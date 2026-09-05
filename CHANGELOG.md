@@ -29,6 +29,23 @@ for the draft publish record and
 [`docs/releases/v1.0.0-beta.5-verification.md`](docs/releases/v1.0.0-beta.5-verification.md)
 for the draft verification record.
 
+**Update 2026-09-05, post-soak: kit `91caebc` ("candidate 1") is NOT the
+beta.5 release candidate anymore.** Candidate 1's Gate A run passed all
+three lanes, but its clean-install hardware soak (soak #3) FAILED: every
+GStreamer playout worker exited with `CTRL stall: no output for 10s` and
+was relaunched -- one per channel in the first 30 minutes, then roughly
+every 30 seconds (rule is zero). Root cause (item 51, below) is a
+regression introduced by #170, not present in beta.4: a widened plan
+window builds far more decoder chains than an 8-core CPU-only station can
+run at once. Hotfix `fix/plan-window-decoder-blowup` is open, not yet
+merged. `v1.0.0-beta.5` will be cut from `main` after that hotfix merges,
+followed by a new Gate A run and a new clean-install hardware soak on
+candidate 2, whose identity is pending: `<BETA5_FINAL_SHA>` /
+`<BETA5_FINAL_BUILD_RUN>` / `<GATE_A_FINAL_RUN_ID>` / `<SOAK5_START_UTC>` /
+`<SOAK5_VERDICT>` / `<SOAK5_RELAUNCHES>`. Candidate 1's facts below
+(SHA `91caebc`, build `33971258093`, Gate A `33972726431`) are preserved as
+history: **candidate 1 -- Gate A PASS x3, hardware soak FAIL (item 51).**
+
 ### Added
 
 - **An operator switch for live captions: `Show live captions on air` on
@@ -311,6 +328,42 @@ for the draft verification record.
   27): a self-test lane for the harness's own proof logic, so a fifth
   latent bug in the same path is caught before a live run rather than
   after -- queued, not part of this candidate.
+- **Root cause of soak #3 (item 51): a #170 regression drives a decoder
+  pileup, not present in beta.4.** Clean-install hardware soak #3 (kit
+  `91caebc`, tester `DESKTOP-VBMA6O5`, clock started
+  `2026-09-05T20:16:29Z`, 272 thirty-second schedule items per channel
+  across three channels) proved the caption-tap fix (#172) works: control
+  plane at roughly 30% CPU, caption tap in state `paused` with backoff,
+  zero `CRITICAL` overload lines. **But every GStreamer playout worker
+  exited with `CTRL stall: no output for 10s` and was relaunched -- one
+  per channel in the first 30 minutes, then roughly every 30 seconds (rule
+  is zero) -- FAIL.** One worker reached 3.5 GB RSS and 1,238 threads.
+  Root cause: #170 widened the playout plan window to hold 30 minutes of
+  schedule (`PLAN_MIN_SECONDS=1800`, `PLAN_MAX_SEGMENTS=120` in
+  `civiccast/egress/source_plan.py`; before #170 a plan held at most 8
+  segments). With 30-second schedule items, a 30-minute plan now holds 60
+  segments; `civiccast/egress/gst/bridge.py` builds one H.264 decoder
+  chain per segment and starts them all in a single pipeline (`engine.py`'s
+  `_build_playlist`), so three channels x 60 decoders means 180
+  concurrently-running decoder chains on an 8-core, CPU-only, GPU-less
+  station -- more than it can produce output from inside the existing
+  10-second stall watchdog. **This is why kit `91caebc` is not the beta.5
+  release candidate.** Hotfix `fix/plan-window-decoder-blowup` (open, not
+  yet merged) caps plans at 8 segments regardless of duration, ties the
+  replan-trigger floor to the plan's actual segment count, and hard-caps
+  decoder chains in the engine. `v1.0.0-beta.5` will be cut from `main` at
+  the new head once this merges, then re-run through a fresh Gate A and a
+  fresh clean-install hardware soak as candidate 2.
+- **Soak #4: real clip durations, item-boundary diagnostic.** Same build
+  `91caebc` (pre-hotfix), same tester. Purpose: determine whether the
+  soak #3 stall is driven by item (schedule-segment) boundaries
+  specifically, or purely by decoder count regardless of segment shape.
+  The four approved LPM clips were rescheduled with their real durations
+  -- 67s, 67s, 667s, and 2365s -- instead of soak #3's 30-second default,
+  sharply cutting the number of schedule items (and decoder chains) a
+  30-minute plan window holds, without touching #170's plan-window code.
+  Soak clock started `<SOAK4_START_UTC>`. Result: `<SOAK4_VERDICT>`,
+  pending.
 - **`civiccast/egress/gst/graph.py`'s `source_leg_is_clock_timed` docstring
   claimed the fail-safe answer for an unknown source factory is `True`; the
   code has always returned `False`** (`_chain_is_clock_timed` only matches a
@@ -501,6 +554,19 @@ for the draft verification record.
    rebuilt kit. Workaround: uninstall, then install fresh. Fix pending:
    `fix/pack-staging-identity-not-version-string`, not part of this
    candidate.
+7. **(item 51) Every GStreamer playout worker relaunches under a real
+   schedule -- a regression from #170, not present in beta.4.** #170's
+   30-minute plan window (`PLAN_MIN_SECONDS=1800`, `PLAN_MAX_SEGMENTS=120`
+   in `civiccast/egress/source_plan.py`) builds far more decoder chains
+   than an 8-core CPU-only station can run at once when schedule items
+   are short. MEASURED: soak #3, clean install of kit `91caebc`,
+   30-second schedule items, `FAIL` -- one relaunch per channel in the
+   first 30 minutes, then roughly every 30 seconds (rule is zero). **This
+   is why kit `91caebc` is not the beta.5 release candidate.** Fix
+   pending: `fix/plan-window-decoder-blowup` (open, not yet merged) --
+   caps plans at 8 segments, ties the replan floor to the plan length, and
+   hard-caps decoder chains in the engine. Not part of candidate 1; will
+   be part of candidate 2.
 
 ## [1.0.0-beta.4] - 2026-09-04
 

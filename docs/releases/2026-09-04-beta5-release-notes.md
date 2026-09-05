@@ -8,6 +8,21 @@ fill-in-the-placeholders-and-run operation rather than a from-scratch write.
 `current` and `v1.0.0-beta.5` as `staging` -- neither this document nor any
 other surface in this PR flips that.
 
+**Update 2026-09-05, post-soak: kit `91caebc` is NOT the beta.5 release
+candidate anymore.** Its clean-install hardware soak (soak #3, below) FAILED:
+every GStreamer playout worker relaunched roughly every 30 seconds per
+channel. Root cause (item 51 in "Known issues" below) is a regression
+introduced by #170 -- not present in beta.4 -- where a widened plan window
+builds far more decoder chains than an 8-core CPU-only station can run at
+once. A hotfix, `fix/plan-window-decoder-blowup`, is open but not yet
+merged. `v1.0.0-beta.5` will be cut from `main` after that hotfix merges,
+followed by a new Gate A run and a new clean-install hardware soak on a new
+candidate. Everything below that names `91caebc` / build `33971258093` /
+Gate A `33972726431` describes **candidate 1**: Gate A PASS x3, hardware
+soak FAIL (item 51). Candidate 2's identity is pending:
+`<BETA5_FINAL_SHA>` / `<BETA5_FINAL_BUILD_RUN>` / `<GATE_A_FINAL_RUN_ID>` /
+`<SOAK5_START_UTC>` / `<SOAK5_VERDICT>` / `<SOAK5_RELAUNCHES>`.
+
 **Publisher (once run):** the coordinating agent, per the owner's
 2026-09-02 delegation ("every green build gets tagged and published" --
 see `scripts/release/publish_beta_candidate.py`'s module docstring).
@@ -18,9 +33,13 @@ publish time" below for the exact list, prepared but not applied here.
 
 ## What will happen
 
-`v1.0.0-beta.5` will publish as a GitHub prerelease on
+**Candidate 1 (`91caebc`) FAILED its hardware soak (item 51 below) and will
+not be published; the paragraph below records what candidate 1's publish
+command and Gate A run were, as history, not as a live plan.** `v1.0.0-beta.5`
+will publish as a GitHub prerelease on
 [`scottconverse/civiccast-native`](https://github.com/scottconverse/civiccast-native/releases),
-targeting source SHA `91caebccc6a6decef476fea5cd785a9ff19abfe6`. Like beta.3/beta.4, it will be
+targeting source SHA `<BETA5_FINAL_SHA>` once candidate 2 passes its own
+Gate A and hardware soak. Like beta.3/beta.4, it will be
 downloadable: `setup.exe` and the runtime `.ccpack` packs as release assets,
 verified by a published `SHA256SUMS.txt` and a `setup.exe.sidecar.json`
 sidecar.
@@ -31,10 +50,13 @@ runtime packs) over the existing install -- no `station\` folder, no
 re-downloading the ~21 GB AI-model bundle. Recordings, settings, database,
 and AI models already on the machine are kept.
 
-Will be published via `python scripts/release/publish_beta_candidate.py
+Candidate 1 would have published via `python scripts/release/publish_beta_candidate.py
 --kit-dir <kit> --source-sha 91caebccc6a6decef476fea5cd785a9ff19abfe6 --build-run-id 33971258093
---gate-a-run-id 33972726431 --tag v1.0.0-beta.5 --truth-status current`,
-whose fail-closed checks must all pass before any GitHub state is touched:
+--gate-a-run-id 33972726431 --tag v1.0.0-beta.5 --truth-status current`
+(never run -- the hardware soak failed first). Candidate 2's equivalent
+command, once its own Gate A run passes, uses `<BETA5_FINAL_SHA>`,
+`<BETA5_FINAL_BUILD_RUN>`, and `<GATE_A_FINAL_RUN_ID>`. The publisher's
+fail-closed checks must all pass before any GitHub state is touched:
 version identity agreeing across `setup.exe` ProductVersion,
 `civiccast._native_version.__version__`, and the tag (already
 `1.0.0-beta.5` as of PR #164's version bump); Authenticode signature status
@@ -228,12 +250,62 @@ schedule setup fell back to its 30-second default clip duration (the
 playout engine trims each clip to fit at air), committing 272
 thirty-second schedule items per channel. All three channels were
 ON_AIR with content when the clock started. Soak clock started
-`2026-09-05T20:16:29Z` on tester `DESKTOP-VBMA6O5`. **PENDING -- the
-soak's own verdict is not yet complete as of this writing (expected
-around 22:26Z).** Verdict: `<SOAK3_VERDICT>`; relaunches observed:
-`<SOAK3_RELAUNCHES>`. This section will be updated in place once the soak
-finishes; do not read a pass/fail verdict here until the placeholders
-above are filled with a real result.
+`2026-09-05T20:16:29Z` on tester `DESKTOP-VBMA6O5`.
+
+**Verdict: FAIL.** The caption-tap fix itself worked as designed: the
+control plane ran at roughly 30% CPU, the caption tap sat in state
+`paused` with backoff engaged, and there were zero `CRITICAL` overload
+lines in the run. **But every GStreamer playout worker exited with `CTRL
+stall: no output for 10s` and was relaunched -- one per channel in the
+first 30 minutes, then roughly every 30 seconds -- the rule is zero
+relaunches.** One worker was observed at 3.5 GB RSS and 1,238 threads.
+This is a different failure than the caption-tap starvation soak #3 was
+designed to retest -- see "Root cause of soak #3" immediately below.
+
+## Root cause of soak #3: the #170 plan-window regression drives a decoder pileup (item 51)
+
+Soak #3 proved the caption-tap fix (#172) works, and disproved the
+hypothesis that fixing the caption tap alone would make the hardware soak
+pass. The relaunches it measured are a **separate, newly introduced
+defect, not present in beta.4** -- a regression from #170
+("honour the schedule slot in source plans; size the plan window by
+duration"), which merged into this candidate after beta.4 shipped.
+
+**Mechanism:** #170 widened the playout plan window to hold 30 minutes of
+schedule (`PLAN_MIN_SECONDS=1800`, `PLAN_MAX_SEGMENTS=120` in
+`civiccast/egress/source_plan.py`). Before #170, a plan held at most 8
+segments (`max_segments=8`). With the soak's 30-second schedule items, a
+30-minute plan now holds 60 segments. `civiccast/egress/gst/bridge.py`
+builds one H.264 decoder chain per segment in the plan and starts them all
+in a single pipeline (`engine.py`'s `_build_playlist`) -- so three channels
+x 60 decoders each means 180 concurrently-running decoder chains on an
+8-core, CPU-only, GPU-less station. That station cannot produce output
+from any of them inside the existing 10-second stall watchdog, so every
+worker trips it and gets relaunched, over and over.
+
+**Hotfix, open, not yet merged:** `fix/plan-window-decoder-blowup` --
+caps plans at 8 segments regardless of duration, ties the replan-trigger
+floor to the plan's actual segment count rather than a fixed time window,
+and hard-caps how many decoder chains the engine will build at once. Once
+merged, `v1.0.0-beta.5` will be cut from `main` at the new head, built,
+and put through a fresh Gate A run and a fresh clean-install hardware
+soak -- **candidate 2**, not a re-test of `91caebc`.
+
+## Fourth real-hardware soak: real clip durations, to isolate the item-boundary question
+
+**Purpose:** show whether the stall soak #3 measured is driven by item
+(schedule-segment) boundaries specifically, or is purely a function of
+decoder count regardless of how the segments are shaped. Same build
+`91caebc` as soak #3 (pre-hotfix); same tester `DESKTOP-VBMA6O5`. The four
+approved LPM clips were rescheduled with their real durations -- 67s, 67s,
+667s, and 2365s -- instead of the 30-second default soak #3 used, which
+sharply cuts the number of schedule items (and therefore decoder chains)
+a 30-minute plan window holds without touching #170's plan-window code at
+all. Soak clock started `<SOAK4_START_UTC>`.
+
+**Result: `<SOAK4_VERDICT>`, pending.** This section will be updated in
+place once the soak finishes; do not read a pass/fail verdict here until
+the placeholder above is filled with a real result.
 
 ## Also in this candidate: the Gate A schema proof now actually executes
 
@@ -340,6 +412,20 @@ path, only the independent proof that checks it from the outside.
    the existing station. **Fix pending:** tracked as
    `fix/pack-staging-identity-not-version-string` -- not part of this
    candidate.
+7. **(item 51) Every GStreamer playout worker relaunches under a real
+   schedule -- a regression from #170, not present in beta.4.** #170's
+   30-minute plan window (`PLAN_MIN_SECONDS=1800`, `PLAN_MAX_SEGMENTS=120`
+   in `civiccast/egress/source_plan.py`) builds far more decoder chains
+   than an 8-core CPU-only station can run at once when schedule items are
+   short -- see "Root cause of soak #3" above for the full mechanism.
+   MEASURED: soak #3, clean install of kit `91caebc`, 30-second schedule
+   items, FAIL -- one relaunch per channel in the first 30 minutes, then
+   roughly every 30 seconds (rule is zero). **This is why kit `91caebc` is
+   not the beta.5 release candidate.** Fix pending: tracked as
+   `fix/plan-window-decoder-blowup` (open, not yet merged) -- caps plans at
+   8 segments, ties the replan floor to the plan length, and hard-caps
+   decoder chains in the engine. Not part of candidate 1; will be part of
+   candidate 2.
 
 ## Also in this candidate: release-prep
 
@@ -389,22 +475,37 @@ Prepared here so publish is a mechanical sweep, not a rediscovery:
   with the real run ids, hashes, and evidence paths from tonight's actual
   run.
 
-## Evidence (to be filled in at publish time)
+## Evidence
+
+**Candidate 1 (`91caebc`) -- Gate A PASS x3, hardware soak FAIL (item 51). Not
+publishable.**
+
+- **Gate A:** run `33972726431`, all three lanes PASS, evidence copied to
+  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\gate-a-v1.0.0-beta.5-final-33972726431\gate-a-verdict-33971258093\gate-a-verdict.json` /
+  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\gate-a-v1.0.0-beta.5-final-33972726431\gate-a-dirty-verdict-33971258093\gate-a-verdict.json` /
+  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\gate-a-v1.0.0-beta.5-final-33972726431\gate-a-download-only-verdict-33971258093\gate-a-verdict.json`.
+- **T6 relaunch-count retest (caption-tap-driven, pre-#172):** tester branch
+  `tester/soak8-e1acfe6-DESKTOP-VBMA6O5` and local copy
+  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\tester-soak8-e1acfe6-20260905\`
+  (see "T6 relaunch-count retest" above -- real-hardware, `FAIL`).
+- **Soak #3 (clean install, decoder-pileup regression, item 51):** clock
+  started `2026-09-05T20:16:29Z` on tester `DESKTOP-VBMA6O5`, `FAIL` --
+  see "Root cause of soak #3" above.
+- **Soak #4 (real clip durations, item-boundary diagnostic):** clock
+  started `<SOAK4_START_UTC>`, result `<SOAK4_VERDICT>` pending.
+
+**Candidate 2 -- pending. To be filled in once a new candidate cuts from
+`main` after `fix/plan-window-decoder-blowup` merges:**
 
 - **Release:** `gh release view v1.0.0-beta.5 -R scottconverse/civiccast-native
   --json isDraft,assets,targetCommitish,tagName`.
 - **Hash + signature, verified from the outside:**
   `scripts/download_windows_release_artifacts.ps1 -AssetSet NativeCandidate`,
   cross-verified against `SHA256SUMS.txt` and `Get-AuthenticodeSignature`.
-- **Gate A:** run `33972726431`, all three lanes PASS, evidence copied to
-  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\gate-a-v1.0.0-beta.5-final-33972726431\gate-a-verdict-33971258093\gate-a-verdict.json` /
-  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\gate-a-v1.0.0-beta.5-final-33972726431\gate-a-dirty-verdict-33971258093\gate-a-verdict.json` /
-  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\gate-a-v1.0.0-beta.5-final-33972726431\gate-a-download-only-verdict-33971258093\gate-a-verdict.json`.
-- **T6 relaunch-count retest:** tester branch
-  `tester/soak8-e1acfe6-DESKTOP-VBMA6O5` and local copy
-  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\tester-soak8-e1acfe6-20260905\`
-  (see "T6 relaunch-count retest" above -- already run, real-hardware,
-  `FAIL`; not a publish-time placeholder).
+- **Gate A:** run `<GATE_A_FINAL_RUN_ID>` (build `<BETA5_FINAL_BUILD_RUN>`),
+  all three lanes expected PASS.
+- **Clean-install hardware soak:** clock `<SOAK5_START_UTC>`, verdict
+  `<SOAK5_VERDICT>`, relaunches `<SOAK5_RELAUNCHES>`.
 - **Test suite:** `uv run pytest tests/docs tests/policy -q` re-run for this
   publish; see the commit history on this branch for the result.
 
@@ -417,6 +518,8 @@ Prepared here so publish is a mechanical sweep, not a rediscovery:
 - No tag or draft release exists yet for `v1.0.0-beta.5`. If the publish
   does not succeed end to end, this document stays a draft and nothing
   above is presented as done.
+- Candidate 1 (`91caebc`) was never published -- it failed its hardware
+  soak (item 51) before reaching the publish step.
 
 ## Related
 
