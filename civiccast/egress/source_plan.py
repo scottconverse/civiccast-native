@@ -25,24 +25,41 @@ AssetResolver = Callable[[str], StaffAssetRow | None]
 ScheduleItemsProvider = Callable[[str], Sequence[ScheduleItemResponse]]
 _PLAYABLE_ASSET_STATES = {ASSET_STATE_VALIDATED, ASSET_STATE_RECORDED}
 
-#: D43 hardening (2026-09-05): the MINIMUM wall-clock length a
-#: schedule-derived plan aims for. A count-only window (``max_segments=8``)
-#: is a 4-minute plan for a schedule of 30-second slots, and automation's
-#: rollover then re-plans -- synchronously preparing sources on the
-#: automation thread (``daemon._try_content_reload``) -- roughly every two
-#: minutes per channel. (Measured caveat: the real-hardware tester's 2-hour
-#: control-plane log shows ZERO rollovers, so that cycle is not a diagnosed
-#: cause of anything observed there; this is hardening against a cadence the
-#: code plainly permits, not a fix for a measured symptom.) Planning by
-#: DURATION decouples the rollover cadence from the schedule's slot
-#: granularity: 30 minutes of plan is ~28 minutes between rollovers no matter
-#: how short the individual items are. A long-item schedule is unaffected --
-#: ``max_segments`` still wins whenever it yields the longer plan.
-PLAN_MIN_SECONDS = 1800.0
+#: D45 fix (2026-09-05): D43 (#170) set this to 1800.0 to lengthen a
+#: schedule-derived plan for the sake of the ROLLOVER cadence (see
+#: ``automation._check_plan_rollover``'s D43 comments). Real-hardware soak
+#: evidence (3 GStreamer channels, a schedule of 30-second items
+#: back-to-back) then measured the actual cost of that: chasing 1800s of
+#: planned duration out of 30-second slots builds ~60 segments per plan, and
+#: ``bridge.graph_from_config`` builds ONE filesrc->decodebin->videoconvert->
+#: videoscale->videorate sub-chain PER segment in a SINGLE pipeline that is
+#: set to PLAYING all at once (``engine._build_playlist``) -- avdec_h264 at
+#: its default max-threads=0 spins up ~20 threads per sub-chain, so 60
+#: sub-chains produced ~1200 threads and ~3.5 GB on one worker, with no TS
+#: buffer landing inside the 10s stall watchdog
+#: (``engine.py``'s ``CTRL stall: no output for 10s``). Every worker
+#: relaunched roughly every 30s. The pipeline SHAPE (segment count) has to
+#: be bounded on its own terms -- CPU-only stations building 1200 decoder
+#: threads is unsafe regardless of how "correct" the resulting wall-clock
+#: window is -- so this is back to 0.0 (no duration floor at all;
+#: ``max_segments`` alone decides how many sub-chains a plan gets). The
+#: rollover-cadence problem D43 was actually solving is fixed at its own
+#: layer instead: ``ChannelAutomationService._rollover_min_interval_seconds``
+#: (automation.py) now derives its per-channel dispatch floor from the
+#: ON-AIR plan's own duration rather than a fixed 300s, so a short plan still
+#: gets rolled over comfortably inside its own lifetime.
+PLAN_MIN_SECONDS = 0.0
 #: Hard ceiling on segments in one plan, so a pathological schedule of
 #: one-second slots cannot build an unbounded segment list (and cannot make
-#: ``SourcePreparer.prepare`` walk thousands of entries) while chasing
-#: ``PLAN_MIN_SECONDS``.
+#: ``SourcePreparer.prepare`` walk thousands of entries, nor
+#: ``bridge.graph_from_config`` build thousands of decoder sub-chains).
+#: With ``PLAN_MIN_SECONDS`` back to 0.0 this ceiling is defense-in-depth
+#: only -- ``max_segments`` (8 by default) is what actually bounds a normal
+#: plan's segment count now. ``bridge.graph_from_config`` also hard-caps the
+#: sub-chains it will actually BUILD at ``MAX_PLAYLIST_SUBCHAINS`` (12),
+#: independent of this value, so a caller that raises ``max_segments`` /
+#: ``segment_cap`` well beyond what one pipeline can safely decode still
+#: cannot blow up the worker process.
 PLAN_MAX_SEGMENTS = 120
 
 
@@ -154,12 +171,16 @@ def build_source_plan_from_schedule(
 ) -> EgressSourcePlan | None:
     """Return the currently playable egress source plan, or None for slate fallback.
 
-    The window is bounded by DURATION as well as count (D43): segments are
-    appended until there are at least ``max_segments`` of them AND the plan
-    spans at least ``min_plan_seconds``, whichever condition is satisfied
-    later -- so a schedule of short slots yields a long plan instead of a
-    four-minute one, and a schedule of long items is unchanged.
-    ``segment_cap`` is the hard upper bound on the segment count.
+    The window is bounded by COUNT first (``max_segments``, 8 by default) --
+    each segment becomes its own decoder sub-chain in the egress pipeline
+    (``bridge.graph_from_config``), so the segment count IS the pipeline's
+    shape, not just a wall-clock convenience. ``min_plan_seconds`` (D45: 0.0
+    by default) is an OPTIONAL additional duration floor for a caller that
+    explicitly wants a longer window and can bear a bigger pipeline; segments
+    are appended until there are at least ``max_segments`` of them AND the
+    plan spans at least ``min_plan_seconds``, whichever condition is
+    satisfied later. ``segment_cap`` is the hard upper bound on the segment
+    count regardless of either.
 
     Each segment is clipped to its SCHEDULE SLOT (D42): the slot is the
     contract, so long media in a 30-second slot plays for 30 seconds, not

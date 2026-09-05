@@ -12,6 +12,7 @@ decision D-S1-6 in the Stage-1 plan) is implemented below in ``graph_from_config
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from dataclasses import dataclass, replace
@@ -47,6 +48,17 @@ from civiccast.egress.models import (
     EgressSourceSegment,
 )
 from civiccast.egress.sinks import SecretResolver
+
+_LOG = logging.getLogger(__name__)
+
+#: D45 fix (2026-09-05) hard cap on decoder sub-chains ``graph_from_config``
+#: will actually BUILD for one channel's playlist leg, independent of
+#: whatever ``max_segments``/``segment_cap`` a source-plan caller used. Each
+#: sub-chain is a real decodebin instance (avdec_h264 defaults to
+#: max-threads=0, ~20 threads each) built and set to PLAYING together at
+#: start -- see ``graph_from_config``'s docstring for the measured cost of
+#: skipping this cap (~1200 threads / ~3.5 GB from a 60-segment plan).
+MAX_PLAYLIST_SUBCHAINS = 12
 
 #: Sink kinds the GStreamer engine can actually deliver (Task B: an unsupported
 #: kind must be refused at config time, not accepted-then-crash at start time —
@@ -534,6 +546,21 @@ def graph_from_config(
     slate message overlaid. Encoder + TS sinks come from the channel's ``EgressConfig``.
     The dedicated always-hot ``live`` selector role + the operator live-cut control
     surface are S16 (Production/Control Room, an optional later tier).
+
+    D45 fix (2026-09-05): each segment becomes its OWN decoder sub-chain, all
+    built and set to PLAYING together (``engine._build_playlist`` /
+    ``GstPlayoutEngine`` start), so the segment count IS the pipeline's
+    shape. Real-hardware soak evidence measured the cost of an oversized
+    plan directly: ~60 segments (a plan sized to
+    ``source_plan.PLAN_MIN_SECONDS`` before D45) produced ~1200 avdec_h264
+    threads (its default max-threads=0 spins up ~20 per sub-chain) and
+    ~3.5 GB on one worker, with the worker relaunching roughly every 30s
+    (no TS output landed inside the engine's 10s stall watchdog).
+    ``source_plan.build_source_plan_from_schedule`` is fixed at its own
+    layer (segment count bounded by ``max_segments``, 8 by default), but
+    this cap is defense-in-depth against any caller — present or future —
+    that hands this function a plan with more segments than one pipeline can
+    safely decode.
     """
     profile = config.canonical_profile
     common_caps = (
@@ -542,6 +569,20 @@ def graph_from_config(
     common_audio_caps = (
         f"audio/x-raw,rate={profile.audio_sample_rate},channels={profile.audio_channels}"
     )
+    program_segments = source_plan.segments
+    if len(program_segments) > MAX_PLAYLIST_SUBCHAINS:
+        _LOG.warning(
+            "Source plan for channel %s carries %d segments, above the "
+            "%d-subchain playlist cap; building only the first %d. Each "
+            "segment is its own decoder sub-chain built into one pipeline "
+            "(see graph_from_config's D45 docstring) -- a plan this large "
+            "would spawn thousands of decoder threads on start.",
+            config.channel_id,
+            len(program_segments),
+            MAX_PLAYLIST_SUBCHAINS,
+            MAX_PLAYLIST_SUBCHAINS,
+        )
+        program_segments = program_segments[:MAX_PLAYLIST_SUBCHAINS]
     program = PlaylistLeg(
         label="program",
         subchains=tuple(
@@ -553,7 +594,7 @@ def graph_from_config(
                 ElementSpec("videorate"),
                 ElementSpec("capsfilter", props={"caps": common_caps}),
             )
-            for segment in source_plan.segments
+            for segment in program_segments
         ),
         audio_tail=(
             ElementSpec("audioconvert"),

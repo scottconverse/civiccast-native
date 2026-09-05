@@ -751,11 +751,17 @@ class TestRolloverCadence:
         # once the reload lands. Three calls in 900 ticks.
         assert calls["n"] == 3
 
-    def test_a_short_plan_cannot_dispatch_faster_than_the_minimum_interval(self) -> None:
-        """Belt-and-braces floor under the CADENCE, independent of the plan
-        window: even if a plan comes back short (a nearly-exhausted schedule,
-        a provider quirk), one channel may not dispatch rollovers closer
-        together than ``_ROLLOVER_MIN_INTERVAL_SECONDS``."""
+    def test_a_short_plan_cannot_dispatch_faster_than_its_scaled_minimum_interval(
+        self,
+    ) -> None:
+        """D45: the CADENCE floor now scales with the plan actually on air
+        (``_rollover_min_interval_seconds``) instead of a fixed 300s -- a flat
+        300s floor is longer than the lifetime of a short plan (e.g. an
+        8-segment, 30-second-item plan is only 240s), which would silently
+        starve every rollover after the first until the engine hits EOS and
+        restarts. For a 100-second plan the scaled floor is 50s (half the
+        plan, clamped to the 30s-300s range): still a real floor under the
+        cadence, but one a short plan can actually live inside."""
         clock = {"now": 1000.0}
         store = InMemoryEgressStore()
         store.upsert_config(_config("public"))
@@ -765,7 +771,7 @@ class TestRolloverCadence:
 
         def provider(_cid: str) -> EgressSourcePlan:
             plans["n"] += 1
-            return _plan_with_duration("public", 150.0, source_ref=f"seg-{plans['n']}")
+            return _plan_with_duration("public", 100.0, source_ref=f"seg-{plans['n']}")
 
         service = ChannelAutomationService(
             store,
@@ -774,30 +780,43 @@ class TestRolloverCadence:
             settings=ChannelAutomationSettings(),
             monotonic=lambda: clock["now"],
         )
+        assert service._rollover_min_interval_seconds(100.0) == 50.0
 
-        # Establish a 150s horizon, then trigger (a 150s plan is already
+        # Establish a 100s horizon, then trigger (a 100s plan is already
         # inside its own 120s lead floor).
         service.run_once(now=_NOW)
         service.run_once(now=_NOW + timedelta(seconds=1))
         assert _pending_actions(store, "public") == ["reload"]
 
-        # The reload lands -> a fresh proof event -> a fresh 150s horizon that
-        # is immediately inside its own lead floor again. Without the interval
-        # floor this would dispatch again straight away, once per plan.
-        for round_index in range(2, 6):
-            self._on_air_state(store, "public", proof_event_id=f"ev-{round_index}")
-            clock["now"] += 60.0
-            service.run_once(now=_NOW + timedelta(seconds=60 * round_index))
-            service.run_once(now=_NOW + timedelta(seconds=60 * round_index + 1))
-            assert _pending_actions(store, "public") == []
+        # The reload lands -> a fresh proof event -> a fresh 100s horizon that
+        # is immediately inside its own lead floor again. Without the scaled
+        # interval floor this would dispatch again straight away, once per
+        # plan.
+        self._on_air_state(store, "public", proof_event_id="ev-2")
+        clock["now"] += 40.0  # 40s since the dispatch, < the 50s scaled floor
+        service.run_once(now=_NOW + timedelta(seconds=41))
+        service.run_once(now=_NOW + timedelta(seconds=42))
+        assert _pending_actions(store, "public") == []
 
-        # Past the interval floor, the next one is allowed through.
-        self._on_air_state(store, "public", proof_event_id="ev-9")
-        clock["now"] += 120.0  # 360s since the dispatch, > the 300s floor
-        service.run_once(now=_NOW + timedelta(seconds=400))
-        service.run_once(now=_NOW + timedelta(seconds=401))
+        # Past the scaled floor, the next one is allowed through -- well
+        # before this 100-second plan would otherwise reach EOS.
+        clock["now"] += 20.0  # 60s since the dispatch, > the 50s scaled floor
+        service.run_once(now=_NOW + timedelta(seconds=61))
+        service.run_once(now=_NOW + timedelta(seconds=62))
         assert _pending_actions(store, "public") == ["reload"]
+
+    def test_the_scaled_interval_never_exceeds_the_historic_ceiling(self) -> None:
+        """A long plan (>= 600s) is unaffected by D45: the scaled floor
+        clamps back down to the historic flat 300s, same as before."""
         assert ChannelAutomationService._ROLLOVER_MIN_INTERVAL_SECONDS == 300.0
+        service = ChannelAutomationService(
+            InMemoryEgressStore(),
+            _FakeDaemon(),
+            lambda _cid: None,
+            settings=ChannelAutomationSettings(),
+        )
+        assert service._rollover_min_interval_seconds(1800.0) == 300.0
+        assert service._rollover_min_interval_seconds(10.0) == 30.0
 
     def test_the_interval_floor_is_cleared_when_the_channel_leaves_the_air(self) -> None:
         """The floor governs EXTENSIONS of a live plan. A channel that goes

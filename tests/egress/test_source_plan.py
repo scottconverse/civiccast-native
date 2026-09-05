@@ -619,18 +619,25 @@ class TestSlotDuration:
 
 
 class TestPlanWindow:
-    """D43: the plan window is bounded by DURATION as well as by count.
+    """D43 (superseded by D45): the plan window used to be bounded by
+    DURATION as well as by count -- ``PLAN_MIN_SECONDS`` defaulted to 1800.0
+    so a schedule of 30-second slots chased a 60-segment, 1800-second plan
+    instead of the count-only 8-segment, 240-second one.
 
-    A count-only window (``max_segments=8``) is a 240-second plan for a
-    schedule of 30-second slots, which drove automation's rollover -- and the
-    synchronous ``SourcePreparer.prepare`` it runs on the automation thread --
-    roughly every two minutes per channel (control plane at ~285% CPU / 1.9 GB
-    on the tester, worker output stalling into the 10s stall watchdog).
+    Real-hardware soak evidence (3 GStreamer channels, 30-second items
+    back-to-back) measured what that duration target actually cost:
+    ``bridge.graph_from_config`` builds ONE decoder sub-chain PER segment in
+    a single pipeline set to PLAYING all at once, so 60 segments produced
+    ~1200 avdec_h264 threads and ~3.5 GB on one worker -- no TS output landed
+    inside the engine's 10s stall watchdog, and every worker relaunched
+    roughly every 30s. D45 reverts ``PLAN_MIN_SECONDS`` to 0.0: a normal
+    plan's segment count is bounded by ``max_segments`` (pipeline shape)
+    alone by default now. A caller that explicitly wants a longer
+    duration-bounded window (and can bear the bigger pipeline) can still opt
+    in via ``min_plan_seconds`` -- exercised below too.
     """
 
-    def test_thirty_second_slots_build_at_least_thirty_minutes_of_plan(
-        self, tmp_path: Path
-    ) -> None:
+    def test_thirty_second_slots_build_only_max_segments_by_default(self, tmp_path: Path) -> None:
         media = _media(tmp_path)
         now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
 
@@ -644,9 +651,36 @@ class TestPlanWindow:
         )
 
         assert plan is not None
+        # D45: PLAN_MIN_SECONDS defaults to 0.0 -- max_segments (8 by
+        # default) is what bounds a normal plan's segment count, not a
+        # duration target that used to build 60 segments (and ~1200 decoder
+        # threads) out of 30-second slots.
+        assert PLAN_MIN_SECONDS == 0.0
+        assert len(plan.segments) == 8
         total = sum(segment.duration_seconds for segment in plan.segments)
-        # Before the fix: 8 segments, 240 seconds of plan.
-        assert total >= PLAN_MIN_SECONDS
+        assert total == 240.0
+
+    def test_min_plan_seconds_can_still_widen_the_window_when_opted_in(
+        self, tmp_path: Path
+    ) -> None:
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+
+        plan = build_source_plan_from_schedule(
+            channel_id="gov",
+            schedule_items=_slot_schedule(now, count=200),
+            asset_resolver=lambda asset_id: _asset_of(
+                media, duration_seconds=3600, asset_id=asset_id
+            ),
+            now=now,
+            # A caller that explicitly wants a longer duration-bounded plan
+            # (and accepts the bigger pipeline) can still ask for it.
+            min_plan_seconds=1800.0,
+        )
+
+        assert plan is not None
+        total = sum(segment.duration_seconds for segment in plan.segments)
+        assert total >= 1800.0
         assert len(plan.segments) == 60
 
     def test_the_segment_cap_bounds_a_pathologically_short_slot_schedule(
@@ -658,12 +692,15 @@ class TestPlanWindow:
         plan = build_source_plan_from_schedule(
             channel_id="gov",
             # 1-second slots: 1800 of them would be needed to reach
-            # PLAN_MIN_SECONDS. The cap stops well short of that.
+            # min_plan_seconds. The cap stops well short of that. A caller
+            # has to opt into min_plan_seconds explicitly for this to bind
+            # at all now that D45 defaults it to 0.0.
             schedule_items=_slot_schedule(now, count=400, slot_seconds=1),
             asset_resolver=lambda asset_id: _asset_of(
                 media, duration_seconds=3600, asset_id=asset_id
             ),
             now=now,
+            min_plan_seconds=1800.0,
         )
 
         assert plan is not None
@@ -675,9 +712,9 @@ class TestPlanWindow:
 
         plan = build_source_plan_from_schedule(
             channel_id="gov",
-            # 30-minute slots: the FIRST segment alone already spans
-            # PLAN_MIN_SECONDS, so the count bound is what applies. A
-            # long-item schedule is unchanged by this fix.
+            # 30-minute slots: the count bound (max_segments) is what
+            # applies regardless of min_plan_seconds. A long-item schedule
+            # is unaffected by D45.
             schedule_items=_slot_schedule(now, count=40, slot_seconds=1800),
             asset_resolver=lambda asset_id: _asset_of(
                 media, duration_seconds=1800, asset_id=asset_id

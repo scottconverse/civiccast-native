@@ -8,6 +8,7 @@ import pytest
 
 from civiccast.egress.errors import SecretUnresolvedError
 from civiccast.egress.gst.bridge import (
+    MAX_PLAYLIST_SUBCHAINS,
     encode_chain_from_profile,
     graph_from_config,
     gst_encoder_name,
@@ -196,6 +197,64 @@ def test_graph_from_config_builds_program_playlist_and_slate() -> None:
     assert slate.elements[0].factory == "videotestsrc"
     assert graph.mux.factory == "mpegtsmux"
     assert graph.sinks[0][1].factory == "udpsink"
+
+
+def test_graph_from_config_caps_playlist_subchains(caplog: pytest.LogCaptureFixture) -> None:
+    """D45 fix: defense-in-depth against a source plan with more segments
+    than one pipeline can safely decode. Each segment becomes its own
+    decoder sub-chain built and set to PLAYING together -- a plan this large
+    (well beyond MAX_PLAYLIST_SUBCHAINS) is exactly the shape that produced
+    ~1200 avdec_h264 threads on real hardware. graph_from_config must build
+    only the first MAX_PLAYLIST_SUBCHAINS and log a warning naming the real
+    plan size, never silently truncate without a trace."""
+    config = EgressConfig(
+        channel_id="ch1",
+        enabled=True,
+        slate_message="Please stand by",
+        sinks=[EgressSinkSpec(kind="udp-ts", label="head", uri="udp://10.0.0.9:5000")],
+    )
+    segment_count = MAX_PLAYLIST_SUBCHAINS + 5
+    plan = EgressSourcePlan(
+        channel_id="ch1",
+        segments=[
+            EgressSourceSegment(
+                label=f"clip{i}", path=f"/m/clip{i}.ts", duration_seconds=30, source_ref=f"c{i}"
+            )
+            for i in range(segment_count)
+        ],
+    )
+    with caplog.at_level("WARNING"):
+        graph = graph_from_config(config, plan)
+    program, _slate = graph.sources
+    assert isinstance(program, PlaylistLeg)
+    assert len(program.subchains) == MAX_PLAYLIST_SUBCHAINS
+    assert program.subchains[0][0].props["location"] == "/m/clip0.ts"
+    assert any(
+        "ch1" in record.message and str(segment_count) in record.message
+        for record in caplog.records
+    )
+
+
+def test_graph_from_config_under_the_cap_is_unaffected() -> None:
+    """A normal-sized plan (well under the cap) builds every segment, same
+    as before D45 -- the cap is a ceiling, not a new default limit."""
+    config = EgressConfig(
+        channel_id="ch1",
+        enabled=True,
+        slate_message="Please stand by",
+        sinks=[EgressSinkSpec(kind="udp-ts", label="head", uri="udp://10.0.0.9:5000")],
+    )
+    plan = EgressSourcePlan(
+        channel_id="ch1",
+        segments=[
+            EgressSourceSegment(label=f"clip{i}", path=f"/m/clip{i}.ts", duration_seconds=30)
+            for i in range(8)
+        ],
+    )
+    graph = graph_from_config(config, plan)
+    program, _slate = graph.sources
+    assert isinstance(program, PlaylistLeg)
+    assert len(program.subchains) == 8
 
 
 def test_graph_from_config_udp_sink_enables_cbr() -> None:

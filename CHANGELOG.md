@@ -165,6 +165,40 @@ below.
   added re-provisioning comments following this registry's established
   pattern, with current-source proof pointed at the new gi-free unit tests
   above.
+- **A schedule of back-to-back short items (30-second slots) blew up the
+  GStreamer worker's decoder threads.** MEASURED on a real tester (clean
+  install of `91caebc`, three GStreamer channels, a schedule of 30-second
+  items back-to-back): every worker exited with
+  `CTRL stall: no output for 10s` and relaunched roughly every 30 seconds; a
+  live worker had 1238 threads and 3.5 GB RSS. Root cause: #170's
+  `source_plan.PLAN_MIN_SECONDS = 1800.0` chased 30 minutes of planned
+  DURATION out of 30-second slots, building ~60 segments per plan --
+  `bridge.graph_from_config` builds one
+  `filesrc -> decodebin -> videoconvert -> videoscale -> videorate` sub-chain
+  PER segment in a single pipeline set to `PLAYING` all at once
+  (`engine._build_playlist`), and `avdec_h264`'s default `max-threads=0`
+  spins up ~20 threads per sub-chain -- ~1200 threads, no TS output landing
+  inside the engine's 10-second stall watchdog. Three independent fixes,
+  D45:
+  - `PLAN_MIN_SECONDS` reverted to `0.0` -- a plan's segment count is bounded
+    by `max_segments` (8 by default, pipeline shape) alone again; a caller
+    that explicitly wants a longer duration-bounded window can still opt in
+    via `min_plan_seconds`.
+  - `ChannelAutomationService._rollover_min_interval_seconds` (`automation.py`)
+    now derives the per-channel rollover-dispatch floor from the plan
+    actually on air (half its duration, clamped between 30s and the historic
+    300s ceiling) instead of a flat 300s -- the flat floor was itself
+    longer than an 8-segment/240-second plan's own lifetime, so it would
+    have starved every rollover after the first and let the engine hit EOS
+    and restart even with the segment-count fix above in place.
+  - `bridge.graph_from_config` hard-caps the sub-chains it will actually
+    build at `MAX_PLAYLIST_SUBCHAINS` (12), logging a WARNING naming the
+    real plan size if a source plan ever carries more -- defense-in-depth
+    against any caller, present or future, handing it an oversized plan.
+  New tests in `tests/egress/test_source_plan.py`, `test_automation.py`, and
+  `test_gst_bridge.py`; none of the changed files (`source_plan.py`,
+  `automation.py`, `bridge.py`) are D2 blob-drift-bound in
+  `docs/claims/claims.yaml`.
 
 ### Changed
 
