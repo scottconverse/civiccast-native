@@ -1,0 +1,69 @@
+﻿{
+    "schema":  "civiccast-native-fleet-heartbeat-v1",
+    "mission":  "soak8-e1acfe6",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "utc":  "20260905T083612Z",
+    "health":  {
+                   "status":  "healthy",
+                   "version":  "1.0.0-beta.5",
+                   "schema":  "current",
+                   "schema_db_revision":  "0087_retention_terms",
+                   "schema_expected_head":  "0087_retention_terms",
+                   "mode":  "normal"
+               },
+    "db_revision":  null,
+    "service":  "Running",
+    "cpu_pct":  15.5,
+    "mem_free_mb":  10194,
+    "disk_free_gb":  289.4,
+    "uptime_min":  11968,
+    "processes":  [
+                      {
+                          "ProcessName":  "python",
+                          "Id":  4764,
+                          "rss_mb":  216,
+                          "cpu_s":  10.3
+                      },
+                      {
+                          "ProcessName":  "pythonservice",
+                          "Id":  9872,
+                          "rss_mb":  87,
+                          "cpu_s":  3.8
+                      }
+                  ],
+    "engine_observed":  {
+                            "gst_launch_processes":  0,
+                            "ffmpeg_processes":  1,
+                            "inferred":  "ffmpeg-fallback"
+                        },
+    "egress_channels":  [
+                            {
+                                "channel_id":  "public",
+                                "state":  null,
+                                "engine":  null,
+                                "last_error":  null,
+                                "sink_connected":  null,
+                                "worker_processes":  null,
+                                "error":  null
+                            },
+                            {
+                                "channel_id":  "education",
+                                "state":  null,
+                                "engine":  null,
+                                "last_error":  null,
+                                "sink_connected":  null,
+                                "worker_processes":  null,
+                                "error":  null
+                            },
+                            {
+                                "channel_id":  "government",
+                                "state":  null,
+                                "engine":  null,
+                                "last_error":  null,
+                                "sink_connected":  null,
+                                "worker_processes":  null,
+                                "error":  null
+                            }
+                        ],
+    "soak_started":  false
+}
