@@ -191,3 +191,8 @@ soak #2 probes to `soak/archive-91caebc-soak2-oldcode/`, resets the counters and
 `state\soak-started`. AUTORUN-3 then verifies as before (30-min cadence, 3-min warm-up grace,
 verdict at 2 h). Results: REINSTALL-RESULT-9r.md, STATE-RESET-RESULT-9s.md, AUTORUN-9t-RESULT-*.md,
 AUTORUN-9u-RESULT-*.md / CHANNEL-SCHEDULE-9u.md / SOAK-START-9u.md / SETUP-BLOCKED-9u.md.
+
+
+## Addendum -- AUTORUN-9v (read-only)
+
+After the clean reinstall, `AUTORUN-9v.ps1` repeats the installed-code check (same as 9q): hashes of the installed civiccast files, presence of `tap_backoff.py`, `CaptionBackoffPolicy` in tap_worker.py, journals. Result `soak/DIAG-9v-<stamp>.md`. A soak #3 verdict only counts if this shows the #172 code on disk.
