@@ -164,25 +164,75 @@ failed_beats=0
 **Say this plainly: the soak did not pass. The engine stayed live and
 on-air for the full 2 hours; the lane failed on the relaunch-count rule,
 not on liveness.** `failed_beats=0` -- nothing ever went off-air or failed
-a capture. What tripped the FAIL is that the playout worker exits cleanly
-at the end of every source plan (`civiccast/egress/source_plan.py`'s
-`max_segments=8`), roughly every 10-15 minutes under continuous premieres,
-and channel automation restarts it -- a short on-air blip each time. Under
-120 minutes of continuous premieres that produced 6-8 relaunches per
-channel, over T6's `>3` budget. Seamless plan rollover -- the worker
-continuing across a plan boundary instead of exiting -- is fixed in beta.5
-by #162; see "Known issues in beta.4" below. Evidence:
+a capture. Under 120 minutes of continuous premieres, each channel
+restarted 6-8 times, over T6's `>3` budget. Evidence:
 `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-4b30c99-20260904`.
+
+**Correction (2026-09-05): the original explanation for these restarts,
+below, was wrong and has been retracted.** This document previously said
+the restarts happened because the playout worker exits cleanly at the end
+of every source plan (`civiccast/egress/source_plan.py`'s `max_segments=8`)
+roughly every 10-15 minutes, and credited beta.5's #162 (seamless plan
+rollover) with fixing it. That was inferred from worker pid changes across
+scheduling beats, never from the worker's own logs, and it does not hold
+up: this soak's `gst-worker.stderr.log` files (all three channels)
+contain only
+
+```
+CTRL stall: no output for 10s — quitting for daemon restart
+```
+
+lines -- 7/9/10 occurrences across education/government/public -- with no
+EOS or plan-end exit anywhere. A beta.5 retest soak (kit `e502074`,
+2026-09-05) shows the identical pattern: 8/8/7 stall lines, again no
+plan-end exit. The plans actually running were 28-38 minutes long while
+restarts came 1-25 minutes apart, which rules out a plan-boundary cause.
+
+Two real causes, both found 2026-09-05:
+
+- **(a) Sandbox-specific output stalls.** The software-encoded channels
+  see periodic output stalls in the GPU-less Windows Sandbox test
+  environment while the source preparer conforms clips synchronously on
+  the same box. Whether this reproduces on real station hardware (an R7
+  with an iGPU, where operators have reported no such issue) is not
+  established.
+- **(b) A real product bug: the automation pass that handles each restart
+  crashed.** Every restart's channel-automation pass then raised
+  `UnicodeEncodeError: 'charmap' codec can't encode character '\ufffd' in
+  position 118` -- the worker's stall message folds a `\ufffd` replacement
+  character into `last_error`, and writing that value out under the
+  process's `cp1252` console/client encoding failed, which skipped channel
+  supervision for that channel until the next tick. Fixed in beta.5 by
+  #167 (ASCII-safe child-log tail; a `client_encoding` fix is a tracked
+  follow-up).
+
+**#162's seamless plan rollover is a real improvement for genuine
+plan-boundary transitions, but it was never exercised by either soak --
+no plan boundary was ever reached -- and it is not what fixes the restarts
+measured here.** Evidence:
+`C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-4b30c99-20260904`
+(beta.4) and
+`C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-e502074-20260905`
+(beta.5 retest); see "Known issues in beta.4" below.
 
 ## Known issues in beta.4
 
-1. **Every 10-15 minutes of continuous premiere scheduling, each channel's
-   playout worker restarts, causing a short on-air blip.** Measured above
-   as the T6 soak's relaunch-count `FAIL` (engine liveness itself was
-   unaffected: `failed_beats=0`). Root cause: `source_plan.py`'s
-   `max_segments=8` bounds each worker to a fixed number of planned
-   segments before it exits by design. Fixed in beta.5 by #162: seamless
-   plan rollover, so the worker continues across a plan boundary in place.
+1. **Each channel's playout worker restarts periodically under continuous
+   premiere scheduling, causing a short on-air blip.** Measured above as
+   the T6 soak's relaunch-count `FAIL` (engine liveness itself was
+   unaffected: `failed_beats=0`). This document previously attributed the
+   restarts to the worker reaching the end of its source plan
+   (`max_segments=8`) every 10-15 minutes and credited beta.5's #162 with
+   the fix; that explanation was an unverified inference and is retracted
+   -- see "The 120-minute engine soak" above for what the worker's own
+   logs actually show (only stall-watchdog exits, no plan-end exit).
+   Root causes, corrected 2026-09-05: (a) periodic output stalls specific
+   to the GPU-less Windows Sandbox test environment, not established to
+   reproduce on real station hardware; and (b) a `UnicodeEncodeError` in
+   the channel-automation pass on every restart, which skipped channel
+   supervision for that channel. (b) is a real product bug, fixed in
+   beta.5 by #167. #162's seamless plan rollover is a genuine improvement
+   for plan-boundary transitions but does not address either cause above.
 2. **TSDuck data files now shipped beside `tsp.exe`** (#156) -- the
    packaged binary previously had its plugin DLLs but not the data files
    TSDuck resolves relative to its own directory on Windows, so TS capture

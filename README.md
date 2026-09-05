@@ -181,15 +181,26 @@ things outside this repository's control:
   every one of 66 samples (22 beats x 3 channels) stayed `ON_AIR` with a
   passing TSDuck capture and worker memory stayed flat -- but the lane
   verdict is `T6_RESULT=FAIL`, on a relaunch-count rule
-  (`relaunches>3` per channel), not on liveness (`failed_beats=0`). The
-  playout worker exits by design at the end of every source plan
-  (`civiccast/egress/source_plan.py`'s `max_segments=8`, roughly every
-  10-15 minutes under continuous premieres), and channel automation
-  restarts it -- a short on-air blip each time, which is what tripped the
-  relaunch budget under sustained premiere scheduling. Seamless plan
-  rollover, removing that blip, is fixed in beta.5 by #162. See
+  (`relaunches>3` per channel), not on liveness (`failed_beats=0`).
+  **Correction (2026-09-05):** this bullet previously attributed the
+  restarts to the worker exiting at the end of every source plan
+  (`max_segments=8`) roughly every 10-15 minutes and credited beta.5's
+  #162 with fixing it; that was an unverified inference from pid changes,
+  not from the worker's own logs, and is retracted. The actual
+  `gst-worker.stderr.log` for every channel in this soak, and in a beta.5
+  retest soak (kit `e502074`), contains only `CTRL stall: no output for
+  10s — quitting for daemon restart` lines -- no plan-end exit ever
+  appears, and the plans running were 28-38 minutes long while restarts
+  came 1-25 minutes apart. Two real causes, found 2026-09-05: periodic
+  output stalls specific to the GPU-less Windows Sandbox test environment
+  (not established to reproduce on real station hardware), and a
+  `UnicodeEncodeError` in the channel-automation pass on every restart
+  that skipped channel supervision for that channel -- the latter a real
+  product bug, fixed in beta.5 by #167. #162's seamless plan rollover is a
+  genuine improvement for plan-boundary transitions, but neither soak ever
+  reached one, and #162 is not what fixes the restarts measured here. See
   [`docs/releases/2026-09-03-beta4-release-notes.md`](docs/releases/2026-09-03-beta4-release-notes.md)
-  for the full soak numbers and evidence path.
+  for the full corrected account and evidence paths.
 
 ## Install and run
 
