@@ -211,3 +211,8 @@ The 20:46Z probe of soak #3 shows one relaunch per channel in the first 30 minut
 ## Addendum -- AUTORUN-9y (read-only)
 
 DIAG-9x (20:56Z): caption tap is the new code and backs off (state paused, CRITICAL=0, control plane ~30% CPU) -- that part of #172 works. But every channel's GStreamer worker exits with `CTRL stall: no output for 10s` and is relaunched about every 30 seconds (one worker at 3.5 GB / 1238 threads). Soak #1 on the older code with the same 30-s schedule restarted only every 10-25 min, so this is new in 91caebc. `AUTORUN-9y.ps1` (runs once, changes nothing) captures worker stderr/stdout tails, thread/RSS growth over 30 s, the per-channel work dirs, and the control-plane plan/segment/prepare/reload/stall lines since 20:16Z. Result `soak/DIAG-9y-<stamp>.md`.
+
+
+## Addendum -- AUTORUN-9zz (read-only)
+
+Soak #4's 22:46Z rollup: workers are small again (340-390 MB, few sub-chains) but each relaunched exactly once this cycle, most likely at the 22:22Z boundary where the plan switched from 30-s items to the long clips. `AUTORUN-9zz.ps1` (runs once, changes nothing) records worker start times, every STARTING/TRANSITIONING/STOPPED/FALLBACK line with its last_error since 22:10Z, reload/rollover/Content-reload/Live-source lines, and the worker stderr tails. Result `soak/DIAG-9zz-<stamp>.md`.
