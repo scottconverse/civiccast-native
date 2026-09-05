@@ -196,24 +196,37 @@ fired in this run). Evidence: tester branch
 `soak/DIAG-9i-20260905T103612Z.md`); local copy
 `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\tester-soak8-e1acfe6-20260905\`.
 
-**Second real-hardware soak, in progress: upgrade install of the final
-candidate over the tester's own station.** Soak clock started
-`2026-09-05T18:40:36Z` on tester `DESKTOP-VBMA6O5`: installing kit
-`91caebc` (the final beta.5 candidate, carrying #172) as an upgrade over
-the still-live `e502074` station from the soak above -- the same real
-hardware, so this measures the upgrade path itself rather than a fresh
-relaunch count. Three channels (`public`, `education`, `government`) ran
-`ON_AIR` on the GStreamer engine with the four approved LPM clips (real
-durations 2365/667/67/67 seconds), 9 items per channel, for a planned
-2h15 of coverage. Measured so far: installer exited `0`; `/health` came
-back healthy after the upgrade; the upgrade engine reported
-`SAME_VERSION_NO_OP` (both the prior and new kit carry `1.0.0-beta.5`, so
-no migration ran, as expected); `PGDATA` was preserved across the
-install. **PENDING -- the soak's own verdict is not yet complete as of
-this writing (~21:07Z).** Verdict: `<SOAK2_VERDICT>`; relaunches
-observed: `<SOAK2_RELAUNCHES>`. This section will be updated in place
-once the soak finishes; do not read a pass/fail verdict here until
-the placeholders above are filled with a real result.
+**Second real-hardware soak, first attempt -- ARCHIVED, not evidence about
+#172.** Soak clock started `2026-09-05T18:40:36Z` on tester
+`DESKTOP-VBMA6O5`: installing kit `91caebc` (the final beta.5 candidate,
+carrying #172) as an install-over the still-live `e502074` station from
+the soak above. Because both kits declared the same `1.0.0-beta.5`
+version string, known issue 6 above applied: the installer's pack staging
+treated the app payload as already satisfied and never replaced it, so
+this run kept executing the *old*, pre-#172 caption tap the whole time
+-- the installer exited `0` and `/health` came back healthy regardless,
+because from the installer's perspective nothing needed to change. The
+control plane ran at roughly 4 CPU cores with the same `CRITICAL` caption
+overload lines described above, and the station relaunched channels twice
+in the first 35 minutes -- the exact behavior #172 was written to fix,
+reproduced because the fix's own code never actually made it onto the
+box. **This run is archived and is not read as evidence for or against
+#172** -- it measured the previous candidate under a new label, not the
+new one.
+
+**Second real-hardware soak, valid retest: clean install of kit
+`91caebc`.** To get a real measurement, the tester uninstalled the
+station completely (including a data wipe) and ran a fresh `/S` install
+of kit `91caebc` from scratch -- this sidesteps known issue 6 entirely,
+since there is no prior install for the version-string comparison to
+match against. First admin was created, and the same four approved LPM
+clips were loaded across three GStreamer channels (`public`, `education`,
+`government`). Soak clock started `<SOAK3_START_UTC>` on tester
+`DESKTOP-VBMA6O5`. **PENDING -- the soak's own verdict is not yet complete
+as of this writing.** Verdict: `<SOAK3_VERDICT>`; relaunches observed:
+`<SOAK3_RELAUNCHES>`. This section will be updated in place once the soak
+finishes; do not read a pass/fail verdict here until the placeholders
+above are filled with a real result.
 
 ## Also in this candidate: the Gate A schema proof now actually executes
 
@@ -293,6 +306,33 @@ path, only the independent proof that checks it from the outside.
    air, or turn on "Start automatically" for it so this is not needed
    again. Gate A's cross-version-upgrade lane does not assert on-air state
    after install-over, so this gap is not caught by that lane.
+6. **Installing a kit over a station that already reports the same version
+   string does not replace the app -- it silently does nothing.** The
+   installer's pack staging
+   (`civiccast/apps/installer/src-tauri/src/native_pack_staging.rs`,
+   `classify_dest_pack_state` -> `AlreadySatisfied`, and
+   `ensure_pack_extracted`'s matching early return) decides whether to
+   re-stage a pack by comparing the already-installed pack's declared
+   `product_version` string to the kit's -- it never looks at the pack's
+   actual content. When a kit is rebuilt without bumping that version
+   string, installing it over a station already on that version leaves the
+   old files in place: the installer still exits `0` and `/health` still
+   comes back healthy, because nothing about the running station actually
+   changed. **Measured on the tester:** installing kit `91caebc` over a
+   station that was already installed from an earlier `1.0.0-beta.5`
+   candidate left the pre-#172 caption tap running underneath it -- proven
+   by comparing file hashes before and after the install, not by anything
+   the installer or the health check reported. **This does not affect the
+   customer upgrade path:** a real beta.4 -> beta.5 upgrade carries two
+   different version strings, so the version comparison correctly sees a
+   change and replaces the payload, exactly as documented above. It only
+   affects re-installing the *same* declared version to pick up a kit that
+   was rebuilt without a version bump -- something only this project's own
+   release process does today. **Workaround:** uninstall the station
+   completely, then install the new kit fresh, rather than installing over
+   the existing station. **Fix pending:** tracked as
+   `fix/pack-staging-identity-not-version-string` -- not part of this
+   candidate.
 
 ## Also in this candidate: release-prep
 

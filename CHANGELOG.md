@@ -483,6 +483,24 @@ for the draft verification record.
    turn on "Start automatically" for it. Gate A's cross-version-upgrade
    lane does not assert on-air state after install-over, so this gap is
    not caught by that lane.
+6. **Installing a kit over a station that already reports the same version
+   string does not replace the app -- it silently does nothing.** The
+   installer's pack staging
+   (`civiccast/apps/installer/src-tauri/src/native_pack_staging.rs`,
+   `classify_dest_pack_state` -> `AlreadySatisfied`, and
+   `ensure_pack_extracted`'s matching early return) compares the
+   already-installed pack's declared `product_version` string to the
+   kit's, never the pack's actual content, so a kit rebuilt without a
+   version bump is treated as already installed: installer exit `0`,
+   `/health` OK, old code keeps running. MEASURED on the tester: kit
+   `91caebc` installed over a station on an earlier `1.0.0-beta.5`
+   candidate left the pre-#172 caption tap running, proven by file
+   hashes. Does not affect the customer upgrade path (beta.4 -> beta.5
+   carries two different version strings and does replace the payload);
+   affects only re-installing the same declared version to pick up a
+   rebuilt kit. Workaround: uninstall, then install fresh. Fix pending:
+   `fix/pack-staging-identity-not-version-string`, not part of this
+   candidate.
 
 ## [1.0.0-beta.4] - 2026-09-04
 
