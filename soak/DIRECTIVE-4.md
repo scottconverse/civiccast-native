@@ -165,3 +165,8 @@ AUTORUN-9m reset `last-egress-run`, so AUTORUN-3 probed 19 s after soak-started 
 ## Addendum -- AUTORUN-9o (read-only)
 
 Soak #2's first rollup (19:16Z) shows the control plane still near 2.9 cores and public/education relaunched once. `AUTORUN-9o.ps1` (runs once, changes nothing) reports every `runtime-status.json` under ProgramData\CivicCast, caption-tap / overload / pause / stall / relaunch log lines and counts, the station profile and channel states, and a 10-s per-process CPU sample, to `soak/DIAG-9o-<stamp>.md`.
+
+
+## Addendum -- AUTORUN-9q
+
+`AUTORUN-9p.ps1` had a PowerShell quoting error (does not parse; it produces no report). `AUTORUN-9q.ps1` is the same read-only installed-code check, fixed. Result: `soak/DIAG-9q-<stamp>.md`.
