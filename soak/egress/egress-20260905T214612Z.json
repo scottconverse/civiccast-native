@@ -1,0 +1,184 @@
+﻿{
+    "schema":  "civiccast-native-soak-egress-v2",
+    "mission":  "soak8-e1acfe6",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "utc":  "20260905T214612Z",
+    "tsp_exe":  "C:\\CivicCastHostStore\\install\\packs\\native-server-binaries\\payload\\tsduck\\bin\\tsp.exe",
+    "engine_observed":  {
+                            "gst_launch_processes":  0,
+                            "ffmpeg_processes":  0,
+                            "gst_worker_processes":  0,
+                            "gst_worker_pids":  [
+                                                    null
+                                                ],
+                            "inferred":  "none-running"
+                        },
+    "worker_processes":  {
+                             "elapsed_seconds_since_last_sample":  2236.189969,
+                             "processes":  [
+                                               {
+                                                   "name":  "python",
+                                                   "pid":  36184,
+                                                   "cpu_seconds_total":  34.140625,
+                                                   "cpu_pct_since_last_sample":  null,
+                                                   "rss_bytes":  3707568128
+                                               },
+                                               {
+                                                   "name":  "python",
+                                                   "pid":  38092,
+                                                   "cpu_seconds_total":  15.859375,
+                                                   "cpu_pct_since_last_sample":  null,
+                                                   "rss_bytes":  3709448192
+                                               },
+                                               {
+                                                   "name":  "python",
+                                                   "pid":  39764,
+                                                   "cpu_seconds_total":  82.875,
+                                                   "cpu_pct_since_last_sample":  null,
+                                                   "rss_bytes":  3733676032
+                                               },
+                                               {
+                                                   "name":  "python",
+                                                   "pid":  44056,
+                                                   "cpu_seconds_total":  7982.453125,
+                                                   "cpu_pct_since_last_sample":  17.69,
+                                                   "rss_bytes":  1013293056
+                                               }
+                                           ]
+                         },
+    "channels":  [
+                     {
+                         "channel_id":  "public",
+                         "port":  9001,
+                         "tsduck":  {
+                                        "label":  "public",
+                                        "port":  9001,
+                                        "tsp_found":  true,
+                                        "ran":  true,
+                                        "timed_out":  false,
+                                        "exit_code":  0,
+                                        "report_found":  true,
+                                        "report_bytes":  6516,
+                                        "packets_total":  {
+                                                              "invalid-syncs":  0,
+                                                              "suspect-ignored":  0,
+                                                              "total":  77374,
+                                                              "transport-errors":  0
+                                                          },
+                                        "invalid_syncs":  null,
+                                        "transport_errors":  null,
+                                        "discontinuities":  null,
+                                        "pcr_pts_drift_ms":  null,
+                                        "verdict":  "pass"
+                                    },
+                         "engine_state":  "ON_AIR",
+                         "engine":  "gstreamer",
+                         "last_error":  null,
+                         "sink_connected":  {
+                                                "soak8-9e-public":  false
+                                            },
+                         "api_error":  null,
+                         "current_source_label":  "Soak8 9e Asset YTDown.com_YouTube_Serving-Locally-with-Michelle-SMART-Reco_Media_lVVzrRCX9_w_001_1080p 2026-09-05 13:48:34",
+                         "pid":  39764,
+                         "relaunch":  {
+                                          "prev_pid":  46360,
+                                          "new_pid":  39764,
+                                          "relaunched_this_cycle":  true,
+                                          "relaunches_total":  1,
+                                          "last_errors":  [
+
+                                                          ]
+                                      }
+                     },
+                     {
+                         "channel_id":  "education",
+                         "port":  9002,
+                         "tsduck":  {
+                                        "label":  "education",
+                                        "port":  9002,
+                                        "tsp_found":  true,
+                                        "ran":  true,
+                                        "timed_out":  false,
+                                        "exit_code":  0,
+                                        "report_found":  true,
+                                        "report_bytes":  6546,
+                                        "packets_total":  {
+                                                              "invalid-syncs":  0,
+                                                              "suspect-ignored":  0,
+                                                              "total":  41844,
+                                                              "transport-errors":  0
+                                                          },
+                                        "invalid_syncs":  null,
+                                        "transport_errors":  null,
+                                        "discontinuities":  null,
+                                        "pcr_pts_drift_ms":  null,
+                                        "verdict":  "pass"
+                                    },
+                         "engine_state":  "ON_AIR",
+                         "engine":  "gstreamer",
+                         "last_error":  null,
+                         "sink_connected":  {
+                                                "soak8-9e-education":  false
+                                            },
+                         "api_error":  null,
+                         "current_source_label":  "Soak8 9e Asset YTDown.com_YouTube_Longmont-Weather-Report-July-23-2026-to-_Media_6yBccmsSnDc_002_360p 2026-09-05 13:48:13",
+                         "pid":  36184,
+                         "relaunch":  {
+                                          "prev_pid":  34488,
+                                          "new_pid":  36184,
+                                          "relaunched_this_cycle":  true,
+                                          "relaunches_total":  1,
+                                          "last_errors":  [
+
+                                                          ]
+                                      }
+                     },
+                     {
+                         "channel_id":  "government",
+                         "port":  9003,
+                         "tsduck":  {
+                                        "label":  "government",
+                                        "port":  9003,
+                                        "tsp_found":  true,
+                                        "ran":  true,
+                                        "timed_out":  false,
+                                        "exit_code":  0,
+                                        "report_found":  true,
+                                        "report_bytes":  6512,
+                                        "packets_total":  {
+                                                              "invalid-syncs":  0,
+                                                              "suspect-ignored":  0,
+                                                              "total":  41997,
+                                                              "transport-errors":  0
+                                                          },
+                                        "invalid_syncs":  null,
+                                        "transport_errors":  null,
+                                        "discontinuities":  null,
+                                        "pcr_pts_drift_ms":  null,
+                                        "verdict":  "pass"
+                                    },
+                         "engine_state":  "ON_AIR",
+                         "engine":  "gstreamer",
+                         "last_error":  null,
+                         "sink_connected":  {
+                                                "soak8-9e-government":  false
+                                            },
+                         "api_error":  null,
+                         "current_source_label":  "Soak8 9e Asset YTDown.com_YouTube_Help-Upgrade-the-LPM-Podcast-Studio_Media_oiYNSJEysvs_001_1080p 2026-09-05 13:47:58",
+                         "pid":  33876,
+                         "relaunch":  {
+                                          "prev_pid":  19896,
+                                          "new_pid":  33876,
+                                          "relaunched_this_cycle":  true,
+                                          "relaunches_total":  1,
+                                          "last_errors":  [
+
+                                                          ]
+                                      }
+                     }
+                 ],
+    "cycle_all_on_air_gstreamer":  true,
+    "cycle_all_tsp_pass":  true,
+    "cycle_no_relaunch":  false,
+    "overall":  "fail"
+}
