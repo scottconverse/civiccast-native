@@ -1,0 +1,177 @@
+﻿{
+    "schema":  "civiccast-native-soak-egress-v2",
+    "mission":  "soak8-e1acfe6",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "utc":  "20260905T130616Z",
+    "tsp_exe":  "C:\\CivicCastHostStore\\install\\packs\\native-server-binaries\\payload\\tsduck\\bin\\tsp.exe",
+    "engine_observed":  {
+                            "gst_launch_processes":  0,
+                            "ffmpeg_processes":  0,
+                            "gst_worker_processes":  0,
+                            "gst_worker_pids":  [
+                                                    null
+                                                ],
+                            "inferred":  "none-running"
+                        },
+    "worker_processes":  {
+                             "elapsed_seconds_since_last_sample":  1796.0139115,
+                             "processes":  [
+                                               {
+                                                   "name":  "python",
+                                                   "pid":  4764,
+                                                   "cpu_seconds_total":  47139.0625,
+                                                   "cpu_pct_since_last_sample":  236.37,
+                                                   "rss_bytes":  1212530688
+                                               },
+                                               {
+                                                   "name":  "python",
+                                                   "pid":  20720,
+                                                   "cpu_seconds_total":  152.921875,
+                                                   "cpu_pct_since_last_sample":  null,
+                                                   "rss_bytes":  920993792
+                                               },
+                                               {
+                                                   "name":  "python",
+                                                   "pid":  33888,
+                                                   "cpu_seconds_total":  110.140625,
+                                                   "cpu_pct_since_last_sample":  null,
+                                                   "rss_bytes":  3437076480
+                                               }
+                                           ]
+                         },
+    "channels":  [
+                     {
+                         "channel_id":  "public",
+                         "port":  9001,
+                         "tsduck":  {
+                                        "label":  "public",
+                                        "port":  9001,
+                                        "tsp_found":  true,
+                                        "ran":  true,
+                                        "timed_out":  false,
+                                        "exit_code":  0,
+                                        "report_found":  true,
+                                        "report_bytes":  6427,
+                                        "packets_total":  {
+                                                              "invalid-syncs":  0,
+                                                              "suspect-ignored":  0,
+                                                              "total":  3612,
+                                                              "transport-errors":  0
+                                                          },
+                                        "invalid_syncs":  null,
+                                        "transport_errors":  null,
+                                        "discontinuities":  null,
+                                        "pcr_pts_drift_ms":  null,
+                                        "verdict":  "pass"
+                                    },
+                         "engine_state":  "FALLBACK_SLATE",
+                         "engine":  "gstreamer",
+                         "last_error":  null,
+                         "sink_connected":  {
+                                                "soak8-9e-public":  true
+                                            },
+                         "api_error":  null,
+                         "current_source_label":  "CivicCast slate",
+                         "pid":  35224,
+                         "relaunch":  {
+                                          "prev_pid":  29484,
+                                          "new_pid":  35224,
+                                          "relaunched_this_cycle":  true,
+                                          "relaunches_total":  5,
+                                          "last_errors":  [
+
+                                                          ]
+                                      }
+                     },
+                     {
+                         "channel_id":  "education",
+                         "port":  9002,
+                         "tsduck":  {
+                                        "label":  "education",
+                                        "port":  9002,
+                                        "tsp_found":  true,
+                                        "ran":  true,
+                                        "timed_out":  false,
+                                        "exit_code":  0,
+                                        "report_found":  true,
+                                        "report_bytes":  6490,
+                                        "packets_total":  {
+                                                              "invalid-syncs":  0,
+                                                              "suspect-ignored":  0,
+                                                              "total":  3642,
+                                                              "transport-errors":  0
+                                                          },
+                                        "invalid_syncs":  null,
+                                        "transport_errors":  null,
+                                        "discontinuities":  null,
+                                        "pcr_pts_drift_ms":  null,
+                                        "verdict":  "pass"
+                                    },
+                         "engine_state":  "FALLBACK_SLATE",
+                         "engine":  "gstreamer",
+                         "last_error":  null,
+                         "sink_connected":  {
+                                                "soak8-9e-education":  true
+                                            },
+                         "api_error":  null,
+                         "current_source_label":  "CivicCast slate",
+                         "pid":  20720,
+                         "relaunch":  {
+                                          "prev_pid":  39200,
+                                          "new_pid":  20720,
+                                          "relaunched_this_cycle":  true,
+                                          "relaunches_total":  4,
+                                          "last_errors":  [
+
+                                                          ]
+                                      }
+                     },
+                     {
+                         "channel_id":  "government",
+                         "port":  9003,
+                         "tsduck":  {
+                                        "label":  "government",
+                                        "port":  9003,
+                                        "tsp_found":  true,
+                                        "ran":  true,
+                                        "timed_out":  false,
+                                        "exit_code":  0,
+                                        "report_found":  true,
+                                        "report_bytes":  6490,
+                                        "packets_total":  {
+                                                              "invalid-syncs":  0,
+                                                              "suspect-ignored":  0,
+                                                              "total":  3637,
+                                                              "transport-errors":  0
+                                                          },
+                                        "invalid_syncs":  null,
+                                        "transport_errors":  null,
+                                        "discontinuities":  null,
+                                        "pcr_pts_drift_ms":  null,
+                                        "verdict":  "pass"
+                                    },
+                         "engine_state":  "FALLBACK_SLATE",
+                         "engine":  "gstreamer",
+                         "last_error":  null,
+                         "sink_connected":  {
+                                                "soak8-9e-government":  true
+                                            },
+                         "api_error":  null,
+                         "current_source_label":  "CivicCast slate",
+                         "pid":  21892,
+                         "relaunch":  {
+                                          "prev_pid":  21604,
+                                          "new_pid":  21892,
+                                          "relaunched_this_cycle":  true,
+                                          "relaunches_total":  6,
+                                          "last_errors":  [
+
+                                                          ]
+                                      }
+                     }
+                 ],
+    "cycle_all_on_air_gstreamer":  false,
+    "cycle_all_tsp_pass":  true,
+    "cycle_no_relaunch":  false,
+    "overall":  "fail"
+}
