@@ -13,12 +13,178 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
-`v1.0.0-beta.5` is the next candidate and the current owner-held unpublished
-candidate; it does not change the `v1.0.0-beta.4` install story documented
-below.
+No changes yet beyond `v1.0.0-beta.5`, drafted immediately below.
+
+## [1.0.0-beta.5] - <RELEASE_DATE>
+
+**DRAFT -- not yet published.** `v1.0.0-beta.5` is still the next candidate
+and the current owner-held unpublished candidate; it does not change the
+`v1.0.0-beta.4` install story documented below `v1.0.0-beta.4`'s own entry.
+`docs/releases/release-truth.yaml` still carries `v1.0.0-beta.4` as
+`current` and `v1.0.0-beta.5` as `staging` -- this entry does not flip
+either; it will be updated in place, and this header's `<RELEASE_DATE>`
+filled in, once an actual publish lands. See
+[`docs/releases/2026-09-04-beta5-release-notes.md`](docs/releases/2026-09-04-beta5-release-notes.md)
+for the draft publish record and
+[`docs/releases/v1.0.0-beta.5-verification.md`](docs/releases/v1.0.0-beta.5-verification.md)
+for the draft verification record.
 
 ### Fixed
 
+- **Headline: the real cause of the playout-worker restarts, found on real
+  station hardware (#172, open, under review).** Two earlier rounds of this entry
+  attributed the beta.4 soak's relaunch-count `FAIL` first to plan-boundary
+  worker exits (retracted, corrected 2026-09-05 in
+  `docs/releases/v1.0.0-beta.4-verification.md` and the beta.4 release
+  notes; that explanation was inferred from worker pid changes, never from
+  the worker's own logs), then to a mix of a sandbox-only output stall and
+  a `UnicodeEncodeError` in the automation pass. **That second explanation
+  was also incomplete.** A soak on the tester's own real hardware
+  (`DESKTOP-VBMA6O5`, 2026-09-05) reproduced the same restarts with no
+  sandbox involved, ruling out "sandbox-specific stall" as the driver and
+  pointing at the one thing common to every environment: the live caption
+  tap.
+
+  **Root cause: the caption tap transcribes every `ON_AIR` channel's audio
+  in-process on CPU, and with three channels running it overloads.**
+  `civiccast/captions/tap_worker.py` runs speech-to-text for every on-air
+  channel in the same process, on the CPU, with no backoff. The tester's
+  three-channel real-hardware soak (`DESKTOP-VBMA6O5`, kit `e502074`,
+  mission `soak8-e1acfe6`, planned 2 hours, actually run 2.5 hours,
+  2026-09-05T09:06:14Z -- 11:36:14Z) recorded `CRITICAL
+  civiccast.captions.tap_worker: Caption tap overload for channel <id>: N
+  settled segments exceeds the maximum 2; active captions were cleared and
+  stale audio was moved to overload evidence` roughly every 30 seconds, on
+  all three channels, throughout the run. It never backs off, drives the
+  control-plane process to roughly 2.8 CPU cores (1.4-1.9 GB resident)
+  throughout, and starves the GStreamer playout workers of CPU time; each
+  starved worker trips its own stall watchdog (`CTRL stall: no output for
+  10s`) and exits, and the daemon relaunches it -- on the tester, public
+  relaunched twice, education once, government three times (6 total); at
+  the final probe public and government were in `FALLBACK_SLATE` after a
+  relaunch and education was still `ON_AIR`; the sandbox soaks saw 5-10
+  relaunches per channel in 2 hours. TSDuck (`tsp`) packet-level checks
+  passed on every 30-minute probe cycle from 09:36Z onward -- the two
+  earlier probe failures, at 08:28Z and 09:06Z, predate `ON_AIR` (the
+  channels had not yet been created) and are excluded -- and the upgrade
+  path passes independently on real hardware: the restarts are a
+  CPU-contention symptom of the caption tap, not an engine or upgrade
+  defect. **Fixed here by #172 (open, under review)**: overload
+  backoff/pause in the caption tap, a bounded ASR workload, and higher
+  process priority for the playout workers. **Known limit, carried
+  forward:** captions are best-effort -- a three-channel, CPU-only station
+  will pause captions under sustained load; playout always wins.
+
+  **Contributing, also fixed: a state-write crash on non-cp1252 characters
+  (#169, merged).** Every restart's channel-automation pass on the earlier
+  soaks also raised `UnicodeEncodeError: 'charmap' codec can't encode
+  character '\ufffd' in position 118` (the worker's stall message folds a
+  `\ufffd` replacement character into `last_error`, and writing it out
+  under the process's `cp1252` client encoding failed), aborting that
+  channel's automation pass until the next tick. Seen on the tester and on
+  both sandbox soaks. #169 folds all persisted free text for non-cp1252
+  clusters and creates new clusters as UTF-8.
+
+  **Planner defects found on the way (#170, open, not part of this
+  release):** schedule slot duration was ignored (a 30-second slot of long
+  media could air for hours), plans were sized by item count rather than
+  duration so a run of short items produced 4-minute plans, and the health
+  poll re-read a worker's entire growing stderr log every 2 seconds instead
+  of tailing it. None of these were the restart's root cause.
+
+  **#162, below, is a real improvement for genuine plan-boundary
+  transitions, but it did not fire in any soak and did not cause, and does
+  not fix, the restarts.** Evidence:
+  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-4b30c99-20260904`
+  (beta.4 sandbox),
+  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-e502074-20260905`
+  (beta.5 sandbox retest), and the tester's real-hardware soak on
+  `DESKTOP-VBMA6O5` (2026-09-05).
+- **Also in this candidate: seamless source-plan rollover for genuine
+  plan-boundary transitions (#162).** Independent of the diagnosis above,
+  the playout worker genuinely does exit cleanly at the end of every
+  source plan (`civiccast/egress/source_plan.py`'s `max_segments=8`), which
+  can happen under continuous back-to-back premieres, and each
+  exit-and-restart is a short on-air blip. New
+  `ChannelAutomationService._check_plan_rollover`
+  (`civiccast/egress/automation.py`) runs every automation tick, tracks the
+  projected wall-clock end of the plan a channel is actively airing, and
+  within 30 seconds of that end re-fetches the schedule through the same
+  `source_plan_provider` already in use -- because
+  `build_source_plan_from_schedule` always resumes the currently-airing item
+  and windows forward from "now," a later fetch naturally reaches further
+  once more content has been published, and that recompute *is* the
+  rollover. If the fresh plan extends further, the channel enqueues the
+  same `"reload"` command the existing slate-to-program transition already
+  uses: the engine switches both video and audio to the new leg at the
+  outgoing clip's end, EOS is dropped on the outgoing selector pads,
+  running-time is rebased, and the new leg is held prerolled so there is
+  nothing left to wait on at the switch point. The channel's `state` stays
+  `ON_AIR` throughout; only a `TRANSITIONING` proof event is recorded. If
+  nothing further is published yet, this is a deliberate no-op and the plan
+  is left to reach its natural end -- closing that smaller residual gap is
+  a separate follow-on. The FFmpeg-concat engine
+  (`supports_content_reload = False`) still benefits: the same `"reload"`
+  command now defers to the existing graceful pending-reload handoff
+  instead of a force-kill. Proven on HALO with the bundled GStreamer: the
+  rollover engine test suite passed 5/5, TSDuck measured 0 discontinuities
+  and 0 PCR/PTS leaps across the monitored rollovers. New
+  `tests/egress/test_automation.py::TestPlanRollover` (6 cases) pins the
+  no-rollover-while-runway-remains case, the single-dispatch-once-inside-
+  lookahead case, no-double-dispatch before the daemon applies a reload, no
+  reload when nothing is published beyond what's airing, horizon
+  re-establishment after a reload lands, and that the rollover check never
+  fires while `FALLBACK_SLATE` is active. **Known residual, carried forward
+  as a known issue:** if the next leg is not ready before the outgoing clip
+  ends, the output freezes until it is ready or the existing 10-second
+  stall watchdog restarts the channel; the immediate-switch path is
+  unchanged. **What only the sandbox soak can confirm:** this is proven at
+  the automation-decision level (unit tests against a fake daemon/store)
+  and via the already-proven seamless-reload path it reuses -- it does not
+  itself replay the 120-minute soak; see the T6 rollover retest in
+  `docs/releases/v1.0.0-beta.5-verification.md` for that.
+- **Gate A: the independent post-upgrade schema proof now actually
+  executes (#158, #160, #161, #163).** Four sequential harness-only bugs on
+  the cross-version-upgrade lane's `psql` schema proof, each exposed only
+  after the one before it was fixed:
+  - **#158** -- `tsp.exe`'s exit code came back `null` on Windows
+    PowerShell 5.1 (`Start-Process -PassThru` + `Wait-Process -Id` needs
+    the process handle cached first), which judged a fail-exit- against an
+    otherwise fully healthy TSDuck capture (Gate A run `33826665417`, kit
+    `4b30c99`: 1229 packets, 0 invalid syncs, 0 transport errors). Fixed by
+    caching `$proc.Handle` and waiting on the object; contract test added.
+  - **#160** -- the proof read the installer's `DatabaseUrl` from
+    `HKLM\SOFTWARE\CivicCast` instead of its real location,
+    `HKLM\Software\CivicCast\Native`, judging every reaching upgrade run
+    `<no-database-url>` (first: Gate A run `33857982657`, kit `c27c6e7`,
+    install/activation/health all independently passing). Fixed; contract
+    test pins the key against the NSIS source.
+  - **#161** -- the proof's SQL argument to `psql` was not quoted
+    (`Start-Process -ArgumentList` does not quote its elements), so `psql`
+    warned about an ignored extra argument, ran a bare `SELECT`, and
+    exited 0 with no rows -- judged `<no-alembic-version-row>` (Gate A run
+    `33870994702`, kit `c27c6e7`). Fixed by quoting the SQL and treating an
+    exit-0-with-warnings result as a failed proof, not a pass; contract
+    test added.
+  - **#163** -- the proof's single `UNION ALL` statement over
+    `civiccast.alembic_version` and `public.alembic_version` failed as a
+    whole when `public.alembic_version` does not exist at all (the product
+    keeps its version table in the `civiccast` schema only) -- Gate A run
+    `33885550628` (kit `c27c6e7`) recorded `<psql-failed>` with `relation
+    "public.alembic_version" does not exist` while
+    install/activation/health/DB-at-head all independently passed. Fixed
+    by running one statement per namespace and falling through cleanly on
+    "does not exist"; contract test added.
+
+  Tonight's Gate A run is the first whose cross-version-upgrade lane can
+  reach a real, independent `psql`-read verdict on the post-upgrade schema
+  instead of failing inside the harness itself before producing one. This
+  is a harness-only class of fix -- it does not touch the product's own
+  upgrade/migration code path, only the independent proof that checks it
+  from the outside. **Gate A harness self-test lane still to add** (batch
+  27): a self-test lane for the harness's own proof logic, so a fifth
+  latent bug in the same path is caught before a live run rather than
+  after -- queued, not part of this candidate.
 - **`civiccast/egress/gst/graph.py`'s `source_leg_is_clock_timed` docstring
   claimed the fail-safe answer for an unknown source factory is `True`; the
   code has always returned `False`** (`_chain_is_clock_timed` only matches a
@@ -73,6 +239,30 @@ below.
   `v1.0.0-beta.4`'s own entry is untouched and stays `status: current`
   (flipped by PR #157); this bump only stages the next candidate behind
   it.
+
+### Known issues in beta.5
+
+1. **Seamless rollover has a residual freeze case (#162).** If the next leg
+   is not ready before the outgoing clip ends, the output freezes until it
+   becomes ready or the existing 10-second stall watchdog restarts the
+   channel. The immediate-switch (non-rollover) path is unchanged. Not yet
+   scheduled; tracked as a follow-on to #162.
+2. **Gate A harness self-test lane still to add (batch 27).** The four
+   independent-proof bugs fixed above (#158, #160, #161, #163) were each
+   found by a real Gate A run failing in a new way, one at a time, rather
+   than by a test exercising the harness's own proof logic in isolation. A
+   self-test lane for the harness is queued as batch 27 and is not part of
+   this candidate.
+3. **Captions are best-effort and pause under load (#172, open, under review).**
+   The caption tap's overload backoff means a box that cannot keep up
+   pauses captions rather than risk playout -- a three-channel, CPU-only
+   station will see captions pause under sustained load. Playout always
+   wins over captioning.
+4. **Planner defects tracked separately (#170, open).** Found while
+   diagnosing the restarts above: schedule slot duration was ignored (a
+   30-second slot of long media could air for hours), plans were sized by
+   item count rather than duration, and the health poll re-read a worker's
+   entire growing stderr log every 2 seconds. Not part of this candidate.
 
 ## [1.0.0-beta.4] - 2026-09-04
 
