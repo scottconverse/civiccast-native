@@ -4,12 +4,18 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from civiccast.egress.errors import SourcePrepareError
-from civiccast.egress.models import EgressConfig, EgressSourcePlan, EgressSourceSegment
+from civiccast.egress.models import (
+    MAX_PLAYLIST_SUBCHAINS,
+    EgressConfig,
+    EgressSourcePlan,
+    EgressSourceSegment,
+)
 from civiccast.egress.runtime import FfmpegRunner
 from civiccast.schedule.models import (
     ASSET_STATE_RECORDED,
@@ -21,29 +27,36 @@ from civiccast.schedule.models import (
 )
 from civiccast.stream._ffmpeg import run_ffmpeg
 
+_LOG = logging.getLogger(__name__)
+
 AssetResolver = Callable[[str], StaffAssetRow | None]
 ScheduleItemsProvider = Callable[[str], Sequence[ScheduleItemResponse]]
 _PLAYABLE_ASSET_STATES = {ASSET_STATE_VALIDATED, ASSET_STATE_RECORDED}
 
-#: D43 hardening (2026-09-05): the MINIMUM wall-clock length a
-#: schedule-derived plan aims for. A count-only window (``max_segments=8``)
-#: is a 4-minute plan for a schedule of 30-second slots, and automation's
-#: rollover then re-plans -- synchronously preparing sources on the
-#: automation thread (``daemon._try_content_reload``) -- roughly every two
-#: minutes per channel. (Measured caveat: the real-hardware tester's 2-hour
-#: control-plane log shows ZERO rollovers, so that cycle is not a diagnosed
-#: cause of anything observed there; this is hardening against a cadence the
-#: code plainly permits, not a fix for a measured symptom.) Planning by
-#: DURATION decouples the rollover cadence from the schedule's slot
-#: granularity: 30 minutes of plan is ~28 minutes between rollovers no matter
-#: how short the individual items are. A long-item schedule is unaffected --
-#: ``max_segments`` still wins whenever it yields the longer plan.
-PLAN_MIN_SECONDS = 1800.0
-#: Hard ceiling on segments in one plan, so a pathological schedule of
-#: one-second slots cannot build an unbounded segment list (and cannot make
-#: ``SourcePreparer.prepare`` walk thousands of entries) while chasing
-#: ``PLAN_MIN_SECONDS``.
-PLAN_MAX_SEGMENTS = 120
+#: D45 fix (2026-09-05): D43 (#170) set this to 1800.0 to lengthen a
+#: schedule-derived plan for the sake of the ROLLOVER cadence (see
+#: ``automation._check_plan_rollover``'s D43 comments). Real-hardware soak
+#: evidence (3 GStreamer channels, a schedule of 30-second items
+#: back-to-back) then measured the actual cost of that: chasing 1800s of
+#: planned duration out of 30-second slots builds ~60 segments per plan, and
+#: ``bridge.graph_from_config`` builds ONE filesrc->decodebin->videoconvert->
+#: videoscale->videorate sub-chain PER segment in a SINGLE pipeline that is
+#: set to PLAYING all at once (``engine._build_playlist``) -- avdec_h264 at
+#: its default max-threads=0 spins up ~20 threads per sub-chain, so 60
+#: sub-chains produced ~1200 threads and ~3.5 GB on one worker, with no TS
+#: buffer landing inside the 10s stall watchdog
+#: (``engine.py``'s ``CTRL stall: no output for 10s``). Every worker
+#: relaunched roughly every 30s. The pipeline SHAPE (segment count) has to
+#: be bounded on its own terms -- CPU-only stations building 1200 decoder
+#: threads is unsafe regardless of how "correct" the resulting wall-clock
+#: window is -- so this is back to 0.0 (no duration floor at all;
+#: ``max_segments`` alone decides how many sub-chains a plan gets). The
+#: rollover-cadence problem D43 was actually solving is fixed at its own
+#: layer instead: ``ChannelAutomationService._rollover_min_interval_seconds``
+#: (automation.py) now derives its per-channel dispatch floor from the
+#: ON-AIR plan's own duration rather than a fixed 300s, so a short plan still
+#: gets rolled over comfortably inside its own lifetime.
+PLAN_MIN_SECONDS = 0.0
 
 
 class SlateSourceGenerator:
@@ -113,7 +126,7 @@ class ScheduleSourcePlanProvider:
         now_provider: Callable[[], datetime] | None = None,
         max_segments: int = 8,
         min_plan_seconds: float = PLAN_MIN_SECONDS,
-        segment_cap: int = PLAN_MAX_SEGMENTS,
+        segment_cap: int = MAX_PLAYLIST_SUBCHAINS,
         gap_tolerance_seconds: float = 1.0,
     ) -> None:
         if max_segments <= 0:
@@ -149,17 +162,21 @@ def build_source_plan_from_schedule(
     now: datetime | None = None,
     max_segments: int = 8,
     min_plan_seconds: float = PLAN_MIN_SECONDS,
-    segment_cap: int = PLAN_MAX_SEGMENTS,
+    segment_cap: int = MAX_PLAYLIST_SUBCHAINS,
     gap_tolerance: timedelta = timedelta(seconds=1),
 ) -> EgressSourcePlan | None:
     """Return the currently playable egress source plan, or None for slate fallback.
 
-    The window is bounded by DURATION as well as count (D43): segments are
-    appended until there are at least ``max_segments`` of them AND the plan
-    spans at least ``min_plan_seconds``, whichever condition is satisfied
-    later -- so a schedule of short slots yields a long plan instead of a
-    four-minute one, and a schedule of long items is unchanged.
-    ``segment_cap`` is the hard upper bound on the segment count.
+    The window is bounded by COUNT first (``max_segments``, 8 by default) --
+    each segment becomes its own decoder sub-chain in the egress pipeline
+    (``bridge.graph_from_config``), so the segment count IS the pipeline's
+    shape, not just a wall-clock convenience. ``min_plan_seconds`` (D45: 0.0
+    by default) is an OPTIONAL additional duration floor for a caller that
+    explicitly wants a longer window and can bear a bigger pipeline; segments
+    are appended until there are at least ``max_segments`` of them AND the
+    plan spans at least ``min_plan_seconds``, whichever condition is
+    satisfied later. ``segment_cap`` is the hard upper bound on the segment
+    count regardless of either.
 
     Each segment is clipped to its SCHEDULE SLOT (D42): the slot is the
     contract, so long media in a 30-second slot plays for 30 seconds, not
@@ -174,12 +191,59 @@ def build_source_plan_from_schedule(
 
     if max_segments <= 0:
         raise ValueError("max_segments must be greater than zero.")
-    if segment_cap < max_segments:
-        raise ValueError("segment_cap must be at least max_segments.")
     if min_plan_seconds < 0:
         raise ValueError("min_plan_seconds must be zero or greater.")
     if gap_tolerance < timedelta(0):
         raise ValueError("gap_tolerance must be zero or greater.")
+    # Hostile-review fix (2026-09-05): validate the CALLER's raw pair first,
+    # before either is touched by the pipeline-shape clamp below. A caller
+    # that explicitly asks for an inconsistent pair (e.g. max_segments=20,
+    # segment_cap=15) is asking for something that was never sensible on its
+    # own terms -- that is a caller bug to surface loudly, not something the
+    # clamp below should silently paper over by coincidentally shrinking
+    # both values into agreement (20/15 clamped to 12/12 would look "fixed"
+    # while hiding that the caller's own request was self-contradictory).
+    if segment_cap < max_segments:
+        raise ValueError("segment_cap must be at least max_segments.")
+    # The cap that bounds the pipeline SHAPE has to live here, at the plan's
+    # only producer, not in ``bridge.graph_from_config`` alone. A
+    # caller-side ``max_segments``/``segment_cap`` above
+    # ``MAX_PLAYLIST_SUBCHAINS`` used to build a plan every OTHER consumer
+    # (``automation.py``'s rollover-horizon tracking, ``daemon.py``'s
+    # dispatched-plan bookkeeping, ``continuity.py``, ``preparer.py``)
+    # trusted at its full, uncapped size, while the bridge silently played
+    # only the first ``MAX_PLAYLIST_SUBCHAINS`` of it -- the pipeline would
+    # reach EOS long before automation's tracked horizon expected it to,
+    # restarting the worker on a cadence the rest of the system had no idea
+    # was coming. Clamping the inputs here instead means every consumer
+    # reads the SAME plan the pipeline will actually play; a plan returned
+    # by this function can never disagree with what ``graph_from_config``
+    # builds from it. This runs AFTER the raw-pair validation above: a
+    # caller whose own numbers already agree with each other (e.g. 20/20)
+    # gets both quietly clamped down together, in step, rather than raising
+    # over a cap the caller had no way to know about at the call site.
+    if max_segments > MAX_PLAYLIST_SUBCHAINS:
+        _LOG.warning(
+            "build_source_plan_from_schedule(%s): max_segments=%d exceeds "
+            "MAX_PLAYLIST_SUBCHAINS=%d (the hard per-pipeline decoder-chain cap); "
+            "clamping to %d.",
+            channel_id,
+            max_segments,
+            MAX_PLAYLIST_SUBCHAINS,
+            MAX_PLAYLIST_SUBCHAINS,
+        )
+        max_segments = MAX_PLAYLIST_SUBCHAINS
+    if segment_cap > MAX_PLAYLIST_SUBCHAINS:
+        _LOG.warning(
+            "build_source_plan_from_schedule(%s): segment_cap=%d exceeds "
+            "MAX_PLAYLIST_SUBCHAINS=%d (the hard per-pipeline decoder-chain cap); "
+            "clamping to %d.",
+            channel_id,
+            segment_cap,
+            MAX_PLAYLIST_SUBCHAINS,
+            MAX_PLAYLIST_SUBCHAINS,
+        )
+        segment_cap = MAX_PLAYLIST_SUBCHAINS
     current_time = _as_utc(now or datetime.now(UTC))
     playable_items = [
         item

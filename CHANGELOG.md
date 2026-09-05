@@ -165,6 +165,84 @@ below.
   added re-provisioning comments following this registry's established
   pattern, with current-source proof pointed at the new gi-free unit tests
   above.
+- **A schedule of back-to-back short items (30-second slots) blew up the
+  GStreamer worker's decoder threads.** MEASURED on a real tester (clean
+  install of `91caebc`, three GStreamer channels, a schedule of 30-second
+  items back-to-back): every worker exited with
+  `CTRL stall: no output for 10s` and relaunched roughly every 30 seconds; a
+  live worker had 1238 threads and 3.5 GB RSS. Root cause: #170's
+  `source_plan.PLAN_MIN_SECONDS = 1800.0` chased 30 minutes of planned
+  DURATION out of 30-second slots, building ~60 segments per plan --
+  `bridge.graph_from_config` builds one
+  `filesrc -> decodebin -> videoconvert -> videoscale -> videorate` sub-chain
+  PER segment in a single pipeline set to `PLAYING` all at once
+  (`engine._build_playlist`), and `avdec_h264`'s default `max-threads=0`
+  spins up ~20 threads per sub-chain -- ~1200 threads, no TS output landing
+  inside the engine's 10-second stall watchdog. D45, four independent fixes
+  (the first pass at this fix missed the second and third below; caught in
+  hostile review before merge):
+  - `PLAN_MIN_SECONDS` reverted to `0.0` -- a plan's segment count is bounded
+    by `max_segments` (8 by default, pipeline shape) alone again; a caller
+    that explicitly wants a longer duration-bounded window can still opt in
+    via `min_plan_seconds`.
+  - The pipeline-shape cap (`MAX_PLAYLIST_SUBCHAINS`, 12; moved into
+    `civiccast/egress/models.py` so every producer and consumer import the
+    same value) is now enforced at the plan's only PRODUCER --
+    `source_plan.build_source_plan_from_schedule` clamps `max_segments` and
+    `segment_cap` down to it (logging a WARNING when it does) -- not only in
+    `bridge.graph_from_config`. Hostile review caught that the first pass
+    capped the pipeline but left every OTHER consumer of the same plan
+    (`automation.py`'s rollover-horizon tracking, `daemon.py`'s
+    dispatched-plan bookkeeping, `continuity.py`, `preparer.py`) trusting an
+    uncapped plan, so a plan above the cap would still have made the
+    pipeline reach EOS long before automation's tracked horizon expected it
+    to -- a worker restart roughly every 6 minutes, silently, for any
+    schedule that could build more than 12 segments. Because the producer
+    now guarantees the cap, `graph_from_config` treats a "program"-kind plan
+    still reaching it above the cap as proof that clamp was BYPASSED and
+    FAILS CLOSED (`errors.PlaylistCapBypassedError`) rather than silently
+    truncating it -- a second delta review caught that truncating-and-
+    logging-ERROR (the first pass's answer) would still have let
+    automation/daemon go on trusting the plan's full, uncapped duration
+    while the pipeline quietly played a shorter one, exactly the desync the
+    producer-side clamp exists to prevent. A "slate"/"cg" fill plan
+    (`SlateSourceGenerator`, `bulletin_filler._plan_with_cycle`) is EXPECTED
+    to repeat past this cap by design (CA-8) and is unaffected -- truncated
+    with a WARNING, not failed.
+  - `ChannelAutomationService._rollover_min_interval_seconds` (`automation.py`)
+    now derives the per-channel rollover-dispatch floor from the plan
+    actually on air (half its planned duration, clamped at the historic 300s
+    ceiling) instead of a flat 300s. MEASURED with the flat 300s floor
+    against an 8x30s (240s) plan: 6 dispatches in 30 minutes, the first at
+    120s, each 300s apart, with the boundary lead shrinking every cycle --
+    120s, then 60s, then 0s, then negative -- so by the third rollover the
+    trigger arrives AT OR AFTER the plan's actual end and the engine reaches
+    EOS and restarts before that rollover can land. The scaled floor keeps
+    the lead at a steady ~120s indefinitely instead. A second delta review
+    caught two more instances of the same shape of bug: an earlier version
+    of the scaled floor itself still floored at a flat 30s
+    (`max(30.0, 0.5 * planned)`, longer than an 8x3s/24-second plan's own
+    life -- MEASURED: still dispatches, ten times in 300s, but with the same
+    shrinking-to-negative lead), and `_ROLLOVER_MIN_LEAD_SECONDS` (the
+    boundary-aligned trigger's lead, previously a flat 120s) had the
+    identical problem on its own -- a lead longer than the plan pushes
+    `rollover_trigger_at`'s `plan_end_at - lead` candidate into the plan's
+    own past, landing dispatches at or after EOS even with the floor fixed.
+    Both are now scaled the same way
+    (`_ROLLOVER_MIN_INTERVAL_FLOOR_SECONDS` = 1.0, a trivial epsilon; a new
+    `_rollover_min_lead_seconds` = `min(120, 0.5 * planned)`), so neither
+    ever returns more than half of the plan's own planned duration --
+    MEASURED for the 24-second plan: a rollover every 24s with a steady 12s
+    (half the plan) of lead, indefinitely.
+  New/rewritten tests in `tests/egress/test_source_plan.py` (an end-to-end
+  test proving the plan `build_source_plan_from_schedule` returns and the
+  graph `bridge.graph_from_config` builds from it agree on the segment
+  count) and `test_automation.py` (production-shape cadence tests against
+  the real `ChannelAutomationService`, an 8x30s and an 8x67s plan, and the
+  8x3s starvation regression), plus `test_gst_bridge.py`. None of the
+  changed files (`source_plan.py`, `automation.py`, `bridge.py`) are D2
+  blob-drift-bound in `docs/claims/claims.yaml`; `models.py` is not bound
+  either.
 
 ### Changed
 

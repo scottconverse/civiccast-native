@@ -631,6 +631,41 @@ class ChannelAutomationRollup(BaseModel):
     dark: list[str] = Field(default_factory=list)
 
 
+#: D45 fix (2026-09-05): hard cap on decoder sub-chains one egress pipeline
+#: will ever be asked to build for a single ``EgressSourcePlan``. Each
+#: segment becomes its own ``filesrc -> decodebin -> videoconvert ->
+#: videoscale -> videorate`` sub-chain, built and set to PLAYING together
+#: (``civiccast.egress.gst.bridge.graph_from_config`` /
+#: ``civiccast.egress.gst.engine.GstPlayoutEngine._build_playlist``) --
+#: avdec_h264's default max-threads=0 spins up ~20 threads per sub-chain.
+#: Measured on real hardware: a 60-segment plan produced ~1200 threads and
+#: ~3.5 GB RSS on one worker, with no TS output landing inside the engine's
+#: 10s stall watchdog, so the worker relaunched roughly every 30s.
+#:
+#: Defined here (rather than in ``source_plan.py`` or ``gst/bridge.py``
+#: separately) so the SCHEDULE-derived plan's producer and consumers import
+#: the exact same value and can never disagree about it:
+#: ``source_plan.build_source_plan_from_schedule`` clamps the segment count
+#: it will ever return to this value (logging a WARNING if it has to), so
+#: the plan every other consumer -- ``automation.py``'s rollover-horizon
+#: tracking, ``daemon.py``'s dispatched-plan bookkeeping, ``continuity.py``,
+#: ``preparer.py`` -- reads is already the same plan the pipeline will
+#: actually play. ``gst/bridge.graph_from_config`` treats a "program"-kind
+#: plan exceeding it as a "the clamp above was bypassed" bug signal and
+#: FAILS CLOSED (``errors.PlaylistCapBypassedError``) rather than silently
+#: playing a truncated slice of a plan the rest of the system still
+#: believes is the full size.
+#:
+#: NOT universal: ``source_plan.SlateSourceGenerator`` and
+#: ``bulletin_filler._plan_with_cycle`` intentionally build "slate"/"cg"
+#: plans that repeat one pre-conformed file well past this cap by design
+#: (CA-8 -- a short single-segment plan relaunched the encoder, resetting
+#: the TS session, every few seconds), and are deliberately NOT clamped to
+#: it; for those, ``graph_from_config`` truncating the pipeline (a WARNING,
+#: not an error) is the accepted, tested trade-off, not a bypass.
+MAX_PLAYLIST_SUBCHAINS = 12
+
+
 class EgressSourceSegment(BaseModel):
     """One pre-conformed source segment available to the egress encoder."""
 

@@ -11,6 +11,7 @@ state rows.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -98,6 +99,38 @@ def _plan_with_duration(
                 kind="program",
                 source_ref=source_ref,
             )
+        ],
+    )
+
+
+class _HorizonAwareDaemon(_FakeDaemon):
+    """A daemon double that, like the real ``EgressDaemon``, can say which source
+    plan it actually DISPATCHED (``dispatched_plan_horizon``)."""
+
+    def __init__(self, *, live_channels: set[str] | None = None) -> None:
+        super().__init__(live_channels=live_channels)
+        self.dispatched: dict[str, tuple[str | None, tuple[float, ...], bool]] = {}
+
+    def dispatched_plan_horizon(
+        self, channel_id: str
+    ) -> tuple[str | None, tuple[float, ...], bool] | None:
+        return self.dispatched.get(channel_id)
+
+
+def _plan_with_segments(
+    channel_id: str, durations: tuple[float, ...], *, source_ref_prefix: str = "seg"
+) -> EgressSourcePlan:
+    return EgressSourcePlan(
+        channel_id=channel_id,
+        segments=[
+            EgressSourceSegment(
+                label=f"Program {n}",
+                path=f"C:/media/program-{n}.ts",
+                duration_seconds=duration,
+                kind="program",
+                source_ref=f"{source_ref_prefix}-{n}",
+            )
+            for n, duration in enumerate(durations)
         ],
     )
 
@@ -654,20 +687,17 @@ class TestPlanRollover:
 
 
 class TestRolloverCadence:
-    """D43 hardening (2026-09-05).
-
-    With 30-second schedule slots the source plan was 8 segments / 240
-    seconds (``source_plan.max_segments``), so ``rollover_trigger_at`` landed
-    120 seconds in and this check would dispatch a reload roughly every two
-    minutes PER CHANNEL -- and each dispatch runs ``SourcePreparer.prepare``
-    synchronously on the automation thread (``daemon._try_content_reload``).
-
-    Measured evidence, stated plainly: a 2-hour control-plane log from the
-    real-hardware tester shows ZERO rollover dispatches and zero horizon
-    establishments, so this fast cycle is NOT the cause of the CPU burn
-    observed there. These are the two conservative bounds against it anyway:
-    a plan window measured in seconds (``source_plan.PLAN_MIN_SECONDS``) and
-    a hard per-channel minimum interval between dispatches.
+    """Hostile-review fix (2026-09-05): D43 (#170) and this PR's first pass at
+    D45 both encoded a premise that was never the shipped shape. D43's
+    ``PLAN_MIN_SECONDS=1800`` (a 60-segment, 1800-second plan for 30-second
+    schedule items) is reverted -- see ``source_plan.py``. What a
+    30-second-item schedule actually builds now is an 8-segment, 240-second
+    plan (``max_segments=8``), and these tests exercise the REAL
+    ``ChannelAutomationService`` against that shape (and a longer one) using
+    ``_HorizonAwareDaemon``/``_plan_with_segments`` -- the same dispatched-
+    plan-horizon fixtures ``TestRolloverHorizonComesFromTheDispatchedPlan``
+    uses, which is what the real ``EgressDaemon`` (not a re-query-only fake)
+    gives the service to work with in production.
     """
 
     def _on_air_state(
@@ -683,47 +713,35 @@ class TestRolloverCadence:
             )
         )
 
-    def _thirty_second_plan(self, channel_id: str) -> EgressSourcePlan:
-        """What ``ScheduleSourcePlanProvider`` now builds from a schedule of
-        30-second slots: 60 segments, 1800 seconds (``PLAN_MIN_SECONDS``)."""
+    def _simulate(
+        self,
+        durations: tuple[float, ...],
+        *,
+        total_ticks: float,
+        step: float = 2.0,
+        min_interval_override: Callable[[float], float] | None = None,
+    ) -> tuple[list[float], int]:
+        """Tick a real ``ChannelAutomationService`` (backed by
+        ``_HorizonAwareDaemon``, mirroring how the real ``EgressDaemon``
+        reports what it actually dispatched) through ``total_ticks`` seconds
+        of the real 2-second poll cadence, and return every tick a rollover
+        reload was dispatched, plus how many times the source-plan provider
+        was called. ``min_interval_override``, when given, replaces
+        ``_rollover_min_interval_seconds`` entirely -- used to reproduce a
+        prior (buggy) floor formula for comparison against the shipped one."""
 
-        return EgressSourcePlan(
-            channel_id=channel_id,
-            segments=[
-                EgressSourceSegment(
-                    label=f"Item {index}",
-                    path="C:/media/program.ts",
-                    duration_seconds=30.0,
-                    kind="program",
-                    source_ref=f"item-{index}",
-                )
-                for index in range(60)
-            ],
-        )
-
-    def test_thirty_second_items_no_longer_roll_over_every_two_minutes(self) -> None:
-        """The regression this whole pass exists for: tick a channel through
-        30 simulated minutes of 2-second poll intervals and count dispatches.
-
-        The old behavior (a 240-second plan for this schedule) produced a
-        rollover every ~120 seconds: ~14 in this window. With a 1800-second
-        plan the trigger does not arrive until 1680 seconds in (the 120s lead
-        floor is earlier than the last segment's start at 1770s), so exactly
-        ONE rollover fires, at ~28 minutes.
-        """
         clock = {"now": 1000.0}
         store = InMemoryEgressStore()
         store.upsert_config(_config("public"))
         self._on_air_state(store, "public", proof_event_id="ev-1")
-        daemon = _FakeDaemon(live_channels={"public"})
+        daemon = _HorizonAwareDaemon(live_channels={"public"})
+        # The plan actually on air from the channel's initial start.
+        daemon.dispatched["public"] = ("ev-1", durations, False)
         calls = {"n": 0}
 
         def provider(cid: str) -> EgressSourcePlan:
-            # Like the real join-in-progress provider, a later call reaches
-            # further into the schedule than an earlier one, so a rollover is
-            # always available to dispatch if the trigger fires.
             calls["n"] += 1
-            return self._thirty_second_plan(cid)
+            return _plan_with_segments(cid, durations, source_ref_prefix=f"call{calls['n']}")
 
         service = ChannelAutomationService(
             store,
@@ -732,30 +750,144 @@ class TestRolloverCadence:
             settings=ChannelAutomationSettings(),
             monotonic=lambda: clock["now"],
         )
+        if min_interval_override is not None:
+            service._rollover_min_interval_seconds = min_interval_override  # type: ignore[method-assign]
 
         dispatch_times: list[float] = []
-        for tick in range(0, 1800, 2):  # 30 minutes at the real 2s poll cadence
+        tick = 0.0
+        ev_n = 1
+        while tick < total_ticks:
             clock["now"] = 1000.0 + tick
             service.run_once(now=_NOW + timedelta(seconds=tick))
             if _pending_actions(store, "public") == ["reload"]:
-                dispatch_times.append(float(tick))
-                # The daemon applies the reload: a fresh proof event, which is
-                # how the service learns the rollover landed.
-                self._on_air_state(store, "public", proof_event_id=f"ev-{len(dispatch_times) + 1}")
+                dispatch_times.append(tick)
+                ev_n += 1
+                new_ev = f"ev-{ev_n}"
+                # The daemon executes the reload: it re-fetches the plan (the
+                # same call a real _try_content_reload makes) and records it
+                # as dispatched, DEFERRED (the channel is ON_AIR with no
+                # manual override, so reload_policy.should_defer_switch is
+                # True) -- this is what lets automation's next horizon be
+                # dated from the OUTGOING leg's own end.
+                daemon.dispatched["public"] = (new_ev, durations, True)
+                self._on_air_state(store, "public", proof_event_id=new_ev)
+            tick += step
+        return dispatch_times, calls["n"]
 
-        assert len(dispatch_times) == 1, dispatch_times
-        # ~28 minutes in, not 2. The old code's first dispatch was at 120s.
-        assert dispatch_times[0] >= 1600.0
-        # And the schedule provider is not re-queried on every poll tick
-        # either: establish the horizon, re-query at the trigger, re-establish
-        # once the reload lands. Three calls in 900 ticks.
-        assert calls["n"] == 3
+    def test_thirty_second_items_roll_over_every_240_seconds_well_before_eos(
+        self,
+    ) -> None:
+        """The regression this whole pass exists for, in its shipped shape:
+        an 8-segment, 30-second-item plan is 240 seconds. The first rollover
+        fires at the boundary-aligned trigger (120s -- ``_ROLLOVER_MIN_LEAD_
+        SECONDS`` before the 240s end), and each later one fires 240s after
+        the last -- always 120s (comfortably >= 100s) before that plan's own
+        end, never at or after it. No FALLBACK_SLATE/EOS boundary is ever
+        reached: every dispatch lands well inside the plan it is extending.
+        """
+        dispatch_times, calls = self._simulate((30.0,) * 8, total_ticks=1200)
 
-    def test_a_short_plan_cannot_dispatch_faster_than_the_minimum_interval(self) -> None:
-        """Belt-and-braces floor under the CADENCE, independent of the plan
-        window: even if a plan comes back short (a nearly-exhausted schedule,
-        a provider quirk), one channel may not dispatch rollovers closer
-        together than ``_ROLLOVER_MIN_INTERVAL_SECONDS``."""
+        assert dispatch_times == [120.0, 360.0, 600.0, 840.0, 1080.0]
+        # Each dispatch is 120s ahead of the plan boundary it is extending
+        # (dispatch N's plan ends at 240*(N+1)) -- well over the 100s floor
+        # this test exists to pin.
+        for index, dispatch_at in enumerate(dispatch_times):
+            plan_end_at = 240.0 * (index + 1)
+            assert plan_end_at - dispatch_at >= 100.0
+        # Not re-queried on every poll tick: once to establish (from the
+        # dispatched plan, no provider call needed) is free; each trigger
+        # re-queries once to confirm there's more schedule to roll onto.
+        assert calls == len(dispatch_times)
+
+    def test_sixty_seven_second_items_roll_over_at_416_of_536(self) -> None:
+        """A different item length is not a special case: an 8-segment,
+        67-second-item plan is 536 seconds, and the same boundary-aligned
+        120s lead applies -- the first rollover fires at 416s (536 - 120),
+        with 120s of runway before EOS."""
+        dispatch_times, _calls = self._simulate((67.0,) * 8, total_ticks=1700)
+
+        assert dispatch_times == [416.0, 952.0, 1488.0]
+        for index, dispatch_at in enumerate(dispatch_times):
+            plan_end_at = 536.0 * (index + 1)
+            assert plan_end_at - dispatch_at >= 100.0
+
+    def test_a_very_short_plan_still_rolls_over_before_its_own_end(self) -> None:
+        """Item 3's regression case: an 8x3s (24-second) plan.
+
+        Hostile-review fix (NEW-3, 2026-09-05): the shipped
+        ``_rollover_min_interval_seconds`` floor alone was not enough --
+        with a flat 120s ``_ROLLOVER_MIN_LEAD_SECONDS``,
+        ``rollover_trigger_at`` still landed at or after a plan this short
+        actually ends (``plan_end_at - 120`` is deep in the plan's own
+        past), so dispatches happened but at/after EOS. Scaling the LEAD
+        the same way (``_rollover_min_lead_seconds`` -- half the plan's
+        duration, clamped at the historic 120s ceiling) fixes this too:
+        every rollover now lands with real runway to spare, not just
+        "eventually, somehow, still dispatching."
+
+        MEASURED with both fixes shipped: a rollover every 24s (at 12s,
+        36s, 60s, ...), each with a lead of exactly 12s -- half the plan's
+        24-second life -- over the boundary it is extending."""
+        dispatch_times, _calls = self._simulate((3.0,) * 8, total_ticks=300)
+
+        assert len(dispatch_times) >= 5, dispatch_times
+
+        def leads(dispatch_times: list[float]) -> list[float]:
+            return [
+                24.0 * (index + 1) - dispatch_at for index, dispatch_at in enumerate(dispatch_times)
+            ]
+
+        plan_leads = leads(dispatch_times)
+        # The real invariant this test exists to pin: every dispatch lands
+        # with meaningful runway before the plan it is extending actually
+        # ends -- never "eventually dispatches, but after EOS."
+        assert all(lead >= 0.25 * 24.0 for lead in plan_leads), plan_leads
+
+    def test_the_flat_floor_bug_the_scaled_floor_fixes(self) -> None:
+        """The CHANGELOG-cited measurement, reproduced directly: against an
+        8x30s (240-second) plan, a flat 300s floor (D43's original value)
+        dispatches every 300s while the boundary-aligned lead shrinks each
+        cycle -- 120s, 60s, 0s, then negative -- so by the third rollover
+        the trigger arrives at or after the plan's real end and the engine
+        would have reached EOS and restarted. The shipped, scaled floor
+        (used by every other test in this class) keeps that lead at a
+        steady ~120s indefinitely instead."""
+
+        def flat_300s_floor(_planned_seconds: float) -> float:
+            return 300.0
+
+        buggy_dispatches, _ = self._simulate(
+            (30.0,) * 8, total_ticks=1800, min_interval_override=flat_300s_floor
+        )
+        fixed_dispatches, _ = self._simulate((30.0,) * 8, total_ticks=1800)
+
+        def leads(dispatch_times: list[float]) -> list[float]:
+            return [
+                240.0 * (index + 1) - dispatch_at
+                for index, dispatch_at in enumerate(dispatch_times)
+            ]
+
+        buggy_leads = leads(buggy_dispatches)
+        fixed_leads = leads(fixed_dispatches)
+
+        assert buggy_dispatches == [120.0, 420.0, 720.0, 1020.0, 1320.0, 1620.0]
+        assert buggy_leads == [120.0, 60.0, 0.0, -60.0, -120.0, -180.0]
+        assert min(buggy_leads) < 0  # the trigger arrives at/after EOS
+
+        assert fixed_dispatches[:5] == [120.0, 360.0, 600.0, 840.0, 1080.0]
+        assert all(lead >= 100.0 for lead in fixed_leads)
+
+    def test_a_short_plan_cannot_dispatch_faster_than_its_scaled_minimum_interval(
+        self,
+    ) -> None:
+        """D45: the CADENCE floor now scales with the plan actually on air
+        (``_rollover_min_interval_seconds``) instead of a fixed 300s -- a flat
+        300s floor is longer than the lifetime of a short plan (e.g. an
+        8-segment, 30-second-item plan is only 240s), which would silently
+        starve every rollover after the first until the engine hits EOS and
+        restarts. For a 100-second plan the scaled floor is 50s (half the
+        plan, clamped to the 30s-300s range): still a real floor under the
+        cadence, but one a short plan can actually live inside."""
         clock = {"now": 1000.0}
         store = InMemoryEgressStore()
         store.upsert_config(_config("public"))
@@ -765,7 +897,7 @@ class TestRolloverCadence:
 
         def provider(_cid: str) -> EgressSourcePlan:
             plans["n"] += 1
-            return _plan_with_duration("public", 150.0, source_ref=f"seg-{plans['n']}")
+            return _plan_with_duration("public", 100.0, source_ref=f"seg-{plans['n']}")
 
         service = ChannelAutomationService(
             store,
@@ -774,30 +906,76 @@ class TestRolloverCadence:
             settings=ChannelAutomationSettings(),
             monotonic=lambda: clock["now"],
         )
+        assert service._rollover_min_interval_seconds(100.0) == 50.0
 
-        # Establish a 150s horizon, then trigger (a 150s plan is already
+        # Establish a 100s horizon, then trigger (a 100s plan is already
         # inside its own 120s lead floor).
         service.run_once(now=_NOW)
         service.run_once(now=_NOW + timedelta(seconds=1))
         assert _pending_actions(store, "public") == ["reload"]
 
-        # The reload lands -> a fresh proof event -> a fresh 150s horizon that
-        # is immediately inside its own lead floor again. Without the interval
-        # floor this would dispatch again straight away, once per plan.
-        for round_index in range(2, 6):
-            self._on_air_state(store, "public", proof_event_id=f"ev-{round_index}")
-            clock["now"] += 60.0
-            service.run_once(now=_NOW + timedelta(seconds=60 * round_index))
-            service.run_once(now=_NOW + timedelta(seconds=60 * round_index + 1))
-            assert _pending_actions(store, "public") == []
+        # The reload lands -> a fresh proof event -> a fresh 100s horizon that
+        # is immediately inside its own lead floor again. Without the scaled
+        # interval floor this would dispatch again straight away, once per
+        # plan.
+        self._on_air_state(store, "public", proof_event_id="ev-2")
+        clock["now"] += 40.0  # 40s since the dispatch, < the 50s scaled floor
+        service.run_once(now=_NOW + timedelta(seconds=41))
+        service.run_once(now=_NOW + timedelta(seconds=42))
+        assert _pending_actions(store, "public") == []
 
-        # Past the interval floor, the next one is allowed through.
-        self._on_air_state(store, "public", proof_event_id="ev-9")
-        clock["now"] += 120.0  # 360s since the dispatch, > the 300s floor
-        service.run_once(now=_NOW + timedelta(seconds=400))
-        service.run_once(now=_NOW + timedelta(seconds=401))
+        # Past the scaled floor, the next one is allowed through -- well
+        # before this 100-second plan would otherwise reach EOS.
+        clock["now"] += 20.0  # 60s since the dispatch, > the 50s scaled floor
+        service.run_once(now=_NOW + timedelta(seconds=61))
+        service.run_once(now=_NOW + timedelta(seconds=62))
         assert _pending_actions(store, "public") == ["reload"]
+
+    def test_the_scaled_interval_never_exceeds_the_historic_ceiling(self) -> None:
+        """A long plan (>= 600s) is unaffected by D45: the scaled floor
+        clamps back down to the historic flat 300s, same as before. A short
+        plan's floor is always HALF its own duration, never a flat 30s
+        (paired with the real-dispatch behavioral tests above, which show
+        what this number actually does to the automation's cadence)."""
         assert ChannelAutomationService._ROLLOVER_MIN_INTERVAL_SECONDS == 300.0
+        service = ChannelAutomationService(
+            InMemoryEgressStore(),
+            _FakeDaemon(),
+            lambda _cid: None,
+            settings=ChannelAutomationSettings(),
+        )
+        assert service._rollover_min_interval_seconds(1800.0) == 300.0
+        assert service._rollover_min_interval_seconds(10.0) == 5.0
+
+    def test_the_scaled_interval_never_exceeds_half_a_24_second_plan(self) -> None:
+        """Item 3's exact regression case: an intermediate version of this
+        fix floored the interval at a flat 30s (``max(30.0, 0.5 *
+        planned_seconds)``), which for a very short plan is LONGER than the
+        plan's entire life.
+
+        MEASURED (with the shipped, ALSO-scaled lead --
+        ``_rollover_min_lead_seconds``, NEW-3 -- in place; a real dispatch
+        simulation, not a one-off unit check): an 8x3s (24-second) plan with
+        that flat 30s floor still dispatches ten times in this window (at
+        12s, 42s, 72s, ... 282s), NOT "exactly one rollover, ever" -- but the
+        boundary-aligned lead shrinks every cycle (12s, 6s, 0s, then
+        negative from the fourth rollover on), so once it turns negative
+        the trigger is arriving at or after the plan's real end: the same
+        failure mode this whole mechanism exists to prevent, just at a
+        smaller scale and slower to show up than "one dispatch and then
+        nothing." The fixed floor (``_ROLLOVER_MIN_INTERVAL_FLOOR_SECONDS``
+        = 1.0, a trivial epsilon) must never return more than half of
+        ``planned_seconds`` -- see
+        ``test_a_very_short_plan_still_rolls_over_before_its_own_end`` above
+        for the shipped floor's actual (positive-lead, indefinite) cadence."""
+        service = ChannelAutomationService(
+            InMemoryEgressStore(),
+            _FakeDaemon(),
+            lambda _cid: None,
+            settings=ChannelAutomationSettings(),
+        )
+        assert service._rollover_min_interval_seconds(24.0) == 12.0
+        assert service._rollover_min_interval_seconds(24.0) <= 0.5 * 24.0
 
     def test_the_interval_floor_is_cleared_when_the_channel_leaves_the_air(self) -> None:
         """The floor governs EXTENSIONS of a live plan. A channel that goes
@@ -1402,36 +1580,6 @@ class TestStartLatchRecovery:
         daemon.live_channels.clear()
         service.run_once(now=_NOW)
         assert _pending_actions(store, "public") == ["start"]
-
-
-class _HorizonAwareDaemon(_FakeDaemon):
-    """A daemon double that, like the real ``EgressDaemon``, can say which source
-    plan it actually DISPATCHED (``dispatched_plan_horizon``)."""
-
-    def __init__(self, *, live_channels: set[str] | None = None) -> None:
-        super().__init__(live_channels=live_channels)
-        self.dispatched: dict[str, tuple[str | None, tuple[float, ...], bool]] = {}
-
-    def dispatched_plan_horizon(
-        self, channel_id: str
-    ) -> tuple[str | None, tuple[float, ...], bool] | None:
-        return self.dispatched.get(channel_id)
-
-
-def _plan_with_segments(channel_id: str, durations: tuple[float, ...]) -> EgressSourcePlan:
-    return EgressSourcePlan(
-        channel_id=channel_id,
-        segments=[
-            EgressSourceSegment(
-                label=f"Program {n}",
-                path=f"C:/media/program-{n}.ts",
-                duration_seconds=duration,
-                kind="program",
-                source_ref=f"seg-{n}",
-            )
-            for n, duration in enumerate(durations)
-        ],
-    )
 
 
 class TestRolloverHorizonComesFromTheDispatchedPlan:

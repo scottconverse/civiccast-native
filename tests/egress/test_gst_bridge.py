@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import pytest
 
-from civiccast.egress.errors import SecretUnresolvedError
+from civiccast.egress.errors import PlaylistCapBypassedError, SecretUnresolvedError
 from civiccast.egress.gst.bridge import (
+    MAX_PLAYLIST_SUBCHAINS,
     encode_chain_from_profile,
     graph_from_config,
     gst_encoder_name,
@@ -196,6 +197,106 @@ def test_graph_from_config_builds_program_playlist_and_slate() -> None:
     assert slate.elements[0].factory == "videotestsrc"
     assert graph.mux.factory == "mpegtsmux"
     assert graph.sinks[0][1].factory == "udpsink"
+
+
+def test_graph_from_config_fails_closed_on_a_bypassed_program_plan() -> None:
+    """Hostile-review fix (2026-09-05): a "program"-kind plan (the schedule
+    shape) reaching ``graph_from_config`` above ``MAX_PLAYLIST_SUBCHAINS``
+    can ONLY mean ``source_plan.build_source_plan_from_schedule``'s own
+    clamp was bypassed -- a hand-built ``EgressSourcePlan`` like this one,
+    or a future producer that forgot to import the shared constant. A prior
+    version of this fix truncated and logged an ERROR here instead, which
+    would have left automation/daemon trusting the plan's full, uncapped
+    duration while the pipeline quietly played a shorter one -- exactly the
+    desync the producer-side clamp exists to prevent. This must fail
+    closed instead."""
+    config = EgressConfig(
+        channel_id="ch1",
+        enabled=True,
+        slate_message="Please stand by",
+        sinks=[EgressSinkSpec(kind="udp-ts", label="head", uri="udp://10.0.0.9:5000")],
+    )
+    segment_count = MAX_PLAYLIST_SUBCHAINS + 5
+    plan = EgressSourcePlan(
+        channel_id="ch1",
+        segments=[
+            EgressSourceSegment(
+                label=f"clip{i}",
+                path=f"/m/clip{i}.ts",
+                duration_seconds=30,
+                kind="program",
+                source_ref=f"c{i}",
+            )
+            for i in range(segment_count)
+        ],
+    )
+    with pytest.raises(PlaylistCapBypassedError, match=rf"ch1.*\b{segment_count}\b"):
+        graph_from_config(config, plan)
+
+
+def test_graph_from_config_caps_an_oversized_slate_plan_and_only_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The counterpart to the test above: ``source_plan.SlateSourceGenerator``
+    intentionally repeats one pre-conformed file well past
+    ``MAX_PLAYLIST_SUBCHAINS`` to span an hour of slate fill (CA-8 -- a short
+    single-segment plan relaunched the encoder, resetting the TS session,
+    every few seconds). That is NOT a bypass, so truncating it here is only
+    a WARNING, not an ERROR."""
+    config = EgressConfig(
+        channel_id="ch1",
+        enabled=True,
+        slate_message="Please stand by",
+        sinks=[EgressSinkSpec(kind="udp-ts", label="head", uri="udp://10.0.0.9:5000")],
+    )
+    segment_count = MAX_PLAYLIST_SUBCHAINS + 5
+    plan = EgressSourcePlan(
+        channel_id="ch1",
+        segments=[
+            EgressSourceSegment(
+                label="CivicCast slate",
+                path="/m/slate.ts",
+                duration_seconds=30,
+                kind="slate",
+                source_ref="civiccast-slate",
+            )
+        ]
+        * segment_count,
+    )
+    with caplog.at_level("WARNING"):
+        graph = graph_from_config(config, plan)
+    program, _slate = graph.sources
+    assert isinstance(program, PlaylistLeg)
+    assert len(program.subchains) == MAX_PLAYLIST_SUBCHAINS
+    matching = [
+        record
+        for record in caplog.records
+        if "ch1" in record.message and str(segment_count) in record.message
+    ]
+    assert matching
+    assert all(record.levelname == "WARNING" for record in matching)
+
+
+def test_graph_from_config_under_the_cap_is_unaffected() -> None:
+    """A normal-sized plan (well under the cap) builds every segment, same
+    as before D45 -- the cap is a ceiling, not a new default limit."""
+    config = EgressConfig(
+        channel_id="ch1",
+        enabled=True,
+        slate_message="Please stand by",
+        sinks=[EgressSinkSpec(kind="udp-ts", label="head", uri="udp://10.0.0.9:5000")],
+    )
+    plan = EgressSourcePlan(
+        channel_id="ch1",
+        segments=[
+            EgressSourceSegment(label=f"clip{i}", path=f"/m/clip{i}.ts", duration_seconds=30)
+            for i in range(8)
+        ],
+    )
+    graph = graph_from_config(config, plan)
+    program, _slate = graph.sources
+    assert isinstance(program, PlaylistLeg)
+    assert len(program.subchains) == 8
 
 
 def test_graph_from_config_udp_sink_enables_cbr() -> None:

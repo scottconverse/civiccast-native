@@ -11,9 +11,13 @@ import pytest
 
 from civiccast.egress import resolver
 from civiccast.egress.errors import SourcePrepareError
-from civiccast.egress.models import CanonicalProfile, EgressConfig, EgressSinkSpec
+from civiccast.egress.models import (
+    MAX_PLAYLIST_SUBCHAINS,
+    CanonicalProfile,
+    EgressConfig,
+    EgressSinkSpec,
+)
 from civiccast.egress.source_plan import (
-    PLAN_MAX_SEGMENTS,
     PLAN_MIN_SECONDS,
     ScheduleSourcePlanProvider,
     SlateSourceGenerator,
@@ -619,18 +623,25 @@ class TestSlotDuration:
 
 
 class TestPlanWindow:
-    """D43: the plan window is bounded by DURATION as well as by count.
+    """D43 (superseded by D45): the plan window used to be bounded by
+    DURATION as well as by count -- ``PLAN_MIN_SECONDS`` defaulted to 1800.0
+    so a schedule of 30-second slots chased a 60-segment, 1800-second plan
+    instead of the count-only 8-segment, 240-second one.
 
-    A count-only window (``max_segments=8``) is a 240-second plan for a
-    schedule of 30-second slots, which drove automation's rollover -- and the
-    synchronous ``SourcePreparer.prepare`` it runs on the automation thread --
-    roughly every two minutes per channel (control plane at ~285% CPU / 1.9 GB
-    on the tester, worker output stalling into the 10s stall watchdog).
+    Real-hardware soak evidence (3 GStreamer channels, 30-second items
+    back-to-back) measured what that duration target actually cost:
+    ``bridge.graph_from_config`` builds ONE decoder sub-chain PER segment in
+    a single pipeline set to PLAYING all at once, so 60 segments produced
+    ~1200 avdec_h264 threads and ~3.5 GB on one worker -- no TS output landed
+    inside the engine's 10s stall watchdog, and every worker relaunched
+    roughly every 30s. D45 reverts ``PLAN_MIN_SECONDS`` to 0.0: a normal
+    plan's segment count is bounded by ``max_segments`` (pipeline shape)
+    alone by default now. A caller that explicitly wants a longer
+    duration-bounded window (and can bear the bigger pipeline) can still opt
+    in via ``min_plan_seconds`` -- exercised below too.
     """
 
-    def test_thirty_second_slots_build_at_least_thirty_minutes_of_plan(
-        self, tmp_path: Path
-    ) -> None:
+    def test_thirty_second_slots_build_only_max_segments_by_default(self, tmp_path: Path) -> None:
         media = _media(tmp_path)
         now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
 
@@ -644,30 +655,81 @@ class TestPlanWindow:
         )
 
         assert plan is not None
+        # D45: PLAN_MIN_SECONDS defaults to 0.0 -- max_segments (8 by
+        # default) is what bounds a normal plan's segment count, not a
+        # duration target that used to build 60 segments (and ~1200 decoder
+        # threads) out of 30-second slots.
+        assert PLAN_MIN_SECONDS == 0.0
+        assert len(plan.segments) == 8
         total = sum(segment.duration_seconds for segment in plan.segments)
-        # Before the fix: 8 segments, 240 seconds of plan.
-        assert total >= PLAN_MIN_SECONDS
-        assert len(plan.segments) == 60
+        assert total == 240.0
 
-    def test_the_segment_cap_bounds_a_pathologically_short_slot_schedule(
+    def test_min_plan_seconds_widens_the_window_only_up_to_the_pipeline_cap(
         self, tmp_path: Path
     ) -> None:
+        """Hostile-review fix (2026-09-05): a caller cannot opt its way past
+        ``MAX_PLAYLIST_SUBCHAINS`` -- the pipeline-shape ceiling always wins,
+        because ``build_source_plan_from_schedule`` is the plan's only
+        producer and every OTHER consumer (``automation.py``'s rollover-
+        horizon tracking, ``daemon.py``, ``continuity.py``, ``preparer.py``)
+        trusts whatever segment count it returns as the plan the pipeline
+        will actually play. 1800s of planned duration out of 30-second slots
+        would need 60 segments; the default ``segment_cap``
+        (``MAX_PLAYLIST_SUBCHAINS``, 12) stops it at 360s instead."""
         media = _media(tmp_path)
         now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
 
         plan = build_source_plan_from_schedule(
             channel_id="gov",
-            # 1-second slots: 1800 of them would be needed to reach
-            # PLAN_MIN_SECONDS. The cap stops well short of that.
-            schedule_items=_slot_schedule(now, count=400, slot_seconds=1),
+            schedule_items=_slot_schedule(now, count=200),
             asset_resolver=lambda asset_id: _asset_of(
                 media, duration_seconds=3600, asset_id=asset_id
             ),
             now=now,
+            # A caller that explicitly wants a longer duration-bounded plan
+            # can still ask for it -- but not past the pipeline cap.
+            min_plan_seconds=1800.0,
         )
 
         assert plan is not None
-        assert len(plan.segments) == PLAN_MAX_SEGMENTS
+        assert len(plan.segments) == MAX_PLAYLIST_SUBCHAINS
+        total = sum(segment.duration_seconds for segment in plan.segments)
+        assert total == MAX_PLAYLIST_SUBCHAINS * 30.0
+        assert total < 1800.0
+
+    def test_an_explicit_segment_cap_above_the_pipeline_ceiling_is_clamped(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Hostile-review fix: a caller cannot ask its way past
+        ``MAX_PLAYLIST_SUBCHAINS`` by passing an explicit larger
+        ``segment_cap``/``max_segments`` either -- both are clamped down
+        (with a WARNING naming the channel), because a plan larger than one
+        pipeline can safely decode is exactly the regression this module
+        exists to prevent. 1-second slots: 1800 of them would be needed to
+        reach ``min_plan_seconds``, and an oversized ``segment_cap`` (120,
+        the module's pre-D45 historical ceiling) would let the segment
+        count get there if it were still honoured."""
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+
+        with caplog.at_level("WARNING"):
+            plan = build_source_plan_from_schedule(
+                channel_id="gov",
+                schedule_items=_slot_schedule(now, count=400, slot_seconds=1),
+                asset_resolver=lambda asset_id: _asset_of(
+                    media, duration_seconds=3600, asset_id=asset_id
+                ),
+                now=now,
+                min_plan_seconds=1800.0,
+                segment_cap=120,
+            )
+
+        assert plan is not None
+        assert len(plan.segments) == MAX_PLAYLIST_SUBCHAINS
+        assert any(
+            "gov" in record.message and "MAX_PLAYLIST_SUBCHAINS" in record.message
+            for record in caplog.records
+        )
 
     def test_long_items_still_stop_at_max_segments(self, tmp_path: Path) -> None:
         media = _media(tmp_path)
@@ -675,9 +737,9 @@ class TestPlanWindow:
 
         plan = build_source_plan_from_schedule(
             channel_id="gov",
-            # 30-minute slots: the FIRST segment alone already spans
-            # PLAN_MIN_SECONDS, so the count bound is what applies. A
-            # long-item schedule is unchanged by this fix.
+            # 30-minute slots: the count bound (max_segments) is what
+            # applies regardless of min_plan_seconds. A long-item schedule
+            # is unaffected by D45.
             schedule_items=_slot_schedule(now, count=40, slot_seconds=1800),
             asset_resolver=lambda asset_id: _asset_of(
                 media, duration_seconds=1800, asset_id=asset_id
@@ -687,6 +749,80 @@ class TestPlanWindow:
 
         assert plan is not None
         assert len(plan.segments) == 8
+
+    def test_end_to_end_a_thirty_second_schedule_never_exceeds_eight_subchains(
+        self, tmp_path: Path
+    ) -> None:
+        """Hostile-review fix (2026-09-05), BLOCKER 1: the clamp has to live
+        at the plan's producer, not just in ``bridge.graph_from_config`` --
+        otherwise a consumer that trusts the plan's own segment count
+        (``automation.py``'s rollover-horizon tracking, ``daemon.py``'s
+        dispatched-plan bookkeeping) disagrees with what the pipeline
+        actually plays. Proven end-to-end here: build a real plan from a
+        30-second-item schedule with ``build_source_plan_from_schedule``,
+        feed that SAME plan into ``graph_from_config``, and check the two
+        never disagree about the segment/sub-chain count -- not just that
+        each is separately capped."""
+        from civiccast.egress.gst.bridge import graph_from_config
+        from civiccast.egress.gst.graph import PlaylistLeg
+
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+
+        plan = build_source_plan_from_schedule(
+            channel_id="gov",
+            schedule_items=_slot_schedule(now, count=200),
+            asset_resolver=lambda asset_id: _asset_of(
+                media, duration_seconds=3600, asset_id=asset_id
+            ),
+            now=now,
+        )
+        assert plan is not None
+        assert len(plan.segments) <= 8
+
+        graph = graph_from_config(_config(), plan)
+        program, _slate = graph.sources
+        assert isinstance(program, PlaylistLeg)
+        assert len(program.subchains) <= 8
+        # The invariant BLOCKER 1 asked for: the plan built by the producer
+        # and the graph built by the consumer agree on the segment count --
+        # nothing was silently truncated on the bridge side because the
+        # producer had already handed it a plan the pipeline can play in
+        # full.
+        assert len(program.subchains) == len(plan.segments)
+
+    def test_end_to_end_agreement_holds_exactly_AT_the_cap(self, tmp_path: Path) -> None:
+        """Item 6: the test above proves agreement well UNDER the cap
+        (``max_segments=8``); prove it also holds exactly AT the cap, where
+        a prior version of ``graph_from_config`` would have hit its own
+        (now removed) truncation branch instead of building the full plan.
+        A caller that explicitly asks for ``max_segments=MAX_PLAYLIST_
+        SUBCHAINS`` gets a plan of exactly that many segments, and
+        ``graph_from_config`` builds exactly that many sub-chains from it --
+        not one fewer."""
+        from civiccast.egress.gst.bridge import graph_from_config
+        from civiccast.egress.gst.graph import PlaylistLeg
+
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+
+        plan = build_source_plan_from_schedule(
+            channel_id="gov",
+            schedule_items=_slot_schedule(now, count=200),
+            asset_resolver=lambda asset_id: _asset_of(
+                media, duration_seconds=3600, asset_id=asset_id
+            ),
+            now=now,
+            max_segments=MAX_PLAYLIST_SUBCHAINS,
+        )
+        assert plan is not None
+        assert len(plan.segments) == MAX_PLAYLIST_SUBCHAINS
+
+        graph = graph_from_config(_config(), plan)
+        program, _slate = graph.sources
+        assert isinstance(program, PlaylistLeg)
+        assert len(program.subchains) == MAX_PLAYLIST_SUBCHAINS
+        assert len(program.subchains) == len(plan.segments)
 
     def test_min_plan_seconds_and_segment_cap_are_validated(self, tmp_path: Path) -> None:
         media = _media(tmp_path)
@@ -712,3 +848,48 @@ class TestPlanWindow:
                 now=now,
                 min_plan_seconds=-1.0,
             )
+
+    def test_an_inconsistent_pair_above_the_cap_raises_rather_than_clamping_silently(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Hostile-review fix (2026-09-05): the raw-pair validation
+        (``segment_cap`` must be at least ``max_segments``) has to run
+        BEFORE the ``MAX_PLAYLIST_SUBCHAINS`` clamp, not after -- otherwise
+        an inconsistent caller-supplied pair that both happen to exceed the
+        pipeline cap (``max_segments=20``, ``segment_cap=15``) would get
+        silently clamped down to an agreeing pair (12/12) instead of
+        surfacing that the caller's own request never made sense on its own
+        terms. A CONSISTENT pair above the cap (20/20) is a different
+        case -- both values agree with each other, so they are clamped down
+        together (with a WARNING), not rejected."""
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+        resolver = lambda asset_id: _asset_of(  # noqa: E731
+            media, duration_seconds=3600, asset_id=asset_id
+        )
+
+        with pytest.raises(ValueError, match="segment_cap"):
+            build_source_plan_from_schedule(
+                channel_id="gov",
+                schedule_items=_slot_schedule(now, count=2),
+                asset_resolver=resolver,
+                now=now,
+                max_segments=20,
+                segment_cap=15,
+            )
+
+        with caplog.at_level("WARNING"):
+            plan = build_source_plan_from_schedule(
+                channel_id="gov",
+                schedule_items=_slot_schedule(now, count=200),
+                asset_resolver=resolver,
+                now=now,
+                max_segments=20,
+                segment_cap=20,
+            )
+        assert plan is not None
+        assert len(plan.segments) == MAX_PLAYLIST_SUBCHAINS
+        assert any(
+            "gov" in record.message and "MAX_PLAYLIST_SUBCHAINS" in record.message
+            for record in caplog.records
+        )
