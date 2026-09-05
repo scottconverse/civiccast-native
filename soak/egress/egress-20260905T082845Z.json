@@ -1,0 +1,138 @@
+﻿{
+    "schema":  "civiccast-native-soak-egress-v2",
+    "mission":  "soak8-e1acfe6",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "utc":  "20260905T082845Z",
+    "tsp_exe":  "C:\\CivicCastHostStore\\install\\packs\\native-server-binaries\\payload\\tsduck\\bin\\tsp.exe",
+    "engine_observed":  {
+                            "gst_launch_processes":  0,
+                            "ffmpeg_processes":  0,
+                            "inferred":  "none-running"
+                        },
+    "worker_processes":  {
+                             "elapsed_seconds_since_last_sample":  null,
+                             "processes":  [
+                                               {
+                                                   "name":  "python",
+                                                   "pid":  4764,
+                                                   "cpu_seconds_total":  8.328125,
+                                                   "cpu_pct_since_last_sample":  null,
+                                                   "rss_bytes":  228016128
+                                               }
+                                           ]
+                         },
+    "channels":  [
+                     {
+                         "channel_id":  "public",
+                         "port":  9001,
+                         "tsduck":  {
+                                        "label":  "public",
+                                        "port":  9001,
+                                        "tsp_found":  true,
+                                        "ran":  true,
+                                        "timed_out":  true,
+                                        "exit_code":  null,
+                                        "report_found":  false,
+                                        "report_bytes":  null,
+                                        "packets_total":  null,
+                                        "invalid_syncs":  null,
+                                        "transport_errors":  null,
+                                        "discontinuities":  null,
+                                        "pcr_pts_drift_ms":  null,
+                                        "verdict":  "fail-timed-out"
+                                    },
+                         "engine_state":  null,
+                         "engine":  null,
+                         "last_error":  null,
+                         "sink_connected":  null,
+                         "api_error":  null,
+                         "current_source_label":  null,
+                         "pid":  null,
+                         "relaunch":  {
+                                          "prev_pid":  null,
+                                          "new_pid":  null,
+                                          "relaunched_this_cycle":  false,
+                                          "relaunches_total":  0,
+                                          "last_errors":  [
+
+                                                          ]
+                                      }
+                     },
+                     {
+                         "channel_id":  "education",
+                         "port":  9002,
+                         "tsduck":  {
+                                        "label":  "education",
+                                        "port":  9002,
+                                        "tsp_found":  true,
+                                        "ran":  true,
+                                        "timed_out":  true,
+                                        "exit_code":  null,
+                                        "report_found":  false,
+                                        "report_bytes":  null,
+                                        "packets_total":  null,
+                                        "invalid_syncs":  null,
+                                        "transport_errors":  null,
+                                        "discontinuities":  null,
+                                        "pcr_pts_drift_ms":  null,
+                                        "verdict":  "fail-timed-out"
+                                    },
+                         "engine_state":  null,
+                         "engine":  null,
+                         "last_error":  null,
+                         "sink_connected":  null,
+                         "api_error":  null,
+                         "current_source_label":  null,
+                         "pid":  null,
+                         "relaunch":  {
+                                          "prev_pid":  null,
+                                          "new_pid":  null,
+                                          "relaunched_this_cycle":  false,
+                                          "relaunches_total":  0,
+                                          "last_errors":  [
+
+                                                          ]
+                                      }
+                     },
+                     {
+                         "channel_id":  "government",
+                         "port":  9003,
+                         "tsduck":  {
+                                        "label":  "government",
+                                        "port":  9003,
+                                        "tsp_found":  true,
+                                        "ran":  true,
+                                        "timed_out":  true,
+                                        "exit_code":  null,
+                                        "report_found":  false,
+                                        "report_bytes":  null,
+                                        "packets_total":  null,
+                                        "invalid_syncs":  null,
+                                        "transport_errors":  null,
+                                        "discontinuities":  null,
+                                        "pcr_pts_drift_ms":  null,
+                                        "verdict":  "fail-timed-out"
+                                    },
+                         "engine_state":  null,
+                         "engine":  null,
+                         "last_error":  null,
+                         "sink_connected":  null,
+                         "api_error":  null,
+                         "current_source_label":  null,
+                         "pid":  null,
+                         "relaunch":  {
+                                          "prev_pid":  null,
+                                          "new_pid":  null,
+                                          "relaunched_this_cycle":  false,
+                                          "relaunches_total":  0,
+                                          "last_errors":  [
+
+                                                          ]
+                                      }
+                     }
+                 ],
+    "cycle_all_on_air_gstreamer":  false,
+    "cycle_all_tsp_pass":  false,
+    "cycle_no_relaunch":  true,
+    "overall":  "fail"
+}
