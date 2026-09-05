@@ -62,3 +62,16 @@ it to rehearse a run without touching the station or the repo.
 `soak/held/` is left exactly as is (AUTORUN-1.ps1, the old 8-hour
 AUTORUN-2.ps1, the old 8-hour AUTORUN-3.ps1). It is historical/parked, not
 part of this directive.
+
+## Addendum 05:55Z — renamed to AUTORUN-5 / AUTORUN-6
+
+Your poll task runs each `soak/autorun/AUTORUN-<n>.ps1` name exactly once and
+keeps a done-marker per NAME. The names AUTORUN-2 and AUTORUN-3 were already
+marked done on this box from the first queue, so the new install script was
+skipped and the channel script (AUTORUN-4) correctly stopped with "station is
+not healthy". Nothing is wrong with your box. The same scripts are now queued
+under fresh names:
+
+- `AUTORUN-5.ps1` — install the e5020746 kit (fresh folder, verified, over the existing station)
+- `AUTORUN-6.ps1` — three channels for 2 hours
+- `AUTORUN-3.ps1` — the recurring verify (runs every poll once `state\soak-started` exists; its once-marker does not matter)

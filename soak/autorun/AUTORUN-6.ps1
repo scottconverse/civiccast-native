@@ -14,7 +14,7 @@ $kit   = "$root\kit-e5020746fa40e7a3f1a160d3a8e1add5c3b57786"
 $br    = "tester/soak8-e1acfe6-$env:COMPUTERNAME"
 $base  = 'http://127.0.0.1:8000'
 $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
-$log   = @("# AUTORUN-4 station setup + three-channel soak (2h candidate e5020746)", "- mission: soak8-e1acfe6", "- host: $env:COMPUTERNAME", "- utc: $stamp", "- kit: $kit", "- DryRun: $($DryRun.IsPresent)", "")
+$log   = @("# AUTORUN-6 station setup + three-channel soak (2h candidate e5020746)", "- mission: soak8-e1acfe6", "- host: $env:COMPUTERNAME", "- utc: $stamp", "- kit: $kit", "- DryRun: $($DryRun.IsPresent)", "")
 New-Item -Force -ItemType Directory "$repo\soak" | Out-Null
 New-Item -Force -ItemType Directory "$root\state" | Out-Null
 
@@ -37,8 +37,8 @@ for ($i = 0; $i -lt 40; $i++) {
   Start-Sleep -Seconds 30
 }
 if (-not $health -or $health.status -ne 'healthy') {
-  $log += "STALLED: station is not healthy; AUTORUN-1 must succeed first. last health: $($health | ConvertTo-Json -Compress -Depth 4)"
-  Save-Report -Lines $log -Name 'SETUP-BLOCKED.md' -Message "test: autorun-4 blocked (station not healthy) $stamp soak8-e1acfe6"
+  $log += "STALLED: station is not healthy; AUTORUN-5 must succeed first. last health: $($health | ConvertTo-Json -Compress -Depth 4)"
+  Save-Report -Lines $log -Name 'SETUP-BLOCKED.md' -Message "test: autorun-6 blocked (station not healthy) $stamp soak8-e1acfe6"
   exit 1
 }
 $log += "station healthy; schema=$($health.schema) db_revision=$($health.db_revision)"
@@ -71,7 +71,7 @@ if (-not $token) {
     $log += $body
     $log += '```'
     $log += '[DRYRUN] stopping before any HTTP write or git push -- no further setup performed.'
-    Save-Report -Lines $log -Name "AUTORUN-4-DRYRUN-$stamp.md" -Message "test: autorun-4 dry-run $stamp soak8-e1acfe6"
+    Save-Report -Lines $log -Name "AUTORUN-6-DRYRUN-$stamp.md" -Message "test: autorun-6 dry-run $stamp soak8-e1acfe6"
     exit 0
   }
   try {
@@ -97,7 +97,7 @@ if (-not $token) {
 } elseif ($DryRun) {
   $log += "[DRYRUN] existing token found at $tokenFile -- would reuse it, no first-admin POST needed."
   $log += '[DRYRUN] stopping before any HTTP write or git push -- no further setup performed.'
-  Save-Report -Lines $log -Name "AUTORUN-4-DRYRUN-$stamp.md" -Message "test: autorun-4 dry-run $stamp soak8-e1acfe6"
+  Save-Report -Lines $log -Name "AUTORUN-6-DRYRUN-$stamp.md" -Message "test: autorun-6 dry-run $stamp soak8-e1acfe6"
   exit 0
 }
 
@@ -109,7 +109,7 @@ if (-not $token) {
     $oa = Invoke-RestMethod -Uri "$base/openapi.json" -TimeoutSec 30
     $log += ($oa.paths.PSObject.Properties.Name | Where-Object { $_ -match 'setup|first-admin|login' })
   } catch { $log += "openapi read failed: $($_.Exception.Message)" }
-  Save-Report -Lines $log -Name 'SETUP-BLOCKED.md' -Message "test: autorun-4 blocked (no token) $stamp soak8-e1acfe6"
+  Save-Report -Lines $log -Name 'SETUP-BLOCKED.md' -Message "test: autorun-6 blocked (no token) $stamp soak8-e1acfe6"
   exit 2
 }
 $hdr = @{ Authorization = "Bearer $token" }
@@ -120,7 +120,7 @@ $log += "samples found: $($samples.Count)"
 foreach ($s in $samples) { $log += "  - $($s.Name) ($([math]::Round($s.Length/1MB)) MB)" }
 if ($samples.Count -lt 1) {
   $log += "STALLED: no sample videos in the kit (expected 4 under $kit\samples\)."
-  Save-Report -Lines $log -Name 'SETUP-BLOCKED.md' -Message "test: autorun-4 blocked (no samples) $stamp soak8-e1acfe6"
+  Save-Report -Lines $log -Name 'SETUP-BLOCKED.md' -Message "test: autorun-6 blocked (no samples) $stamp soak8-e1acfe6"
   exit 3
 }
 
@@ -172,7 +172,7 @@ foreach ($c in $channelSpecs) {
 if ($DryRun) {
   $log += ''
   $log += '[DRYRUN] stopping before any HTTP write or git push -- assets, schedule, and start-playout are not executed.'
-  Save-Report -Lines $log -Name "AUTORUN-4-DRYRUN-$stamp.md" -Message "test: autorun-4 dry-run $stamp soak8-e1acfe6"
+  Save-Report -Lines $log -Name "AUTORUN-6-DRYRUN-$stamp.md" -Message "test: autorun-6 dry-run $stamp soak8-e1acfe6"
   exit 0
 }
 
@@ -274,12 +274,12 @@ $log += "observed worker processes: gst-launch-1.0=$gst ffmpeg=$ff"
 
 # ---------------------------------------------------------------- 6. start clock
 Set-Content "$root\state\soak-started" -Value $startUtc.ToString('o') -Encoding ascii
-Save-Report -Lines $sched -Name 'CHANNEL-SCHEDULE.md' -Message "test: autorun-4 channel schedule $stamp soak8-e1acfe6"
+Save-Report -Lines $sched -Name 'CHANNEL-SCHEDULE.md' -Message "test: autorun-6 channel schedule $stamp soak8-e1acfe6"
 $startDoc = @("# soak8-e1acfe6 SOAK START (candidate e5020746, 2h)", "", "- host: $env:COMPUTERNAME",
   "- soak clock start (UTC): $($startUtc.ToString('o'))",
   "- planned duration: 2 hours (final verdict at T+2h; polling continues forever after)",
   "- channels: public/9001, education/9002, government/9003 (udp-ts)",
   "- engine: station default (GStreamer). Every heartbeat reports the engine actually running per channel.")
-Save-Report -Lines $startDoc -Name 'SOAK-START.md' -Message "test: autorun-4 soak start $stamp soak8-e1acfe6"
-Save-Report -Lines $log -Name "AUTORUN-4-RESULT-$stamp.md" -Message "test: autorun-4 result $stamp soak8-e1acfe6"
+Save-Report -Lines $startDoc -Name 'SOAK-START.md' -Message "test: autorun-6 soak start $stamp soak8-e1acfe6"
+Save-Report -Lines $log -Name "AUTORUN-4-RESULT-$stamp.md" -Message "test: autorun-6 result $stamp soak8-e1acfe6"
 exit 0

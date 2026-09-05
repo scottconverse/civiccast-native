@@ -1,4 +1,4 @@
-# AUTORUN-2 (soak8-e1acfe6) -- fetch + verify the FIXED kit into a fresh per-kit folder,
+# AUTORUN-5 (soak8-e1acfe6) -- fetch + verify the FIXED kit into a fresh per-kit folder,
 # then install it silently OVER the existing station (the customer upgrade path).
 # Executed automatically by the CivicCastSoak-Poll scheduled task, exactly once.
 # Idempotent: re-running only re-fetches bad/missing files and skips an install
@@ -12,7 +12,7 @@ $repo   = "$root\repo"
 $br     = "tester/soak8-e1acfe6-$env:COMPUTERNAME"
 $base   = 'http://192.168.0.135:8766/e5020746fa40e7a3f1a160d3a8e1add5c3b57786/'
 $stamp  = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
-$log    = @("# AUTORUN-2 kit fetch + install", "- mission: soak8-e1acfe6", "- host: $env:COMPUTERNAME", "- utc: $stamp", "- kit: $base", "")
+$log    = @("# AUTORUN-5 kit fetch + install", "- mission: soak8-e1acfe6", "- host: $env:COMPUTERNAME", "- utc: $stamp", "- kit: $base", "")
 
 $script:fetchPhase = $true
 New-Item -Force -ItemType Directory $dst | Out-Null
@@ -21,7 +21,7 @@ New-Item -Force -ItemType Directory "$repo\soak" | Out-Null
 # If this run cannot complete (kit not staged yet, server down, hash bad), clear our
 # own once-only marker so the 10-minute poll retries instead of giving up forever.
 function Reset-AutorunMarker {
-  Remove-Item "$root\state\autorun-done\AUTORUN-2.ps1.done" -Force -ErrorAction SilentlyContinue
+  Remove-Item "$root\state\autorun-done\AUTORUN-5.ps1.done" -Force -ErrorAction SilentlyContinue
 }
 
 # ---------------------------------------------------------- 1. manifest + files
@@ -31,7 +31,7 @@ if (-not (Test-Path "$dst\SHA256SUMS.txt") -or (Get-Item "$dst\SHA256SUMS.txt").
   Reset-AutorunMarker
   Set-Content "$repo\soak\INSTALL-RESULT.md" -Value ($log -join "`n") -Encoding utf8
   git -C $repo add soak/INSTALL-RESULT.md
-  git -C $repo commit --quiet -m "test: autorun-2 kit fetch BLOCKED $stamp soak8-e1acfe6"
+  git -C $repo commit --quiet -m "test: autorun-5 kit fetch BLOCKED $stamp soak8-e1acfe6"
   git -C $repo push --quiet origin $br 2>&1 | Out-Null
   exit 1
 }
@@ -71,7 +71,7 @@ if ($bad -ne 0) {
   Reset-AutorunMarker
   Set-Content "$repo\soak\INSTALL-RESULT.md" -Value ($log -join "`n") -Encoding utf8
   git -C $repo add soak/INSTALL-RESULT.md
-  git -C $repo commit --quiet -m "test: autorun-2 kit verify FAILED bad=$bad $stamp soak8-e1acfe6"
+  git -C $repo commit --quiet -m "test: autorun-5 kit verify FAILED bad=$bad $stamp soak8-e1acfe6"
   git -C $repo push --quiet origin $br 2>&1 | Out-Null
   exit 2
 }
@@ -83,7 +83,7 @@ if (-not $exe) {
   $log += "no installer .exe found at the kit root"
   Set-Content "$repo\soak\INSTALL-RESULT.md" -Value ($log -join "`n") -Encoding utf8
   git -C $repo add soak/INSTALL-RESULT.md
-  git -C $repo commit --quiet -m "test: autorun-2 no installer $stamp soak8-e1acfe6"
+  git -C $repo commit --quiet -m "test: autorun-5 no installer $stamp soak8-e1acfe6"
   git -C $repo push --quiet origin $br 2>&1 | Out-Null
   exit 3
 }
@@ -150,6 +150,6 @@ if ($healthy) { Set-Content "$root\state\installed" -Value $stamp -Encoding asci
 
 Set-Content "$repo\soak\INSTALL-RESULT.md" -Value ($log -join "`n") -Encoding utf8
 git -C $repo add soak/INSTALL-RESULT.md
-git -C $repo commit --quiet -m "test: autorun-2 install result exit=$installerExit healthy=$healthy $stamp soak8-e1acfe6"
+git -C $repo commit --quiet -m "test: autorun-5 install result exit=$installerExit healthy=$healthy $stamp soak8-e1acfe6"
 git -C $repo push --quiet origin $br 2>&1 | Out-Null
 if ($healthy) { exit 0 } else { exit 4 }
