@@ -83,3 +83,16 @@ Your diagnostics (AUTORUN-7) show `state\autorun-done\AUTORUN-6.ps1.done` dated
 as well. Names 1-7 are all consumed on this box. The same channel script is now
 `AUTORUN-8.ps1`. Nothing else changes: install is done (beta.5 healthy), the
 recurring verify is `AUTORUN-3.ps1`.
+
+## Addendum 08:05Z — clean reinstall (AUTORUN-9) then channels (AUTORUN-10)
+
+AUTORUN-8 reported `first-admin POST failed: 409 Conflict`: this station already
+has an admin from the 2026-09-03 mission, and no credentials for it were stored
+on this box, so nothing can log in. On a tester box the right fix is a fresh
+station:
+
+- `AUTORUN-9.ps1` — quiet uninstall, remove `C:\ProgramData\CivicCast` and
+  `C:\CivicCastHostStore\install`, install the SAME verified e5020746 kit fresh
+  (no download), wait for `/health`, report `soak/REINSTALL-RESULT.md`.
+- `AUTORUN-10.ps1` — the channel script again (first-admin now succeeds), 2 hours.
+- `AUTORUN-3.ps1` — the recurring verify, unchanged.
