@@ -217,6 +217,16 @@ foreach ($c in $channelSpecs) {
       $row.current_source_label   = $st.current_source_label
       $row.pid                    = $st.pid
       if ($st.PSObject.Properties.Name -contains 'engine') { $row.engine = $st.engine }
+      # The state row carries the playout worker pid; the process name tells the engine:
+      # python.exe = the GStreamer worker (civiccast\egress\gst\worker.py), ffmpeg.exe = ffmpeg.
+      if (-not $row.engine -and $st.PSObject.Properties.Name -contains 'pid' -and $st.pid) {
+        $wp = Get-Process -Id ([int]$st.pid) -ErrorAction SilentlyContinue
+        if ($wp) {
+          if ($wp.ProcessName -match '^python') { $row.engine = 'gstreamer' }
+          elseif ($wp.ProcessName -match '^ffmpeg') { $row.engine = 'ffmpeg' }
+          else { $row.engine = "unknown:$($wp.ProcessName)" }
+        }
+      }
     } catch { $row.api_error = "state: $($_.Exception.Message)" }
     try {
       $hl = @(Invoke-RestMethod -Uri "$base/api/staff/egress/channels/$($c.id)/health?limit=1" -Headers $hdr -TimeoutSec 20)
