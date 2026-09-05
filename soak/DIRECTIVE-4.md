@@ -75,3 +75,11 @@ under fresh names:
 - `AUTORUN-5.ps1` — install the e5020746 kit (fresh folder, verified, over the existing station)
 - `AUTORUN-6.ps1` — three channels for 2 hours
 - `AUTORUN-3.ps1` — the recurring verify (runs every poll once `state\soak-started` exists; its once-marker does not matter)
+
+## Addendum 07:55Z — channel script re-queued as AUTORUN-8
+
+Your diagnostics (AUTORUN-7) show `state\autorun-done\AUTORUN-6.ps1.done` dated
+2026-09-03, left by the first mission, so the renamed channel script was skipped
+as well. Names 1-7 are all consumed on this box. The same channel script is now
+`AUTORUN-8.ps1`. Nothing else changes: install is done (beta.5 healthy), the
+recurring verify is `AUTORUN-3.ps1`.
