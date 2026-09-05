@@ -1,0 +1,163 @@
+﻿{
+    "schema":  "civiccast-native-fleet-soak-verdict-v2",
+    "mission":  "soak8-e1acfe6",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "utc":  "20260905T113614Z",
+    "planned_hours":  2,
+    "actual_hours":  2.5,
+    "soak_start_utc":  "2026-09-05T09:06:14.8833448Z",
+    "engine_per_channel":  {
+                               "education":  [
+                                                 "none-running",
+                                                 "gstreamer"
+                                             ],
+                               "public":  [
+                                              "none-running",
+                                              "gstreamer"
+                                          ],
+                               "government":  [
+                                                  "none-running",
+                                                  "gstreamer"
+                                              ]
+                           },
+    "engine_observed_final":  {
+                                  "gst_launch_processes":  0,
+                                  "ffmpeg_processes":  0,
+                                  "gst_worker_processes":  0,
+                                  "gst_worker_pids":  [
+                                                          null
+                                                      ],
+                                  "inferred":  "none-running"
+                              },
+    "egress_probes":  7,
+    "egress_failures":  [
+                            {
+                                "utc":  "20260905T082845Z",
+                                "channel_id":  "public",
+                                "verdict":  "fail-timed-out",
+                                "last_error":  null
+                            },
+                            {
+                                "utc":  "20260905T082845Z",
+                                "channel_id":  "education",
+                                "verdict":  "fail-timed-out",
+                                "last_error":  null
+                            },
+                            {
+                                "utc":  "20260905T082845Z",
+                                "channel_id":  "government",
+                                "verdict":  "fail-timed-out",
+                                "last_error":  null
+                            },
+                            {
+                                "utc":  "20260905T090618Z",
+                                "channel_id":  "public",
+                                "verdict":  "fail-exit-",
+                                "last_error":  null
+                            },
+                            {
+                                "utc":  "20260905T090618Z",
+                                "channel_id":  "education",
+                                "verdict":  "fail-exit-",
+                                "last_error":  null
+                            },
+                            {
+                                "utc":  "20260905T090618Z",
+                                "channel_id":  "government",
+                                "verdict":  "fail-exit-",
+                                "last_error":  null
+                            }
+                        ],
+    "not_on_air_gstreamer_events":  [
+                                        {
+                                            "utc":  "20260905T082845Z",
+                                            "channel_id":  "public",
+                                            "engine_state":  null,
+                                            "engine":  "none-running"
+                                        },
+                                        {
+                                            "utc":  "20260905T082845Z",
+                                            "channel_id":  "education",
+                                            "engine_state":  null,
+                                            "engine":  "none-running"
+                                        },
+                                        {
+                                            "utc":  "20260905T082845Z",
+                                            "channel_id":  "government",
+                                            "engine_state":  null,
+                                            "engine":  "none-running"
+                                        },
+                                        {
+                                            "utc":  "20260905T090618Z",
+                                            "channel_id":  "public",
+                                            "engine_state":  "ON_AIR",
+                                            "engine":  "none-running"
+                                        },
+                                        {
+                                            "utc":  "20260905T090618Z",
+                                            "channel_id":  "education",
+                                            "engine_state":  "ON_AIR",
+                                            "engine":  "none-running"
+                                        },
+                                        {
+                                            "utc":  "20260905T090618Z",
+                                            "channel_id":  "government",
+                                            "engine_state":  "ON_AIR",
+                                            "engine":  "none-running"
+                                        },
+                                        {
+                                            "utc":  "20260905T093613Z",
+                                            "channel_id":  "public",
+                                            "engine_state":  "ON_AIR",
+                                            "engine":  "none-running"
+                                        },
+                                        {
+                                            "utc":  "20260905T093613Z",
+                                            "channel_id":  "education",
+                                            "engine_state":  "ON_AIR",
+                                            "engine":  "none-running"
+                                        },
+                                        {
+                                            "utc":  "20260905T093613Z",
+                                            "channel_id":  "government",
+                                            "engine_state":  "ON_AIR",
+                                            "engine":  "none-running"
+                                        },
+                                        {
+                                            "utc":  "20260905T113614Z",
+                                            "channel_id":  "public",
+                                            "engine_state":  "FALLBACK_SLATE",
+                                            "engine":  "gstreamer"
+                                        },
+                                        {
+                                            "utc":  "20260905T113614Z",
+                                            "channel_id":  "government",
+                                            "engine_state":  "FALLBACK_SLATE",
+                                            "engine":  "gstreamer"
+                                        }
+                                    ],
+    "relaunches_per_channel":  {
+                                   "education":  1,
+                                   "public":  2,
+                                   "government":  3
+                               },
+    "relaunches_total":  6,
+    "last_errors_per_channel":  {
+                                    "education":  {
+
+                                                  },
+                                    "public":  {
+
+                                               },
+                                    "government":  {
+
+                                                   }
+                                },
+    "heartbeats_written":  83,
+    "heartbeats_expected":  4,
+    "gaps":  [
+
+             ],
+    "verdict":  "FAIL",
+    "note":  "PASS requires: all channels ON_AIR on GStreamer at every cycle, tsp pass every cycle, and zero relaunches per channel. Relaunch/error counts are reported either way, never suppressed. Polling does NOT stop here -- a published verdict ends this mission data collection, never polling duty."
+}
