@@ -119,3 +119,24 @@ exact API (multipart asset upload -> package -> ready -> approve; schedule +
 Commit-to-Air; config PUT with slate_message and sink loudness/EAS fields; start),
 clears the false marker first, captures every non-2xx response body, and sets
 `soak-started` only after a channel reports ON_AIR.
+
+
+## Addendum (second soak) -- AUTORUN-9j: upgrade to kit 91caebc and restart the 2-hour soak
+
+Soak #1 on kit e502074 ended FAIL (relaunches public 2 / education 1 / government 3; TSDuck pass
+every cycle). Root cause measured on this box: the live caption tap ran CPU ASR for all three
+channels in-process, held the control plane near 3 cores, and starved the playout workers
+(`CTRL stall: no output for 10s` -> relaunch). The fix (PR #172) is in kit
+`91caebccc6a6decef476fea5cd785a9ff19abfe6` (main; installer 1.0.0-beta.5), served from
+`http://192.168.0.135:8766/91caebccc6a6decef476fea5cd785a9ff19abfe6/` (19-line SHA256SUMS).
+
+`AUTORUN-9j.ps1` (runs once): fetch + verify the kit into `C:\CivicCastSoak\kit-91caebc...`,
+install it silently OVER the running station (customer upgrade path), wait for `/health`
+healthy + schema current, wait until all three channels report ON_AIR, then archive soak #1's
+probes to `soak/archive-e502074-soak1/`, reset the relaunch/pid/rollup counters under
+`state\`, and write a fresh `state\soak-started`. `AUTORUN-3` then verifies every 30 min as
+before and writes a new `soak/final-verdict.json` at 2 h. PASS rule unchanged: ON_AIR on
+GStreamer every cycle, tsp pass every cycle, ZERO relaunches per channel.
+Result file: `soak/INSTALL-RESULT-9j.md`. Exit codes: 1 fetch blocked (retries next poll),
+2 hash mismatch (retries), 3 no installer, 4 not healthy after install, 5 fewer than 3
+channels ON_AIR (soak NOT restarted; report and stop).
