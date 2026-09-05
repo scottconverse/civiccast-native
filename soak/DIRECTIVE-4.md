@@ -201,3 +201,8 @@ After the clean reinstall, `AUTORUN-9v.ps1` repeats the installed-code check (sa
 ## Addendum -- AUTORUN-9w
 
 `AUTORUN-9u` uploaded the 4 clips, scheduled 272 items per channel (30 s each: ffprobe is not on this box, default duration), applied config and sent start, but no channel reported ON_AIR within its 3-minute window on the freshly installed station, so it did not write `soak-started`. `AUTORUN-9w.ps1` (runs once) records each channel's raw `/state`, sends `start` again (harmless if already running), polls up to 6 minutes, and when all three are ON_AIR archives the earlier probes to `soak/archive-91caebc-soak2-oldcode/`, resets the counters and writes `state\soak-started` (soak #3). Result `soak/RESTART-RESULT-9w.md`; exit 5 = still <3 ON_AIR.
+
+
+## Addendum -- AUTORUN-9x (read-only)
+
+The 20:46Z probe of soak #3 shows one relaunch per channel in the first 30 minutes on the NEW code (9w also re-sent `start` at 20:16:29Z, which restarts workers, so some of that may be the harness). `AUTORUN-9x.ps1` (runs once, changes nothing) dumps the caption runtime-status files, every relaunch / stall / egress-state / start-command line from the control-plane log since 20:10Z with timestamps, counts, the station profile and channel states, and a 10-s per-process CPU sample. Result `soak/DIAG-9x-<stamp>.md`.
