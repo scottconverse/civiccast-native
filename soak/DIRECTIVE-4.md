@@ -206,3 +206,8 @@ After the clean reinstall, `AUTORUN-9v.ps1` repeats the installed-code check (sa
 ## Addendum -- AUTORUN-9x (read-only)
 
 The 20:46Z probe of soak #3 shows one relaunch per channel in the first 30 minutes on the NEW code (9w also re-sent `start` at 20:16:29Z, which restarts workers, so some of that may be the harness). `AUTORUN-9x.ps1` (runs once, changes nothing) dumps the caption runtime-status files, every relaunch / stall / egress-state / start-command line from the control-plane log since 20:10Z with timestamps, counts, the station profile and channel states, and a 10-s per-process CPU sample. Result `soak/DIAG-9x-<stamp>.md`.
+
+
+## Addendum -- AUTORUN-9y (read-only)
+
+DIAG-9x (20:56Z): caption tap is the new code and backs off (state paused, CRITICAL=0, control plane ~30% CPU) -- that part of #172 works. But every channel's GStreamer worker exits with `CTRL stall: no output for 10s` and is relaunched about every 30 seconds (one worker at 3.5 GB / 1238 threads). Soak #1 on the older code with the same 30-s schedule restarted only every 10-25 min, so this is new in 91caebc. `AUTORUN-9y.ps1` (runs once, changes nothing) captures worker stderr/stdout tails, thread/RSS growth over 30 s, the per-channel work dirs, and the control-plane plan/segment/prepare/reload/stall lines since 20:16Z. Result `soak/DIAG-9y-<stamp>.md`.
