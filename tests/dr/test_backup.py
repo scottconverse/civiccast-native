@@ -270,6 +270,52 @@ def test_the_guard_can_be_opted_out_of_deliberately(monkeypatch) -> None:
     assert "LC_COLLATE 'en_US.UTF-8'" in argv
 
 
+def test_a_win1252_source_locale_is_carried_through_not_replaced_by_the_utf8_fallback(
+    monkeypatch,
+) -> None:
+    """The encoding branch's addendum: a source database provisioned before the
+    initdb UTF8 fix (WIN1252, the OS-codepage default on Windows) must be
+    CLONED as WIN1252 by the drill/restore path, not silently upgraded to the
+    ``_FALLBACK_DATABASE_LOCALE`` UTF8 constant -- that fallback is for an
+    UNREADABLE row only (see its updated docstring), never a substitute for a
+    successfully measured non-UTF8 locale. Goes through the REAL
+    read_database_locale (via a fake _spawn_pg_tool returning psql's own
+    tuples-only/no-align/pipe-separated output shape), not a monkeypatched
+    stand-in for read_database_locale itself, so this proves the measurement
+    path end to end."""
+    import civiccast.dr.backup as backup_module
+
+    class _LocaleRowResult:
+        returncode = 0
+        stdout = b"WIN1252|French_France.1252|French_France.1252\n"
+        stderr = b""
+
+    class _CreateResult:
+        returncode = 0
+        stdout = b""
+        stderr = b""
+
+    seen: dict[str, object] = {}
+
+    def _fake_spawn(argv, *, tool, **kwargs):  # type: ignore[no-untyped-def]
+        if tool == "psql (source database locale)":
+            return _LocaleRowResult()
+        seen["create_argv"] = argv
+        return _CreateResult()
+
+    monkeypatch.setattr(backup_module, "_spawn_pg_tool", _fake_spawn)
+
+    url = create_fresh_postgres_database(
+        database_url="postgresql://u:p@127.0.0.1:5432/civiccast",
+        database_name="civiccast_drill_restore",
+    )
+    assert url.endswith("/civiccast_drill_restore")
+    argv = " ".join(str(part) for part in seen["create_argv"])
+    assert "ENCODING 'WIN1252'" in argv, "the measured source locale must win over the fallback"
+    assert "UTF8" not in argv
+    assert "LC_COLLATE 'French_France.1252'" in argv
+
+
 def test_an_unreadable_source_locale_falls_back_rather_than_failing(monkeypatch) -> None:
     import civiccast.dr.backup as backup_module
 

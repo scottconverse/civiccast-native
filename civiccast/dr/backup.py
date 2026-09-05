@@ -419,11 +419,24 @@ class DatabaseLocale:
     lc_ctype: str
 
 
-#: What a database inherits when its own row cannot be read. UTF8 + C is the
-#: safest pair: UTF8 because that is what this product's own provisioning
-#: creates, and C because it is byte-ordering, i.e. deterministic on every
-#: platform -- so a fallback clone still orders rows identically to itself,
-#: even if it may not match a differently-collated source.
+#: What a database inherits when its own row cannot be read.
+#:
+#: NOT necessarily what this product's own provisioning creates --
+#: civiccast/native/provision/seams.py's ``initdb`` passed no
+#: ``-E``/``--encoding``/``--locale`` before this defect was fixed, so any
+#: cluster provisioned before then is the OS codepage (WIN1252 on Windows),
+#: not UTF8. Only a cluster initdb'd AFTER that fix (``initdb_argv`` pins
+#: ``--encoding UTF8 --locale C`` for NEW clusters only) is actually UTF8/C.
+#: This constant is used ONLY when :func:`read_database_locale` cannot read
+#: the SOURCE database's real row at all (old server, permission refusal, a
+#: database that does not exist yet) -- the normal path always clones the
+#: source's MEASURED encoding/collation via ``pg_encoding_to_char(encoding)``
+#: (see :func:`read_database_locale`), never this constant. UTF8 + C remains
+#: the right pair to fall back to when the real value is unreadable: UTF8 can
+#: encode anything (never a worse choice for a fresh clone with no better
+#: information), and C is byte-ordering -- deterministic on every platform, no
+#: locale pack required -- so a fallback clone still orders rows identically
+#: to itself, even if it may not match a differently-collated source.
 _FALLBACK_DATABASE_LOCALE = DatabaseLocale(encoding="UTF8", lc_collate="C", lc_ctype="C")
 
 #: Characters a Postgres encoding / locale name can contain. Anything else is

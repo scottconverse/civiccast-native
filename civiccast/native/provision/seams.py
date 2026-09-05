@@ -32,6 +32,19 @@ hard rule: "NO real postgres execution in unit tests" -- that proof belongs
 to the WP2/WP5 live lifecycle matrix). :func:`initdb_argv`'s pure argv-shape
 and the atomic-write helper ARE unit-tested, since neither spawns a process
 or requires PostgreSQL to exist on the test host.
+
+PROVISION NOTE (encoding): :func:`initdb_argv` pins ``--encoding=UTF8
+--locale=C`` for every NEW cluster (``run_initdb`` only ever fires when
+``detect_postgres_cluster`` finds no existing ``PG_VERSION``, see
+``orchestrator.py``'s ``needs_initdb`` branch). A cluster that already
+existed before this change is NEVER touched here and keeps whatever
+encoding it was originally initdb'd with -- on Windows that was previously
+the OS codepage (WIN1252 in the sandbox/CI fleet), since nothing passed
+``-E``/``--encoding``/``--locale`` before. Any code path that persists
+operator-entered or child-process free text must therefore still assume the
+database MAY be non-UTF8 and go through ``civiccast/egress/_text.py``'s
+``db_safe_text`` -- it must never assume this fix's UTF8 pin applies
+cluster-wide.
 """
 
 from __future__ import annotations
@@ -115,6 +128,16 @@ PSQL_TIMEOUT_SECONDS = 120.0
 #: one loopback rule -- see :func:`initdb_argv`'s docstring for why.
 INITDB_AUTH_HOST_METHOD = "scram-sha-256"
 
+#: Server encoding pinned for every NEW cluster -- see :func:`initdb_argv`'s
+#: docstring. Existing clusters (initdb'd before this constant existed) are
+#: untouched and may still be the OS codepage (WIN1252 on Windows).
+INITDB_ENCODING = "UTF8"
+
+#: Locale pinned for every NEW cluster -- see :func:`initdb_argv`'s docstring
+#: for why ``C`` (byte-ordering, always available, no locale pack needed)
+#: rather than a language-specific locale.
+INITDB_LOCALE = "C"
+
 
 def initdb_argv(*, initdb_path: str, data_dir: str, username: str, pwfile: str) -> list[str]:
     """Pure argv construction for ``initdb`` -- separated from the spawn
@@ -143,6 +166,35 @@ def initdb_argv(*, initdb_path: str, data_dir: str, username: str, pwfile: str) 
     can never silently drift apart (a freshly initialized cluster's default
     auth is never weaker -- or different -- from what the provisioned
     ``pg_hba.conf`` will require once the config-write phase runs).
+
+    ``--encoding=UTF8 --locale=C`` (:data:`INITDB_ENCODING`,
+    :data:`INITDB_LOCALE`) pin the cluster's server encoding rather than
+    inheriting ``initdb``'s own platform default. On Windows that default is
+    the process's OS codepage (WIN1252 in the sandbox/CI fleet) because
+    nothing here ever passed ``-E``/``--encoding``/``--locale`` -- and no
+    caller sets ``client_encoding`` either (:mod:`civiccast.db.session`,
+    :mod:`civiccast.db.url`) -- so any character outside that codepage
+    written into a persisted free-text column (an operator-entered source
+    title, a folded child-stderr tail, ...) raised ``UnicodeEncodeError`` in
+    psycopg and aborted the whole automation pass for that channel (see
+    ``civiccast/egress/_text.py``'s ``db_safe_text`` and
+    ``civiccast/egress/daemon.py``'s ``_ascii_safe`` docstring for the T6
+    soak evidence). UTF8 can encode any Unicode text, closing the defect at
+    its root for every NEW cluster. ``C`` locale (rather than a language-
+    specific one) is deliberate too: it is byte-ordering, not a translated
+    collation, so it is available on every platform without a locale pack
+    and never varies by OS install language -- ``LC_COLLATE``/``LC_CTYPE``
+    ordering only needs to be self-consistent within one cluster, not match
+    any particular human language.
+
+    This only ever changes what a NEW cluster gets: ``initdb`` is only
+    invoked by the orchestrator when ``detect_postgres_cluster`` finds no
+    existing ``PG_VERSION`` file (see ``orchestrator.py``'s
+    ``needs_initdb`` branch) -- an existing cluster provisioned before this
+    change keeps whatever encoding it already has, and nothing here
+    retroactively touches it. That is exactly why the encoding cannot be
+    assumed UTF8 anywhere a persisted value might reach the database: see
+    ``civiccast/egress/_text.py``.
     """
 
     if not initdb_path.strip():
@@ -162,6 +214,10 @@ def initdb_argv(*, initdb_path: str, data_dir: str, username: str, pwfile: str) 
         "--pwfile",
         pwfile,
         f"--auth-host={INITDB_AUTH_HOST_METHOD}",
+        "--encoding",
+        INITDB_ENCODING,
+        "--locale",
+        INITDB_LOCALE,
         "--no-instructions",
     ]
 

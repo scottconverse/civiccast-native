@@ -1106,7 +1106,15 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # (1786, 1987) -> (1787, 1988).
     # 2026-09-04 upgrade-over-running-station provision fix (#159): +2 pure, +2 total
     # (tests/native/test_provision_cli.py): (1787, 1988) -> (1789, 1990).
-    assert (collect("not windows_only"), collect()) == (1789, 1990)
+    # fix/state-write-encoding: one new platform-independent case,
+    # test_initdb_argv_pins_utf8_encoding_and_c_locale_for_new_clusters in
+    # tests/native/test_provision_seams.py, pinning initdb_argv's new
+    # --encoding/--locale flags (the rest of that PR's tests live under
+    # tests/egress and tests/dr, outside this collector's tests/native scope,
+    # so they do not move this floor). Both lanes advance by one. Re-derived
+    # by an actual `--collect-only` run on this tree, not by arithmetic:
+    # (1789, 1990) -> (1790, 1991).
+    assert (collect("not windows_only"), collect()) == (1790, 1991)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

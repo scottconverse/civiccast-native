@@ -63,6 +63,25 @@ def test_initdb_argv_shape() -> None:
     assert "hunter2" not in " ".join(argv)
 
 
+def test_initdb_argv_pins_utf8_encoding_and_c_locale_for_new_clusters() -> None:
+    """Every NEW cluster must be initdb'd UTF8/C, never inheriting the
+    platform default (WIN1252 on Windows) -- see the encoding defect this
+    closes in the module docstring and civiccast/egress/_text.py. Existing
+    clusters are never touched by this (initdb only runs when
+    detect_postgres_cluster finds none, see orchestrator.py)."""
+
+    argv = initdb_argv(
+        initdb_path="initdb.exe",
+        data_dir=r"C:\pgdata",
+        username="civiccast_svc",
+        pwfile=r"C:\state\tmp\pwfile.tmp",
+    )
+    assert "--encoding" in argv
+    assert argv[argv.index("--encoding") + 1] == "UTF8"
+    assert "--locale" in argv
+    assert argv[argv.index("--locale") + 1] == "C"
+
+
 def test_initdb_argv_auth_matches_pg_hba_conf_method() -> None:
     # Drift guard: the provisioned pg_hba.conf's "host" rule and initdb's
     # --auth-host default must name the EXACT SAME auth method string, pulled

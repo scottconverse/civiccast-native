@@ -974,7 +974,13 @@ class GstPlayoutEngine:
             # so the reason a channel bounced is on the operator's state row instead
             # of only in an uncollected stdout log.
             print(
-                f"CTRL stall: no output for {int(self.stall_timeout_s)}s — quitting for daemon restart",
+                # ASCII only: the daemon folds this line into the state row's
+                # last_error, which is written to Postgres. A non-ASCII byte here
+                # is re-read as U+FFFD (_child_stderr_tail reads errors="replace")
+                # and a non-UTF8 client_encoding then fails the whole state write
+                # -- see _child_stderr_tail's sanitiser and the T6 soak evidence
+                # (soak-120-e502074-20260905).
+                f"CTRL stall: no output for {int(self.stall_timeout_s)}s - quitting for daemon restart",
                 file=sys.stderr,
                 flush=True,
             )
