@@ -155,3 +155,8 @@ Why the channels stayed dark: egress state is a Postgres row (`egress_states`), 
 ## Addendum -- AUTORUN-9m: reschedule content, then soak #2
 
 The 18:25Z rollup shows all three channels running on GStreamer in FALLBACK_SLATE with tsp pass: they did come back after the upgrade, but soak #1's schedule (2h15 from 09:05Z) ran out hours ago, so there is nothing to play. `AUTORUN-9l` will only send `start` (harmless). `AUTORUN-9m.ps1` (runs once) is AUTORUN-9e with the upload step replaced: it lists `/api/staff/assets`, reuses every `soak8-9e-*` asset in a ready state (durations from the record, else ffprobe of the matching sample clip), schedules 2h15 back-to-back per channel + Commit-to-Air, re-applies the channel config, sends start, polls up to 6 min for ON_AIR (all three), archives soak #1's probes to `soak/archive-e502074-soak1/`, resets the relaunch counters and writes a fresh `state\soak-started`. Results: `AUTORUN-9m-RESULT-<stamp>.md`, `CHANNEL-SCHEDULE-9m.md`, `SOAK-START-9m.md`, or `SETUP-BLOCKED-9m.md`.
+
+
+## Addendum -- AUTORUN-3 warm-up grace (verdict rule change, rev 22)
+
+AUTORUN-9m reset `last-egress-run`, so AUTORUN-3 probed 19 s after soak-started (18:40:55Z): tsp pass on all three channels, but education and government were still TRANSITIONING from the start command. Under the strict rule that one warm-up sample alone would make a clean 2-hour soak FAIL. Rule now: probes taken within 3 minutes of soak-started stay on disk and in the rollups but are excluded from the verdict; the verdict JSON lists them in `warmup_probes_excluded`. Everything else (ON_AIR on GStreamer every cycle, tsp pass every cycle, zero relaunches) is unchanged.

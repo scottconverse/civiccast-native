@@ -327,9 +327,17 @@ if ($elapsedH -ge 2 -and -not (Test-Path "$repo\soak\final-verdict.json")) {
   $perChannelRelaunches = @{}
   $perChannelLastErrors = @{}
   $anyNotOnAirGst = @()
+  # Warm-up grace: a probe taken within 3 minutes of soak-started samples channels that
+  # are still TRANSITIONING from the start command (seen 2026-09-05 18:40:55Z, 19 s after
+  # start). Those probes are kept on disk and counted below, but excluded from the verdict.
+  $warmupUntil = $startUtc.AddMinutes(3)
+  $warmupExcluded = @()
   foreach ($f in $all) {
     try {
       $j = Get-Content $f.FullName -Raw | ConvertFrom-Json
+      $probeUtc = $null
+      try { $probeUtc = [datetime]::ParseExact("$($j.utc)", 'yyyyMMddTHHmmssZ', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal).ToUniversalTime() } catch { $probeUtc = $null }
+      if ($probeUtc -and $probeUtc -lt $warmupUntil) { $warmupExcluded += "$($j.utc)"; continue }
       foreach ($ch in $j.channels) {
         if (-not $perChannelEngine.ContainsKey($ch.channel_id)) { $perChannelEngine[$ch.channel_id] = @() }
         $e = $(if ($ch.engine) { "$($ch.engine)" } else { "$($j.engine_observed.inferred)" })
@@ -365,6 +373,7 @@ if ($elapsedH -ge 2 -and -not (Test-Path "$repo\soak\final-verdict.json")) {
     engine_per_channel = $perChannelEngine
     engine_observed_final = $engineObserved
     egress_probes = $all.Count
+    warmup_probes_excluded = @($warmupExcluded)
     egress_failures = @($egressFailures)
     not_on_air_gstreamer_events = @($anyNotOnAirGst)
     relaunches_per_channel = $perChannelRelaunches
@@ -374,7 +383,7 @@ if ($elapsedH -ge 2 -and -not (Test-Path "$repo\soak\final-verdict.json")) {
     heartbeats_expected = $expectedHb
     gaps = @($(if ($hbs.Count -lt $expectedHb - 1) { "heartbeat gap: $($hbs.Count) written vs ~$expectedHb expected" }))
     verdict = $(if (@($egressFailures).Count -eq 0 -and @($anyNotOnAirGst).Count -eq 0 -and $totalRelaunches -eq 0 -and $hbs.Count -ge $expectedHb - 1) { 'PASS' } else { 'FAIL' })
-    note = 'PASS requires: all channels ON_AIR on GStreamer at every cycle, tsp pass every cycle, and zero relaunches per channel. Relaunch/error counts are reported either way, never suppressed. Polling does NOT stop here -- a published verdict ends this mission data collection, never polling duty.'
+    note = 'PASS requires: all channels ON_AIR on GStreamer at every cycle after a 3-minute warm-up grace from soak-started (warm-up probes are listed in warmup_probes_excluded), tsp pass every cycle, and zero relaunches per channel. Relaunch/error counts are reported either way, never suppressed. Polling does NOT stop here -- a published verdict ends this mission data collection, never polling duty.'
   }
   if ($DryRun) {
     Write-Host "[DRYRUN] would write $repo\soak\final-verdict.json and git add/commit/push. verdict=$($verdict.verdict)"

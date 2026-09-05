@@ -1,6 +1,7 @@
 # soak8-e1acfe6 Latest Test Directive
 Current: soak/DIRECTIVE-4.md
 Branch: soak8-e1acfe6-directives
+Updated: 2026-09-05T18:47Z (rev 22 - AUTORUN-3 verdict: 3-minute warm-up grace after soak-started; warm-up probes listed in warmup_probes_excluded, never deleted)
 Updated: 2026-09-05T18:34Z (rev 21 - AUTORUN-9m: the channels are up but on FALLBACK_SLATE because soak #1 schedule ran out; reschedule 2h15 of the approved soak assets per channel + commit-to-air, start, wait ON_AIR, archive soak #1, start soak #2)
 Updated: 2026-09-05T18:28Z (rev 20 - AUTORUN-9l: send start to the three channels (they only auto-resume with auto_start=true), wait 3/3 ON_AIR, then archive soak #1 and start soak #2 on kit 91caebc)
 Updated: 2026-09-05T18:26Z (rev 19 - AUTORUN-9k read-only: why 0/3 channels ON_AIR after the 91caebc upgrade; egress dir, raw channel/schedule/playout API, installed version)
