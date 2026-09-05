@@ -1,0 +1,43 @@
+﻿{
+    "schema":  "civiccast-native-fleet-heartbeat-v1",
+    "mission":  "soak8-e1acfe6",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "utc":  "20260905T070612Z",
+    "health":  {
+                   "status":  "healthy",
+                   "version":  "1.0.0-beta.5",
+                   "schema":  "current",
+                   "schema_db_revision":  "0087_retention_terms",
+                   "schema_expected_head":  "0087_retention_terms",
+                   "mode":  "normal"
+               },
+    "db_revision":  null,
+    "service":  "Running",
+    "cpu_pct":  7.3,
+    "mem_free_mb":  10318,
+    "disk_free_gb":  264,
+    "uptime_min":  11878,
+    "processes":  [
+                      {
+                          "ProcessName":  "python",
+                          "Id":  12008,
+                          "rss_mb":  199,
+                          "cpu_s":  13
+                      },
+                      {
+                          "ProcessName":  "pythonservice",
+                          "Id":  8344,
+                          "rss_mb":  88,
+                          "cpu_s":  6.3
+                      }
+                  ],
+    "engine_observed":  {
+                            "gst_launch_processes":  0,
+                            "ffmpeg_processes":  0,
+                            "inferred":  "none-running"
+                        },
+    "egress_channels":  [
+
+                        ],
+    "soak_started":  false
+}
