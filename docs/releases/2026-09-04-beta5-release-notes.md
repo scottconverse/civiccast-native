@@ -15,13 +15,14 @@ channel. Root cause (item 51 in "Known issues" below) is a regression
 introduced by #170 -- not present in beta.4 -- where a widened plan window
 builds far more decoder chains than an 8-core CPU-only station can run at
 once. A hotfix, `fix/plan-window-decoder-blowup`, is open but not yet
-merged. `v1.0.0-beta.5` will be cut from `main` after that hotfix merges,
-followed by a new Gate A run and a new clean-install hardware soak on a new
-candidate. Everything below that names `91caebc` / build `33971258093` /
-Gate A `33972726431` describes **candidate 1**: Gate A PASS x3, hardware
-soak FAIL (item 51). Candidate 2's identity is pending:
-`<BETA5_FINAL_SHA>` / `<BETA5_FINAL_BUILD_RUN>` / `<GATE_A_FINAL_RUN_ID>` /
-`<SOAK5_START_UTC>` / `<SOAK5_VERDICT>` / `<SOAK5_RELAUNCHES>`.
+merged (as #174). `v1.0.0-beta.5` will be cut from `main` at source SHA
+`609273da22b968b8ed9320dfc158d67b01eb30b3` (`609273d`, build run
+`33997406150`) as candidate 2, following a new Gate A run and a new
+clean-install hardware soak. Everything below that names `91caebc` / build
+`33971258093` / Gate A `33972726431` describes **candidate 1**: Gate A
+PASS x3, hardware soak FAIL (item 51). Candidate 2's remaining identity is
+pending: `<GATE_A_FINAL_RUN_ID>` / `<SOAK5_START_UTC>` /
+`<SOAK5_VERDICT>` / `<SOAK5_RELAUNCHES>`.
 
 **Publisher (once run):** the coordinating agent, per the owner's
 2026-09-02 delegation ("every green build gets tagged and published" --
@@ -38,8 +39,9 @@ not be published; the paragraph below records what candidate 1's publish
 command and Gate A run were, as history, not as a live plan.** `v1.0.0-beta.5`
 will publish as a GitHub prerelease on
 [`scottconverse/civiccast-native`](https://github.com/scottconverse/civiccast-native/releases),
-targeting source SHA `<BETA5_FINAL_SHA>` once candidate 2 passes its own
-Gate A and hardware soak. Like beta.3/beta.4, it will be
+targeting source SHA `609273da22b968b8ed9320dfc158d67b01eb30b3` once
+candidate 2 passes its own Gate A and hardware soak. Like beta.3/beta.4,
+it will be
 downloadable: `setup.exe` and the runtime `.ccpack` packs as release assets,
 verified by a published `SHA256SUMS.txt` and a `setup.exe.sidecar.json`
 sidecar.
@@ -54,8 +56,9 @@ Candidate 1 would have published via `python scripts/release/publish_beta_candid
 --kit-dir <kit> --source-sha 91caebccc6a6decef476fea5cd785a9ff19abfe6 --build-run-id 33971258093
 --gate-a-run-id 33972726431 --tag v1.0.0-beta.5 --truth-status current`
 (never run -- the hardware soak failed first). Candidate 2's equivalent
-command, once its own Gate A run passes, uses `<BETA5_FINAL_SHA>`,
-`<BETA5_FINAL_BUILD_RUN>`, and `<GATE_A_FINAL_RUN_ID>`. The publisher's
+command, once its own Gate A run passes, uses
+`609273da22b968b8ed9320dfc158d67b01eb30b3`, `33997406150`, and
+`<GATE_A_FINAL_RUN_ID>`. The publisher's
 fail-closed checks must all pass before any GitHub state is touched:
 version identity agreeing across `setup.exe` ProductVersion,
 `civiccast._native_version.__version__`, and the tag (already
@@ -301,11 +304,22 @@ approved LPM clips were rescheduled with their real durations -- 67s, 67s,
 667s, and 2365s -- instead of the 30-second default soak #3 used, which
 sharply cuts the number of schedule items (and therefore decoder chains)
 a 30-minute plan window holds without touching #170's plan-window code at
-all. Soak clock started `<SOAK4_START_UTC>`.
+all. Soak clock started `2026-09-05T21:08:51Z` on kit `91caebc`.
 
-**Result: `<SOAK4_VERDICT>`, pending.** This section will be updated in
-place once the soak finishes; do not read a pass/fail verdict here until
-the placeholder above is filled with a real result.
+**Result: FAIL (relaunches).** The rescheduled long items collided (HTTP
+409) with the 30-second items still queued, which stayed in the plan
+until roughly `22:20Z` -- so the first ~70 minutes of the run stayed on
+the 30-second items and kept relaunching. Once the plan window actually
+held the long clips, each worker's RSS fell from roughly 3.5 GB to
+roughly 0.35 GB -- the item-51 decoder-pileup mechanism seen live,
+confirming rather than disproving the root cause rather than isolating a
+separate item-boundary effect. The long-item phase then hit a schedule
+gap (`No valid source plan is available`, falling back to slate); one
+channel tripped the 5-crash guard; the planner then issued a rollover for
+a plan it believed had ended 1,208 seconds earlier; and all three
+channels sat in `TRANSITIONING` from `22:55Z` onward and did not recover
+on their own -- logged as item 54 in "Known issues" below (planner/
+rollover accounting after a fallback; hotfix #174 does not address it).
 
 ## Also in this candidate: the Gate A schema proof now actually executes
 
@@ -426,6 +440,16 @@ path, only the independent proof that checks it from the outside.
    8 segments, ties the replan floor to the plan length, and hard-caps
    decoder chains in the engine. Not part of candidate 1; will be part of
    candidate 2.
+8. **(item 54) After a schedule gap or a crash-loop fallback, the planner
+   may issue a stale rollover and a channel can sit in `TRANSITIONING`
+   indefinitely.** MEASURED: soak #4, kit `91caebc` -- once the plan
+   window held the rescheduled long clips, a schedule gap fell back to
+   slate, one channel tripped the 5-crash guard, and the planner then
+   issued a rollover for a plan it believed had ended 1,208 seconds
+   earlier; all three channels sat in `TRANSITIONING` from `22:55Z`
+   onward and never recovered on their own. **Operator action:** Stop
+   then Start the affected channel. **Fix pending** -- not addressed by
+   hotfix #174.
 
 ## Also in this candidate: release-prep
 
@@ -492,17 +516,21 @@ publishable.**
   started `2026-09-05T20:16:29Z` on tester `DESKTOP-VBMA6O5`, `FAIL` --
   see "Root cause of soak #3" above.
 - **Soak #4 (real clip durations, item-boundary diagnostic):** clock
-  started `<SOAK4_START_UTC>`, result `<SOAK4_VERDICT>` pending.
+  started `2026-09-05T21:08:51Z` on kit `91caebc`, result `FAIL
+  (relaunches)` -- see "Fourth real-hardware soak" above; also surfaced
+  item 54 (planner/rollover accounting after a fallback).
 
-**Candidate 2 -- pending. To be filled in once a new candidate cuts from
-`main` after `fix/plan-window-decoder-blowup` merges:**
+**Candidate 2 -- source SHA `609273da22b968b8ed9320dfc158d67b01eb30b3`
+(`609273d`), build run `33997406150`, cut from `main` after
+`fix/plan-window-decoder-blowup` merged as #174. Remaining evidence
+pending:**
 
 - **Release:** `gh release view v1.0.0-beta.5 -R scottconverse/civiccast-native
   --json isDraft,assets,targetCommitish,tagName`.
 - **Hash + signature, verified from the outside:**
   `scripts/download_windows_release_artifacts.ps1 -AssetSet NativeCandidate`,
   cross-verified against `SHA256SUMS.txt` and `Get-AuthenticodeSignature`.
-- **Gate A:** run `<GATE_A_FINAL_RUN_ID>` (build `<BETA5_FINAL_BUILD_RUN>`),
+- **Gate A:** run `<GATE_A_FINAL_RUN_ID>` (build `33997406150`),
   all three lanes expected PASS.
 - **Clean-install hardware soak:** clock `<SOAK5_START_UTC>`, verdict
   `<SOAK5_VERDICT>`, relaunches `<SOAK5_RELAUNCHES>`.

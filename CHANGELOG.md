@@ -37,12 +37,13 @@ was relaunched -- one per channel in the first 30 minutes, then roughly
 every 30 seconds (rule is zero). Root cause (item 51, below) is a
 regression introduced by #170, not present in beta.4: a widened plan
 window builds far more decoder chains than an 8-core CPU-only station can
-run at once. Hotfix `fix/plan-window-decoder-blowup` is open, not yet
-merged. `v1.0.0-beta.5` will be cut from `main` after that hotfix merges,
-followed by a new Gate A run and a new clean-install hardware soak on
-candidate 2, whose identity is pending: `<BETA5_FINAL_SHA>` /
-`<BETA5_FINAL_BUILD_RUN>` / `<GATE_A_FINAL_RUN_ID>` / `<SOAK5_START_UTC>` /
-`<SOAK5_VERDICT>` / `<SOAK5_RELAUNCHES>`. Candidate 1's facts below
+run at once. Hotfix `fix/plan-window-decoder-blowup` merged as #174.
+`v1.0.0-beta.5` will be cut from `main` at source SHA
+`609273da22b968b8ed9320dfc158d67b01eb30b3` (`609273d`, build run
+`33997406150`) as candidate 2, following a new Gate A run and a new
+clean-install hardware soak, whose identity is still pending:
+`<GATE_A_FINAL_RUN_ID>` / `<SOAK5_START_UTC>` / `<SOAK5_VERDICT>` /
+`<SOAK5_RELAUNCHES>`. Candidate 1's facts below
 (SHA `91caebc`, build `33971258093`, Gate A `33972726431`) are preserved as
 history: **candidate 1 -- Gate A PASS x3, hardware soak FAIL (item 51).**
 
@@ -362,8 +363,21 @@ history: **candidate 1 -- Gate A PASS x3, hardware soak FAIL (item 51).**
   -- 67s, 67s, 667s, and 2365s -- instead of soak #3's 30-second default,
   sharply cutting the number of schedule items (and decoder chains) a
   30-minute plan window holds, without touching #170's plan-window code.
-  Soak clock started `<SOAK4_START_UTC>`. Result: `<SOAK4_VERDICT>`,
-  pending.
+  Soak clock started `2026-09-05T21:08:51Z` on kit `91caebc`. **Result:
+  FAIL (relaunches).** The rescheduled long items collided (HTTP 409)
+  with the 30-second items still queued, which stayed in the plan until
+  roughly `22:20Z` -- so the first ~70 minutes of the run stayed on the
+  30-second items and kept relaunching. Once the plan window actually
+  held the long clips, each worker's RSS fell from roughly 3.5 GB to
+  roughly 0.35 GB -- the item-51 decoder-pileup mechanism seen live,
+  confirming rather than disproving the root cause. The long-item phase
+  then hit a schedule gap (`No valid source plan is available`, falling
+  back to slate); one channel tripped the 5-crash guard; the planner then
+  issued a rollover for a plan it believed had ended 1,208 seconds
+  earlier; and all three channels sat in `TRANSITIONING` from `22:55Z`
+  onward and did not recover on their own (item 54, below:
+  planner/rollover accounting after a fallback -- hotfix #174 does not
+  address it).
 - **`civiccast/egress/gst/graph.py`'s `source_leg_is_clock_timed` docstring
   claimed the fail-safe answer for an unknown source factory is `True`; the
   code has always returned `False`** (`_chain_is_clock_timed` only matches a
@@ -567,6 +581,15 @@ history: **candidate 1 -- Gate A PASS x3, hardware soak FAIL (item 51).**
    caps plans at 8 segments, ties the replan floor to the plan length, and
    hard-caps decoder chains in the engine. Not part of candidate 1; will
    be part of candidate 2.
+8. **(item 54) After a schedule gap or a crash-loop fallback, the planner
+   may issue a stale rollover and a channel can sit in `TRANSITIONING`
+   indefinitely.** MEASURED: soak #4, kit `91caebc`, once the plan window
+   held the rescheduled long clips -- a schedule gap fell back to slate,
+   one channel tripped the 5-crash guard, and the planner then issued a
+   rollover for a plan it believed had ended 1,208 seconds earlier; all
+   three channels sat in `TRANSITIONING` from `22:55Z` onward and never
+   recovered on their own. **Operator action:** Stop then Start the
+   affected channel. **Fix pending** -- not addressed by hotfix #174.
 
 ## [1.0.0-beta.4] - 2026-09-04
 
