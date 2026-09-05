@@ -1,0 +1,39 @@
+﻿{
+    "schema":  "civiccast-native-fleet-heartbeat-v1",
+    "mission":  "soak8-e1acfe6",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "utc":  "20260905T063612Z",
+    "health":  {
+                   "error":  "Unable to connect to the remote server",
+                   "status":  "unreachable"
+               },
+    "db_revision":  null,
+    "service":  "Stopped",
+    "cpu_pct":  10.3,
+    "mem_free_mb":  10447,
+    "disk_free_gb":  283.3,
+    "uptime_min":  11848,
+    "processes":  [
+                      {
+                          "ProcessName":  "CivicCast (Native)_1.0.0-beta.5_x64-setup",
+                          "Id":  11952,
+                          "rss_mb":  25,
+                          "cpu_s":  14.5
+                      },
+                      {
+                          "ProcessName":  "CivicCast Native",
+                          "Id":  12704,
+                          "rss_mb":  10,
+                          "cpu_s":  2.8
+                      }
+                  ],
+    "engine_observed":  {
+                            "gst_launch_processes":  0,
+                            "ffmpeg_processes":  0,
+                            "inferred":  "none-running"
+                        },
+    "egress_channels":  [
+
+                        ],
+    "soak_started":  false
+}
