@@ -94,5 +94,5 @@ station:
 - `AUTORUN-9.ps1` — quiet uninstall, remove `C:\ProgramData\CivicCast` and
   `C:\CivicCastHostStore\install`, install the SAME verified e5020746 kit fresh
   (no download), wait for `/health`, report `soak/REINSTALL-RESULT.md`.
-- `AUTORUN-10.ps1` — the channel script again (first-admin now succeeds), 2 hours.
+- `AUTORUN-9b.ps1` — the channel script again (named 9b so it sorts AFTER 9; the executor sorts names as text) (first-admin now succeeds), 2 hours.
 - `AUTORUN-3.ps1` — the recurring verify, unchanged.
