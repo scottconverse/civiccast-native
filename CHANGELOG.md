@@ -157,40 +157,70 @@ for the draft verification record.
   still satisfied. It now accepts either refusal state, and the test consumes
   the REAL producer's output instead of a hand-typed report dict, which is why
   nothing caught the mismatch.
-- **Headline: beta.4's soak restarts diagnosed correctly, and the real bug
-  fixed (#167).** beta.4's release documentation said its 120-minute engine
-  soak's relaunch-count `FAIL` was caused by the playout worker exiting at
-  the end of every source plan (`max_segments=8`) roughly every 10-15
-  minutes, and credited #162 (below) with fixing it. **That explanation was
-  wrong and has been retracted** (corrected 2026-09-05 in
+- **Headline: the real cause of the playout-worker restarts, found on real
+  station hardware (#<CAPTION_FIX_PR>).** Two earlier rounds of this entry
+  attributed the beta.4 soak's relaunch-count `FAIL` first to plan-boundary
+  worker exits (retracted, corrected 2026-09-05 in
   `docs/releases/v1.0.0-beta.4-verification.md` and the beta.4 release
-  notes); it was inferred from worker pid changes, never from the worker's
-  own logs. Reading the actual `gst-worker.stderr.log` from the beta.4 soak
-  (kit `4b30c99`) and a beta.5 retest soak (kit `e502074`) shows only `CTRL
-  stall: no output for 10s — quitting for daemon restart` lines in both
-  runs (beta.4: 7/9/10 occurrences across education/government/public;
-  beta.5: 8/8/7) -- no EOS or plan-end exit in either; plans actually ran
-  28-38 minutes while restarts came 1-25 minutes apart, ruling out a
-  plan-boundary cause. Two real causes, both found 2026-09-05: **(a)**
-  periodic output stalls specific to the software-encoded channels in the
-  GPU-less Windows Sandbox test environment, not established to reproduce
-  on real station hardware (an R7 with an iGPU, where operators have
-  reported no such issue); and **(b)** a real product bug -- every
-  restart's channel-automation pass raised `UnicodeEncodeError: 'charmap'
-  codec can't encode character '\ufffd' in position 118` (the worker's
-  stall message folds a `\ufffd` replacement character into `last_error`,
-  and writing it out under the process's `cp1252` client encoding failed),
-  skipping channel supervision for that channel. **Fixed here**: an
-  ASCII-safe child-log tail so a non-ASCII byte in the worker's stderr can
-  no longer reach `last_error` in a form that breaks the write; a
-  `client_encoding` fix for the underlying database write path is a
-  tracked follow-up. **#162, below, is a real improvement for genuine
-  plan-boundary transitions, but it was never exercised by either soak and
-  is not what fixes the beta.4 restarts.** Evidence:
+  notes; that explanation was inferred from worker pid changes, never from
+  the worker's own logs), then to a mix of a sandbox-only output stall and
+  a `UnicodeEncodeError` in the automation pass. **That second explanation
+  was also incomplete.** A soak on the tester's own real hardware
+  (`DESKTOP-VBMA6O5`, 2026-09-05) reproduced the same restarts with no
+  sandbox involved, ruling out "sandbox-specific stall" as the driver and
+  pointing at the one thing common to every environment: the live caption
+  tap.
+
+  **Root cause: the caption tap transcribes every `ON_AIR` channel's audio
+  in-process on CPU, and with three channels running it overloads.**
+  `civiccast/captions/tap_worker.py` runs speech-to-text for every on-air
+  channel in the same process, on the CPU, with no backoff. The tester's
+  three-channel real-hardware soak recorded `CRITICAL
+  civiccast.captions.tap_worker: Caption tap overload for channel <id>: N
+  settled segments exceeds the maximum 2; active captions were cleared and
+  stale audio was moved to overload evidence` roughly every 30 seconds, on
+  all three channels, for the full 2-hour run (663 caption lines total). It
+  never backs off, drives the control-plane process to roughly 2.5 CPU
+  cores (19,000+ CPU-seconds, 1.9 GB resident), and starves the GStreamer
+  playout workers of CPU time; each starved worker trips its own stall
+  watchdog (`CTRL stall: no output for 10s`) and exits, and the daemon
+  relaunches it -- on the tester, public restarted once, education once,
+  government twice in 90 minutes; the sandbox soaks saw 5-10 relaunches per
+  channel in 2 hours. The playout engine itself, the TSDuck packet-level
+  checks (0 sync errors, 0 transport errors, roughly 100,000 packets per
+  capture), and the upgrade path all pass independently on real hardware --
+  the restarts are a CPU-contention symptom of the caption tap, not an
+  engine or upgrade defect. **Fixed here by #<CAPTION_FIX_PR>**: overload
+  backoff/pause in the caption tap, a bounded ASR workload, and higher
+  process priority for the playout workers. **Known limit, carried
+  forward:** captions are best-effort -- a three-channel, CPU-only station
+  will pause captions under sustained load; playout always wins.
+
+  **Contributing, also fixed: a state-write crash on non-cp1252 characters
+  (#169, merged).** Every restart's channel-automation pass on the earlier
+  soaks also raised `UnicodeEncodeError: 'charmap' codec can't encode
+  character '\ufffd' in position 118` (the worker's stall message folds a
+  `\ufffd` replacement character into `last_error`, and writing it out
+  under the process's `cp1252` client encoding failed), aborting that
+  channel's automation pass until the next tick. Seen on the tester and on
+  both sandbox soaks. #169 folds all persisted free text for non-cp1252
+  clusters and creates new clusters as UTF-8.
+
+  **Planner defects found on the way (#170, open, not part of this
+  release):** schedule slot duration was ignored (a 30-second slot of long
+  media could air for hours), plans were sized by item count rather than
+  duration so a run of short items produced 4-minute plans, and the health
+  poll re-read a worker's entire growing stderr log every 2 seconds instead
+  of tailing it. None of these were the restart's root cause.
+
+  **#162, below, is a real improvement for genuine plan-boundary
+  transitions, but it did not fire in any soak and did not cause, and does
+  not fix, the restarts.** Evidence:
   `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-4b30c99-20260904`
-  (beta.4) and
+  (beta.4 sandbox),
   `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-e502074-20260905`
-  (beta.5 retest).
+  (beta.5 sandbox retest), and the tester's real-hardware soak on
+  `DESKTOP-VBMA6O5` (2026-09-05).
 - **Also in this candidate: seamless source-plan rollover for genuine
   plan-boundary transitions (#162).** Independent of the diagnosis above,
   the playout worker genuinely does exit cleanly at the end of every
@@ -422,6 +452,16 @@ for the draft verification record.
    than by a test exercising the harness's own proof logic in isolation. A
    self-test lane for the harness is queued as batch 27 and is not part of
    this candidate.
+3. **Captions are best-effort and pause under load (#<CAPTION_FIX_PR>).**
+   The caption tap's overload backoff means a box that cannot keep up
+   pauses captions rather than risk playout -- a three-channel, CPU-only
+   station will see captions pause under sustained load. Playout always
+   wins over captioning.
+4. **Planner defects tracked separately (#170, open).** Found while
+   diagnosing the restarts above: schedule slot duration was ignored (a
+   30-second slot of long media could air for hours), plans were sized by
+   item count rather than duration, and the health poll re-read a worker's
+   entire growing stderr log every 2 seconds. Not part of this candidate.
 
 ## [1.0.0-beta.4] - 2026-09-04
 
