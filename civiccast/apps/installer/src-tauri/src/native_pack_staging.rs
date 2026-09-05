@@ -797,17 +797,20 @@ pub fn ensure_pack_extracted(
 /// this fix newly distinguishes.
 ///
 /// Carried on [`PackStagingReport`]/[`OptionalPackStagingReport`], which
-/// `main.rs`'s `run_native_pack_staging_cli` already prints as one pretty
-/// JSON manifest -- deliberately NOT a `println!`/`eprintln!` anywhere in
-/// this module. `nsis-hooks-bootstrap.nsh`'s `--civiccast-stage-packs`
-/// invocation asserts this module emits ZERO print calls and relies on that
-/// being true: it captures the child's ENTIRE stdout with
-/// `nsExec::ExecToStack` as one string ($1), gates it behind a single human
-/// `DetailPrint` line in the wizard pane, and hands the FULL string to
-/// `CIVICCAST_STEP`, which is what actually lands this identity data in
-/// `install-progress.log`. A `println!` here would not add a line to that
-/// log -- it would silently become part of $1, ahead of the JSON, exactly
-/// the failure mode `nsis-hooks-bootstrap.nsh`'s own comments warn about.
+/// `main.rs`'s `run_native_pack_staging_cli` renders as one pretty JSON
+/// manifest and writes WHOLE to its own file under
+/// `%ProgramData%\CivicCast\` (never straight to stdout as of the
+/// 2026-09-05 delta review -- a manifest with `payload_identity` entries
+/// for even a handful of components already exceeds NSIS_MAX_STRLEN, the
+/// 1024-byte cap `nsis-hooks-bootstrap.nsh`'s `ExecToStack` capture
+/// truncates $1 at); stdout gets only a short summary naming that file's
+/// path plus one compact token per component. This module itself is still
+/// deliberately NOT the source of any `println!`/`eprintln!` --
+/// `nsis-hooks-bootstrap.nsh`'s `--civiccast-stage-packs` invocation asserts
+/// this module emits ZERO print calls, relying on the child never emitting
+/// progressive output while the multi-gigabyte extraction runs; the
+/// summary itself is built and printed exactly once, by `main.rs`'s CLI
+/// handler, not by anything in here.
 #[derive(Debug, Clone, Serialize)]
 pub struct PackPayloadIdentity {
     pub component: String,
@@ -815,6 +818,19 @@ pub struct PackPayloadIdentity {
     /// `"AlreadySatisfied"`, `"ReplaceFromOffline"`) -- always the exact enum
     /// variant name, by construction, so it can never drift from it the way
     /// a hand-typed label could.
+    ///
+    /// This is the staging DECISION at the moment it was made, not
+    /// necessarily the component's FINAL disposition for this run. In
+    /// particular, a required component recorded here as
+    /// `"NeedsOnlineOrAbort"` is not yet resolved: `stage_required_packs`
+    /// only decides this per component in its first pass, then separately
+    /// attempts every such component through the online channel (see
+    /// [`attempt_online_pack_acquire`]) -- a component whose `outcome` here
+    /// reads `"NeedsOnlineOrAbort"` may still go on to appear in that same
+    /// report's `satisfied_online` list moments later. This entry is never
+    /// retroactively updated to reflect that; read `satisfied_online`
+    /// alongside `payload_identity`, not `payload_identity` alone, for a
+    /// required component's true final state.
     pub outcome: String,
     /// The pack digest already staged at `$INSTDIR\packs\<component>.ccpack`
     /// BEFORE this decision, when one existed and verified (`None` for an
@@ -897,6 +913,15 @@ pub fn stage_required_packs(
         // for -- so a NeedsOnlineOrAbort or CopyFromOffline component shows
         // up in the manifest exactly as much as an AlreadySatisfied or
         // ReplaceFromOffline one does.
+        //
+        // Only true for a run that reaches `Ok(report)`, though: every `?`
+        // below (each `commit_pack_file(...)?`) is an EARLY RETURN out of
+        // this whole function on failure, which discards `report` --
+        // including every entry already pushed onto it for earlier
+        // components in this loop -- the same way `stage_optional_packs`'s
+        // `CorruptWithNoRemedy` arm does. A caller only ever sees
+        // `payload_identity` on the success path; a failure's detail is
+        // carried entirely by the propagated error string.
         report.payload_identity.push(PackPayloadIdentity {
             component: component.clone(),
             outcome: format!("{action:?}"),
@@ -915,7 +940,7 @@ pub fn stage_required_packs(
                     component,
                     expected_product_version,
                     expected_compatible_core,
-                )?;
+                )?; // early return on Err discards `report` -- see the comment above
                 report.copied_from_offline.push(component.clone());
             }
             StagingAction::ReplaceCorruptFromOffline => {
@@ -928,7 +953,7 @@ pub fn stage_required_packs(
                     component,
                     expected_product_version,
                     expected_compatible_core,
-                )?;
+                )?; // early return on Err discards `report` -- see the comment above
                 report.replaced_from_offline.push(component.clone());
             }
             StagingAction::ReplaceFromOffline => {
@@ -941,7 +966,7 @@ pub fn stage_required_packs(
                     component,
                     expected_product_version,
                     expected_compatible_core,
-                )?;
+                )?; // early return on Err discards `report` -- see the comment above
                 report.replaced_from_offline.push(component.clone());
             }
             StagingAction::NeedsOnlineOrAbort => needs_online.push(component.clone()),
@@ -1076,9 +1101,16 @@ pub fn stage_optional_packs(
             source_digest.as_deref(),
         );
         // Recorded for EVERY outcome (see PackPayloadIdentity's doc),
-        // including SkipAbsent and CorruptWithNoRemedy -- the latter
-        // returns Err below, but the identity fact is still worth carrying
-        // on the partial report a caller might inspect.
+        // including SkipAbsent and CorruptWithNoRemedy. For the latter this
+        // entry is NOT actually visible to any caller: the match arm below
+        // returns `Err(String)` on `CorruptWithNoRemedy`, discarding the
+        // partial `report` (including this push) along with the function's
+        // whole `Ok` value -- `stage_optional_packs`'s return type is
+        // `Result<OptionalPackStagingReport, String>`, never a report
+        // alongside the error. The push still happens uniformly (this loop
+        // never special-cases any one outcome), it just never reaches
+        // anyone; the operator-facing detail for THIS outcome is carried
+        // entirely by the error string built a few lines below instead.
         report.payload_identity.push(PackPayloadIdentity {
             component: component.clone(),
             outcome: format!("{action:?}"),
@@ -1099,7 +1131,7 @@ pub fn stage_optional_packs(
                     component,
                     expected_product_version,
                     expected_compatible_core,
-                )?;
+                )?; // early return on Err discards `report` -- see the comment above
                 report.copied_from_offline.push(component.clone());
             }
             OptionalStagingAction::ReplaceCorruptFromOffline => {
@@ -1112,7 +1144,7 @@ pub fn stage_optional_packs(
                     component,
                     expected_product_version,
                     expected_compatible_core,
-                )?;
+                )?; // early return on Err discards `report` -- see the comment above
                 report.replaced_from_offline.push(component.clone());
             }
             OptionalStagingAction::ReplaceFromOffline => {
@@ -1125,7 +1157,7 @@ pub fn stage_optional_packs(
                     component,
                     expected_product_version,
                     expected_compatible_core,
-                )?;
+                )?; // early return on Err discards `report` -- see the comment above
                 report.replaced_from_offline.push(component.clone());
             }
             OptionalStagingAction::SkipAbsent => {
@@ -1963,20 +1995,56 @@ mod tests {
         let instdir = root.join("instdir");
         fs::create_dir_all(installer_dir.join("packs")).expect("mkdir installer packs");
 
-        // Kit A already staged at $INSTDIR\packs (a prior install).
-        let dest_dir = instdir.join("packs");
-        fs::create_dir_all(&dest_dir).expect("mkdir dest packs");
+        // Kit A installs FIRST, through the real `stage_required_packs`
+        // path -- this is what actually lays down $INSTDIR\packs\
+        // native-server-binaries\payload\ the first time, not a hand-
+        // written fixture. Doing it this way (rather than writing kit A's
+        // raw pack straight to dest_dir with no extracted tree) is what lets
+        // the SECOND run below exercise `ensure_pack_extracted`'s REBUILD
+        // branch (:762-773 -- authorize_rebuild + remove_dir_all) instead of
+        // its missing-tree creation branch: kit B's run finds an EXISTING
+        // tree that fails re-verification against kit B's pack, not an
+        // absent one.
         build_signed_pack(
-            &dest_dir.join("native-server-binaries.ccpack"),
+            &installer_dir
+                .join("packs")
+                .join("native-server-binaries.ccpack"),
             &signing_key,
             "native-server-binaries",
             &[("bin/initdb.exe", b"KIT-A-payload-bytes")],
         );
+        let authority = RecordingAuthority::default();
+        let first_install = stage_required_packs(
+            &installer_dir,
+            &instdir,
+            &trust,
+            &["native-server-binaries".to_string()],
+            "1.0.0-rc15",
+            "1.0.0-rc15",
+            None,
+            "beta",
+            &authority,
+        )
+        .expect("kit A's own first install must succeed");
+        assert_eq!(
+            first_install.copied_from_offline,
+            vec!["native-server-binaries"]
+        );
+        assert!(
+            authority.calls.borrow().is_empty(),
+            "a fresh, missing tree must never consult the rebuild authority"
+        );
 
-        // Kit B's incoming offline pack at $EXEDIR\packs: same declared
+        // Kit B replaces kit A's pack at $EXEDIR\packs: same declared
         // product_version/compatible_core ("1.0.0-rc15", matching what both
         // classify_dest_pack_state and discover_offline_pack_sources are
-        // told to expect below), but different payload content.
+        // told to expect below), but different payload content -- the
+        // measured 2026-09-05 real-tester regression. Before this fix,
+        // `classify_dest_pack_state` only checked the version strings, so
+        // the already-staged kit A pack verified and
+        // `decide_offline_staging_action` returned `AlreadySatisfied` --
+        // kit B's incoming pack was never copied, and the station kept
+        // running kit A's code under kit B's declared version.
         build_signed_pack(
             &installer_dir
                 .join("packs")
@@ -1995,7 +2063,7 @@ mod tests {
             "1.0.0-rc15",
             None,
             "beta",
-            &AllowAllAuthority,
+            &authority,
         )
         .expect("install-over with a content-diverged same-version kit must succeed");
 
@@ -2006,8 +2074,15 @@ mod tests {
              never silently folded into already_present"
         );
         assert!(report.already_present.is_empty());
+        assert_eq!(
+            authority.calls.borrow().as_slice(),
+            ["native-server-binaries"],
+            "the REBUILD path must consult the rebuild authority exactly once, for the \
+             component whose stale extracted tree it is about to delete"
+        );
 
         // The staged raw pack must now be kit B's, not kit A's.
+        let dest_dir = instdir.join("packs");
         let staged_pack = fs::read(dest_dir.join("native-server-binaries.ccpack"))
             .expect("read staged pack after install-over");
         let kit_b_pack = fs::read(
@@ -2073,15 +2148,41 @@ mod tests {
         let instdir = root.join("instdir");
         fs::create_dir_all(installer_dir.join("packs")).expect("mkdir installer packs");
 
-        // Kit A's app payload already staged at $INSTDIR\packs (a prior
-        // install).
-        let dest_dir = instdir.join("packs");
-        fs::create_dir_all(&dest_dir).expect("mkdir dest packs");
+        // Kit A's app payload installs FIRST, through the real
+        // `stage_required_packs` path (see the sibling
+        // native-server-binaries test's comment for why this -- rather than
+        // hand-writing a raw pack straight into dest_dir -- is what lets the
+        // SECOND run below exercise `ensure_pack_extracted`'s REBUILD branch
+        // at the runtime bridge, not its missing-tree creation branch).
         build_signed_pack(
-            &dest_dir.join(format!("{APP_PAYLOAD_COMPONENT}.ccpack")),
+            &installer_dir
+                .join("packs")
+                .join(format!("{APP_PAYLOAD_COMPONENT}.ccpack")),
             &signing_key,
             APP_PAYLOAD_COMPONENT,
             &[("python.exe", b"KIT-A-interpreter-bytes")],
+        );
+        let authority = RecordingAuthority::default();
+        stage_required_packs(
+            &installer_dir,
+            &instdir,
+            &trust,
+            &[APP_PAYLOAD_COMPONENT.to_string()],
+            "1.0.0-rc15",
+            "1.0.0-rc15",
+            None,
+            "beta",
+            &authority,
+        )
+        .expect("kit A's own first install of the app payload must succeed");
+        assert!(
+            authority.calls.borrow().is_empty(),
+            "a fresh, missing runtime\\ tree must never consult the rebuild authority"
+        );
+        assert_eq!(
+            fs::read(instdir.join("runtime").join("python.exe")).expect("kit A's runtime.exe"),
+            b"KIT-A-interpreter-bytes",
+            "sanity: kit A's own first install must land its own bytes at the runtime bridge"
         );
 
         // Kit B's incoming offline app-payload pack at $EXEDIR\packs: same
@@ -2104,7 +2205,7 @@ mod tests {
             "1.0.0-rc15",
             None,
             "beta",
-            &AllowAllAuthority,
+            &authority,
         )
         .expect("install-over of a content-diverged same-version app-payload kit must succeed");
 
@@ -2114,6 +2215,12 @@ mod tests {
             "a same-version, different-content app-payload pack must be reported as replaced"
         );
         assert!(report.already_present.is_empty());
+        assert_eq!(
+            authority.calls.borrow().as_slice(),
+            [APP_PAYLOAD_COMPONENT],
+            "the REBUILD path at the runtime bridge must consult the rebuild authority exactly \
+             once, for the component whose stale runtime\\ tree it is about to delete"
+        );
 
         // The extracted tree at the RUNTIME BRIDGE -- $INSTDIR\runtime, not
         // $INSTDIR\packs\native-app-payload\payload -- must be rebuilt from

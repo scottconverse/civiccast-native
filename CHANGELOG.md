@@ -55,12 +55,21 @@ below.
   incoming one differs, for both required and optional components. Every
   staging decision -- for every component and every outcome, not only a
   replace/unchanged subset -- now records which outcome fired plus both
-  packs' digests as structured `payload_identity` entries on the
-  `--civiccast-stage-packs` manifest report (`PackPayloadIdentity`), which
-  the NSIS hook already logs to `install-progress.log` in full; there is no
-  new free-text log line (`native_pack_staging.rs` still emits zero
+  packs' digests as structured `payload_identity` entries
+  (`PackPayloadIdentity`) on the `--civiccast-stage-packs` manifest report.
+  That full manifest is written whole to its own file under
+  `%ProgramData%\CivicCast\` (`install-manifest-report-<pid>-<unix
+  time>.json`) rather than piped through stdout: a manifest carrying
+  `payload_identity` for even a handful of components already exceeds the
+  1024-byte NSIS_MAX_STRLEN cap `nsis-hooks-bootstrap.nsh`'s `ExecToStack`
+  capture truncates at (measured against real Gate A evidence), and because
+  `serde_json`'s `Map` renders keys alphabetically, truncation would have
+  silently dropped the entire `required` object. `install-progress.log`
+  instead gets a short, budget-tested summary line naming that file's path
+  plus one `component=outcome staged=<8hex> incoming=<8hex>` token per
+  component; `native_pack_staging.rs` itself still emits zero
   `print`/`println`/`eprintln` calls, which `nsis-hooks-bootstrap.nsh`'s
-  capture strategy depends on).
+  capture strategy depends on.
   Gate A's cross-version upgrade lane (`sandbox-lab/scripts/
   In-Sandbox-Report.ps1`, `scripts/gate_a_verdict.py`'s
   `check_dirty_survival`) now additionally hashes the installed app-payload

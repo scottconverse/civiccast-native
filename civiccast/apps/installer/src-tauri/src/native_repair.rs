@@ -961,6 +961,37 @@ mod tests {
         );
     }
 
+    /// Every `StagingAction` variant, exactly once -- compiler-enforced by
+    /// the `match` below, which has NO wildcard (`_`) arm. `StagingAction`
+    /// has no `EnumIter`-style derive available in this crate's dependency
+    /// set, so this is the zero-dependency substitute: if a 6th variant is
+    /// ever added to `StagingAction`, this match becomes non-exhaustive and
+    /// the crate fails to compile until a new arm is added HERE, right next
+    /// to the array literal it must also be added to -- a 6th variant can
+    /// no longer silently go untested by
+    /// `copy_guard_agrees_with_repair_action_mapping_for_every_staging_action`
+    /// the way a bare hard-coded array (with no tie back to the enum
+    /// definition) previously let it.
+    fn every_staging_action() -> [StagingAction; 5] {
+        let all = [
+            StagingAction::AlreadySatisfied,
+            StagingAction::CopyFromOffline,
+            StagingAction::ReplaceCorruptFromOffline,
+            StagingAction::ReplaceFromOffline,
+            StagingAction::NeedsOnlineOrAbort,
+        ];
+        for action in all {
+            match action {
+                StagingAction::AlreadySatisfied
+                | StagingAction::CopyFromOffline
+                | StagingAction::ReplaceCorruptFromOffline
+                | StagingAction::ReplaceFromOffline
+                | StagingAction::NeedsOnlineOrAbort => {}
+            }
+        }
+        all
+    }
+
     #[test]
     fn copy_guard_agrees_with_repair_action_mapping_for_every_staging_action() {
         // The bug this guards: `repair_pack_component`'s copy guard and
@@ -973,13 +1004,7 @@ mod tests {
         // `decide_component_repair_action`'s own mapping for every
         // `StagingAction` variant: `RepairedFromSideLoad` if and only if
         // `staging_action_requires_side_load_copy` says so.
-        for staging_action in [
-            StagingAction::AlreadySatisfied,
-            StagingAction::CopyFromOffline,
-            StagingAction::ReplaceCorruptFromOffline,
-            StagingAction::ReplaceFromOffline,
-            StagingAction::NeedsOnlineOrAbort,
-        ] {
+        for staging_action in every_staging_action() {
             let repairs_from_side_load = decide_component_repair_action(staging_action, false)
                 == RepairAction::RepairedFromSideLoad;
             assert_eq!(
