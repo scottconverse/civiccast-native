@@ -1,7 +1,7 @@
 # soak8-e1acfe6 Latest Test Directive
 Current: soak/DIRECTIVE-4.md
 Branch: soak8-e1acfe6-directives
-Updated: 2026-09-05T05:55Z (rev 6 - install and channel autoruns renamed AUTORUN-5/AUTORUN-6: the executor keys its once-marker by filename and AUTORUN-2/4 names were already consumed)
+Updated: 2026-09-05T07:45Z (rev 7 - AUTORUN-7 diagnostics queued: pushes poll.log tail, reports/state listings, autorun log tails, station channel list, control-plane log tail; no changes to the box)
 Platform prompt: PROMPT-WINDOWS-CODEX.md (the one paste for a Codex-desktop tester on a Windows box)
 Autoruns queued: soak/autorun/AUTORUN-5.ps1 (fetch the e5020746 kit into a fresh kit-<sha> folder, verify, install OVER the existing station), soak/autorun/AUTORUN-6.ps1 (first-admin + three channels + start, 2h15m schedule), soak/autorun/AUTORUN-3.ps1 (TSDuck egress proof, engine-per-channel, relaunch tracking, worker CPU/RSS, 30-min rollups, T+2h verdict)
 
