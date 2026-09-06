@@ -417,14 +417,20 @@ class EgressDaemon:
         # last carried, kept ONLY so a late-arriving status write for that
         # dead attempt can be recognized and logged as ignored instead of
         # silently doing nothing -- see ``_discard_pending_reload_settlement``
-        # and ``_poll_reload_settlement``. Value is ``(reload_id, discarded_at)``
-        # (follow-up, second hostile-review pass): bounded by
-        # ``_PENDING_RELOAD_SETTLE_DEADLINE_S`` so this dict cannot grow
-        # unbounded across a long-running daemon's many restarts/reloads --
-        # an entry this old is definitely stale (any settlement for it would
-        # itself already be well past every timeout this module has) and is
-        # evicted the next time this channel is checked, not kept forever.
-        self._discarded_reload_ids: dict[str, tuple[str, float]] = {}
+        # and ``_poll_reload_settlement``. Keyed by channel_id, so this is
+        # already bounded by the number of channels this daemon instance
+        # tracks (at most one entry per channel, always overwritten by that
+        # channel's next discard) -- NOT by time. (Hostile-review follow-up,
+        # third pass, P2: a second-pass revision briefly added a bounded-age
+        # expiry here on the theory that this dict could otherwise grow
+        # unboundedly; it could not (the per-channel key already caps it),
+        # and the added expiry could evict an id whose real settlement lands
+        # legitimately right at the edge of the same
+        # ``_PENDING_RELOAD_SETTLE_DEADLINE_S`` budget the pending entry
+        # itself was allowed to take -- and it was never evicted for a
+        # channel that gets stopped, so it did not even close the gap it was
+        # written for. Reverted to a plain reload_id with no expiry.)
+        self._discarded_reload_ids: dict[str, str] = {}
 
     def process_once(self, channel_id: str) -> int:
         """Process all currently queued commands for one channel.
@@ -792,6 +798,23 @@ class EgressDaemon:
             else:
                 self._last_loudness_lufs.pop(channel_id, None)
 
+            # Hostile-review follow-up (third pass), P0: captured right here,
+            # BEFORE the encoder-unavailable retry below gets a chance to flip
+            # using_fallback_slate again -- this records whether the preparer
+            # (just above) ran against a plan that was ALREADY the fallback
+            # slate (an early flip: force_fallback_slate, caption-readiness
+            # refusal, or source_plan is None, all above) versus the program
+            # plan. The distinction matters because the tracking decision at
+            # the end of this method used to release prepared_plan_dir on
+            # ANY using_fallback_slate=True, including this early-flip case --
+            # but there, prepared_plan_dir is the SLATE's own directory (the
+            # preparer ran on source_plan after it was already reassigned to
+            # the fallback plan), which the encoder is actively airing from.
+            # Releasing it (rmtree) out from under a live airing was reviewer-
+            # proven with a probe: prepared_for=['Fallback slate'], state
+            # FALLBACK_SLATE pid=111, released=['plan-1'].
+            prepared_for_fallback = using_fallback_slate
+
             # Hostile-review follow-up (second pass), items 1 & 2: everything
             # from here down to the tracking decision at the end of this
             # block can either raise (a provider hook, EncoderStartRequest
@@ -924,16 +947,22 @@ class EgressDaemon:
                 # shipped default) -- _try_content_reload/_commit_reload_
                 # settlement never run at all on that path, so without this the
                 # only cleanup for a _start()-launched plan was age/budget GC.
-                if using_fallback_slate:
-                    # Item 1 fix: using_fallback_slate can become True AFTER a
-                    # successful prepare() (the encoder-unavailable retry path
-                    # just above) -- the prepared plan was never actually
-                    # dispatched to this encoder (a fallback slate plan, built
-                    # by _fallback_source_provider, aired instead), so release
-                    # it now instead of silently dropping the reference the
-                    # way the pre-fix code did.
+                if using_fallback_slate and not prepared_for_fallback:
+                    # Item 1 fix, narrowed by the P0 fix above: only release
+                    # when using_fallback_slate flipped True AFTER the
+                    # preparer already ran (prepared_for_fallback is False) --
+                    # the encoder-unavailable retry path just above, where
+                    # prepared_plan_dir is the PROGRAM plan's directory, never
+                    # actually dispatched to this encoder (a separately-built
+                    # fallback slate plan aired instead). Release it.
                     self._release_prepared_plan_dir(prepared_plan_dir)
                 elif prepared_plan_dir is not None:
+                    # Covers both: a normal (non-fallback) start, AND an
+                    # early-flip fallback slate (force_fallback_slate,
+                    # caption-readiness refusal, or no source plan) where the
+                    # preparer ran against the SLATE plan itself -- that
+                    # directory is exactly what this encoder is airing from,
+                    # so it must be tracked as active, not released.
                     self._active_prepared_plan_dir[channel_id] = prepared_plan_dir
             except Exception:
                 # Item 2 fix: anything above that raises past this point --
@@ -1706,7 +1735,7 @@ class EgressDaemon:
             pending.reload_id,
             reason,
         )
-        self._discarded_reload_ids[channel_id] = (pending.reload_id, self._monotonic())
+        self._discarded_reload_ids[channel_id] = pending.reload_id
         self._release_prepared_plan_dir(pending.plan_dir)
 
     def _discard_active_prepared_plan_dir(self, channel_id: str) -> None:
@@ -1715,10 +1744,20 @@ class EgressDaemon:
         ``_start`` and ``_commit_reload_settlement``), once the worker reading
         it is confirmed gone -- a real process exit (``_poll_process``), a
         fresh ``_start`` past its already-alive guard (which only reaches
-        here when the previously-tracked process has already exited), or an
-        operator stop (``_stop``). Deliberately NOT called from
-        ``_fall_back_to_restart_reload``: that path's worker may still be
-        alive and draining/airing the very plan this would release."""
+        here when the previously-tracked process has already exited), a
+        direct (non-draining) operator stop (``_stop(channel_id,
+        draining=False)``, whose immediate ``_process_terminate`` call above
+        it makes exit synchronous), or ``stop_all_channels``'s own
+        observed-exit loop for the DRAINING case (hostile-review follow-up,
+        third pass, P2: ``_stop(channel_id, draining=True)`` only sends the
+        worker its graceful TERMINAL command and returns -- the worker is
+        still airing, possibly for the entire ``deadline_seconds`` window, so
+        ``_stop`` itself must NOT call this for a draining stop; the previous
+        docstring here claiming the worker is "confirmed gone" on every
+        ``_stop`` call was wrong for exactly that path). Deliberately NOT
+        called from ``_fall_back_to_restart_reload``: that path's worker may
+        still be alive and draining/airing the very plan this would
+        release."""
         self._release_prepared_plan_dir(self._active_prepared_plan_dir.pop(channel_id, None))
 
     def live_prepared_plan_dirs(self, channel_id: str) -> frozenset[Path]:
@@ -2043,28 +2082,18 @@ class EgressDaemon:
         that left no evidence the late write was ever observed."""
         pending = self._pending_reload_settle.get(channel_id)
         if pending is None:
-            discarded = self._discarded_reload_ids.get(channel_id)
-            if discarded is not None:
-                discarded_id, discarded_at = discarded
-                if self._monotonic() - discarded_at >= _PENDING_RELOAD_SETTLE_DEADLINE_S:
-                    # Follow-up (second hostile-review pass): bounded expiry --
-                    # an entry this old is stale (any real settlement for it
-                    # would itself be well past every timeout this module has)
-                    # and would otherwise sit in this dict forever on a
-                    # long-running daemon that never happens to see a late
-                    # write arrive to trigger the pop below.
+            discarded_id = self._discarded_reload_ids.get(channel_id)
+            if discarded_id is not None:
+                status = self._read_reload_status(channel_id)
+                if status is not None and status.get("id") == discarded_id:
+                    _LOG.info(
+                        "Content-reload settlement for %s (reload_id=%s) arrived after "
+                        "that attempt was already discarded (worker exit/supersede/"
+                        "restart); ignoring.",
+                        channel_id,
+                        discarded_id,
+                    )
                     self._discarded_reload_ids.pop(channel_id, None)
-                else:
-                    status = self._read_reload_status(channel_id)
-                    if status is not None and status.get("id") == discarded_id:
-                        _LOG.info(
-                            "Content-reload settlement for %s (reload_id=%s) arrived after "
-                            "that attempt was already discarded (worker exit/supersede/"
-                            "restart); ignoring.",
-                            channel_id,
-                            discarded_id,
-                        )
-                        self._discarded_reload_ids.pop(channel_id, None)
             return
         status = self._read_reload_status(channel_id)
         if status is not None and status.get("id") == pending.reload_id:
@@ -2247,17 +2276,25 @@ class EgressDaemon:
         # genuine crash as a clean reload handoff.
         self._reload_kills.discard(channel_id)
         # F1/F3 fix: an armed-but-unsettled reload is moot once the channel is
-        # stopped (nothing will ever read reload-status.json for it again), and
-        # the channel's active prepared-plan directory is now retired -- release
-        # both immediately instead of waiting for GC. Hostile-review follow-up
-        # (second pass), items 3 & 4: this used to plain-pop
+        # stopped (nothing will ever read reload-status.json for it again) --
+        # release it immediately instead of waiting for GC. Hostile-review
+        # follow-up (second pass), item 3: this used to plain-pop
         # _pending_reload_settle (never releasing pending.plan_dir, never
         # logging, never recording the discarded reload_id for late-arrival
-        # detection) and inline what _discard_active_prepared_plan_dir already
-        # does -- both routed through the shared helpers now, which is what
-        # that helper's own docstring already claimed this call site did.
+        # detection) -- routed through the shared helper now.
         self._discard_pending_reload_settlement(channel_id, reason="channel stopped")
-        self._discard_active_prepared_plan_dir(channel_id)
+        # Hostile-review follow-up (third pass), P2: the ACTIVE prepared-plan
+        # directory is only safe to release here when this is a direct
+        # (non-draining) stop -- the _process_terminate call further down
+        # this method makes the worker's exit synchronous with this call, so
+        # by the time we'd release it is already confirmed gone. A DRAINING
+        # stop only sends the worker its graceful TERMINAL command below and
+        # returns; the worker may still be airing from this very directory
+        # for up to stop_all_channels' whole deadline_seconds window, so that
+        # path defers this release to stop_all_channels' own observed-exit
+        # loop instead (see _discard_active_prepared_plan_dir's docstring).
+        if not draining:
+            self._discard_active_prepared_plan_dir(channel_id)
         self._stderr_logs.pop(channel_id, None)
         self._hls_relay_dead.pop(channel_id, None)
         self._clear_cg_overlay_proof(channel_id, "DRAINING" if draining else "STOPPING")
@@ -2309,6 +2346,15 @@ class EgressDaemon:
         snapshot time (already stopped/crashed) is reported ``already_gone``
         without issuing a redundant stop. Zero tracked channels is a clean
         no-op.
+
+        Hostile-review follow-up (third pass), P2: ``_stop(channel_id,
+        draining=True)`` deliberately does NOT release the channel's active
+        prepared-plan directory (see ``_discard_active_prepared_plan_dir``'s
+        docstring) -- the worker is still airing from it until THIS method
+        observes its exit. Every terminal branch below (``already_gone``,
+        ``drained`` at either the polling loop or the deadline check, and
+        ``killed_after_deadline``) therefore releases it here instead, once
+        exit is actually confirmed.
         """
 
         snapshot = list(self._processes.items())
@@ -2324,6 +2370,7 @@ class EgressDaemon:
                 # stop (RAT-004 idempotency).
                 self._processes.pop(channel_id, None)
                 outcomes[channel_id] = "already_gone"
+                self._discard_active_prepared_plan_dir(channel_id)
                 continue
             self._stop(channel_id, draining=True)
             pending[channel_id] = process
@@ -2337,6 +2384,7 @@ class EgressDaemon:
             ]
             for channel_id in exited:
                 outcomes[channel_id] = "drained"
+                self._discard_active_prepared_plan_dir(channel_id)
                 del pending[channel_id]
             if pending:
                 self._sleep(_DRAIN_POLL_INTERVAL_SECONDS)
@@ -2347,9 +2395,11 @@ class EgressDaemon:
             # tick is still reported ``drained`` rather than needlessly killed.
             if _process_poll(process) is not None:
                 outcomes[channel_id] = "drained"
+                self._discard_active_prepared_plan_dir(channel_id)
                 continue
             _process_terminate(process)
             outcomes[channel_id] = "killed_after_deadline"
+            self._discard_active_prepared_plan_dir(channel_id)
 
         # CC-WS5-006: shutdown/drain-all is a terminal off-air for each channel —
         # release its worker control pipe now that its process exit is resolved, so

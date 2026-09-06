@@ -1356,10 +1356,15 @@ def test_worker_crash_during_the_armed_window_discards_pending_settlement(
     assert daemon._pending_reload_settle.get("gov") is None  # type: ignore[attr-defined]
     assert len(started) == 2  # the crash relaunch landed (pid 222)
 
-    # Shortly after (well within the discarded-id's own bounded-expiry
-    # window -- see _discarded_reload_ids), the dead attempt's worker
-    # finally writes its status file. Recognized and ignored, logged.
-    fake_now[0] += 50.0
+    # Well past the 960s settlement deadline the ARMED reload itself would
+    # have been allowed to take (hostile-review follow-up, third pass, P2:
+    # _discarded_reload_ids is keyed by channel_id -- already bounded by the
+    # number of channels this daemon tracks -- and carries no expiry of its
+    # own; a real settlement for a dead attempt can legitimately land any
+    # time after the crash, including well past that budget, and must still
+    # be recognized), the dead attempt's worker finally writes its status
+    # file. Recognized and ignored, logged; no additional restart triggered.
+    fake_now[0] += 1000.0
     with caplog.at_level(logging.INFO, logger="civiccast.egress.daemon"):
         _write_fake_reload_status(tmp_path, "gov", armed_reload_id, "applied")
         daemon.process_once("gov")
@@ -1370,15 +1375,6 @@ def test_worker_crash_during_the_armed_window_discards_pending_settlement(
         "gov" in message and armed_reload_id in message and "ignoring" in message
         for message in messages
     ), messages
-
-    # Advance well past the 960s settlement deadline -- with the pending entry
-    # already gone (and the late write already consumed above), no
-    # fallback-to-restart fires because of the dead attempt (a real bug here
-    # would show up as a SECOND, spurious TRANSITIONING/restart cycle beyond
-    # the one the crash itself already caused).
-    fake_now[0] += 1000.0
-    daemon.process_once("gov")
-    assert len(started) == 2  # no additional restart triggered by the stale reload
     state = store.read_state("gov")
     assert state is not None
     assert state.state == "ON_AIR"
@@ -1454,6 +1450,193 @@ def test_superseding_a_pending_reload_releases_its_previous_plan_dir(tmp_path: P
     # The FIRST reload's plan (plan-2) is released the moment it is
     # superseded -- not left dangling until GC eventually notices.
     assert released == [tmp_path / "plan-2"]
+
+
+def test_stop_releases_both_the_pending_reload_and_the_active_plan_dir(tmp_path: Path) -> None:
+    """Hostile-review follow-up (third pass): a direct (non-draining) operator
+    stop must route through BOTH shared discard helpers -- an armed-but-
+    unsettled reload's plan_dir (``_discard_pending_reload_settlement``) AND
+    the channel's currently-active plan_dir (``_discard_active_prepared_plan_
+    dir``) -- rather than either being left for GC. The direct stop path's
+    own ``_process_terminate`` call makes the worker's exit synchronous with
+    this call, so releasing the active dir here (unlike the draining path,
+    see the next test) is safe."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+    )
+
+    daemon.process_once("gov")  # initial start -> plan-1, tracked ACTIVE
+    assert daemon._active_prepared_plan_dir.get("gov") == tmp_path / "plan-1"  # type: ignore[attr-defined]
+
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # arms a reload -> plan-2, tracked PENDING (never settles)
+    assert daemon._pending_reload_settle.get("gov") is not None  # type: ignore[attr-defined]
+    assert released == []
+
+    store.enqueue_command(_command("stop"))
+    daemon.process_once("gov")
+
+    assert daemon._pending_reload_settle.get("gov") is None  # type: ignore[attr-defined]
+    assert daemon._active_prepared_plan_dir.get("gov") is None  # type: ignore[attr-defined]
+    # _discard_pending_reload_settlement runs before _discard_active_prepared_
+    # plan_dir inside _stop, so the pending reload's plan (plan-2) is
+    # released first, then the active plan (plan-1).
+    assert released == [tmp_path / "plan-2", tmp_path / "plan-1"]
+    assert store.read_state("gov").state == "STOPPED"
+
+
+def test_draining_stop_defers_the_active_plan_dir_release_to_stop_all_channels(
+    tmp_path: Path,
+) -> None:
+    """Hostile-review follow-up (third pass), P2: a DRAINING stop
+    (``stop_all_channels``'s graceful path) only sends the worker its
+    TERMINAL command and returns -- the worker may still be airing from the
+    active plan directory for the entire drain deadline, so ``_stop`` itself
+    must NOT release it. Proves the directory survives the draining ``_stop``
+    call untouched, and is only released once ``stop_all_channels`` actually
+    observes the worker's exit."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    process = _FakeProcess(pid=111)
+    processes = [process]
+    started: list[_FakeProcess] = []
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        encoder_strategy=_FakeContentReloadStrategy(processes, started),
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+    )
+
+    daemon.process_once("gov")  # _start -> plan-1, tracked ACTIVE
+    assert daemon._active_prepared_plan_dir.get("gov") == tmp_path / "plan-1"  # type: ignore[attr-defined]
+
+    result = daemon.stop_all_channels(deadline_seconds=0.0)  # worker never exits in time
+    assert result.outcomes[0].outcome == "killed_after_deadline"
+
+    # The worker was force-terminated by the deadline escalation -- ITS exit
+    # is what unblocks the release, which this same stop_all_channels call
+    # then performs once that escalation confirms it.
+    assert released == [tmp_path / "plan-1"]
+    assert daemon._active_prepared_plan_dir.get("gov") is None  # type: ignore[attr-defined]
+
+
+def test_worker_exit_between_poll_process_and_poll_reload_settlement_falls_back(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Hostile-review follow-up (third pass): the liveness re-check inside
+    ``_poll_reload_settlement`` (guarding the "applied" -> ``_commit_reload_
+    settlement`` transition) must catch a worker that was still alive when
+    ``_poll_process`` checked it EARLIER in this same ``process_once`` tick,
+    but has exited by the time this later check runs -- proving the
+    liveness check is a live re-read, not reused/stale information from
+    earlier in the same pass. Falls back to restart, but (since the crash
+    is only discovered mid-tick, after the healthy-poll bookkeeping already
+    ran) the actual relaunch does not fire until the FOLLOWING tick, once
+    ``_poll_process`` itself observes the same exit."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+
+    class _ExitsOnSecondPollProcess(_FakeProcess):
+        """Alive on its FIRST ``poll()`` call, exited (non-zero) on every
+        call after that -- models a worker dying in the gap between two
+        poll checks within the SAME process_once tick."""
+
+        def __init__(self, *, pid: int, alive_for_calls: int) -> None:
+            super().__init__(pid=pid, returncode=None)
+            self._poll_calls = 0
+            self._alive_for_calls = alive_for_calls
+
+        def poll(self) -> int | None:
+            self._poll_calls += 1
+            if self._poll_calls <= self._alive_for_calls:
+                return None
+            self.returncode = 1
+            return 1
+
+    # Alive for its first 3 poll() calls (the reload-arming tick's own
+    # _poll_process check, that same tick's _request_reload liveness check
+    # gating whether it even attempts the seamless path, and the critical
+    # tick's OWN _poll_process check) -- exited from the 4th call onward,
+    # which is _poll_reload_settlement's liveness re-check later in that
+    # SAME critical tick.
+    worker = _ExitsOnSecondPollProcess(pid=111, alive_for_calls=3)
+    restart_process = _FakeProcess(pid=222)
+    processes = [worker, restart_process]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR (pid 111, poll call #1 pending)
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # armed; no status file ever written
+
+    armed_reload_id = strategy.reload_ids[-1]
+    _write_fake_reload_status(tmp_path, "gov", armed_reload_id, "applied")
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.daemon"):
+        # ONE tick: _poll_process runs first and calls worker.poll() (call #1
+        # -> None, still alive) -- no crash-relaunch fires from THAT check.
+        # _poll_reload_settlement runs later in this SAME tick, sees the
+        # "applied" status, and does its OWN liveness re-check (call #2 ->
+        # 1, exited) -- falls back to restart, but does not itself relaunch.
+        daemon.process_once("gov")
+
+    assert daemon._pending_reload_settle.get("gov") is None  # type: ignore[attr-defined]
+    assert len(started) == 1  # no relaunch yet -- this tick only fell back
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "TRANSITIONING"
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(
+        "gov" in message and "already exited" in message and armed_reload_id in message
+        for message in messages
+    ), messages
+
+    # The FOLLOWING tick: _poll_process now observes the same exit (call #3,
+    # still 1) as a fresh crash and relaunches.
+    daemon.process_once("gov")
+    assert len(started) == 2
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Mayor interview"
 
 
 def test_start_tracks_and_releases_its_active_plan_dir_on_worker_exit(tmp_path: Path) -> None:
@@ -2949,6 +3132,150 @@ def test_start_releases_the_prepared_plan_when_the_encoder_falls_back_to_slate(
     # The program plan's prepared directory (plan-1) was minted, then
     # released once the slate aired instead -- never tracked as active
     # (the slate was never built by the preparer), never left dangling.
+    assert released == [tmp_path / "plan-1"]
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset()
+
+
+def test_start_tracks_not_releases_the_prepared_plan_for_a_force_fallback_slate(
+    tmp_path: Path,
+) -> None:
+    """Hostile-review follow-up (third pass), P0: ``using_fallback_slate``
+    also flips True on THREE paths BEFORE the preparer ever runs --
+    ``force_fallback_slate`` (the crash-loop latch), a caption-readiness
+    refusal, and ``source_plan is None`` (this test covers the first). On
+    all three, the preparer runs against the SLATE plan itself (source_plan
+    was already reassigned before the preparer block), so the resulting
+    prepared_plan_dir is what the encoder is ACTIVELY airing from -- the
+    pre-fix tracking code released (rmtree'd) it out from under the live
+    slate the moment it started airing (reviewer-proven with a probe:
+    prepared_for=['Fallback slate'], state FALLBACK_SLATE pid=111,
+    released=['plan-1']). Proves the directory is tracked as active while
+    the slate airs, NOT released, and is only released once that worker
+    actually exits."""
+    from civiccast.egress.daemon import _LIVE_SOURCE_FAILURE_FALLBACK_STREAK
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    n = _LIVE_SOURCE_FAILURE_FALLBACK_STREAK
+    pids = tuple(100 + i for i in range(n + 2))  # 1 initial start + n relaunches + 1 more
+    processes = [_FakeProcess(pid=pid, returncode=None) for pid in pids]
+    started: list[_FakeProcess] = []
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _live_source_plan(tmp_path),
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+        restart_cooldown_seconds=0.0,  # never defer — isolate the fallback trigger itself
+    )
+
+    daemon.process_once("gov")  # start -> the live source, ON_AIR (plan-1, tracked active)
+    for _ in range(n):
+        started[-1].returncode = 1  # the live source drops / never connects
+        daemon.process_once("gov")  # the LAST of these force_fallback_slate=True
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+    # The slate's own prepared plan (whatever plan-N the preparer minted on
+    # the force_fallback_slate relaunch) is tracked ACTIVE, not released,
+    # while this worker airs it.
+    active_dir = daemon._active_prepared_plan_dir.get("gov")  # type: ignore[attr-defined]
+    assert active_dir is not None
+    assert active_dir not in released
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset({active_dir})
+
+    # Once THAT worker exits (a clean exit here, e.g. an operator stop), the
+    # slate's own directory is released like any other active plan.
+    started[-1].returncode = 0
+    daemon.process_once("gov")
+    assert active_dir in released
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset()
+
+
+def test_start_tracks_not_releases_the_prepared_plan_for_a_caption_readiness_refusal(
+    tmp_path: Path,
+) -> None:
+    """Hostile-review follow-up (third pass), P0 (second early-flip path):
+    same defect as the force_fallback_slate test above, triggered instead by
+    a caption-readiness refusal that requires the fallback slate."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        caption_readiness_provider=lambda _channel_id: SimpleNamespace(
+            ready=False,
+            refusal_reason="free-space-reserve-unrestorable",
+            requires_fallback_slate=True,
+        ),
+        ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+    )
+
+    daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+    assert released == []  # the slate's own directory (plan-1) is airing, not released
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-1"})
+
+    started[0].returncode = 0  # the slate worker exits cleanly
+    daemon.process_once("gov")
+    assert released == [tmp_path / "plan-1"]
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset()
+
+
+def test_start_tracks_not_releases_the_prepared_plan_for_a_missing_source_plan(
+    tmp_path: Path,
+) -> None:
+    """Hostile-review follow-up (third pass), P0 (third early-flip path):
+    same defect as the two tests above, triggered instead by
+    ``source_plan_provider`` returning ``None`` with a fallback configured."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+    )
+
+    daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+    assert released == []  # the slate's own directory (plan-1) is airing, not released
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-1"})
+
+    started[0].returncode = 0  # the slate worker exits cleanly
+    daemon.process_once("gov")
     assert released == [tmp_path / "plan-1"]
     assert daemon.live_prepared_plan_dirs("gov") == frozenset()
 
