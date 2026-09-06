@@ -549,11 +549,33 @@ entries:
       # (GstPlayoutStrategy.supports_content_reload, strategy.py -- not part
       # of this claim's bound module set). Blob IDs re-hashed with
       # `git hash-object --path <file> <file>` per D2.
+      # Re-provisioned again (same branch, hostile-review follow-up,
+      # 2026-09-06): worker.py and engine.py drifted a THIRD time within this
+      # PR -- a self-review caught that the ack-waits-for-settlement design
+      # above was itself wrong (a deferred/boundary-aligned switch can take
+      # up to defer_switch_timeout_s=900s to settle, far longer than a pipe
+      # ack should ever block, and the strategy's bounded wait would time out
+      # on a correctly-armed long-lead reload and get the daemon to terminate
+      # a healthy worker). worker.py's "reload" ack now means "armed" only,
+      # written synchronously; the eventual settle outcome is reported
+      # out-of-band via a new reload-status.json file
+      # (_write_reload_status), polled by the (out-of-claim-scope)
+      # daemon.py. engine.py also gained two adjacent leak fixes found on the
+      # same pass: _instantiate_source_leg and the reload_program build/link
+      # step now dispose whatever was already built before a raise instead of
+      # leaking it, and _link_leg_to_selectors releases any selector request
+      # pad it already claimed before a later failure in the same call.
+      # Neither change touches decode_policy.py, graph.py, control.py, or
+      # audio_tap.py, which keep their recorded blobs. Current-source proof
+      # for these bytes is this PR's own updated unit coverage in the same
+      # two test files named above (test_gst_engine_reload_concat_naming.py,
+      # test_gst_worker_reload_ack.py), re-run green against the new design.
+      # Blob IDs re-hashed with `git hash-object --path <file> <file>` per D2.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 8abacefc90a63d159ba2f97db62e254b8fd962fa
+          blob: 9c2cbff12ac9fc977738ad2c0ca33a098266bfe9
         - path: civiccast/egress/gst/engine.py
-          blob: b0d8270bdd2fe0bedca52c509933938b9fa212bb
+          blob: 4b7a9456165ccf5e1888b28a7b75de6974c95d91
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -795,11 +817,33 @@ entries:
       # (GstPlayoutStrategy.supports_content_reload, strategy.py -- not part
       # of this claim's bound module set). Blob IDs re-hashed with
       # `git hash-object --path <file> <file>` per D2.
+      # Re-provisioned again (same branch, hostile-review follow-up,
+      # 2026-09-06): worker.py and engine.py drifted a THIRD time within this
+      # PR -- a self-review caught that the ack-waits-for-settlement design
+      # above was itself wrong (a deferred/boundary-aligned switch can take
+      # up to defer_switch_timeout_s=900s to settle, far longer than a pipe
+      # ack should ever block, and the strategy's bounded wait would time out
+      # on a correctly-armed long-lead reload and get the daemon to terminate
+      # a healthy worker). worker.py's "reload" ack now means "armed" only,
+      # written synchronously; the eventual settle outcome is reported
+      # out-of-band via a new reload-status.json file
+      # (_write_reload_status), polled by the (out-of-claim-scope)
+      # daemon.py. engine.py also gained two adjacent leak fixes found on the
+      # same pass: _instantiate_source_leg and the reload_program build/link
+      # step now dispose whatever was already built before a raise instead of
+      # leaking it, and _link_leg_to_selectors releases any selector request
+      # pad it already claimed before a later failure in the same call.
+      # Neither change touches decode_policy.py, graph.py, control.py, or
+      # audio_tap.py, which keep their recorded blobs. Current-source proof
+      # for these bytes is this PR's own updated unit coverage in the same
+      # two test files named above (test_gst_engine_reload_concat_naming.py,
+      # test_gst_worker_reload_ack.py), re-run green against the new design.
+      # Blob IDs re-hashed with `git hash-object --path <file> <file>` per D2.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 8abacefc90a63d159ba2f97db62e254b8fd962fa
+          blob: 9c2cbff12ac9fc977738ad2c0ca33a098266bfe9
         - path: civiccast/egress/gst/engine.py
-          blob: b0d8270bdd2fe0bedca52c509933938b9fa212bb
+          blob: 4b7a9456165ccf5e1888b28a7b75de6974c95d91
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py

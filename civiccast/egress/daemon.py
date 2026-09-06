@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
 import time
 import uuid
@@ -170,6 +172,34 @@ _LIVE_SOURCE_FAILURE_FALLBACK_STREAK = _RESTART_ESCALATION_STREAK
 # operator-facing string, not a log sink.
 _STDERR_TAIL_MAX_CHARS = 600
 
+# F1 redesign (coordinator hostile review, 2026-09-06): absolute backstop for a
+# pending reload settlement that never arrives at all (e.g. the worker crashed
+# between arming the reload and writing reload-status.json, or the status file
+# itself never made it to disk). Longer than the engine's own
+# ``defer_switch_timeout_s`` (900s default, GstPlayoutEngine.__init__) plus a
+# generous margin for the pipe round trip and a couple of missed poll ticks --
+# a legitimate deferred switch always settles well within this window; past it,
+# treat the reload as lost and fall back to restart rather than wait forever.
+_PENDING_RELOAD_SETTLE_DEADLINE_S = 960.0
+
+
+class _PendingReloadSettlement(NamedTuple):
+    """F1 redesign: everything ``_poll_reload_settlement`` needs to either
+    finish the ON_AIR bookkeeping (on "applied") or fall back to restart (on
+    "aborted:<reason>" or a deadline lapse) for one armed-but-not-yet-settled
+    content-reload. Constructed by ``_try_content_reload``, consumed and
+    cleared by ``_poll_reload_settlement``."""
+
+    reload_id: str
+    since: float  # daemon._monotonic() at arm time -- the deadline clock
+    process: object
+    config: EgressConfig
+    source_plan: EgressSourcePlan
+    switch_at_end_of_current: bool
+    previous_state: str | None
+    previous_source_label: str | None
+    plan_dir: Path | None
+
 
 def _ascii_safe(text: str) -> str:
     """Fold arbitrary child output so it can reach the database, whatever its
@@ -274,6 +304,15 @@ class EgressDaemon:
         # silent no-op (tests / the CLI daemon loop that don't wire alerting).
         command_failure_hook: Callable[[str, EgressCommand, BaseException], None] | None = None,
         sleep: Callable[[float], None] | None = None,
+        # F3 fix (hostile-review follow-up, 2026-09-06): optional hook to
+        # immediately reclaim one specific SourcePreparer per-plan directory
+        # (``SourcePreparer.release``) once THIS daemon independently knows a
+        # plan is retired -- see ``_poll_reload_settlement`` (a just-settled
+        # reload's predecessor) and ``_stop`` (the channel's active plan on an
+        # operator stop). None (the default, and every caller that doesn't
+        # construct a real ``SourcePreparer``) means GC alone reclaims stale
+        # directories -- never a correctness issue, just slower cleanup.
+        prepared_plan_release: Callable[[Path | None], None] | None = None,
     ) -> None:
         self._store = store
         # Single injectable monotonic clock for all crash-relaunch timing (the
@@ -361,6 +400,18 @@ class EgressDaemon:
         self._last_loudness_lufs: dict[str, float] = {}
         self._active_cg_overlay_ids: dict[str, str] = {}
         self._last_cg_overlay_event_keys: dict[str, tuple[str, str, str | None]] = {}
+        # F1 redesign (2026-09-06): a content-reload's ack now means only
+        # "armed" -- the actual commit/abort is tracked here until
+        # ``_poll_reload_settlement`` observes it (or its deadline lapses).
+        # See ``_try_content_reload``'s docstring for the full design.
+        self._pending_reload_settle: dict[str, _PendingReloadSettlement] = {}
+        # F3 fix: the per-plan prepared/ directory (SourcePreparationReport.
+        # plan_dir) backing the CURRENTLY on-air plan for each channel, if the
+        # configured source_preparer reports one. Updated when a reload
+        # settles applied; the PREVIOUS value is released at that point (see
+        # ``_poll_reload_settlement``) rather than left for GC alone.
+        self._active_prepared_plan_dir: dict[str, Path] = {}
+        self._prepared_plan_release = prepared_plan_release
 
     def process_once(self, channel_id: str) -> int:
         """Process all currently queued commands for one channel.
@@ -403,7 +454,16 @@ class EgressDaemon:
         # health append (below) calls _sink_connected this same tick (MAJOR M1).
         # Order is preserved across the guard: each call still runs only after
         # the previous one completed (successfully or not), never in parallel.
-        for poll in (self._poll_hls_relay, self._poll_process, self._service_backoff_relaunch):
+        # F1 redesign: _poll_reload_settlement checks reload-status.json for a
+        # channel with an armed-but-not-yet-settled content-reload -- a no-op
+        # for every other channel (it returns immediately when there is no
+        # pending entry).
+        for poll in (
+            self._poll_hls_relay,
+            self._poll_process,
+            self._service_backoff_relaunch,
+            self._poll_reload_settlement,
+        ):
             try:
                 poll(channel_id)
             except Exception:
@@ -1527,7 +1587,27 @@ class EgressDaemon:
         so the caller falls back to terminate+restart — for any case the seamless path
         can't own: no/disabled config, no/foreign/invalid plan, a prepare failure, a
         strategy error, or a worker control channel that isn't ready yet.
-        """
+
+        F1 redesign (coordinator hostile review, 2026-09-06): ``reload_content``
+        returning True now means the reload was ARMED (accepted; the worker's new
+        leg is building/prerolling), NOT that it has committed -- committing (or
+        aborting) can take up to the worker's own ``defer_switch_timeout_s`` (900s
+        default) for a deferred/boundary-aligned switch (the automation-driven
+        ON_AIR-extension case this method exists for -- see
+        ``reload_policy.should_defer_switch``). Doing the ON_AIR proof-event/state
+        bookkeeping immediately, as the pre-redesign code did, would therefore
+        claim the channel is airing the NEW source before the switch has actually
+        happened -- for a deferred switch, the OLD content is often still
+        genuinely on air for minutes after this method returns.
+
+        This method now only ARMS the reload and records a
+        ``_PendingReloadSettlement`` in ``self._pending_reload_settle``; the
+        state/proof-event bookkeeping is deferred to ``_commit_reload_settlement``,
+        invoked by ``_poll_reload_settlement`` once ``reload-status.json`` actually
+        reports ``"applied"`` (or the daemon falls back to restart on
+        ``"aborted:<reason>"``/a deadline lapse). Returns True as soon as the
+        reload is armed -- this is what tells the CALLER (``_request_reload``) not
+        to fall back to terminate+restart; it does not mean the switch landed."""
         config = self._store.get_config(channel_id)
         if config is None or not config.enabled:
             return False
@@ -1543,6 +1623,11 @@ class EgressDaemon:
             return False  # let terminate+restart resolve the slate fallback
         if source_plan is None or source_plan.channel_id != channel_id:
             return False
+        # F3: None unless the preparer actually reports a discrete per-plan
+        # directory (see SourcePreparationReport.plan_dir) -- tracked into the
+        # pending settlement below so _commit_reload_settlement can release the
+        # PREVIOUS plan once this one lands.
+        prepared_plan_dir: Path | None = None
         if self._source_preparer is not None:
             # D43 instrumentation (2026-09-05): this call is SYNCHRONOUS on the
             # automation thread -- ChannelAutomationService's poll loop
@@ -1561,6 +1646,7 @@ class EgressDaemon:
             try:
                 preparation_report = self._source_preparer(source_plan, config)
                 source_plan = preparation_report.source_plan
+                prepared_plan_dir = preparation_report.plan_dir
                 self._record_prepared_loudness(channel_id, preparation_report)
             except SourcePrepareError:
                 _LOG.warning(
@@ -1609,12 +1695,34 @@ class EgressDaemon:
                 manual_override_active=self.has_manual_override(channel_id),
             ),
         )
+        # F1 redesign: a daemon-generated id (not the strategy's own internal
+        # uuid, which this layer never sees) so _poll_reload_settlement can
+        # correlate reload-status.json's "id" field back to THIS specific
+        # attempt -- load-bearing across a supersede (a second reload armed
+        # before the first settles gets its OWN id and its OWN pending entry;
+        # see that method's docstring).
+        reload_id = str(uuid.uuid4())
+        # F5 note (coordinator hostile review; NOT fixed here, deliberately):
+        # this call still runs synchronously on the automation thread, same as
+        # every call already made from here (source_plan_provider, the
+        # preparer, the strategy dispatch below). With the F1 redesign the
+        # worker's ack is "armed" -- fast, bounded by _reload_ack_timeout_s()
+        # (the plain 5s default) -- so the WORST case this blocks the
+        # automation thread for is that ~5s pipe round trip, not the up-to-
+        # 900s settlement wait the pre-redesign code risked. That is still a
+        # synchronous call on a thread automation's whole poll loop shares
+        # across every channel; moving send_and_wait off the automation
+        # thread entirely (e.g. a dedicated dispatch thread/executor per
+        # channel) would remove even that bound but is a separate change --
+        # left as a note, not attempted in this PR.
         try:
-            applied = self._encoder_strategy.reload_content(channel_id, self._work_dir, request)
+            armed = self._encoder_strategy.reload_content(
+                channel_id, self._work_dir, request, command_id=reload_id
+            )
         except Exception:
             _LOG.exception("Content-reload dispatch failed for %s; restarting encoder.", channel_id)
             return False
-        if not applied:
+        if not armed:
             # Diagnosability fix (coordinator follow-up, 2026-09-06): this used to
             # return False with NO log line at all -- an operator/on-call reading
             # the control-plane log for "why did this channel restart instead of
@@ -1632,8 +1740,39 @@ class EgressDaemon:
                 reason or "no reason reported by the encoder strategy",
             )
             return False
-        previous_state = state.state if state else None
-        previous_source_label = state.current_source_label if state else None
+        # Armed, not yet settled: record it and return. _poll_reload_settlement
+        # finishes the ON_AIR bookkeeping once reload-status.json confirms
+        # "applied" (or falls back to restart on "aborted:<reason>"/deadline).
+        self._pending_reload_settle[channel_id] = _PendingReloadSettlement(
+            reload_id=reload_id,
+            since=self._monotonic(),
+            process=process,
+            config=config,
+            source_plan=source_plan,
+            switch_at_end_of_current=bool(request.switch_at_end_of_current),
+            previous_state=state.state if state else None,
+            previous_source_label=state.current_source_label if state else None,
+            plan_dir=prepared_plan_dir,
+        )
+        _LOG.info(
+            "Seamless content-reload armed for %s (reload_id=%s, switch_at_end_of_current=%s); "
+            "awaiting settlement.",
+            channel_id,
+            reload_id,
+            request.switch_at_end_of_current,
+        )
+        return True
+
+    def _commit_reload_settlement(self, channel_id: str, pending: _PendingReloadSettlement) -> None:
+        """F1 redesign: the ON_AIR proof-event/state bookkeeping ``_try_content_
+        reload`` used to do immediately -- now run only once
+        ``_poll_reload_settlement`` observes ``reload-status.json`` reporting
+        ``"applied"`` for ``pending.reload_id``. Also releases the PREVIOUS
+        active prepared-plan directory (F3) and records the new one."""
+        config = pending.config
+        source_plan = pending.source_plan
+        previous_state = pending.previous_state
+        previous_source_label = pending.previous_source_label
         # Record the source-to-source transition in the proof chain for parity with
         # the restart path — but DO NOT write a TRANSITIONING *state*: the seamless
         # swap never takes output down, so the channel stays ON_AIR throughout.
@@ -1667,13 +1806,13 @@ class EgressDaemon:
             "ON_AIR",
             current_source_label=source_plan.segments[0].label,
             current_proof_event_id=proof_event.event_id,
-            pid=_process_pid(process),
+            pid=_process_pid(pending.process),
         )
         self._record_dispatched_plan(
             channel_id,
             proof_event_id=proof_event.event_id,
             source_plan=source_plan,
-            switch_deferred=bool(request.switch_at_end_of_current),
+            switch_deferred=pending.switch_at_end_of_current,
         )
         self._append_health(
             channel_id,
@@ -1681,7 +1820,109 @@ class EgressDaemon:
             sink_connected=self._sink_connected(channel_id, config, state="ON_AIR"),
             seconds_on_air=self._seconds_on_air(channel_id),
         )
-        return True
+        # F3: the reload just settled -- the PREVIOUS plan is retired (the
+        # engine has disposed its leg; see engine.reload_program's on_settled
+        # contract). Release it immediately rather than waiting for GC, then
+        # start tracking the new plan as active.
+        previous_plan_dir = self._active_prepared_plan_dir.pop(channel_id, None)
+        if self._prepared_plan_release is not None and previous_plan_dir is not None:
+            with contextlib.suppress(Exception):  # a release hiccup must never break settlement
+                self._prepared_plan_release(previous_plan_dir)
+        if pending.plan_dir is not None:
+            self._active_prepared_plan_dir[channel_id] = pending.plan_dir
+
+    def _poll_reload_settlement(self, channel_id: str) -> None:
+        """F1 redesign: poll ``reload-status.json`` for a channel with an
+        armed-but-not-yet-settled content-reload (``_try_content_reload``).
+        Runs once per ``process_once`` tick (added to its poll tuple), replacing
+        the pre-redesign design's synchronous, potentially-900s-long block on
+        the worker-pipe ack.
+
+        * status ``"id"`` matches the pending reload and ``"result" ==
+          "applied"`` -- the switch actually landed: finish the ON_AIR
+          bookkeeping (``_commit_reload_settlement``) and clear the pending
+          entry.
+        * status matches and ``"result"`` starts with ``"aborted:"`` -- the
+          reload did not land (build error, timeout, supersession downstream of
+          this specific attempt): log the reason and fall back to restart
+          (``_fall_back_to_restart_reload``), same path a synchronously-declined
+          reload always took.
+        * no status yet, or an id that does not match (a superseded attempt's
+          own settlement arriving late) -- keep waiting, UNLESS
+          ``_PENDING_RELOAD_SETTLE_DEADLINE_S`` has elapsed since this reload
+          was armed, in which case treat it as lost and fall back to restart
+          rather than wait forever for a status update that may never come
+          (e.g. the worker crashed between arming and writing the file)."""
+        pending = self._pending_reload_settle.get(channel_id)
+        if pending is None:
+            return
+        status = self._read_reload_status(channel_id)
+        if status is not None and status.get("id") == pending.reload_id:
+            result = status.get("result")
+            if result == "applied":
+                self._pending_reload_settle.pop(channel_id, None)
+                self._commit_reload_settlement(channel_id, pending)
+                return
+            if isinstance(result, str) and result.startswith("aborted:"):
+                self._pending_reload_settle.pop(channel_id, None)
+                _LOG.warning(
+                    "Seamless content-reload for %s did not land (%s); falling back to restart.",
+                    channel_id,
+                    result,
+                )
+                self._fall_back_to_restart_reload(channel_id)
+                return
+            # An unrecognized result string: fall through to the deadline check
+            # below rather than trust an unknown value as either outcome.
+        if self._monotonic() - pending.since >= _PENDING_RELOAD_SETTLE_DEADLINE_S:
+            self._pending_reload_settle.pop(channel_id, None)
+            _LOG.warning(
+                "Seamless content-reload for %s reported no settlement within %.0fs "
+                "(reload_id=%s); falling back to restart.",
+                channel_id,
+                _PENDING_RELOAD_SETTLE_DEADLINE_S,
+                pending.reload_id,
+            )
+            self._fall_back_to_restart_reload(channel_id)
+
+    def _read_reload_status(self, channel_id: str) -> dict[str, Any] | None:
+        """Best-effort read of ``<work>/<channel_id>/reload-status.json``
+        (``worker.py``'s ``_write_reload_status``). Never raises: a torn read
+        (mid-rewrite, though the worker writes atomically via tmp+replace so
+        this should be rare) or a malformed body is just "no status yet",
+        retried next tick."""
+        status_path = self._work_dir / channel_id / "reload-status.json"
+        try:
+            data = json.loads(status_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _fall_back_to_restart_reload(self, channel_id: str) -> None:
+        """The terminate+restart reload path a declined/aborted/lost content-
+        reload always falls through to -- factored out of ``_request_reload``
+        so ``_poll_reload_settlement`` can take the exact same path for a
+        reload that armed successfully but then failed to settle."""
+        state = self._store.read_state(channel_id)
+        process = self._processes.get(channel_id)
+        self._pending_reloads[channel_id] = (
+            state.state if state else None,
+            state.current_source_label if state else None,
+        )
+        self._write_state(
+            channel_id,
+            "TRANSITIONING",
+            current_source_label=state.current_source_label if state else None,
+            current_proof_event_id=state.current_proof_event_id if state else None,
+            pid=_process_pid(process),
+        )
+        if state is not None and state.state == "FALLBACK_SLATE" and process is not None:
+            # Issue #157 (CA-8 live finding): filler is interruptible by
+            # design - a due program must not wait out the fill-target plan
+            # (after #154 that wait is up to an hour of slate). Programs
+            # keep the graceful drain above.
+            self._reload_kills.add(channel_id)
+            _process_terminate(process)
 
     def _request_reload(self, channel_id: str) -> None:
         state = self._store.read_state(channel_id)
@@ -1704,25 +1945,12 @@ class EgressDaemon:
             and getattr(self._encoder_strategy, "supports_content_reload", False)
             and self._try_content_reload(channel_id, state, process)
         ):
+            # F1 redesign: True means ARMED, not settled -- _poll_reload_
+            # settlement (in process_once's poll tuple) finishes the job (or
+            # falls back to restart via _fall_back_to_restart_reload below)
+            # once reload-status.json actually reports an outcome.
             return
-        self._pending_reloads[channel_id] = (
-            state.state if state else None,
-            state.current_source_label if state else None,
-        )
-        self._write_state(
-            channel_id,
-            "TRANSITIONING",
-            current_source_label=state.current_source_label if state else None,
-            current_proof_event_id=state.current_proof_event_id if state else None,
-            pid=_process_pid(process),
-        )
-        if state is not None and state.state == "FALLBACK_SLATE":
-            # Issue #157 (CA-8 live finding): filler is interruptible by
-            # design - a due program must not wait out the fill-target plan
-            # (after #154 that wait is up to an hour of slate). Programs
-            # keep the graceful drain above.
-            self._reload_kills.add(channel_id)
-            _process_terminate(process)
+        self._fall_back_to_restart_reload(channel_id)
 
     def _drain(self, channel_id: str) -> None:
         process = self._processes.get(channel_id)
@@ -1761,6 +1989,15 @@ class EgressDaemon:
         # Audit ENG-005: a leaked reload-kill flag would later misclassify a
         # genuine crash as a clean reload handoff.
         self._reload_kills.discard(channel_id)
+        # F1/F3 fix: an armed-but-unsettled reload is moot once the channel is
+        # stopped (nothing will ever read reload-status.json for it again), and
+        # the channel's active prepared-plan directory is now retired -- release
+        # it immediately instead of waiting for GC.
+        self._pending_reload_settle.pop(channel_id, None)
+        stopped_plan_dir = self._active_prepared_plan_dir.pop(channel_id, None)
+        if self._prepared_plan_release is not None and stopped_plan_dir is not None:
+            with contextlib.suppress(Exception):
+                self._prepared_plan_release(stopped_plan_dir)
         self._stderr_logs.pop(channel_id, None)
         self._hls_relay_dead.pop(channel_id, None)
         self._clear_cg_overlay_proof(channel_id, "DRAINING" if draining else "STOPPING")

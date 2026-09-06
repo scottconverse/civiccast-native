@@ -1301,6 +1301,18 @@ def build_channel_automation(
         ),
         asset_resolver=asset_store.get_staff_row,
     )
+    # #156: the persistent conform cache emits playout-time trims when the
+    # engine honors them — the legacy ffmpeg-concat engine does (ffconcat
+    # inpoint/outpoint); the gst engine (default) reads only segment.path, so
+    # it gets the fast stream-copy fallback instead.
+    # F3 fix (hostile-review follow-up, 2026-09-06): kept as a named instance
+    # so `.release` (immediate per-plan-directory reclaim once the daemon
+    # independently knows a plan is retired) can be wired alongside `.prepare`
+    # -- see cli.py's identical pattern.
+    source_preparer_instance = SourcePreparer(
+        work_dir=resolved_work_dir,
+        playout_trim_supported=not gstreamer_engine_selected(),
+    )
     # S5: the production engine is the PlayoutSupervisor (subclass of EgressDaemon)
     # so live takeover/handback work. lookahead_source_plan_provider=None keeps
     # source selection a single-plan passthrough of source_plan_provider —
@@ -1319,14 +1331,8 @@ def build_channel_automation(
         fallback_source_provider=build_filler_source_provider(
             session_factory, work_dir=resolved_work_dir
         ),
-        # #156: the persistent conform cache emits playout-time trims when the
-        # engine honors them — the legacy ffmpeg-concat engine does (ffconcat
-        # inpoint/outpoint); the gst engine (default) reads only segment.path, so
-        # it gets the fast stream-copy fallback instead.
-        source_preparer=SourcePreparer(
-            work_dir=resolved_work_dir,
-            playout_trim_supported=not gstreamer_engine_selected(),
-        ).prepare,
+        source_preparer=source_preparer_instance.prepare,
+        prepared_plan_release=source_preparer_instance.release,
         resolve_secret=lambda ref: os.environ.get(ref),
         # S15: the GStreamer engine (default) or ffmpeg-concat (legacy), per
         # CIVICCAST_EGRESS_ENGINE.

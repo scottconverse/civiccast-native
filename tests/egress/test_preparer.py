@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+import civiccast.egress.preparer as preparer_module
 from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.models import (
     CanonicalProfile,
@@ -391,12 +392,23 @@ def test_stale_prepared_plan_directories_are_garbage_collected(tmp_path: Path) -
         warm_scheduler=lambda job: None,
     )
 
+    # F3 fix: keep-N-most-recent (N=3) protects a directory from GC purely by
+    # recency, however old it is -- so proving the AGE FLOOR actually fires
+    # requires enough other directories to push the stale one out of that
+    # protection first. One dir older than the floor, plus enough OTHER dirs
+    # (all younger) to exceed keep-N, plus a fresh one this very prepare()
+    # call creates.
     prepared_root = tmp_path / "work" / "gov" / "prepared"
     stale_dir = prepared_root / ("0" * 12)
     stale_dir.mkdir(parents=True)
     (stale_dir / "segment-0001.ts").write_text("old", encoding="utf-8")
-    old_time = time.time() - (7 * 3600)  # older than the 6h floor
+    old_time = time.time() - (25 * 3600)  # older than the 24h floor
     os.utime(stale_dir, (old_time, old_time))
+
+    for i in range(preparer_module._PREPARED_PLAN_DIR_KEEP_N):
+        other_dir = prepared_root / f"other{i:03d}"
+        other_dir.mkdir(parents=True)
+        (other_dir / "segment-0001.ts").write_text("other", encoding="utf-8")
 
     fresh_dir = prepared_root / ("1" * 12)
     fresh_dir.mkdir(parents=True)
@@ -406,8 +418,129 @@ def test_stale_prepared_plan_directories_are_garbage_collected(tmp_path: Path) -
     preparer.prepare(plan, _config())
 
     remaining = {p.name for p in prepared_root.iterdir() if p.is_dir()}
-    assert stale_dir.name not in remaining  # reclaimed: older than the floor
+    assert stale_dir.name not in remaining  # reclaimed: older than the floor,
+    # and pushed out of keep-N-most-recent by the other directories above
     assert fresh_dir.name in remaining  # untouched: younger than the floor
+
+
+def test_a_plan_dir_still_referenced_by_a_live_worker_is_never_deleted(
+    tmp_path: Path,
+) -> None:
+    """F4: a per-plan directory the CALLER (the daemon, tracking which plan a
+    live worker is currently reading) explicitly marks as still in use is
+    NEVER removed by GC -- however old it is, however large (the byte budget
+    alone would otherwise evict it), and however far outside the
+    keep-N-most-recent protection it falls."""
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    prepared_root = tmp_path / "work" / "gov" / "prepared"
+
+    live_dir = prepared_root / "aaaaaaaaaaaa"
+    live_dir.mkdir(parents=True)
+    # large enough that the byte budget alone would otherwise evict it first
+    (live_dir / "segment-0001.ts").write_bytes(b"x" * 1024)
+    ancient_time = time.time() - (48 * 3600)  # older than the 24h floor
+    os.utime(live_dir, (ancient_time, ancient_time))
+
+    # enough OTHER (newer) directories to push live_dir out of keep-N's
+    # recency protection too -- ``keep`` must be the thing saving it, not an
+    # accident of recency.
+    for i in range(preparer_module._PREPARED_PLAN_DIR_KEEP_N + 2):
+        other_dir = prepared_root / f"other{i:03d}"
+        other_dir.mkdir(parents=True)
+        (other_dir / "segment-0001.ts").write_text("other", encoding="utf-8")
+
+    preparer._gc_prepared_plan_dirs(prepared_root, keep=frozenset({live_dir}))
+
+    assert live_dir.exists()
+    assert (live_dir / "segment-0001.ts").exists()
+
+
+def test_release_reclaims_one_specific_plan_dir_immediately(tmp_path: Path) -> None:
+    """F3: the daemon calls release() for a plan it independently knows has
+    settled (the OLD plan of a just-committed content-reload) -- reclaimed
+    immediately, no GC pass needed."""
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    plan_dir = tmp_path / "work" / "gov" / "prepared" / "abc123"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "segment-0001.ts").write_text("retired", encoding="utf-8")
+
+    preparer.release(plan_dir)
+
+    assert not plan_dir.exists()
+
+
+def test_release_of_none_is_a_no_op(tmp_path: Path) -> None:
+    """A plan whose prepare() never created a discrete directory (F7: a
+    live-only plan, or every segment a playout_trim_supported cache hit)
+    reports plan_dir=None -- release(None) must not raise."""
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    preparer.release(None)  # must not raise
+
+
+def test_flat_pre_upgrade_prepared_files_are_swept(tmp_path: Path) -> None:
+    """F6: a pre-upgrade flat ``prepared/segment-NNNN.ts`` (the fixed-path
+    layout H5 replaced) sitting directly under the channel's prepared/ root
+    is removed by GC -- nothing written after this fix ever reads from there
+    again."""
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    prepared_root = tmp_path / "work" / "gov" / "prepared"
+    prepared_root.mkdir(parents=True)
+    flat_file = prepared_root / "segment-0001.ts"
+    flat_file.write_text("pre-upgrade leftover", encoding="utf-8")
+    flat_tmp = prepared_root / "segment-0002.ts.tmp"
+    flat_tmp.write_text("pre-upgrade partial", encoding="utf-8")
+
+    preparer._gc_prepared_plan_dirs(prepared_root)
+
+    assert not flat_file.exists()
+    assert not flat_tmp.exists()
+
+
+def test_a_plan_with_no_local_writes_leaves_no_directory(tmp_path: Path) -> None:
+    """F7: a plan whose every segment is live (no local ffmpeg write ever
+    happens) must not leave an empty per-plan directory under prepared/, and
+    the report's plan_dir is None (nothing to release or track)."""
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    plan = EgressSourcePlan(
+        channel_id="gov",
+        segments=[
+            EgressSourceSegment(
+                label="Live feed",
+                path="srt://127.0.0.1:19002",
+                duration_seconds=60,
+                kind="live",
+                source_ref="gov:relay",
+            )
+        ],
+    )
+
+    report = preparer.prepare(plan, _config())
+
+    assert report.plan_dir is None
+    prepared_root = tmp_path / "work" / "gov" / "prepared"
+    assert not prepared_root.exists() or list(prepared_root.iterdir()) == []
+
+
+def test_a_plan_with_local_writes_reports_its_plan_dir(tmp_path: Path) -> None:
+    """F7 counterpart: a plan that DOES write locally reports the real
+    plan_dir, and the directory actually holds the written segment."""
+
+    def runner(args: list[str]) -> FfmpegResult:
+        Path(args[-1]).write_text("prepared", encoding="utf-8")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=runner,
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+
+    report = preparer.prepare(_source_plan(tmp_path), _config())
+
+    assert report.plan_dir is not None
+    assert report.plan_dir.is_dir()
+    assert list(report.plan_dir.iterdir())
 
 
 def test_repeated_identical_segments_prepare_once(tmp_path: Path) -> None:

@@ -78,26 +78,56 @@ below.
     mirroring the existing `_overlay_layer_seq` pattern) so a reload's
     rebuilt aggregators never collide with the leg they are replacing.
   - `reload_program` gained an optional `on_settled` callback, invoked
-    exactly once when the reload actually commits or aborts;
-    `worker.py`'s D2 pipe dispatch now defers its ack until that callback
-    fires (`"applied"` from the commit path, `"aborted:<reason>"` from the
-    abort path) instead of acking the instant `reload_program` returns.
-    The strategy's ack wait for a `reload` command alone is now bounded by
-    the worker's own `reload_timeout_s` plus a margin
-    (`GstPlayoutStrategy._reload_ack_timeout_s`), not the default 5s. The
-    daemon also now logs a WARNING naming the channel and the reason
-    whenever a seamless reload is declined
+    exactly once when the reload actually commits or aborts.
+    `worker.py`'s D2 pipe dispatch acks a `reload` command `"armed"`
+    SYNCHRONOUSLY the instant `reload_program` returns without raising (the
+    command was accepted; the new leg is building/prerolling) -- a first
+    attempt at this fix made the ack wait for `on_settled` to fire instead,
+    which just moved the dishonesty: a DEFERRED/boundary-aligned switch (an
+    automation-driven ON_AIR extension, `reload_policy.should_defer_switch`)
+    can take up to `defer_switch_timeout_s` (900s default) to settle, so that
+    ack would have blocked far longer than any pipe round trip should, and
+    the strategy's bounded ack wait would time out on a correctly-armed
+    long-lead reload and the daemon would terminate a perfectly healthy
+    worker. The reload's eventual settle outcome
+    (`"applied"`/`"aborted:<reason>"`) is instead reported OUT-OF-BAND via
+    `reload-status.json` (`worker.py`'s `_write_reload_status`), polled once
+    per automation tick by the new `EgressDaemon._poll_reload_settlement`
+    (added to `process_once`'s poll set) -- `_try_content_reload` now only
+    ARMS a reload and records a `_PendingReloadSettlement`; the ON_AIR
+    proof-event/state bookkeeping (`_commit_reload_settlement`) runs only
+    once settlement is actually observed, and a settlement that never
+    arrives within a generous backstop deadline (`
+    _PENDING_RELOAD_SETTLE_DEADLINE_S`, 960s) falls back to the daemon's
+    terminate+restart path, same as an immediately-declined reload always
+    did. The strategy's ack wait for `reload` is therefore back to the SAME
+    small default every other verb uses. The daemon also now logs a WARNING
+    naming the channel and the reason whenever a seamless reload is declined
+    or fails to settle
     (`GstPlayoutStrategy.last_send_command_failure_reason`), where before
-    `if not applied: return False` had no log line at all.
+    `if not applied: return False` had no log line at all. **Known
+    consequence, not a bug**: while a reload is armed but genuinely still
+    settling, the channel's state row stays at whatever it was before the
+    reload (honest -- the physical output has not switched yet either); with
+    the seamless path OFF (the beta.5 default below), a plan rollover instead
+    shows `TRANSITIONING` from the moment automation triggers the rollover
+    check (well before the current item's natural end, by design -- see
+    `reload_policy.rollover_trigger_at`) until the item actually ends and the
+    restart lands, even though the channel is airing normally the whole time.
   - `preparer.py`'s `prepare()` now writes every call's prepared segments
     into their own uniquely-named subdirectory
     (`<channel>/prepared/<uuid>/segment-NNNN.ts`) so two `prepare()` calls
     can never share an output path; the two direct-ffmpeg write sites
     (cache-hit stream-copy, trimmed-miss conform) now write to a `.tmp`
     sibling and rename into place atomically, matching the existing
-    full-asset-cache write's pattern; and a generous, age-based backstop
-    (`_gc_stale_prepared_plan_dirs`) reclaims old per-plan directories a
-    long-running channel would otherwise accumulate forever.
+    full-asset-cache write's pattern. GC is now keep-3-most-recent-plans
+    first (never swept regardless of age or size), then a byte budget, then
+    a 24h age floor as a last resort -- plus an explicit `release()` the
+    daemon calls the moment it independently knows a plan is retired (a
+    just-settled reload's predecessor, or a channel's active plan on
+    operator stop), and a plan whose every segment never triggers a local
+    write (all-live, or every segment a `playout_trim_supported` cache hit)
+    leaves no directory behind at all.
   - **Known issue: the seamless in-place rollover is disabled by default in
     beta.5, pending a fresh hardware soak.** All fixes above are
     unit-tested, but the seamless path itself has not yet been RE-PROVEN on
@@ -108,7 +138,9 @@ below.
     in-place swap. Cost of the fallback: one encoder restart per plan
     rollover -- a rounding error for a normal 10-40 minute program item, but
     roughly one restart every ~30 seconds for a rapid 30-second-item
-    test/demo schedule.
+    test/demo schedule -- and, per the TRANSITIONING note above, the state
+    row reads `TRANSITIONING` for that whole rollover-trigger-to-natural-end
+    window even though playout itself never glitches.
 - **Install-over could leave the PREVIOUS kit's application payload silently
   running.** MEASURED on a real tester (2026-09-05): installing kit B `/S`
   (install-over) on a station kit A had already installed, where both kits

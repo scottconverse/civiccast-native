@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,6 +34,20 @@ from civiccast.egress.models import (
 from civiccast.egress.preparer import PreparedSegmentRecord, SourcePreparationReport
 from civiccast.egress.store import InMemoryEgressStore
 from civiccast.egress.supervisor import PlayoutSupervisor
+
+
+def _write_fake_reload_status(
+    work_dir: Path, channel_id: str, command_id: str | None, result: str
+) -> None:
+    """F1 redesign test helper: simulates ``worker.py``'s
+    ``_write_reload_status`` -- writes the file ``EgressDaemon.
+    _poll_reload_settlement`` polls for. ``command_id`` falls back to a fresh
+    uuid (mirroring ``worker.py``'s own fallback) so a caller that doesn't
+    pass one still produces a matchable id."""
+    channel_dir = work_dir / channel_id
+    channel_dir.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"id": command_id or uuid.uuid4().hex, "result": result})
+    (channel_dir / "reload-status.json").write_text(payload, encoding="utf-8")
 
 
 class _FakeProcess:
@@ -783,12 +799,18 @@ class _FakeContentReloadStrategy:
         *,
         reload_ok: bool = True,
         reload_exc: Exception | None = None,
+        # F1/F9: False lets a test control settlement timing itself (simulate
+        # a deferred switch that stays pending across several poll ticks)
+        # instead of the fake auto-settling "applied" the instant it arms.
+        auto_settle: bool = True,
     ) -> None:
         self._processes = processes
         self._started = started
         self._reload_ok = reload_ok
         self._reload_exc = reload_exc
+        self._auto_settle = auto_settle
         self.reload_calls: list[str] = []
+        self.reload_ids: list[str | None] = []
         # B3 fix: records what each reload_content call was asked for, so tests
         # can pin daemon.py's should_defer_switch wiring (_try_content_reload
         # sets EncoderStartRequest.switch_at_end_of_current).
@@ -808,11 +830,33 @@ class _FakeContentReloadStrategy:
     def swap_role(self, channel_id: str, work_dir: Path, role: str) -> None:  # pragma: no cover
         raise NotImplementedError
 
-    def reload_content(self, channel_id: str, work_dir: Path, request: EncoderStartRequest) -> bool:
+    def reload_content(
+        self,
+        channel_id: str,
+        work_dir: Path,
+        request: EncoderStartRequest,
+        *,
+        command_id: str | None = None,
+    ) -> bool:
         self.reload_calls.append(request.source_plan.segments[0].label)
+        self.reload_ids.append(command_id)
         self.switch_at_end_of_current_calls.append(request.switch_at_end_of_current)
         if self._reload_exc is not None:
             raise self._reload_exc
+        if self._reload_ok and self._auto_settle:
+            # F1 redesign: True now means ARMED, and the daemon defers its
+            # ON_AIR bookkeeping to _poll_reload_settlement observing
+            # reload-status.json -- this fake simulates an immediate,
+            # instantly-settling reload (the common case: switch_at_end_of_
+            # current=False commits on the new leg's first buffer) by writing
+            # that file right away. A test that needs to see the daemon's
+            # POST-settlement state therefore calls process_once() ONE MORE
+            # TIME after the reload -- the same shape a real deferred switch
+            # takes, just compressed to zero wall-clock delay. A test that
+            # constructs this fake with auto_settle=False controls the status
+            # file itself (F9: proving the daemon does not terminate the
+            # worker while genuinely still awaiting settlement).
+            _write_fake_reload_status(work_dir, channel_id, command_id, "applied")
         return self._reload_ok
 
 
@@ -848,6 +892,12 @@ def test_content_reload_swaps_program_in_place_without_restart(tmp_path: Path) -
     assert len(started) == 1
     assert started[0].terminated is False
     assert len(processes) == 1 and processes[0].pid == 222  # the spare was never started
+
+    # F1 redesign: the reload is ARMED after the process_once above (the fake
+    # strategy already wrote reload-status.json "applied"), but the daemon's
+    # ON_AIR bookkeeping only lands once _poll_reload_settlement observes it --
+    # one more tick, exactly like a real deferred switch settling later.
+    daemon.process_once("gov")
 
     state = store.read_state("gov")
     assert state is not None
@@ -1089,6 +1139,119 @@ def test_content_reload_declined_with_no_reason_reported_still_logs(
     assert any("gov" in message and "declined" in message for message in warnings), warnings
 
 
+def test_pending_reload_does_not_terminate_the_worker_while_awaiting_settlement(
+    tmp_path: Path,
+) -> None:
+    """F1 BLOCKER fix (coordinator hostile review): a deferred/boundary-aligned
+    switch (an automation-driven ON_AIR extension) can take minutes to settle.
+    The pre-redesign code bounded the pipe ack itself at a fixed timeout, so a
+    correctly-armed long-lead reload would time out that wait and the daemon
+    would terminate a perfectly healthy worker. This redesign never blocks on
+    settlement at all -- across many poll ticks with reload-status.json still
+    absent, the worker must NEVER be restarted or terminated; only once the
+    status file actually appears does the daemon act (and even then, only to
+    finish the ON_AIR bookkeeping, not to touch the process)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # armed; strategy did NOT write reload-status.json
+
+    assert strategy.reload_calls == ["Mayor interview"]
+    assert len(started) == 1  # no restart happened to arm it
+
+    # Many more ticks with settlement still pending -- this is standing in for
+    # however long a real deferred switch's natural wait runs (up to
+    # defer_switch_timeout_s=900s in the engine); the point is that NOTHING
+    # here is time-bounded on this side, so no amount of ticks alone forces a
+    # restart the way the old synchronous ack-wait design would have.
+    for _ in range(20):
+        daemon.process_once("gov")
+
+    assert started[0].terminated is False  # never terminated while pending
+    assert len(started) == 1  # never restarted
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Council meeting"  # still the OLD label -- honest
+
+    # The reload NOW settles (a real worker's on_settled finally fires).
+    _write_fake_reload_status(tmp_path, "gov", strategy.reload_ids[-1], "applied")
+    daemon.process_once("gov")
+
+    assert started[0].terminated is False  # still never terminated
+    assert len(started) == 1  # still never restarted -- truly seamless
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Mayor interview"
+
+
+def test_pending_reload_settlement_deadline_falls_back_to_restart(tmp_path: Path) -> None:
+    """F1 redesign: if a status update never arrives at all (e.g. the worker
+    crashed between arming and writing reload-status.json), the daemon must
+    not wait forever -- past _PENDING_RELOAD_SETTLE_DEADLINE_S it gives up and
+    falls back to the terminate+restart path, same as a synchronously-declined
+    reload always did."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    fake_now = [1_000_000.0]
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+        monotonic=lambda: fake_now[0],
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # armed; no status file ever written
+
+    assert len(started) == 1  # no restart yet -- still within the deadline
+
+    # Advance the injected clock past the deadline with no status update ever
+    # arriving.
+    fake_now[0] += 961.0
+    daemon.process_once("gov")
+
+    assert store.read_state("gov").state == "TRANSITIONING"  # fell back to restart
+    started[0].returncode = 0  # the drained encoder exits -> pending reload restarts
+    daemon.process_once("gov")
+
+    assert len(started) == 2  # restart landed the program change
+    state = store.read_state("gov")
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Mayor interview"
+
+
 def test_content_reload_strategy_exception_falls_back_to_restart(tmp_path: Path) -> None:
     """TEST-004 #5: if reload_content RAISES, the daemon logs and falls back to
     terminate+restart rather than letting a strategy bug kill the program change."""
@@ -1181,7 +1344,9 @@ class _CapturingEncoderStrategy:
     def swap_role(self, channel_id: str, work_dir: Path, role: str) -> None:  # pragma: no cover
         raise NotImplementedError
 
-    def reload_content(self, channel_id: str, work_dir: Path, request: EncoderStartRequest) -> bool:
+    def reload_content(
+        self, channel_id: str, work_dir: Path, request: EncoderStartRequest, **_kwargs: Any
+    ) -> bool:
         self.reload_requests.append(request)
         return True
 
@@ -1850,7 +2015,7 @@ class _FakeReconnectStrategy:
         raise NotImplementedError
 
     def reload_content(
-        self, channel_id: str, work_dir: Path, request: EncoderStartRequest
+        self, channel_id: str, work_dir: Path, request: EncoderStartRequest, **_kwargs: Any
     ) -> bool:  # pragma: no cover
         return True
 

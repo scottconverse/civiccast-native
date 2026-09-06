@@ -867,7 +867,16 @@ class GstPlayoutEngine:
         self, leg: SourceLeg | PlaylistLeg
     ) -> tuple[Gst.Pad | None, Gst.Pad | None, list[Gst.Element]]:
         """Build one source leg's elements (collected so the leg can be disposed as a
-        unit on a content-reload). Returns ``(video_src_pad, audio_src_pad, elements)``."""
+        unit on a content-reload). Returns ``(video_src_pad, audio_src_pad, elements)``.
+
+        F2 fix (hostile-review follow-up, 2026-09-06): a build failure partway
+        through (e.g. ``_make``'s fail-loud ``pipeline.add`` check, item 1) used
+        to leave whatever elements it HAD already added to the pipeline before
+        the failure permanently leaked -- this method's own caller
+        (``reload_program``, for a content-reload) has no ``pending`` entry to
+        route the cleanup through at this point (that entry is only created
+        AFTER this call succeeds), so the disposal has to happen right here,
+        at the only place still holding a reference to ``collected``."""
         collected: list[Gst.Element] = []
         self._collecting = collected
         try:
@@ -883,15 +892,40 @@ class GstPlayoutEngine:
                 if leg.audio:
                     _audio_first, audio_out = self._build_chain(leg.audio)
                     audio_out_pad = audio_out.get_static_pad("src")
+        except Exception:
+            self._dispose_elements_best_effort(collected)
+            raise
         finally:
             self._collecting = None
         return out_pad, audio_out_pad, collected
+
+    def _dispose_elements_best_effort(self, elements: list[Gst.Element]) -> None:
+        """NULL + remove a list of elements from the pipeline, swallowing every
+        error -- used from an already-failing build/link path (F2 fix) where
+        raising a SECOND exception would replace the caller's real one. Mirrors
+        ``_dispose_source_leg``'s element half but skips the pad/selector half
+        (a caller here never got as far as linking anything to a selector)."""
+        for element in elements:
+            with contextlib.suppress(Exception):
+                element.set_state(Gst.State.NULL)
+        for element in elements:
+            with contextlib.suppress(Exception):
+                self.pipeline.remove(element)
 
     def _link_leg_to_selectors(
         self, label: str, out_pad: Gst.Pad | None, audio_out_pad: Gst.Pad | None
     ) -> tuple[Gst.Pad, Gst.Pad | None]:
         """Request selector sink pad(s) and link this leg's src pad(s) into them.
-        Returns ``(video_sink_pad, audio_sink_pad | None)``; raises on a link failure."""
+        Returns ``(video_sink_pad, audio_sink_pad | None)``; raises on a link failure.
+
+        F2 fix (hostile-review follow-up, 2026-09-06): every raise path below now
+        releases whatever selector request pad(s) IT ITSELF already requested
+        before failing -- a partial failure (audio raises after video already
+        linked, say) used to leave an orphaned, still-requested selector sink
+        pad behind forever (a request pad is never automatically released; only
+        ``release_request_pad`` frees it). The caller (``reload_program``) still
+        disposes the LEG'S ELEMENTS on this raise (see its own try/except); this
+        method is only responsible for pads IT requested."""
         selector = self.selector
         if selector is None:
             raise RuntimeError("video selector was not built")
@@ -903,10 +937,12 @@ class GstPlayoutEngine:
                 and out_pad.link(sink_pad) == Gst.PadLinkReturn.OK
             )
         except Exception as exc:  # gi may raise on a caps mismatch
+            self._release_selector_pad_best_effort(selector, sink_pad)
             raise RuntimeError(
                 f"failed to link source {label!r} into selector (caps mismatch?): {exc}"
             ) from exc
         if not video_linked:
+            self._release_selector_pad_best_effort(selector, sink_pad)
             raise RuntimeError(f"failed to link source {label!r} into selector (caps mismatch?)")
 
         audio_sink_pad = None
@@ -917,11 +953,29 @@ class GstPlayoutEngine:
             # a mixed graph would desync the selectors (wrong audio over wrong
             # video, the issue-#56 class).
             if audio_out_pad is None:
+                self._release_selector_pad_best_effort(selector, sink_pad, linked_pad=out_pad)
                 raise RuntimeError(f"audio is enabled but source {label!r} has no audio leg")
             audio_sink_pad = audio_selector.request_pad_simple("sink_%u")
             if audio_sink_pad is None or audio_out_pad.link(audio_sink_pad) != Gst.PadLinkReturn.OK:
+                self._release_selector_pad_best_effort(selector, sink_pad, linked_pad=out_pad)
+                self._release_selector_pad_best_effort(audio_selector, audio_sink_pad)
                 raise RuntimeError(f"failed to link audio for source {label!r}")
         return sink_pad, audio_sink_pad
+
+    @staticmethod
+    def _release_selector_pad_best_effort(
+        selector: Gst.Element, sink_pad: Gst.Pad | None, *, linked_pad: Gst.Pad | None = None
+    ) -> None:
+        """Unlink (if ``linked_pad`` proves it was actually linked) and release
+        one selector request pad, swallowing any error -- called only from an
+        already-failing path, so this must never raise a SECOND exception that
+        would replace the caller's real one."""
+        if sink_pad is None:
+            return
+        with contextlib.suppress(Exception):
+            if linked_pad is not None:
+                linked_pad.unlink(sink_pad)
+            selector.release_request_pad(sink_pad)
 
     # -- runtime -----------------------------------------------------------------
 
@@ -1315,10 +1369,21 @@ class GstPlayoutEngine:
 
         # Build + link the new leg. A failure here has committed no state, so the
         # current program keeps playing — just propagate (the caller logs it).
-        out_pad, audio_out_pad, new_elements = self._instantiate_source_leg(new_leg)
-        new_video_pad, new_audio_pad = self._link_leg_to_selectors(
-            "program(reload)", out_pad, audio_out_pad
-        )
+        # F2 fix: ``_instantiate_source_leg`` already disposes ITS OWN partial
+        # build on a raise (its own try/except); this second layer covers the
+        # remaining leak window -- ``_link_leg_to_selectors`` raising AFTER
+        # instantiate already succeeded, which would otherwise leave a fully
+        # built, still-in-the-pipeline (but never-linked-anywhere) leg behind
+        # with nothing left holding a reference to it.
+        new_elements: list[Gst.Element] = []
+        try:
+            out_pad, audio_out_pad, new_elements = self._instantiate_source_leg(new_leg)
+            new_video_pad, new_audio_pad = self._link_leg_to_selectors(
+                "program(reload)", out_pad, audio_out_pad
+            )
+        except Exception:
+            self._dispose_elements_best_effort(new_elements)
+            raise
         pending: dict[str, Any] = {
             "new_video_pad": new_video_pad,
             "new_audio_pad": new_audio_pad,

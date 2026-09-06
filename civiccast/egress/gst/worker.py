@@ -43,8 +43,8 @@ import os
 import sys
 import threading
 import time
+import uuid
 from collections import OrderedDict
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -149,20 +149,47 @@ class _AppliedIdCache:
             self._ids.popitem(last=False)
 
 
-#: ``_dispatch_control_with_ack``'s ``reload``-verb result when the reload was
-#: successfully ARMED (built + prerolled, watchdog started) but has not yet
-#: COMMITTED or ABORTED. See the function's docstring, item 4.
-_DEFERRED_RESULT = "deferred"
+def _write_reload_status(channel_dir: Path, *, reload_id: str, result: str) -> None:
+    """F1 redesign (coordinator hostile review, 2026-09-06): the OUT-OF-BAND
+    settle outcome for a reload.
+
+    The pipe ack for a ``reload`` command now means only "armed" (see
+    ``_dispatch_control_with_ack``'s docstring) -- the actual commit or abort
+    can take up to the engine's own ``reload_timeout_s`` (an immediate switch)
+    or ``defer_switch_timeout_s`` (900s default, a deferred/boundary-aligned
+    switch -- exactly the case an automation-driven ON_AIR extension uses, per
+    ``reload_policy.should_defer_switch``). Blocking a synchronous pipe
+    round-trip ack for up to 900s was THE F1 blocker this redesign fixes: it
+    starved the automation thread and, worse, the strategy's bounded ack wait
+    would time out long before a legitimately-armed deferred reload ever
+    settles, causing the daemon to terminate a worker that was doing exactly
+    what it was told.
+
+    Instead, this file (``<channel_dir>/reload-status.json``) carries the
+    eventual outcome; ``EgressDaemon._poll_reload_settlement`` polls it once
+    per automation tick (bounded, cheap) instead of blocking on it. Atomic
+    write (tmp + replace) so the daemon never observes a partial JSON body.
+    Best-effort: a write hiccup here must not crash the worker -- the daemon's
+    own deadline (``_PENDING_RELOAD_SETTLE_DEADLINE_S``) is the backstop if a
+    status update never arrives at all."""
+    status_path = channel_dir / "reload-status.json"
+    tmp_path = status_path.with_name(status_path.name + ".tmp")
+    payload = json.dumps({"id": reload_id, "result": result, "ts": time.time()})
+    try:
+        tmp_path.write_text(payload, encoding="utf-8")
+        tmp_path.replace(status_path)
+    except OSError as exc:
+        print(f"WARN: failed to write reload-status.json: {exc!r}", flush=True)
 
 
 def _dispatch_control_with_ack(
     engine_instance: Any,
     line: str,
     *,
-    on_reload_settled: Callable[[str, str | None], None] | None = None,
+    command_id: str | None = None,
 ) -> tuple[str, str | None]:
     """The D2 pipe-seam dispatch: applies ``line`` and returns an ack result
-    (``"applied"``|``"error"``|``"deferred"``, detail) instead of only printing, so
+    (``"applied"``|``"armed"``|``"error"``, detail) instead of only printing, so
     the pipe seam can write back ``{"result": ...}`` (design.md sec4's 'ack-point
     reading'). Calls the SAME public engine effects ``engine._dispatch_control`` uses
     (``swap.swap_to``, ``reload_program``, ``push_caption_cue``, ``_loop.quit()``)
@@ -170,24 +197,31 @@ def _dispatch_control_with_ack(
     since ``_dispatch_control`` itself is fire-and-forget (engine.py, out of this
     unit's file ownership) and has no return value to relay.
 
-    Item 4 (honest ack, measured 2026-09-06 hardware soak): ``reload_program`` only
-    ARMS a reload -- it builds and preroll the new leg and returns immediately; the
-    actual commit (first buffer / boundary reached) or abort (build error, async
-    bus error, timeout, supersession) happens LATER, on the main loop. The pre-fix
-    code here returned ``"applied"`` the instant ``reload_program`` returned, which
-    is not the same claim -- a caller told "applied" for a reload that then quietly
-    timed out (the H1 concat-name collision this same change fixes in engine.py) had
-    no way to know the reload never actually landed, and kept believing the worker
-    was already playing the new program.
+    F1 redesign (coordinator hostile review, 2026-09-06, superseding item 4's
+    original "deferred ack" design): ``reload_program`` only ARMS a reload -- it
+    builds and prerolls the new leg and returns immediately; the actual commit
+    (first buffer / boundary reached) or abort (build error, async bus error,
+    timeout, supersession) happens LATER, on the main loop, and for a DEFERRED
+    switch (an automation-driven ON_AIR extension) that can take up to
+    ``defer_switch_timeout_s`` (900s default) -- far longer than any pipe
+    round-trip ack should ever block for. Item 4's fix made the ack wait for
+    that full settlement, which just moved the dishonesty (and, worse,
+    introduced a NEW failure: the strategy's bounded ack wait would time out
+    on a correctly-armed long-lead deferred reload and the daemon would
+    terminate a healthy worker). This redesign instead:
 
-    For the ``reload`` verb this function therefore does NOT return a final result:
-    it registers ``on_reload_settled`` as the engine's ``reload_program(...,
-    on_settled=...)`` callback (invoked exactly once, from ``_commit_reload`` or
-    ``_abort_pending_reload``, on the SAME GLib main loop this dispatch itself runs
-    on) and returns ``(_DEFERRED_RESULT, None)`` so the caller (``_dispatch_and_ack``
-    below) knows not to write an ack now. ``on_reload_settled`` receives
-    ``"applied"`` or ``"aborted:<reason>"`` -- the caller writes THAT as the ack
-    once it actually fires. Every other verb is unchanged: dispatch and ack are
+    * acks ``"armed"`` the instant ``reload_program`` returns without raising
+      (the command was accepted; the new leg is now building/prerolling) --
+      keeps the ack fast and bounded, like every other verb;
+    * acks ``"error:<repr>"`` immediately if ``reload_program`` (or reading/
+      parsing the graph file) raises synchronously -- nothing was armed, so
+      there is nothing to settle later;
+    * reports the EVENTUAL settle outcome out-of-band via
+      ``_write_reload_status`` (``reload_id`` is the D2 envelope's own
+      command id, so the daemon can correlate a specific armed attempt to its
+      settlement even across a supersede).
+
+    Every other verb (swap/caption/stop) is unchanged: dispatch and ack are
     still the same synchronous step they always were."""
     command = controlmod.parse_control_line(line)
     if command is None:
@@ -199,17 +233,18 @@ def _dispatch_control_with_ack(
             return "applied", None
         if verb == "reload":
             reload_path = Path(command[1])
+            channel_dir = reload_path.parent
             with reload_path.open(encoding="utf-8") as handle:
                 new_graph = graphmod.graph_from_json(handle.read())
             switch_at_end_of_current = reload_policy_mod.reload_switch_is_deferred(command[1])
             with contextlib.suppress(OSError):
                 reload_path.unlink()  # one-shot graph file: consumed after read
 
+            reload_id = command_id or uuid.uuid4().hex
+
             def _on_settled(committed: bool, reason: str | None) -> None:
-                if on_reload_settled is None:
-                    return
                 result = "applied" if committed else f"aborted:{reason or 'unknown'}"
-                on_reload_settled(result, None)
+                _write_reload_status(channel_dir, reload_id=reload_id, result=result)
 
             engine_instance.reload_program(
                 new_graph.sources[0],
@@ -233,7 +268,8 @@ def _dispatch_control_with_ack(
                     f"(program reload still in flight): {exc!r}",
                     flush=True,
                 )
-            return _DEFERRED_RESULT, None
+            # F1: ack "armed" NOW -- do not wait for _on_settled.
+            return "armed", None
         if verb == "caption":
             text = base64.b64decode(command[3]).decode("utf-8", "replace")
             pushed = engine_instance.push_caption_cue(
@@ -350,19 +386,28 @@ def _windows_pipe_reader_loop(
         current_handle = handle
         if not applied.should_apply(command_id):
             # Redelivered id: the ack was lost, not the application -- ack again
-            # without re-enacting (D2 idempotent-redelivery contract).
+            # without re-enacting (D2 idempotent-redelivery contract). F1
+            # redesign: "applied" is only ever cached for swap/caption/stop
+            # now (a "reload" that ACTUALLY committed writes reload-status.json,
+            # not the applied-id cache -- see _dispatch_and_ack); a cached
+            # "reload" id was marked applied at ARM time, so redelivering it
+            # re-acks "armed" (matching what the original ack said), never
+            # "applied".
+            parsed = controlmod.parse_control_line(command_line)
+            reack_result = "armed" if parsed is not None and parsed[0] == "reload" else "applied"
             ack_written = threading.Event()
 
             def _reack(
                 h: Any = current_handle,
                 cid: str = command_id,
+                result: str = reack_result,
                 completed: threading.Event = ack_written,
             ) -> bool:
                 try:
                     _windows_pipe_write_line(
                         h,
                         write_lock,
-                        json.dumps({"v": 1, "id": cid, "result": "applied"}),
+                        json.dumps({"v": 1, "id": cid, "result": result}),
                     )
                 finally:
                     completed.set()
@@ -381,33 +426,25 @@ def _windows_pipe_reader_loop(
             line_text: str = command_line,
             completed: threading.Event = ack_written,
         ) -> bool:
-            def _write_ack(result: str, detail: str | None) -> None:
-                if result == "applied":
+            # F1 redesign: the ack is ALWAYS written synchronously now (a
+            # "reload"'s eventual settle outcome goes out-of-band via
+            # reload-status.json instead -- see _dispatch_control_with_ack's
+            # docstring). "armed" counts as accepted for the dedup cache, same
+            # as "applied": a redelivery of an already-armed reload id must
+            # re-ack, not re-enact (re-arming would supersede the FIRST
+            # attempt's own still-settling reload for no reason).
+            try:
+                result, detail = _dispatch_control_with_ack(
+                    engine_instance, line_text, command_id=cid
+                )
+                if result in ("applied", "armed"):
                     applied.mark_applied(cid)
                 _windows_pipe_write_line(
                     h,
                     write_lock,
                     json.dumps({"v": 1, "id": cid, "result": result, "detail": detail}),
                 )
-
-            try:
-                result, detail = _dispatch_control_with_ack(
-                    engine_instance, line_text, on_reload_settled=_write_ack
-                )
-                if result != _DEFERRED_RESULT:
-                    _write_ack(result, detail)
-                # else (item 4, honest ack): a "reload" was successfully ARMED but
-                # has not committed or aborted yet -- ``_write_ack`` above is now
-                # wired as the engine's ``on_settled`` callback and will be invoked
-                # exactly once, later, from ``_commit_reload``/``_abort_pending_
-                # reload`` (still on this same GLib main loop). Do NOT ack here;
-                # writing "applied" at this point is exactly the premature-ack
-                # defect this change fixes.
             finally:
-                # Dispatch (arming the command) is complete either way -- this
-                # unblocks the reader thread to process the NEXT line (e.g. a
-                # superseding reload, or "stop") while a deferred reload settles
-                # in the background. It does NOT mean the ack has been written.
                 completed.set()
             return False  # one-shot GLib idle source
 

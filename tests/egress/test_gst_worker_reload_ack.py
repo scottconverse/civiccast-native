@@ -1,13 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""Item 4 (honest ack): ``worker.py``'s D2 windows-pipe dispatch must not ack a
-``reload`` command "applied" before the engine's reload actually COMMITS -- and
-must ack "aborted:<reason>" if it doesn't. Measured on real hardware (2026-09-06):
-the pre-fix code acked "applied" the instant ``engine.reload_program(...)``
-RETURNED, which only means the reload was ARMED (built + prerolled), not that it
-had committed; combined with the H1 concat-naming collision (engine.py), the daemon
-believed every rollover had landed while it silently timed out and was retried
-forever.
+"""F1 redesign (coordinator hostile-review follow-up, 2026-09-06, superseding
+item 4's original "deferred ack" design): a ``reload`` command's pipe ack means
+only "armed" now (the worker accepted the command and the new leg is building/
+prerolling, or the build failed synchronously) -- written SYNCHRONOUSLY, same
+as every other verb. Item 4's fix made the ack wait for the reload to fully
+COMMIT or ABORT, which for a deferred/boundary-aligned switch (an
+automation-driven ON_AIR extension) can take up to ``defer_switch_timeout_s``
+(900s default) -- far longer than any pipe round-trip ack should ever block
+for, and the strategy's bounded ack wait would time out on a correctly-armed
+long-lead reload, causing the daemon to terminate a healthy worker (the F1
+BLOCKER this redesign fixes).
+
+The reload's EVENTUAL settle outcome (``"applied"``/``"aborted:<reason>"``) is
+now reported OUT-OF-BAND via ``reload-status.json`` (``_write_reload_status``),
+polled by ``EgressDaemon._poll_reload_settlement`` instead of riding the ack.
 
 ``worker.py`` is import-safe with only stdlib + the sibling gi-free ``control``/
 ``graph``/``reload_policy`` modules (its own module docstring), so
@@ -20,6 +27,7 @@ py`` imports ``worker.py`` by stubbing ``civiccast.egress.gst.engine`` in
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 import types
 from collections.abc import Iterator
@@ -85,10 +93,13 @@ class _FakeEngine:
         self.graphics_overlay_should_raise = False
         self.caption_pushed: list[dict[str, Any]] = []
         self.push_caption_return = True
+        self.reload_program_should_raise: Exception | None = None
 
     def reload_program(
         self, new_leg: Any, *, switch_at_end_of_current: bool, on_settled: Any
     ) -> None:
+        if self.reload_program_should_raise is not None:
+            raise self.reload_program_should_raise
         self.reload_calls.append(
             {
                 "new_leg": new_leg,
@@ -115,82 +126,95 @@ def _write_graph(tmp_path: Path) -> Path:
     return path
 
 
-# --- the reload verb defers its ack (item 4) --------------------------------------
+# --- F1: the reload verb acks "armed" synchronously; settle is out-of-band --------
 
 
-def test_reload_returns_deferred_and_does_not_ack_immediately(
-    worker_module, tmp_path: Path
-) -> None:
+def _read_status(graph_path: Path) -> dict[str, Any]:
+    status_path = graph_path.parent / "reload-status.json"
+    return json.loads(status_path.read_text(encoding="utf-8"))
+
+
+def test_reload_acks_armed_synchronously(worker_module, tmp_path: Path) -> None:
     graph_path = _write_graph(tmp_path)
     engine = _FakeEngine()
-    settled: list[tuple[str, str | None]] = []
 
     result, detail = worker_module._dispatch_control_with_ack(
-        engine,
-        f"reload {graph_path}",
-        on_reload_settled=lambda result, detail: settled.append((result, detail)),
+        engine, f"reload {graph_path}", command_id="cmd-1"
     )
 
-    assert result == worker_module._DEFERRED_RESULT
+    assert result == "armed"
     assert detail is None
-    assert settled == []  # not acked yet -- the engine hasn't settled
     assert len(engine.reload_calls) == 1
     assert not graph_path.exists()  # one-shot graph file consumed after read
+    # Not settled yet -- no status file until on_settled fires.
+    assert not (graph_path.parent / "reload-status.json").exists()
 
 
-def test_reload_acks_applied_only_once_the_engine_commits(worker_module, tmp_path: Path) -> None:
+def test_reload_settle_applied_is_written_out_of_band(worker_module, tmp_path: Path) -> None:
     graph_path = _write_graph(tmp_path)
     engine = _FakeEngine()
-    settled: list[tuple[str, str | None]] = []
 
-    result, _detail = worker_module._dispatch_control_with_ack(
-        engine,
-        f"reload {graph_path}",
-        on_reload_settled=lambda result, detail: settled.append((result, detail)),
-    )
-    assert result == worker_module._DEFERRED_RESULT
-    assert settled == []
-
+    worker_module._dispatch_control_with_ack(engine, f"reload {graph_path}", command_id="cmd-2")
     # Simulate the engine's own later main-loop commit (``_commit_reload``'s
-    # ``on_settled(True, None)`` call).
+    # ``on_settled(True, None)`` call) -- this does NOT touch the pipe ack at
+    # all; it writes the status file instead.
     engine.reload_calls[0]["on_settled"](True, None)
 
-    assert settled == [("applied", None)]
+    status = _read_status(graph_path)
+    assert status["id"] == "cmd-2"
+    assert status["result"] == "applied"
 
 
-def test_reload_acks_aborted_with_reason_when_the_engine_aborts(
-    worker_module, tmp_path: Path
-) -> None:
+def test_reload_settle_aborted_carries_the_reason(worker_module, tmp_path: Path) -> None:
     graph_path = _write_graph(tmp_path)
     engine = _FakeEngine()
-    settled: list[tuple[str, str | None]] = []
 
-    worker_module._dispatch_control_with_ack(
-        engine,
-        f"reload {graph_path}",
-        on_reload_settled=lambda result, detail: settled.append((result, detail)),
-    )
+    worker_module._dispatch_control_with_ack(engine, f"reload {graph_path}", command_id="cmd-3")
     # Simulate the engine's own later main-loop abort (e.g. the H1 fix's
-    # ``_make``-raises-on-refused-add path, or the reload_timeout_s watchdog).
+    # ``_make``-raises-on-refused-add path, or the reload_timeout_s watchdog) --
+    # arriving long after any pipe ack bound would have expired is exactly the
+    # point: this path no longer rides the ack at all.
     engine.reload_calls[0]["on_settled"](False, "timeout")
 
-    assert settled == [("aborted:timeout", None)]
+    status = _read_status(graph_path)
+    assert status["id"] == "cmd-3"
+    assert status["result"] == "aborted:timeout"
 
 
-def test_reload_with_no_on_reload_settled_callback_is_still_deferred(
+def test_reload_settle_without_a_command_id_falls_back_to_a_generated_one(
     worker_module, tmp_path: Path
 ) -> None:
-    """A caller that does not ask for a deferred ack (``on_reload_settled=None``,
-    the parameter's default) still gets the honest "deferred" result -- it simply
-    has no way to observe the eventual settlement. This proves the fix does not
-    silently fall back to the old "applied instantly" behavior for any caller."""
+    """A caller that doesn't supply ``command_id`` (the default) still gets a
+    real, generated reload id in the status file -- never a crash, never a
+    silently-dropped settlement."""
     graph_path = _write_graph(tmp_path)
     engine = _FakeEngine()
 
-    result, detail = worker_module._dispatch_control_with_ack(engine, f"reload {graph_path}")
+    worker_module._dispatch_control_with_ack(engine, f"reload {graph_path}")
+    engine.reload_calls[0]["on_settled"](True, None)
 
-    assert result == worker_module._DEFERRED_RESULT
-    assert detail is None
+    status = _read_status(graph_path)
+    assert status["id"]  # some non-empty generated id
+    assert status["result"] == "applied"
+
+
+def test_a_synchronous_build_failure_acks_error_and_settles_nothing(
+    worker_module, tmp_path: Path
+) -> None:
+    """F2: if ``reload_program`` itself raises (nothing was armed), the ack is
+    "error" immediately -- there is no pending settlement to report later, so
+    no status file is written at all."""
+    graph_path = _write_graph(tmp_path)
+    engine = _FakeEngine()
+    engine.reload_program_should_raise = RuntimeError("simulated fail-loud pipeline.add refusal")
+
+    result, detail = worker_module._dispatch_control_with_ack(
+        engine, f"reload {graph_path}", command_id="cmd-4"
+    )
+
+    assert result == "error"
+    assert "simulated fail-loud pipeline.add refusal" in (detail or "")
+    assert not (graph_path.parent / "reload-status.json").exists()
 
 
 def test_a_graphics_overlay_reapply_failure_does_not_affect_the_program_reload_ack(
@@ -203,20 +227,18 @@ def test_a_graphics_overlay_reapply_failure_does_not_affect_the_program_reload_a
     graph_path = _write_graph(tmp_path)
     engine = _FakeEngine()
     engine.graphics_overlay_should_raise = True
-    settled: list[tuple[str, str | None]] = []
 
     result, _detail = worker_module._dispatch_control_with_ack(
-        engine,
-        f"reload {graph_path}",
-        on_reload_settled=lambda result, detail: settled.append((result, detail)),
+        engine, f"reload {graph_path}", command_id="cmd-5"
     )
 
-    assert result == worker_module._DEFERRED_RESULT  # program reload still armed fine
+    assert result == "armed"  # program reload still armed fine
     assert len(engine.reload_calls) == 1
     assert "graphics-overlay re-apply failed" in capsys.readouterr().out
 
     engine.reload_calls[0]["on_settled"](True, None)
-    assert settled == [("applied", None)]  # program reload's own outcome, unaffected
+    status = _read_status(graph_path)
+    assert status["result"] == "applied"  # program reload's own outcome, unaffected
 
 
 # --- every other verb is unchanged: synchronous dispatch + immediate ack ----------

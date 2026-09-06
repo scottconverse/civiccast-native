@@ -414,6 +414,23 @@ def test_supports_content_reload_explicit_constructor_arg_wins_over_env(
     assert strategy.supports_content_reload is False
 
 
+def test_reload_ack_timeout_is_the_same_small_default_as_every_other_verb() -> None:
+    """F1 redesign (F9): item 4's original widened bound (the worker's own
+    reload_timeout_s plus a margin) was itself a bug -- a reload's ack now
+    means only "armed" (fast, like any other verb), with the eventual settle
+    outcome reported out-of-band (reload-status.json), so this bound must be
+    back to the plain default and must NOT vary with
+    CIVICCAST_RELOAD_TIMEOUT_S (the env var item 4 used to read here)."""
+    assert strategy_module._reload_ack_timeout_s() == strategy_module._WORKER_PIPE_ACK_TIMEOUT_S
+
+
+def test_reload_ack_timeout_ignores_the_old_reload_timeout_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CIVICCAST_RELOAD_TIMEOUT_S", "900")
+    assert strategy_module._reload_ack_timeout_s() == strategy_module._WORKER_PIPE_ACK_TIMEOUT_S
+
+
 @_POSIX_FIFO_ONLY
 def test_reload_content_writes_graph_and_sends_reload_command(tmp_path) -> None:
     strategy = GstPlayoutStrategy(worker_launcher=lambda *args: None)

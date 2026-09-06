@@ -80,12 +80,24 @@ class EncoderStrategy(Protocol):
         """Swap the active source role (``program``/``slate``/``live``) in place.
         Only called when ``supports_live_swap`` is True."""
 
-    def reload_content(self, channel_id: str, work_dir: Path, request: EncoderStartRequest) -> bool:
+    def reload_content(
+        self,
+        channel_id: str,
+        work_dir: Path,
+        request: EncoderStartRequest,
+        *,
+        command_id: str | None = None,
+    ) -> bool:
         """Rebuild the running program's content from ``request`` in place, with no
-        encoder restart. Returns True on success (the swap was dispatched), False if
+        encoder restart. Returns True on success (the swap was ACCEPTED -- for the
+        GStreamer strategy this means "armed", not yet necessarily committed; see
+        ``GstPlayoutStrategy.reload_content``'s docstring, F1 redesign), False if
         it could not be applied (e.g. the worker control channel is not ready) so the
         caller can fall back to terminate+restart. Only called when
-        ``supports_content_reload`` is True."""
+        ``supports_content_reload`` is True. ``command_id``, when given, lets the
+        caller correlate this specific reload attempt with its eventual settlement
+        (only meaningful to a strategy that reports settlement out-of-band; ignored
+        by a strategy that doesn't)."""
 
 
 class ConcatEncoderStrategy:
@@ -98,7 +110,14 @@ class ConcatEncoderStrategy:
     def swap_role(self, channel_id: str, work_dir: Path, role: str) -> None:
         raise NotImplementedError("ConcatEncoderStrategy does not support in-place swap")
 
-    def reload_content(self, channel_id: str, work_dir: Path, request: EncoderStartRequest) -> bool:
+    def reload_content(
+        self,
+        channel_id: str,
+        work_dir: Path,
+        request: EncoderStartRequest,
+        *,
+        command_id: str | None = None,
+    ) -> bool:
         raise NotImplementedError("ConcatEncoderStrategy does not support content-reload")
 
     def start(self, request: EncoderStartRequest) -> EncoderStartResult:

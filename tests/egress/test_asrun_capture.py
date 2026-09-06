@@ -27,6 +27,8 @@ SQLite-backed ``ReportingStore`` (the open/close stitch + station resolution).
 
 from __future__ import annotations
 
+import json
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -53,6 +55,18 @@ from civiccast.reporting.store import ReportingStore
 # --------------------------------------------------------------------------- #
 # Test doubles
 # --------------------------------------------------------------------------- #
+
+
+def _write_fake_reload_status(
+    work_dir: Path, channel_id: str, command_id: str | None, result: str
+) -> None:
+    """F1 redesign test helper: simulates ``worker.py``'s
+    ``_write_reload_status`` -- the file ``EgressDaemon._poll_reload_
+    settlement`` polls for. See test_daemon.py's identical helper."""
+    channel_dir = work_dir / channel_id
+    channel_dir.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"id": command_id or uuid.uuid4().hex, "result": result})
+    (channel_dir / "reload-status.json").write_text(payload, encoding="utf-8")
 
 
 class _FakeProcess:
@@ -255,9 +269,17 @@ def test_seamless_content_reload_records_a_transition(tmp_path: Path) -> None:
             )
 
         def reload_content(
-            self, channel_id: str, work_dir: Path, request: EncoderStartRequest
+            self,
+            channel_id: str,
+            work_dir: Path,
+            request: EncoderStartRequest,
+            *,
+            command_id: str | None = None,
         ) -> bool:
-            return True  # seamless swap applied in place
+            # F1 redesign: True means ARMED; simulate an immediately-settling
+            # reload (see test_daemon.py's identical helper/comment).
+            _write_fake_reload_status(work_dir, channel_id, command_id, "applied")
+            return True
 
     process = _FakeProcess()
     recorder = _FakeRecorder()
@@ -290,6 +312,10 @@ def test_seamless_content_reload_records_a_transition(tmp_path: Path) -> None:
         ],
     )
     store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+    # F1 redesign: the reload is ARMED after the tick above (the fake strategy
+    # already wrote reload-status.json "applied"); the as-run transition only
+    # lands once _poll_reload_settlement observes it -- one more tick.
     daemon.process_once("gov")
 
     assert len(recorder.transitions) == 2  # the seamless boundary was captured
@@ -584,9 +610,17 @@ def test_reload_uses_real_recorder_stitch_end_to_end(
             )
 
         def reload_content(
-            self, channel_id: str, work_dir: Path, request: EncoderStartRequest
+            self,
+            channel_id: str,
+            work_dir: Path,
+            request: EncoderStartRequest,
+            *,
+            command_id: str | None = None,
         ) -> bool:
-            return True  # seamless swap applied in place
+            # F1 redesign: True means ARMED; simulate an immediately-settling
+            # reload (see test_daemon.py's identical helper/comment).
+            _write_fake_reload_status(work_dir, channel_id, command_id, "applied")
+            return True
 
     process = _FakeProcess()
     recorder = StoreAsRunRecorder(reporting_store, station_id="civiccast-station")
@@ -618,6 +652,9 @@ def test_reload_uses_real_recorder_stitch_end_to_end(
         ],
     )
     egress_store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+    # F1 redesign: one more tick for _poll_reload_settlement to observe the
+    # armed reload's (immediately-written, by the fake) settlement.
     daemon.process_once("gov")
 
     # Two ledger rows; the first row closes EXACTLY at the second row's start.
