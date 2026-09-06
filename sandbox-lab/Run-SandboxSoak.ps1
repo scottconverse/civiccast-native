@@ -105,6 +105,14 @@ param(
     # coordinator, not independently verified against this checkout).
     [switch]$SeamlessReload,
 
+    # Round-15 finding (a): threaded through to In-Sandbox-Soak.ps1's own
+    # -OnAirBoundMinutes (which used to be a hardcoded 12 deep in that
+    # script) via the .wsb template's {{ON_AIR_BOUND_MINUTES}} placeholder,
+    # and recorded in that run's SOAK-START.json/VERDICT.json. Default 12
+    # matches the prior hardcoded value -- unchanged behavior for every
+    # existing caller.
+    [int]$OnAirBoundMinutes = 12,
+
     [switch]$DryRun
 )
 
@@ -135,7 +143,7 @@ function Exit-HarnessError {
 
 if (-not $Root) { $Root = $PSScriptRoot }
 if (-not $Root) { $Root = (Get-Location).Path }
-Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), KitRoot: $KitRoot, SeamlessReload: $($SeamlessReload.IsPresent), DryRun: $($DryRun.IsPresent)"
+Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), OnAirBoundMinutes: $OnAirBoundMinutes, KitRoot: $KitRoot, SeamlessReload: $($SeamlessReload.IsPresent), DryRun: $($DryRun.IsPresent)"
 
 $hostLivenessPath = Join-Path $Root 'scripts\HostLiveness.ps1'
 if (-not (Test-Path $hostLivenessPath)) {
@@ -266,13 +274,14 @@ $rendered = $template `
     -replace [regex]::Escape('{{OUTPUT_DIR}}'), $outputDir `
     -replace [regex]::Escape('{{SCRIPTS_DIR}}'), $scriptsDir `
     -replace [regex]::Escape('{{MINUTES}}'), "$Minutes" `
+    -replace [regex]::Escape('{{ON_AIR_BOUND_MINUTES}}'), "$OnAirBoundMinutes" `
     -replace [regex]::Escape('{{SEAMLESS_RELOAD_ARG}}'), $seamlessReloadArg
 
 $wsbPath = Join-Path $Root "CivicCastSandboxSoak-$runName.wsb"
 Set-Content -Path $wsbPath -Value $rendered -Encoding UTF8
 Write-Step "Rendered $wsbPath"
 
-$logonCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes $Minutes $seamlessReloadArg"
+$logonCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes $Minutes -OnAirBoundMinutes $OnAirBoundMinutes $seamlessReloadArg"
 Write-Step "LogonCommand: $logonCommand"
 
 # --------------------------------------------------------------------------

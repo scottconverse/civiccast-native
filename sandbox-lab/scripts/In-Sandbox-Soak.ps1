@@ -75,6 +75,14 @@
 # prove the engine survives a source-plan rollover repeatedly, not just once.
 param(
     [int]$Minutes = 15,
+    # Round-15 finding (a): was a hardcoded `$OnAirBoundMinutes = 12` deep
+    # in section 4 -- now a real parameter, threaded from
+    # Run-SandboxSoak.ps1's own -OnAirBoundMinutes (default 12, unchanged
+    # behavior for every existing caller that doesn't pass it) so the
+    # coordinator can widen/narrow the ON_AIR bound per run without editing
+    # this file. Recorded in SOAK-START.json/VERDICT.json alongside
+    # everything else the ON_AIR poll already carries.
+    [int]$OnAirBoundMinutes = 12,
     # Round-6 item 1: when set, the guest exports
     # CIVICCAST_EGRESS_SEAMLESS_RELOAD=1 at MACHINE scope before starting the
     # CivicCastSupervisor service, so the service and its control-plane
@@ -601,6 +609,67 @@ function Copy-StationLogs {
             } catch { }
         }
     }
+
+    # Round-15 finding (b): run 11 (candidate 3b, -SeamlessReload) timed out
+    # at 12 minutes with NO state row on any channel and only the
+    # "education" channel's directory + conform-cache present under the
+    # egress work dir -- the per-channel loop just above only ever sees a
+    # channel that ALREADY has a directory under $egressSrc, so a channel
+    # whose conform/prepare work hadn't created one yet was invisible to
+    # this evidence capture entirely, and there was no way to tell from the
+    # captured evidence whether conform was still actively running or had
+    # simply stalled. Captured HERE (unconditional -- every known channel
+    # from $channelSpecs is listed even if its directory does not exist
+    # yet, reported as such, rather than silently absent) into
+    # logs\<label>\conform-progress.json:
+    #   - a (name, size, mtime) listing of the GLOBAL conform-cache dir
+    #     (shared across all channels, civiccast/egress -- conform results
+    #     are cached once and reused, so this is the one place to see
+    #     whether ANY conform work is landing at all);
+    #   - the SAME per-channel prepared\ listing as above, but for every
+    #     channel this script knows about (not just ones whose directory
+    #     happens to already exist), each stamped with whether its
+    #     directory was even present;
+    #   - a Win32_Process snapshot of every ffmpeg.exe/python.exe child
+    #     (CommandLine + CreationDate) -- if conform is still running, its
+    #     process (and command line, which names the source/output paths)
+    #     should show up here even when nothing has landed on disk yet.
+    $conformProgress = [ordered]@{
+        captured_utc = (Get-Date).ToUniversalTime().ToString('o')
+        conform_cache = $null
+        channels = @()
+        processes = @()
+    }
+    $conformCacheSrc = Join-Path $egressSrc 'conform-cache'
+    if (Test-Path $conformCacheSrc) {
+        try {
+            $conformProgress.conform_cache = @(Get-ChildItem -LiteralPath $conformCacheSrc -Recurse -File -ErrorAction SilentlyContinue |
+                Select-Object Name, @{n = 'FullPath'; e = { $_.FullName } }, Length, LastWriteTimeUtc)
+        } catch { $conformProgress.conform_cache = "error listing $($conformCacheSrc): $_" }
+    } else {
+        $conformProgress.conform_cache = "not present: $conformCacheSrc"
+    }
+    foreach ($cs in @($channelSpecs)) {
+        $chDir = Join-Path $egressSrc $cs.id
+        $chPreparedSrc = Join-Path $chDir 'prepared'
+        $chEntry = [ordered]@{ channel_id = $cs.id; channel_dir_present = (Test-Path $chDir); prepared = $null }
+        if (Test-Path $chPreparedSrc) {
+            try {
+                $chEntry.prepared = @(Get-ChildItem -LiteralPath $chPreparedSrc -File -ErrorAction SilentlyContinue |
+                    Select-Object Name, Length, LastWriteTimeUtc)
+            } catch { $chEntry.prepared = "error listing $($chPreparedSrc): $_" }
+        } else {
+            $chEntry.prepared = "not present: $chPreparedSrc"
+        }
+        $conformProgress.channels += $chEntry
+    }
+    try {
+        $conformProgress.processes = @(Get-CimInstance Win32_Process -Filter "Name='ffmpeg.exe' OR Name='python.exe'" -ErrorAction SilentlyContinue |
+            Select-Object ProcessId, Name, CommandLine, CreationDate)
+    } catch { $conformProgress.processes = "error querying Win32_Process: $_" }
+    try {
+        $conformProgress | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $dst 'conform-progress.json') -Encoding UTF8
+    } catch { }
 }
 
 # N2 (blocker): Windows Defender Firewall raises a modal "Do you want to
@@ -1134,12 +1203,12 @@ if ($stagedAssets.Count -eq 0) {
 
 # Round-5 item 1 / round-8 finding 6: single source of truth for the
 # ON_AIR poll bound, needed HERE (to size the schedule for the worst case)
-# and again below (as the actual poll deadline). Raised 10 -> 12 minutes:
-# run 7 showed the "public" channel genuinely reaching ON_AIR at 645s
-# (10m45s) -- inside the OLD 10-minute/600s bound's own measured worst
-# case, but with no margin left at all. 12 minutes gives real headroom
-# past that measured number, not just past the round-5 8.5-minute one.
-$OnAirBoundMinutes = 12
+# and again below (as the actual poll deadline). Raised 10 -> 12 minutes
+# (run 7's "public" channel genuinely reaching ON_AIR at 645s/10m45s --
+# inside the OLD 10-minute/600s bound's own measured worst case, but with
+# no margin left at all); round-15 finding (a): now a real parameter
+# (-OnAirBoundMinutes, default 12, see the param block above) instead of a
+# hardcoded literal here.
 
 # Schedule + Commit-to-Air: a FIXED item count per channel, sized for the
 # WORST CASE where the ON_AIR poll takes its full $OnAirBoundMinutes bound --
@@ -1428,6 +1497,9 @@ Write-PhaseMarker -Name 'SOAK-START.json' -Obj ([ordered]@{
     channels_started_utc = $channelsStartedUtc.ToString('o')
     first_state_row_s = $firstStateRowSByChannel
     time_to_on_air_s = $timeToOnAirSByChannel
+    # Round-15 finding (a): the ON_AIR bound actually in force for this run
+    # -- was a hardcoded 12, now -OnAirBoundMinutes (still defaults to 12).
+    on_air_bound_minutes = $OnAirBoundMinutes
     seamless_reload = [bool]$SeamlessReload
     seamless_reload_verified = $summary.seamless_reload_verified
 })
@@ -2017,6 +2089,8 @@ $verdict = [ordered]@{
     soak_start_utc       = $SoakStartUtc.ToString('o')
     run_end_utc          = (Get-Date).ToUniversalTime().ToString('o')
     minutes_requested    = $Minutes
+    # Round-15 finding (a): the ON_AIR bound actually in force for this run.
+    on_air_bound_minutes = $OnAirBoundMinutes
     installer_exit_code  = $summary.installer_exit_code
     installer_elapsed_seconds = $summary.installer_elapsed_seconds
     station_healthy      = $summary.station_healthy
