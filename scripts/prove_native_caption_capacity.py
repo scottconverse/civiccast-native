@@ -33,6 +33,7 @@ import psutil
 from civiccast.captions.models import AudioChunk
 from civiccast.captions.review import InMemoryCaptionReviewStore
 from civiccast.captions.runtime import (
+    LIVE_TAP_CPU_BEAM_SIZE,
     CaptionRuntime,
     FasterWhisperRuntime,
     default_live_tap_cpu_threads,
@@ -377,6 +378,18 @@ def build_caption_runtime(
             beam_size=beam_size,
             language="en",
             vad_filter=vad_filter,
+            # This proof exists to measure the LIVE tap specifically (see the
+            # module docstring: "the production CaptionTapWorker ... under a
+            # real-time deadline"), so it must ask for the live sizing the
+            # same way civiccast.ai_models.runtime.build_caption_runtime does
+            # for the real product. `cpu_threads`/`beam_size` are still
+            # passed explicitly above (from --cpu-threads/--beam-size,
+            # both now defaulting to the live values -- see argparse below),
+            # so `live=True` here does not silently override an operator's
+            # deliberate hardware-exploration trial; it only makes the
+            # runtime's OWN `_live`-gated behavior (the startup log line,
+            # the CUDA-fallback beam-width drop) match what production does.
+            live=True,
         )
     finally:
         for name, previous_value in previous_environment.items():
@@ -623,12 +636,17 @@ def _overload_negative_control(
     }
 
 
-def main() -> int:
-    # Every downstream site (runtime construction, expected identity, env
-    # pins) reads these module globals at call time, so overriding them from
-    # the CLI keeps the whole run — including the identity acceptance —
-    # consistent.
-    global CAPTION_DEVICE, CAPTION_COMPUTE_TYPE
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build the CLI parser, factored out of :func:`main` so its defaults --
+
+    in particular ``--cpu-threads`` and ``--beam-size``, both wired to the
+    live tap's real shipped sizing (item 79) -- are directly testable without
+    running the whole proof (which needs real audio fixtures, a model
+    directory, and a work directory). See
+    ``tests/native/test_caption_capacity_proof.py``'s
+    ``TestArgParserDefaultsTrackTheLiveTap``.
+    """
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--audio",
@@ -645,7 +663,18 @@ def main() -> int:
     parser.add_argument("--model-dir", required=True, type=Path)
     parser.add_argument("--work-dir", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--beam-size", type=int, default=5)
+    parser.add_argument(
+        "--beam-size",
+        type=int,
+        # Deliberately NOT 5 (the batch/GPU default): this proof exists to
+        # measure the shipped LIVE tap, and greedy decoding (beam 1) is the
+        # live tap's own default on CPU (LIVE_TAP_CPU_BEAM_SIZE). An
+        # unoverridden run therefore matches cpu_threads and beam_size to
+        # the SAME deployed sizing, rather than measuring a station that
+        # caps its threads like the live tap but decodes like a batch pass
+        # nobody ships that way.
+        default=LIVE_TAP_CPU_BEAM_SIZE,
+    )
     parser.add_argument("--overlap-seconds", type=float, default=4.0)
     parser.add_argument(
         "--cpu-threads",
@@ -691,6 +720,16 @@ def main() -> int:
         action="store_true",
         help="disable the production VAD optimization for a comparison run",
     )
+    return parser
+
+
+def main() -> int:
+    # Every downstream site (runtime construction, expected identity, env
+    # pins) reads these module globals at call time, so overriding them from
+    # the CLI keeps the whole run — including the identity acceptance —
+    # consistent.
+    global CAPTION_DEVICE, CAPTION_COMPUTE_TYPE
+    parser = _build_arg_parser()
     args = parser.parse_args()
 
     CAPTION_DEVICE = args.device

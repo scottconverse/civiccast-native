@@ -62,16 +62,25 @@ below.
   small station, up to 2 on a bigger one, never more, logged once when the
   tap starts alongside `cpu_count` and the channel concurrency bound;
   override: `CIVICCAST_CAPTION_TAP_CPU_THREADS`, clamped rather than fatal on
-  a bad value so a typo cannot take an activated station off air; the
-  existing, more general `CIVICCAST_WHISPER_CPU_THREADS` is clamped the same
-  way now too, and its `0` ("every core") is refused specifically for the
-  live tap regardless of which of the two variables asked for it) --
-  recorded meeting transcription is untouched, it still uses as many threads
-  as the box allows. (3) the first pause after an overload is now twice as
-  long (120 seconds instead of 60) so a station that just proved it cannot
+  a bad value, and capped at 2 with a warning if it asks for more, so a typo
+  or an over-aggressive value cannot take an activated station off air or
+  hand the live tap "every core" worth of threads. The existing, more
+  general `CIVICCAST_WHISPER_CPU_THREADS` keeps its original fail-fast
+  (raise) behaviour for recorded-meeting transcription, unchanged -- but for
+  the **live tap specifically** it is now clamped the same way as the
+  tap-only variable (a bad value warns and falls back instead of raising),
+  its `0` ("every core") is refused regardless of which of the two variables
+  asked for it, and a value above 2 is capped the same way. Recorded meeting
+  transcription itself is untouched either way -- it still uses as many
+  threads as the box allows. (3) the first pause after an overload is now
+  twice as long (120 seconds instead of 60) so a station that just proved it cannot
   keep up gets real recovery time before speech recognition is attempted
   again. Does not add any new cross-module wiring to the stall watchdog --
-  that stays a separate, medium-risk item.
+  that stays a separate, medium-risk item. `scripts/prove_native_caption_capacity.py`'s
+  `--cpu-threads`/`--beam-size` flags now default to the same live sizing
+  production ships, and the proof constructs its runtime with `live=True`, so
+  an unoverridden capacity-proof run measures the actual deployed
+  configuration instead of a station nobody ships.
 
 - **A seamless plan rollover collided its own concat aggregators, silently
   failed to join the pipeline, and was acked "applied" anyway -- so

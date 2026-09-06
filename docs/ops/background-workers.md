@@ -138,7 +138,7 @@ kill the scan.
 | `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS` | `120` | First pause after an overload; each consecutive overload doubles it. Item 79 (2026-09): doubled from `60` — a struggling station needs real recovery room before ASR is attempted again. |
 | `CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS` | `900` | Ceiling on that doubling. |
 | `CIVICCAST_CAPTION_TAP_CPU_THREADS` | one per 8 CPUs, max 2 | CTranslate2 intra-op threads for the **live tap only** (item 79, 2026-09). Recorded-meeting transcription is unaffected. |
-| `CIVICCAST_WHISPER_CPU_THREADS` | (unset) | CTranslate2 threads per transcription; overrides `..._TAP_CPU_THREADS` above when set, for either the live tap or batch/VOD. `0` means "every core" and is the batch/VOD default — do not set it to `0` on a station that is also on air. |
+| `CIVICCAST_WHISPER_CPU_THREADS` | (unset) | CTranslate2 threads per transcription; overrides `..._TAP_CPU_THREADS` above when set. For batch/VOD, `0` means "every core" and is honoured as before. For the **live tap**, `0` is refused (item 79, 2026-09): it falls back to the live default instead, with a warning logged, so this variable can no longer hand the live tap "every core" even by mistake. |
 | `CIVICCAST_WHISPER_BEAM_SIZE` | `1` on CPU, `5` on CUDA | Decoder beam width. Wider is slightly more accurate and roughly linearly more expensive. |
 
 ### Turning live captions off

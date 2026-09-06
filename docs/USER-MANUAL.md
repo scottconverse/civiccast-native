@@ -332,10 +332,13 @@ workflow is. Two things to know before relying on it for a real meeting:
 ### Live Captions, And When To Turn Them Off {#live-captions-switch}
 
 When live captions are on, CivicCast writes captions as the meeting happens —
-but it captions **one channel at a time; the others pause** while they wait
-their turn. It is useful, and it is hard work for the computer — hard enough
-that on a station without a suitable graphics card it can compete with the
-broadcast itself for the processor.
+but it captions **one channel at a time**. On a station with more than one
+channel on air, the others are **paused, most of the time**, with no live
+captions showing and their audio discarded rather than saved up for later —
+this is not a brief wait, it is the normal state for every channel that
+isn't the one currently being captioned. It is useful, and it is hard work
+for the computer — hard enough that on a station without a suitable graphics
+card it can compete with the broadcast itself for the processor.
 
 **The switch:** *Setup → Station Profile → **Show live captions on air***.
 It is on when the station is installed. Only a setup admin can change it.
@@ -845,9 +848,11 @@ station needs.
   tap only** (item 79, 2026-09). Default: one per 8 CPUs, never more than 2.
   Recorded-meeting transcription is unaffected.
 - **`CIVICCAST_WHISPER_CPU_THREADS`** — Processor threads per transcription;
-  overrides `..._TAP_CPU_THREADS` above when set, for either the live tap or
-  batch. `0` means "every core" and is the batch default. Do not set it to `0`
-  on a station that is also on air.
+  overrides `..._TAP_CPU_THREADS` above when set. For batch, `0` means "every
+  core" and is honoured as before. For the **live tap**, `0` is refused
+  (item 79, 2026-09): it falls back to the live default instead, with a
+  warning logged, so this variable can no longer hand the live tap "every
+  core" — on air or otherwise.
 - **`CIVICCAST_WHISPER_BEAM_SIZE`** — Live-tap decoder beam width (default 1 on
   CPU, 5 on a GPU). Does not affect recorded-file captioning.
 - **`CIVICCAST_CAPTION_FEED_POLL_SECONDS`** — Caption feed and decode-back proof cadence.

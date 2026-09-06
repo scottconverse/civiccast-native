@@ -1127,7 +1127,20 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # scripted CaptionRuntime and a tmp_path WAV), so both lanes advance by
     # four. Re-derived by an actual `--collect-only` run on this tree, not by
     # arithmetic: (1790, 1991) -> (1794, 1995).
-    assert (collect("not windows_only"), collect()) == (1794, 1995)
+    # fix/caption-tap-caps-item79 review round 4: three new
+    # platform-independent cases in tests/native/test_caption_capacity_proof.py
+    # (TestArgParserDefaultsTrackTheLiveTap), added after review caught the
+    # capacity proof constructing FasterWhisperRuntime WITHOUT live=True --
+    # so --cpu-threads's live-tap default (a prior fix) paired with a beam
+    # width that never followed it, measuring a sizing nobody ships. The new
+    # cases pin the --cpu-threads and --beam-size argparse defaults against
+    # civiccast.captions.runtime's own default_live_tap_cpu_threads()/
+    # LIVE_TAP_CPU_BEAM_SIZE, plus that the constructed runtime actually
+    # receives live=True. No windows_only marker and no OS dependency (an
+    # argparse.ArgumentParser and a monkeypatched constructor), so both lanes
+    # advance by three. Re-derived by an actual `--collect-only` run on this
+    # tree, not by arithmetic: (1794, 1995) -> (1797, 1998).
+    assert (collect("not windows_only"), collect()) == (1797, 1998)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
