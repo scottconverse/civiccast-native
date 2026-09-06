@@ -93,6 +93,13 @@ class BulletinFillerSourceGenerator:
         self._slide_seconds = slide_seconds
         self._clock = clock or (lambda: datetime.now(UTC))
         self._target_fill_seconds = target_fill_seconds
+        # Delta review fix (2026-09-05): above MAX_PLAYLIST_SUBCHAINS PAGES
+        # (i.e. more than MAX_PLAYLIST_SUBCHAINS**2 distinct slides), a plan
+        # built from every page would itself exceed the segment cap again --
+        # see _plan_with_cycle. Tracks which page WINDOW to show on the next
+        # fill-plan generation so all pages (and therefore all slides) air
+        # across successive generations instead.
+        self._rotation_page_offset = 0
 
     def __call__(self, config: EgressConfig) -> EgressSourcePlan:
         now = self._clock()
@@ -218,10 +225,43 @@ class BulletinFillerSourceGenerator:
         probe reading the control-plane log)."""
         if not segments:
             return EgressSourcePlan(channel_id=config.channel_id, segments=segments)
-        pages = [
+        all_pages = [
             segments[i : i + MAX_PLAYLIST_SUBCHAINS]
             for i in range(0, len(segments), MAX_PLAYLIST_SUBCHAINS)
         ]
+        windowed = False
+        if len(all_pages) > MAX_PLAYLIST_SUBCHAINS:
+            # Delta review fix (2026-09-05): more than MAX_PLAYLIST_SUBCHAINS
+            # pages (i.e. more than MAX_PLAYLIST_SUBCHAINS**2 = 144 distinct
+            # slides) still built more than MAX_PLAYLIST_SUBCHAINS total
+            # segments -- ``max(1, MAX_PLAYLIST_SUBCHAINS // len(pages))``
+            # floors to 1 once ``len(pages) > MAX_PLAYLIST_SUBCHAINS``, which
+            # bounds CYCLES but not the page count itself. Select a rotating
+            # WINDOW of at most MAX_PLAYLIST_SUBCHAINS pages instead --
+            # advancing the offset every call -- so every page (and
+            # therefore every slide) airs across successive fill-plan
+            # generations rather than exceeding the segment cap at once.
+            windowed = True
+            offset = self._rotation_page_offset % len(all_pages)
+            pages = [
+                all_pages[(offset + i) % len(all_pages)] for i in range(MAX_PLAYLIST_SUBCHAINS)
+            ]
+            self._rotation_page_offset = (offset + MAX_PLAYLIST_SUBCHAINS) % len(all_pages)
+            _LOG.warning(
+                "channel %s: bulletin/board rotation has %d distinct slides across "
+                "%d pages, above the %d-page cap; rotating a window of %d pages "
+                "starting at page %d this generation so every page airs across "
+                "successive fill-plan generations instead of exceeding the "
+                "segment cap at once.",
+                config.channel_id,
+                len(segments),
+                len(all_pages),
+                MAX_PLAYLIST_SUBCHAINS,
+                MAX_PLAYLIST_SUBCHAINS,
+                offset,
+            )
+        else:
+            pages = all_pages
         page_segments: list[EgressSourceSegment] = []
         for page in pages:
             rotation_seconds = self._slide_seconds * len(page)
@@ -242,7 +282,7 @@ class BulletinFillerSourceGenerator:
             min(max_cycles, int(-(-self._target_fill_seconds // total_page_seconds))),
         )
         coverage_seconds = cycles * total_page_seconds
-        if len(pages) > 1:
+        if len(pages) > 1 and not windowed:
             _LOG.warning(
                 "channel %s: bulletin/board rotation has %d distinct slides, above "
                 "the %d-slide-per-rotation cap; paging across %d rotation files "

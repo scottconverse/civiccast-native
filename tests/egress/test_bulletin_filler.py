@@ -483,6 +483,51 @@ def test_bulletin_rotation_pages_across_files_instead_of_dropping_slides(
     assert len(all_referenced_slides) == bulletin_count
 
 
+def test_bulletin_rotation_windows_pages_above_the_page_cap(tmp_path: Path) -> None:
+    """Delta review fix: above MAX_PLAYLIST_SUBCHAINS PAGES (more than
+    MAX_PLAYLIST_SUBCHAINS**2 = 144 distinct slides), including every page
+    would itself build more than MAX_PLAYLIST_SUBCHAINS total segments
+    again -- ``max(1, MAX_PLAYLIST_SUBCHAINS // len(pages))`` floors to 1
+    without bounding the page count. 200 slides page into 17 rotation
+    files (16 x 12 + 1 x 8); a single fill-plan generation must still stay
+    at or under the segment cap, and a rotating page WINDOW means every
+    page -- therefore every slide -- airs across two successive
+    generations (17 pages needs two 12-page windows to cover)."""
+    bulletin_count = 200
+    bulletins = [_bulletin(f"cgb_{i}", title=f"Bulletin {i}") for i in range(bulletin_count)]
+    concat_slide_paths: list[set[str]] = []
+
+    def runner(args: list[str]) -> FfmpegResult:
+        out = Path(args[-1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"ts")
+        if "-safe" in args:
+            concat_list_path = Path(args[args.index("-i") + 1])
+            lines = concat_list_path.read_text(encoding="utf-8").splitlines()
+            concat_slide_paths.append({line for line in lines if line})
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    generator = BulletinFillerSourceGenerator(
+        work_dir=tmp_path,
+        bulletins_provider=lambda _cid: bulletins,
+        ffmpeg_runner=runner,
+        target_fill_seconds=60,
+    )
+
+    first_plan = generator(_config())
+    assert len(first_plan.segments) <= MAX_PLAYLIST_SUBCHAINS
+
+    second_plan = generator(_config())
+    assert len(second_plan.segments) <= MAX_PLAYLIST_SUBCHAINS
+
+    # Across the two generations, every one of the 200 distinct slides was
+    # referenced by SOME page's concat list -- none permanently dropped.
+    all_referenced_slides: set[str] = set()
+    for page_paths in concat_slide_paths:
+        all_referenced_slides |= page_paths
+    assert len(all_referenced_slides) == bulletin_count
+
+
 class TestDefaultImageResolver:
     """Gate finding F-4: ``_default_image_resolver`` must not resolve a staff
     asset's ``file_path`` to a filesystem path outside CivicCast's configured

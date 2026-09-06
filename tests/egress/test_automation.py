@@ -377,8 +377,11 @@ class TestSlateReplan:
         # The 5th consecutive failure was already observed and counted
         # inside the loop above -- gave up without needing a distinct 6th
         # dispatch attempt.
-        assert alerted
-        assert any("public" in detail and "5 consecutive failures" in detail for detail in alerted)
+        # Delta review fix: the give-up tick used to fall through into a
+        # second, redundant "already given up" check and fire the alert
+        # TWICE on that one tick -- exactly once now.
+        assert len(alerted) == 1
+        assert "public" in alerted[0] and "5 consecutive failures" in alerted[0]
 
         # It stays given up: no reload dispatches again, ever.
         service.run_once(now=_NOW)
@@ -393,6 +396,50 @@ class TestSlateReplan:
         self._slate_state(store, "public")
         service.run_once(now=_NOW)
         assert _pending_actions(store, "public") == ["reload"]
+
+    def test_stale_pending_mark_is_discarded_on_a_stopped_or_error_terminal_state(
+        self,
+    ) -> None:
+        """Delta review fix: a dispatched reload marked pending must not
+        count a FALSE failure against a LATER, unrelated FALLBACK_SLATE
+        period if the channel passed through a terminal STOPPED/ERROR
+        state in between (an operator stop, or a crash) -- that terminal
+        state has nothing to do with the reload's own outcome, so the
+        stale pending mark is discarded rather than carried forward and
+        misread as "the dispatched reload flapped back to slate"."""
+        clock = {"now": 1000.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._slate_state(store, "public")
+        daemon = _FakeDaemon(live_channels={"public"})
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan(cid),
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+        )
+
+        service.run_once(now=_NOW)
+        assert _pending_actions(store, "public") == ["reload"]
+        assert "public" in service._slate_replan_pending  # type: ignore[attr-defined]
+
+        # The channel is stopped (an operator action, or a crash) before
+        # the dispatched reload ever resolves either way.
+        store.write_state(EgressStateRow(channel_id="public", state="STOPPED", updated_at=_NOW))
+        service.run_once(now=_NOW)
+        assert "public" not in service._slate_replan_pending  # type: ignore[attr-defined]
+
+        # A later, UNRELATED return to FALLBACK_SLATE (e.g. after a manual
+        # restart) must start the attempt count fresh -- not count a false
+        # failure for the stale mark. (Past the first dispatch's own
+        # cooldown, an unrelated concern from the cadence-pacing fix, so it
+        # alone doesn't block this second dispatch.)
+        clock["now"] += 31.0
+        self._slate_state(store, "public")
+        service.run_once(now=_NOW)
+        assert _pending_actions(store, "public") == ["reload"]
+        assert service._slate_replan_attempts.get("public", 0) == 0  # type: ignore[attr-defined]
 
 
 class TestPlanRollover:

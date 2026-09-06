@@ -637,6 +637,51 @@ def test_daemon_logs_last_error_at_info_on_fallback_slate_transition(
     ), [r.getMessage() for r in info_records]
 
 
+def test_daemon_logs_transition_note_at_info_on_a_pending_reload(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Delta review fix: ``_write_state``'s single-choke-point log line
+    named ``last_error`` but not ``transition_note`` -- the SAME
+    diagnosability gap Gate A T4 already fixed for ``last_error`` (a state
+    transition with no explanatory trail reaching the control-plane log).
+    A pending-reload drain writes its honest annotation into
+    transition_note (see the BLOCKER A hostile-review redo), so it must
+    reach the log too."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, reload_ok=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+
+    with caplog.at_level("INFO", logger="civiccast.egress.daemon"):
+        daemon.process_once("gov")  # seamless fails -> terminate+restart latches
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.transition_note is not None
+
+    info_records = [r for r in caplog.records if r.levelname == "INFO"]
+    assert any(
+        "TRANSITIONING" in r.getMessage() and state.transition_note in r.getMessage()
+        for r in info_records
+    ), [r.getMessage() for r in info_records]
+
+
 def test_daemon_runs_fallback_slate_provider_when_no_source_plan(tmp_path: Path) -> None:
     store = InMemoryEgressStore()
     store.upsert_config(_config())
@@ -1195,6 +1240,49 @@ def test_pending_reload_deadline_for_fallback_slate_uses_a_short_bound(tmp_path:
     deadline = daemon._estimate_pending_reload_deadline("gov", state, since)  # type: ignore[attr-defined]
 
     assert deadline == since + timedelta(seconds=_PENDING_RELOAD_SLATE_DEADLINE_S)
+
+
+def test_pending_reload_deadline_is_unknown_while_a_switch_is_deferred(tmp_path: Path) -> None:
+    """Delta review fix: a content-reload dispatched with
+    switch_at_end_of_current=True (switch_was_deferred on the recorded
+    horizon) does not start airing at dispatch time -- the engine holds it
+    until the OUTGOING leg's own natural end. ``_dispatched_plan_
+    started_at`` is stamped at DISPATCH time regardless, so while a switch
+    is still deferred that anchor is too early and would make the deadline
+    come due before the plan has even started airing. Nothing reports back
+    when a deferred switch actually lands, so the honest estimate while
+    switch_was_deferred is True is "unknown" (None) -- never a guessed-too-
+    early deadline."""
+    daemon = EgressDaemon(
+        InMemoryEgressStore(),
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+    )
+    dispatched_at = datetime(2026, 6, 5, 12, 0, 0, tzinfo=UTC)
+    daemon._dispatched_plan_horizon["gov"] = ("ev-1", (600.0,), True)  # type: ignore[attr-defined]
+    daemon._dispatched_plan_started_at["gov"] = dispatched_at  # type: ignore[attr-defined]
+    state = EgressStateRow(
+        channel_id="gov",
+        state="ON_AIR",
+        current_proof_event_id="ev-1",
+        updated_at=dispatched_at,
+    )
+
+    # Even long after "dispatch" -- which would otherwise look like the
+    # 600s plan is already overdue -- the deferred switch means we
+    # genuinely don't know when it actually started airing.
+    since = dispatched_at + timedelta(seconds=700)
+    deadline = daemon._estimate_pending_reload_deadline("gov", state, since)  # type: ignore[attr-defined]
+
+    assert deadline is None
+
+    # Contrast: the SAME horizon with switch_was_deferred=False estimates
+    # normally (the fix is specific to the deferred case, not a blanket
+    # regression).
+    daemon._dispatched_plan_horizon["gov"] = ("ev-1", (600.0,), False)  # type: ignore[attr-defined]
+    since2 = dispatched_at + timedelta(seconds=400)
+    deadline2 = daemon._estimate_pending_reload_deadline("gov", state, since2)  # type: ignore[attr-defined]
+    assert deadline2 == since2 + timedelta(seconds=200 + _PENDING_RELOAD_DEADLINE_MARGIN_S)
 
 
 def test_request_reload_ignores_a_duplicate_request_while_already_pending(

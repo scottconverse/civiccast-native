@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import os
@@ -121,13 +122,12 @@ class SlateSourceGenerator:
         slate_dir.mkdir(parents=True, exist_ok=True)
         output_name = f"slate-{cache_key}.ts"
         output_path = slate_dir / output_name
-        if not output_path.exists():
-            # Delta review fix: bounded disk hygiene -- remove any
-            # previously-cached slate render whose key no longer matches
-            # (a config/duration change, or a SLATE_RENDER_VERSION bump)
-            # before rendering the new one. Only ever lists THIS channel's
-            # own slate directory, never a wider tree.
-            self._evict_stale_slate_renders(slate_dir, keep_name=output_name)
+        # Delta review fix: a cache "hit" is only trustworthy if the file is
+        # non-empty -- a zero-byte file (left by a crash before the atomic
+        # staging+replace fix below existed, or external corruption) must be
+        # re-rendered, not silently served as a valid slate source forever.
+        cache_valid = output_path.exists() and output_path.stat().st_size > 0
+        if not cache_valid:
             # Delta review fix: render to a staging path and only publish
             # atomically via .replace() -- matches bulletin_filler.py's
             # rotation-file cache -- so a reader can never observe a
@@ -155,8 +155,18 @@ class SlateSourceGenerator:
                         "output before retrying."
                     )
                 staging.replace(output_path)
+                # Delta review fix: eviction moved to AFTER the new render
+                # publishes successfully (never on a failed render, which
+                # would otherwise leave the channel with no valid cached
+                # file at all) and each unlink is best-effort -- a stale
+                # file the running encoder still has open (a Windows
+                # sharing violation) must not crash this prepare; it is
+                # simply left for a later prepare to clean up once nothing
+                # holds it.
+                self._evict_stale_slate_renders(slate_dir, keep_name=output_name)
             finally:
-                staging.unlink(missing_ok=True)
+                with contextlib.suppress(OSError):
+                    staging.unlink(missing_ok=True)
         repeats = min(
             MAX_PLAYLIST_SUBCHAINS,
             max(1, -(-self._target_fill_seconds // duration_seconds)),
@@ -193,10 +203,16 @@ class SlateSourceGenerator:
         ``SLATE_RENDER_VERSION`` bump) so stale renders don't accumulate
         forever. Bounded -- only ever lists ONE channel's own slate
         directory (never a wider tree), which holds at most a handful of
-        cached renders."""
+        cached renders. Called only after a fresh render has published
+        successfully (never on a failed render). Each unlink is best-effort:
+        a stale file the running encoder still has open (a Windows sharing
+        violation raises ``PermissionError``, an ``OSError`` subclass) is
+        left alone rather than raising out of a successful prepare -- a
+        later prepare, once nothing holds it, cleans it up instead."""
         for candidate in slate_dir.glob("slate-*.ts"):
             if candidate.name != keep_name:
-                candidate.unlink(missing_ok=True)
+                with contextlib.suppress(OSError):
+                    candidate.unlink(missing_ok=True)
 
 
 class ScheduleSourcePlanProvider:

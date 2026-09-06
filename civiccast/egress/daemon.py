@@ -932,12 +932,13 @@ class EgressDaemon:
         last_error = db_safe_text_or_none(last_error)
         transition_note = db_safe_text_or_none(transition_note)
         _LOG.info(
-            "channel %s: egress state -> %s (source=%s, pid=%s, last_error=%s)",
+            "channel %s: egress state -> %s (source=%s, pid=%s, last_error=%s, transition_note=%s)",
             channel_id,
             state,
             current_source_label or "-",
             pid if pid is not None else "-",
             last_error or "-",
+            transition_note or "-",
         )
         # ``updated_at`` is the row's public "last write" timestamp -- it
         # advances on EVERY write, honestly, including a poll tick that
@@ -1769,10 +1770,25 @@ class EgressDaemon:
         program content to wait out, so its deadline is a short flat bound
         instead of a plan-duration estimate.
 
+        Delta review fix: a content-reload dispatched with
+        ``switch_at_end_of_current=True`` (``switch_was_deferred`` on the
+        recorded horizon) does NOT start airing at dispatch time -- the
+        engine holds it until the OUTGOING leg's own natural end (see
+        ``dispatched_plan_horizon``'s docstring). ``_dispatched_plan_
+        started_at`` is stamped at dispatch time regardless, so while a
+        switch is still deferred that anchor is too EARLY: the elapsed-time
+        computation below would overestimate how much of the plan has
+        already played, undershoot the true remaining runway, and the
+        deadline would come due before the plan has even started airing.
+        Nothing today reports back when a deferred switch actually lands,
+        so the honest answer while it is still deferred is "unknown" --
+        never a guessed-too-early deadline.
+
         Returns None when the daemon cannot say (no dispatched-plan record,
-        or the record does not match what is actually airing right now) --
-        an unknown deadline never escalates a false alarm; see
-        ``alerting/runtime_status.py``'s fallback bound for that case.
+        the record does not match what is actually airing right now, or the
+        switch is still deferred) -- an unknown deadline never escalates a
+        false alarm; see ``alerting/runtime_status.py``'s fallback bound for
+        that case.
         """
         if state is None:
             return None
@@ -1781,8 +1797,10 @@ class EgressDaemon:
         horizon = self.dispatched_plan_horizon(channel_id)
         if horizon is None:
             return None
-        proof_event_id, durations, _switch_deferred = horizon
+        proof_event_id, durations, switch_deferred = horizon
         if proof_event_id != state.current_proof_event_id or not durations:
+            return None
+        if switch_deferred:
             return None
         total_seconds = sum(durations)
         if total_seconds <= 0:

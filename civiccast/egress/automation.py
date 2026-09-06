@@ -683,6 +683,17 @@ class ChannelAutomationService:
                 self._slate_replan_attempts.pop(channel_id, None)
                 self._slate_replan_gave_up.discard(channel_id)
                 self._slate_replan_pending.discard(channel_id)
+            elif state_row is None or state_row.state in ("STOPPED", "ERROR"):
+                # Delta review fix: a terminal state unrelated to the
+                # reload's own outcome (the channel was stopped, or
+                # crashed to ERROR) must discard any stale pending mark --
+                # otherwise a LATER, unrelated return to FALLBACK_SLATE
+                # (e.g. after a manual restart) would count a false
+                # failure for a reload whose fate has nothing to do with
+                # the current situation. TRANSITIONING/STARTING/DRAINING
+                # are normal mid-flap states and must NOT clear it -- that
+                # would break the failure-detection mechanism itself.
+                self._slate_replan_pending.discard(channel_id)
             return
         # Delta review fix (2026-09-05): a dispatch that IS still pending
         # (marked below, right after ``_enqueue``) and we are back here on
@@ -715,6 +726,11 @@ class ChannelAutomationService:
                             "consecutive failures; operator intervention needed."
                         ),
                     )
+                # Delta review fix: without this return, the SAME tick that
+                # just gave up fell through to the "already gave up" check
+                # below (now true, since it was just set two lines above)
+                # and fired on_slate_reload_exhausted a second time.
+                return
         if channel_id in self._reload_issued:
             return
         # Hostile-review "no flap" fix (2026-09-05): a persistently-failing

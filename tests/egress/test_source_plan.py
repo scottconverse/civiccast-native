@@ -210,6 +210,104 @@ def test_slate_source_generator_caches_the_rendered_file_across_prepares(tmp_pat
     assert third.segments[0].path != first.segments[0].path
 
 
+def test_slate_source_generator_rerenders_a_truncated_cached_file(tmp_path: Path) -> None:
+    """Delta review fix: a cache "hit" is only trustworthy if the cached
+    file is non-empty. A zero-byte file at the cache path (left by a crash
+    before the atomic staging+replace fix existed, or external corruption)
+    must be re-rendered, not silently served as a valid slate source
+    forever."""
+    calls: list[list[str]] = []
+
+    def runner(args: list[str]) -> FfmpegResult:
+        calls.append(args)
+        out = Path(args[-1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"ts")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    generator = SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=runner)
+    first = generator(_config())
+    assert len(calls) == 1
+
+    # Truncate the cached file to zero bytes, simulating corruption.
+    cached_path = Path(first.segments[0].path)
+    cached_path.write_bytes(b"")
+    assert cached_path.stat().st_size == 0
+
+    second = generator(_config())
+
+    assert len(calls) == 2  # re-rendered instead of trusting the empty file
+    assert second.segments[0].path == first.segments[0].path  # same cache key/path
+    assert cached_path.stat().st_size > 0  # the file is whole again
+
+
+def test_slate_source_generator_eviction_skips_a_locked_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Delta review fix: eviction runs only AFTER a fresh render publishes
+    successfully, and each unlink is best-effort -- a stale file the
+    running encoder still has open (a Windows sharing violation,
+    PermissionError) must not crash a successful prepare."""
+    calls: list[list[str]] = []
+
+    def runner(args: list[str]) -> FfmpegResult:
+        calls.append(args)
+        out = Path(args[-1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"ts")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    generator = SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=runner)
+    first = generator(_config())  # establishes the first cached render
+
+    # A different message means a different cache key -- the OLD cached
+    # file becomes stale and eligible for eviction on the next prepare.
+    changed_config = _config().model_copy(update={"slate_message": "A different message."})
+
+    original_unlink = Path.unlink
+
+    def locked_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self == Path(first.segments[0].path):
+            raise PermissionError("simulated: file is open by the running encoder")
+        return original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", locked_unlink)
+
+    # Must not raise, even though the stale file's unlink is "locked".
+    second = generator(changed_config)
+
+    assert len(calls) == 2
+    assert Path(first.segments[0].path).exists()  # the "locked" file survives
+    assert Path(second.segments[0].path).exists()
+    assert second.segments[0].path != first.segments[0].path
+
+
+def test_slate_source_generator_render_version_bump_changes_the_cache_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Delta review fix: SLATE_RENDER_VERSION is folded into the cache key
+    so a future change to the render recipe invalidates every previously-
+    cached file instead of silently reusing bytes from the OLD recipe."""
+    calls: list[list[str]] = []
+
+    def runner(args: list[str]) -> FfmpegResult:
+        calls.append(args)
+        out = Path(args[-1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"ts")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    generator = SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=runner)
+    first = generator(_config())
+    assert len(calls) == 1
+
+    monkeypatch.setattr("civiccast.egress.source_plan.SLATE_RENDER_VERSION", 999)
+    second = generator(_config())
+
+    assert len(calls) == 2  # the version bump alone forced a re-render
+    assert second.segments[0].path != first.segments[0].path
+
+
 def test_slate_source_generator_raises_on_ffmpeg_failure(tmp_path: Path) -> None:
     generator = SlateSourceGenerator(
         work_dir=tmp_path,
