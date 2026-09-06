@@ -254,3 +254,8 @@ After the 9za..9zd chain, `AUTORUN-9ze.ps1` proves the installed code is kit 609
 ## Addendum -- AUTORUN-9zl (soak #5 clock)
 
 9zk proved the installed code is kit 609273d (#172 + #174 markers, hashes equal to the pack). 9zj uploaded the 4 clips, scheduled 272 x 30-s items per channel, applied config and sent start, but no channel reported ON_AIR within its 3-minute window (same as on the previous fresh install). `AUTORUN-9zl.ps1` (runs once) records each channel's raw `/state`, sends `start` again (a no-op on a running channel), polls up to 6 minutes, and when all three are ON_AIR archives previous probes to `soak/archive-609273d-prev-soak/`, resets the counters and writes `state\soak-started` (soak #5). Result `soak/RESTART-RESULT-9zl.md`; exit 5 = still <3 ON_AIR.
+
+
+## Addendum -- AUTORUN-9zm (read-only)
+
+Soak #5's 02:56Z probe shows one relaunch per channel in the first 30 minutes on the hotfix build (tsp pass on all three). `AUTORUN-9zm.ps1` (runs once, changes nothing) records every STARTING/STOPPED/FALLBACK line with its last_error since 02:20Z, rollover/reload/EOS/plan lines, caption runtime-status, worker threads/RSS/start times and stderr tails, and a CPU sample. Result `soak/DIAG-9zm-<stamp>.md`.
