@@ -147,6 +147,25 @@ Assert-Equal 'p8b3 (sanity: a value with no backslash at all is unaffected)' 0 $
 $p8b4 = ConvertTo-WorkerEnvEntries -WorkerEnv @('CIVICCAST_CAPTION_TAP_DIR=')
 Assert-Equal 'p8b4 (empty/unset value is unaffected by the trailing-backslash rule)' 0 $p8b4.errors.Count
 
+# scenario 8c: round-3 review finding 4 -- non-ASCII / non-printable
+# characters are REJECTED at parse time, not silently mangled by a
+# downstream ASCII-only transport. MEASURED directly (round 3): writing
+# a rendered command containing 'A=café日本' to a plain-ASCII
+# file produced 'A=caf???' -- a lossy, silent transform that would then
+# have been misattributed to "the transport mangled it" instead of "this
+# value was never representable in the first place".
+$p8c1 = ConvertTo-WorkerEnvEntries -WorkerEnv @('A=café日本')
+Assert-Equal 'p8c1 rejects non-ASCII (café日本)' 1 $p8c1.errors.Count
+Assert-True 'p8c1 error message names the real reason (printable ASCII), not a generic parse error' ($p8c1.errors[0] -match 'ASCII')
+# A control character (e.g. a literal tab) is non-printable ASCII too --
+# also rejected, not just multi-byte/non-Latin text.
+$p8c2 = ConvertTo-WorkerEnvEntries -WorkerEnv @("A=1$([char]9)2")
+Assert-Equal 'p8c2 rejects a control character (tab)' 1 $p8c2.errors.Count
+# Sanity: plain printable ASCII (letters, digits, punctuation already
+# allowed elsewhere) is unaffected by this rule.
+$p8c3 = ConvertTo-WorkerEnvEntries -WorkerEnv @('GST_DEBUG_FILE=C:\CivicCastSoak\gst-debug.log')
+Assert-Equal 'p8c3 (sanity: plain ASCII path is unaffected)' 0 $p8c3.errors.Count
+
 # scenario 9: empty/whitespace/absent input -> no entries, no errors.
 Assert-Equal 'p9a ($null) entry count' 0 (ConvertTo-WorkerEnvEntries -WorkerEnv $null).entries.Count
 Assert-Equal 'p9b (empty array) entry count' 0 (ConvertTo-WorkerEnvEntries -WorkerEnv @()).entries.Count
@@ -301,6 +320,29 @@ Assert-True 'rt1b found value no longer contains a literal %' ($null -eq $rt1b.f
 $badBackslashCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes 15 -OnAirBoundMinutes 12  -WorkerEnv "GST_DEBUG_FILE=C:\CivicCastSoak\"'
 $rt1c = Test-RenderedWorkerEnvRoundTrip -RenderedCommand $badBackslashCommand -ExpectedCanonicalArg 'GST_DEBUG_FILE=C:\CivicCastSoak\'
 Assert-True 'rt1c (trailing-backslash/quote collision) is CAUGHT, not passed' (-not $rt1c.ok) "(found: '$($rt1c.found)')"
+
+# scenario 20d (round-3 review finding 5): a LEGITIMATE value that
+# happens to contain the literal text "-File <something>" -- this is a
+# perfectly valid -WorkerEnv value (no rejected characters at all: just
+# letters, a space, a colon, backslashes, a dot) and must round-trip
+# successfully, NOT be mistaken for a second -File flag. MEASURED
+# directly against the PREVIOUS implementation (`-replace
+# '-File\s+\S+', ...`, global/unanchored): this exact value got rewritten
+# a second time INSIDE the quoted -WorkerEnv token, corrupting it and
+# reporting a false round-trip FAILURE for a string a real cmd.exe/
+# powershell.exe parse actually delivers correctly (inside the quotes,
+# "-File ..." is just literal text). The fix anchors the substitution to
+# the FIRST "-File " occurrence from the start of the string only.
+$tricky = 'A=-File C:\evil.ps1'
+$trickyQuoted = Get-QuotedWorkerEnvArgToken -CanonicalArg $tricky
+$trickyCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes 15 -OnAirBoundMinutes 12  $trickyQuoted"
+$rt1d = Test-RenderedWorkerEnvRoundTrip -RenderedCommand $trickyCommand -ExpectedCanonicalArg $tricky
+Assert-True 'rt1d (a value containing literal "-File ...") round-trips correctly, not a false failure' $rt1d.ok "(reason: $($rt1d.reason))"
+Assert-Equal 'rt1d found matches the tricky value exactly' $tricky $rt1d.found
+# Also prove it survives full parse validation (no rejected characters):
+# ConvertTo-WorkerEnvEntries must accept it cleanly.
+$trickyParsed = ConvertTo-WorkerEnvEntries -WorkerEnv @($tricky)
+Assert-Equal 'rt1d value parses with zero errors (a legitimate value, not one this lane should ever reject)' 0 $trickyParsed.errors.Count
 
 # scenario 21: the full synthetic multi-feature string ($experiment),
 # rendered and round-tripped end to end through a real execution.

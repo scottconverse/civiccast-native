@@ -99,6 +99,27 @@ function ConvertTo-WorkerEnvEntries {
             $errors += "entry '$item' contains a character (one of < > & | ^ % or a literal quote) that cannot survive the .wsb LogonCommand's cmd.exe quoting -- rejected, not best-effort escaped"
             continue
         }
+        # Round-3 review finding 4: non-ASCII / non-printable characters
+        # are rejected here too, not left to be silently mangled further
+        # downstream. Measured directly: writing the rendered command to
+        # a plain-ASCII file (this lane's own round-trip test harness, and
+        # -- before this fix -- potentially the .wsb/LogonCommand path
+        # too, depending on how Windows Sandbox itself decodes that text)
+        # turns 'A=café日本' into 'A=caf???' -- a silent,
+        # lossy transform that would then get misattributed to "the
+        # transport mangled it" instead of "this value was never
+        # representable in the first place". Values must be printable
+        # ASCII: 0x20 (space) through 0x7E inclusive. A NAME can never
+        # trip this (already constrained to
+        # ^[A-Za-z_][A-Za-z0-9_]*$ above, itself pure ASCII), so this only
+        # ever fires on VALUE in practice -- checked here regardless, for
+        # the same defense-in-depth reason every other character-class
+        # check in this function double-checks NAME even though it is
+        # already validated.
+        if ($name -match '[^\x20-\x7E]' -or $value -match '[^\x20-\x7E]') {
+            $errors += "entry '$item' contains a non-ASCII or non-printable character -- values must be printable ASCII (0x20-0x7E); rejected, not silently transliterated/mangled by a downstream ASCII-only transport"
+            continue
+        }
         # Round-2 review finding (item 3): a value ending in a single
         # trailing backslash collides with the closing quote this lane
         # itself appends in Get-QuotedWorkerEnvArgToken -- the Win32
@@ -202,6 +223,14 @@ function Get-QuotedWorkerEnvArgToken {
     if ($CanonicalArg -match '["<>&|^%]') {
         throw "canonical -WorkerEnv arg contains a character unsafe to embed in the .wsb LogonCommand (a literal quote, or one of < > & | ^ %): '$CanonicalArg'"
     }
+    # Round-3 review finding 4: defense in depth, mirroring
+    # ConvertTo-WorkerEnvEntries's own non-ASCII rejection -- a caller
+    # that builds a CanonicalArg some other way (bypassing that parse
+    # step) must not reach this render step with a value that could be
+    # silently mangled by a downstream ASCII-only transport.
+    if ($CanonicalArg -match '[^\x20-\x7E]') {
+        throw "canonical -WorkerEnv arg contains a non-ASCII or non-printable character (values must be printable ASCII, 0x20-0x7E): '$CanonicalArg'"
+    }
     # Round-2 review finding (item 3): the canonical arg is the string this
     # function wraps in a closing '"' -- if IT ends in an odd number of
     # backslashes (in practice: one, since ConvertTo-WorkerEnvEntries
@@ -304,7 +333,61 @@ if ($idx -ge 0 -and ($idx + 1) -lt $args.Count) {
     # here) so there is no SECOND layer of PowerShell-side argument
     # re-quoting between this test harness and the cmd.exe parse under
     # test -- the .cmd file's bytes are exactly what cmd.exe reads.
-    $testCommand = $RenderedCommand -replace '-File\s+\S+', "-File `"$captureScriptPath`""
+    #
+    # Round-3 review finding 5: the previous version used `-replace
+    # '-File\s+\S+', "-File `"$captureScriptPath`""` -- TWO real bugs.
+    # (a) `-replace` matches globally and unanchored: a -WorkerEnv VALUE
+    # that itself happens to contain the literal text "-File <token>"
+    # (measured: 'A=-File C:\evil.ps1') got rewritten too, corrupting the
+    # value under test and reporting a FALSE round-trip failure for a
+    # string a real cmd.exe/powershell.exe parse would have delivered
+    # correctly (inside the quotes, "-File ..." is just literal text, not
+    # a flag). (b) the replacement argument is a regex SUBSTITUTION
+    # pattern, not a literal string -- if $captureScriptPath (built from
+    # the OS temp directory) ever contained a literal '$' character, it
+    # would be misread as a backreference token ($1, $&, ...) instead of
+    # being inserted verbatim.
+    #
+    # Fixed by never using -replace/Regex.Replace's substitution-pattern
+    # argument at all: [regex]::Match anchored to the START of the string
+    # (^) finds the FIRST "...-File " prefix -- which, given this
+    # function's own command shape (always
+    # "powershell.exe -NoProfile -ExecutionPolicy Bypass -File <target>
+    # ..."), can only ever be the REAL -File flag; nothing before it in
+    # the string could itself contain the literal substring "-File "
+    # unless -WorkerEnv's own value did, and that value only ever appears
+    # LATER in the string (after -Minutes/-OnAirBoundMinutes/etc.), never
+    # before the real -File token. The target token immediately following
+    # is located the same way, and the final command is built by plain
+    # string concatenation (.Substring + '+') -- $captureScriptPath is
+    # never passed through anything that interprets '$' specially.
+    $prefixMatch = [regex]::Match($RenderedCommand, '^.*?-File\s+')
+    if (-not $prefixMatch.Success) {
+        return [pscustomobject]@{ ok = $false; found = $null; reason = 'no -File token found at or after the start of the rendered command -- cannot build the round-trip capture command' }
+    }
+    $prefix = $prefixMatch.Value
+    $afterPrefix = $RenderedCommand.Substring($prefix.Length)
+    $targetMatch = [regex]::Match($afterPrefix, '^\S+')
+    if (-not $targetMatch.Success) {
+        return [pscustomobject]@{ ok = $false; found = $null; reason = 'no -File target token found immediately after -File in the rendered command' }
+    }
+    $rest = $afterPrefix.Substring($targetMatch.Value.Length)
+    $testCommand = $prefix + '"' + $captureScriptPath + '"' + $rest
+    # Round-3 review finding 4's second half asked this harness's own
+    # encoding be brought in line with the real .wsb path's -Encoding
+    # UTF8 -- tried directly, and it does NOT work for a .cmd file the
+    # way it does for the .wsb's XML: Windows PowerShell 5.1's -Encoding
+    # UTF8 writes a UTF-8 BOM (EF BB BF) by default, and unlike XML (whose
+    # parser is BOM-aware), cmd.exe reads those three BOM bytes as
+    # literal leading characters of the FIRST token on the line -- MEASURED
+    # directly: a .cmd written this way exits 1 immediately ("is not
+    # recognized"), never even reaching powershell.exe. -Encoding ASCII
+    # (no BOM, ever) is what actually matches production's real behavior
+    # here -- and it is no longer lossy the way it originally was:
+    # ConvertTo-WorkerEnvEntries now rejects non-ASCII at parse time
+    # (finding 4's first half), so nothing that can legitimately reach
+    # this render step was ever going to need a byte ASCII cannot
+    # represent in the first place.
     Set-Content -Path $batchPath -Value $testCommand -Encoding ASCII
 
     $result = [pscustomobject]@{ ok = $false; found = $null; reason = 'unset' }

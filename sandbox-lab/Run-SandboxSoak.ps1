@@ -405,7 +405,10 @@ $scriptsToCheck = @(
     # sandbox-lab lane follow-up D: WorkerEnv.ps1 -- dot-sourced by THIS
     # host script (near the top, alongside HostLiveness.ps1/
     # BackstopMarkerGrace.ps1) AND by In-Sandbox-Soak.ps1 in the guest.
-    (Join-Path $scriptsDir 'WorkerEnv.ps1')
+    (Join-Path $scriptsDir 'WorkerEnv.ps1'),
+    # sandbox-lab lane follow-up D, item 2 (round-3 review): GstDebugTail.ps1
+    # -- dot-sourced by In-Sandbox-Soak.ps1 in the guest, same pattern.
+    (Join-Path $scriptsDir 'GstDebugTail.ps1')
 )
 $parseResults = @($scriptsToCheck | ForEach-Object { Test-ScriptParses -Path $_ })
 $parseOk = -not @($parseResults | Where-Object { -not $_.ok }).Count

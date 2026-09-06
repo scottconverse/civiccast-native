@@ -606,6 +606,18 @@ if (-not (Test-Path $donePath)) {
     Write-SoakLog "watchdog spawn failed (non-fatal): $_"
 }
 
+# sandbox-lab lane follow-up D, item 2 (round-3 review): Copy-GstDebugTail
+# now lives in its own dot-sourceable file, GstDebugTail.ps1, matching this
+# project's established extraction pattern (ServiceStartFailureCheck.ps1/
+# CaptionsOffCheck.ps1/WorkerStdoutParser.ps1/CpuSampler.ps1/WorkerEnv.ps1)
+# so it is unit-testable (Test-GstDebugTail.ps1) against real temp files/
+# streams -- including a file held open for write by another process and
+# a file that grows mid-copy -- instead of only ever being exercised
+# inside a live sandbox soak. See that file's own header for the
+# live-open-file share-mode fix, the growing-file bound fix, and the
+# banner/naming fix.
+. (Join-Path 'C:\CivicCastSoakScripts' 'GstDebugTail.ps1')
+
 function Copy-StationLogs {
     <#
       Copies the station's daemon/worker/install logs, installer-state.json,
@@ -790,6 +802,10 @@ function Copy-StationLogs {
     # tail is what a human actually wants when a GStreamer worker is
     # investigated (the failure is almost always at the END of the log,
     # not the start), so truncating-and-keeping beats dropping entirely.
+    # Round-3 review findings 1-3: the truncation itself is
+    # Copy-GstDebugTail (defined just above this function) -- see its own
+    # header for the live-open-file share-mode fix, the growing-file
+    # bound fix, and the "<name>.tail200mb" naming + banner-line fix.
     $gstDebugDst = Join-Path $dst 'gst-debug'
     $gstDebugNote = Join-Path $dst 'gst-debug-note.txt'
     if (-not $script:GstDebugFilePath) {
@@ -826,28 +842,46 @@ function Copy-StationLogs {
             } else {
                 New-Item -ItemType Directory -Force -Path $gstDebugDst | Out-Null
                 foreach ($f in $gstCandidates) {
-                    $destPath = Join-Path $gstDebugDst $f.Name
                     if ($f.Length -gt $gstDebugMaxBytes) {
-                        # Round-2 review finding (optional item): keep the
-                        # LAST 200 MB (the most recent debug output --
-                        # where a real failure almost always is) instead
-                        # of skipping the file outright. Streamed, not
-                        # loaded into memory: Seek to (length - 200 MB),
-                        # CopyTo the rest.
+                        # Round-3 review findings 1-3 (all confirmed against
+                        # a live-open file / a growing file):
+                        #   (1) [System.IO.File]::OpenRead uses FileShare.Read
+                        #       -- opening the SAME GST_DEBUG_FILE the
+                        #       GStreamer worker still has open for write
+                        #       (no read-sharing on its side) threw "being
+                        #       used by another process" every time, while
+                        #       Copy-Item on the identical file succeeded
+                        #       (Copy-Item goes through a different Win32
+                        #       CopyFile path that tolerates this). Fixed by
+                        #       opening with FileShare.ReadWrite explicitly.
+                        #   (2) the previous version snapshotted $f.Length
+                        #       ONCE, then let CopyTo read to whatever EOF
+                        #       actually was by the time the copy ran -- a
+                        #       file that kept growing during the copy (the
+                        #       live/expected case for GST_DEBUG_FILE) could
+                        #       end up with MORE than 200 MB kept. Fixed by
+                        #       bounding the READ LOOP itself to
+                        #       $gstDebugMaxBytes total bytes, counted down
+                        #       as each chunk is read -- growth past the
+                        #       start position during the copy can never
+                        #       push the kept size over the bound.
+                        #   (3) the truncated file was written under the
+                        #       SAME name as the original, with no marker
+                        #       that anything was dropped. Fixed: written as
+                        #       "<name>.tail200mb" (never overwrites/is
+                        #       confused with a complete copy) with a
+                        #       one-line ASCII banner prepended (safe: a
+                        #       GStreamer debug log is plain text).
+                        $destPath = Join-Path $gstDebugDst "$($f.Name).tail200mb"
                         try {
-                            $srcStream = [System.IO.File]::OpenRead($f.FullName)
-                            try {
-                                $skipBytes = [int64]($f.Length - $gstDebugMaxBytes)
-                                $null = $srcStream.Seek($skipBytes, [System.IO.SeekOrigin]::Begin)
-                                $destStream = [System.IO.File]::Create($destPath)
-                                try { $srcStream.CopyTo($destStream) } finally { $destStream.Dispose() }
-                            } finally { $srcStream.Dispose() }
-                            $gstDebugNoteLines += "TRUNCATED $($f.Name): kept the LAST 200 MB of $([math]::Round($f.Length / 1MB, 1)) MB total (earlier content dropped, not the whole file)"
+                            Copy-GstDebugTail -SourcePath $f.FullName -DestPath $destPath -MaxBytes $gstDebugMaxBytes
+                            $gstDebugNoteLines += "TRUNCATED $($f.Name) -> $($f.Name).tail200mb: kept at most the LAST $([math]::Round($gstDebugMaxBytes / 1MB, 0)) MB (source was $([math]::Round($f.Length / 1MB, 1)) MB when listed -- may have grown further since; earlier content dropped, not the whole file)"
                         } catch {
                             $gstDebugNoteLines += "FAILED to truncate-copy $($f.Name): $_"
                         }
                         continue
                     }
+                    $destPath = Join-Path $gstDebugDst $f.Name
                     try {
                         Copy-Item -LiteralPath $f.FullName -Destination $destPath -Force -ErrorAction Stop
                         $gstDebugNoteLines += "copied $($f.Name) ($([math]::Round($f.Length / 1MB, 2)) MB)"
