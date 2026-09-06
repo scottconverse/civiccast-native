@@ -78,6 +78,15 @@ param(
     # SOAK-START.json).
     [int]$QuietMinutes = 15,
 
+    # Minutes from launch within which at least one main-thread file
+    # (soak-log.txt/summary.json/a phase marker) must exist. Windows
+    # Sandbox itself measured 30-60s to boot before its LogonCommand script
+    # even starts; this must clear that comfortably. Absence of a file
+    # before this bound is NORMAL, never a stall (see HostLiveness.ps1's
+    # header for the run-3 bug this fixes: absence was previously treated
+    # as staleness from t=0, firing ~40s after launch).
+    [int]$BootBoundMinutes = 5,
+
     [switch]$DryRun
 )
 
@@ -108,6 +117,12 @@ function Exit-HarnessError {
 
 if (-not $Root) { $Root = (Get-Location).Path }
 Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), KitRoot: $KitRoot, DryRun: $($DryRun.IsPresent)"
+
+$hostLivenessPath = Join-Path $Root 'scripts\HostLiveness.ps1'
+if (-not (Test-Path $hostLivenessPath)) {
+    Exit-HarnessError "HostLiveness.ps1 not found at $hostLivenessPath"
+}
+. $hostLivenessPath
 
 # --------------------------------------------------------------------------
 # 1a. Refuse if Windows Sandbox is already running (Gate A owns it, and
@@ -345,8 +360,19 @@ function Invoke-SandboxKill {
         return [pscustomobject]@{ ok = $true; foreign = $false; remaining = @() }
     }
 
+    # Coordinator confirmed directly (unelevated host, this box): Stop-Process
+    # against vmmemWindowsSandbox returns "Access is denied" -- it is a
+    # protected VM-worker process an unelevated Windows PowerShell session
+    # cannot terminate. NEVER attempt it (a failed attempt is also wasted
+    # time and a confusing warning line for no effect). Kill only the
+    # process types that actually respond to an unelevated Stop-Process --
+    # WindowsSandboxClient/WindowsSandboxRemoteSession/WindowsSandboxServer
+    # -- then wait for vmmemWindowsSandbox to exit ON ITS OWN once its
+    # parent session is gone (a real elevated operator/helper can clear a
+    # lingering one; that is out of band from this script).
+    $killableProcs = @($ownProcs | Where-Object { $_.ProcessName -ne 'vmmemWindowsSandbox' })
     $killed = @()
-    foreach ($p in $ownProcs) {
+    foreach ($p in $killableProcs) {
         try {
             Stop-Process -Id $p.Id -Force -ErrorAction Stop
             $killed += "$($p.ProcessName)(pid=$($p.Id))"
@@ -354,17 +380,22 @@ function Invoke-SandboxKill {
             Write-Warning "[Run-SandboxSoak] failed to stop $($p.ProcessName) pid=$($p.Id): $_"
         }
     }
-    Write-Step "Killed (by recorded PID only): $(if ($killed.Count -gt 0) { $killed -join ', ' } else { '(none -- all failed to stop)' })"
+    Write-Step "Killed (by recorded PID only, vmmemWindowsSandbox excluded -- cannot be stopped from an unelevated host): $(if ($killed.Count -gt 0) { $killed -join ', ' } else { '(none -- all failed to stop)' })"
 
-    $pollDeadline = (Get-Date).AddSeconds(60)
+    $pollDeadline = (Get-Date).AddSeconds(180)
     $vmmemGone = $false
     while ((Get-Date) -lt $pollDeadline) {
         if (@(Get-Process -Name 'vmmemWindowsSandbox' -ErrorAction SilentlyContinue).Count -eq 0) { $vmmemGone = $true; break }
-        Start-Sleep -Seconds 2
+        Start-Sleep -Seconds 5
     }
     $remaining = @(Get-Process -Name $SandboxProcessNames -ErrorAction SilentlyContinue)
-    Write-Step "vmmemWindowsSandbox gone (polled up to 60s): $vmmemGone. Remaining sandbox process(es): $(if ($remaining.Count -gt 0) { ($remaining | ForEach-Object { "$($_.ProcessName)(pid=$($_.Id))" }) -join ', ' } else { 'none' })"
-    return [pscustomobject]@{ ok = $true; foreign = $false; remaining = $remaining }
+    if ($vmmemGone) {
+        Write-Step "vmmemWindowsSandbox exited on its own (polled up to 3 minutes) once its parent session was stopped."
+    } else {
+        Write-Warning "[Run-SandboxSoak] vmmemWindowsSandbox is still running after 3 minutes -- LINGERING. This host cannot stop it unelevated (Access is denied); clear it with the elevated helper. Exit code is unaffected by this -- the run's own verdict/stall classification is unchanged."
+    }
+    Write-Step "Remaining sandbox process(es): $(if ($remaining.Count -gt 0) { ($remaining | ForEach-Object { "$($_.ProcessName)(pid=$($_.Id))" }) -join ', ' } else { 'none' })"
+    return [pscustomobject]@{ ok = $true; foreign = $false; remaining = $remaining; vmmem_lingering = (-not $vmmemGone) }
 }
 
 function Write-StallAndExit {
@@ -473,25 +504,37 @@ $installDeadlineUtc = $launchTimeUtc.AddMinutes($InstallBoundMinutes)
 $healthDeadlineUtc = $null
 $lastRollupCount = 0
 $lastRollupProgressUtc = $null
-$lastMainThreadProgressUtc = $launchTimeUtc
 
-Write-Step "Waiting for VERDICT.txt. Phase bounds: install<=${InstallBoundMinutes}m (from launch), health<=${HealthBoundMinutes}m (from install-done), rollup-stall<=${RollupStallMinutes}m (once soak_start_utc is set), generic main-thread quiet-bound<=${QuietMinutes}m (every phase; shipper heartbeat used only to classify quiet-share vs. genuine stall)."
+Write-Step "Waiting for VERDICT.txt. Phase bounds: install<=${InstallBoundMinutes}m (from launch), health<=${HealthBoundMinutes}m (from install-done), rollup-stall<=${RollupStallMinutes}m (once soak_start_utc is set), boot-bound<=${BootBoundMinutes}m (at least one main-thread file must exist), generic main-thread quiet-bound<=${QuietMinutes}m thereafter (every phase; shipper heartbeat used only to classify quiet-share vs. genuine stall)."
 
 while ($true) {
     if (Test-Path $verdictTxtPath) { break }
 
-    $liveUtc = Get-MainThreadLivenessUtc -OutputDir $outputDir
-    if ($liveUtc -and $liveUtc -gt $lastMainThreadProgressUtc) { $lastMainThreadProgressUtc = $liveUtc }
-    $quietMinutes = ((Get-Date).ToUniversalTime() - $lastMainThreadProgressUtc).TotalMinutes
-    if ($quietMinutes -ge $QuietMinutes) {
-        $heartbeatUtc = Get-ShipperHeartbeatUtc -OutputDir $outputDir
-        $heartbeatFresh = $heartbeatUtc -and ((Get-Date).ToUniversalTime() - $heartbeatUtc).TotalMinutes -lt $QuietMinutes
-        if ($heartbeatFresh) {
-            Write-StallAndExit -Reason "no new soak-log.txt/summary.json/phase-marker mtime for >= ${QuietMinutes} minute(s) while the shipper heartbeat kept advancing (main-thread quiet-liveness bound, phase=$phase) -- the guest script itself appears stuck" -LaunchedPids $launchedPids -OutputDir $outputDir
-        } else {
-            Write-QuietShareAndExit -Reason "no new soak-log.txt/summary.json/phase-marker mtime for >= ${QuietMinutes} minute(s), AND the shipper's own _SHIPPER-HEARTBEAT.txt is also stale or missing (phase=$phase) -- the guest-to-host mapped-folder channel (or the guest itself) is wedged, not a diagnosable product state" -LaunchedPids $launchedPids -OutputDir $outputDir
-        }
+    # Classification via Get-SandboxLivenessVerdict (HostLiveness.ps1) --
+    # NEVER inline here again. The run-3 bug lived in exactly this spot: a
+    # local `$quietMinutes` (elapsed time) and the `$QuietMinutes` parameter
+    # (the threshold) are THE SAME VARIABLE to PowerShell (case-insensitive
+    # names), so the very first loop iteration's elapsed-time assignment
+    # clobbered the threshold down to ~0, firing a false quiet-share ~40s
+    # after launch, before the guest had even booted. Routing through a
+    # separate, unit-tested function with distinctly-named parameters
+    # closes both that bug and the "absence == staleness from t=0" bug in
+    # the same fix -- see HostLiveness.ps1's own header and
+    # Test-HostLiveness.ps1's regression-guard scenario.
+    $mainThreadUtc = Get-MainThreadLivenessUtc -OutputDir $outputDir
+    $heartbeatUtc = Get-ShipperHeartbeatUtc -OutputDir $outputDir
+    $livenessSplat = @{ NowUtc = (Get-Date).ToUniversalTime(); LaunchUtc = $launchTimeUtc; BootBoundMinutes = $BootBoundMinutes; QuietMinutes = $QuietMinutes }
+    if ($mainThreadUtc) { $livenessSplat['MainThreadNewestUtc'] = $mainThreadUtc }
+    if ($heartbeatUtc) { $livenessSplat['HeartbeatNewestUtc'] = $heartbeatUtc }
+    $liveness = Get-SandboxLivenessVerdict @livenessSplat
+    if ($liveness.verdict -eq 'guest-never-started') {
+        Write-QuietShareAndExit -Reason $liveness.reason -LaunchedPids $launchedPids -OutputDir $outputDir
+    } elseif ($liveness.verdict -eq 'stall') {
+        Write-StallAndExit -Reason $liveness.reason -LaunchedPids $launchedPids -OutputDir $outputDir
+    } elseif ($liveness.verdict -eq 'quiet-share') {
+        Write-QuietShareAndExit -Reason $liveness.reason -LaunchedPids $launchedPids -OutputDir $outputDir
     }
+    # else 'alive' -- fall through to the phase-specific checks below.
 
     if ($phase -eq 'installing') {
         if (Test-Path $installDoneMarker) {
