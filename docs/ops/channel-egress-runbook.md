@@ -225,15 +225,27 @@ itself — no CLI worker needed. Posture for a three-channel station:
   one GOP — about 2 seconds — early); on the GStreamer engine the cached copy is
   re-cut by stream copy rather than re-encoded, which costs seconds, not
   minutes.
-- **Cache HIT accuracy vs MISS accuracy (item 66):** a cache HIT's window is a
-  `-c copy` cut out of the shared conform (fast, but floors to the previous
-  keyframe — up to ~2 seconds early, per the keyframe note above); a cache
-  MISS's bounded conform re-encodes the exact wanted window sample-accurately.
-  On the GStreamer engine this means the FIRST airing of an asset (a MISS,
-  re-encoded) can start slightly more precisely than a LATER airing of the
-  same asset served from the cache (a HIT, keyframe-floored) — the opposite of
-  what "cache = faster and better" intuition suggests. Neither is a defect;
-  don't read a later airing's ~2s-early start as a regression from the first.
+- **Cache HIT accuracy vs MISS accuracy (item 66, corrected round-3):** for a
+  TRIMMED (join-in-progress) request, a cache HIT's window is a `-c copy` cut
+  out of the shared conform — fast, but floors to the previous keyframe (up to
+  ~2 seconds early, per the keyframe note above); a first-time trimmed MISS's
+  bounded conform re-encodes the wanted window instead (`-ss` before `-i`, but
+  ffmpeg still decodes every source frame from that keyframe forward when
+  transcoding rather than stream-copying, so the OUTPUT starts at the exact
+  requested time, not the nearest keyframe). So a join-in-progress asset's
+  FIRST airing at a given offset (a MISS, re-encoded) can start more precisely
+  than a LATER airing at that same offset served from the cache (a HIT,
+  keyframe-floored) — the opposite of what "cached = better" intuition
+  suggests. Neither is a defect; don't read a later airing's ~2s-early start
+  as a regression from the first.
+  For an UNTRIMMED asset there is no flooring concern either way: the
+  GStreamer engine's bounded conform for an untrimmed MISS never seeks (the
+  whole asset is wanted from the start, so no `-ss`), and that already-
+  finished per-plan file is what airs directly — the persistent cache entry
+  is populated afterward from a hard link (or a plain file copy, if the cache
+  lives on a different volume) of that SAME file, never a second encode or a
+  copy-out. A cache HIT for an untrimmed asset is therefore byte-identical to
+  its first airing.
 
 - Never run the inline automation driver AND a `civiccast egress run` CLI
   worker for the same channels: two daemons would race the same durable

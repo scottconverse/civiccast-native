@@ -47,6 +47,8 @@ def check_loudness(
     target_lufs: float,
     tolerance_lufs: float,
     standard_label: str = DEFAULT_LOUDNESS_STANDARD,
+    probe_start_seconds: float | None = None,
+    probe_duration_seconds: float | None = None,
 ) -> LoudnessGateResult:
     """Measure a media asset's integrated loudness and gate it against a target.
 
@@ -55,6 +57,18 @@ def check_loudness(
     EBU R128 to -23 LUFS — all measured by the same ITU-R BS.1770 meter. The
     result reports the *destination's* standard instead of a single hardcoded
     one, and the remediation hint names the actual target.
+
+    ``probe_start_seconds``/``probe_duration_seconds`` (item 66 round-3,
+    Opus review): both ``None`` (every caller except the source preparer)
+    measures the WHOLE file, unchanged. When given, they bound the probe to
+    a window instead -- ``probe_start_seconds`` seeks (``-ss`` before
+    ``-i``) and ``probe_duration_seconds`` limits (``-t`` after ``-i``),
+    the same convention ``build_conform_source_args`` uses. This is a
+    deliberate accuracy/speed trade the caller opts into; it does not
+    change what a whole-file probe would report for material with uniform
+    loudness, and it can differ for material that varies significantly
+    across its length -- callers that need the whole-file measurement must
+    leave both ``None``.
     """
 
     if not media_path.exists():
@@ -75,26 +89,20 @@ def check_loudness(
                 "Install ffmpeg, verify it with civiccast doctor, then rerun loudness."
             ),
         )
-    result = run_ffmpeg(
-        [
-            "-hide_banner",
-            "-nostats",
-            "-i",
-            str(media_path),
-            # Item 66 follow-up (measured on HALO): the loudness gate only
-            # needs the audio stream -- ``-vn`` drops video decode from the
-            # ebur128 pass entirely. Measured 46.7s -> far less on a 39-min
-            # clip; unmeasured exact delta here, but audio-only decode is
-            # strictly cheaper and never changes the LUFS measurement (video
-            # frames never feed ebur128).
-            "-vn",
-            "-filter_complex",
-            "ebur128=peak=true",
-            "-f",
-            "null",
-            "-",
-        ]
-    )
+    args = ["-hide_banner", "-nostats"]
+    if probe_start_seconds is not None:
+        args.extend(["-ss", f"{probe_start_seconds:g}"])
+    args.extend(["-i", str(media_path)])
+    # Item 66 follow-up (measured on HALO): the loudness gate only needs
+    # the audio stream -- ``-vn`` drops video decode from the ebur128 pass
+    # entirely. Measured 46.7s -> far less on a 39-min clip; unmeasured
+    # exact delta here, but audio-only decode is strictly cheaper and never
+    # changes the LUFS measurement (video frames never feed ebur128).
+    args.append("-vn")
+    if probe_duration_seconds is not None:
+        args.extend(["-t", f"{probe_duration_seconds:g}"])
+    args.extend(["-filter_complex", "ebur128=peak=true", "-f", "null", "-"])
+    result = run_ffmpeg(args)
     if result.returncode != 0:
         return _loudness_failure(
             standard=standard_label,
@@ -126,18 +134,25 @@ def check_streaming_loudness(
     media_path: Path,
     target_lufs: float,
     tolerance_lufs: float,
+    probe_start_seconds: float | None = None,
+    probe_duration_seconds: float | None = None,
 ) -> LoudnessGateResult:
     """Back-compat wrapper: gate streaming audio against its -16 LUFS target.
 
     Retained so existing callers (the source preparer, the FileSink/SRT
     continuity proofs, the CLI) and their test monkeypatches keep working while
     new per-sink callers use :func:`check_loudness` with a destination label.
+    ``probe_start_seconds``/``probe_duration_seconds`` forward to
+    :func:`check_loudness` -- see its docstring (item 66 round-3: the source
+    preparer bounds every probe to a window instead of the whole file).
     """
 
     return check_loudness(
         media_path=media_path,
         target_lufs=target_lufs,
         tolerance_lufs=tolerance_lufs,
+        probe_start_seconds=probe_start_seconds,
+        probe_duration_seconds=probe_duration_seconds,
     )
 
 

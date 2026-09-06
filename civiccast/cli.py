@@ -1193,7 +1193,7 @@ def _run_egress_service(
         build_board_overlay_provider,
         build_filler_source_provider,
     )
-    from civiccast.egress.engine_select import build_encoder_strategy
+    from civiccast.egress.engine_select import build_encoder_strategy, gstreamer_engine_selected
 
     _bind_egress_database(_resolve_egress_database_url())
     store = _build_egress_store()
@@ -1201,7 +1201,15 @@ def _run_egress_service(
     # F3 fix (hostile-review follow-up, 2026-09-06): kept as a named instance
     # so `.release` (immediate per-plan-directory reclaim once the daemon
     # independently knows a plan is retired) can be wired alongside `.prepare`.
-    source_preparer_instance = SourcePreparer(work_dir=work_dir)
+    # Item 66 round-3 (Opus review): this constructor call was missing
+    # playout_trim_supported entirely, silently defaulting to False (the
+    # GStreamer-engine shape) even when the CLI-driven worker is actually
+    # running the legacy ffmpeg-concat engine -- automation.py:1352 already
+    # wires this correctly; mirror it here with the same helper.
+    source_preparer_instance = SourcePreparer(
+        work_dir=work_dir,
+        playout_trim_supported=not gstreamer_engine_selected(),
+    )
     daemon = EgressDaemon(
         store,
         work_dir=work_dir,

@@ -75,29 +75,73 @@ below.
     once and writes the meta immediately — even before any conform for that
     asset exists — so every other segment of the same asset, in this
     `prepare()` call or a later one, reuses it instead of re-probing.
-  - **An untrimmed foreground conform now populates the cache directly
-    instead of scheduling a redundant warm.** Untrimmed segments are the
-    full asset by definition (`source_plan.py`'s untrimmed-segment
-    contract) — on the GStreamer engine an untrimmed MISS's bounded
-    conform (`-t <duration>`) IS already a full-asset conform, so it's
-    promoted straight into the persistent cache (`tmp.replace(...)` +
-    `_write_cache_meta`) and the per-plan segment is produced from the
-    cache via the normal copy-out path, instead of writing the same bytes
-    once to the per-plan file and then a second time via a background
-    warm. TRIMMED misses are unchanged: bounded conform straight to air,
-    full-asset warm scheduled behind it.
+  - **An untrimmed foreground conform now populates the cache by LINKING
+    the already-finished per-plan file into it, never by moving it.**
+    Untrimmed segments are the full asset by definition (`source_plan.py`'s
+    untrimmed-segment contract) — on the GStreamer engine an untrimmed
+    MISS's bounded conform (`-t <duration>`) IS already a full-asset
+    conform. A round-2 version of this fix finished that conform into the
+    persistent cache FIRST and then copied it back OUT for the per-plan
+    file — an extra full-length copy on the blocking path, and if the cache
+    promotion raised (the entry alone exceeds `CIVICCAST_CONFORM_CACHE_GB`),
+    the per-plan file no longer existed and the segment failed to air where
+    it used to air fine. An Opus review caught both problems. The per-plan
+    file is now finished FIRST, unconditionally (`tmp_output_path.replace
+    (output_path)`), and airs from itself; the cache is populated
+    afterward via `_promote_finished_conform_into_cache` — a hard link
+    (`os.link`, falling back to `shutil.copy2` across volumes) of that
+    SAME already-airing file into `conform-cache/{key}.ts.tmp`, then the
+    existing atomic rename. Any failure in that promotion (including the
+    over-budget case above) is logged and swallowed, never raised: the
+    segment is already safely on air regardless, and only the NEXT airing
+    of that asset misses the cache and re-conforms. TRIMMED misses are
+    unchanged: bounded conform straight to air, full-asset warm scheduled
+    behind it.
   - **The warm scheduler is a single-worker FIFO queue, not one thread per
     job.** `_default_warm_scheduler` used to spawn an unbounded daemon
     thread per warm job; it now queues onto one long-lived background
     worker, so at most one warm conform runs at a time regardless of how
     many distinct assets are warming. The existing per-key dedupe
     (`self._warming`) is unchanged.
-  See `docs/ops/channel-egress-runbook.md`'s new "Cache HIT accuracy vs MISS
-  accuracy" note: after this change, a cache MISS's bounded conform
-  re-encodes its window sample-accurately, while a later cache HIT's
-  copy-out still floors to the previous keyframe (up to ~2s early) — so a
-  later airing of the same asset can start slightly less precisely than the
-  first, which is the opposite of what "cached = better" intuition suggests.
+  - **The loudness probe is now bounded to a window, not the whole file.**
+    A trimmed segment probes exactly its own wanted window (`-ss <inpoint>`
+    before `-i`, `-t <duration>` after it — the same convention
+    `build_conform_source_args` uses); an untrimmed segment (the full
+    asset) is capped to its first 120 seconds instead of its whole
+    duration. `check_loudness`/`check_streaming_loudness` gained optional
+    `probe_start_seconds`/`probe_duration_seconds` parameters for this
+    (`None`/`None`, the default for every OTHER caller, still measures the
+    whole file unchanged). This is a documented sample, not a full-file
+    measurement, for material whose loudness varies significantly across
+    its length — the persisted-meta memo above still means one asset gets
+    one measured value shared across every segment/airing of it, which was
+    already this codebase's model before item 66 (the cache key never
+    depended on trim).
+  - **`_evict_cache_over_budget` now reaps orphaned cache-dir files** that
+    no other path here ever cleaned up: an abandoned `{key}.ts.tmp` (a
+    conform or promotion interrupted mid-write) older than 1 hour is
+    deleted outright, and a live one still counts toward the budget so a
+    burst of concurrent warms/promotions can't blow past
+    `CIVICCAST_CONFORM_CACHE_GB` before finishing; a `{key}.json` with no
+    sibling `{key}.ts` (a loudness-only probe whose conform never followed)
+    older than 24 hours is deleted outright. `_write_cache_meta`'s sidecar
+    write is now tmp+replace atomic, matching every `.ts` write in this
+    module. `os.utime(cached_ts)` on a cache HIT is now guarded against
+    `FileNotFoundError` (a concurrent eviction pass removing the entry
+    between the existence check and the utime call) and falls through to a
+    MISS instead of crashing.
+  - **`cli.py`'s CLI-driven worker now passes `playout_trim_supported`
+    too.** Its `SourcePreparer(work_dir=work_dir)` construction was missing
+    the argument entirely (silently defaulting to `False`, the
+    GStreamer-engine shape, even when running the legacy ffmpeg-concat
+    engine) — `automation.py`'s in-app driver already wired this correctly;
+    the CLI path now imports the same `gstreamer_engine_selected` helper
+    and mirrors it.
+  See `docs/ops/channel-egress-runbook.md`'s corrected "Cache HIT accuracy vs
+  MISS accuracy" note: the accuracy differential only ever applied to
+  TRIMMED (join-in-progress) requests; an untrimmed asset's cache entry is
+  now a link/copy of the exact file that already aired, so it is
+  byte-identical to the first airing, not a separately-produced copy.
 - **A seamless plan rollover collided its own concat aggregators, silently
   failed to join the pipeline, and was acked "applied" anyway -- so
   automation kept re-triggering it forever while the channel bounced.**

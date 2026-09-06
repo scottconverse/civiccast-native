@@ -76,6 +76,22 @@ _PREPARED_PLAN_DIR_KEEP_N = 3
 _PREPARED_PLAN_DIR_BUDGET_GB = 5.0
 _PREPARED_PLAN_DIR_MAX_AGE_S = 24.0 * 3600.0
 
+#: Item 66 round-3 (Opus review): _evict_cache_over_budget's orphan reap.
+#: A ``.ts.tmp`` this old was abandoned mid-write (a crash, a killed
+#: process) -- any legitimate in-flight conform or promotion finishes in
+#: seconds to low minutes even for an hour-long asset. A ``.json`` with no
+#: sibling ``.ts`` this old is a loudness-only probe (see
+#: ``_write_cache_meta``) whose conform never landed (every attempt failed,
+#: or the process was killed between the two writes).
+_ORPHAN_CACHE_TMP_MAX_AGE_S = 3600.0
+_ORPHAN_CACHE_META_MAX_AGE_S = 24.0 * 3600.0
+
+#: Item 66 round-3 (Opus review, point 7): an untrimmed loudness probe no
+#: longer decodes the whole asset -- it samples the first two minutes. This
+#: is the one place that head-sample assumption is encoded; see
+#: ``_prepare_segment``'s loudness-probe comment.
+_UNTRIMMED_LOUDNESS_PROBE_CAP_S = 120.0
+
 
 def _prepared_plan_dir_budget_bytes() -> float:
     raw = os.environ.get("CIVICCAST_PREPARED_PLAN_DIR_BUDGET_GB", "").strip()
@@ -291,7 +307,13 @@ class SourcePreparer:
         asset exists (a loudness-only probe result, persisted early so
         later segments of the same asset can skip re-probing) -- so this
         must create the cache directory itself rather than assume a conform
-        call already did."""
+        call already did.
+
+        Item 66 round-3 (Opus review): tmp+replace atomic write, same
+        discipline as every ``.ts`` write in this module -- a reader
+        (``_read_cache_meta``, or the cache-HIT check's ``.is_file()``) must
+        never observe a partially-written ``{key}.json``.
+        """
         cache_dir = self._cache_dir()
         cache_dir.mkdir(parents=True, exist_ok=True)
         meta = {
@@ -299,7 +321,10 @@ class SourcePreparer:
             "measured_lufs": loudness.measured_lufs,
             "normalized": normalized,
         }
-        (cache_dir / f"{key}.json").write_text(json.dumps(meta), encoding="utf-8")
+        final = cache_dir / f"{key}.json"
+        tmp = final.with_name(final.name + ".tmp")
+        tmp.write_text(json.dumps(meta), encoding="utf-8")
+        tmp.replace(final)
 
     def _conform_lock(self, key: str) -> threading.Lock:
         """A per-cache-key lock: a background warm and a foreground
@@ -366,16 +391,18 @@ class SourcePreparer:
         place, write the sidecar meta, run eviction, and fail cleanly if the
         just-written entry alone exceeds budget.
 
-        Shared tail of two call sites: ``_conform_full_asset_into_cache``
-        (which runs the ffmpeg conform itself, under ``self._conform_lock``
-        for the whole call -- ``tmp`` there already lives at the SHARED
-        ``{key}.ts.tmp`` cache path, so the lock must cover the ffmpeg run
-        too, not just this promotion) and (item 66, point 3)
-        ``_prepare_segment``'s untrimmed-foreground-conform path, whose
-        ffmpeg run already wrote to a PRIVATE per-plan ``.tmp`` file no
-        other writer can reach -- only the move into the shared cache path
-        needs the lock there, acquired at that call site around just this
-        method.
+        Shared tail of two call sites, both of which hold ``self._conform_
+        lock(key)`` around the call: ``_conform_full_asset_into_cache``
+        (holds it across the ffmpeg run too, since ``tmp`` there already
+        lives at the SHARED ``{key}.ts.tmp`` cache path) and (item 66)
+        ``_promote_finished_conform_into_cache``, whose ``tmp`` is a
+        hard-link/copy of an already-finished per-plan file it made at that
+        same shared path just before calling this.
+
+        Raises ``SourcePrepareError`` if the just-written entry alone
+        exceeds the configured budget -- callers that must never let a
+        cache-promotion failure interrupt something already safely airing
+        (``_promote_finished_conform_into_cache``) catch this themselves.
         """
         cache_dir = self._cache_dir()
         final = cache_dir / f"{key}.ts"
@@ -393,6 +420,53 @@ class SourcePreparer:
                 "increase CIVICCAST_CONFORM_CACHE_GB or exclude this asset."
             )
         return final
+
+    def _promote_finished_conform_into_cache(
+        self,
+        key: str,
+        finished_output_path: Path,
+        source_path: Path,
+        loudness: LoudnessGateResult,
+        normalized: bool,
+    ) -> None:
+        """Item 66 round-3 BLOCKER fix (Opus review): populate the
+        persistent conform cache from an ALREADY-FINISHED, already-airing
+        per-plan file via a hard link (``os.link``), falling back to a real
+        copy (``shutil.copy2``) if linking fails (e.g. the cache lives on a
+        different volume than the per-plan directory) -- never by moving
+        ``finished_output_path`` itself. The segment is airing from that
+        exact path; this method must never make it disappear.
+
+        Any failure here -- a failed link AND a failed copy, or
+        ``_promote_conform_into_cache``'s own over-budget
+        ``SourcePrepareError`` when this single entry alone exceeds
+        ``CIVICCAST_CONFORM_CACHE_GB`` -- is logged and swallowed, never
+        raised: the segment is already safely on air from
+        ``finished_output_path`` regardless of whether this succeeds. The
+        only cost of a promotion failure is that the NEXT airing of this
+        asset misses the cache and re-conforms, exactly like a failed
+        background warm already does (see ``_schedule_warm``).
+        """
+        cache_dir = self._cache_dir()
+        tmp = cache_dir / f"{key}.ts.tmp"
+        try:
+            with self._conform_lock(key):
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                tmp.unlink(missing_ok=True)
+                try:
+                    os.link(finished_output_path, tmp)
+                except OSError:
+                    shutil.copy2(finished_output_path, tmp)
+                self._promote_conform_into_cache(key, tmp, source_path, loudness, normalized)
+        except Exception:
+            _LOG.exception(
+                "Promoting the finished conform for %r into the persistent conform cache "
+                "failed; the segment already airs from its per-plan file unaffected. "
+                "The next airing of this asset misses the cache and re-conforms.",
+                source_path.name,
+            )
+            with contextlib.suppress(OSError):
+                tmp.unlink()
 
     def _emit_prepared_from_cache(
         self,
@@ -423,11 +497,12 @@ class SourcePreparer:
         else:
             # H5 fix (atomic write, second half): write to a ``.tmp`` sibling and
             # ``rename`` into place only on success -- mirrors
-            # ``_conform_full_asset_into_cache``'s existing tmp+replace pattern
-            # (this was the one write site in this module that did NOT already
-            # follow it). ``output_path`` is now unique per ``prepare()`` call
-            # (see that method's docstring), so this is defense-in-depth rather
-            # than the primary H5 fix -- but a reader that opens the final path
+            # ``_conform_full_asset_into_cache``'s tmp+replace pattern (every
+            # write site under ``conform-cache/`` now follows it, including
+            # ``_write_cache_meta``'s sidecar -- item 66 round-3 review).
+            # ``output_path`` is now unique per ``prepare()`` call (see that
+            # method's docstring), so this is defense-in-depth rather than the
+            # primary H5 fix -- but a reader that opens the final path
             # mid-write (this module has no control over when a consumer looks)
             # must never observe a partial file either.
             # F7 fix: prepare() no longer pre-creates the per-plan directory
@@ -605,14 +680,63 @@ class SourcePreparer:
                 shutil.rmtree(entry)
 
     def _evict_cache_over_budget(self) -> None:
+        """Oldest-first eviction of ``.ts`` entries over
+        ``CIVICCAST_CONFORM_CACHE_GB``.
+
+        Item 66 round-3 (Opus review) also reaps two kinds of orphaned
+        cache-dir detritus that no other code path here ever cleans up:
+
+        * an abandoned ``{key}.ts.tmp`` (a conform or promotion interrupted
+          mid-write, e.g. by a crash or a killed process) older than
+          ``_ORPHAN_CACHE_TMP_MAX_AGE_S`` (1h) is deleted outright; a
+          younger one is assumed still in-flight and its bytes are counted
+          toward the budget below so a burst of concurrent warms/promotions
+          can't blow past the configured budget before any of them finish
+          and become real ``.ts`` entries;
+        * a ``{key}.json`` with no sibling ``{key}.ts`` (a loudness-only
+          probe meta -- see ``_write_cache_meta`` -- whose conform never
+          followed) older than ``_ORPHAN_CACHE_META_MAX_AGE_S`` (24h) is
+          deleted outright.
+        """
         budget = _cache_budget_bytes()
         cache_dir = self._cache_dir()
+        now = time.time()
         try:
-            entries = sorted(cache_dir.glob("*.ts"), key=lambda p: p.stat().st_mtime)
+            ts_entries = sorted(cache_dir.glob("*.ts"), key=lambda p: p.stat().st_mtime)
         except OSError:
             return
-        total = sum(p.stat().st_size for p in entries if p.exists())
-        for oldest in entries:
+
+        tmp_bytes = 0
+        with contextlib.suppress(OSError):
+            for tmp in cache_dir.glob("*.ts.tmp"):
+                try:
+                    age = now - tmp.stat().st_mtime
+                except OSError:
+                    continue
+                if age > _ORPHAN_CACHE_TMP_MAX_AGE_S:
+                    with contextlib.suppress(OSError):
+                        tmp.unlink()
+                    continue
+                with contextlib.suppress(OSError):
+                    tmp_bytes += tmp.stat().st_size
+
+        with contextlib.suppress(OSError):
+            for meta_path in cache_dir.glob("*.json"):
+                if meta_path.with_suffix(".ts").exists():
+                    continue
+                try:
+                    age = now - meta_path.stat().st_mtime
+                except OSError:
+                    continue
+                if age > _ORPHAN_CACHE_META_MAX_AGE_S:
+                    with contextlib.suppress(OSError):
+                        meta_path.unlink()
+
+        total = tmp_bytes
+        for p in ts_entries:
+            with contextlib.suppress(OSError):
+                total += p.stat().st_size
+        for oldest in ts_entries:
             if total <= budget:
                 break
             try:
@@ -758,20 +882,31 @@ class SourcePreparer:
         if key is not None:
             cached_ts = self._cache_dir() / f"{key}.ts"
             if cached_ts.is_file() and meta is not None:
-                os.utime(cached_ts)  # refresh the eviction clock on hit
-                return self._emit_prepared_from_cache(
-                    cached_ts,
-                    segment,
-                    source_path=source_path,
-                    output_path=output_path,
-                    loudness_status=str(meta.get("loudness_status", "ok")),
-                    measured_lufs=(
-                        float(lufs)
-                        if isinstance(lufs := meta.get("measured_lufs"), int | float)
-                        else None
-                    ),
-                    normalized=bool(meta.get("normalized", False)),
-                )
+                try:
+                    os.utime(cached_ts)  # refresh the eviction clock on hit
+                except FileNotFoundError:
+                    # Item 66 round-3 (Opus review): a concurrent eviction
+                    # pass (_evict_cache_over_budget, running under a
+                    # DIFFERENT SourcePreparer/channel sharing this cache
+                    # dir) removed the entry between the .is_file() check
+                    # above and this utime call. Fall through and treat it
+                    # as a MISS instead of returning a cache path that no
+                    # longer exists.
+                    pass
+                else:
+                    return self._emit_prepared_from_cache(
+                        cached_ts,
+                        segment,
+                        source_path=source_path,
+                        output_path=output_path,
+                        loudness_status=str(meta.get("loudness_status", "ok")),
+                        measured_lufs=(
+                            float(lufs)
+                            if isinstance(lufs := meta.get("measured_lufs"), int | float)
+                            else None
+                        ),
+                        normalized=bool(meta.get("normalized", False)),
+                    )
 
         if meta is not None:
             # Item 66 (point 1, Opus review): the full conform isn't cached
@@ -802,10 +937,32 @@ class SourcePreparer:
             )
             normalized = bool(meta.get("normalized", False))
         else:
+            # Item 66 round-3 (Opus review): bound the probe to a WINDOW
+            # instead of decoding/analyzing the whole file. A trimmed
+            # segment probes exactly its own wanted window (``-ss
+            # <inpoint>`` before ``-i`` for the seek, ``-t <duration>`` after
+            # it -- the same convention ``build_conform_source_args`` uses);
+            # an untrimmed segment (the full asset) is capped to the first
+            # ``_UNTRIMMED_LOUDNESS_PROBE_CAP_S`` (120s) instead of its whole
+            # duration. This is a SAMPLE, not a full-file measurement -- the
+            # memo above still means one asset gets exactly one loudness
+            # value shared across every segment/airing of it (the model this
+            # codebase already used before item 66: the cache key never
+            # depended on trim, so a MISS's measurement was always reused
+            # across different join-in-progress offsets too), so document
+            # the sampling rather than pretend nothing changed.
+            if trimmed:
+                probe_start_seconds = segment.inpoint_seconds
+                probe_duration_seconds = segment.duration_seconds
+            else:
+                probe_start_seconds = None
+                probe_duration_seconds = _UNTRIMMED_LOUDNESS_PROBE_CAP_S
             loudness = self._loudness_checker(
                 media_path=source_path,
                 target_lufs=config.loudness_target_lufs,
                 tolerance_lufs=config.loudness_tolerance_lufs,
+                probe_start_seconds=probe_start_seconds,
+                probe_duration_seconds=probe_duration_seconds,
             )
             if loudness.status != "ok" and loudness.measured_lufs is None:
                 raise SourcePrepareError(
@@ -882,38 +1039,36 @@ class SourcePreparer:
             raise SourcePrepareError(
                 f"Egress source {segment.label!r} could not be conformed; inspect FFmpeg output."
             )
+        # Item 66 round-3 BLOCKER fix (Opus review): the per-plan file is
+        # finished FIRST, unconditionally, before anything else touches the
+        # cache. The previous round moved this same tmp file INTO the cache
+        # and then copied it back OUT again for the per-plan output -- an
+        # extra full-length copy on the blocking path, and if the cache
+        # promotion raised (e.g. this entry alone exceeds
+        # CIVICCAST_CONFORM_CACHE_GB), the per-plan file no longer existed
+        # and the segment failed to air where it used to air fine. Now the
+        # segment's own file exists and is ready to air before the cache is
+        # touched at all.
+        tmp_output_path.replace(output_path)
 
         if key is not None and not trimmed:
-            # Item 66 (point 3, Opus review): an UNTRIMMED segment is, by
-            # definition, the whole asset (source_plan.py's untrimmed-segment
-            # contract) -- this bounded conform's output already IS the
-            # full-asset conform the persistent cache wants. Promote it
-            # straight in instead of throwing the work away and scheduling a
-            # warm to reconform the identical bytes a second time; emit the
-            # per-plan segment from the cache via the normal cache-hit path
-            # (a fast ``-c copy`` window, since this is only reached when
-            # ``self._playout_trim_supported`` is False -- see the guard
-            # above).
-            with self._conform_lock(key):
-                cached_ts = self._promote_conform_into_cache(
-                    key, tmp_output_path, source_path, loudness, normalized
-                )
-            return self._emit_prepared_from_cache(
-                cached_ts,
-                segment,
-                source_path=source_path,
-                output_path=output_path,
-                loudness_status=loudness.status,
-                measured_lufs=loudness.measured_lufs,
-                normalized=normalized,
+            # An UNTRIMMED segment is, by definition, the whole asset
+            # (source_plan.py's untrimmed-segment contract) -- this bounded
+            # conform's output already IS the full-asset conform the
+            # persistent cache wants. Populate the cache from the
+            # ALREADY-FINISHED, already-airing ``output_path`` via a hard
+            # link (falling back to a real copy) instead of moving it -- see
+            # ``_promote_finished_conform_into_cache``'s docstring for why
+            # this is a link/copy, not a move, and why any failure here is
+            # logged and swallowed rather than raised: the segment is
+            # already safely on air regardless of whether this succeeds.
+            self._promote_finished_conform_into_cache(
+                key, output_path, source_path, loudness, normalized
             )
-
-        tmp_output_path.replace(output_path)
-        if key is not None:
-            # Only a genuinely TRIMMED miss reaches here (the untrimmed case
-            # returns above) -- this window is NOT the whole asset, so warm
-            # the full-asset cache behind it for later airings, same as
-            # before item 66.
+        elif key is not None:
+            # Only a genuinely TRIMMED miss reaches here -- this window is
+            # NOT the whole asset, so warm the full-asset cache behind it
+            # for later airings, same as before item 66.
             self._schedule_warm(key, source_path, config, loudness, normalized)
         return (
             EgressSourceSegment(

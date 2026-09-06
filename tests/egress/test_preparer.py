@@ -914,6 +914,28 @@ def test_build_conform_source_args_threads_param(tmp_path: Path) -> None:
     ]
 
 
+def test_foreground_thread_cap_is_pinned_to_cpu_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Item 66 round-3 (Opus review, point 2): pin the exact cap formula --
+    half the box's cores, floored at 1 -- with a monkeypatched
+    ``os.cpu_count()``, mirroring the shape of
+    ``tests/captions/test_caption_tap_worker.py``'s
+    ``test_default_concurrency_is_one_channel_per_eight_cpus``, including
+    the ``cpu_count() -> None`` case (documented as possible by the stdlib)."""
+    monkeypatch.setattr(preparer_module.os, "cpu_count", lambda: 8)
+    assert preparer_module._foreground_thread_cap() == 4
+    monkeypatch.setattr(preparer_module.os, "cpu_count", lambda: 4)
+    assert preparer_module._foreground_thread_cap() == 2
+    monkeypatch.setattr(preparer_module.os, "cpu_count", lambda: 2)
+    assert preparer_module._foreground_thread_cap() == 1
+    monkeypatch.setattr(preparer_module.os, "cpu_count", lambda: 1)
+    assert preparer_module._foreground_thread_cap() == 1
+    # `os.cpu_count()` is documented as possibly None.
+    monkeypatch.setattr(preparer_module.os, "cpu_count", lambda: None)
+    assert preparer_module._foreground_thread_cap() == 1
+
+
 def test_conform_full_asset_into_cache_thread_param(tmp_path: Path) -> None:
     """``_conform_full_asset_into_cache``'s ``threads`` parameter must reach
     ``build_conform_source_args``: the warm-behind path (default, ``threads=1``)
@@ -960,15 +982,20 @@ def test_conform_full_asset_into_cache_thread_param(tmp_path: Path) -> None:
     ]
 
 
-def test_untrimmed_miss_runs_bounded_conform_and_promotes_into_cache(tmp_path: Path) -> None:
-    """Item 66, points 2+3: with the GStreamer engine (``playout_trim_supported
-    =False``, the constructor default) an untrimmed cache MISS must NOT take
-    the whole-asset synchronous conform (measured 8.5-12+ min to first
-    ON_AIR on a fresh station) -- it falls through to a bounded per-segment
-    conform (``-t <duration>``, thread-capped, not single-threaded/unthrottled).
-    Because an untrimmed segment IS the whole asset by definition, that
-    bounded conform's output is promoted straight into the persistent
-    conform cache instead of a redundant warm being scheduled."""
+def test_untrimmed_miss_runs_one_bounded_conform_and_links_into_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 66 round-3 BLOCKER fix (Opus review, point 1): with the
+    GStreamer engine (``playout_trim_supported=False``, the constructor
+    default) an untrimmed cache MISS falls through to a bounded
+    per-segment conform (``-t <duration>``, thread-capped). The round-2
+    version of this fix moved that conform's output INTO the cache and
+    then copied it back OUT for the per-plan file -- an extra full-length
+    copy on the blocking path. The per-plan file must now be the DIRECT
+    result of the one ffmpeg call (finished before the cache is touched at
+    all), and the cache must be populated from a link/copy of that same
+    file, not a second ffmpeg invocation."""
+    monkeypatch.setattr(preparer_module.os, "cpu_count", lambda: 8)
     calls: list[list[str]] = []
     warm_jobs: list = []
     preparer = SourcePreparer(
@@ -982,39 +1009,34 @@ def test_untrimmed_miss_runs_bounded_conform_and_promotes_into_cache(tmp_path: P
 
     report = preparer.prepare(_untrimmed_plan(tmp_path), _config())
 
-    # Two ffmpeg calls: (1) the bounded foreground conform into a private
-    # per-plan tmp file, then (2) _emit_prepared_from_cache's normal `-c
-    # copy` copy-out from the now-populated cache into the per-plan output
-    # (the same shape a genuine cache HIT would take) -- never a second
-    # re-encode of the asset.
-    assert len(calls) == 2
+    assert len(calls) == 1  # exactly one ffmpeg call -- no copy-out round trip
     conform_args = calls[0]
     assert conform_args[conform_args.index("-t") : conform_args.index("-t") + 2] == [
         "-t",
         "3600",
     ]
-    assert "-threads" in conform_args  # foreground-capped, not unthrottled/single-threaded
-    assert "conform-cache" not in conform_args[-1]  # conforms to a private per-plan tmp, not the
-    # cache path directly -- the promotion is a Python rename, not an ffmpeg output target.
-    copy_out_args = calls[1]
-    assert copy_out_args[copy_out_args.index("-c") : copy_out_args.index("-c") + 2] == [
-        "-c",
-        "copy",
+    assert conform_args[conform_args.index("-threads") : conform_args.index("-threads") + 2] == [
+        "-threads",
+        "4",  # max(1, 8 // 2)
     ]
-    assert "-b:v" not in copy_out_args  # no re-encode on the copy-out
+    assert "conform-cache" not in conform_args[-1]  # conforms to a private per-plan tmp
     seg = report.source_plan.segments[0]
-    assert "conform-cache" not in seg.path  # per-plan output emitted via copy-out
+    assert "conform-cache" not in seg.path  # the re-encoded per-plan file itself airs
+    assert Path(seg.path).is_file()  # what airs must actually exist
     assert len(warm_jobs) == 0  # no redundant warm -- this conform already populated the cache
 
     key = preparer._cache_key(tmp_path / "long-recording.mp4", _config())
     assert key is not None
-    assert (tmp_path / "work" / "conform-cache" / f"{key}.ts").is_file()
+    cache_ts = tmp_path / "work" / "conform-cache" / f"{key}.ts"
+    assert cache_ts.is_file()
     assert (tmp_path / "work" / "conform-cache" / f"{key}.json").is_file()
+    assert not cache_ts.with_suffix(".ts.tmp").exists()  # no leftover tmp sibling
+    # Linked (or copied), never MOVED: the per-plan file must still exist too.
+    assert Path(seg.path).exists()
 
     # A second prepare() of the same asset is now a genuine cache HIT: the
     # engine still can't trim at playout, so it costs one fast `-c copy`
-    # copy-out (never a re-encode) and zero warms -- never a second
-    # full-asset conform.
+    # copy-out (never a re-encode) and zero warms.
     calls.clear()
     warm_jobs.clear()
     preparer.prepare(_untrimmed_plan(tmp_path), _config())
@@ -1028,7 +1050,125 @@ def test_untrimmed_miss_runs_bounded_conform_and_promotes_into_cache(tmp_path: P
     assert warm_jobs == []
 
 
-def test_untrimmed_miss_still_conforms_full_asset_when_engine_can_trim(tmp_path: Path) -> None:
+def test_promote_finished_conform_links_without_moving_the_per_plan_file(
+    tmp_path: Path,
+) -> None:
+    """Unit-level companion: ``_promote_finished_conform_into_cache`` must
+    populate the cache from ``finished_output_path`` without ever making
+    that path disappear (a link or a copy, never a move)."""
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    config = _config()
+    key = preparer._cache_key(source, config)
+    assert key is not None
+    finished = tmp_path / "already-airing.ts"
+    finished.write_text("prepared bytes", encoding="utf-8")
+
+    preparer._promote_finished_conform_into_cache(key, finished, source, _loudness(), False)
+
+    cache_ts = tmp_path / "work" / "conform-cache" / f"{key}.ts"
+    assert cache_ts.is_file()
+    assert cache_ts.read_text(encoding="utf-8") == "prepared bytes"
+    assert finished.is_file()  # never moved
+    assert finished.read_text(encoding="utf-8") == "prepared bytes"
+
+
+def test_promote_finished_conform_falls_back_to_copy_when_link_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``os.link`` can fail (e.g. the cache lives on a different volume than
+    the per-plan directory) -- must fall back to a real copy rather than
+    propagating the error."""
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    config = _config()
+    key = preparer._cache_key(source, config)
+    assert key is not None
+    finished = tmp_path / "already-airing.ts"
+    finished.write_text("prepared bytes", encoding="utf-8")
+
+    def _raising_link(_src: object, _dst: object) -> None:
+        raise OSError("simulated cross-volume link failure")
+
+    monkeypatch.setattr(preparer_module.os, "link", _raising_link)
+
+    preparer._promote_finished_conform_into_cache(key, finished, source, _loudness(), False)
+
+    cache_ts = tmp_path / "work" / "conform-cache" / f"{key}.ts"
+    assert cache_ts.is_file()  # populated via shutil.copy2 fallback
+    assert cache_ts.read_text(encoding="utf-8") == "prepared bytes"
+    assert finished.is_file()
+
+
+def test_promote_finished_conform_swallows_over_budget_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """BLOCKER regression guard: a promotion failure (here, this single
+    entry alone exceeding ``CIVICCAST_CONFORM_CACHE_GB``) must never
+    propagate -- the per-plan file already airs and must keep existing."""
+    monkeypatch.setenv("CIVICCAST_CONFORM_CACHE_GB", "0.000000001")  # ~1 byte
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    config = _config()
+    key = preparer._cache_key(source, config)
+    assert key is not None  # a positive (if tiny) budget still enables caching
+    finished = tmp_path / "already-airing.ts"
+    finished.write_text("prepared bytes long enough to exceed a 1-byte budget", encoding="utf-8")
+
+    preparer._promote_finished_conform_into_cache(
+        key, finished, source, _loudness(), False
+    )  # must not raise
+
+    assert finished.is_file()  # the per-plan file survives regardless
+    assert not (tmp_path / "work" / "conform-cache" / f"{key}.ts").exists()  # evicted over budget
+
+
+def test_untrimmed_miss_still_airs_when_cache_promotion_fails_over_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end companion: the exact BLOCKER scenario through ``prepare()``
+    itself -- a promotion that fails over budget must not turn into a
+    failed ``prepare()`` call. Before this fix, ``_promote_conform_into_
+    cache``'s ``SourcePrepareError`` propagated straight out of
+    ``_prepare_segment`` because the per-plan file had already been moved
+    into the (now-evicted) cache location."""
+    monkeypatch.setenv("CIVICCAST_CONFORM_CACHE_GB", "0.000000001")  # ~1 byte
+    calls: list[list[str]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+
+    report = preparer.prepare(_untrimmed_plan(tmp_path), _config())  # must not raise
+
+    assert len(calls) == 1
+    seg = report.source_plan.segments[0]
+    assert Path(seg.path).is_file()  # the segment airs regardless of the cache-promotion failure
+
+
+def test_untrimmed_miss_still_conforms_full_asset_when_engine_can_trim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Companion to the test above: with ``playout_trim_supported=True`` (the
     legacy ffmpeg-concat engine) the SHAPE of an untrimmed miss is unchanged
     by item 66 -- it still conforms the whole asset synchronously straight
@@ -1037,7 +1177,9 @@ def test_untrimmed_miss_still_conforms_full_asset_when_engine_can_trim(tmp_path:
     What DOES change (point 2, Opus review): this synchronous conform is now
     thread-capped rather than fully unthrottled, since it is reachable
     outside first-ON_AIR too (``EgressDaemon._try_content_reload``'s
-    synchronous prepare while another channel may be on air)."""
+    synchronous prepare while another channel may be on air) -- pin the
+    exact cap value, not just its presence."""
+    monkeypatch.setattr(preparer_module.os, "cpu_count", lambda: 4)
     calls: list[list[str]] = []
     preparer = SourcePreparer(
         work_dir=tmp_path / "work",
@@ -1053,9 +1195,182 @@ def test_untrimmed_miss_still_conforms_full_asset_when_engine_can_trim(tmp_path:
     args = calls[0]
     assert "-t" not in args  # whole-asset conform, not bounded to the segment
     assert "-ss" not in args
-    assert "-threads" in args  # point 2: thread-capped, no longer fully unthrottled
+    assert args[args.index("-threads") : args.index("-threads") + 2] == [
+        "-threads",
+        "2",  # max(1, 4 // 2) -- point 2: exact cap, no longer fully unthrottled
+    ]
     seg = report.source_plan.segments[0]
     assert "conform-cache" in seg.path  # emitted straight from the cache object
+
+
+def test_loudness_probe_is_bounded_to_the_segment_window_when_trimmed(tmp_path: Path) -> None:
+    """Item 66 round-3, point 7: a trimmed segment's loudness probe must be
+    bounded to its own window (``-ss <inpoint>``, ``-t <duration>``), not
+    the whole file."""
+    probes: list[dict] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **kwargs: probes.append(kwargs) or _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+
+    # _source_plan: inpoint=2, outpoint=14.5, duration=12.5 -- trimmed.
+    preparer.prepare(_source_plan(tmp_path), _config())
+
+    assert len(probes) == 1
+    assert probes[0]["probe_start_seconds"] == 2
+    assert probes[0]["probe_duration_seconds"] == 12.5
+
+
+def test_loudness_probe_is_capped_at_120s_when_untrimmed(tmp_path: Path) -> None:
+    """Companion: an untrimmed segment (the full 3600s asset) is capped to
+    the documented 120s head sample, never the whole duration."""
+    probes: list[dict] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **kwargs: probes.append(kwargs) or _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+
+    preparer.prepare(_untrimmed_plan(tmp_path), _config())
+
+    assert len(probes) == 1
+    assert probes[0]["probe_start_seconds"] is None
+    assert probes[0]["probe_duration_seconds"] == 120.0
+
+
+def test_cache_hit_utime_race_falls_through_to_a_miss(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 66 round-3, point 4: ``os.utime(cached_ts)`` on a cache HIT can
+    race a concurrent eviction pass that removed the entry between the
+    ``.is_file()`` check and this call -- must fall through to a MISS
+    (re-conform) instead of an unguarded ``FileNotFoundError`` crash."""
+    calls: list[list[str]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+        playout_trim_supported=True,
+    )
+    preparer.prepare(_untrimmed_plan(tmp_path), _config())  # warm the cache: a real HIT exists
+    assert len(calls) == 1
+    calls.clear()
+
+    def _raising_utime(_path: object, *_a: object, **_k: object) -> None:
+        raise FileNotFoundError(_path)
+
+    monkeypatch.setattr(preparer_module.os, "utime", _raising_utime)
+
+    report = preparer.prepare(_untrimmed_plan(tmp_path), _config())  # must not raise
+
+    assert len(calls) == 1  # treated as a miss -- re-conformed
+    seg = report.source_plan.segments[0]
+    assert "conform-cache" in seg.path
+
+
+def test_evict_cache_over_budget_reaps_orphaned_tmp_and_meta(tmp_path: Path) -> None:
+    """Item 66 round-3, point 3: an abandoned ``.ts.tmp`` older than 1h is
+    reaped; a younger one is left alone. A ``.json`` with no sibling
+    ``.ts`` older than 24h is reaped; one with a sibling ``.ts`` is kept
+    regardless of age."""
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    cache_dir = tmp_path / "work" / "conform-cache"
+    cache_dir.mkdir(parents=True)
+
+    old_tmp = cache_dir / "orphan1.ts.tmp"
+    old_tmp.write_text("stale", encoding="utf-8")
+    young_tmp = cache_dir / "orphan2.ts.tmp"
+    young_tmp.write_text("still writing", encoding="utf-8")
+    orphan_meta = cache_dir / "orphan3.json"
+    orphan_meta.write_text("{}", encoding="utf-8")
+    paired_meta = cache_dir / "orphan4.json"
+    paired_meta.write_text("{}", encoding="utf-8")
+    paired_ts = cache_dir / "orphan4.ts"
+    paired_ts.write_text("real cache entry", encoding="utf-8")
+
+    old_tmp_time = time.time() - preparer_module._ORPHAN_CACHE_TMP_MAX_AGE_S - 60
+    os.utime(old_tmp, (old_tmp_time, old_tmp_time))
+    old_meta_time = time.time() - preparer_module._ORPHAN_CACHE_META_MAX_AGE_S - 60
+    os.utime(orphan_meta, (old_meta_time, old_meta_time))
+
+    preparer._evict_cache_over_budget()
+
+    assert not old_tmp.exists()  # reaped: old orphaned .tmp
+    assert young_tmp.exists()  # kept: still within the age floor
+    assert not orphan_meta.exists()  # reaped: old .json with no sibling .ts
+    assert paired_meta.exists()  # kept: has a sibling .ts
+    assert paired_ts.exists()
+
+
+def test_evict_cache_over_budget_counts_live_tmp_bytes_toward_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 66 round-3, point 3: a live (young) ``.ts.tmp`` counts toward
+    the budget even though it is never itself evicted here -- so a real
+    ``.ts`` entry is evicted earlier to make room for in-flight writes."""
+    monkeypatch.setenv("CIVICCAST_CONFORM_CACHE_GB", "0.0000001")  # 100 bytes
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    cache_dir = tmp_path / "work" / "conform-cache"
+    cache_dir.mkdir(parents=True)
+    ts_entry = cache_dir / "aaaa.ts"
+    ts_entry.write_text("x" * 60, encoding="utf-8")
+    live_tmp = cache_dir / "bbbb.ts.tmp"
+    live_tmp.write_text("y" * 60, encoding="utf-8")  # young -- not orphaned
+
+    preparer._evict_cache_over_budget()
+
+    # 60 (live .tmp, counted but never evicted here) + 60 (.ts) = 120 bytes,
+    # over the ~100-byte budget -- the .ts entry is evicted to bring the
+    # total back down; the live .tmp itself is left alone.
+    assert not ts_entry.exists()
+    assert live_tmp.exists()
+
+
+def test_write_cache_meta_is_atomic_tmp_replace(tmp_path: Path) -> None:
+    """Item 66 round-3, point 4: ``_write_cache_meta``'s sidecar write must
+    be tmp+replace, matching every ``.ts`` write in this module -- no
+    leftover ``.tmp`` sibling once the write completes."""
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+
+    preparer._write_cache_meta("somekey", _loudness(), False)
+
+    cache_dir = tmp_path / "work" / "conform-cache"
+    assert (cache_dir / "somekey.json").is_file()
+    assert not (cache_dir / "somekey.json.tmp").exists()
+
+
+def test_cli_source_preparer_wires_playout_trim_supported(tmp_path: Path) -> None:
+    """Item 66 round-3, point 6: ``cli.py``'s ``SourcePreparer(work_dir=
+    work_dir)`` construction was missing ``playout_trim_supported`` entirely
+    (silently defaulting to ``False`` even on the legacy ffmpeg-concat
+    engine) -- it must now mirror ``automation.py``'s
+    ``not gstreamer_engine_selected()`` wiring via the same helper."""
+    import inspect
+
+    from civiccast import cli as cli_module
+
+    source = inspect.getsource(cli_module._run_egress_service)
+    assert "gstreamer_engine_selected" in source
+    assert "playout_trim_supported=not gstreamer_engine_selected()" in source
 
 
 def test_loudness_probed_once_for_all_segments_of_one_asset_in_one_prepare(
@@ -1140,11 +1455,15 @@ def test_loudness_probe_reused_across_prepares_of_the_same_asset(tmp_path: Path)
     assert probes_2 == []  # reused from the meta the first prepare() persisted
 
 
-def test_default_warm_scheduler_runs_one_job_at_a_time_fifo(tmp_path: Path) -> None:
-    """Item 66, point 4: the production ``_default_warm_scheduler`` used to
-    spawn one daemon thread PER job -- unbounded. It must instead queue jobs
-    onto a single worker: 3 distinct assets queue 3 jobs, but at most 1 ever
-    runs concurrently."""
+def test_default_warm_scheduler_runs_jobs_in_fifo_order_one_at_a_time(tmp_path: Path) -> None:
+    """Item 66, point 4 (round-3 review tightened the assertions): the
+    production ``_default_warm_scheduler`` used to spawn one daemon thread
+    PER job -- unbounded. It must instead queue jobs onto a single worker:
+    3 distinct assets queue 3 jobs, at most 1 ever runs concurrently, AND
+    they complete in the order they were queued (``completed == [0, 1, 2]``,
+    not merely ``sorted(completed) == [0, 1, 2]`` -- a worker that ran them
+    out of order would still pass the weaker assertion). ``max_active`` is
+    read under ``guard`` too, matching how it is written."""
     active = 0
     max_active = 0
     guard = threading.Lock()
@@ -1171,11 +1490,39 @@ def test_default_warm_scheduler_runs_one_job_at_a_time_fifo(tmp_path: Path) -> N
         preparer_module._default_warm_scheduler(make_job(n))
 
     assert started.wait(timeout=5)  # the first job is running
-    assert max_active == 1  # never more than one warm job active at once
+    with guard:
+        assert max_active == 1  # never more than one warm job active at once
     release.set()
     # Give the single worker time to drain the remaining queued jobs.
     deadline = time.monotonic() + 5
     while len(completed) < 3 and time.monotonic() < deadline:
         time.sleep(0.02)
-    assert sorted(completed) == [0, 1, 2]
-    assert max_active == 1
+    assert completed == [0, 1, 2]  # FIFO order, not just membership
+    with guard:
+        assert max_active == 1
+
+
+def test_default_warm_scheduler_survives_a_job_that_raises(tmp_path: Path) -> None:
+    """Item 66 round-3, point 5: a job that raises must not stop the
+    single worker from draining the rest of the queue -- ``_warm_worker``'s
+    own try/except is meant to catch exactly this, but it was never
+    exercised by a test."""
+    completed: list[int] = []
+
+    def failing_job() -> None:
+        completed.append(-1)
+        raise RuntimeError("boom")
+
+    def make_ok_job(n: int):
+        def _job() -> None:
+            completed.append(n)
+
+        return _job
+
+    preparer_module._default_warm_scheduler(failing_job)
+    preparer_module._default_warm_scheduler(make_ok_job(1))
+
+    deadline = time.monotonic() + 5
+    while len(completed) < 2 and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert completed == [-1, 1]  # job 2 still ran despite job 1's exception
