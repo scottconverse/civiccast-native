@@ -23,3 +23,17 @@ from __future__ import annotations
 #     non-None `result["error"]`, e.g. the S9-5 stall watchdog).
 # 2 = worker.py usage error (missing argv[1]) — predates this change.
 GST_PREROLL_TIMEOUT_EXIT_CODE = 3
+
+# Item 85 (sandbox runs 12/14/15): a reload commit (``GstPlayoutEngine.
+# _commit_reload``) that never finishes -- the measured wedge was the GLib
+# main-loop thread parked forever inside a synchronous ``set_state(NULL)`` on
+# an old source leg whose streaming thread was itself parked in input-selector's
+# sync-streams wait. Because the SAME thread runs the GLib loop, no ordinary
+# GLib timeout source can ever fire to notice -- only a real OS thread
+# (``engine._arm_commit_watchdog``'s ``threading.Timer``) escapes it, via
+# ``os._exit`` with this distinct code. Distinct from the generic crash code
+# (1) so the daemon's stderr-tail ``last_error`` and any future relaunch-path
+# branching (mirroring ``GST_PREROLL_TIMEOUT_EXIT_CODE`` above) can tell "the
+# worker force-exited itself out of a detected reload-commit wedge" apart from
+# an ordinary crash.
+GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE = 4

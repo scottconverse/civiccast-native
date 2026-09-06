@@ -2312,6 +2312,108 @@ def test_content_reload_declined_with_no_reason_reported_still_logs(
     assert any("gov" in message and "declined" in message for message in warnings), warnings
 
 
+def test_content_reload_ack_timeout_on_a_live_pid_terminates_the_wedged_worker(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Item 85 daemon-side fix (sandbox soaks 12/14/15): a reload ack timeout
+    while the worker's own pid is still alive is the daemon-visible symptom of
+    the engine-side reload-commit wedge item 85's engine.py fix addresses -- the
+    worker's GLib main-loop thread is blocked forever inside a synchronous
+    GStreamer call and will NEVER again answer a pipe command. Before this fix,
+    ``_fall_back_to_restart_reload`` only terminated the process for
+    ``FALLBACK_SLATE``; for an ordinary ON_AIR channel (this test's case) it left
+    the wedged pid running forever, and ``_poll_process`` re-wrote TRANSITIONING
+    on every tick because it only ever turns a ``_pending_reloads`` entry into a
+    real restart once the worker's OWN exit is observed -- which, for a wedged
+    pid, never happens on its own. This proves the fix: the wedged process is
+    terminated immediately (bounded terminate -> wait -> kill; this fake process
+    reports exited the instant ``terminate()`` is called, so no kill escalation
+    is exercised here), and the very next poll tick observes the exit and
+    restarts the channel cleanly instead of pinning TRANSITIONING forever."""
+
+    class _AckTimeoutStrategy(_FakeContentReloadStrategy):
+        def last_send_command_failure_reason(self, channel_id: str) -> str | None:
+            return "ack timeout after 5.0s (reissue_desired_state)"
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    wedged_process = _FakeProcess(pid=111)
+    fresh_process = _FakeProcess(pid=222)
+    processes = [wedged_process, fresh_process]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _AckTimeoutStrategy(processes, started, reload_ok=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")  # starts wedged_process, writes ON_AIR
+    assert not wedged_process.terminated
+
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.daemon"):
+        daemon.process_once("gov")  # the declined reload -- must terminate the wedged worker
+
+    assert wedged_process.terminated, "a reload ack timeout on a live pid must terminate it"
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("gov" in message and "wedged" in message for message in warnings), warnings
+
+    # The fake process reports exited (returncode=0) the instant terminate() is
+    # called, so the NEXT poll tick's ordinary worker-exit handling restarts the
+    # channel -- proving the pending-reload entry does not pin TRANSITIONING
+    # against a pid that (in this fixed behavior) is no longer running.
+    daemon.process_once("gov")
+    assert started == [wedged_process, fresh_process]
+    state = store.read_state("gov")
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Mayor interview"
+
+
+def test_content_reload_declined_for_a_reason_other_than_ack_timeout_does_not_terminate(
+    tmp_path: Path,
+) -> None:
+    """Narrow scope check: a decline for a reason OTHER than an ack timeout (a
+    plan-prepare failure, a synchronous build error, etc.) must NOT terminate an
+    otherwise-healthy worker -- only a lost ack on a confirmed-alive pid (the
+    specific wedge symptom) escalates to termination. ``_FakeContentReloadStrategy``
+    with no ``last_send_command_failure_reason`` capability (matching every other
+    existing declined-reload test in this file) models exactly that: a decline
+    with no reason at all, therefore never matching the "ack timeout" check."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    process = _FakeProcess(pid=111)
+    processes = [process, _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, reload_ok=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert not process.terminated
+
+
 def test_pending_reload_does_not_terminate_the_worker_while_awaiting_settlement(
     tmp_path: Path,
 ) -> None:

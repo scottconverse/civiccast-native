@@ -2456,6 +2456,42 @@ class EgressDaemon:
                 channel_id,
                 reason or "no reason reported by the encoder strategy",
             )
+            # Item 85 daemon-side fix: an "ack timeout" here is the daemon-visible
+            # symptom of the engine-side reload-commit wedge this item's engine.py
+            # fix addresses (see GstPlayoutEngine._commit_reload / _dispose_source_
+            # leg) -- the worker's GLib main-loop thread is blocked forever inside
+            # a synchronous GStreamer call and will NEVER again answer a pipe
+            # command (every command is marshalled onto that same loop via
+            # GLib.idle_add; see worker.py's _windows_pipe_reader_loop). The
+            # process itself is confirmed alive here (``_request_reload`` already
+            # early-returned to ``_start`` above if it were not), so simply
+            # falling back to restart -- which, for anything but FALLBACK_SLATE,
+            # does not terminate the process at all -- leaves the wedged pid
+            # running forever: ``_poll_process`` only ever turns a
+            # ``_pending_reloads`` entry into a real restart once the worker's OWN
+            # exit code is observed, so nothing but the process itself exiting
+            # would ever clear it, and it never will on its own. Measured: the
+            # daemon rewrote TRANSITIONING every ~2s for minutes against exactly
+            # this condition (sandbox soaks 12/14/15). Terminate it now, bounded
+            # (terminate -> wait -> kill), reusing the SAME deliberate-kill
+            # bookkeeping (``_reload_kills``) the FALLBACK_SLATE branch below
+            # already relies on, so ``_poll_process``'s existing worker-exit
+            # handling picks this up as a clean deliberate kill (not a crash) and
+            # actually restarts the channel next tick instead of pinning
+            # TRANSITIONING against a pid that will never exit on its own.
+            if (
+                isinstance(reason, str)
+                and "ack timeout" in reason
+                and _process_poll(process) is None
+            ):
+                _LOG.warning(
+                    "Worker for %s appears wedged (reload ack timed out on a live "
+                    "pid, reason=%r); terminating it so the channel can restart.",
+                    channel_id,
+                    reason,
+                )
+                self._reload_kills.add(channel_id)
+                _process_terminate_bounded(process)
             return False
         # Item 3 fix: a still-pending PREVIOUS reload for this channel (this
         # attempt supersedes it -- e.g. automation issued another rollover
@@ -3165,6 +3201,32 @@ def _process_poll(process: object) -> int | None:
 
 def _process_terminate(process: object) -> None:
     process.terminate()  # type: ignore[attr-defined]
+
+
+_WEDGED_WORKER_TERMINATE_WAIT_S = 3.0
+
+
+def _process_terminate_bounded(
+    process: object, *, wait_s: float = _WEDGED_WORKER_TERMINATE_WAIT_S
+) -> None:
+    """Item 85: terminate -> bounded wait -> kill, for a worker confirmed wedged
+    (a reload ack timeout on a still-alive pid -- see ``_try_content_reload``'s
+    "not armed" branch). A wedged worker's GLib main-loop thread is blocked
+    inside a synchronous GStreamer call, not inside Python, so ``terminate()``
+    (SIGTERM / a Windows console-control-style request) is not guaranteed to be
+    observed promptly -- escalate to ``kill()`` if the process has not actually
+    exited within ``wait_s``, so this call is itself bounded and can never hang
+    the calling thread the way the wedge itself hangs the worker's own."""
+    with contextlib.suppress(Exception):
+        _process_terminate(process)
+    poller = cast(_PollableProcess, process)
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        if poller.poll() is not None:
+            return
+        time.sleep(0.1)
+    with contextlib.suppress(Exception):
+        process.kill()  # type: ignore[attr-defined]
 
 
 def _process_close(process: object) -> None:

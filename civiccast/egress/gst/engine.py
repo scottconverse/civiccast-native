@@ -21,6 +21,7 @@ import os
 import re
 import signal
 import sys
+import threading
 import time
 from collections.abc import Callable
 from itertools import pairwise
@@ -124,6 +125,16 @@ except ImportError:
     from reload_policy import (  # type: ignore[import-not-found,no-redef]
         reload_id_from_sidecar_path,
         reload_switch_is_deferred,
+    )
+
+# Item 85: gi-free exit-code contract with the daemon (same reasoning as the
+# reload_policy/decode_policy siblings above -- this module must stay
+# importable both in package form and by-path, see worker.py's docstring).
+try:
+    from civiccast.egress.gst.exit_codes import GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE
+except ImportError:
+    from exit_codes import (  # type: ignore[import-not-found,no-redef]
+        GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE,
     )
 
 
@@ -327,6 +338,7 @@ class GstPlayoutEngine:
         stall_timeout_s: float = 10.0,
         defer_switch_timeout_s: float = 900.0,
         preroll_timeout_s: float | None = None,
+        commit_timeout_s: float = 15.0,
     ) -> None:
         prefer_cpu_decoders_by_default()
         Gst.init([])
@@ -356,6 +368,10 @@ class GstPlayoutEngine:
         # on-air, the pipeline has silently stalled — quit so the daemon restarts the
         # worker to a known state (a live source that freezes without posting an error).
         self.stall_timeout_s = stall_timeout_s
+        # Item 85: bounds ``_commit_reload`` itself -- see ``_arm_commit_watchdog``
+        # for why a plain ``GLib.timeout_add`` cannot do this job alone (the
+        # measured wedge blocks the very thread that would run it).
+        self.commit_timeout_s = commit_timeout_s
         # Item 82: bounded PLAYING-preroll wait (see ``_await_playing`` / the
         # module-level ``_resolve_preroll_timeout_s`` for the constructor-arg /
         # env-var / default resolution and clamp).
@@ -1982,14 +1998,77 @@ class GstPlayoutEngine:
         self._commit_reload()
         return False  # one-shot
 
+    def _arm_commit_watchdog(self) -> threading.Timer:
+        """Item 85 (sandbox runs 12/14/15): ``_commit_reload`` must never be able to
+        hang the worker forever. Seven soaks recorded the SAME wedge: the last line
+        either worker ever printed was "boundary switch rebased...", then nothing --
+        the process stayed alive but the pipe control reader stopped answering
+        (the ordering bug this item fixes; see ``_commit_reload``'s reordering and
+        ``_dispose_source_leg``'s unlink-before-NULL change).
+
+        A ``GLib.timeout_add_seconds`` source is USELESS as the sole guard here: if
+        the wedge is (as measured) the GLib main-loop thread itself blocked inside a
+        synchronous GStreamer call (``Gst.Element.set_state``/``get_state`` in
+        ``_dispose_source_leg``), the main loop never gets a turn to run ANY of its
+        own timeout sources -- the same thread is stuck. Only a real OS-level
+        thread, independent of the GLib loop, is guaranteed to fire regardless of
+        what the main-loop thread is doing. Cancelled by the caller once
+        ``_commit_reload`` actually returns; a commit that finishes in time never
+        prints anything from this thread and never calls ``os._exit``."""
+
+        def _on_commit_wedged() -> None:
+            print(
+                "CTRL reload: commit did not finish within "
+                f"{self.commit_timeout_s:.0f}s - quitting for daemon restart",
+                file=sys.stderr,
+                flush=True,
+            )
+            self._error = ("reload-commit-timeout", "commit did not complete in time")
+            # Best-effort, bounded attempt at a graceful pipeline teardown -- never
+            # awaited: ``set_state`` itself does not block (only ``get_state``
+            # does), so this cannot turn into a second wedge on this watchdog
+            # thread. If the main thread is genuinely stuck inside GStreamer, this
+            # request may never be serviced either; the os._exit below is what
+            # actually guarantees the process goes away.
+            with contextlib.suppress(Exception):
+                self.pipeline.set_state(Gst.State.NULL)
+            os._exit(int(GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE))
+
+        timer = threading.Timer(max(1.0, self.commit_timeout_s), _on_commit_wedged)
+        timer.daemon = True
+        timer.start()
+        return timer
+
     def _commit_reload(self) -> bool:
         """Main-loop commit of a reload: switch the selector(s) to the prerolled new
         leg, repoint role index 0 at it, then dispose the old leg. A no-op if the
         reload was aborted/superseded before this fired. ``return False`` so a GLib
-        timeout/idle source that calls this directly runs once."""
+        timeout/idle source that calls this directly runs once.
+
+        Item 85 root-cause fix: the hold probes on the new leg's tail pad(s) are
+        released BEFORE the selector's ``active-pad`` is ever touched -- the exact
+        invariant ``_abort_pending_reload`` already documents ("a held pad has a
+        GStreamer streaming thread parked inside the blocking probe... releasing
+        first lets those threads unwind normally") but this method used to violate:
+        it switched ``active-pad`` onto the new leg, THEN released its holds, THEN
+        disposed the old leg -- so the old leg's streaming thread could end up
+        parked inside input-selector's ``sync-streams`` pacing wait (paced against
+        the now-active new pad, which had not yet been allowed to produce anything)
+        at the exact moment ``_dispose_source_leg`` called the old leg's elements'
+        synchronous ``set_state(NULL)``, wedging the GLib main-loop thread inside
+        that call forever -- the seven-soak failure this whole item exists to fix.
+        Wrapped in a real-OS-thread watchdog (``_arm_commit_watchdog``) as the
+        backstop for a wedge this reordering does not anticipate."""
         pending = self._pending_reload
         if pending is None:
             return False  # aborted or superseded before the first buffer landed
+        watchdog = self._arm_commit_watchdog()
+        try:
+            return self._commit_reload_body(pending)
+        finally:
+            watchdog.cancel()
+
+    def _commit_reload_body(self, pending: dict[str, Any]) -> bool:
         for timeout_key in ("timeout_id", "defer_timeout_id"):
             if pending[timeout_key] is not None:
                 with contextlib.suppress(Exception):
@@ -2034,14 +2113,23 @@ class GstPlayoutEngine:
                 f"{switch_running_time / Gst.SECOND:.3f}s",
                 flush=True,
             )
+        print("CTRL reload: switching selector", flush=True)
+        # Item 85 root-cause fix: release the new leg's hold probes BEFORE the
+        # selector's active-pad is touched at all -- NOT last, as this method used
+        # to. A held pad has a GStreamer streaming thread parked inside the
+        # blocking probe (mirrors ``_abort_pending_reload``'s identical invariant);
+        # releasing it first lets that thread unwind and start delivering buffers
+        # normally (input-selector silently drops what arrives on a non-active
+        # pad -- releasing before the switch is NOT a functional no-op, it is what
+        # keeps the leg's own streaming thread from ever blocking on
+        # ``sync-streams`` pacing against a switch that has not happened yet). Only
+        # once that thread is free do we actually flip ``active-pad``.
+        self._release_hold_probes(pending)
+        print("CTRL reload: holds released", flush=True)
         selector.set_property("active-pad", new_video_pad)
         audio_selector = self.audio_selector
         if new_audio_pad is not None and audio_selector is not None:
             audio_selector.set_property("active-pad", new_audio_pad)
-        # Release the hold LAST: the new leg's first buffer (and, with it, the
-        # re-sent SEGMENT carrying the offset above) may only flow once the
-        # selector is already pointing at it.
-        self._release_hold_probes(pending)
         # Role index 0 (program) now points at the new leg. The swap controller shares
         # these list objects by reference, so an operator role-swap stays correct.
         self.selector_sink_pads[0] = new_video_pad
@@ -2052,6 +2140,7 @@ class GstPlayoutEngine:
         self._dispose_source_leg(
             pending["old_video_pad"], pending["old_audio_pad"], pending["old_elements"]
         )
+        print("CTRL reload: old leg disposed", flush=True)
         # Only NOW may the outgoing pads' EOS-drop probes go: the retiring leg can
         # still emit an EOS (the audio stream typically ends a beat after video)
         # right up until it is unlinked and NULLed, and one that escaped between
@@ -2166,23 +2255,46 @@ class GstPlayoutEngine:
         audio_pad: Gst.Pad | None,
         elements: list[Gst.Element],
     ) -> None:
-        """Tear down a now-inactive source leg: unlink from the selector(s), release
-        the request pad(s), then NULL + remove its elements. Best-effort — a disposal
-        hiccup is logged, never raised, so it can't kill a live channel. (Without this
-        a 24/7 channel would leak a leg's elements on every program change.)"""
+        """Tear down a now-inactive source leg: FLUSH + unlink from the selector(s)
+        and release the request pad(s) BEFORE NULLing its elements, then remove
+        them. Best-effort — a disposal hiccup is logged, never raised, so it can't
+        kill a live channel. (Without this a 24/7 channel would leak a leg's
+        elements on every program change.)
+
+        Item 85 root-cause fix: unlink + release_request_pad now run BEFORE
+        ``set_state(Gst.State.NULL)``, not after. The old ordering called
+        ``set_state(NULL)`` on a leg's elements while that leg's streaming thread
+        could still be parked inside input-selector's own sink-pad wait (paced
+        against the sibling stream by ``sync-streams``, or simply still delivering
+        its last few buffers to a pad the selector no longer forwards) --
+        ``set_state(NULL)`` blocks the calling thread until every streaming thread
+        touching that element has actually returned from its current callback, so
+        a thread parked inside the SELECTOR's own wait (not this leg's element at
+        all) could never be woken by NULLing the leg's own elements, and the GLib
+        main-loop thread calling this hung forever (the exact seven-soak wedge).
+        Sending FLUSH_START on the sink pad BEFORE unlinking wakes any streaming
+        thread blocked in that pad's wait (GstInputSelector's sync-streams
+        condvar checks the pad's flushing flag and is broadcast on FLUSH_START);
+        unlinking and releasing the request pad immediately after, still before
+        the leg's own elements are ever told to NULL, means that thread has
+        nothing left to block on by the time ``set_state(NULL)`` runs."""
         try:
-            for element in elements:
-                element.set_state(Gst.State.NULL)
             for selector, pad in (
                 (self.selector, video_pad),
                 (self.audio_selector, audio_pad),
             ):
                 if selector is None or pad is None:
                     continue
+                with contextlib.suppress(Exception):
+                    pad.send_event(Gst.Event.new_flush_start())
                 peer = pad.get_peer()
                 if peer is not None:
                     peer.unlink(pad)
+                with contextlib.suppress(Exception):
+                    pad.send_event(Gst.Event.new_flush_stop(True))
                 selector.release_request_pad(pad)
+            for element in elements:
+                element.set_state(Gst.State.NULL)
             for element in elements:
                 self.pipeline.remove(element)
         except Exception as exc:
