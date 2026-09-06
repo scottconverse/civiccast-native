@@ -133,11 +133,12 @@ kill the scan.
 | `CIVICCAST_CAPTION_TAP_DIR` | unset | Tap root shared by the egress fork and the worker. Required when the mode is not `off`; setting it also enables the egress fork. |
 | `CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS` | `5` | Segment length — the floor of the caption latency budget (tap → transcribe → stabilize → review queue). |
 | `CIVICCAST_CAPTION_TAP_POLL_SECONDS` | `2` | Worker scan interval. |
-| `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | one per 8 CPUs, max 3 | How many channels may be transcribed **at the same time**. |
+| `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | `1`, station-wide | How many channels' ASR calls may be in flight **at the same time**. Item 79 (2026-09): tightened from a per-core-count formula (max 3) to a flat `1`, regardless of core count. See "Captions are best effort; playout wins" below for why this is knob hardening, not a standalone fix -- the tap already shares one model instance across channels. |
 | `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` | `2` | Settled segments a channel may be behind before it counts as overloaded. |
-| `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS` | `60` | First pause after an overload; each consecutive overload doubles it. |
+| `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS` | `120` | First pause after an overload; each consecutive overload doubles it. Item 79 (2026-09): doubled from `60` — a struggling station needs real recovery room before ASR is attempted again. |
 | `CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS` | `900` | Ceiling on that doubling. |
-| `CIVICCAST_WHISPER_CPU_THREADS` | `1` for the live tap | CTranslate2 threads per transcription. `0` means "every core" and is the batch/VOD default — do not set it to `0` on a station that is also on air. |
+| `CIVICCAST_CAPTION_TAP_CPU_THREADS` | one per 8 CPUs, max 2 | CTranslate2 intra-op threads for the **live tap only** (item 79, 2026-09). "One per 8 CPUs, max 2" is the *default* — an operator override is honoured up to `2` (`LIVE_TAP_CPU_THREADS_CEILING`); asking for more is refused, not silently clamped: the value is capped at `2` and a WARNING is logged naming the rejected value. Recorded-meeting transcription is unaffected. |
+| `CIVICCAST_WHISPER_CPU_THREADS` | (unset) | CTranslate2 threads per transcription; overrides `..._TAP_CPU_THREADS` above when set. For batch/VOD, `0` means "every core" and is honoured as before, with no ceiling. For the **live tap**, `0` is refused (item 79, 2026-09): it falls back to the live default instead, with a warning logged, so this variable can no longer hand the live tap "every core" even by mistake — and, same as the tap-only variable above, any live value above `2` (`LIVE_TAP_CPU_THREADS_CEILING`) is capped at `2` rather than honoured, also with a WARNING. The live tap's `cpu_threads` is therefore never more than `2`, however either variable is set. |
 | `CIVICCAST_WHISPER_BEAM_SIZE` | `1` on CPU, `5` on CUDA | Decoder beam width. Wider is slightly more accurate and roughly linearly more expensive. |
 
 ### Turning live captions off
@@ -173,13 +174,27 @@ not.
 CivicCast therefore enforces an explicit ordering, and none of it is
 negotiable at runtime by the caption feature itself:
 
-- **ASR is bounded.** By default only one channel per 8 CPUs is transcribed at
-  a time, with one CTranslate2 thread and greedy decoding — roughly a one-core
-  budget for the whole caption feature on an 8-core station. Extra channels are
-  queued, not dropped.
+- **ASR is bounded.** By default only **one** channel, station-wide, is
+  transcribed at a time — regardless of core count (item 79, 2026-09
+  tightened this from a per-core-count formula, max 3, to a flat 1) — with
+  1-2 CTranslate2 threads (core-count-aware, capped) and greedy decoding.
+  This is knob hardening on top of a design that already shares ONE speech
+  recognition model instance across every channel with CTranslate2's
+  `inter_threads=1`, so the old default of 3 never actually ran 3 concurrent
+  **inferences** — the model's own queue was already serializing the decode
+  step, even though VAD and feature extraction for different channels could
+  still overlap ahead of it.
+  Within a single scan, channels beyond the concurrency bound queue on the
+  worker pool rather than being dropped outright — but a station with more
+  channels ON_AIR than the bound will still spend most of a scan
+  transcribing one channel while the others' backlog grows, and once a
+  channel's settled backlog exceeds `..._MAX_BACKLOG_SEGMENTS` its audio IS
+  dropped by the overload path below, not queued indefinitely. In practice, a
+  3-channel station has live captions paused on most channels most of the
+  time.
 - **Overload backs off.** When a channel falls further behind than
   `..._MAX_BACKLOG_SEGMENTS`, its live captions are **paused** for an
-  exponentially growing window (60s, 120s, 240s … capped at 15 minutes), its
+  exponentially growing window (120s, 240s, 480s … capped at 15 minutes), its
   active caption file is blanked, and its stale audio is **discarded**. During
   the pause the station spends *nothing* on transcribing that channel, and
   keeps nothing: audio that was never transcribed cannot be reviewed, so
@@ -220,8 +235,14 @@ same channel mean the station cannot transcribe that channel in real time.
 **If a station is permanently paused,** the fix is to reduce the caption work,
 not to raise the CPU limits: move to a lower caption tier, caption fewer
 channels at once, or put a supported GPU in the box. Raising
-`CIVICCAST_WHISPER_CPU_THREADS` on a CPU-only station that is on air trades
-broadcast reliability for captions that the backoff is going to discard anyway.
+`CIVICCAST_WHISPER_CPU_THREADS` (or `CIVICCAST_CAPTION_TAP_CPU_THREADS`) on a
+CPU-only station that is on air is no longer a lever that trades broadcast
+reliability for more captions (item 79, 2026-09): the live tap caps both
+variables at `LIVE_TAP_CPU_THREADS_CEILING` (`2`) and logs a WARNING when an
+operator asks for more, precisely so this trade can no longer be made by
+raising a number — the tap shares its box with playout and must never
+approach "every core" again, which is what produced the original field
+failure this whole knob-hardening effort exists to prevent.
 
 **Why off by default:** live transcription needs the local faster-whisper
 model runtime. Enabling `inline` without the model installed fails fast at

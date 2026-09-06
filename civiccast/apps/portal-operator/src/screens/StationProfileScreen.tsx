@@ -407,9 +407,11 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
           <span style={{ color: 'var(--cc-ink)' }}>Show live captions on air</span>
         </label>
         <p id="live-captions-help" className="text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-          When this is on, CivicCast listens to each channel that is on air and writes captions in
-          real time. It is useful, and it is hard work for this computer. If playout is stuttering
-          or channels are restarting, turn it off: the picture and sound always come first, and
+          When this is on, CivicCast writes captions in real time — but one channel at a time. On a
+          station with more than one channel on air, the others are paused most of the time, with
+          no live captions showing and their audio discarded. It is useful, and it is hard work for
+          this computer. If playout is stuttering or channels are restarting, turn it off: the
+          picture and sound always come first, and
           nothing else about the broadcast changes. Captions on recordings you publish are
           produced separately and are <strong>not</strong> affected by this setting.{' '}
           {/* Deliberately NOT another "Read more in the manual": this screen
