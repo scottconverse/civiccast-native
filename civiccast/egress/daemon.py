@@ -381,15 +381,37 @@ class EgressDaemon:
         # silently turning a should-cut-immediately rollover reload back into
         # a deferred one (a 900s held leg). _start must never pop this; only
         # _request_reload (every reader) and _stop (the channel going dark
-        # makes any in-flight rollover moot) do. Also left UNcleared by
-        # _drain and stop_all_channels' "process already gone" branch (an
-        # off-air channel with no tracked process at all) -- benign, not an
-        # oversight: every route back to a seamless content reload for this
-        # channel goes through _request_reload's own unconditional pop
-        # first, so a value sitting here from before the channel went dark
-        # can never reach should_defer_switch stale. See reload_policy.
-        # should_defer_switch's plan_end_at/now parameters, which this
-        # feeds.
+        # makes any in-flight rollover moot) do.
+        #
+        # Round 5 (coordinator review): round 4's docstring here claimed the
+        # entries left uncleared by _drain and stop_all_channels' "process
+        # already gone" branch were benign because "every route back to a
+        # seamless content reload for this channel goes through
+        # _request_reload's own unconditional pop first, so a value sitting
+        # here from before the channel went dark can never reach
+        # should_defer_switch stale." That was FALSE: _request_reload's pop
+        # does not discard the value, it PASSES it down (as
+        # rollover_plan_end_at=) through _try_content_reload into
+        # should_defer_switch -- popping a stale entry feeds it to
+        # should_defer_switch exactly as readily as a fresh one would.
+        # MEASURED: record_rollover_plan_end("gov", <2020-01-01>); let the
+        # worker exit cleanly (rc=0, STOPPED) -- none of _stop, _drain, nor
+        # stop_all_channels ran, so the value survived; restart the channel
+        # (ON_AIR); issue a plain operator reload with no rollover behind it
+        # at all -- switch_at_end_of_current came back False (cut
+        # immediately) instead of True (should have deferred, the ordinary
+        # ON_AIR/no-override shape). Every off-air route that bypasses
+        # _stop -- _poll_process's clean-exit and terminal-ERROR worker-exit
+        # branches, _drain's process-is-None branch, and stop_all_channels'
+        # "already gone" branch -- now pops this itself, the same as _stop
+        # does, so nothing recorded before a channel goes fully dark can
+        # ever survive to feed a later, unrelated reload. The pending-
+        # reload restart and crash-relaunch routes inside _poll_process
+        # deliberately do NOT pop here (per round 4's _start fix above --
+        # the channel stays effectively on air through those, and
+        # _request_reload's own pop is what those routes rely on instead).
+        # See reload_policy.should_defer_switch's plan_end_at/now
+        # parameters, which this feeds.
         self._rollover_plan_end_at: dict[str, datetime] = {}
         # S9-5 crash-relaunch back-off: a latch paces rapid repeat relaunches, a
         # per-channel streak counts consecutive rapid crashes (for escalation +
@@ -1465,6 +1487,19 @@ class EgressDaemon:
                 self._hls_relay.stop_channel(channel_id)
             self._write_state(channel_id, "STOPPED")
             self._append_health(channel_id, "STOPPED", sink_connected={})
+            # Round 5 (coordinator review): a clean exit with no pending
+            # reload is genuinely off-air -- unlike the pending_reload
+            # restart above and the crash-relaunch below (both of which
+            # keep the channel effectively on air and must NOT pop this,
+            # per _start's own no-pop rule), nothing is left to defer a
+            # switch against. Bypasses _stop entirely (this route is
+            # reached from a worker exit _poll_process observes on its own,
+            # not from an operator/drain stop), so _stop's own pop never
+            # ran -- MEASURED to otherwise leave a stale entry sitting here
+            # across the channel going fully dark and being freshly
+            # restarted, ready to wrongly bind to a later, unrelated plain
+            # reload. See ``_rollover_plan_end_at``'s docstring.
+            self._rollover_plan_end_at.pop(channel_id, None)
             return
         self._pending_reloads.pop(channel_id, None)
         state = self._store.read_state(channel_id)
@@ -1482,6 +1517,10 @@ class EgressDaemon:
             ),
         )
         self._append_health(channel_id, "ERROR", sink_connected={}, dropped_frames=0)
+        # Round 5 (coordinator review): same reasoning as the clean-exit
+        # branch above -- a terminal ERROR is off-air and bypasses _stop,
+        # so this route must clear the entry itself.
+        self._rollover_plan_end_at.pop(channel_id, None)
 
     def _relaunch_after_crash(
         self, channel_id: str, state: EgressStateRow, uptime: float | None
@@ -1975,12 +2014,20 @@ class EgressDaemon:
             # Item 78 fix 3: ``rollover_plan_end_at`` is this method's
             # keyword-only parameter, sourced by ``_request_reload`` popping
             # ``self._rollover_plan_end_at`` unconditionally at the top of
-            # ITS body -- before any of its own branches run, so this is the
-            # one and only reload attempt that recorded value can ever apply
-            # to, and a stale value from an earlier, already-settled (or
-            # abandoned) rollover can never be read again for a later,
-            # unrelated reload of this same channel (e.g. a plain operator-
-            # issued reload with no rollover behind it at all).
+            # ITS body -- before any of its own branches run. Round 5
+            # (coordinator review): that pop does NOT scope the value to the
+            # reload automation recorded it for -- it binds to whichever
+            # "reload" command for this channel ``_request_reload`` drains
+            # NEXT, which may be a different, unrelated reload (e.g. an
+            # operator-issued one queued ahead of automation's own, or a
+            # plain reload issued after a stale entry survived the channel
+            # going off-air and being restarted). See
+            # ``test_the_recorded_plan_end_binds_to_whichever_reload_drains_first_not_automations_own``
+            # and ``_rollover_plan_end_at``'s docstring for the routes that
+            # now clear it before that mixup can happen; scoping the value
+            # to the specific command id it was recorded for (rather than
+            # relying on every off-air/relaunch route to pop it in time) is
+            # follow-up work, not done here.
             switch_at_end_of_current=should_defer_switch(
                 previous_state=state.state if state else None,
                 manual_override_active=self.has_manual_override(channel_id),
@@ -2346,6 +2393,11 @@ class EgressDaemon:
             self._close_as_run(channel_id)  # nothing on air to drain — close any open row
             self._write_state(channel_id, "STOPPED")
             self._append_health(channel_id, "STOPPED", sink_connected={})
+            # Round 5 (coordinator review): another off-air route that
+            # bypasses _stop entirely (nothing to send a stop through) --
+            # see the matching pop/comment in _poll_process's worker-exit
+            # branches and ``_rollover_plan_end_at``'s docstring.
+            self._rollover_plan_end_at.pop(channel_id, None)
             return
         state = self._store.read_state(channel_id)
         config = self._store.get_config(channel_id)
@@ -2480,6 +2532,11 @@ class EgressDaemon:
                 self._processes.pop(channel_id, None)
                 outcomes[channel_id] = "already_gone"
                 self._discard_active_prepared_plan_dir(channel_id)
+                # Round 5 (coordinator review): this channel never goes
+                # through _stop on this path either -- another off-air
+                # route that must clear the entry itself. See
+                # ``_rollover_plan_end_at``'s docstring.
+                self._rollover_plan_end_at.pop(channel_id, None)
                 continue
             self._stop(channel_id, draining=True)
             pending[channel_id] = process

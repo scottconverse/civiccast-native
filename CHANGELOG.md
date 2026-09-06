@@ -225,16 +225,42 @@ below.
     run (the worker is missing/dead, there is no state row, or the strategy
     doesn't support content-reload all used to skip straight past the point
     that consumed it and leave it sitting there), and passes the value down
-    explicitly to `_try_content_reload`; `_stop` clears it too. Plainly: the
-    recorded value binds to whatever "reload" command for that channel
-    `_request_reload` processes NEXT, not necessarily the one automation
-    dispatched it for -- MEASURED, an operator reload queued before
-    automation's own rollover reload drains consumes it instead, and cuts
-    immediately when it should have deferred normally. Automation's own
-    45-second retry-timeout/settlement bookkeeping still recovers from
-    that (the never-landed reload it was actually tracking gets retried on
-    schedule), but the mixup itself is real and this fix does not close it
-    -- only the indefinite leak.
+    explicitly to `_try_content_reload`. Plainly: the recorded value binds
+    to whatever "reload" command for that channel `_request_reload`
+    processes NEXT, not necessarily the one automation dispatched it for --
+    MEASURED, an operator reload queued before automation's own rollover
+    reload drains consumes it instead, and cuts immediately when it should
+    have deferred normally. Automation's own 45-second retry-timeout/
+    settlement bookkeeping still recovers from that (the never-landed
+    reload it was actually tracking gets retried on schedule), but the
+    mixup itself is real and this fix does not close it -- only the
+    indefinite leak, and only once every route off-air actually clears the
+    entry (see the next paragraph; an earlier round of this same fix
+    believed, incorrectly, that `_stop` alone was enough).
+  - **Round 5 (coordinator review): three more off-air routes left the
+    same entry uncleared, and one of them was MEASURED to actually revert
+    a later, unrelated reload's defer decision.** `_stop` clearing the
+    entry (added above) only covers an operator stop or a drain -- a
+    worker that exits on its own (a clean rc=0 exit with no pending
+    reload, or a terminal crash that lands the channel in `ERROR` rather
+    than a relaunch) never reaches `_stop`, and neither does `_drain`'s
+    own "nothing to drain" branch nor `stop_all_channels`' "already gone"
+    branch (both handle a channel with no live process at all). Any of
+    the four now leaves a rollover-plan `plan_end_at` sitting in memory
+    forever once recorded, exactly as before `_stop`'s own fix, just via a
+    different door. MEASURED: record a rollover plan_end already in the
+    past for a channel, let its worker exit cleanly (`STOPPED`), restart
+    the channel (`ON_AIR`), then issue a plain operator reload with no
+    rollover behind it at all -- the reload wrongly saw the stale,
+    already-past `plan_end_at` and cut immediately instead of deferring
+    normally. All four routes (`_poll_process`'s clean-exit and
+    terminal-`ERROR` worker-exit branches, `_drain`'s process-is-None
+    branch, and `stop_all_channels`' already-gone branch) now clear the
+    entry themselves, the same as `_stop` does; the pending-reload restart
+    and crash-relaunch routes inside `_poll_process` deliberately do not,
+    since those keep the channel effectively on air and rely on
+    `_request_reload`'s own pop instead (the same round-4 rule that keeps
+    `_start` from popping this dict).
 - **Install-over could leave the PREVIOUS kit's application payload silently
   running.** MEASURED on a real tester (2026-09-05): installing kit B `/S`
   (install-over) on a station kit A had already installed, where both kits

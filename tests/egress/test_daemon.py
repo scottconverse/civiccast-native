@@ -1368,6 +1368,165 @@ def test_stop_clears_the_recorded_rollover_plan_end(tmp_path: Path) -> None:
     assert daemon._rollover_plan_end_at == {}
 
 
+def test_worker_clean_exit_then_restart_then_plain_reload_does_not_leak_stale_rollover_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 5, item 1 -- REGRESSION left by round 4.
+
+    Round 4's own docstring claimed a stale ``_rollover_plan_end_at`` entry
+    could never reach ``should_defer_switch`` because ``_request_reload``
+    pops it first -- false: the pop PASSES the value down (as
+    ``rollover_plan_end_at=``) into ``_try_content_reload`` and from there
+    into ``should_defer_switch``, it does not discard it. A worker that
+    exits cleanly (rc=0, no pending reload) never reaches ``_stop`` --
+    that route is ``_poll_process`` observing the exit on its own, not an
+    operator stop or a drain -- so the entry survived across the channel
+    going fully off-air (``STOPPED``) and being freshly restarted
+    (``ON_AIR``). MEASURED: record a rollover plan_end already in the past,
+    let the worker exit cleanly, restart the channel, then issue a PLAIN
+    operator reload with no rollover behind it at all -- the reload wrongly
+    saw the stale, already-past ``plan_end_at`` and cut immediately
+    (``switch_at_end_of_current=False``) instead of deferring normally
+    (``True``, the ordinary ON_AIR/no-override shape an unrecorded reload
+    should take). Fixed by clearing the entry in the clean-exit branch of
+    ``_poll_process`` itself, alongside the terminal-``ERROR`` branch,
+    ``_drain``'s process-is-None branch, and ``stop_all_channels``'
+    already-gone branch (see the other new tests below and
+    ``_rollover_plan_end_at``'s docstring)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Council meeting"),
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR (process 111)
+
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
+    started[0].returncode = 0  # a clean exit, e.g. the channel's own plan ran out
+    daemon.process_once("gov")  # _poll_process's clean-exit branch -> STOPPED
+
+    assert store.read_state("gov").state == "STOPPED"
+    assert daemon._rollover_plan_end_at == {}  # must not survive the channel going dark
+
+    # Fresh command_ids -- the initial "cmd-start"/"cmd-reload" ids from
+    # ``_command()`` are already consumed and would be silently deduped.
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="start",
+            issued_at=datetime(2026, 6, 5, 13, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-restart",
+        )
+    )
+    daemon.process_once("gov")  # restart -> ON_AIR (process 222)
+    assert store.read_state("gov").state == "ON_AIR"
+
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 14, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-plain-reload",
+        )
+    )  # a plain reload, no rollover behind it
+    daemon.process_once("gov")
+
+    assert strategy.switch_at_end_of_current_calls == [True]  # deferred, not cut
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_poll_process_terminal_error_clears_the_recorded_rollover_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 5, item 1: the terminal-``ERROR`` branch of
+    ``_poll_process`` (a crash the daemon does not relaunch, because the
+    state row is not in one of the relaunchable states) is another route
+    that takes the channel off-air without ever reaching ``_stop`` --
+    it must clear the entry itself too."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    process = _FakeProcess(pid=111)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        ffmpeg_starter=lambda args: process,
+    )
+    daemon.process_once("gov")  # start -> ON_AIR
+
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
+    # Force the state row out of every relaunchable state so the crash below
+    # lands in the terminal ERROR branch instead of _relaunch_after_crash.
+    store.write_state(
+        EgressStateRow(channel_id="gov", state="STOPPED", updated_at=datetime.now(UTC))
+    )
+    process.returncode = 1  # a crash the daemon will not relaunch
+    daemon.process_once("gov")
+
+    assert store.read_state("gov").state == "ERROR"
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_drain_with_no_live_process_clears_the_recorded_rollover_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 5, item 1: ``_drain``'s process-is-None
+    branch (drain issued against a channel with no live process at all) is
+    another off-air route that bypasses ``_stop`` entirely -- it must
+    clear the entry itself too."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=lambda _cid: _source_plan(tmp_path)
+    )
+
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
+    assert daemon._rollover_plan_end_at == {"gov": datetime(2020, 1, 1, tzinfo=UTC)}
+
+    store.enqueue_command(_command("drain"))
+    daemon.process_once("gov")  # _drain: process is None -> STOPPED
+
+    assert store.read_state("gov").state == "STOPPED"
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_stop_all_channels_already_gone_clears_the_recorded_rollover_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 5, item 1: ``stop_all_channels``' "already
+    gone" branch (a channel whose process already exited but hasn't been
+    reaped by ``_poll_process`` yet) is another off-air route that bypasses
+    ``_stop`` entirely -- it must clear the entry itself too."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    process = _FakeProcess(pid=111)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        ffmpeg_starter=lambda args: process,
+    )
+    daemon.process_once("gov")  # start -> ON_AIR, tracked in self._processes
+
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
+    process.returncode = 0  # exited already, but _poll_process hasn't reaped it yet
+
+    result = daemon.stop_all_channels(deadline_seconds=0.0)
+
+    assert [outcome.outcome for outcome in result.outcomes] == ["already_gone"]
+    assert daemon._rollover_plan_end_at == {}
+
+
 def test_the_recorded_plan_end_binds_to_whichever_reload_drains_first_not_automations_own(
     tmp_path: Path,
 ) -> None:
