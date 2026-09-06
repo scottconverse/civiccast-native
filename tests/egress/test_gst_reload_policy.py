@@ -61,6 +61,96 @@ class TestShouldDeferSwitch:
             assert should_defer_switch(previous_state=state, manual_override_active=False) is False
 
 
+class TestShouldDeferSwitchPlanEndAt:
+    """Item 78 fix 3: an optional ``plan_end_at``/``now`` pair overrides an
+    otherwise-deferring decision to "cut immediately" once the tracked plan's
+    projected end has already passed by wall clock -- deferring to a boundary
+    that already happened waits for something that will never arrive."""
+
+    def test_omitting_both_preserves_prior_behavior(self) -> None:
+        # Every pre-existing caller/test (including every case in
+        # TestShouldDeferSwitch above) passes neither parameter -- this must
+        # be indistinguishable from the old two-argument signature.
+        assert should_defer_switch(previous_state="ON_AIR", manual_override_active=False) is True
+        assert (
+            should_defer_switch(previous_state="FALLBACK_SLATE", manual_override_active=False)
+            is False
+        )
+
+    def test_plan_end_at_in_the_future_still_defers(self) -> None:
+        assert (
+            should_defer_switch(
+                previous_state="ON_AIR",
+                manual_override_active=False,
+                plan_end_at=_NOW + timedelta(seconds=1),
+                now=_NOW,
+            )
+            is True
+        )
+
+    def test_plan_end_at_exactly_at_now_cuts_immediately(self) -> None:
+        assert (
+            should_defer_switch(
+                previous_state="ON_AIR",
+                manual_override_active=False,
+                plan_end_at=_NOW,
+                now=_NOW,
+            )
+            is False
+        )
+
+    def test_plan_end_at_in_the_past_cuts_immediately_even_though_on_air_with_no_override(
+        self,
+    ) -> None:
+        # This is otherwise the exact shape that would defer (ON_AIR, no
+        # override) -- the stale horizon must win.
+        assert (
+            should_defer_switch(
+                previous_state="ON_AIR",
+                manual_override_active=False,
+                plan_end_at=_NOW - timedelta(seconds=698),
+                now=_NOW,
+            )
+            is False
+        )
+
+    def test_only_one_of_the_pair_given_is_ignored(self) -> None:
+        # Both must be present to engage the override -- a caller that only
+        # has one of the two (shouldn't happen, but must not crash or
+        # misbehave) falls back to the ordinary decision.
+        assert (
+            should_defer_switch(
+                previous_state="ON_AIR",
+                manual_override_active=False,
+                plan_end_at=_NOW - timedelta(seconds=1),
+                now=None,
+            )
+            is True
+        )
+        assert (
+            should_defer_switch(
+                previous_state="ON_AIR",
+                manual_override_active=False,
+                plan_end_at=None,
+                now=_NOW,
+            )
+            is True
+        )
+
+    def test_a_past_plan_end_at_does_not_make_a_slate_replan_defer(self) -> None:
+        # FALLBACK_SLATE never defers regardless -- a past plan_end_at cannot
+        # accidentally flip the decision the other way.
+        assert (
+            should_defer_switch(
+                previous_state="FALLBACK_SLATE",
+                manual_override_active=False,
+                plan_end_at=_NOW + timedelta(seconds=100),
+                now=_NOW,
+            )
+            is False
+        )
+
+
 class TestReloadSidecarSuffix:
     """The switch-mode flag rides the one-shot reload sidecar's FILENAME (not a
     new control-line token): ``control.parse_control_line``'s ``reload <path>``

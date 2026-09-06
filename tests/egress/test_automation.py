@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 
 import pytest
 
@@ -396,6 +397,59 @@ class TestPlanRollover:
         # the daemon has not yet applied the first one (no command storm).
         service.run_once(now=later + timedelta(seconds=1))
         assert _pending_actions(store, "public") == []
+
+    def test_check_plan_rollover_records_the_plan_end_scoped_to_the_enqueued_commands_own_id(
+        self,
+    ) -> None:
+        """Coordinator review, round 8, item 4: ``_check_plan_rollover``
+        generates the reload command's id up front and must pass the EXACT
+        same id to both ``record_rollover_plan_end`` and the ``_enqueue``
+        call that dispatches it (round 7's whole point) -- nothing in the
+        prior test suite pinned that the two ids actually agree, only that
+        ``_enqueue`` was CALLED with *a* ``command_id`` keyword. If the two
+        ever drifted apart, ``EgressDaemon._request_reload``'s command-id
+        scoping would never match the command that actually drains, and the
+        recorded ``plan_end_at`` would silently never be used at all --
+        reintroducing dead air on an already-past horizon that should have
+        cut immediately (see ``_rollover_plan_end_at``'s docstring)."""
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+
+        class _RecordingDaemon(_FakeDaemon):
+            def __init__(self) -> None:
+                super().__init__(live_channels={"public"})
+                self.recorded: list[tuple[str, datetime, str | None]] = []
+
+            def record_rollover_plan_end(
+                self, channel_id: str, plan_end_at: datetime, *, command_id: str | None
+            ) -> None:
+                self.recorded.append((channel_id, plan_end_at, command_id))
+
+        daemon = _RecordingDaemon()
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+
+        service = ChannelAutomationService(
+            store, daemon, provider, settings=ChannelAutomationSettings()
+        )
+
+        service.run_once(now=_NOW)  # establish the horizon: plan ends 40s from now
+        later = _NOW + timedelta(seconds=15)
+        service.run_once(now=later)  # inside the lookahead -> rollover dispatch
+
+        assert len(daemon.recorded) == 1
+        pending = store.pop_pending_commands("public")
+        assert [command.action for command in pending] == ["reload"]
+        recorded_channel_id, _recorded_plan_end_at, recorded_command_id = daemon.recorded[0]
+        assert recorded_channel_id == "public"
+        # The load-bearing assertion: the id EgressDaemon will see draining
+        # this command must be the exact id the plan_end was scoped to.
+        assert recorded_command_id is not None
+        assert recorded_command_id == pending[0].command_id
 
     def test_no_rollover_when_schedule_has_nothing_further(self) -> None:
         store = InMemoryEgressStore()
@@ -922,12 +976,27 @@ class TestRolloverCadence:
     def test_the_flat_floor_bug_the_scaled_floor_fixes(self) -> None:
         """The CHANGELOG-cited measurement, reproduced directly: against an
         8x30s (240-second) plan, a flat 300s floor (D43's original value)
-        dispatches every 300s while the boundary-aligned lead shrinks each
-        cycle -- 120s, 60s, 0s, then negative -- so by the third rollover
-        the trigger arrives at or after the plan's real end and the engine
-        would have reached EOS and restarted. The shipped, scaled floor
-        (used by every other test in this class) keeps that lead at a
-        steady ~120s indefinitely instead."""
+        dispatches with the boundary-aligned lead shrinking cycle over
+        cycle until it goes negative -- the trigger arrives at or after the
+        plan's real end and the engine would have reached EOS and
+        restarted. The shipped, scaled floor (used by every other test in
+        this class) keeps that lead at a steady ~120s indefinitely instead.
+
+        Item 78 fix 2 (the stale-horizon guard in ``_check_plan_rollover``)
+        changes the EXACT dispatch cadence the flat-floor bug produces here
+        versus its original measurement: once a negative lead actually lands
+        the tracked horizon on a ``plan_end_at`` at or before "now", this
+        pass now discards it and re-establishes from the current dispatch
+        rather than blindly dispatching another rollover against a target
+        already behind wall clock -- see the two "was stale ... re-
+        establishing" log lines this simulation now emits. That backstop
+        bounds the damage (no runaway "one dispatch every single tick,
+        forever") but it does NOT make the flat floor safe: the boundary-
+        aligned lead still goes negative here, repeatedly and by a growing
+        margin, because the floor itself is still wrong for this plan
+        shape. The scaled floor below remains the real fix; this guard is
+        defense-in-depth for whatever gets past it (a stalled automation
+        pass, not merely a mistuned constant)."""
 
         def flat_300s_floor(_planned_seconds: float) -> float:
             return 300.0
@@ -946,9 +1015,9 @@ class TestRolloverCadence:
         buggy_leads = leads(buggy_dispatches)
         fixed_leads = leads(fixed_dispatches)
 
-        assert buggy_dispatches == [120.0, 420.0, 720.0, 1020.0, 1320.0, 1620.0]
-        assert buggy_leads == [120.0, 60.0, 0.0, -60.0, -120.0, -180.0]
-        assert min(buggy_leads) < 0  # the trigger arrives at/after EOS
+        assert buggy_dispatches == [120.0, 420.0, 840.0, 1140.0, 1560.0]
+        assert buggy_leads == [120.0, 60.0, -120.0, -180.0, -360.0]
+        assert min(buggy_leads) < 0  # the flat floor is still not safe
 
         assert fixed_dispatches[:5] == [120.0, 360.0, 600.0, 840.0, 1080.0]
         assert all(lead >= 100.0 for lead in fixed_leads)
@@ -1790,3 +1859,510 @@ class TestRolloverHorizonComesFromTheDispatchedPlan:
         # Past the correct trigger it rolls over as normal.
         service.run_once(now=_NOW + timedelta(seconds=800))
         assert _pending_actions(store, "public") == ["reload"]
+
+
+class TestPerChannelClockIsReadFreshEachIteration:
+    """Item 78 fix 1: ``run_once()`` (no explicit ``now`` -- the shape
+    ``run_forever`` actually uses in production) must read wall-clock time
+    freshly for EACH channel's pass, not once for the whole scan. Reading it
+    once meant a single channel's synchronous ``_start`` (``SourcePreparer``
+    can block for minutes, per soak evidence) left every channel that poll
+    tick -- including its own next tick -- computing rollover math against a
+    timestamp that was already stale by however long the block lasted,
+    freezing ``plan_end_at`` in the past and firing rollovers forever ("live
+    plan ends in -698s")."""
+
+    def test_now_is_read_once_per_channel_not_once_for_the_whole_pass(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("a"))
+        store.upsert_config(_config("b"))
+        store.upsert_config(_config("c"))
+        service = ChannelAutomationService(
+            store,
+            _FakeDaemon(),
+            lambda _cid: None,
+            settings=ChannelAutomationSettings(),
+        )
+
+        import civiccast.egress.automation as automation_module
+
+        real_datetime = automation_module.datetime
+        call_count = 0
+
+        class _CountingDateTime(real_datetime):  # type: ignore[misc,valid-type]
+            @classmethod
+            def now(cls, tz=None):  # type: ignore[override]
+                nonlocal call_count
+                call_count += 1
+                return real_datetime.now(tz)
+
+        monkeypatch.setattr(automation_module, "datetime", _CountingDateTime)
+
+        service.run_once()  # no explicit `now` -- the real run_forever shape
+
+        assert call_count == 3  # once per enabled channel, never once for the whole pass
+
+    def test_the_blocking_channel_itself_sees_the_post_block_clock_not_a_stale_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Coordinator review, round 2: reading "now" once per channel is not
+        enough if it is read at the TOP of that channel's own pass -- BEFORE
+        ``daemon.process_once``, which is exactly where a channel's own
+        synchronous ``_start`` (``SourcePreparer.prepare``) can block for
+        minutes. The blocking channel must see the POST-block clock for its
+        own ``_check_plan_rollover``, not the timestamp captured before the
+        block. Channel "a" here blocks (advances a shared fake wall clock by
+        2000s, longer than its own 1800s plan) inside ``process_once``;
+        channel "b" never blocks. Both establish a horizon strictly in the
+        future relative to the POST-block clock -- not the "-200s" a
+        pre-block reading would have produced for "a"."""
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("a"))
+        store.upsert_config(_config("b"))
+
+        def on_air(channel_id: str, proof_event_id: str) -> None:
+            store.write_state(
+                EgressStateRow(
+                    channel_id=channel_id,
+                    state="ON_AIR",
+                    current_source_label="Program",
+                    current_proof_event_id=proof_event_id,
+                    updated_at=_NOW,
+                )
+            )
+
+        on_air("a", "ev-a1")
+        on_air("b", "ev-b1")
+
+        import civiccast.egress.automation as automation_module
+
+        wall_clock = {"now": _NOW}
+        real_datetime = automation_module.datetime
+
+        class _ControllableDateTime(real_datetime):  # type: ignore[misc,valid-type]
+            @classmethod
+            def now(cls, tz=None):  # type: ignore[override]
+                return wall_clock["now"]
+
+        monkeypatch.setattr(automation_module, "datetime", _ControllableDateTime)
+
+        class _BlockingDaemon(_FakeDaemon):
+            def process_once(self, channel_id: str) -> int:
+                super().process_once(channel_id)
+                if channel_id == "a":
+                    # Simulate item 78's diagnosed ~915s SourcePreparer block
+                    # (here 2000s -- longer than the 1800s plan below, so a
+                    # stale pre-block "now" would establish an already-past
+                    # horizon, not merely a short-lead one).
+                    wall_clock["now"] = wall_clock["now"] + timedelta(seconds=2000)
+                return 0
+
+        daemon = _BlockingDaemon(live_channels={"a", "b"})
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_duration(cid, 1800.0),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once()  # no explicit `now` -- the real run_forever shape
+
+        post_block_now = wall_clock["now"]
+        tracked_a = service._plan_horizon["a"]
+        tracked_b = service._plan_horizon["b"]
+        # A stale pre-block reading would have established plan_end_at at
+        # _NOW+1800, which is 200s BEHIND post_block_now (_NOW+2000) -- the
+        # exact "-200s" shape of the diagnosed bug. The fix must establish it
+        # from the post-block clock instead, strictly in the future.
+        assert tracked_a[1] > post_block_now
+        assert tracked_a[1] == post_block_now + timedelta(seconds=1800)
+        assert tracked_b[1] > post_block_now
+
+
+class TestStaleRolloverHorizonIsReestablishedNotDispatchedAgainst:
+    """Item 78 fix 2: once a tracked ``plan_end_at`` has slipped into the past
+    (the channel's own automation pass blocked long enough that wall clock
+    passed it by), the tracked horizon must be discarded and re-established
+    from the CURRENT proof event/dispatch -- never dispatched against as if
+    it were still a real future boundary. Dispatching against a stale,
+    already-past ``plan_end_at`` is the exact frozen-horizon bug (soak
+    evidence: "live plan ends in -698s", forever): the fresh plan the
+    provider hands back always ends further in the future than a target
+    stuck in the past, so every tick looks like a legitimate rollover and one
+    fires every single poll, forever."""
+
+    def test_a_stale_horizon_is_discarded_instead_of_driving_an_unthrottled_dispatch(
+        self,
+    ) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        store.write_state(
+            EgressStateRow(
+                channel_id="public",
+                state="ON_AIR",
+                current_source_label="Council Meeting",
+                current_proof_event_id="ev-1",
+                updated_at=_NOW,
+            )
+        )
+        service = ChannelAutomationService(
+            store,
+            _FakeDaemon(live_channels={"public"}),
+            lambda cid: _plan_with_duration(cid, 100.0),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once(now=_NOW)  # establishes: ends at _NOW+100
+        assert _pending_actions(store, "public") == []
+
+        # A huge jump forward with NO proof-event change -- the shape a
+        # long-blocked automation pass produces (item 78's diagnosed
+        # scenario): the tracked plan_end_at (_NOW+100) is now far in the
+        # past relative to "now". Without the fix, this dispatches a reload
+        # (any fresh re-query trivially "ends later" than a target already
+        # thousands of seconds in the past) -- every single tick, forever.
+        far_future = _NOW + timedelta(seconds=5000)
+        service.run_once(now=far_future)
+
+        assert _pending_actions(store, "public") == []
+
+
+class TestRolloverRetryDispatchTimestampIsClearedWithTheIssuedLatch:
+    """Coordinator review, round 4, item 2(a): ``_rollover_retry_dispatched_at``
+    must be cleared everywhere ``_rollover_issued`` itself is discarded (a
+    landed rollover, or a discarded stale horizon) -- not only when the
+    channel leaves the air. Without this, a stale retry timestamp left over
+    from an earlier, already-resolved rollover sequence could incorrectly
+    suppress the very FIRST retry of whatever rollover comes next, even
+    though nothing about that next sequence has actually violated the 60s
+    floor. These tests assert directly on the cleared state (white-box,
+    deterministic) rather than threading a full establish/dispatch/retry/
+    land timing chain through black-box behavior -- see
+    ``TestRolloverRetryFloorMeasuredFromTheLastRetryNotTheOriginalDispatch``'s
+    churn test for a black-box demonstration of the same clearing in a
+    realistic relaunch scenario."""
+
+    def _on_air(self, store: InMemoryEgressStore, channel_id: str, *, proof_event_id: str) -> None:
+        store.write_state(
+            EgressStateRow(
+                channel_id=channel_id,
+                state="ON_AIR",
+                current_source_label="Council Meeting",
+                current_proof_event_id=proof_event_id,
+                updated_at=_NOW,
+            )
+        )
+
+    def test_cleared_when_a_fresh_plan_takes_air(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", proof_event_id="ev-1")
+        service = ChannelAutomationService(
+            store,
+            _FakeDaemon(live_channels={"public"}),
+            lambda cid: _plan_with_duration(cid, 1800.0),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once(now=_NOW)  # establish: ends far in the future
+        assert _pending_actions(store, "public") == []
+
+        # Simulate an earlier, already-resolved rollover retry sequence for
+        # THIS channel having left a timestamp behind.
+        service._rollover_retry_dispatched_at["public"] = service._monotonic()
+
+        # A fresh proof event lands -- "a fresh plan just took air".
+        self._on_air(store, "public", proof_event_id="ev-2")
+        service.run_once(now=_NOW)
+
+        assert service._rollover_retry_dispatched_at.get("public") is None
+
+    def test_cleared_when_the_tracked_horizon_is_discarded_as_stale(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", proof_event_id="ev-1")
+        service = ChannelAutomationService(
+            store,
+            _FakeDaemon(live_channels={"public"}),
+            lambda cid: _plan_with_duration(cid, 100.0),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once(now=_NOW)  # establish: ends at _NOW+100
+        assert _pending_actions(store, "public") == []
+
+        service._rollover_retry_dispatched_at["public"] = service._monotonic()
+
+        # The wall clock jumps far past the tracked plan's own end -- the
+        # horizon is stale and must be discarded/re-established (see
+        # TestStaleRolloverHorizonIsReestablishedNotDispatchedAgainst above).
+        far_future = _NOW + timedelta(seconds=5000)
+        service.run_once(now=far_future)
+
+        assert service._rollover_retry_dispatched_at.get("public") is None
+
+
+class TestRolloverRetryRespectsAFloorAndAYoungWorkerGuard:
+    """Item 78 fix 2 (second half): the B2 "reload never landed" retry path
+    used to be fully exempt from any dispatch-cadence floor at all
+    (deliberately -- "recovery, not cadence"), which meant a worker stuck
+    crash-relaunching right after every reload got hit with an unthrottled
+    re-arm about one second after every relaunch. Two independent guards now
+    apply on the retry path only (the ordinary D45 per-plan cadence floor
+    stays exempt on retry, as before): a flat minimum gap between retry
+    dispatches, and a floor under how young the channel's current worker pid
+    may be before another synchronous ``SourcePreparer.prepare`` is thrown at
+    it."""
+
+    def _on_air(
+        self, store: InMemoryEgressStore, channel_id: str, *, proof_event_id: str, pid: int | None
+    ) -> None:
+        store.write_state(
+            EgressStateRow(
+                channel_id=channel_id,
+                state="ON_AIR",
+                current_source_label="Council Meeting",
+                current_proof_event_id=proof_event_id,
+                updated_at=_NOW,
+                pid=pid,
+            )
+        )
+
+    def test_the_floor_constants_match_the_spec(self) -> None:
+        assert ChannelAutomationService._ROLLOVER_RETRY_MIN_INTERVAL_SECONDS == 60.0
+        assert ChannelAutomationService._ROLLOVER_RETRY_MIN_WORKER_AGE_SECONDS == 60.0
+
+    def test_retry_is_deferred_until_a_freshly_relaunched_worker_settles(self) -> None:
+        clock = {"now": 1000.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", proof_event_id="ev-1", pid=111)
+        daemon = _FakeDaemon(live_channels={"public"})
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            provider,
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+        )
+
+        service.run_once(now=_NOW)  # establishes the horizon; pid 111 first tracked
+        later = _NOW + timedelta(seconds=35)
+        service.run_once(now=later)  # dispatches the reload
+        assert _pending_actions(store, "public") == ["reload"]
+
+        # It never lands, AND (independently) the worker crashed and
+        # relaunched with a NEW pid around the same time -- the process id
+        # changed but the daemon has not confirmed a new source yet (the
+        # proof event is unchanged).
+        self._on_air(store, "public", proof_event_id="ev-1", pid=222)
+        clock["now"] += 50.0  # past the 45s ISSUED_TIMEOUT
+        service.run_once(now=later)
+        # pid 222 has only been alive an instant by our tracking -- far
+        # short of the 60s worker-age floor -- so the retry is deferred.
+        assert _pending_actions(store, "public") == []
+        assert calls["n"] == 2  # no extra prepare call while deferred
+
+        # Once the pid has aged past the floor, the retry goes through.
+        clock["now"] += 65.0
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == ["reload"]
+
+    def test_an_unknown_pid_never_blocks_the_retry_indefinitely(self) -> None:
+        """A bare test double / a state row with no pid information at all
+        must never be treated as "just relaunched forever" -- see
+        ``test_rollover_retries_once_if_the_dispatched_reload_never_lands``
+        in ``TestPlanRollover``, which exercises this exact shape (pid always
+        ``None``) and must keep passing unchanged."""
+        clock = {"now": 1000.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", proof_event_id="ev-1", pid=None)
+        daemon = _FakeDaemon(live_channels={"public"})
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            provider,
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+        )
+
+        service.run_once(now=_NOW)
+        later = _NOW + timedelta(seconds=35)
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == ["reload"]
+
+        clock["now"] += 50.0  # past the 45s timeout (the retry-interval floor is a
+        # no-op here: this is the FIRST retry, so _rollover_retry_dispatched_at
+        # has nothing recorded yet to measure a gap from)
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == ["reload"]
+
+
+class TestRolloverRetryFloorMeasuredFromTheLastRetryNotTheOriginalDispatch:
+    """Coordinator review, round 2, item 4: ``_ROLLOVER_RETRY_MIN_INTERVAL_SECONDS``
+    was previously measured from ``_rollover_dispatched_at`` (the ORIGINAL
+    dispatch) -- dead code, since the retry branch is only ever entered
+    after ``_ROLLOVER_ISSUED_TIMEOUT_SECONDS`` (45s) has already elapsed
+    since that same origin, so a floor <= 45s measured from it can never
+    bind. It is now measured from ``_rollover_retry_dispatched_at`` (the
+    last RETRY specifically), making it a real storm limiter: a channel
+    stuck retrying repeatedly is capped to one retry per
+    ``_ROLLOVER_RETRY_MIN_INTERVAL_SECONDS`` (60s), not one every time the
+    45s timeout re-arms."""
+
+    def test_a_worker_relaunching_faster_than_its_own_trigger_delay_gets_no_rollover_during_the_churn(
+        self,
+    ) -> None:
+        """Coordinator review, round 3, item F (round-4 doc correction, item
+        2(c)): models a REAL worker relaunch -- a non-ON_AIR tick
+        (``STARTING``) followed by ON_AIR again with a FRESH proof event and
+        a new pid -- not merely a changed pid on an otherwise-unbroken
+        ON_AIR/proof-event stream (the round-2 shape, which really only
+        exercised the worker-pid-age guard in isolation and never any of
+        the horizon-reset cleanup branches at all).
+
+        What this test actually demonstrates: the "not ON_AIR" branch's
+        horizon reset (``_plan_horizon``/``_rollover_issued``/
+        ``_rollover_dispatched_at``/``_rollover_retry_dispatched_at`` all
+        cleared, present since round 2 -- the ``STARTING`` tick on every
+        relaunch cycle) -- NOT round 3 item E's specific addition (clearing
+        ``_rollover_retry_dispatched_at`` on the "fresh plan just took air"
+        and "stale horizon" branches). Because the ``STARTING`` tick always
+        runs immediately before the landing tick in this exact sequence,
+        the "fresh plan took air" branch's own clearing is REDUNDANT here --
+        the value is already ``None`` by the time it runs. Item E's two
+        clearings are covered directly (and non-redundantly) by
+        ``TestRolloverRetryDispatchTimestampIsClearedWithTheIssuedLatch``
+        above instead.
+
+        The plan here is two segments (40s, 200s): its boundary-aligned
+        trigger is 40s after establishment (the last segment's own start),
+        deliberately longer than the ~25s a horizon gets to live between one
+        relaunch's landing and the next relaunch's ``STARTING`` tick (30s
+        apart). Every relaunch therefore wipes the tracked horizon via the
+        "not ON_AIR" branch before it ever gets far enough to reach its own
+        trigger. This is the exact degrade mode named in the CHANGELOG: a
+        worker that relaunches faster than a rollover's own trigger delay
+        never keeps a horizon tracked long enough to fire one at all while
+        it keeps doing that -- not a hang, just a reversion to the pre-
+        item-78 shape (the channel reaches its own EOS/crash cycle and the
+        daemon's own crash back-off, untouched by this fix, owns the
+        restart). Once the worker stabilizes (stops relaunching), the
+        rollover mechanism gets a real chance to run: one dispatch at the
+        trigger and, since it never lands here either, retries capped to
+        the 60s floor -- the same steady-state behavior the round-2 version
+        of this test proved."""
+        clock = {"now": 1000.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        daemon = _FakeDaemon(live_channels={"public"})
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return _plan_with_segments(
+                "public", (40.0, 200.0), source_ref_prefix=f"call{calls['n']}"
+            )
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            provider,
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+        )
+
+        def starting(pid: int) -> None:
+            store.write_state(
+                EgressStateRow(
+                    channel_id="public",
+                    state="STARTING",
+                    current_proof_event_id=None,
+                    updated_at=_NOW,
+                    pid=pid,
+                )
+            )
+
+        def on_air(pid: int, proof_event_id: str) -> None:
+            store.write_state(
+                EgressStateRow(
+                    channel_id="public",
+                    state="ON_AIR",
+                    current_source_label="Council Meeting",
+                    current_proof_event_id=proof_event_id,
+                    updated_at=_NOW,
+                    pid=pid,
+                )
+            )
+
+        # Wall clock advances in lockstep with the monotonic clock (unlike
+        # every OTHER test in this module, which pins "now" to a single
+        # fixed instant) -- required here so the plan's own 40s-out trigger
+        # is ever actually reached by wall clock at all once the churn ends;
+        # a pinned "now" would leave ``now < trigger_at`` true forever.
+        wall_now = _NOW
+        on_air(pid=1, proof_event_id="ev-1")
+        service.run_once(now=wall_now)  # establish: 240s plan, trigger 40s out
+
+        dispatch_times: list[float] = []
+        pid_counter = 1
+        proof_counter = 1
+        tick = 0.0
+        step = 5.0
+        last_relaunch_tick = 0.0
+        pending_landing = False
+        # Bounded to stay within the ONE plan lifetime (240s) the LAST
+        # relaunch (landing by tick 250) establishes -- long enough to
+        # observe the churn producing nothing, then the original dispatch
+        # and several retries, short enough that the item-2 stale-horizon
+        # guard never re-establishes a SECOND lifetime and confuses the
+        # gap-spacing assertions below with another original-dispatch reset.
+        while tick < 460.0:
+            clock["now"] += step
+            wall_now = wall_now + timedelta(seconds=step)
+            tick += step
+            if pending_landing:
+                # The relaunch "lands" the next tick after STARTING -- back
+                # ON_AIR with a fresh proof event, same new pid.
+                on_air(pid=pid_counter, proof_event_id=f"ev-{proof_counter}")
+                pending_landing = False
+            elif tick <= 250.0 and tick - last_relaunch_tick >= 30.0:
+                pid_counter += 1
+                proof_counter += 1
+                last_relaunch_tick = tick
+                starting(pid=pid_counter)
+                pending_landing = True
+            service.run_once(now=wall_now)
+            if _pending_actions(store, "public") == ["reload"]:
+                dispatch_times.append(clock["now"])
+
+        # No rollover ever got far enough to dispatch during the churn (every
+        # relaunch wipes the horizon well before its own 40s trigger delay).
+        assert all(t > 1000.0 + 250.0 for t in dispatch_times), dispatch_times
+        # The original dispatch plus several retries land once the worker
+        # stabilizes -- not a vacuous "zero dispatches ever" result.
+        assert len(dispatch_times) >= 3, dispatch_times
+        gaps = [b - a for a, b in pairwise(dispatch_times)]
+        # The FIRST gap is original-dispatch -> first-retry, legitimately
+        # governed by the 45s ISSUED_TIMEOUT alone (the interval floor is a
+        # no-op for a channel's very first retry -- nothing recorded yet to
+        # measure a gap from). Every gap AFTER that is retry -> retry, and
+        # must respect the 60s interval floor -- the storm limiter this fix
+        # exists to make meaningful.
+        assert gaps[0] >= 45.0, gaps
+        assert all(gap >= 60.0 for gap in gaps[1:]), gaps
