@@ -268,30 +268,45 @@ itself — no CLI worker needed. Posture for a three-channel station:
   synchronous scheduler and head-of-line-blocked the real one; round 5
   schedules it only after the lock is released.
 - **The loudness probe samples the asset, it does not measure the whole
-  file (item 66, revised round-5):** a TRIMMED (join-in-progress) segment's
+  file (item 66, revised round-6):** a TRIMMED (join-in-progress) segment's
   probe is bounded to its own wanted window. An UNTRIMMED segment's probe
-  samples 120 seconds starting 40% into the asset's REAL MEDIA DURATION —
-  NOT the head, and NOT the schedule slot's duration — because a head
-  sample can land on cold-open silence or room tone and measure the
-  silence floor instead of the program's real loudness (a real field
-  failure: -70 LUFS measured at the head of a 39-minute meeting recording,
-  which would have driven normalization completely wrong and been reused
-  for every other segment/airing of that asset via the per-asset memo
-  above). The media duration used for that 40% offset is the asset's own
-  probed length (a cheap ffprobe query, cached alongside the loudness
-  result) — NOT the prepared segment's `duration_seconds`, which is capped
-  by the schedule slot and can be shorter than the asset itself; using the
-  slot duration for the offset could seek past the asset's actual end
-  (measured: a past-EOF seek reads as silence, triggering an unnecessary
-  floor fallback). The 40% offset is clamped so it can never land past the
-  asset's real end even for a short asset. If the sampled window itself
-  measures at or below -60 LUFS integrated (still silence, e.g. a long
-  pause that happens to land in the sample), the preparer resamples ONCE
-  more at a DIFFERENT offset (70% into the media duration, same clamping,
-  still a bounded 120-second sample — never a whole-file decode) and uses
-  that reading instead. Only if BOTH independent samples land at the floor
-  is the asset treated as genuinely silent (normalization is skipped
-  outright rather than trusting either floor reading as a real target).
+  uses the asset's REAL MEDIA DURATION — NOT the head, and NOT the
+  prepared segment's `duration_seconds` (which is capped by the schedule
+  slot and can be shorter than the asset itself; using the slot duration
+  for an offset could seek past the asset's actual end, read as silence,
+  and trigger an unnecessary floor verdict). The real duration comes from
+  a cheap ffprobe query, cached alongside the loudness result so a later
+  airing of the same asset never re-probes either one.
+  - **Duration known, asset > 240 seconds:** samples 120 seconds starting
+    40% in (a head sample can land on cold-open silence or room tone and
+    measure the silence floor instead of the program's real loudness — a
+    real field failure: -70 LUFS measured at the head of a 39-minute
+    meeting recording). If that sample measures at or below -60 LUFS
+    integrated (still silence, e.g. a long pause that happens to land in
+    the window), the preparer resamples ONCE more at 70% in — clamped so
+    the two windows never overlap (the second always starts at least 120
+    seconds after the first) — and uses that reading instead. Only if
+    BOTH independent samples land at the floor is the asset treated as
+    genuinely silent (normalization is skipped outright rather than
+    trusting either floor reading as a real target). If the resample
+    itself fails to produce a measurement at all, the FIRST reading is
+    kept rather than raising or discarding it.
+  - **Duration known, asset <= 240 seconds:** two non-overlapping
+    120-second windows literally cannot fit, so a "different offset"
+    second sample would either duplicate the first (any asset <=200s) or
+    overlap it (up to 400s) — never genuinely independent evidence.
+    Instead, exactly ONE sample is taken, from the very start, spanning
+    `min(duration, 120s)` — already the whole (or nearly the whole) file,
+    so a floor reading on it is trusted directly as silence with no
+    resample needed.
+  - **Duration genuinely unknown** (ffprobe unavailable or failed): the
+    probe samples from the very start (never past EOF for any asset with
+    real audio) and a floor reading is NEVER trusted as proof of silence —
+    there is no independent second window, and no known length, to
+    cross-check it against. This corrects a real, measured failure: with
+    the previous fixed-offset design (120s and 240s in), a real 67-second
+    clip (true loudness -10.9 LUFS) had BOTH offsets land past its actual
+    end, read as silence, and got misreported as a genuinely silent asset.
   Either way this remains a sample rather than a full-file measurement for
   material whose loudness varies significantly across its length.
 

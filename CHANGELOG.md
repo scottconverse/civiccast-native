@@ -91,7 +91,7 @@ below.
     afterward via `_promote_finished_conform_into_cache` — a hard link
     (`os.link`) of that SAME already-airing file into
     `conform-cache/{key}.ts.tmp`, then the existing atomic rename.
-  - **The link/lock design in the paragraph above went through THREE more
+  - **The link/lock design in the paragraph above went through FOUR more
     measured rounds of Opus review after it first shipped:**
     - **Round 4, BLOCKER:** the lock guarding that promotion (and the
       matching lock in `_conform_full_asset_into_cache`, used on the
@@ -128,6 +128,17 @@ below.
       AFTERWARD; the queued job's own lock acquisition is now also
       non-blocking (skip on contention rather than wait or busy-loop
       re-queuing itself).
+    - **Round 6, point 7:** if handing the job to `self._warm_scheduler`
+      itself raised (the job "discarded" before it ever ran, e.g. a broken
+      or test-double scheduler), `key` was left stuck in `self._warming`
+      forever — silently suppressing every future GENUINE warm for that
+      asset. Both `_schedule_warm` and `_schedule_cache_copy_promotion` now
+      catch that failure, discard the key, and log instead of leaving it
+      stuck. Point 5: the copy job's OUTER exception handler (covering
+      every failure other than a failed `shutil.copy2` itself, e.g.
+      `_promote_conform_into_cache`'s own over-budget raise after the copy
+      already succeeded) now also unlinks its partial `.ts.tmp` — only the
+      inner handler did before.
     Any failure in cache promotion (including the over-budget case) is
     still logged and swallowed, never raised: the segment is already
     safely on air regardless, and only the NEXT airing of that asset
@@ -165,23 +176,43 @@ below.
     (still silence -- e.g. a pause that happens to land in the sampled
     window), a round-4 version fell back to a synchronous WHOLE-FILE probe
     (measured 46.7s on a 39-minute clip) -- exactly the kind of
-    start-path-blocking work item 66 exists to close. Round 5 replaces that
+    start-path-blocking work item 66 exists to close. Round 5 replaced that
     with a SECOND bounded sample at a different offset (70% into the real
-    media duration, still 120 seconds, same EOF clamping); only if BOTH
-    independent samples land at the floor is the asset treated as
-    genuinely silent (`normalize=False`, cached as such -- never trusting
-    either floor reading as a real loudnorm target).
+    media duration, still 120 seconds).
+    **Round 6 found two more real bugs in that round-5 shape, both PROVEN
+    on real clips:** (1) when the real duration is genuinely UNKNOWN
+    (ffprobe unavailable or failed), round 5 still sampled at fixed 120s
+    and 240s offsets — for a real 67-second clip (true loudness -10.9
+    LUFS) BOTH offsets land past the clip's actual end, read as silence,
+    and the asset was misreported as genuinely silent. Round 6 samples
+    from 0s instead when duration is unknown (never past EOF for any
+    asset with real audio), and never trusts that single,
+    uncorroborated sample as proof of silence. (2) round 5's "second,
+    different offset" sample was actually IDENTICAL to the first for any
+    asset <=200s and OVERLAPPED it for up to 400s — never genuinely
+    independent evidence. Round 6 takes exactly ONE sample (0s, spanning
+    `min(duration, 120s)`) for any asset <=240s instead (trusted directly
+    as silence if it hits the floor — that one sample already covers the
+    whole, or nearly the whole, file); above 240s, the two samples are
+    placed and clamped so the second always starts at least 120s after
+    the first, guaranteeing no overlap. If the resample itself fails to
+    produce a measurement at all, the first (floor) reading is kept
+    rather than raising or silently discarding it.
     `check_loudness`/`check_streaming_loudness` gained optional
     `probe_start_seconds`/`probe_duration_seconds`/`threads` parameters for
     this (`None` for every OTHER caller, still measuring the whole file,
-    unthrottled, unchanged); `threads` is not currently exercised by any
-    caller now that the whole-file fallback is gone, but is kept as a
-    correctly-wired general capability (see the arg-order fix below). This
-    remains a documented sample, not a full-file measurement, for material
-    whose loudness varies significantly across its length — the
-    persisted-meta memo above still means one asset gets one measured value
-    shared across every segment/airing of it, which was already this
-    codebase's model before item 66 (the cache key never depended on trim).
+    unthrottled, unchanged); `_prepare_segment` now passes `threads=` on
+    every probe (round 6, point 6 — a production caller now exercises the
+    arg-order fix below, not just its own unit tests). This remains a
+    documented sample, not a full-file measurement, for material whose
+    loudness varies significantly across its length — the persisted-meta
+    memo above still means one asset gets one measured value shared
+    across every segment/airing of it, which was already this codebase's
+    model before item 66 (the cache key never depended on trim). The
+    asset's real media duration is threaded explicitly through every
+    conform/promotion call site that writes cache meta (round 6, point 3)
+    instead of `_write_cache_meta` doing a defensive read-modify-write on
+    every single write to avoid losing it.
   - **`-threads`'s position in `check_loudness` was an OUTPUT option, not
     an input one (round 5).** Round 4 placed `-threads <N>` after `-i`/
     `-t`, which ffmpeg parses as applying to the `-f null` output --
@@ -218,7 +249,8 @@ below.
   its new "Cache promotion never waits behind an in-progress warm" note,
   and its corrected "loudness probe" note describing the sampling window
   (40%/70% of the asset's REAL media duration, not its schedule-slot
-  duration) and the two-sample silence-floor fallback.
+  duration, with a single-sample shape for assets at or below 240s and a
+  never-trust-a-single-blind-sample rule when duration is unknown).
 - **A seamless plan rollover collided its own concat aggregators, silently
   failed to join the pipeline, and was acked "applied" anyway -- so
   automation kept re-triggering it forever while the channel bounced.**

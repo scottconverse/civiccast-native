@@ -741,6 +741,64 @@ def test_duplicate_warms_are_deduped(tmp_path: Path) -> None:
     assert len(warm_jobs) == 1
 
 
+def test_schedule_warm_discards_key_when_scheduler_itself_fails(tmp_path: Path) -> None:
+    """Item 66 round-6 (Opus review, point 7): if handing the warm job to
+    ``self._warm_scheduler`` itself raises (the job never gets a chance to
+    run, let alone clean up after itself), ``key`` must not be left stuck
+    in ``self._warming`` forever -- that would silently suppress every
+    GENUINE future warm for this asset for the life of this
+    ``SourcePreparer`` instance."""
+
+    def failing_scheduler(_job: Callable[[], None]) -> None:
+        raise RuntimeError("scheduler is down")
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=failing_scheduler,
+    )
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    config = _config()
+    key = preparer._cache_key(source, config)
+    assert key is not None
+
+    preparer._schedule_warm(key, source, config, _loudness(), False)  # must not raise
+
+    assert key not in preparer._warming  # not left stuck -- a genuine warm can still be scheduled
+
+
+def test_schedule_cache_copy_promotion_discards_key_when_scheduler_itself_fails(
+    tmp_path: Path,
+) -> None:
+    """Companion for ``_schedule_cache_copy_promotion`` -- the exact same
+    ``self._warming`` set, the exact same failure mode."""
+
+    def failing_scheduler(_job: Callable[[], None]) -> None:
+        raise RuntimeError("scheduler is down")
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=failing_scheduler,
+    )
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    config = _config()
+    key = preparer._cache_key(source, config)
+    assert key is not None
+    finished = tmp_path / "already-airing.ts"
+    finished.write_text("prepared bytes", encoding="utf-8")
+
+    preparer._schedule_cache_copy_promotion(
+        key, finished, source, _loudness(), False
+    )  # must not raise
+
+    assert key not in preparer._warming
+
+
 def test_corrupt_cache_sidecar_is_treated_as_miss(tmp_path: Path) -> None:
     calls: list[list[str]] = []
     preparer = SourcePreparer(
@@ -1259,6 +1317,48 @@ def test_promote_finished_conform_queues_a_copy_job_when_link_fails(
     assert finished.is_file()
 
 
+def test_cache_copy_promotion_job_cleans_up_tmp_on_a_post_copy_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 66 round-6 (Opus review, point 5): the copy job's INNER
+    try/except already cleaned up a partial ``.ts.tmp`` when ``shutil.
+    copy2`` itself failed -- but a failure AFTER a successful copy (e.g.
+    ``_promote_conform_into_cache``'s own over-budget raise, which runs
+    after the copy2 succeeded but before the tmp is renamed away) hit only
+    the OUTER except, which did not clean up. It must now unlink the tmp
+    there too."""
+    monkeypatch.setenv("CIVICCAST_CONFORM_CACHE_GB", "0.000000001")  # ~1 byte -- guarantees
+    # _promote_conform_into_cache's own over-budget SourcePrepareError, raised AFTER copy2
+    # succeeds and BEFORE the tmp is renamed away.
+    warm_jobs: list = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=warm_jobs.append,
+    )
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    config = _config()
+    key = preparer._cache_key(source, config)
+    assert key is not None
+    finished = tmp_path / "already-airing.ts"
+    finished.write_text("prepared bytes long enough to exceed a 1-byte budget", encoding="utf-8")
+
+    def _raising_link(_src: object, _dst: object) -> None:
+        raise OSError("simulated cross-volume link failure")
+
+    monkeypatch.setattr(preparer_module.os, "link", _raising_link)
+
+    preparer._promote_finished_conform_into_cache(key, finished, source, _loudness(), False)
+    assert len(warm_jobs) == 1
+    warm_jobs[0]()  # must not raise -- the job's own outer except must swallow it
+
+    tmp = tmp_path / "work" / "conform-cache" / f"{key}.ts.tmp"
+    assert not tmp.exists()  # cleaned up by the outer except, not left for the orphan reap
+    assert finished.is_file()  # the segment's own file is never touched by any of this
+
+
 def test_promote_finished_conform_does_not_deadlock_with_synchronous_scheduler(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1453,27 +1553,80 @@ def test_untrimmed_probe_samples_mid_file_not_the_head(
     assert meta["media_duration_seconds"] == 3600.0  # cached for a later prepare() call
 
 
-def test_untrimmed_probe_clamps_start_for_a_short_asset(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("duration", "expected_start", "expected_duration", "second_sample_possible"),
+    [
+        # Item 66 round-6 (Opus review, point 2): a "second, different
+        # offset" sample was actually IDENTICAL to the first for any asset
+        # <=200s and OVERLAPPED it for up to 400s -- never genuinely
+        # independent evidence. At or below _SHORT_ASSET_SINGLE_SAMPLE_MAX_S
+        # (240s) exactly one sample (0s, spanning min(duration, 120s)) is
+        # taken and no second sample is ever attempted; above it, the first
+        # sample sits at 40% in with enough room reserved for a later
+        # non-overlapping resample (verified below to land at 70% in,
+        # never overlapping the first window).
+        (67.0, 0.0, 67.0, False),  # the exact duration from the PROVEN field failure
+        (150.0, 0.0, 120.0, False),
+        (240.0, 0.0, 120.0, False),  # exactly the single/dual boundary
+        (400.0, 160.0, 120.0, True),  # smallest duration where two 120s windows just fit
+        (3600.0, 1440.0, 120.0, True),
+    ],
+)
+def test_untrimmed_probe_window_by_media_duration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    duration: float,
+    expected_start: float,
+    expected_duration: float,
+    second_sample_possible: bool,
 ) -> None:
-    """Companion: a real media duration short enough that 40% of it plus
-    the 120s sample window would read past EOF must clamp the start
-    instead -- never seek past the asset's own end."""
-    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 150.0)
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: duration)
     probes: list[dict] = []
     preparer = SourcePreparer(
         work_dir=tmp_path / "work",
         ffmpeg_runner=_counting_runner([]),
-        loudness_checker=lambda **kwargs: probes.append(kwargs) or _loudness(),
+        # A floor reading throughout: proves whether a resample is even
+        # ATTEMPTED, regardless of whether it would end up trusted.
+        loudness_checker=lambda **kwargs: probes.append(kwargs) or _loudness(measured_lufs=-70.0),
         warm_scheduler=lambda job: None,
     )
 
     preparer.prepare(_untrimmed_plan(tmp_path), _config())
 
-    assert len(probes) == 1
-    # 40% of 150s = 60s, but 60s + 120s sample = 180s > 150s media duration --
-    # clamp to media_duration - probe_len = 30s instead.
-    assert probes[0]["probe_start_seconds"] == 30.0
+    assert probes[0]["probe_start_seconds"] == expected_start
+    assert probes[0]["probe_duration_seconds"] == expected_duration
+    if second_sample_possible:
+        assert len(probes) == 2  # the floor reading triggers exactly one resample
+        # The two windows must never overlap: second start >= first start + 120s.
+        assert probes[1]["probe_start_seconds"] >= expected_start + 120.0
+        assert probes[1]["probe_start_seconds"] + probes[1]["probe_duration_seconds"] <= duration
+    else:
+        assert len(probes) == 1  # no second window exists to sample -- none attempted
+
+
+def test_untrimmed_probe_trusts_a_single_conclusive_sample_as_silent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Companion to the parametrized test above: for a short, KNOWN-duration
+    asset (<=240s) whose one sample already covers the whole file, a floor
+    reading is trusted directly as genuine silence -- there is no second
+    window to corroborate against, and none is needed."""
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 150.0)
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(measured_lufs=-70.0),
+        warm_scheduler=lambda job: None,
+    )
+
+    preparer.prepare(_untrimmed_plan(tmp_path), _config())
+
+    key = preparer._cache_key(tmp_path / "long-recording.mp4", _config())
+    assert key is not None
+    meta = preparer._read_cache_meta(key)
+    assert meta is not None
+    assert meta["measured_lufs"] == -70.0
+    assert meta["normalized"] is False  # trusted as silent from the one sample alone
 
 
 def test_untrimmed_probe_falls_back_to_a_second_bounded_sample_on_silence_floor(
@@ -1519,6 +1672,41 @@ def test_untrimmed_probe_falls_back_to_a_second_bounded_sample_on_silence_floor(
     )  # -16.0 is outside -24.0 +/- 1.0 tolerance -- still normalizes
 
 
+def test_untrimmed_probe_keeps_first_reading_when_resample_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 66 round-6 (Opus review, point 4): if the resample itself fails
+    to produce a measurement (e.g. an ffmpeg error), the first (floor)
+    reading is kept -- never raise from a failed resample, and never
+    silently overwrite a usable reading with an unmeasured one."""
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 3600.0)
+
+    def loudness_checker(**kwargs: object) -> LoudnessGateResult:
+        if kwargs.get("probe_start_seconds") == 1440.0:
+            # the 40%-in sample: silence, well outside tolerance of the -24 target.
+            return _loudness(status="failed", measured_lufs=-70.0)
+        # the 70%-in resample fails outright -- no measurement at all.
+        return _loudness(status="failed", measured_lufs=None)
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=loudness_checker,
+        warm_scheduler=lambda job: None,
+    )
+
+    report = preparer.prepare(_untrimmed_plan(tmp_path), _config())  # must not raise
+
+    seg = report.source_plan.segments[0]
+    assert Path(seg.path).is_file()
+    key = preparer._cache_key(tmp_path / "long-recording.mp4", _config())
+    assert key is not None
+    meta = preparer._read_cache_meta(key)
+    assert meta is not None
+    assert meta["measured_lufs"] == -70.0  # the first (floor) reading, kept
+    assert meta["normalized"] is True  # never marked silent -- the resample couldn't confirm it
+
+
 def test_untrimmed_probe_treats_asset_as_silent_when_both_samples_hit_the_floor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1560,6 +1748,47 @@ def test_untrimmed_probe_does_not_fall_back_when_sample_is_above_the_floor(
     preparer.prepare(_untrimmed_plan(tmp_path), _config())
 
     assert len(probes) == 1  # no fallback triggered
+
+
+def test_untrimmed_probe_with_unknown_duration_samples_from_zero_never_silent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 66 round-6 BLOCKER-adjacent fix (Opus review, point 1): PROVEN
+    on a real 67-second clip (real loudness -10.9 LUFS): when the real
+    media duration is unknown (ffprobe unavailable/failed), round 5's
+    fixed 120s/240s offsets landed entirely past the clip's actual end for
+    ANY asset shorter than 120s, read as silence, and got misreported as a
+    genuinely silent asset. With duration unknown, the probe must sample
+    from 0s instead (never past EOF for any asset with real audio), and a
+    floor reading there must NEVER be trusted as proof of silence (there
+    is no independent second window, and no known length, to corroborate
+    it against)."""
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: None)
+    probes: list[dict] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        # Simulates the PROVEN failure mode: a blind offset lands past EOF
+        # and reads as silence, even though the real asset is not silent.
+        loudness_checker=lambda **kwargs: (
+            probes.append(kwargs) or _loudness(status="failed", measured_lufs=-70.0)
+        ),
+        warm_scheduler=lambda job: None,
+    )
+
+    preparer.prepare(_untrimmed_plan(tmp_path), _config())
+
+    assert len(probes) == 1  # sampled once, from the start -- never a second/corroborating sample
+    assert probes[0]["probe_start_seconds"] == 0.0
+    assert probes[0]["probe_duration_seconds"] == 120.0
+
+    key = preparer._cache_key(tmp_path / "long-recording.mp4", _config())
+    assert key is not None
+    meta = preparer._read_cache_meta(key)
+    assert meta is not None
+    assert meta["measured_lufs"] == -70.0
+    assert meta["normalized"] is True  # NEVER trusted as silent when duration is unknown
+    assert meta["media_duration_seconds"] is None
 
 
 def test_cache_hit_utime_race_falls_through_to_a_miss(
@@ -1774,6 +2003,57 @@ def test_loudness_probe_reused_across_prepares_of_the_same_asset(tmp_path: Path)
         warm_scheduler=lambda job: None,
     ).prepare(plan(), _config())
     assert probes_2 == []  # reused from the meta the first prepare() persisted
+
+
+def test_untrimmed_second_prepare_of_same_asset_runs_zero_ffprobes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 66 round-6 (Opus review, point 3): an untrimmed asset's real
+    media duration (probed via ``probe_media_duration_seconds``) is cached
+    in the same meta as its loudness result -- a SECOND ``prepare()`` of
+    the same asset (a fresh ``SourcePreparer`` sharing ``work_dir``) must
+    run ZERO ffprobes, same as it must run zero loudness probes. The
+    duration read back from the reused meta (see ``_prepare_segment``'s
+    ``if meta is not None:`` branch) must also survive the SECOND meta
+    write that the untrimmed-miss tail makes (``_promote_finished_conform_
+    into_cache`` -> ``_write_cache_meta`` again, without itself knowing the
+    duration) -- proving the round-6 explicit-threading fix actually
+    prevents the round-5 read-modify-write it replaced from being needed."""
+    ffprobe_calls: list[Path] = []
+
+    def counting_probe(path: Path) -> float | None:
+        ffprobe_calls.append(path)
+        return 3600.0
+
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", counting_probe)
+
+    preparer_1 = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    preparer_1.prepare(_untrimmed_plan(tmp_path), _config())
+    assert len(ffprobe_calls) == 1
+
+    key = preparer_1._cache_key(tmp_path / "long-recording.mp4", _config())
+    assert key is not None
+    meta_after_first = preparer_1._read_cache_meta(key)
+    assert meta_after_first is not None
+    assert meta_after_first["media_duration_seconds"] == 3600.0  # survives the conform-tail's
+    # second _write_cache_meta call (the untrimmed-miss branch always writes meta twice: once
+    # from the probe itself, again from _promote_finished_conform_into_cache's tail).
+
+    ffprobe_calls.clear()
+    preparer_2 = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    preparer_2.prepare(_untrimmed_plan(tmp_path), _config())
+
+    assert ffprobe_calls == []  # zero ffprobes on the second prepare() of the same asset
 
 
 def test_default_warm_scheduler_runs_jobs_in_fifo_order_one_at_a_time(tmp_path: Path) -> None:

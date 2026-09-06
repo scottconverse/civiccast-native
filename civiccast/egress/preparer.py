@@ -115,6 +115,18 @@ _UNTRIMMED_LOUDNESS_PROBE_FRACTION_2 = 0.7
 #: program loudness.
 _LOUDNESS_SILENCE_FLOOR_LUFS = -60.0
 
+#: Item 66 round-6 (Opus review, point 2): two non-overlapping
+#: ``_UNTRIMMED_LOUDNESS_PROBE_CAP_S``-long windows, with at least one full
+#: window's gap between their starts, cannot both fit inside an asset
+#: shorter than twice that length. Below this threshold a "second, different
+#: offset" sample was actually IDENTICAL to the first for anything <=200s
+#: and overlapped it for up to 400s -- never genuinely independent evidence.
+#: At or below this duration, take exactly ONE sample spanning
+#: ``min(duration, _UNTRIMMED_LOUDNESS_PROBE_CAP_S)`` from the very start
+#: instead -- it already covers the whole (or nearly the whole) asset, so
+#: it needs no corroboration.
+_SHORT_ASSET_SINGLE_SAMPLE_MAX_S = _UNTRIMMED_LOUDNESS_PROBE_CAP_S * 2
+
 
 def _prepared_plan_dir_budget_bytes() -> float:
     raw = os.environ.get("CIVICCAST_PREPARED_PLAN_DIR_BUDGET_GB", "").strip()
@@ -344,25 +356,28 @@ class SourcePreparer:
         (``_read_cache_meta``, or the cache-HIT check's ``.is_file()``) must
         never observe a partially-written ``{key}.json``.
 
-        ``media_duration_seconds`` (item 66 round-5, point 2): the asset's
-        real media duration, probed once via ``probe_media_duration_seconds``
-        and cached here so later segments/airings of the same asset never
-        re-probe it. Not every caller knows this value (``_promote_conform_
-        into_cache``'s tail does not), so a ``None`` here MERGES with --
-        never overwrites to ``None`` -- whatever value was already
-        persisted.
+        ``media_duration_seconds`` (item 66 round-5, point 2; simplified
+        round-6, point 3): the asset's real media duration, probed once via
+        ``probe_media_duration_seconds`` and cached here so later
+        segments/airings of the same asset never re-probe it. Every call
+        site that could plausibly know this value now threads it through
+        explicitly (``_conform_full_asset_into_cache``,
+        ``_promote_conform_into_cache``, ``_promote_finished_conform_into_
+        cache``, ``_schedule_cache_copy_promotion``, ``_schedule_warm`` all
+        gained the same keyword) -- a round-5 version of this method instead
+        read the existing meta back and merged in whatever value it already
+        held, purely to avoid a later write-without-the-value clobbering an
+        earlier write-with-it. That extra read on every write is no longer
+        needed now that the value travels with the call: this write is the
+        single atomic write of everything this cache entry's meta holds.
         """
         cache_dir = self._cache_dir()
         cache_dir.mkdir(parents=True, exist_ok=True)
-        existing = self._read_cache_meta(key) or {}
-        preserved_duration = existing.get("media_duration_seconds")
         meta = {
             "loudness_status": loudness.status,
             "measured_lufs": loudness.measured_lufs,
             "normalized": normalized,
-            "media_duration_seconds": (
-                media_duration_seconds if media_duration_seconds is not None else preserved_duration
-            ),
+            "media_duration_seconds": media_duration_seconds,
         }
         final = cache_dir / f"{key}.json"
         tmp = final.with_name(final.name + ".tmp")
@@ -385,6 +400,7 @@ class SourcePreparer:
         normalized: bool,
         *,
         threads: int = 1,
+        media_duration_seconds: float | None = None,
     ) -> Path | None:
         """Conform the WHOLE asset (no trim) into the cache, atomically.
 
@@ -445,7 +461,14 @@ class SourcePreparer:
                 raise SourcePrepareError(
                     f"Full-asset conform for cache failed for {source_path.name!r}."
                 )
-            return self._promote_conform_into_cache(key, tmp, source_path, loudness, normalized)
+            return self._promote_conform_into_cache(
+                key,
+                tmp,
+                source_path,
+                loudness,
+                normalized,
+                media_duration_seconds=media_duration_seconds,
+            )
         finally:
             lock.release()
 
@@ -456,6 +479,8 @@ class SourcePreparer:
         source_path: Path,
         loudness: LoudnessGateResult,
         normalized: bool,
+        *,
+        media_duration_seconds: float | None = None,
     ) -> Path:
         """Move an already-conformed ``tmp`` file (a full-asset conform, no
         trim) into the persistent conform cache atomically: rename into
@@ -484,7 +509,9 @@ class SourcePreparer:
         final = cache_dir / f"{key}.ts"
         cache_dir.mkdir(parents=True, exist_ok=True)
         tmp.replace(final)
-        self._write_cache_meta(key, loudness, normalized)
+        self._write_cache_meta(
+            key, loudness, normalized, media_duration_seconds=media_duration_seconds
+        )
         self._evict_cache_over_budget()
         if not final.exists():
             # The just-written entry alone exceeded the budget and was
@@ -504,6 +531,8 @@ class SourcePreparer:
         source_path: Path,
         loudness: LoudnessGateResult,
         normalized: bool,
+        *,
+        media_duration_seconds: float | None = None,
     ) -> None:
         """Item 66 round-3 BLOCKER fix (Opus review): populate the
         persistent conform cache from an ALREADY-FINISHED, already-airing
@@ -569,7 +598,14 @@ class SourcePreparer:
                 # try/except/finally) rather than here, while still held.
                 needs_background_copy = True
             else:
-                self._promote_conform_into_cache(key, tmp, source_path, loudness, normalized)
+                self._promote_conform_into_cache(
+                    key,
+                    tmp,
+                    source_path,
+                    loudness,
+                    normalized,
+                    media_duration_seconds=media_duration_seconds,
+                )
         except Exception:
             _LOG.exception(
                 "Promoting the finished conform for %r into the persistent conform cache "
@@ -584,7 +620,12 @@ class SourcePreparer:
 
         if needs_background_copy:
             self._schedule_cache_copy_promotion(
-                key, finished_output_path, source_path, loudness, normalized
+                key,
+                finished_output_path,
+                source_path,
+                loudness,
+                normalized,
+                media_duration_seconds=media_duration_seconds,
             )
 
     def _schedule_cache_copy_promotion(
@@ -594,6 +635,8 @@ class SourcePreparer:
         source_path: Path,
         loudness: LoudnessGateResult,
         normalized: bool,
+        *,
+        media_duration_seconds: float | None = None,
     ) -> None:
         """Item 66 round-4 (Opus review, point 3): queue a full
         byte-for-byte copy of an already-finished, already-airing per-plan
@@ -628,6 +671,15 @@ class SourcePreparer:
         ``release``'s docstring for the accepted (not fixed) race against
         that directory being reclaimed (by ``release`` or
         ``_gc_prepared_plan_dirs``) before the copy runs.
+
+        Item 66 round-6 (point 7): if handing ``_job`` to ``self.
+        _warm_scheduler`` itself raises (the job is never queued at all --
+        "discarded" before it ever got a chance to run its own cleanup),
+        ``key`` is removed from ``self._warming`` right here instead of
+        being left there forever -- otherwise ``_schedule_warm``'s own
+        top-of-function dedupe check (which shares this same set) would
+        silently refuse to ever schedule a GENUINE warm for this asset
+        again for the life of this ``SourcePreparer`` instance.
         """
         with self._warming_guard:
             if key in self._warming:
@@ -635,6 +687,7 @@ class SourcePreparer:
             self._warming.add(key)
 
         def _job() -> None:
+            tmp: Path | None = None
             try:
                 cached_ts = self._cache_dir() / f"{key}.ts"
                 if cached_ts.is_file() and self._read_cache_meta(key) is not None:
@@ -662,7 +715,14 @@ class SourcePreparer:
                         with contextlib.suppress(OSError):
                             tmp.unlink()
                         raise
-                    self._promote_conform_into_cache(key, tmp, source_path, loudness, normalized)
+                    self._promote_conform_into_cache(
+                        key,
+                        tmp,
+                        source_path,
+                        loudness,
+                        normalized,
+                        media_duration_seconds=media_duration_seconds,
+                    )
                 finally:
                     lock.release()
             except Exception:
@@ -671,11 +731,29 @@ class SourcePreparer:
                     "re-populates the cache.",
                     source_path.name,
                 )
+                # Item 66 round-6 (point 5): the inner handler above already
+                # covers a failed copy2; this covers every OTHER failure in
+                # the block (cache_dir.mkdir, the initial tmp.unlink, or
+                # _promote_conform_into_cache's own over-budget raise after
+                # copy2 succeeded but before tmp was renamed away) so a
+                # partial .ts.tmp is never left for the orphan reap to find.
+                if tmp is not None:
+                    with contextlib.suppress(OSError):
+                        tmp.unlink()
             finally:
                 with self._warming_guard:
                     self._warming.discard(key)
 
-        self._warm_scheduler(_job)
+        try:
+            self._warm_scheduler(_job)
+        except Exception:
+            with self._warming_guard:
+                self._warming.discard(key)
+            _LOG.exception(
+                "Failed to queue background cache-copy promotion for %r; the next "
+                "airing re-populates the cache.",
+                source_path.name,
+            )
 
     def _emit_prepared_from_cache(
         self,
@@ -772,8 +850,20 @@ class SourcePreparer:
         config: EgressConfig,
         loudness: LoudnessGateResult,
         normalized: bool,
+        *,
+        media_duration_seconds: float | None = None,
     ) -> None:
-        """Warm-behind: populate the full-asset cache without blocking airtime."""
+        """Warm-behind: populate the full-asset cache without blocking airtime.
+
+        Item 66 round-6 (point 7): if handing ``_job`` to ``self.
+        _warm_scheduler`` itself raises, ``key`` is removed from
+        ``self._warming`` here too -- see
+        ``_schedule_cache_copy_promotion``'s docstring, which shares this
+        exact concern (and this exact ``self._warming`` set): a job
+        "discarded" before it ever ran would otherwise leave the key
+        stuck, silently suppressing every future GENUINE warm for this
+        asset for the life of this ``SourcePreparer`` instance.
+        """
         with self._warming_guard:
             if key in self._warming:
                 return
@@ -792,7 +882,14 @@ class SourcePreparer:
                 cached_ts = self._cache_dir() / f"{key}.ts"
                 if cached_ts.is_file() and self._read_cache_meta(key) is not None:
                     return
-                self._conform_full_asset_into_cache(key, source_path, config, loudness, normalized)
+                self._conform_full_asset_into_cache(
+                    key,
+                    source_path,
+                    config,
+                    loudness,
+                    normalized,
+                    media_duration_seconds=media_duration_seconds,
+                )
             except Exception:
                 # A failed warm must never surface at air; the next airing
                 # simply misses the cache and warms again.
@@ -801,7 +898,12 @@ class SourcePreparer:
                 with self._warming_guard:
                     self._warming.discard(key)
 
-        self._warm_scheduler(_job)
+        try:
+            self._warm_scheduler(_job)
+        except Exception:
+            with self._warming_guard:
+                self._warming.discard(key)
+            _LOG.exception("Failed to queue conform-cache warm; next airing re-warms.")
 
     def release(self, plan_dir: Path | None) -> None:
         """F3 fix: immediately reclaim ONE specific per-plan directory the caller
@@ -1141,6 +1243,12 @@ class SourcePreparer:
                         normalized=bool(meta.get("normalized", False)),
                     )
 
+        # Item 66 round-6 (point 3): declared here, before the reuse/probe
+        # split, so it is ALWAYS bound regardless of which branch runs --
+        # both branches' tail calls (``_conform_full_asset_into_cache`` /
+        # ``_promote_finished_conform_into_cache`` / ``_schedule_warm``)
+        # thread it through to ``_write_cache_meta``.
+        media_duration: float | None = None
         if meta is not None:
             # Item 66 (point 1, Opus review): the full conform isn't cached
             # yet, but a loudness probe for this SAME asset fingerprint
@@ -1169,6 +1277,21 @@ class SourcePreparer:
                 ),
             )
             normalized = bool(meta.get("normalized", False))
+            # Item 66 round-6 (point 3): read the cached media duration back
+            # from this SAME meta -- reused here so a downstream conform's
+            # own ``_write_cache_meta`` call (which does not itself know the
+            # duration) does not have to guess at it. Whichever segment
+            # first probed this asset already persisted this value in the
+            # exact same atomic write as the loudness fields above; a round-5
+            # version of ``_write_cache_meta`` instead did a defensive
+            # read-modify-write on every single write to avoid losing this
+            # value -- reading it back once here, at the one place loudness
+            # itself is also being reused from disk, replaces that.
+            media_duration = (
+                float(cached_duration)
+                if isinstance(cached_duration := meta.get("media_duration_seconds"), int | float)
+                else None
+            )
         else:
             # Item 66 round-3 (Opus review): bound the probe to a WINDOW
             # instead of decoding/analyzing the whole file. A trimmed
@@ -1182,8 +1305,21 @@ class SourcePreparer:
             # tone and measure the silence floor, a real field failure that
             # would drive loudnorm's target completely wrong and get
             # memoized for every other segment/airing of the asset.
-            media_duration: float | None = None
             silent_asset = False
+            # Item 66 round-6 (Opus review): two different ways a floor
+            # reading on the FIRST sample can become a trusted silence
+            # verdict. ``allow_second_sample`` -- corroborate with a
+            # second, genuinely independent sample before trusting it (the
+            # "long asset" branch below). ``single_sample_is_conclusive`` --
+            # trust the FIRST sample alone, because its window already
+            # covers the whole (or nearly the whole) known-length asset, so
+            # there is nothing left to corroborate against (the "short,
+            # known-duration asset" branch below). Neither applies to a
+            # trimmed probe, nor when the real duration is unknown --
+            # point 1(a): a single, uncorroborated sample against an asset
+            # of UNKNOWN length is never trusted as proof of silence.
+            allow_second_sample = False
+            single_sample_is_conclusive = False
             if trimmed:
                 probe_start_seconds = segment.inpoint_seconds
                 probe_duration_seconds = segment.duration_seconds
@@ -1210,32 +1346,71 @@ class SourcePreparer:
                 # loudness memo it is written together with.
                 media_duration = probe_media_duration_seconds(source_path)
                 if media_duration is not None and media_duration > 0:
-                    # Clamp so the 40%-in offset can never land past EOF,
-                    # even for an asset shorter than the sample window
-                    # would otherwise reach.
-                    probe_start_seconds = max(
-                        0.0,
-                        min(
-                            media_duration * _UNTRIMMED_LOUDNESS_PROBE_FRACTION,
-                            media_duration - _UNTRIMMED_LOUDNESS_PROBE_CAP_S,
-                        ),
-                    )
+                    if media_duration <= _SHORT_ASSET_SINGLE_SAMPLE_MAX_S:
+                        # Item 66 round-6 (point 2): can't fit two
+                        # non-overlapping windows -- one sample spanning
+                        # min(duration, 120s) from the very start already
+                        # covers the whole (or nearly the whole) asset, so
+                        # it needs no corroboration -- a floor reading on
+                        # it alone is conclusive (the asset's real length
+                        # IS known here, unlike the "unknown duration"
+                        # branch below).
+                        probe_start_seconds = 0.0
+                        probe_duration_seconds = min(
+                            media_duration, _UNTRIMMED_LOUDNESS_PROBE_CAP_S
+                        )
+                        single_sample_is_conclusive = True
+                    else:
+                        # Long asset: 40% in, clamped so a LATER 70%-in
+                        # resample (see below) can still fit non-overlapping
+                        # -- reserve a full second window's worth of room,
+                        # not just this window's own.
+                        probe_start_seconds = max(
+                            0.0,
+                            min(
+                                media_duration * _UNTRIMMED_LOUDNESS_PROBE_FRACTION,
+                                media_duration - _SHORT_ASSET_SINGLE_SAMPLE_MAX_S,
+                            ),
+                        )
+                        probe_duration_seconds = _UNTRIMMED_LOUDNESS_PROBE_CAP_S
+                        allow_second_sample = True
                 else:
-                    # Real duration genuinely unknown (ffprobe unavailable
-                    # or failed too) -- fall back to the historical fixed
-                    # offset; EOF position isn't knowable here, so the
-                    # residual past-EOF risk can't be clamped away.
-                    probe_start_seconds = _UNTRIMMED_LOUDNESS_PROBE_CAP_S
-                probe_duration_seconds = _UNTRIMMED_LOUDNESS_PROBE_CAP_S
+                    # Item 66 round-6 (Opus review, point 1): the real
+                    # duration is genuinely unknown (ffprobe unavailable or
+                    # failed) -- round 5's fixed 120s/240s offsets were
+                    # PROVEN wrong here: for anything shorter than 120s,
+                    # BOTH blind offsets land past the asset's actual end,
+                    # read as silence, and get misreported as a genuinely
+                    # silent asset (measured: a real 67s/-10.9 LUFS clip
+                    # reported as silent). Sample from the very start
+                    # instead -- never past EOF for any asset with any
+                    # audio at all -- and never corroborate/trust this
+                    # single, uncorroborated sample as proof of silence:
+                    # there is no independent second window to cross-check
+                    # it against when the asset's true length isn't known.
+                    probe_start_seconds = 0.0
+                    probe_duration_seconds = _UNTRIMMED_LOUDNESS_PROBE_CAP_S
             loudness = self._loudness_checker(
                 media_path=source_path,
                 target_lufs=config.loudness_target_lufs,
                 tolerance_lufs=config.loudness_tolerance_lufs,
                 probe_start_seconds=probe_start_seconds,
                 probe_duration_seconds=probe_duration_seconds,
+                threads=_foreground_thread_cap(),
             )
             if (
-                not trimmed
+                single_sample_is_conclusive
+                and loudness.measured_lufs is not None
+                and loudness.measured_lufs <= _LOUDNESS_SILENCE_FLOOR_LUFS
+            ):
+                # Item 66 round-6 (point 2 companion): the short,
+                # known-duration asset's ONE sample already covers the
+                # whole (or nearly the whole) file -- no second window
+                # exists to corroborate against, so this reading alone is
+                # trusted directly.
+                silent_asset = True
+            elif (
+                allow_second_sample
                 and loudness.measured_lufs is not None
                 and loudness.measured_lufs <= _LOUDNESS_SILENCE_FLOOR_LUFS
             ):
@@ -1245,44 +1420,65 @@ class SourcePreparer:
                 # start-path-blocking work item 66 exists to close. Take a
                 # SECOND bounded sample at a different offset instead
                 # (``_UNTRIMMED_LOUDNESS_PROBE_FRACTION_2``, 70% into the
-                # media, same clamping as the first sample) rather than a
-                # full decode. Only if BOTH independent samples land at the
+                # media) rather than a full decode. ``allow_second_sample``
+                # (only True for the "long asset" branch above) guarantees
+                # ``media_duration`` is known and positive here, and that
+                # there is room for a window starting at least
+                # ``_UNTRIMMED_LOUDNESS_PROBE_CAP_S`` after the first one
+                # without running past EOF (round-6, point 2's overlap
+                # fix). Only if BOTH independent samples land at the
                 # silence floor is the asset treated as genuinely silent.
-                if media_duration is not None and media_duration > 0:
-                    second_probe_start = max(
-                        0.0,
-                        min(
-                            media_duration * _UNTRIMMED_LOUDNESS_PROBE_FRACTION_2,
-                            media_duration - _UNTRIMMED_LOUDNESS_PROBE_CAP_S,
-                        ),
+                assert media_duration is not None
+                assert probe_start_seconds is not None  # untrimmed: always a concrete float
+                second_probe_start = min(
+                    max(
+                        media_duration * _UNTRIMMED_LOUDNESS_PROBE_FRACTION_2,
+                        probe_start_seconds + _UNTRIMMED_LOUDNESS_PROBE_CAP_S,
+                    ),
+                    media_duration - _UNTRIMMED_LOUDNESS_PROBE_CAP_S,
+                )
+                # Item 66 round-6 (point 1b): defense in depth -- a window
+                # that would start at or past EOF is unusable, not silence,
+                # however it got computed. The clamping above should always
+                # keep this comfortably non-negative and within bounds; this
+                # guard only disables corroboration if that arithmetic is
+                # ever wrong, rather than trusting a past-EOF read.
+                second_sample_is_usable = (
+                    second_probe_start >= 0.0
+                    and second_probe_start + _UNTRIMMED_LOUDNESS_PROBE_CAP_S <= media_duration
+                )
+                if second_sample_is_usable:
+                    _LOG.info(
+                        "Loudness sample for %r measured at the silence floor "
+                        "(%.1f LUFS) at %.1fs in; resampling at %.1fs in before "
+                        "treating the asset as silent.",
+                        source_path.name,
+                        loudness.measured_lufs,
+                        probe_start_seconds,
+                        second_probe_start,
                     )
-                else:
-                    second_probe_start = _UNTRIMMED_LOUDNESS_PROBE_CAP_S * 2
-                _LOG.info(
-                    "Loudness sample for %r measured at the silence floor "
-                    "(%.1f LUFS) at %.1fs in; resampling at %.1fs in before "
-                    "treating the asset as silent.",
-                    source_path.name,
-                    loudness.measured_lufs,
-                    probe_start_seconds,
-                    second_probe_start,
-                )
-                second_loudness = self._loudness_checker(
-                    media_path=source_path,
-                    target_lufs=config.loudness_target_lufs,
-                    tolerance_lufs=config.loudness_tolerance_lufs,
-                    probe_start_seconds=second_probe_start,
-                    probe_duration_seconds=_UNTRIMMED_LOUDNESS_PROBE_CAP_S,
-                )
-                if (
-                    second_loudness.measured_lufs is not None
-                    and second_loudness.measured_lufs <= _LOUDNESS_SILENCE_FLOOR_LUFS
-                ):
-                    # Two independent samples, two different offsets, both
-                    # at the floor -- treat as a genuinely silent asset:
-                    # never normalize toward a target that isn't there.
-                    silent_asset = True
-                loudness = second_loudness
+                    second_loudness = self._loudness_checker(
+                        media_path=source_path,
+                        target_lufs=config.loudness_target_lufs,
+                        tolerance_lufs=config.loudness_tolerance_lufs,
+                        probe_start_seconds=second_probe_start,
+                        probe_duration_seconds=_UNTRIMMED_LOUDNESS_PROBE_CAP_S,
+                        threads=_foreground_thread_cap(),
+                    )
+                    if second_loudness.measured_lufs is not None:
+                        # Item 66 round-6 (point 4): only replace the first
+                        # (floor) reading if the resample actually produced
+                        # a measurement -- if the resample itself failed
+                        # (e.g. an ffmpeg error), keep the first reading
+                        # rather than overwriting it with an unmeasured
+                        # result and raising below.
+                        if second_loudness.measured_lufs <= _LOUDNESS_SILENCE_FLOOR_LUFS:
+                            # Two independent samples, two different
+                            # offsets, both at the floor -- treat as a
+                            # genuinely silent asset: never normalize
+                            # toward a target that isn't there.
+                            silent_asset = True
+                        loudness = second_loudness
             if loudness.status != "ok" and loudness.measured_lufs is None:
                 raise SourcePrepareError(
                     f"Egress source {segment.label!r} could not be measured for loudness: "
@@ -1315,7 +1511,13 @@ class SourcePreparer:
         # redundant warm.
         if key is not None and not trimmed and self._playout_trim_supported:
             full_asset_cached_ts = self._conform_full_asset_into_cache(
-                key, source_path, config, loudness, normalized, threads=_foreground_thread_cap()
+                key,
+                source_path,
+                config,
+                loudness,
+                normalized,
+                threads=_foreground_thread_cap(),
+                media_duration_seconds=media_duration,
             )
             if full_asset_cached_ts is not None:
                 return self._emit_prepared_from_cache(
@@ -1396,13 +1598,28 @@ class SourcePreparer:
             # swallowed rather than raised -- the segment is already safely
             # on air regardless of whether this succeeds.
             self._promote_finished_conform_into_cache(
-                key, output_path, source_path, loudness, normalized
+                key,
+                output_path,
+                source_path,
+                loudness,
+                normalized,
+                media_duration_seconds=media_duration,
             )
         elif key is not None:
             # Only a genuinely TRIMMED miss reaches here -- this window is
             # NOT the whole asset, so warm the full-asset cache behind it
-            # for later airings, same as before item 66.
-            self._schedule_warm(key, source_path, config, loudness, normalized)
+            # for later airings, same as before item 66. (``media_duration``
+            # is always ``None`` on this path -- it is only ever computed
+            # for an UNTRIMMED probe -- so this is just for signature
+            # symmetry with the sibling call above.)
+            self._schedule_warm(
+                key,
+                source_path,
+                config,
+                loudness,
+                normalized,
+                media_duration_seconds=media_duration,
+            )
         return (
             EgressSourceSegment(
                 label=segment.label,
