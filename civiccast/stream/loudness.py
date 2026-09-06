@@ -78,11 +78,14 @@ def check_loudness(
     ``ebur128`` filter graph itself). A round-4 version of this placed
     ``-threads`` after ``-i``/``-t``, which ffmpeg parses as an OUTPUT
     option applying only to the ``-f null`` output -- it never actually
-    capped the decode or filter-graph threads it was meant to bound. Not
-    currently exercised by any caller in this codebase (the source
-    preparer's silence-floor handling takes a second bounded sample
-    instead of a whole-file fallback -- see item 66 round-5, point 3) but
-    kept and correctly wired as a general capability of this function.
+    capped the decode or filter-graph threads it was meant to bound.
+    Exercised by every probe the source preparer takes: ``_prepare_segment``
+    (``civiccast/egress/preparer.py``) passes ``threads=_foreground_thread_
+    cap()`` on every synchronous probe call -- the trimmed-window probe, the
+    untrimmed mid-file/head sample, and the silence-floor corroboration
+    resample alike (item 66 round-6, point 6: this correction was itself
+    prompted by finding that no production caller had ever exercised the
+    round-5 arg-order fix until then).
     """
 
     if not media_path.exists():

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import threading
@@ -1556,18 +1557,29 @@ def test_untrimmed_probe_samples_mid_file_not_the_head(
 @pytest.mark.parametrize(
     ("duration", "expected_start", "expected_duration", "second_sample_possible"),
     [
-        # Item 66 round-6 (Opus review, point 2): a "second, different
-        # offset" sample was actually IDENTICAL to the first for any asset
-        # <=200s and OVERLAPPED it for up to 400s -- never genuinely
-        # independent evidence. At or below _SHORT_ASSET_SINGLE_SAMPLE_MAX_S
-        # (240s) exactly one sample (0s, spanning min(duration, 120s)) is
-        # taken and no second sample is ever attempted; above it, the first
-        # sample sits at 40% in with enough room reserved for a later
-        # non-overlapping resample (verified below to land at 70% in,
-        # never overlapping the first window).
+        # Item 66 round-7 (Opus review, point 2, MEDIUM fix): round-6 used
+        # 240s (_UNTRIMMED_LOUDNESS_PROBE_CAP_S * 2) as the single-sample
+        # cutoff, which let a 120-240s asset's HEAD-only 120s sample stand
+        # in for the whole file when it covered at most HALF of it -- a real
+        # field failure (a 200s clip whose only audio starts at 130s, past
+        # the sampled [0, 120) window, got memoized as silent). The cutoff
+        # is now the probe window's own size (120s): at or below it, one
+        # sample spanning the whole file is taken from the very start; above
+        # it, the "long asset" branch is used instead -- its first sample
+        # sits at 40% in (never the head), and a genuinely non-overlapping
+        # second sample (start >= first start + 120s, verified below) is
+        # only attempted when there is room for one.
         (67.0, 0.0, 67.0, False),  # the exact duration from the PROVEN field failure
-        (150.0, 0.0, 120.0, False),
-        (240.0, 0.0, 120.0, False),  # exactly the single/dual boundary
+        (120.0, 0.0, 120.0, False),  # exactly the new single/dual boundary
+        # 150s and 240s: now in the "long asset" branch (>120s), but neither
+        # has room for a genuinely non-overlapping second 120s window (that
+        # needs >= 240s) -- no resample is attempted, so the ONE (40%-in,
+        # never head) sample is what's used. This is exactly what fixes the
+        # 200s field failure above: 150s's window [30, 150) and 240s's
+        # window [96, 216) both reach well past the old HEAD-only [0, 120)
+        # sample and would have caught audio starting at 130s.
+        (150.0, 30.0, 120.0, False),
+        (240.0, 96.0, 120.0, False),
         (400.0, 160.0, 120.0, True),  # smallest duration where two 120s windows just fit
         (3600.0, 1440.0, 120.0, True),
     ],
@@ -1608,10 +1620,12 @@ def test_untrimmed_probe_trusts_a_single_conclusive_sample_as_silent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Companion to the parametrized test above: for a short, KNOWN-duration
-    asset (<=240s) whose one sample already covers the whole file, a floor
-    reading is trusted directly as genuine silence -- there is no second
-    window to corroborate against, and none is needed."""
-    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 150.0)
+    asset (<=120s -- item 66 round-7 lowered this from 240s, see
+    ``_SHORT_ASSET_SINGLE_SAMPLE_MAX_S``'s docstring) whose one sample
+    already covers the whole file, a floor reading is trusted directly as
+    genuine silence -- there is no second window to corroborate against,
+    and none is needed."""
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 90.0)
     preparer = SourcePreparer(
         work_dir=tmp_path / "work",
         ffmpeg_runner=_counting_runner([]),
@@ -1627,6 +1641,45 @@ def test_untrimmed_probe_trusts_a_single_conclusive_sample_as_silent(
     assert meta is not None
     assert meta["measured_lufs"] == -70.0
     assert meta["normalized"] is False  # trusted as silent from the one sample alone
+
+
+def test_untrimmed_probe_at_120_to_240s_never_trusts_an_unusable_resample(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 66 round-7 (point 2, MEDIUM fix): a 150s asset (in the "long
+    asset" branch now that the single-sample cutoff is 120s, not 240s) has
+    no room for a genuinely non-overlapping second 120s window -- two full
+    120s windows need >= 240s. The floor reading on the one available
+    (40%-in) sample is used directly as the measurement: it is NEITHER
+    trusted as conclusive silence (only the <=120s branch does that) NOR
+    corroborated by a resample (none was attempted, since none would be
+    genuinely independent) -- exactly the round-6 "never trust an
+    overlapping/identical resample as evidence" invariant, now also
+    enforced in the range round-6 itself couldn't reach (120-240s)."""
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 150.0)
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        # status="failed": a real loudness checker reports this for a -70.0
+        # reading against a -24.0 target -- the test double for the
+        # conclusive-silence test above defaults to "ok" only because
+        # ``silent_asset`` there forces ``normalized`` to False regardless.
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-70.0),
+        warm_scheduler=lambda job: None,
+    )
+
+    preparer.prepare(_untrimmed_plan(tmp_path), _config())
+
+    key = preparer._cache_key(tmp_path / "long-recording.mp4", _config())
+    assert key is not None
+    meta = preparer._read_cache_meta(key)
+    assert meta is not None
+    assert meta["measured_lufs"] == -70.0
+    # NOT marked "normalized is False" (never trusted as conclusive silence,
+    # unlike the <=120s case) -- the floor reading is used as a real
+    # measurement, so normalization proceeds toward the target exactly as it
+    # would for any other out-of-tolerance reading.
+    assert meta["normalized"] is True
 
 
 def test_untrimmed_probe_falls_back_to_a_second_bounded_sample_on_silence_floor(
@@ -2054,6 +2107,169 @@ def test_untrimmed_second_prepare_of_same_asset_runs_zero_ffprobes(
     preparer_2.prepare(_untrimmed_plan(tmp_path), _config())
 
     assert ffprobe_calls == []  # zero ffprobes on the second prepare() of the same asset
+
+
+def _slot_capped_untrimmed_plan(
+    source: Path, *, duration_seconds: float, label: str = "segment"
+) -> EgressSourcePlan:
+    """An "untrimmed" (no inpoint/outpoint) segment whose own duration is
+    SHORTER than the asset's real media length -- exactly D42's shape
+    (`source_plan.py`'s `_segment_duration`, `min(slot, playable)`): a
+    schedule slot shorter than the asset produces this without any
+    inpoint/outpoint attached."""
+    return EgressSourcePlan(
+        channel_id="gov",
+        segments=[
+            EgressSourceSegment(label=label, path=str(source), duration_seconds=duration_seconds)
+        ],
+    )
+
+
+def test_slot_capped_untrimmed_conform_is_not_promoted_as_full_asset_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 66 round-7 (point 1, HIGH BLOCKER fix). Reproduces the reviewer's
+    scenario: D42 (`source_plan.py`'s `_segment_duration`, `min(slot,
+    playable)`) makes a 30s schedule slot on a 67s untrimmed asset produce a
+    30s bounded conform with NO inpoint/outpoint -- `trimmed` reads False
+    even though this is only a fragment of the asset. Round-6 hard-linked
+    that fragment into the persistent cache as if it were the whole asset
+    (`_promote_finished_conform_into_cache`, unconditional on `not trimmed`
+    alone); this must no longer happen -- the fragment must never become
+    `{key}.ts`, and the real full-asset conform must be warmed behind it
+    instead, exactly like a genuinely trimmed miss."""
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 67.0)
+    source = tmp_path / "raw-source.mp4"
+    source.write_text("fake media", encoding="utf-8")
+    warm_jobs: list[Callable[[], None]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=warm_jobs.append,  # never runs -- inspect state before any warm executes
+    )
+
+    report = preparer.prepare(_slot_capped_untrimmed_plan(source, duration_seconds=30.0), _config())
+
+    # The segment still airs fine from its own per-plan file...
+    seg = report.source_plan.segments[0]
+    assert Path(seg.path).is_file()
+    # ...but the 30s fragment must NOT have been hard-linked into the
+    # persistent cache as if it were the whole 67s asset.
+    key = preparer._cache_key(source, _config())
+    assert key is not None
+    cached_ts = preparer._cache_dir() / f"{key}.ts"
+    assert not cached_ts.is_file()  # no fragment ever gets promoted as "the full asset"
+    # A real full-asset warm was scheduled behind it instead (same fallback
+    # a genuinely trimmed miss already used).
+    assert len(warm_jobs) == 1
+
+
+def test_slot_capped_untrimmed_conform_warms_the_true_full_asset(tmp_path: Path) -> None:
+    """Companion to the test above, with a synchronous warm scheduler: once
+    the warm-behind job actually runs, it conforms the WHOLE asset (no
+    duration truncation -- ``_conform_full_asset_into_cache`` always builds
+    with ``segment=None``) and marks the cache entry ``full_asset_conform``
+    -- a later, longer-slot request for the same asset can then safely hit
+    it (see the read-side test below)."""
+    source = tmp_path / "raw-source.mp4"
+    source.write_text("fake media", encoding="utf-8")
+    calls: list[list[str]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: job(),  # synchronous: runs inline
+    )
+
+    preparer.prepare(_slot_capped_untrimmed_plan(source, duration_seconds=30.0), _config())
+
+    key = preparer._cache_key(source, _config())
+    assert key is not None
+    cached_ts = preparer._cache_dir() / f"{key}.ts"
+    assert cached_ts.is_file()  # the warm populated the persistent cache
+    meta = preparer._read_cache_meta(key)
+    assert meta is not None
+    assert meta["full_asset_conform"] is True
+
+
+def test_full_asset_cache_hit_requires_the_explicit_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 66 round-7 (point 1, HIGH BLOCKER fix), read side. A meta file
+    whose ``full_asset_conform`` is missing or False -- a legacy entry from
+    before this fix, or (defense in depth) any future write that forgets to
+    set it -- must never be trusted as the shared full-asset cache: a
+    `segment.duration_seconds` vs `media_duration_seconds` numeric
+    comparison alone cannot tell a genuinely full conform apart from a short
+    one, because `media_duration_seconds` records the ASSET's true length,
+    unaffected by whatever the `.ts` on disk actually holds. Plant a SHORT
+    `.ts` with a meta that omits the flag (simulating the exact stale-entry
+    shape the round-6 bug produced) and prove a later request re-conforms
+    instead of trusting it."""
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 67.0)
+    source = tmp_path / "raw-source.mp4"
+    source.write_text("fake media", encoding="utf-8")
+    calls: list[list[str]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    key = preparer._cache_key(source, _config())
+    assert key is not None
+    cache_dir = preparer._cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / f"{key}.ts").write_text("only 30s of real content", encoding="utf-8")
+
+    (cache_dir / f"{key}.json").write_text(
+        json.dumps(
+            {
+                "loudness_status": "ok",
+                "measured_lufs": -24.1,
+                "normalized": False,
+                "media_duration_seconds": 67.0,
+                # no "full_asset_conform" key at all -- the pre-round-7 shape
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = preparer.prepare(_slot_capped_untrimmed_plan(source, duration_seconds=60.0), _config())
+
+    assert len(calls) == 1  # re-conformed -- the stale entry was never trusted as a HIT
+    seg = report.source_plan.segments[0]
+    assert "conform-cache" not in seg.path  # its own bounded conform, not the stale cache object
+
+
+def test_full_asset_cache_hit_trusted_once_flag_is_set(tmp_path: Path) -> None:
+    """Positive companion: once a cache entry genuinely IS the whole asset
+    (``full_asset_conform`` True), a later, shorter-slot request for the
+    SAME asset correctly hits it -- the fix does not disable caching for the
+    ordinary (correct) case, only for entries that were never proven full."""
+    source = tmp_path / "raw-source.mp4"
+    source.write_text("fake media", encoding="utf-8")
+    calls: list[list[str]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: job(),
+        playout_trim_supported=True,  # simplest path to a genuine full-asset conform
+    )
+    # First airing: untrimmed MISS on an engine that trims at playout ->
+    # _conform_full_asset_into_cache runs directly, always the whole file.
+    preparer.prepare(_slot_capped_untrimmed_plan(source, duration_seconds=3600.0), _config())
+    assert len(calls) == 1
+    calls.clear()
+
+    # A later, shorter-slot request for the same asset.
+    report = preparer.prepare(_slot_capped_untrimmed_plan(source, duration_seconds=30.0), _config())
+
+    assert calls == []  # zero ffmpeg work -- a genuine cache HIT
+    seg = report.source_plan.segments[0]
+    assert "conform-cache" in seg.path
 
 
 def test_default_warm_scheduler_runs_jobs_in_fifo_order_one_at_a_time(tmp_path: Path) -> None:

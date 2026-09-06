@@ -277,28 +277,34 @@ itself — no CLI worker needed. Posture for a three-channel station:
   and trigger an unnecessary floor verdict). The real duration comes from
   a cheap ffprobe query, cached alongside the loudness result so a later
   airing of the same asset never re-probes either one.
-  - **Duration known, asset > 240 seconds:** samples 120 seconds starting
+  - **Duration known, asset > 120 seconds:** samples 120 seconds starting
     40% in (a head sample can land on cold-open silence or room tone and
     measure the silence floor instead of the program's real loudness — a
     real field failure: -70 LUFS measured at the head of a 39-minute
     meeting recording). If that sample measures at or below -60 LUFS
     integrated (still silence, e.g. a long pause that happens to land in
-    the window), the preparer resamples ONCE more at 70% in — clamped so
-    the two windows never overlap (the second always starts at least 120
-    seconds after the first) — and uses that reading instead. Only if
-    BOTH independent samples land at the floor is the asset treated as
+    the window), the preparer resamples ONCE more at 70% in — but only if
+    a genuinely non-overlapping second window actually fits (the second
+    must start at least 120 seconds after the first AND stay inside the
+    file); for a 120-240 second asset that room may not exist at all, in
+    which case no resample is attempted and the single (floor) reading is
+    used as measured. When a non-overlapping resample IS possible and
+    both independent samples land at the floor, the asset is treated as
     genuinely silent (normalization is skipped outright rather than
     trusting either floor reading as a real target). If the resample
     itself fails to produce a measurement at all, the FIRST reading is
     kept rather than raising or discarding it.
-  - **Duration known, asset <= 240 seconds:** two non-overlapping
-    120-second windows literally cannot fit, so a "different offset"
-    second sample would either duplicate the first (any asset <=200s) or
-    overlap it (up to 400s) — never genuinely independent evidence.
-    Instead, exactly ONE sample is taken, from the very start, spanning
-    `min(duration, 120s)` — already the whole (or nearly the whole) file,
-    so a floor reading on it is trusted directly as silence with no
-    resample needed.
+  - **Duration known, asset <= 120 seconds:** one sample spanning
+    `min(duration, 120s)` from the very start already covers the whole (or
+    nearly the whole) file, so a floor reading on it is trusted directly
+    as silence with no resample needed. (Item 66 round-6 used a 240-second
+    cutoff here instead of 120; that let a 120-240 second asset's
+    HEAD-only 120-second sample stand in for the whole file when it
+    covered at most half of it — a real field failure: a 200-second clip
+    whose audio starts at 130 seconds got memoized as silent because the
+    sampled window never reached it. Round 7 lowered the cutoff to the
+    probe window's own size, so a "duration known" asset over 120 seconds
+    always falls into the sampled-window case above instead.)
   - **Duration genuinely unknown** (ffprobe unavailable or failed): the
     probe samples from the very start (never past EOF for any asset with
     real audio) and a floor reading is NEVER trusted as proof of silence —

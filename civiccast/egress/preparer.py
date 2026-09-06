@@ -115,17 +115,34 @@ _UNTRIMMED_LOUDNESS_PROBE_FRACTION_2 = 0.7
 #: program loudness.
 _LOUDNESS_SILENCE_FLOOR_LUFS = -60.0
 
-#: Item 66 round-6 (Opus review, point 2): two non-overlapping
-#: ``_UNTRIMMED_LOUDNESS_PROBE_CAP_S``-long windows, with at least one full
-#: window's gap between their starts, cannot both fit inside an asset
-#: shorter than twice that length. Below this threshold a "second, different
-#: offset" sample was actually IDENTICAL to the first for anything <=200s
-#: and overlapped it for up to 400s -- never genuinely independent evidence.
-#: At or below this duration, take exactly ONE sample spanning
-#: ``min(duration, _UNTRIMMED_LOUDNESS_PROBE_CAP_S)`` from the very start
-#: instead -- it already covers the whole (or nearly the whole) asset, so
-#: it needs no corroboration.
-_SHORT_ASSET_SINGLE_SAMPLE_MAX_S = _UNTRIMMED_LOUDNESS_PROBE_CAP_S * 2
+#: Item 66 round-7 (Opus review, point 2, MEDIUM fix): a single HEAD sample
+#: is only genuinely conclusive proof of silence when its own window
+#: (``min(duration, _UNTRIMMED_LOUDNESS_PROBE_CAP_S)`` from the very start)
+#: covers the WHOLE asset -- i.e. ``duration <= _UNTRIMMED_LOUDNESS_PROBE_CAP_S``
+#: itself. Round-6 set this to ``_UNTRIMMED_LOUDNESS_PROBE_CAP_S * 2`` (240s)
+#: instead, reasoning only about when a genuinely independent SECOND sample
+#: could fit -- but that let a 120-240s asset's single 120s HEAD sample (at
+#: most half the file) get trusted as "the whole (or nearly the whole)
+#: asset" when it was really only up to half of it: a real field failure
+#: (a 200s clip with audio starting at 130s, entirely past the sampled
+#: window, memoized as -70 LUFS silence). Below/at this duration the one
+#: sample truly is (nearly) the whole file, so it needs no corroboration;
+#: above it, the "long asset" branch below is used instead -- its first
+#: sample already sits at 40% in (never the head) and, on a floor reading,
+#: corroborates with a second bounded sample before trusting silence, which
+#: is what protects the 120-240s range now.
+_SHORT_ASSET_SINGLE_SAMPLE_MAX_S = _UNTRIMMED_LOUDNESS_PROBE_CAP_S
+
+#: Item 66 round-7 (point 1, HIGH): D42 (source_plan.py's ``_segment_duration``,
+#: ``min(slot, playable)``) means an "untrimmed" segment (no inpoint/outpoint)
+#: can carry a ``duration_seconds`` SHORTER than the asset's real media length
+#: whenever the schedule slot is shorter than the asset -- a 30s slot on a
+#: 67s asset produces a 30s bounded conform that is NOT the whole asset,
+#: even though ``trimmed`` (inpoint/outpoint both None) is False. The same
+#: tolerance ``source_plan.py``'s own ``_covers_slot`` uses for its slot/media
+#: fuzz (1s) is reused here so a 29.97s asset in a 30s slot still counts as
+#: "the whole asset" and gets promoted into the shared cache.
+_FULL_ASSET_DURATION_TOLERANCE_S = 1.0
 
 
 def _prepared_plan_dir_budget_bytes() -> float:
@@ -344,6 +361,7 @@ class SourcePreparer:
         normalized: bool,
         *,
         media_duration_seconds: float | None = None,
+        full_asset_conform: bool = False,
     ) -> None:
         """Item 66 (point 1): now also called BEFORE any conform for this
         asset exists (a loudness-only probe result, persisted early so
@@ -370,6 +388,26 @@ class SourcePreparer:
         earlier write-with-it. That extra read on every write is no longer
         needed now that the value travels with the call: this write is the
         single atomic write of everything this cache entry's meta holds.
+
+        ``full_asset_conform`` (item 66 round-7, point 1, HIGH): True ONLY
+        when this write accompanies (or follows) an actual ``{key}.ts`` that
+        genuinely holds the whole asset -- set exclusively by
+        ``_promote_conform_into_cache``, the single choke point every
+        promotion path (``_conform_full_asset_into_cache``,
+        ``_promote_finished_conform_into_cache``, ``_schedule_cache_copy_
+        promotion``'s job) funnels through right after the ``.ts`` itself is
+        finalized. The probe-only call in ``_prepare_segment`` (persisted
+        before any conform exists) never sets it, so it defaults False there.
+        The cache-HIT check in ``_prepare_segment`` requires this flag before
+        trusting ``{key}.ts`` as the shared full-asset entry -- see that
+        check's own comment for why a numeric ``duration_seconds`` comparison
+        alone cannot detect an already-on-disk short/truncated ``.ts`` (D42,
+        round-6 BLOCKER: a slot-capped "untrimmed" conform used to get
+        promoted as if it were the whole asset). A meta file written by
+        pre-round-7 code never carries this key, so ``.get(...)`` on it
+        naturally reads False too -- a legacy short entry self-heals into a
+        MISS (and gets correctly re-conformed) rather than staying silently
+        wrong.
         """
         cache_dir = self._cache_dir()
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -378,6 +416,7 @@ class SourcePreparer:
             "measured_lufs": loudness.measured_lufs,
             "normalized": normalized,
             "media_duration_seconds": media_duration_seconds,
+            "full_asset_conform": full_asset_conform,
         }
         final = cache_dir / f"{key}.json"
         tmp = final.with_name(final.name + ".tmp")
@@ -504,13 +543,27 @@ class SourcePreparer:
         cache-promotion failure interrupt something already safely airing
         (``_promote_finished_conform_into_cache``,
         ``_schedule_cache_copy_promotion``) catch this themselves.
+
+        Item 66 round-7 (point 1, HIGH): this is the SOLE place a ``.ts`` is
+        ever renamed into the persistent cache, so it is the one authoritative
+        place to mark the sidecar meta ``full_asset_conform=True`` -- every
+        caller (``_conform_full_asset_into_cache``'s own whole-file conform,
+        and ``_promote_finished_conform_into_cache``/``_schedule_cache_copy_
+        promotion``'s copy of an already-finished per-plan file) is now
+        responsible for only ever reaching this method with a ``tmp`` that
+        genuinely IS the whole asset -- ``_prepare_segment``'s cache-hit check
+        depends on that invariant holding here unconditionally.
         """
         cache_dir = self._cache_dir()
         final = cache_dir / f"{key}.ts"
         cache_dir.mkdir(parents=True, exist_ok=True)
         tmp.replace(final)
         self._write_cache_meta(
-            key, loudness, normalized, media_duration_seconds=media_duration_seconds
+            key,
+            loudness,
+            normalized,
+            media_duration_seconds=media_duration_seconds,
+            full_asset_conform=True,
         )
         self._evict_cache_over_budget()
         if not final.exists():
@@ -1216,7 +1269,29 @@ class SourcePreparer:
         meta = self._read_cache_meta(key) if key is not None else None
         if key is not None:
             cached_ts = self._cache_dir() / f"{key}.ts"
-            if cached_ts.is_file() and meta is not None:
+            # Item 66 round-7 (point 1, HIGH): ``full_asset_conform`` must be
+            # explicitly True, not just present -- see ``_promote_conform_
+            # into_cache``'s docstring for the invariant this depends on and
+            # ``_write_cache_meta``'s for why a meta file from BEFORE this
+            # flag existed (or the probe-only write, which never sets it)
+            # reads as False here rather than raising. D42 (source_plan.py's
+            # ``_segment_duration``) can make an "untrimmed" segment's own
+            # ``duration_seconds`` SHORTER than the asset's real media length
+            # (a schedule slot shorter than the asset) -- a round-6 BLOCKER:
+            # such a segment's bounded conform used to get promoted as if it
+            # were the whole asset (``trimmed`` is False either way, since
+            # D42's truncation carries no inpoint/outpoint), so a LATER,
+            # longer-slot airing of the same asset would hit this exact
+            # cache entry and stream-copy ``-t`` past what it actually holds
+            # -- dead air, sticky until the entry's size/mtime changed. A
+            # plain ``segment.duration_seconds`` vs ``media_duration_seconds``
+            # comparison HERE cannot catch this: ``media_duration_seconds``
+            # records the asset's true length, not the short entry's actual
+            # bytes, so it would look identical whether or not the ``.ts`` on
+            # disk is genuinely the whole asset. The explicit marker (set only
+            # at the one choke point that finalizes a ``.ts`` -- see that
+            # method) is what actually distinguishes them.
+            if cached_ts.is_file() and meta is not None and meta.get("full_asset_conform") is True:
                 try:
                     os.utime(cached_ts)  # refresh the eviction clock on hit
                 except FileNotFoundError:
@@ -1347,24 +1422,32 @@ class SourcePreparer:
                 media_duration = probe_media_duration_seconds(source_path)
                 if media_duration is not None and media_duration > 0:
                     if media_duration <= _SHORT_ASSET_SINGLE_SAMPLE_MAX_S:
-                        # Item 66 round-6 (point 2): can't fit two
-                        # non-overlapping windows -- one sample spanning
-                        # min(duration, 120s) from the very start already
-                        # covers the whole (or nearly the whole) asset, so
-                        # it needs no corroboration -- a floor reading on
-                        # it alone is conclusive (the asset's real length
-                        # IS known here, unlike the "unknown duration"
-                        # branch below).
+                        # Item 66 round-7 (point 2, MEDIUM fix): a single
+                        # sample is only conclusive when its own window
+                        # (min(duration, 120s) from the very start) IS the
+                        # whole file -- i.e. duration itself is at most the
+                        # probe cap. Round-6 used ``* 2`` (240s) here, which
+                        # let a 120-240s asset's HEAD-only 120s sample stand
+                        # in for the whole file when it was really covering
+                        # at most half of it (see this constant's own
+                        # docstring for the field failure that caught this).
                         probe_start_seconds = 0.0
                         probe_duration_seconds = min(
                             media_duration, _UNTRIMMED_LOUDNESS_PROBE_CAP_S
                         )
                         single_sample_is_conclusive = True
                     else:
-                        # Long asset: 40% in, clamped so a LATER 70%-in
-                        # resample (see below) can still fit non-overlapping
-                        # -- reserve a full second window's worth of room,
-                        # not just this window's own.
+                        # Long asset (now also anything just over 120s, not
+                        # only >240s -- see the constant's docstring): 40% in,
+                        # clamped so a LATER 70%-in resample can still fit
+                        # non-overlapping when there IS room for one (>=240s);
+                        # for 120-240s assets the reserved gap can't always
+                        # fit a second non-overlapping window at all, and
+                        # ``second_sample_is_usable``'s explicit non-overlap
+                        # check (below) is what actually keeps a
+                        # too-close/identical resample from being trusted as
+                        # corroboration in that case, rather than this
+                        # reservation alone.
                         probe_start_seconds = max(
                             0.0,
                             min(
@@ -1443,9 +1526,23 @@ class SourcePreparer:
                 # keep this comfortably non-negative and within bounds; this
                 # guard only disables corroboration if that arithmetic is
                 # ever wrong, rather than trusting a past-EOF read.
+                #
+                # Item 66 round-7 (point 2, MEDIUM): also require genuine
+                # non-overlap with the first window. Lowering
+                # ``_SHORT_ASSET_SINGLE_SAMPLE_MAX_S`` from 240s to 120s (see
+                # that constant's docstring) means this "long asset" branch
+                # now also runs for assets as short as just over 120s, where
+                # two full non-overlapping 120s windows cannot both fit --
+                # exactly the "identical/overlapping, never genuinely
+                # independent evidence" failure round-6 already fixed for the
+                # >240s range. Without this check the arithmetic above can
+                # compute a second window that starts AT OR BEFORE the first
+                # one ends (or is identical to it), which would count as
+                # "corroboration" while providing none.
                 second_sample_is_usable = (
                     second_probe_start >= 0.0
                     and second_probe_start + _UNTRIMMED_LOUDNESS_PROBE_CAP_S <= media_duration
+                    and second_probe_start >= probe_start_seconds + _UNTRIMMED_LOUDNESS_PROBE_CAP_S
                 )
                 if second_sample_is_usable:
                     _LOG.info(
@@ -1584,42 +1681,67 @@ class SourcePreparer:
         # touched at all.
         tmp_output_path.replace(output_path)
 
-        if key is not None and not trimmed:
-            # An UNTRIMMED segment is, by definition, the whole asset
-            # (source_plan.py's untrimmed-segment contract) -- this bounded
-            # conform's output already IS the full-asset conform the
-            # persistent cache wants. Populate the cache from the
-            # ALREADY-FINISHED, already-airing ``output_path`` via a hard
-            # link (queuing a background copy instead if linking fails --
-            # e.g. a cross-volume layout) instead of moving it -- see
-            # ``_promote_finished_conform_into_cache``'s docstring for the
-            # full round-4 shape: non-blocking on lock contention (skipped
-            # rather than waited on), and any failure here is logged and
-            # swallowed rather than raised -- the segment is already safely
-            # on air regardless of whether this succeeds.
-            self._promote_finished_conform_into_cache(
-                key,
-                output_path,
-                source_path,
-                loudness,
-                normalized,
-                media_duration_seconds=media_duration,
+        if key is not None:
+            # Item 66 round-7 (point 1, HIGH fix): an UNTRIMMED segment
+            # (inpoint/outpoint both None) is NOT, by definition, the whole
+            # asset -- D42 (source_plan.py's ``_segment_duration``, ``min(slot,
+            # playable)``) makes an untrimmed segment's own ``duration_seconds``
+            # SHORTER than the asset's real media length whenever the
+            # schedule slot is shorter than the asset (a 30s slot on a 67s
+            # asset produces a 30s bounded conform here, no inpoint/outpoint
+            # attached, so ``trimmed`` reads False even though this output is
+            # only a fragment). A round-6 BLOCKER promoted that fragment into
+            # the persistent cache as if it WERE the whole asset; a later,
+            # longer-slot airing of the same asset then hit this exact entry
+            # and stream-copied ``-t`` past what it actually held -- dead air,
+            # sticky until the entry's size/mtime changed. Only promote this
+            # bounded conform directly when it demonstrably covers the whole
+            # known media duration (the same tolerance ``source_plan.py``'s
+            # own ``_covers_slot`` uses). ``media_duration`` unknown (ffprobe
+            # unavailable/failed for THIS call) keeps the pre-round-7 "trust
+            # untrimmed as full" assumption rather than routing every such
+            # segment to an extra, unverifiable warm: D42's own cap requires
+            # a KNOWN asset duration to ever shorten ``segment.duration_
+            # seconds`` below the real media length in the first place (see
+            # ``_playable_duration``'s ``None`` case in ``source_plan.py``),
+            # so an untrimmed segment reaching here with a genuinely unknown
+            # duration was never capped by D42 to begin with.
+            is_full_asset_conform = not trimmed and (
+                media_duration is None
+                or segment.duration_seconds >= media_duration - _FULL_ASSET_DURATION_TOLERANCE_S
             )
-        elif key is not None:
-            # Only a genuinely TRIMMED miss reaches here -- this window is
-            # NOT the whole asset, so warm the full-asset cache behind it
-            # for later airings, same as before item 66. (``media_duration``
-            # is always ``None`` on this path -- it is only ever computed
-            # for an UNTRIMMED probe -- so this is just for signature
-            # symmetry with the sibling call above.)
-            self._schedule_warm(
-                key,
-                source_path,
-                config,
-                loudness,
-                normalized,
-                media_duration_seconds=media_duration,
-            )
+            if is_full_asset_conform:
+                # This bounded conform's output already IS the full-asset
+                # conform the persistent cache wants. Populate the cache from
+                # the ALREADY-FINISHED, already-airing ``output_path`` via a
+                # hard link (queuing a background copy instead if linking
+                # fails -- e.g. a cross-volume layout) instead of moving it --
+                # see ``_promote_finished_conform_into_cache``'s docstring for
+                # the full round-4 shape: non-blocking on lock contention
+                # (skipped rather than waited on), and any failure here is
+                # logged and swallowed rather than raised -- the segment is
+                # already safely on air regardless of whether this succeeds.
+                self._promote_finished_conform_into_cache(
+                    key,
+                    output_path,
+                    source_path,
+                    loudness,
+                    normalized,
+                    media_duration_seconds=media_duration,
+                )
+            else:
+                # A genuinely trimmed miss, OR an untrimmed-but-slot-capped
+                # (D42) conform that is only a fragment of the asset -- this
+                # window is NOT the whole asset, so warm the full-asset cache
+                # behind it for later airings, same as before item 66.
+                self._schedule_warm(
+                    key,
+                    source_path,
+                    config,
+                    loudness,
+                    normalized,
+                    media_duration_seconds=media_duration,
+                )
         return (
             EgressSourceSegment(
                 label=segment.label,

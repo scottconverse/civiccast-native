@@ -251,6 +251,70 @@ below.
   (40%/70% of the asset's REAL media duration, not its schedule-slot
   duration, with a single-sample shape for assets at or below 240s and a
   never-trust-a-single-blind-sample rule when duration is unknown).
+  **Round 7 found two more real bugs, both PROVEN with a reproduction, in
+  the round-6 shape above:**
+  - **HIGH: an "untrimmed" segment is NOT, by definition, the whole asset.**
+    Round 6's own line above ("untrimmed segments are the full asset by
+    definition") was wrong once D42 (`source_plan.py`'s `_segment_duration`,
+    `min(slot, playable)`) shipped: a schedule slot shorter than its asset
+    makes an untrimmed segment's `duration_seconds` shorter than the
+    asset's real media length too, with no inpoint/outpoint attached to
+    show it. `_promote_finished_conform_into_cache` still hard-linked that
+    SHORT bounded conform into the persistent cache as if it were the whole
+    asset; a later, longer-slot airing of the same asset then hit that
+    entry and stream-copied `-t <longer duration>` from a file that didn't
+    have that much content — dead air, sticky in the cache until its
+    size/mtime happened to change. Reproduced: a 30-second schedule slot on
+    a 67-second asset, followed by a 60-second slot on the same asset.
+    Fixed at both ends: the promotion is now gated on the bounded conform's
+    own `duration_seconds` actually covering the asset's real media
+    duration (the same 1-second tolerance `_covers_slot` uses) — if it
+    doesn't, the full-asset cache is warmed behind it instead, exactly like
+    a genuinely trimmed miss already was. (A genuinely UNKNOWN real duration
+    — the preparer's own ffprobe unavailable or failing for this call —
+    keeps the pre-round-7 "trust untrimmed as full" assumption rather than
+    force every such segment through an extra, unverifiable warm: D42 itself
+    can only shorten a segment's duration below the real media length when
+    the asset's duration is KNOWN, so an untrimmed segment reaching this
+    gate with a genuinely unknown duration was never capped by D42 to begin
+    with.) The cache **read** side no longer
+    trusts `{key}.ts` on `duration_seconds` arithmetic either (a short
+    entry's meta still reports the asset's correct real length, so a
+    numeric comparison alone can't tell a genuine full conform apart from a
+    stale short one) — `_write_cache_meta` gained an explicit
+    `full_asset_conform` flag, set ONLY by `_promote_conform_into_cache`
+    (the one place a `.ts` is ever finalized into the cache), and a cache
+    HIT now requires that flag to be `True`. A `{key}.json` written by
+    pre-round-7 code never carries it, so an already-corrupted on-disk
+    entry from before this fix self-heals into a MISS (and gets correctly
+    re-conformed) instead of staying silently wrong.
+  - **MEDIUM: a single HEAD sample was trusted as conclusive silence for
+    assets up to 240 seconds, even though the sampled window only covers
+    120 of them — reintroducing the exact round-4 head-silence failure for
+    that range.** Reproduced: a 200-second clip whose only audio starts at
+    130 seconds (well past the sampled `[0, 120)` window) got memoized as
+    silent, and normalization was skipped. The single-sample-conclusive
+    cutoff (`_SHORT_ASSET_SINGLE_SAMPLE_MAX_S`) is now the probe window's
+    own size (120s, not 240s) — a "duration known" asset over 120 seconds
+    always falls into the sampled-window branch instead (40% in, not the
+    head), which happens to cover the 130-200s range in the reproduction
+    above. That branch's corroborating resample also gained an explicit
+    non-overlap check (`second_probe_start >= first + 120s`): lowering the
+    cutoff means the 120-240s range can now reach that branch too, where
+    two full non-overlapping 120-second windows don't always fit — without
+    the check, an overlapping/identical resample could count as
+    "corroboration" while providing none, exactly the failure round-6
+    already fixed for durations above 240s.
+  - Doc-only: `civiccast/stream/loudness.py`'s `check_streaming_loudness`
+    docstring claimed its `probe_start_seconds`/`probe_duration_seconds`/
+    `threads` parameters were "not currently exercised by any caller" —
+    false since round 6 shipped: `_prepare_segment` passes `threads=` on
+    every probe (see above) and `probe_start_seconds`/`probe_duration_seconds`
+    on every untrimmed/trimmed probe alike. Corrected.
+  See `docs/ops/channel-egress-runbook.md`'s corrected loudness-probe note
+  (the single-sample cutoff is 120s, not 240s, and the 120-240s range's
+  resample is skipped rather than trusted when no non-overlapping window
+  fits).
 - **A seamless plan rollover collided its own concat aggregators, silently
   failed to join the pipeline, and was acked "applied" anyway -- so
   automation kept re-triggering it forever while the channel bounced.**
