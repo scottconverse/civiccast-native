@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
 #
-# Run-SandboxSoak.ps1 -- host orchestrator for the LOCAL 15-minute Windows
-# Sandbox soak lane. Finds bugs on HALO in ~15 minutes instead of on the
-# tester box in hours, by driving a real silent install + station start +
+# Run-SandboxSoak.ps1 -- host orchestrator for the LOCAL Windows Sandbox
+# soak lane. Finds bugs on HALO in ~15 SOAK minutes instead of on the tester
+# box in hours, by driving a real silent install + station start +
 # sample-content playout inside a disposable Windows Sandbox VM, using a
 # kit already verified on disk (no download here -- see -KitRoot).
 #
@@ -17,13 +17,23 @@
 # duration, judged by the same SoakVerdict.ps1 logic Test-SoakVerdict.ps1
 # unit-tests.
 #
+# -Minutes is SOAK minutes, measured inside the sandbox from
+# soak_start_utc (health OK + all 3 channels configured/started + at least
+# one confirmed ON_AIR) -- NOT wall-clock minutes from launch. Install alone
+# measured 13m05s on the first real run against kit 609273d (05:02:30 ->
+# 05:15:35, exit 0); a wall-clock-from-launch deadline would have declared
+# that install a stall before it ever got a chance to finish.
+#
 # Usage:
 #   pwsh -File sandbox-lab/Run-SandboxSoak.ps1 -Sha <full sha> [-Minutes 15] [-KitRoot C:\CivicCastTester\kit-safe]
 #   pwsh -File sandbox-lab/Run-SandboxSoak.ps1 -Sha <full sha> -DryRun
 #
 # Exit codes: 0 PASS, 1 FAIL, 2 harness/setup error (bad kit, missing
-# prerequisite), 3 Windows Sandbox already running, 4 stall (no rollup
-# progress for 6 minutes -- sandbox killed, evidence preserved).
+# prerequisite), 3 Windows Sandbox already running (busy guard), 4 stall
+# (a phase bound was exceeded -- sandbox killed, evidence preserved), 5 a
+# stall fired but the matching sandbox process(es) were NOT launched by
+# this run (StartTime predates our own launch) -- refuses to touch them,
+# evidence preserved, nothing killed.
 param(
     [Parameter(Mandatory = $true)]
     [string]$Sha,
@@ -34,14 +44,28 @@ param(
 
     [string]$Root = $PSScriptRoot,
 
-    # Minutes with no new rollup file under output\rollups\ (and no VM-alive
-    # progress) before this script declares a stall, writes STALL.txt, kills
-    # the sandbox, and exits 4. Rollups land every 3 minutes inside the
-    # sandbox (see In-Sandbox-Soak.ps1), so 6 minutes is two missed
-    # checkpoints -- generous enough to survive one slow tick, tight enough
-    # that a genuinely wedged run does not sit there for the full -Minutes
-    # + watchdog grace before anyone notices.
-    [int]$StallMinutes = 6,
+    # Phase bounds (minutes). Keep these in sync with In-Sandbox-Soak.ps1's
+    # own $InstallBoundMinutes/$HealthBoundMinutes -- the in-sandbox
+    # watchdog is a second, independent backstop using the same numbers,
+    # not a substitute for this host-side guard.
+    [int]$InstallBoundMinutes = 20,
+    [int]$HealthBoundMinutes = 10,
+
+    # Minutes with no new rollup file under output\rollups\ once the soak
+    # clock has started (SOAK-START.json present) before this script
+    # declares a stall. Rollups land every 3 minutes inside the sandbox, so
+    # 6 minutes is two missed checkpoints.
+    [int]$RollupStallMinutes = 6,
+
+    # Generic backstop liveness bound (minutes), mirrors Host-Launch-
+    # Sandbox-Test.ps1's own -QuietShareMinutes: the newest mtime among
+    # soak-log.txt / summary.json / _SHIPPER-HEARTBEAT.txt in the output
+    # folder must advance at least this often, in EVERY phase, independent
+    # of the phase-specific bounds above. Catches a hang the phase bounds
+    # don't yet have a marker for (e.g. mid first-admin/asset-upload/
+    # schedule/commit/channel-start, between PHASE-HEALTHY.json and
+    # SOAK-START.json).
+    [int]$QuietMinutes = 15,
 
     [switch]$DryRun
 )
@@ -54,25 +78,47 @@ function Write-Step {
 }
 
 function Exit-HarnessError {
+    <#
+      NEVER use Write-Error here: with $ErrorActionPreference = 'Stop' (set
+      above), Write-Error's non-terminating error is PROMOTED to terminating
+      and thrown immediately -- there is no try/catch around these call
+      sites, so the throw unwinds past the `exit $Code` statement entirely
+      and the process actually exits 1 (PowerShell's default for an
+      unhandled terminating error) regardless of what $Code says. Measured:
+      every Exit-HarnessError call exited 1 in both PS 5.1 and PS 7 before
+      this fix, never the documented 2. [Console]::Error.WriteLine is a
+      plain write -- it cannot become a terminating error under any
+      $ErrorActionPreference.
+    #>
     param([string]$Message, [int]$Code = 2)
-    Write-Error "[Run-SandboxSoak] ERROR: $Message"
+    [Console]::Error.WriteLine("[Run-SandboxSoak] ERROR: $Message")
     exit $Code
 }
 
 if (-not $Root) { $Root = (Get-Location).Path }
-Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes, KitRoot: $KitRoot, DryRun: $($DryRun.IsPresent)"
+Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), KitRoot: $KitRoot, DryRun: $($DryRun.IsPresent)"
 
 # --------------------------------------------------------------------------
 # 1a. Refuse if Windows Sandbox is already running (Gate A owns it, and
-#     Codex uses it too -- see the caller's own note; this lane never
-#     launches over another user's session).
+#     Codex uses it too). Process name list is the PROVEN one from
+#     Host-Launch-Sandbox-Test.ps1:183-188 -- NOT the ad hoc
+#     ('WindowsSandbox','WindowsSandboxClient') list this script started
+#     with, which is exactly why the first real run's stall-kill left
+#     WindowsSandboxRemoteSession/WindowsSandboxServer/vmmemWindowsSandbox
+#     running: those three names were never in the kill target at all.
+#     WindowsSandbox.exe itself is excluded from the BUSY-detection list on
+#     purpose (Host-Launch-Sandbox-Test.ps1's own note: it is a launcher
+#     stub that starts the VM and exits almost immediately, so its absence
+#     proves nothing about whether a session is live) but IS included in
+#     the kill target list below for thoroughness, along with vmwp (the
+#     VM worker process; Host-Launch-Sandbox-Test.ps1:501 checks it
+#     alongside WindowsSandboxRemoteSession/WindowsSandboxServer as its own
+#     "is the VM actually alive" signal).
 # --------------------------------------------------------------------------
-$sandboxProcNames = @('WindowsSandbox', 'WindowsSandboxClient')
-# Get-Process (not Get-CimInstance) finds the processes by name reliably
-# across PS versions; Get-CimInstance is then used ONLY to recover each
-# matched PID's command line for the printed evidence (Get-Process's own
-# .Path/-IncludeUserName does not carry the command line on this platform).
-$existing = @(Get-Process -Name $sandboxProcNames -ErrorAction SilentlyContinue)
+$BusyGuardProcNames = @('WindowsSandboxClient', 'WindowsSandboxRemoteSession', 'WindowsSandboxServer', 'vmmemWindowsSandbox')
+$KillTargetProcNames = @('WindowsSandbox', 'WindowsSandboxClient', 'WindowsSandboxRemoteSession', 'WindowsSandboxServer', 'vmmemWindowsSandbox', 'vmwp')
+
+$existing = @(Get-Process -Name $BusyGuardProcNames -ErrorAction SilentlyContinue)
 if ($existing.Count -gt 0) {
     Write-Host "[Run-SandboxSoak] Windows Sandbox is already running -- refusing to start (Gate A / another agent may own it):" -ForegroundColor Yellow
     foreach ($p in $existing) {
@@ -182,7 +228,7 @@ Write-Step "LogonCommand: $logonCommand"
 # --------------------------------------------------------------------------
 # 3. Parse-check both in-sandbox scripts before ever launching anything --
 #    a syntax error inside the sandbox is otherwise invisible until the
-#    watchdog times out 25 minutes later.
+#    watchdog times out much later.
 # --------------------------------------------------------------------------
 function Test-ScriptParses {
     param([string]$Path)
@@ -219,60 +265,178 @@ if (-not $parseOk) {
 if ($DryRun) {
     Write-Step "DRY RUN complete. Kit verified ($verifiedCount files), .wsb rendered at $wsbPath, both in-sandbox scripts parse cleanly."
     Write-Step "Would launch: Start-Process -FilePath 'C:\Windows\System32\WindowsSandbox.exe' -ArgumentList `"$wsbPath`""
-    Write-Step "Would poll for: $outputDir\VERDICT.txt"
+    Write-Step "Would poll for: $outputDir\VERDICT.txt (phase bounds: install=${InstallBoundMinutes}m, health=${HealthBoundMinutes}m after install, rollup-stall=${RollupStallMinutes}m once soak_start_utc is set, generic quiet-bound=${QuietMinutes}m throughout)"
     Write-Step "Output directory prepared at: $outputDir (empty -- no sandbox launched)"
     exit 0
 }
 
 # --------------------------------------------------------------------------
-# 4. Launch and wait for VERDICT.txt, with a stall alarm.
+# 4. Kill helper -- used by every stall path below. Only ever touches
+#    process(es) this run itself launched: WindowsSandboxRemoteSession and
+#    WindowsSandboxServer are the two names in $KillTargetProcNames that
+#    reliably carry a readable, non-system StartTime, so ownership is keyed
+#    on THOSE (must both have StartTime >= our own launch time, minus a
+#    small clock-skew buffer). vmmemWindowsSandbox and vmwp are
+#    system-owned VM worker processes with no reliably readable StartTime
+#    (measured directly on this box: vmmemWindowsSandbox reports an empty
+#    StartTime) -- they are never checked for ownership themselves, only
+#    killed/verified-gone AFTER the named two are confirmed ours, on the
+#    understanding that they belong to whichever session's
+#    RemoteSession/Server process they are currently paired with.
 # --------------------------------------------------------------------------
-Write-Step "Launching Windows Sandbox ($wsbPath)..."
+function Invoke-SandboxKill {
+    param([datetime]$LaunchTimeUtc, [string[]]$KillNames, [string]$OutputDir)
+
+    $ownershipNames = @('WindowsSandboxRemoteSession', 'WindowsSandboxServer')
+    $ownershipProcs = @(Get-Process -Name $ownershipNames -ErrorAction SilentlyContinue)
+
+    if ($ownershipProcs.Count -gt 0) {
+        $foreign = @($ownershipProcs | Where-Object {
+            $st = $null
+            try { $st = $_.StartTime.ToUniversalTime() } catch { $st = $null }
+            (-not $st) -or ($st -lt $LaunchTimeUtc.AddSeconds(-5))
+        })
+        if ($foreign.Count -gt 0) {
+            $lines = @(
+                "foreign_sandbox_session_detected_utc=$((Get-Date).ToUniversalTime().ToString('o'))"
+                "our_launch_utc=$($LaunchTimeUtc.ToString('o'))"
+            )
+            foreach ($f in $foreign) {
+                $st = $null
+                try { $st = $f.StartTime.ToUniversalTime().ToString('o') } catch { $st = '<unreadable>' }
+                $lines += "  pid=$($f.Id) name=$($f.ProcessName) start_time_utc=$st -- predates our launch, NOT OURS, refusing to kill anything"
+            }
+            Set-Content -Path (Join-Path $OutputDir 'FOREIGN-SANDBOX-SESSION.txt') -Value ($lines -join "`n") -Encoding UTF8
+            foreach ($l in $lines) { Write-Warning "[Run-SandboxSoak] $l" }
+            return [pscustomobject]@{ ok = $false; foreign = $true; vmmem_gone = $null; remaining = @() }
+        }
+    }
+
+    $procs = @(Get-Process -Name $KillNames -ErrorAction SilentlyContinue)
+    $killed = @()
+    foreach ($p in $procs) {
+        try {
+            Stop-Process -Id $p.Id -Force -ErrorAction Stop
+            $killed += "$($p.ProcessName)(pid=$($p.Id))"
+        } catch {
+            Write-Warning "[Run-SandboxSoak] failed to stop $($p.ProcessName) pid=$($p.Id): $_"
+        }
+    }
+    Write-Step "Killed: $(if ($killed.Count -gt 0) { $killed -join ', ' } else { '(nothing matched)' })"
+
+    $pollDeadline = (Get-Date).AddSeconds(60)
+    $vmmemGone = $false
+    while ((Get-Date) -lt $pollDeadline) {
+        if (@(Get-Process -Name 'vmmemWindowsSandbox' -ErrorAction SilentlyContinue).Count -eq 0) { $vmmemGone = $true; break }
+        Start-Sleep -Seconds 2
+    }
+    $remaining = @(Get-Process -Name $KillNames -ErrorAction SilentlyContinue)
+    Write-Step "vmmemWindowsSandbox gone (polled up to 60s): $vmmemGone. Remaining sandbox process(es): $(if ($remaining.Count -gt 0) { ($remaining | ForEach-Object { "$($_.ProcessName)(pid=$($_.Id))" }) -join ', ' } else { 'none' })"
+    return [pscustomobject]@{ ok = $true; foreign = $false; vmmem_gone = $vmmemGone; remaining = $remaining }
+}
+
+function Write-StallAndExit {
+    param([string]$Reason, [datetime]$LaunchTimeUtc, [string]$OutputDir, [string[]]$KillNames)
+    $ts = (Get-Date).ToUniversalTime().ToString('o')
+    $stallBody = "stall_detected_utc=$ts reason=$Reason"
+    Set-Content -Path (Join-Path $OutputDir 'STALL.txt') -Value $stallBody -Encoding UTF8
+    Write-Warning "[Run-SandboxSoak] STALL: $stallBody -- attempting to kill the sandbox."
+    $killResult = Invoke-SandboxKill -LaunchTimeUtc $LaunchTimeUtc -KillNames $KillNames -OutputDir $OutputDir
+    if ($killResult.foreign) {
+        exit 5
+    }
+    exit 4
+}
+
+# --------------------------------------------------------------------------
+# 5. Launch and wait for VERDICT.txt, enforcing separate phase deadlines
+#    (installer bound from launch, station-healthy bound from install-done,
+#    rollup-stall bound once the soak clock starts) PLUS a generic
+#    quiet-liveness backstop that covers every phase, including the setup
+#    phase between healthy and soak-start that has no dedicated bound of its
+#    own (first-admin, asset upload, schedule/commit, channel config/start,
+#    ON_AIR poll).
+# --------------------------------------------------------------------------
+$launchTimeUtc = (Get-Date).ToUniversalTime()
+Write-Step "Launching Windows Sandbox ($wsbPath) at $($launchTimeUtc.ToString('o'))..."
 Start-Process -FilePath 'C:\Windows\System32\WindowsSandbox.exe' -ArgumentList "`"$wsbPath`"" | Out-Null
 
 $verdictTxtPath = Join-Path $outputDir 'VERDICT.txt'
 $verdictJsonPath = Join-Path $outputDir 'VERDICT.json'
 $rollupsDir = Join-Path $outputDir 'rollups'
-$stallSeconds = [Math]::Max(60, $StallMinutes * 60)
-$lastProgressTime = Get-Date
-$lastRollupCount = 0
-$overallDeadline = (Get-Date).AddMinutes($Minutes + 20)   # generous outer bound past the in-sandbox watchdog's own Minutes+10
+$installDoneMarker = Join-Path $outputDir 'PHASE-INSTALL-DONE.json'
+$healthyMarker = Join-Path $outputDir 'PHASE-HEALTHY.json'
+$soakStartMarker = Join-Path $outputDir 'SOAK-START.json'
 
-Write-Step "Waiting for $verdictTxtPath (stall alarm at ${StallMinutes}m of no rollup progress, outer bound $($overallDeadline.ToString('o')))..."
+function Get-LatestLivenessUtc {
+    <#
+      Generic liveness signal: the newest mtime among the files the shipper
+      mirrors out every ~15s, mirroring Host-Launch-Sandbox-Test.ps1's own
+      _SHIPPER-HEARTBEAT.txt-driven quiet-share detector. Returns $null if
+      none of the files exist yet (before the first shipper tick lands).
+    #>
+    param([string]$OutputDir)
+    $candidates = @('soak-log.txt', 'summary.json', '_SHIPPER-HEARTBEAT.txt') | ForEach-Object { Join-Path $OutputDir $_ }
+    $times = @($candidates | Where-Object { Test-Path $_ } | ForEach-Object { (Get-Item $_).LastWriteTimeUtc })
+    if ($times.Count -eq 0) { return $null }
+    return ($times | Sort-Object -Descending | Select-Object -First 1)
+}
+
+$phase = 'installing'
+$installDeadlineUtc = $launchTimeUtc.AddMinutes($InstallBoundMinutes)
+$healthDeadlineUtc = $null
+$lastRollupCount = 0
+$lastRollupProgressUtc = $null
+$lastGenericProgressUtc = $launchTimeUtc
+
+Write-Step "Waiting for VERDICT.txt. Phase bounds: install<=${InstallBoundMinutes}m (from launch), health<=${HealthBoundMinutes}m (from install-done), rollup-stall<=${RollupStallMinutes}m (once soak_start_utc is set), generic-quiet<=${QuietMinutes}m (every phase)."
 
 while ($true) {
     if (Test-Path $verdictTxtPath) { break }
 
-    $rollupCount = 0
-    if (Test-Path $rollupsDir) {
-        $rollupCount = @(Get-ChildItem -Path $rollupsDir -Filter '*.json' -File -ErrorAction SilentlyContinue).Count
-    }
-    if ($rollupCount -gt $lastRollupCount) {
-        $lastRollupCount = $rollupCount
-        $lastProgressTime = Get-Date
+    $liveUtc = Get-LatestLivenessUtc -OutputDir $outputDir
+    if ($liveUtc -and $liveUtc -gt $lastGenericProgressUtc) { $lastGenericProgressUtc = $liveUtc }
+    $genericStalledMin = ((Get-Date).ToUniversalTime() - $lastGenericProgressUtc).TotalMinutes
+    if ($genericStalledMin -ge $QuietMinutes) {
+        Write-StallAndExit -Reason "no new soak-log.txt/summary.json/_SHIPPER-HEARTBEAT.txt mtime for >= ${QuietMinutes} minute(s) (generic quiet-liveness bound, phase=$phase)" -LaunchTimeUtc $launchTimeUtc -OutputDir $outputDir -KillNames $KillTargetProcNames
     }
 
-    $stalledSeconds = ((Get-Date) - $lastProgressTime).TotalSeconds
-    if ($stalledSeconds -ge $stallSeconds) {
-        $ts = (Get-Date).ToUniversalTime().ToString('o')
-        $stallBody = "stall_detected_utc=$ts rollup_count=$rollupCount stalled_seconds=$([Math]::Round($stalledSeconds, 1)) threshold_seconds=$stallSeconds reason=no new rollup file for >= ${StallMinutes} minute(s)"
-        Set-Content -Path (Join-Path $outputDir 'STALL.txt') -Value $stallBody -Encoding UTF8
-        Write-Warning "[Run-SandboxSoak] STALL: $stallBody -- killing the sandbox."
-        foreach ($name in $sandboxProcNames) {
-            Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    if ($phase -eq 'installing') {
+        if (Test-Path $installDoneMarker) {
+            $phase = 'awaiting-health'
+            $healthDeadlineUtc = (Get-Item $installDoneMarker).LastWriteTimeUtc.AddMinutes($HealthBoundMinutes)
+            Write-Step "phase -> awaiting-health (health bound: $($healthDeadlineUtc.ToString('o')))"
+        } elseif ((Get-Date).ToUniversalTime() -gt $installDeadlineUtc) {
+            Write-StallAndExit -Reason "installer bound (${InstallBoundMinutes}m from launch $($launchTimeUtc.ToString('o'))) exceeded -- PHASE-INSTALL-DONE.json never appeared" -LaunchTimeUtc $launchTimeUtc -OutputDir $outputDir -KillNames $KillTargetProcNames
         }
-        exit 4
-    }
-
-    if ((Get-Date) -ge $overallDeadline) {
-        $ts = (Get-Date).ToUniversalTime().ToString('o')
-        $stallBody = "outer_deadline_reached_utc=$ts reason=VERDICT.txt never appeared within Minutes+20 ($($Minutes + 20)m), and the in-sandbox watchdog (Minutes+10) should have already fired -- treating as a stall"
-        Set-Content -Path (Join-Path $outputDir 'STALL.txt') -Value $stallBody -Encoding UTF8
-        Write-Warning "[Run-SandboxSoak] STALL (outer deadline): $stallBody -- killing the sandbox."
-        foreach ($name in $sandboxProcNames) {
-            Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    } elseif ($phase -eq 'awaiting-health') {
+        if (Test-Path $healthyMarker) {
+            $phase = 'awaiting-soak-start'
+            Write-Step "phase -> awaiting-soak-start (generic quiet-bound covers first-admin/assets/schedule/channel-start from here)"
+        } elseif ((Get-Date).ToUniversalTime() -gt $healthDeadlineUtc) {
+            Write-StallAndExit -Reason "station-healthy bound (${HealthBoundMinutes}m from install-done) exceeded -- PHASE-HEALTHY.json never appeared" -LaunchTimeUtc $launchTimeUtc -OutputDir $outputDir -KillNames $KillTargetProcNames
         }
-        exit 4
+    } elseif ($phase -eq 'awaiting-soak-start') {
+        if (Test-Path $soakStartMarker) {
+            $phase = 'running'
+            $lastRollupProgressUtc = (Get-Date).ToUniversalTime()
+            Write-Step "phase -> running (soak clock started; rollup-stall bound now armed at ${RollupStallMinutes}m)"
+        }
+    } elseif ($phase -eq 'running') {
+        $rollupCount = 0
+        if (Test-Path $rollupsDir) {
+            $rollupCount = @(Get-ChildItem -Path $rollupsDir -Filter '*.json' -File -ErrorAction SilentlyContinue).Count
+        }
+        if ($rollupCount -gt $lastRollupCount) {
+            $lastRollupCount = $rollupCount
+            $lastRollupProgressUtc = (Get-Date).ToUniversalTime()
+        }
+        if ($lastRollupProgressUtc) {
+            $rollupStalledMin = ((Get-Date).ToUniversalTime() - $lastRollupProgressUtc).TotalMinutes
+            if ($rollupStalledMin -ge $RollupStallMinutes) {
+                Write-StallAndExit -Reason "no new rollup file for >= ${RollupStallMinutes} minute(s) (rollup_count=$rollupCount)" -LaunchTimeUtc $launchTimeUtc -OutputDir $outputDir -KillNames $KillTargetProcNames
+            }
+        }
     }
 
     Start-Sleep -Seconds 15
@@ -291,7 +455,7 @@ Write-Host "Evidence: $outputDir"
 # Sandbox tears itself down once the LogonCommand's script exits; give it a
 # short grace window, then confirm.
 Start-Sleep -Seconds 5
-$stillRunning = @(Get-Process -Name $sandboxProcNames -ErrorAction SilentlyContinue)
+$stillRunning = @(Get-Process -Name $KillTargetProcNames -ErrorAction SilentlyContinue)
 if ($stillRunning.Count -gt 0) {
     Write-Step "Sandbox process(es) still shutting down ($($stillRunning.Count)) -- not force-closing; a normal completion tears down on its own."
 }

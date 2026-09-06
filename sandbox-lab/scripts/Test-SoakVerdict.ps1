@@ -106,6 +106,35 @@ $cycles4 = @(
 $v4 = Get-SoakVerdict -Cycles $cycles4 -StartUtc $startUtc -WarmupSeconds 180
 Assert-Equal 'scenario4 (ON_AIR missing warm-up only) -> PASS' 'PASS' $v4.verdict
 
+# -------------------------------------------------------------- scenario 4b
+# engine=$null post-warmup (EgressStateRow carries no `engine` field --
+# civiccast/egress/models.py:506-518 -- so this is what a worker-pid-found-
+# but-census-inconclusive, or no-worker-at-all, row looks like). Expect FAIL
+# -- a null engine must never read as "probably gstreamer, close enough".
+$channelsEngineNull = @(
+    (New-Channel -Id 'public' -Engine $null), (New-Channel -Id 'education'), (New-Channel -Id 'government')
+)
+$cycles4b = @(
+    (New-Cycle -Utc '2026-09-05T18:01:00Z' -Channels $threeChannelsGood)
+    (New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $channelsEngineNull)
+)
+$v4b = Get-SoakVerdict -Cycles $cycles4b -StartUtc $startUtc -WarmupSeconds 180
+Assert-Equal 'scenario4b (engine=null post-warmup) -> FAIL' 'FAIL' $v4b.verdict
+
+# -------------------------------------------------------------- scenario 4c
+# engine='ffmpeg-fallback' post-warmup (allow_software_fallback=$false in
+# the channel config makes this a real, visible failure -- see
+# In-Sandbox-Soak.ps1's channel config body). Expect FAIL.
+$channelsFfmpegFallback = @(
+    (New-Channel -Id 'public' -Engine 'ffmpeg-fallback'), (New-Channel -Id 'education'), (New-Channel -Id 'government')
+)
+$cycles4c = @(
+    (New-Cycle -Utc '2026-09-05T18:01:00Z' -Channels $threeChannelsGood)
+    (New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $channelsFfmpegFallback)
+)
+$v4c = Get-SoakVerdict -Cycles $cycles4c -StartUtc $startUtc -WarmupSeconds 180
+Assert-Equal 'scenario4c (engine=ffmpeg-fallback post-warmup) -> FAIL' 'FAIL' $v4c.verdict
+
 # ---------------------------------------------------------------- scenario 5
 # tsduck fail post-warmup. Expect FAIL (sanity check for the tsp-fail path).
 $channelsTspFail = @(

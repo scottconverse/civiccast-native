@@ -71,7 +71,16 @@ function Test-SoakCycle {
         }
     }
 
-    $notOnAir = @($channels | Where-Object { $_.engine_state -ne 'ON_AIR' -or ($_.engine -and $_.engine -ne 'gstreamer') })
+    # engine must be exactly 'gstreamer' post-warmup -- $null (worker not
+    # found / EgressStateRow carries no engine field so it must be inferred
+    # from the OS process census, see In-Sandbox-Soak.ps1's
+    # Get-EngineForWorkerPid) and 'ffmpeg-fallback' both fail here. A
+    # missing/unknown engine is not "probably fine" -- it means either no
+    # worker is running or the shipped default silently fell back, and
+    # allow_software_fallback is set to $false in the channel config
+    # specifically so that fallback is a real, visible failure rather than
+    # a channel that happens to still look ON_AIR.
+    $notOnAir = @($channels | Where-Object { $_.engine_state -ne 'ON_AIR' -or $_.engine -ne 'gstreamer' })
     $tspFail = @($channels | Where-Object { $_.tsduck_verdict -ne 'pass' })
 
     if ($IsWarmup) {
