@@ -74,6 +74,45 @@ def reload_switch_is_deferred(reload_path: str) -> bool:
     return reload_path.endswith(DEFERRED_SWITCH_SUFFIX)
 
 
+#: The literal filename segment ``GstPlayoutStrategy.reload_content`` writes
+#: every reload sidecar under, immediately before the id component --
+#: ``playout-graph.reload.<id><suffix>``.
+_RELOAD_SIDECAR_PREFIX = "playout-graph.reload."
+
+
+def reload_id_from_sidecar_path(reload_path: str) -> str:
+    """Extract the daemon-generated reload id embedded in a reload sidecar's
+    FILENAME (hostile-review follow-up, 2026-09-06, item "POSIX _dispatch_
+    control never settles").
+
+    ``GstPlayoutStrategy.reload_content`` uses the daemon's own ``command_id``
+    (``EgressDaemon._try_content_reload``'s freshly generated ``reload_id``,
+    the same id its own ``_poll_reload_settlement`` later looks for) as this
+    filename's unique component, instead of a disconnected, independently
+    generated uuid -- specifically so a reload dispatched over the POSIX FIFO
+    control channel can still report its settlement under an id the daemon
+    can correlate. Unlike the Windows D2 named-pipe seam, the FIFO has no
+    separate envelope/ack ``id`` field at all (``control.parse_control_line``'s
+    ``reload <path>`` grammar takes the entire remainder as the path -- see
+    ``reload_sidecar_suffix``'s docstring for why the switch-mode flag rides
+    the filename for the identical reason), so the filename is the only slot
+    available.
+
+    Falls back to the bare filename stem (``Path(reload_path).name``, suffix
+    included) if the expected ``playout-graph.reload.`` prefix isn't present
+    -- e.g. a hand-constructed path in an older test/tool -- so a dispatch can
+    never crash over this; it just correlates less precisely (effectively:
+    not at all, matching the pre-fix behavior for that one caller)."""
+    name = reload_path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    if not name.startswith(_RELOAD_SIDECAR_PREFIX):
+        return name
+    remainder = name[len(_RELOAD_SIDECAR_PREFIX) :]
+    for suffix in (DEFERRED_SWITCH_SUFFIX, IMMEDIATE_SWITCH_SUFFIX):
+        if remainder.endswith(suffix):
+            return remainder[: -len(suffix)]
+    return remainder
+
+
 def should_defer_switch(*, previous_state: str | None, manual_override_active: bool) -> bool:
     """True when a content-reload should defer its selector switch to the
     outgoing leg's own EOS rather than cutting the instant the new leg is ready.
@@ -114,6 +153,7 @@ def rollover_trigger_at(
 __all__ = [
     "DEFERRED_SWITCH_SUFFIX",
     "IMMEDIATE_SWITCH_SUFFIX",
+    "reload_id_from_sidecar_path",
     "reload_sidecar_suffix",
     "reload_switch_is_deferred",
     "rollover_trigger_at",

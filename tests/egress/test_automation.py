@@ -103,6 +103,19 @@ def _plan_with_duration(
     )
 
 
+class _PendingReloadAwareDaemon(_FakeDaemon):
+    """A daemon double that, like the real ``EgressDaemon`` (F1 redesign),
+    can report an armed-but-not-yet-settled reload via
+    ``has_pending_reload_settlement``."""
+
+    def __init__(self, *, live_channels: set[str] | None = None) -> None:
+        super().__init__(live_channels=live_channels)
+        self.pending_channels: set[str] = set()
+
+    def has_pending_reload_settlement(self, channel_id: str) -> bool:
+        return channel_id in self.pending_channels
+
+
 class _HorizonAwareDaemon(_FakeDaemon):
     """A daemon double that, like the real ``EgressDaemon``, can say which source
     plan it actually DISPATCHED (``dispatched_plan_horizon``)."""
@@ -605,6 +618,69 @@ class TestPlanRollover:
         clock["now"] += 40.0
         service.run_once(now=later)
         assert _pending_actions(store, "public") == ["reload"]
+
+    def test_rollover_never_retries_while_the_daemon_reports_a_pending_settlement(
+        self,
+    ) -> None:
+        """Hostile-review follow-up, item 2 (F1 redesign): a DEFERRED switch's
+        ``current_proof_event_id`` does not change until it actually SETTLES,
+        which for an automation-driven ON_AIR extension can be ~120s+ after
+        this dispatches it -- far longer than ``_ROLLOVER_ISSUED_TIMEOUT_
+        SECONDS`` (45s). Without checking the daemon's own "armed, still
+        settling" signal first, the retry-if-undelivered branch would fire
+        every ~45s while a perfectly healthy deferred reload is still
+        legitimately settling (re-preparing synchronously, superseding the
+        still-armed leg, creating another prepared-plan directory each time).
+        Proves: zero re-dispatches across a 120s-plus wait while the daemon
+        reports pending, then a normal landing once it reports settled."""
+        clock = {"now": 1000.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _PendingReloadAwareDaemon(live_channels={"public"})
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            provider,
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+        )
+
+        service.run_once(now=_NOW)  # establish horizon: 40s plan
+        later = _NOW + timedelta(seconds=35)
+        service.run_once(now=later)  # trigger fires -> one reload dispatched
+        assert calls["n"] == 2
+        assert _pending_actions(store, "public") == ["reload"]
+
+        # The daemon now reports this reload as armed and still settling.
+        daemon.pending_channels.add("public")
+
+        # 120 seconds pass (well past the 45s retry timeout) with the daemon
+        # still reporting pending throughout -- NOT ONE re-dispatch.
+        for _ in range(12):
+            clock["now"] += 10.0
+            service.run_once(now=later)
+            assert _pending_actions(store, "public") == []
+        assert calls["n"] == 2  # still just the one prepare call from the dispatch above
+
+        # The reload finally settles: the daemon no longer reports it pending,
+        # and (as the real EgressDaemon._commit_reload_settlement does)
+        # current_proof_event_id changes to reflect the landed plan.
+        daemon.pending_channels.discard("public")
+        self._on_air_state(store, "public", proof_event_id="ev-2")
+        clock["now"] += 10.0
+        service.run_once(now=later)
+
+        # Recognized as "a fresh plan just took air" (existing branch) -- the
+        # horizon re-establishes from the NEW plan, no retry dispatched for
+        # the now-landed one.
+        assert _pending_actions(store, "public") == []
 
     # -- Hostile-review B3: earlier, boundary-aligned trigger ------------------
 

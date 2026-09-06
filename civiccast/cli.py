@@ -1198,6 +1198,10 @@ def _run_egress_service(
     _bind_egress_database(_resolve_egress_database_url())
     store = _build_egress_store()
     source_plan_provider = _build_egress_source_plan_provider()
+    # F3 fix (hostile-review follow-up, 2026-09-06): kept as a named instance
+    # so `.release` (immediate per-plan-directory reclaim once the daemon
+    # independently knows a plan is retired) can be wired alongside `.prepare`.
+    source_preparer_instance = SourcePreparer(work_dir=work_dir)
     daemon = EgressDaemon(
         store,
         work_dir=work_dir,
@@ -1210,12 +1214,17 @@ def _run_egress_service(
         cg_overlay_provider=build_board_overlay_provider(
             _build_cli_session_factory(), work_dir=work_dir
         ),
-        source_preparer=SourcePreparer(work_dir=work_dir).prepare,
+        source_preparer=source_preparer_instance.prepare,
+        prepared_plan_release=source_preparer_instance.release,
         resolve_secret=lambda ref: os.environ.get(ref),
         # S15: the GStreamer engine (default) or ffmpeg-concat (legacy), per
         # CIVICCAST_EGRESS_ENGINE.
         encoder_strategy=build_encoder_strategy(),
     )
+    # Item 5 fix: only the daemon knows which per-plan directories are
+    # currently LIVE (active on-air + armed-not-yet-settled) -- wire it back
+    # into the preparer's own GC pass now that both exist.
+    source_preparer_instance.set_protected_plan_dirs_provider(daemon.live_prepared_plan_dirs)
     with _egress_stop_signal_context(enabled=not once) as should_stop:
         service = EgressService(
             daemon,

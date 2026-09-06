@@ -85,7 +85,7 @@ class _WorkerStrategy:
         raise NotImplementedError
 
     def reload_content(  # pragma: no cover
-        self, channel_id: str, work_dir: Path, request: EncoderStartRequest
+        self, channel_id: str, work_dir: Path, request: EncoderStartRequest, **_kwargs
     ) -> bool:
         return False
 

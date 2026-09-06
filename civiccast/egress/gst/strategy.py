@@ -78,6 +78,12 @@ _TRUTHY = {"1", "true", "yes", "on"}
 #   strategy -> worker  {"v":1,"id":"<uuid>","cmd":"<existing control line>"}
 #   worker -> strategy  {"v":1,"id":"<same>","result":"applied"|"error","detail":...}
 #
+# F1 redesign (2026-09-06): for the "reload" verb specifically, "applied" above
+# is really "armed" (accepted; the new leg is building/prerolling) -- the
+# eventual commit/abort is reported out-of-band via reload-status.json
+# (worker.py's _write_reload_status / daemon._poll_reload_settlement), never
+# by blocking this ack. See _reload_ack_timeout_s's docstring for why.
+#
 # The per-verb replay policy (reload/swap = at-least-once desired-state reissue;
 # caption = at-most-once, never replayed; stop = terminal, suppresses replay) is
 # NOT reimplemented here -- it is the pure, already-tested
@@ -89,6 +95,34 @@ _TRUTHY = {"1", "true", "yes", "on"}
 WORKER_PIPE_FRAME_CAP = 16 * 1024  # bytes; D7-class hardening extended to worker pipes
 _WORKER_PIPE_NAME_PREFIX = r"\\.\pipe\civiccast-worker-"
 _WORKER_PIPE_ACK_TIMEOUT_S = 5.0
+
+
+def _reload_ack_timeout_s() -> float:
+    """Bound for a ``reload`` command's ack wait.
+
+    F1 redesign (coordinator hostile review, 2026-09-06, superseding item 4's
+    original design): item 4 made the worker's ``reload`` ack wait for the
+    reload to fully COMMIT or ABORT, which for a DEFERRED/boundary-aligned
+    switch (an automation-driven ON_AIR extension -- see
+    ``reload_policy.should_defer_switch``) can take up to
+    ``defer_switch_timeout_s`` (900s default) -- so item 4 widened this bound
+    to the worker's own (immediate-switch) ``reload_timeout_s`` plus a margin,
+    which was STILL wrong for the deferred case: a correctly-armed reload with
+    a long natural lead would blow straight through even that widened bound,
+    the strategy would report a lost ack, and the daemon would terminate a
+    perfectly healthy worker.
+
+    The ack now means only "armed" (``worker.py``'s ``_dispatch_control_with_ack``
+    docstring) -- the worker accepted the command and the new leg is building/
+    prerolling, or the build failed synchronously -- which is fast, like every
+    other verb's ack. The eventual settle outcome is reported out-of-band
+    (``reload-status.json``, polled by ``EgressDaemon._poll_reload_settlement``)
+    instead of riding this ack at all. This function is therefore back to the
+    SAME small default every other verb uses -- kept as its own named function
+    (rather than inlining ``_WORKER_PIPE_ACK_TIMEOUT_S`` at the call site) so a
+    future reload-specific tuning need has a single seam to change, without
+    reintroducing today's mistake of conflating "acked" with "settled"."""
+    return _WORKER_PIPE_ACK_TIMEOUT_S
 
 
 def worker_pipe_name(channel_id: str) -> str:
@@ -418,6 +452,16 @@ class _WindowsPipeChannel:
         self._lock = threading.Lock()
         self._round_trip_lock = threading.Lock()
         self._connected_event = threading.Event()
+        # Diagnosability fix (coordinator follow-up, 2026-09-06): the daemon's
+        # ``_try_content_reload`` treated a False ``reload_content`` as silent --
+        # nothing said WHY the seamless path was declined, so an operator/on-call
+        # reading the control-plane log for "why did this channel restart instead
+        # of reloading in place" found nothing. ``send_and_wait`` keeps its
+        # existing synchronous bool contract (widely relied on by callers and
+        # tests); this attribute carries the reason for the MOST RECENT False
+        # return on THIS channel's pipe, read by
+        # ``GstPlayoutStrategy.last_send_command_failure_reason``.
+        self.last_failure_reason: str | None = None
 
     def start(self) -> None:
         """Create the pipe, accept the worker's connection on a background
@@ -452,14 +496,24 @@ class _WindowsPipeChannel:
         sec4's 'bounded retry keyed by id'). On timeout, applies the per-verb
         lost-ack policy (``WorkerPipeSession.expire``) and returns ``False`` --
         matching the existing FIFO-path contract where a dropped command is
-        reported as ``False``, never an exception."""
+        reported as ``False``, never an exception.
+
+        F1 redesign: a ``reload`` command's ack means "armed" (accepted, the new
+        leg is building/prerolling), written by the worker synchronously -- same
+        bound as every other verb (``_reload_ack_timeout_s()`` intentionally
+        equals the default now; see its own docstring for why item 4's original
+        widened bound was itself a bug). ``True`` for ``reload`` on either
+        ``"armed"`` or ``"applied"`` (a redelivered id re-acks whatever the
+        original ack said -- see ``worker.py``'s ``_windows_pipe_reader_loop``)."""
+        ack_timeout_s = _reload_ack_timeout_s() if verb == "reload" else self._ack_timeout_s
         # A synchronous Win32 pipe handle serializes ReadFile and WriteFile calls
         # issued concurrently against that handle.  Keep one request/ack exchange
         # on one caller thread instead of parking a background ReadFile that would
         # deadlock the next write.
         with self._round_trip_lock:
-            deadline = time.monotonic() + self._ack_timeout_s
-            if not self._connected_event.wait(self._ack_timeout_s):
+            deadline = time.monotonic() + ack_timeout_s
+            if not self._connected_event.wait(ack_timeout_s):
+                self.last_failure_reason = "worker never connected to its control pipe"
                 logger.warning(
                     "worker command for %s timed out before the worker connected",
                     self.session.channel_id,
@@ -493,7 +547,19 @@ class _WindowsPipeChannel:
                 resolved.result = result
                 resolved.detail = detail
                 if command_id == command.id:
-                    return result == "applied"
+                    succeeded = result == "applied" or (verb == "reload" and result == "armed")
+                    if not succeeded:
+                        # e.g. a reload's synchronous "error:<repr>" ack (the
+                        # build failed before anything was armed -- F1 redesign)
+                        # -- surfaced so the caller (daemon._try_content_reload)
+                        # can log WHY, not just that the seamless reload was
+                        # declined.
+                        self.last_failure_reason = f"worker acked {result!r}" + (
+                            f" ({detail})" if detail else ""
+                        )
+                    else:
+                        self.last_failure_reason = None
+                    return succeeded
 
             with self._lock:
                 self._pending.pop(command.id, None)
@@ -501,6 +567,9 @@ class _WindowsPipeChannel:
             # (reissue_desired_state / report_dropped / keep_stopping) rather than
             # discarding it silently.
             lost_ack_outcome = self.session.expire(command.id)
+            self.last_failure_reason = (
+                f"ack timeout after {ack_timeout_s:.1f}s ({lost_ack_outcome})"
+            )
             logger.warning(
                 "worker command %s lost-ack -> %s",
                 command.id,
@@ -523,6 +592,46 @@ def _embed_captions_default() -> bool:
     opt-in via ``CIVICCAST_EGRESS_ENGINE``. The live SEI insertion is WSL/LPM-validated;
     the decode-back proof loop is what flips caption_status to on."""
     return os.environ.get("CIVICCAST_EGRESS_EMBED_CAPTIONS", "").strip().lower() in _TRUTHY
+
+
+#: Item 3 (beta.5 gate): the env var that re-enables the GStreamer engine's
+#: seamless in-place program content-reload. Off by DEFAULT for beta.5.
+#:
+#: MEASURED on real hardware (2026-09-06, clean install of 609273d, three
+#: GStreamer channels): the first seamless plan rollover
+#: (``daemon._try_content_reload`` -> ``strategy.reload_content`` -> the D2
+#: worker-pipe seam -> ``engine.reload_program``) was followed by
+#: ``CTRL stall: no output for 10s`` worker relaunches every ~30s on every
+#: channel. Root cause (H1, see ``engine.py``'s ``_make``/``_build_playlist``/
+#: ``_source_leg_seq`` comments): every ``PlaylistLeg`` build named its ``concat``
+#: aggregators with the bare leg label (``vconcat_program``/``aconcat_program``),
+#: so a reload's rebuilt aggregators collided with the still-live outgoing leg's
+#: same-named aggregators -- GStreamer's ``bin.add()`` silently REFUSED the
+#: duplicate, the reload's new leg never actually joined the pipeline, its
+#: readiness probes never fired, and the worker's ``reload_program`` call ack'd
+#: "applied" before the reload had committed (worker.py's premature-ack defect,
+#: also fixed in this change) -- so automation believed every rollover had
+#: landed and kept re-triggering it every cadence tick while the channel bounced
+#: on the stall watchdog forever.
+#:
+#: This same change fixes the concat-naming collision (``_source_leg_seq``), the
+#: silent ``pipeline.add()`` failure (``_make`` now raises), and the premature
+#: ack (``reload_program(..., on_settled=...)``) -- but the seamless path has not
+#: yet been RE-PROVEN on real hardware since those fixes, so it stays off by
+#: default for the beta.5 candidate. Set ``CIVICCAST_EGRESS_SEAMLESS_RELOAD=1``
+#: to opt back in once a fresh soak confirms the fix; a channel with it off
+#: falls back to the daemon's existing terminate+restart reload path at every
+#: plan rollover (one encoder restart per rollover -- a rounding error for
+#: 10-40 minute program items, roughly every ~30s for a rapid 30-second-item
+#: test/demo schedule).
+_SEAMLESS_RELOAD_ENV_VAR = "CIVICCAST_EGRESS_SEAMLESS_RELOAD"
+
+
+def _seamless_content_reload_default() -> bool:
+    """Whether ``GstPlayoutStrategy.supports_content_reload`` defaults on, from the
+    environment. See ``_SEAMLESS_RELOAD_ENV_VAR`` above for why this defaults OFF
+    for beta.5 and what opting back in costs when the seamless path is disabled."""
+    return os.environ.get(_SEAMLESS_RELOAD_ENV_VAR, "").strip().lower() in _TRUTHY
 
 
 def _write_graph_file(path: Path, text: str) -> None:
@@ -611,7 +720,12 @@ class GstPlayoutStrategy:
 
     name = "gstreamer-playout-worker"
     supports_live_swap = True
-    supports_content_reload = True
+    # Item 3: class-level fallback ONLY, for anything that reads the attribute off
+    # the class rather than an instance. Every real instance overrides this in
+    # __init__ with the environment-gated, DI-overridable value -- see
+    # ``_SEAMLESS_RELOAD_ENV_VAR``/``_seamless_content_reload_default`` above for
+    # why this defaults False (beta.5 gate, unproven-since-fix seamless rollover).
+    supports_content_reload = False
     # selector index per source role — matches graph_from_config leg order
     # (program leg = pad 0, always-hot black slate = pad 1). There is deliberately
     # NO 'live' pad: CivicCast airs a single pre-switched live feed (S16 delegates
@@ -630,6 +744,7 @@ class GstPlayoutStrategy:
         encoder_probe: Callable[[str], bool] | None = None,
         element_probe: Callable[[str], bool] | None = None,
         is_windows: bool | None = None,
+        supports_content_reload: bool | None = None,
     ) -> None:
         self._launch = worker_launcher or _default_worker_launcher
         self._python = python_executable or sys.executable
@@ -646,6 +761,15 @@ class GstPlayoutStrategy:
         self._embed_captions = (
             _embed_captions_default() if embed_captions is None else embed_captions
         )
+        # Item 3 (beta.5 gate): instance attribute so ``getattr(strategy,
+        # "supports_content_reload", False)`` (``daemon._request_reload``) reads the
+        # environment-gated default unless a caller (or a test) overrides it
+        # explicitly -- see ``_SEAMLESS_RELOAD_ENV_VAR`` above.
+        self.supports_content_reload = (
+            _seamless_content_reload_default()
+            if supports_content_reload is None
+            else supports_content_reload
+        )
         # S11 gap 9: per-channel secondary audio (SAP/descriptive) tracks, if wired.
         self._audio_tracks_provider = audio_tracks_provider
         # D2 Windows worker-pipe seam: one _WindowsPipeChannel per active channel,
@@ -654,6 +778,12 @@ class GstPlayoutStrategy:
         # required to unit-test the strategy's Windows wiring with a fake channel.
         self._pipe_channel_factory: PipeChannelFactory = pipe_channel_factory or _WindowsPipeChannel
         self._pipe_channels: dict[str, _WindowsPipeChannel] = {}
+        # Diagnosability fix (coordinator follow-up, 2026-09-06): the reason the
+        # MOST RECENT send_command() call on each channel returned False, if any --
+        # read by daemon._try_content_reload so a declined seamless reload logs
+        # WHY instead of silently falling back to restart. See
+        # ``last_send_command_failure_reason``.
+        self._last_send_command_failure: dict[str, str] = {}
 
     def _caption_embed(self) -> CaptionEmbedRequest | None:
         """The caption-embed request for graph assembly (None = embedding off)."""
@@ -748,7 +878,7 @@ class GstPlayoutStrategy:
         log_dir = channel_dir / "logs"
         stdout_path = log_dir / "gst-worker.stdout.log"
         stderr_path = log_dir / "gst-worker.stderr.log"
-        if os.name == "nt":
+        if self._is_windows:
             # D2 Windows worker-pipe seam (design.md sec4): the STRATEGY is the pipe
             # SERVER and must exist before the worker -- create+serve it here, before
             # launch, then pass the worker the pipe NAME (not a filesystem path).
@@ -802,36 +932,78 @@ class GstPlayoutStrategy:
         On native Windows this routes through the D2 named-pipe seam (design.md
         sec4): the versioned envelope + a BOUNDED wait for the worker's ack
         (``_WindowsPipeChannel.send_and_wait``) -- returns ``True`` only when the
-        worker acked ``"applied"``, ``False`` on a lost/timed-out/errored ack
-        (never raises), matching the POSIX contract's shape below exactly. On
+        worker acked ``"applied"`` (or, for ``reload``, ``"armed"`` -- F1
+        redesign, see ``_reload_ack_timeout_s``'s docstring), ``False`` on a
+        lost/timed-out/errored ack (never raises), matching the POSIX contract's
+        shape below exactly. On
         WSL/Linux this is the ORIGINAL POSIX FIFO write, UNCHANGED: non-blocking,
         returns False (drops the command) if the FIFO is missing (worker not
         started) or has no reader yet — never raises and never blocks waiting for
         a reader (audit M2). In production the supervisor calls this on a role
-        change to swap the active source instead of restarting the encoder."""
-        if os.name == "nt":
+        change to swap the active source instead of restarting the encoder.
+
+        Bug fix (coordinator hostile review, 2026-09-06, CI mutation-report):
+        this used to branch on the real ``os.name`` directly instead of the
+        injectable ``self._is_windows`` this class already carries (and
+        already uses for the encoder-override decision, ``_resolve_encoder_
+        override``) -- so a test constructing this strategy with
+        ``is_windows=True`` to exercise the Windows pipe path on a POSIX CI
+        runner silently fell through to the FIFO branch instead (the FIFO
+        never existed, so it failed with a misleading "control FIFO missing"
+        reason rather than the pipe channel's own). Both branch points below
+        (here and in ``start()``) now consult ``self._is_windows``, matching
+        the encoder-override seam -- production behavior is unchanged
+        (``self._is_windows`` still defaults to the real ``os.name`` unless a
+        caller overrides it)."""
+        if self._is_windows:
             channel = self._pipe_channels.get(channel_id)
             if channel is None:
+                self._last_send_command_failure[channel_id] = (
+                    "worker not started (no registered control-pipe channel)"
+                )
                 return False  # worker not started (or its channel was never registered)
             verb_token = text.strip().split(None, 1)
             if not verb_token or verb_token[0].lower() not in ("reload", "swap", "caption", "stop"):
+                self._last_send_command_failure[channel_id] = f"unparseable control line: {text!r}"
                 return False  # unparseable per control.parse_control_line's own grammar
-            return channel.send_and_wait(
+            applied = channel.send_and_wait(
                 cast(Verb, verb_token[0].lower()),
                 text,
                 command_id=command_id,
             )
+            if applied:
+                self._last_send_command_failure.pop(channel_id, None)
+            else:
+                # getattr: a test double standing in for _WindowsPipeChannel
+                # (structural typing, not inheritance) need not carry this
+                # attribute -- see _FakePipeChannel in test_gst_strategy.py.
+                reason = getattr(channel, "last_failure_reason", None)
+                if reason is not None:
+                    self._last_send_command_failure[channel_id] = reason
+            return applied
         path = self.control_fifo_path(work_dir, channel_id)
         flags = os.O_WRONLY | getattr(os, "O_NONBLOCK", 0)
         try:
             fd = os.open(os.fspath(path), flags)
         except OSError:
+            self._last_send_command_failure[channel_id] = (
+                "control FIFO missing or has no reader (worker not started)"
+            )
             return False
         try:
             os.write(fd, (text.rstrip("\n") + "\n").encode("utf-8"))
         finally:
             os.close(fd)
+        self._last_send_command_failure.pop(channel_id, None)
         return True
+
+    def last_send_command_failure_reason(self, channel_id: str) -> str | None:
+        """Why the most recent ``send_command``/``reload_content`` call for
+        ``channel_id`` returned False, or None if the last call succeeded (or no
+        call has been made yet). Read by ``daemon._try_content_reload`` so a
+        declined seamless reload's log line names a reason, not just the fact of
+        the decline."""
+        return self._last_send_command_failure.get(channel_id)
 
     def reconnect_channel(self, channel_id: str) -> list[str]:
         """Replay the channel's CURRENT desired state (reload/swap) to its worker
@@ -870,7 +1042,14 @@ class GstPlayoutStrategy:
             raise ValueError(f"unknown source role: {role!r}")
         self.send_command(work_dir, channel_id, f"swap {index}")
 
-    def reload_content(self, channel_id: str, work_dir: Path, request: EncoderStartRequest) -> bool:
+    def reload_content(
+        self,
+        channel_id: str,
+        work_dir: Path,
+        request: EncoderStartRequest,
+        *,
+        command_id: str | None = None,
+    ) -> bool:
         """Rebuild the program leg from a newly-due source plan in place (D-S1-6).
 
         Serializes a fresh ``PlayoutGraph`` for the new plan to a sidecar file and
@@ -878,9 +1057,14 @@ class GstPlayoutStrategy:
         rebuilds the program leg on the live pipeline and switches on the new leg's
         first buffer, or defers the switch to the outgoing leg's own EOS when
         ``request.switch_at_end_of_current`` is set — B3 fix, seamless either way,
-        no encoder restart). Returns the FIFO-write result: False when the worker
-        control channel is not ready, so the daemon can fall back to
-        terminate+restart."""
+        no encoder restart). Returns True once the worker has ACKED the command
+        as armed (F1 redesign) -- not once the reload has actually committed; the
+        caller (``daemon._try_content_reload``) tracks settlement separately via
+        ``reload-status.json``. Returns False when the worker control channel is
+        not ready or the build failed synchronously, so the daemon can fall back
+        to terminate+restart. ``command_id``, when given, is threaded through as
+        the D2 envelope's own id (``daemon._try_content_reload`` generates one so
+        it can correlate this specific reload attempt's eventual settlement)."""
         # Apply the SAME native-Windows encoder decision as start() -- a reload that
         # skipped this would rebuild the live pipeline on the absent hardware encoder
         # after a software fallback (adversarial-review BLOCKER). warn=False: the
@@ -904,10 +1088,20 @@ class GstPlayoutStrategy:
         # reading, so concurrent reloads can't clobber a fixed path mid-read. B3 fix:
         # the filename also carries the switch-mode flag (see reload_policy.py's
         # docstring for why the control-line grammar itself can't carry it).
+        # Hostile-review follow-up (2026-09-06): the filename's unique component is
+        # now the CALLER'S ``command_id`` when one is given, rather than an
+        # independently generated uuid -- the POSIX FIFO control channel has no
+        # separate envelope/ack id field the way the Windows D2 pipe does, so this
+        # is the only way a reload dispatched over the FIFO can report its eventual
+        # settlement (``reload-status.json``) under an id the daemon can correlate
+        # back to this specific attempt (``reload_policy.reload_id_from_sidecar_path``,
+        # read by ``engine._dispatch_control``).
         suffix = reload_sidecar_suffix(switch_at_end_of_current=request.switch_at_end_of_current)
-        reload_path = channel_dir / f"playout-graph.reload.{uuid.uuid4().hex}{suffix}"
+        reload_path = channel_dir / f"playout-graph.reload.{command_id or uuid.uuid4().hex}{suffix}"
         _write_graph_file(reload_path, graph_to_json(graph))
-        return self.send_command(work_dir, channel_id, f"reload {reload_path}")
+        return self.send_command(
+            work_dir, channel_id, f"reload {reload_path}", command_id=command_id
+        )
 
     def send_caption_cue(
         self,

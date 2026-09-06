@@ -27,11 +27,15 @@ Preparation now keeps a **persistent conform cache** under
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
 import os
+import shutil
 import threading
+import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +57,38 @@ WarmScheduler = Callable[[Callable[[], None]], None]
 
 _CACHE_DIR_NAME = "conform-cache"
 _DEFAULT_CACHE_GB = 20.0
+#: F3 fix (hostile-review follow-up, 2026-09-06): the age-only GC this replaced
+#: had no size/count budget at all, so a channel doing frequent rollovers (the
+#: exact scenario H5 was fixed for) could accumulate an unbounded number of
+#: per-plan directories over a 6-hour window. GC is now keep-N-most-recent
+#: FIRST (a directory this recent could plausibly still be the one a live
+#: worker is reading, or one the daemon hasn't yet released -- see
+#: ``release``), THEN a byte budget across whatever is left, and only falls
+#: back to a bare age floor as an absolute last resort for anything neither
+#: of those already caught. The floor is deliberately longer than H5's
+#: original 6h now that keep-N is the primary defense.
+_PREPARED_PLAN_DIR_KEEP_N = 3
+_PREPARED_PLAN_DIR_BUDGET_GB = 5.0
+_PREPARED_PLAN_DIR_MAX_AGE_S = 24.0 * 3600.0
+
+
+def _prepared_plan_dir_budget_bytes() -> float:
+    raw = os.environ.get("CIVICCAST_PREPARED_PLAN_DIR_BUDGET_GB", "").strip()
+    try:
+        gb = float(raw) if raw else _PREPARED_PLAN_DIR_BUDGET_GB
+    except ValueError:
+        gb = _PREPARED_PLAN_DIR_BUDGET_GB
+    return gb * 1e9
+
+
+def _dir_size_bytes(directory: Path) -> int:
+    total = 0
+    with contextlib.suppress(OSError):
+        for entry in directory.rglob("*"):
+            with contextlib.suppress(OSError):
+                if entry.is_file():
+                    total += entry.stat().st_size
+    return total
 
 
 def _default_warm_scheduler(job: Callable[[], None]) -> None:
@@ -87,6 +123,15 @@ class SourcePreparationReport:
 
     source_plan: EgressSourcePlan
     records: tuple[PreparedSegmentRecord, ...]
+    #: F3 fix: this call's unique ``<channel>/prepared/<uuid>`` directory (see
+    #: ``prepare``'s docstring), so a caller that independently knows a plan is
+    #: retired (e.g. the daemon, once a content-reload reports its predecessor
+    #: settled) can hand it straight back to ``SourcePreparer.release`` instead
+    #: of waiting for GC. ``None`` for a caller/test double that never
+    #: constructs a real per-plan directory (e.g. a live-only plan whose
+    #: ``prepare()`` call wrote nothing at all -- see F7 -- or a fake
+    #: preparer in a test).
+    plan_dir: Path | None = None
 
 
 class SourcePreparer:
@@ -118,6 +163,29 @@ class SourcePreparer:
         # ponytail: one Lock per cache key ever seen, never pruned -- bounded
         # by the number of distinct assets aired over the process lifetime.
         self._conform_locks: dict[str, threading.Lock] = {}
+        # Hostile-review follow-up, item 5: this module has no visibility of
+        # its own into which per-plan directories a caller still considers
+        # LIVE (an active on-air plan, an armed-but-not-yet-settled reload) --
+        # only the daemon knows that. None means GC falls back to keep-N/
+        # budget/age alone (still safe, just less precise); see
+        # ``set_protected_plan_dirs_provider``.
+        self._protected_plan_dirs_provider: Callable[[str], frozenset[Path]] | None = None
+
+    def set_protected_plan_dirs_provider(
+        self, provider: Callable[[str], frozenset[Path]] | None
+    ) -> None:
+        """Wire a callback ``prepare()`` consults before every GC pass to learn
+        which of THIS channel's per-plan directories must never be evicted,
+        however old, large, or far outside keep-N recency they are.
+
+        A setter rather than a constructor arg because of construction order:
+        production wiring builds the ``SourcePreparer`` instance FIRST (so its
+        ``.prepare``/``.release`` bound methods can be passed into
+        ``EgressDaemon.__init__``), and only the resulting daemon can answer
+        "which directories are live" (``EgressDaemon.live_prepared_plan_dirs``)
+        -- see cli.py's/automation.py's wiring, both of which call this right
+        after constructing the daemon."""
+        self._protected_plan_dirs_provider = provider
 
     # -- persistent conform cache -------------------------------------------
 
@@ -244,6 +312,20 @@ class SourcePreparer:
             emit_inpoint = inpoint
             emit_outpoint = (inpoint or 0.0) + segment.duration_seconds
         else:
+            # H5 fix (atomic write, second half): write to a ``.tmp`` sibling and
+            # ``rename`` into place only on success -- mirrors
+            # ``_conform_full_asset_into_cache``'s existing tmp+replace pattern
+            # (this was the one write site in this module that did NOT already
+            # follow it). ``output_path`` is now unique per ``prepare()`` call
+            # (see that method's docstring), so this is defense-in-depth rather
+            # than the primary H5 fix -- but a reader that opens the final path
+            # mid-write (this module has no control over when a consumer looks)
+            # must never observe a partial file either.
+            # F7 fix: prepare() no longer pre-creates the per-plan directory
+            # (it may end up removed again if nothing is ever written into it),
+            # so the first actual write site must create it lazily.
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_output_path = output_path.with_name(output_path.name + ".tmp")
             args = ["-hide_banner", "-loglevel", "warning"]
             if inpoint is not None:
                 args.extend(["-ss", f"{inpoint:g}"])
@@ -257,14 +339,16 @@ class SourcePreparer:
                     "copy",
                     "-f",
                     "mpegts",
-                    str(output_path),
+                    str(tmp_output_path),
                 ]
             )
             result = self._ffmpeg_runner(args)
             if result.returncode != 0:
+                tmp_output_path.unlink(missing_ok=True)
                 raise SourcePrepareError(
                     f"Cached conform copy-out failed for {segment.label!r}; inspect FFmpeg output."
                 )
+            tmp_output_path.replace(output_path)
             emitted = str(output_path)
             emit_inpoint = None
             emit_outpoint = None
@@ -315,6 +399,102 @@ class SourcePreparer:
 
         self._warm_scheduler(_job)
 
+    def release(self, plan_dir: Path | None) -> None:
+        """F3 fix: immediately reclaim ONE specific per-plan directory the caller
+        independently knows is safe to remove -- e.g. the daemon calls this for
+        the PREVIOUS plan's directory once a content-reload's replacement has
+        actually SETTLED (``engine.reload_program``'s ``on_settled`` landing
+        "applied" means the old leg is disposed engine-side and its file is no
+        longer open for read). ``None`` (no discrete directory was ever tracked
+        for that plan -- see ``SourcePreparationReport.plan_dir``) is a no-op.
+        Best-effort and silent, same as GC: a locked file (still-open handle on
+        Windows, worker slower to let go than expected) just means this
+        directory falls through to the next GC pass instead of a hard failure."""
+        if plan_dir is None:
+            return
+        with contextlib.suppress(OSError):
+            shutil.rmtree(plan_dir)
+
+    def _gc_prepared_plan_dirs(
+        self, channel_prepared_root: Path, *, keep: frozenset[Path] = frozenset()
+    ) -> None:
+        """Reclaim old per-plan ``prepared/<uuid>`` directories (H5 fix; budget +
+        keep-N added by the F3 follow-up). Best-effort and silent throughout: a
+        GC hiccup (a locked file, a permissions error) must never fail the
+        ``prepare()`` call it runs inside of -- the worst case is one stale
+        directory surviving to the next prepare's GC pass.
+
+        Three layers, in order:
+
+        1. **Keep-N-most-recent** (``_PREPARED_PLAN_DIR_KEEP_N``, by directory
+           mtime) is NEVER eligible for removal here, regardless of size or age
+           -- one of these could plausibly still be the plan a live worker is
+           reading, or one the daemon has armed but not yet confirmed settled.
+           ``keep`` (the caller's own actively-tracked directories, e.g. the
+           daemon's current on-air plan) is unioned into this protected set,
+           so an explicitly-tracked directory is never swept even if it is
+           somehow older than the N most recent by mtime.
+        2. **Byte budget** (``_prepared_plan_dir_budget_bytes``) across
+           whatever is left after (1): oldest-first eviction until the
+           channel's ``prepared/`` tree (excluding the protected set) is back
+           under budget.
+        3. **Age floor** (``_PREPARED_PLAN_DIR_MAX_AGE_S``, 24h) as an absolute
+           last resort for anything (1) and (2) did not already catch -- a
+           directory this old was very likely already reclaimed by (2) on a
+           channel with any reload cadence at all; this floor exists for the
+           degenerate case of a channel that barely reloads, where the byte
+           budget alone might never trigger.
+
+        F6 (same follow-up): also removes any PRE-UPGRADE flat
+        ``prepared/segment-NNNN.ts``/``.tmp`` file sitting directly under
+        ``channel_prepared_root`` itself (never inside a plan subdirectory) --
+        the layout this fix replaced. Safe unconditionally: no code path
+        written after this fix ever reads from that flat location again, and a
+        file a pre-upgrade worker still has open simply fails to delete (a
+        locked file raises ``OSError``, suppressed) and is retried next pass."""
+        try:
+            entries = list(channel_prepared_root.iterdir())
+        except OSError:
+            return
+        # F6: pre-upgrade flat files directly under the channel's prepared/ root.
+        for entry in entries:
+            if entry.is_file() and entry.suffix in (".ts", ".tmp"):
+                with contextlib.suppress(OSError):
+                    entry.unlink()
+        plan_dirs = [entry for entry in entries if entry.is_dir()]
+
+        def _mtime(path: Path) -> float:
+            try:
+                return path.stat().st_mtime
+            except OSError:
+                return 0.0
+
+        plan_dirs.sort(key=_mtime, reverse=True)  # newest first
+        protected = set(plan_dirs[:_PREPARED_PLAN_DIR_KEEP_N]) | (keep & set(plan_dirs))
+        candidates = [entry for entry in plan_dirs if entry not in protected]
+        # oldest-first for eviction (both the budget and age passes below want
+        # to give up the least-recently-used directory first).
+        candidates.sort(key=_mtime)
+
+        budget = _prepared_plan_dir_budget_bytes()
+        sizes = {entry: _dir_size_bytes(entry) for entry in candidates}
+        total = sum(sizes.values())
+        remaining: list[Path] = []
+        for entry in candidates:
+            if total <= budget:
+                remaining.append(entry)
+                continue
+            with contextlib.suppress(OSError):
+                shutil.rmtree(entry)
+            total -= sizes[entry]
+
+        now = time.time()
+        for entry in remaining:
+            if now - _mtime(entry) <= _PREPARED_PLAN_DIR_MAX_AGE_S:
+                continue
+            with contextlib.suppress(OSError):
+                shutil.rmtree(entry)
+
     def _evict_cache_over_budget(self) -> None:
         budget = _cache_budget_bytes()
         cache_dir = self._cache_dir()
@@ -337,10 +517,51 @@ class SourcePreparer:
     def prepare(
         self, source_plan: EgressSourcePlan, config: EgressConfig
     ) -> SourcePreparationReport:
-        """Return a canonical, trim-free source plan ready for the persistent encoder."""
+        """Return a canonical, trim-free source plan ready for the persistent encoder.
 
-        prepared_dir = self._work_dir / config.channel_id / "prepared"
-        prepared_dir.mkdir(parents=True, exist_ok=True)
+        H5 fix (measured on real hardware, tester soak): before this fix every
+        ``prepare()`` call for a channel wrote its non-cached/trim-copy output to
+        the SAME fixed path (``<channel>/prepared/segment-NNNN.ts``, keyed only by
+        segment INDEX within its own call, never by which plan the call was
+        preparing). For the GStreamer engine (``playout_trim_supported=False``),
+        a content-reload's ``prepare()`` call for the NEWLY-due plan therefore
+        wrote directly over the exact file the CURRENTLY LIVE worker's ``filesrc``
+        was still reading for the plan already on air -- no GStreamer warning, no
+        error, just a truncated/rewritten file underneath a live read, surfacing
+        only as a downstream ``CTRL stall: no output for 10s`` on the worker with
+        nothing in its own log pointing at the cause. Every call now gets its own
+        uniquely-named subdirectory (``<channel>/prepared/<uuid>/segment-NNNN.ts``)
+        so two ``prepare()`` calls -- however close together, however they
+        overlap in wall-clock time -- can never share an output path. See
+        ``_gc_prepared_plan_dirs`` for how the resulting directories are
+        eventually reclaimed (keep-N-most-recent + a byte budget + an age
+        floor as a last resort -- F3 fix), ``release`` for how a caller that
+        independently knows a plan is retired can reclaim it immediately, and
+        each write site's own comments for the accompanying atomic-write fix
+        (H5's second half: a partial write must never be observable at the
+        final path either). F7 fix: the directory itself is created lazily (by
+        the write sites below, not here) and removed again at the end of this
+        call if nothing was ever written into it -- a plan whose every segment
+        is ``kind == "live"``, or whose every segment is a cache HIT under
+        ``playout_trim_supported=True`` (which points straight at the shared
+        conform-cache entry, never writing a per-plan file at all), leaves no
+        trace under ``prepared/`` rather than an empty directory nothing will
+        ever clean up."""
+
+        channel_prepared_root = self._work_dir / config.channel_id / "prepared"
+        channel_prepared_root.mkdir(parents=True, exist_ok=True)
+        # Item 5 fix: ask the wired provider (the daemon, if one is
+        # configured -- set_protected_plan_dirs_provider) which of this
+        # channel's directories are LIVE right now, so GC can never evict one
+        # regardless of age, size, or keep-N recency -- not just the
+        # keep-N-most-recent heuristic on its own.
+        protected = (
+            self._protected_plan_dirs_provider(config.channel_id)
+            if self._protected_plan_dirs_provider is not None
+            else frozenset()
+        )
+        self._gc_prepared_plan_dirs(channel_prepared_root, keep=protected)
+        prepared_dir = channel_prepared_root / uuid.uuid4().hex[:12]
         prepared_segments: list[EgressSourceSegment] = []
         records: list[PreparedSegmentRecord] = []
         # CA-8: filler plans repeat one rendered segment hundreds of times to
@@ -384,12 +605,25 @@ class SourcePreparer:
             seen[key] = (prepared_segment, record)
             prepared_segments.append(prepared_segment)
             records.append(record)
+        # F7 fix: nothing was ever written into prepared_dir (every segment was
+        # live-passthrough and/or a playout_trim_supported=True cache hit, which
+        # points straight at the shared conform-cache entry) -- remove the
+        # directory rather than leave an empty one nothing will ever clean up,
+        # and report no plan_dir at all (there is nothing to release or GC).
+        reported_plan_dir: Path | None = prepared_dir
+        if prepared_dir.exists() and not any(prepared_dir.iterdir()):
+            with contextlib.suppress(OSError):
+                prepared_dir.rmdir()
+                reported_plan_dir = None
+        elif not prepared_dir.exists():
+            reported_plan_dir = None
         return SourcePreparationReport(
             source_plan=EgressSourcePlan(
                 channel_id=source_plan.channel_id,
                 segments=prepared_segments,
             ),
             records=tuple(records),
+            plan_dir=reported_plan_dir,
         )
 
     def _prepare_segment(
@@ -462,18 +696,26 @@ class SourcePreparer:
         # Trimmed MISS (first-ever join-in-progress start): conform only the
         # remaining portion straight to air — identical latency to the historic
         # behavior — and warm the full-asset cache behind it for next time.
+        # H5 fix (atomic write, second half): same tmp+rename pattern as the
+        # cache-hit stream-copy branch above -- see that branch's comment.
+        # F7 fix: create the per-plan directory lazily -- see the sibling
+        # comment in _emit_prepared_from_cache.
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_output_path = output_path.with_name(output_path.name + ".tmp")
         args = build_conform_source_args(
             source_path=source_path,
-            output_path=output_path,
+            output_path=tmp_output_path,
             segment=segment,
             profile=config.canonical_profile,
             loudness_target_lufs=config.loudness_target_lufs if normalized else None,
         )
         result = self._ffmpeg_runner(args)
         if result.returncode != 0:
+            tmp_output_path.unlink(missing_ok=True)
             raise SourcePrepareError(
                 f"Egress source {segment.label!r} could not be conformed; inspect FFmpeg output."
             )
+        tmp_output_path.replace(output_path)
         if key is not None:
             self._schedule_warm(key, source_path, config, loudness, normalized)
         return (
