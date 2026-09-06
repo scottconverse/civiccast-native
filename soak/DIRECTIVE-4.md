@@ -259,3 +259,8 @@ After the 9za..9zd chain, `AUTORUN-9ze.ps1` proves the installed code is kit 609
 ## Addendum -- AUTORUN-9zm (read-only)
 
 Soak #5's 02:56Z probe shows one relaunch per channel in the first 30 minutes on the hotfix build (tsp pass on all three). `AUTORUN-9zm.ps1` (runs once, changes nothing) records every STARTING/STOPPED/FALLBACK line with its last_error since 02:20Z, rollover/reload/EOS/plan lines, caption runtime-status, worker threads/RSS/start times and stderr tails, and a CPU sample. Result `soak/DIAG-9zm-<stamp>.md`.
+
+
+## Addendum -- AUTORUN-9zn (read-only, item-60 proof)
+
+Diagnosis: every in-place plan reload builds concat elements named `vconcat_program`/`aconcat_program` while the live ones still exist, so GStreamer refuses to add them (`Name ... is not unique in bin ... not adding` on stderr), the reload never commits (`CTRL reload aborted: new program produced no buffer within 10s` on worker STDOUT), the worker acks success anyway, and automation re-issues the rollover forever while the doubled decoder tree starves the encoder (`CTRL stall`). `AUTORUN-9zn.ps1` (runs once, changes nothing) counts and quotes those lines from each channel's gst-worker.stdout.log / stderr.log. Result `soak/DIAG-9zn-<stamp>.md`.
