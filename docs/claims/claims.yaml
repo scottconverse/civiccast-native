@@ -895,11 +895,107 @@ entries:
       # bug shape against the PRE-fix gating logic before being restored to
       # the fix).
       # Blob IDs re-hashed with `git hash-object --path <file> <file>`.
+      #
+      # engine.py and worker.py drifted an EIGHTH time (item 85, sandbox runs
+      # 12/14/15, 2026-09-06): a wedged reload commit -- the last line either
+      # of two soaked workers ever printed was "CTRL reload: boundary switch
+      # rebased...", never "CTRL reload committed", and the process then sat
+      # alive but unresponsive forever. THE WEDGE ITSELF IS NOT LOCALIZED BY
+      # THIS ENTRY. Round 1 hypothesized a root cause in engine.py's
+      # ``_commit_reload``/``_dispose_source_leg`` (switching the selector's
+      # ``active-pad`` before releasing the new leg's hold probes; NULLing a
+      # retiring leg's elements before unlinking its selector pad) and shipped
+      # a REORDERING as the fix. Hostile review (10 real-GStreamer runs of the
+      # extended test against that reordering: 4 failures, 0 on main, every
+      # one ``gst_base_src_loop ... streaming stopped, reason not-linked``
+      # right after "CTRL reload committed") found the reorder introduced a
+      # NEW, deterministic defect of its own -- releasing a hold before the
+      # active-pad switch drops the new leg's first buffer at the default
+      # (``cache-buffers=False``) input-selector sink pad, and
+      # unlinking/releasing a retiring leg's selector pad before that leg's
+      # own elements reach NULL races its still-live streaming thread into
+      # ``GST_FLOW_NOT_LINKED`` (fatal, not a benign no-op) -- and REVERTED
+      # it: ``_commit_reload``/``_dispose_source_leg`` keep main's ORIGINAL
+      # ordering, unchanged by this item. What ships instead: (1) four staged
+      # stdout lines in ``_commit_reload`` ("switching selector"/"holds
+      # released"/"old leg disposed"/"committed (elements=N)"), repositioned
+      # to main's ordering, so the next soak that reproduces the wedge shows
+      # which of the four steps it stalled inside; (2) ``_commit_reload`` is
+      # wrapped by ``_arm_commit_watchdog``, a real OS ``threading.Timer``
+      # (NOT a GLib timeout source, which could never fire if the wedge is
+      # the SAME thread that would run it) that, on expiry, dumps every live
+      # thread's Python stack (``faulthandler.dump_traceback(all_threads=
+      # True)``) FIRST -- the actual localization tool for a future
+      # reproduction -- then force-exits IMMEDIATELY (no pipeline teardown
+      # attempt: a downward ``set_state`` transition takes the same
+      # STREAM_LOCK a wedged thread already holds) with a new, distinct
+      # ``civiccast.egress.gst.exit_codes.GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE``
+      # (``5`` -- ``4`` is item 84's ``GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE``,
+      # gi-free sibling, not itself bound here) if the commit does not finish
+      # within ``commit_timeout_s`` (worker.py:
+      # ``CIVICCAST_RELOAD_COMMIT_TIMEOUT_S`` env override, default 15s,
+      # validated/clamped to [3, 120]s with a stderr warning -- never
+      # silently floored). This exit path emits NO ``WORKER_RESULT`` receipt,
+      # by design. daemon.py also changed (a reload ack timeout on a
+      # still-alive pid now terminates the wedged worker -- bounded
+      # terminate -> wait -> kill, escalating to kill() if terminate() is
+      # never observed -- setting the ``_pending_reloads`` fallback entry
+      # BEFORE terminating rather than after; the exit code is classified as
+      # "reload-commit-timeout" in the relaunch log line and deliberately NOT
+      # exempted from the crash-loop streak, unlike a genuine slow-start exit
+      # code) but is not itself a code input of this claim, unchanged from
+      # before this entry existed. Neither decode_policy.py, graph.py,
+      # control.py, nor audio_tap.py changed. Current-source proof for these
+      # bytes: new gi-free coverage in tests/egress/
+      # test_gst_engine_reload_commit_ordering.py (main's ordering is
+      # unchanged -- active-pad switch before hold-probe release, NULL before
+      # unlink/release_request_pad, no FLUSH_START/FLUSH_STOP events sent at
+      # all; the four staged log lines print in order; the commit-watchdog
+      # thread dumps all-threads then force-exits with no pipeline teardown
+      # when a commit never returns, and is a no-op when it finishes in time;
+      # ``commit_timeout_s`` clamps with a warning), an extended
+      # real-GStreamer test in tests/egress/test_gst_engine_wsl.py (a
+      # deferred rollover whose payload is a real multi-segment concat
+      # PlaylistLeg of 4 short real A/V clips -- decoded via
+      # ``filesrc ! decodebin`` each, the production shape a real schedule-
+      # derived program leg takes -- committing within bound; run 10x
+      # directly against this box's bundled native GStreamer runtime, not
+      # skipped: 0 "not-linked" errors across all 10 runs), and
+      # tests/egress/test_daemon.py plus tests/egress/
+      # test_daemon_reload_commit_timeout_relaunch.py (the ack-timeout-on-a-
+      # live-pid termination including a kill() escalation case, that a
+      # decline for any other reason does not terminate a healthy worker, the
+      # relaunch log line's classification, and that this exit code counts
+      # toward the crash-loop streak on every occurrence). Blob IDs re-hashed
+      # with `git hash-object --path <file> <file>` -- worker.py/engine.py
+      # ALSO carry item 84's own (PR #187, merged as a6d7871) drift into
+      # these same bytes; that item's own current-source proof (its
+      # dedicated test files, named earlier in this claim's history) covers
+      # its half of what these blobs now bind.
+      #
+      # engine.py drifted a NINTH time (item 85, round-2 review, same PR
+      # #188): ``_on_commit_wedged`` now wraps the stack dump + print in
+      # ``try: ... finally: os._exit(...)`` so the force-exit is unconditional
+      # even if stderr itself is unusable; ``_arm_commit_watchdog`` now
+      # returns ``(timer, completed)`` -- a ``threading.Event`` the caller
+      # sets, in its own ``finally``, BEFORE calling ``timer.cancel()`` --
+      # because ``Timer.cancel()`` alone cannot close the race where the
+      # watchdog thread has already started running past its own cancel
+      # check at the exact moment the commit finishes; ``_on_commit_wedged``
+      # re-checks ``completed`` first and returns without exiting if it is
+      # set. Neither worker.py, decode_policy.py, graph.py, control.py, nor
+      # audio_tap.py changed. Current-source proof: tests/egress/
+      # test_gst_engine_reload_commit_ordering.py gained
+      # ``test_commit_watchdog_completion_flag_wins_a_cancel_race`` (fires
+      # the watchdog's underlying function directly after ``completed`` is
+      # set, proving the function itself -- not just ``Timer.cancel()`` --
+      # refuses to exit once the commit is known to have finished). Blob IDs
+      # re-hashed with `git hash-object --path <file> <file>`.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: bf6554490665c0681dd6f29fec326ed3fb4adeb0
+          blob: 8b4696f803df606acaa4e6754e87a82d19afed44
         - path: civiccast/egress/gst/engine.py
-          blob: 785a9c9cff74ffe81ba5223de3411995d082a67a
+          blob: 89a3cde87d712d12ffaae5e7e3052753ea555958
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -910,7 +1006,7 @@ entries:
           blob: 338db038b43c0881bf41bee42a6d80b9864c32cc
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: a25383172e0de25fbcac4e14e249baf01ed34e54
+        blob: 16e8c5bc5eaaa281d7a97432e14e896a6b5f1fc8
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -1487,11 +1583,107 @@ entries:
       # bug shape against the PRE-fix gating logic before being restored to
       # the fix).
       # Blob IDs re-hashed with `git hash-object --path <file> <file>`.
+      #
+      # engine.py and worker.py drifted an EIGHTH time (item 85, sandbox runs
+      # 12/14/15, 2026-09-06): a wedged reload commit -- the last line either
+      # of two soaked workers ever printed was "CTRL reload: boundary switch
+      # rebased...", never "CTRL reload committed", and the process then sat
+      # alive but unresponsive forever. THE WEDGE ITSELF IS NOT LOCALIZED BY
+      # THIS ENTRY. Round 1 hypothesized a root cause in engine.py's
+      # ``_commit_reload``/``_dispose_source_leg`` (switching the selector's
+      # ``active-pad`` before releasing the new leg's hold probes; NULLing a
+      # retiring leg's elements before unlinking its selector pad) and shipped
+      # a REORDERING as the fix. Hostile review (10 real-GStreamer runs of the
+      # extended test against that reordering: 4 failures, 0 on main, every
+      # one ``gst_base_src_loop ... streaming stopped, reason not-linked``
+      # right after "CTRL reload committed") found the reorder introduced a
+      # NEW, deterministic defect of its own -- releasing a hold before the
+      # active-pad switch drops the new leg's first buffer at the default
+      # (``cache-buffers=False``) input-selector sink pad, and
+      # unlinking/releasing a retiring leg's selector pad before that leg's
+      # own elements reach NULL races its still-live streaming thread into
+      # ``GST_FLOW_NOT_LINKED`` (fatal, not a benign no-op) -- and REVERTED
+      # it: ``_commit_reload``/``_dispose_source_leg`` keep main's ORIGINAL
+      # ordering, unchanged by this item. What ships instead: (1) four staged
+      # stdout lines in ``_commit_reload`` ("switching selector"/"holds
+      # released"/"old leg disposed"/"committed (elements=N)"), repositioned
+      # to main's ordering, so the next soak that reproduces the wedge shows
+      # which of the four steps it stalled inside; (2) ``_commit_reload`` is
+      # wrapped by ``_arm_commit_watchdog``, a real OS ``threading.Timer``
+      # (NOT a GLib timeout source, which could never fire if the wedge is
+      # the SAME thread that would run it) that, on expiry, dumps every live
+      # thread's Python stack (``faulthandler.dump_traceback(all_threads=
+      # True)``) FIRST -- the actual localization tool for a future
+      # reproduction -- then force-exits IMMEDIATELY (no pipeline teardown
+      # attempt: a downward ``set_state`` transition takes the same
+      # STREAM_LOCK a wedged thread already holds) with a new, distinct
+      # ``civiccast.egress.gst.exit_codes.GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE``
+      # (``5`` -- ``4`` is item 84's ``GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE``,
+      # gi-free sibling, not itself bound here) if the commit does not finish
+      # within ``commit_timeout_s`` (worker.py:
+      # ``CIVICCAST_RELOAD_COMMIT_TIMEOUT_S`` env override, default 15s,
+      # validated/clamped to [3, 120]s with a stderr warning -- never
+      # silently floored). This exit path emits NO ``WORKER_RESULT`` receipt,
+      # by design. daemon.py also changed (a reload ack timeout on a
+      # still-alive pid now terminates the wedged worker -- bounded
+      # terminate -> wait -> kill, escalating to kill() if terminate() is
+      # never observed -- setting the ``_pending_reloads`` fallback entry
+      # BEFORE terminating rather than after; the exit code is classified as
+      # "reload-commit-timeout" in the relaunch log line and deliberately NOT
+      # exempted from the crash-loop streak, unlike a genuine slow-start exit
+      # code) but is not itself a code input of this claim, unchanged from
+      # before this entry existed. Neither decode_policy.py, graph.py,
+      # control.py, nor audio_tap.py changed. Current-source proof for these
+      # bytes: new gi-free coverage in tests/egress/
+      # test_gst_engine_reload_commit_ordering.py (main's ordering is
+      # unchanged -- active-pad switch before hold-probe release, NULL before
+      # unlink/release_request_pad, no FLUSH_START/FLUSH_STOP events sent at
+      # all; the four staged log lines print in order; the commit-watchdog
+      # thread dumps all-threads then force-exits with no pipeline teardown
+      # when a commit never returns, and is a no-op when it finishes in time;
+      # ``commit_timeout_s`` clamps with a warning), an extended
+      # real-GStreamer test in tests/egress/test_gst_engine_wsl.py (a
+      # deferred rollover whose payload is a real multi-segment concat
+      # PlaylistLeg of 4 short real A/V clips -- decoded via
+      # ``filesrc ! decodebin`` each, the production shape a real schedule-
+      # derived program leg takes -- committing within bound; run 10x
+      # directly against this box's bundled native GStreamer runtime, not
+      # skipped: 0 "not-linked" errors across all 10 runs), and
+      # tests/egress/test_daemon.py plus tests/egress/
+      # test_daemon_reload_commit_timeout_relaunch.py (the ack-timeout-on-a-
+      # live-pid termination including a kill() escalation case, that a
+      # decline for any other reason does not terminate a healthy worker, the
+      # relaunch log line's classification, and that this exit code counts
+      # toward the crash-loop streak on every occurrence). Blob IDs re-hashed
+      # with `git hash-object --path <file> <file>` -- worker.py/engine.py
+      # ALSO carry item 84's own (PR #187, merged as a6d7871) drift into
+      # these same bytes; that item's own current-source proof (its
+      # dedicated test files, named earlier in this claim's history) covers
+      # its half of what these blobs now bind.
+      #
+      # engine.py drifted a NINTH time (item 85, round-2 review, same PR
+      # #188): ``_on_commit_wedged`` now wraps the stack dump + print in
+      # ``try: ... finally: os._exit(...)`` so the force-exit is unconditional
+      # even if stderr itself is unusable; ``_arm_commit_watchdog`` now
+      # returns ``(timer, completed)`` -- a ``threading.Event`` the caller
+      # sets, in its own ``finally``, BEFORE calling ``timer.cancel()`` --
+      # because ``Timer.cancel()`` alone cannot close the race where the
+      # watchdog thread has already started running past its own cancel
+      # check at the exact moment the commit finishes; ``_on_commit_wedged``
+      # re-checks ``completed`` first and returns without exiting if it is
+      # set. Neither worker.py, decode_policy.py, graph.py, control.py, nor
+      # audio_tap.py changed. Current-source proof: tests/egress/
+      # test_gst_engine_reload_commit_ordering.py gained
+      # ``test_commit_watchdog_completion_flag_wins_a_cancel_race`` (fires
+      # the watchdog's underlying function directly after ``completed`` is
+      # set, proving the function itself -- not just ``Timer.cancel()`` --
+      # refuses to exit once the commit is known to have finished). Blob IDs
+      # re-hashed with `git hash-object --path <file> <file>`.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: bf6554490665c0681dd6f29fec326ed3fb4adeb0
+          blob: 8b4696f803df606acaa4e6754e87a82d19afed44
         - path: civiccast/egress/gst/engine.py
-          blob: 785a9c9cff74ffe81ba5223de3411995d082a67a
+          blob: 89a3cde87d712d12ffaae5e7e3052753ea555958
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -1502,7 +1694,7 @@ entries:
           blob: 338db038b43c0881bf41bee42a6d80b9864c32cc
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: a25383172e0de25fbcac4e14e249baf01ed34e54
+        blob: 16e8c5bc5eaaa281d7a97432e14e896a6b5f1fc8
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py

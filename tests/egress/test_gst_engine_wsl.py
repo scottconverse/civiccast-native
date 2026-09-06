@@ -2075,3 +2075,177 @@ def test_deferred_rollover_switches_at_the_boundary_without_eos(tmp_path: Path) 
         f"PES PTS stepped backward on PID(s) {[hex(pid) for pid in backward]} -- the new "
         f"leg was not rebased onto the outgoing leg's end;\n{text}"
     )
+
+
+# --- item 85: multi-segment concat-playlist reload commit (sandbox soaks 12/14/15) --
+
+
+def _write_short_av_clip(path: Path, *, seconds: float = 0.4, pattern: int = 0) -> None:
+    """Encode a short, REAL, finite A/V clip (matroska, H.264 + Opus) via a
+    one-shot ``Gst.parse_launch`` EOS-driven pipeline. ``gi``/``Gst`` is already
+    available in this test PROCESS (not just the worker subprocess) -- see
+    ``_linux_gi_available``/``_windows_bundled_gstreamer_available`` above, both
+    of which already do a live ``import gi`` to answer their capability check.
+
+    The filesink's ``location`` is set via ``set_property`` AFTER parsing,
+    never embedded in the ``Gst.parse_launch`` string -- a Windows absolute path
+    contains a drive-letter colon, and this repository has already hit exactly
+    that class of bug once (``caption_proof._escape_movie_path``, a single-escaped
+    drive colon splitting a ``lavfi movie=`` filename); side-stepping the parser
+    entirely for this property removes the whole hazard rather than re-escaping it.
+    """
+    import gi
+
+    gi.require_version("Gst", "1.0")
+    from gi.repository import Gst
+
+    video_buffers = max(1, int(seconds * 30))
+    audio_buffers = max(1, int(seconds * 48000 / 1024) + 1)
+    encoder = " ".join(_h264_sender_encoder_args())
+    desc = (
+        f"videotestsrc is-live=false pattern={pattern} num-buffers={video_buffers} ! "
+        f"{_CAPS} ! {encoder} mux. "
+        f"audiotestsrc is-live=false wave=0 num-buffers={audio_buffers} ! {_ACAPS} ! "
+        # avenc_aac (gst-libav), not opusenc -- matches graph.audio_encode_specs'
+        # own default and is confirmed present in the bundled native runtime
+        # closure (opusenc is not).
+        f"audioconvert ! audioresample ! avenc_aac bitrate=128000 ! aacparse ! mux. "
+        f"matroskamux name=mux ! filesink name=sink"
+    )
+    pipeline = Gst.parse_launch(desc)
+    pipeline.get_by_name("sink").set_property("location", str(path))
+    bus = pipeline.get_bus()
+    if pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
+        pipeline.set_state(Gst.State.NULL)
+        raise RuntimeError(f"failed to start the test-clip encoder pipeline for {path}")
+    try:
+        msg = bus.timed_pop_filtered(
+            int(15 * Gst.SECOND), Gst.MessageType.EOS | Gst.MessageType.ERROR
+        )
+        if msg is None:
+            raise RuntimeError(f"test-clip encoder for {path} produced no EOS within 15s")
+        if msg.type == Gst.MessageType.ERROR:
+            err, debug = msg.parse_error()
+            raise RuntimeError(f"test-clip encoder for {path} errored: {err} ({debug})")
+    finally:
+        pipeline.set_state(Gst.State.NULL)
+        pipeline.get_state(int(5 * Gst.SECOND))
+    if not path.exists() or path.stat().st_size == 0:
+        raise RuntimeError(f"test-clip encoder for {path} produced no (or an empty) file")
+
+
+def _multi_segment_playlist_reload_graph(clip_paths: list[Path]):
+    """A reload payload whose PROGRAM leg is a real ``concat`` ``PlaylistLeg`` of
+    ``len(clip_paths)`` (>=4 in the test below) short, REAL A/V segments -- the
+    exact production shape ``bridge.graph_from_config`` builds for a real
+    schedule-derived program leg (``filesrc ! decodebin ! videoconvert !
+    videoscale ! videorate ! capsfilter`` per segment, one shared ``audio_tail``
+    concatenating each clip's decoded audio into the audio selector). Item 85's
+    sandbox wedges were measured against exactly this shape -- a real multi-
+    segment playlist, not a single bare ``videotestsrc`` leg -- so this is the
+    scenario the commit-ordering fix has to prove itself against, with MULTIPLE
+    internal concat segment-boundaries churning inside the held leg while it
+    waits for the outgoing leg's own end, not just one clean first buffer."""
+    program = graphmod.PlaylistLeg(
+        label="program",
+        subchains=tuple(
+            (
+                _E("filesrc", props={"location": str(clip)}),
+                _E("decodebin"),
+                _E("videoconvert"),
+                _E("videoscale"),
+                _E("videorate"),
+                _E("capsfilter", props={"caps": _CAPS}),
+            )
+            for clip in clip_paths
+        ),
+        audio_tail=(
+            _E("audioconvert"),
+            _E("audioresample"),
+            _E("capsfilter", props={"caps": _ACAPS}),
+        ),
+    )
+    base = _av_demo_graph(nsrc=2)
+    return graphmod.PlayoutGraph(
+        sources=(program, base.sources[1]),
+        encoder=base.encoder,
+        audio_encoder=base.audio_encoder,
+        mux=base.mux,
+        sinks=base.sinks,
+    )
+
+
+def test_deferred_rollover_commits_with_a_multi_segment_concat_playlist_reload(
+    tmp_path: Path,
+) -> None:
+    """Item 85 (sandbox runs 12/14/15): a ``switch_at_end_of_current`` reload whose
+    payload is a REAL multi-segment concat ``PlaylistLeg`` (>=4 short real A/V
+    clips, decoded via ``filesrc ! decodebin`` each -- the production shape,
+    unlike ``test_deferred_rollover_switches_at_the_boundary_without_eos`` above,
+    which uses a single bare ``videotestsrc`` leg) must still COMMIT within a
+    bounded time. Before item 85's engine.py fix, the measured failure was a
+    permanent wedge: the worker's last log line was "CTRL reload: boundary switch
+    rebased...", the process stayed alive, and "CTRL reload committed" never
+    appeared in any of seven soaks.
+
+    The module's own ``_hard_hang_timeout`` autouse fixture (120s,
+    ``faulthandler.dump_traceback_later``) already arms the every-test safety net
+    this scenario asks for; a wedge here still trips that net and dumps every
+    thread's live stack, it just does so at the module's shared bound rather than
+    a bespoke one for this single test."""
+    program_seconds = 4.0
+    out_ts = tmp_path / "out.ts"
+    graph = _paced_filesink_graph(_finite_program_av_graph(seconds=program_seconds), out_ts)
+
+    clip_paths = [tmp_path / f"segment-{i}.mkv" for i in range(4)]
+    for i, clip in enumerate(clip_paths):
+        _write_short_av_clip(clip, seconds=0.4, pattern=i % 2)
+
+    reload_path = tmp_path / f"multiseg-rollover{reloadpolicy.DEFERRED_SWITCH_SUFFIX}"
+    reload_path.write_text(
+        graphmod.graph_to_json(_multi_segment_playlist_reload_graph(clip_paths)),
+        encoding="utf-8",
+    )
+    assert reloadpolicy.reload_switch_is_deferred(str(reload_path)), (
+        "the harness must request the DEFERRED switch mode, else this test proves nothing"
+    )
+
+    proc, control, log = _launch_worker(tmp_path, graph, out_ts)
+    try:
+        time.sleep(1.0)
+        _send(control, f"reload {reload_path}")
+        _wait_for_log(log, "CTRL reload committed", timeout=program_seconds + 30.0)
+        text = log.read_text(encoding="utf-8", errors="replace")
+        # The item 85 staged commit prints, in order -- proves the commit ran
+        # main's own ordering (switching announced, THEN the active-pad switch
+        # + hold-probe release actually happen, THEN the old leg is disposed)
+        # rather than just happening to still reach "committed" some other way.
+        for marker in (
+            "CTRL reload: switching selector",
+            "CTRL reload: holds released",
+            "CTRL reload: old leg disposed",
+            "CTRL reload committed",
+        ):
+            assert marker in text, f"missing staged commit log line {marker!r};\n{text}"
+        assert text.index("CTRL reload: switching selector") < text.index(
+            "CTRL reload: holds released"
+        )
+        assert text.index("CTRL reload: holds released") < text.index(
+            "CTRL reload: old leg disposed"
+        )
+        assert text.index("CTRL reload: old leg disposed") < text.index("CTRL reload committed")
+        # Regression assertion (mirrors the single-segment test above): the
+        # worker must still be alive a full second past the boundary, not
+        # freshly wedged with the commit log line printed just before it hung.
+        time.sleep(1.0)
+        assert proc.poll() is None, (
+            f"worker exited right after committing a multi-segment reload;\nlog:\n{text}"
+        )
+        _send(control, "stop")
+        returncode = proc.wait(timeout=25)
+    finally:
+        _reap(proc)
+
+    assert returncode == 0, (
+        f"unclean teardown after a multi-segment concat-playlist reload (rc={returncode})"
+    )
