@@ -183,10 +183,17 @@ below.
     being used to justify another dispatch. This stops the runaway
     rollover-forever failure, but it is not free: re-anchoring to "now"
     also pushes the NEXT trigger point later than it would otherwise have
-    been (measured directly against the shipped, already-fixed cadence
-    floor: the reproduced worst case moved from a lead of -180s to -360s),
-    since the new plan is windowed from a later starting point. Safe, but a
-    real behavior change worth knowing about, not a free correction.
+    been, since the new plan is windowed from a later starting point --
+    safe, but a real behavior change worth knowing about, not a free
+    correction. (`tests/egress/test_automation.py`'s
+    `TestRolloverCadence.test_the_flat_floor_bug_the_scaled_floor_fixes`
+    measures this concretely: it deliberately reproduces an OLDER, already-
+    fixed cadence-floor bug from D43 to compare against the shipped,
+    scaled floor, and this PR's stale-horizon re-anchor changes the
+    reproduced bug's own worst-case lead from -180s to -360s. The negative
+    lead itself is that older bug, not this PR's doing -- the shipped floor
+    the test compares against is unaffected -- but the re-anchor measurably
+    changes how that unrelated, deliberately-reintroduced bug plays out.)
   - The 45-second "did the last rollover reload actually land" retry path
     used to be completely unthrottled; it now refuses to dispatch to a
     worker whose process has been alive less than 60 seconds (giving a
@@ -196,17 +203,28 @@ below.
     dispatch, not the original one, which is what makes this floor
     actually bind instead of always being satisfied already by the 45-
     second timeout that gates entry to the retry path in the first place).
+    Degrade mode, unchanged by this fix: a worker that keeps relaunching
+    faster than it can ever satisfy the 60-second worker-age floor gets NO
+    rollover at all for as long as that keeps happening -- not a hang, just
+    a reversion to the pre-item-78 shape, where the channel reaches its own
+    end-of-schedule/crash cycle and the daemon's own crash back-off (this
+    fix does not touch it) owns the restart.
   - The daemon also now refuses to defer a seamless reload's on-air switch
     to the outgoing program's own end if that boundary has already passed
     by the time the reload actually runs -- it cuts over immediately
     instead, since waiting for an end-of-program event that is already
     behind the clock would otherwise mean waiting for something that will
     never arrive. The plan_end_at a rollover reload was computed against is
-    now consumed exactly once per reload attempt (popped up front, before
-    any of the daemon's own early-return paths), so a value recorded for
-    one attempt can never leak forward and silently force an unrelated
-    later reload -- an ordinary operator-issued one included -- to cut
-    immediately when it should defer normally.
+    consumed exactly once per "reload" command: `EgressDaemon._request_reload`
+    pops it at the very top of its own body, before any of ITS OWN branches
+    run (the worker is missing/dead, there is no state row, or the strategy
+    doesn't support content-reload all used to skip straight past the point
+    that consumed it and leave it sitting there), and passes the value down
+    explicitly to `_try_content_reload`; `_start`/`_stop` clear it too. A
+    value recorded for one rollover attempt can therefore never leak forward
+    and silently force a later, unrelated reload for the same channel -- an
+    ordinary operator-issued one included -- to cut immediately when it
+    should defer normally.
 - **Install-over could leave the PREVIOUS kit's application payload silently
   running.** MEASURED on a real tester (2026-09-05): installing kit B `/S`
   (install-over) on a station kit A had already installed, where both kits

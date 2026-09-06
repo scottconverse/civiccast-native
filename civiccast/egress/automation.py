@@ -939,6 +939,12 @@ class ChannelAutomationService:
             # roll over yet. Also means any in-flight rollover landed.
             self._rollover_issued.discard(channel_id)
             self._rollover_issued_at.pop(channel_id, None)
+            # Coordinator review, round 3, item E: a resolved rollover
+            # sequence (this one landed) must not suppress the FIRST retry
+            # of whatever rollover comes next for the fresh plan just
+            # established -- clear the retry-interval floor's own timestamp
+            # here too, everywhere _rollover_issued itself is discarded.
+            self._rollover_retry_dispatched_at.pop(channel_id, None)
             previous_end_at = tracked[1] if tracked is not None else None
             self._reestablish_plan_horizon(
                 channel_id,
@@ -971,6 +977,11 @@ class ChannelAutomationService:
             )
             self._rollover_issued.discard(channel_id)
             self._rollover_issued_at.pop(channel_id, None)
+            # Coordinator review, round 3, item E: same reasoning as the
+            # "fresh plan just took air" branch above -- a stale, discarded
+            # sequence must not suppress the first retry of whatever
+            # rollover the re-established horizon triggers next.
+            self._rollover_retry_dispatched_at.pop(channel_id, None)
             self._reestablish_plan_horizon(
                 channel_id,
                 now=now,

@@ -861,6 +861,16 @@ class _FakeContentReloadStrategy:
         return self._reload_ok
 
 
+class _FakeNonReloadCapableStrategy(_FakeContentReloadStrategy):
+    """Identical to ``_FakeContentReloadStrategy`` except it does NOT declare
+    ``supports_content_reload`` -- ``_request_reload``'s own guard
+    (``getattr(self._encoder_strategy, "supports_content_reload", False)``)
+    must short-circuit to the restart path before ``_try_content_reload`` is
+    ever called, so ``reload_calls`` staying empty is the proof."""
+
+    supports_content_reload = False
+
+
 def test_content_reload_swaps_program_in_place_without_restart(tmp_path: Path) -> None:
     """D-S1-6: a content-reload-capable strategy applies a newly-due program in
     place — no TRANSITIONING, no second process, the running encoder is untouched —
@@ -1180,6 +1190,104 @@ def test_content_reload_foreign_channel_plan_pops_the_recorded_plan_end(tmp_path
     assert daemon._rollover_plan_end_at == {}
 
 
+def test_request_reload_worker_missing_or_dead_pops_the_recorded_plan_end(tmp_path: Path) -> None:
+    """Coordinator review, round 3, item A: ``_request_reload`` has THREE
+    early returns of its own that never reach ``_try_content_reload`` at
+    all -- round 2 only closed the leak paths INSIDE that method. This one
+    is "the worker is missing or has exited" (``_request_reload`` routes to
+    ``_start`` instead, and never calls ``_try_content_reload``)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
+    started[0].returncode = 0  # the worker died
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == []  # _try_content_reload was never reached
+    assert len(started) == 2  # restarted instead
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_request_reload_no_state_row_pops_the_recorded_plan_end(tmp_path: Path) -> None:
+    """Coordinator review, round 3, item A -- "no state row" (the ``state is
+    not None and ...`` guard short-circuits before ``_try_content_reload``
+    is ever called, falling straight to the terminate+restart path).
+
+    Calls ``_request_reload`` directly (rather than via ``process_once``'s
+    command loop): ``process_once`` runs ``_poll_process`` on every tick
+    BEFORE draining commands, and ``_poll_process`` re-establishes a state
+    row for any channel with a live process (deriving one from whatever the
+    current health/draining/pending-reload bookkeeping says) -- which would
+    mask "no state row" the instant a real "reload" command was queued
+    alongside it. A genuinely missing state row against a live, tracked
+    process is exactly what this guard exists to handle regardless."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    processes: list[_FakeProcess] = []
+    started: list[_FakeProcess] = []
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Council meeting"),
+        encoder_strategy=strategy,
+    )
+    daemon._processes["gov"] = _FakeProcess(pid=111)  # type: ignore[attr-defined]
+    # Deliberately no store.write_state call -- no state row exists at all.
+
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
+    daemon._request_reload("gov")  # type: ignore[attr-defined]
+
+    assert strategy.reload_calls == []  # _try_content_reload was never reached
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_request_reload_strategy_without_support_pops_the_recorded_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 3, item A -- the strategy doesn't declare
+    ``supports_content_reload`` (``_request_reload``'s ``getattr`` guard
+    short-circuits before ``_try_content_reload`` is ever called)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeNonReloadCapableStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == []  # _try_content_reload was never reached
+    assert daemon._rollover_plan_end_at == {}
+
+
 def test_content_reload_never_defers_switch_off_of_fallback_slate(tmp_path: Path) -> None:
     """Issue #157: filler must be interrupted the moment a due program is
     ready -- a reload issued from FALLBACK_SLATE must never defer (wait out
@@ -1210,7 +1318,7 @@ def test_content_reload_never_defers_switch_off_of_fallback_slate(tmp_path: Path
 
     state = store.read_state("gov")
     assert state is not None
-    applied = daemon._try_content_reload("gov", state, processes[0])  # type: ignore[attr-defined]
+    applied = daemon._try_content_reload("gov", state, processes[0], rollover_plan_end_at=None)  # type: ignore[attr-defined]
 
     assert applied is True
     assert strategy.switch_at_end_of_current_calls == [False]
@@ -1249,7 +1357,7 @@ def test_content_reload_never_defers_switch_during_a_manual_override(tmp_path: P
 
     state = store.read_state("gov")
     assert state is not None
-    applied = daemon._try_content_reload("gov", state, processes[0])  # type: ignore[attr-defined]
+    applied = daemon._try_content_reload("gov", state, processes[0], rollover_plan_end_at=None)  # type: ignore[attr-defined]
 
     assert applied is True
     assert strategy.switch_at_end_of_current_calls == [False]

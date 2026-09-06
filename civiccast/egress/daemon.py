@@ -358,11 +358,21 @@ class EgressDaemon:
         # command. The durable EgressCommand queue is a fixed webapp<->daemon
         # schema shared by every issuer (operator actions included), not the
         # place to carry ephemeral per-dispatch automation bookkeeping, so this
-        # rides an in-memory side channel instead -- consumed (popped) the
-        # moment _try_content_reload builds the reload request, so a stale
-        # value can never leak into an unrelated later reload for the same
-        # channel. See reload_policy.should_defer_switch's plan_end_at/now
-        # parameters, which this feeds.
+        # rides an in-memory side channel instead.
+        #
+        # Round 3 (coordinator review): consumed (popped) at the TOP of
+        # _request_reload -- the one method every "reload" command reaches --
+        # not inside _try_content_reload. Round 2 popped it inside
+        # _try_content_reload, which closed every early return INSIDE that
+        # method but missed _request_reload's own three earlier exits that
+        # never call it at all (worker missing/dead -> _start; no state row;
+        # strategy lacks supports_content_reload), each of which measurably
+        # left a stale value sitting here forever. Also cleared defensively
+        # in _start (its other callers -- initial start, auto_start, crash-
+        # relaunch -- never go through _request_reload either) and in _stop
+        # (the channel going dark makes any in-flight rollover moot). See
+        # reload_policy.should_defer_switch's plan_end_at/now parameters,
+        # which this feeds.
         self._rollover_plan_end_at: dict[str, datetime] = {}
         # S9-5 crash-relaunch back-off: a latch paces rapid repeat relaunches, a
         # per-channel streak counts consecutive rapid crashes (for escalation +
@@ -667,6 +677,17 @@ class EgressDaemon:
         force_fallback_slate: bool = False,
         force_fallback_reason: str | None = None,
     ) -> None:
+        # Item 78 fix 3 (coordinator review, round 3): a terminate+restart
+        # start ALWAYS supersedes whatever seamless content-reload attempt
+        # (if any) automation had in flight for this channel -- discard any
+        # recorded rollover plan_end here too, defense-in-depth alongside
+        # ``_request_reload``'s own pop. ``_request_reload``'s "worker
+        # missing/dead" branch already routes here, so this is redundant for
+        # THAT specific caller, but ``_start`` has other callers (initial
+        # start, auto_start, crash-relaunch) that never go through
+        # ``_request_reload`` at all and could otherwise leave a stale value
+        # sitting in ``self._rollover_plan_end_at`` indefinitely.
+        self._rollover_plan_end_at.pop(channel_id, None)
         try:
             config = self._store.get_config(channel_id)
             if config is None:
@@ -1811,7 +1832,14 @@ class EgressDaemon:
         dropped" (retry after ``_ROLLOVER_ISSUED_TIMEOUT_SECONDS``)."""
         return channel_id in self._pending_reload_settle
 
-    def _try_content_reload(self, channel_id: str, state: EgressStateRow, process: object) -> bool:
+    def _try_content_reload(
+        self,
+        channel_id: str,
+        state: EgressStateRow,
+        process: object,
+        *,
+        rollover_plan_end_at: datetime | None,
+    ) -> bool:
         """Seamless program content-reload for a content-reload-capable strategy.
 
         Resolves the newly-due plan (same provider → preparer chain as ``_start``) and
@@ -1839,20 +1867,22 @@ class EgressDaemon:
         reports ``"applied"`` (or the daemon falls back to restart on
         ``"aborted:<reason>"``/a deadline lapse). Returns True as soon as the
         reload is armed -- this is what tells the CALLER (``_request_reload``) not
-        to fall back to terminate+restart; it does not mean the switch landed."""
-        # Item 78 fix 3 (coordinator review, round 2): pop the recorded
-        # rollover plan_end_at HERE, before any early return below, not at
-        # the point ``EncoderStartRequest`` is actually built. Popping only
-        # at that later point left the value SET (never consumed) on every
-        # early-return path above it -- no/disabled config, no/foreign
-        # plan, a SourcePrepareError from either the provider or the
-        # preparer -- so it silently leaked forward and applied to the
-        # NEXT reload attempt for this channel instead, forcing an
-        # incorrect immediate cut on what might be a plain operator-issued
-        # reload with no rollover behind it at all. Every path through this
-        # method now consumes it exactly once, whether or not that path
-        # actually reaches the ``should_defer_switch`` call it feeds.
-        rollover_plan_end_at = self._rollover_plan_end_at.pop(channel_id, None)
+        to fall back to terminate+restart; it does not mean the switch landed.
+
+        Item 78 fix 3 (coordinator review, round 3): ``rollover_plan_end_at``
+        is a required keyword-only parameter, not read from
+        ``self._rollover_plan_end_at`` inside this method -- the CALLER
+        (``_request_reload``) pops the dict and passes the value down
+        explicitly. Round 2 popped it at the top of THIS method, which fixed
+        the leak for every early return inside this method's own body, but
+        ``_request_reload`` itself has three earlier exits that never call
+        this method at all (the worker is missing/dead -> ``_start``; no
+        state row; the strategy doesn't declare ``supports_content_reload``)
+        -- each of those left the recorded value sitting in
+        ``self._rollover_plan_end_at`` forever, to be read by whatever
+        reload attempt for this channel came next. Popping in the one
+        caller that is reached on every single "reload" command, before any
+        of ITS branches run, is what actually closes all of them."""
         config = self._store.get_config(channel_id)
         if config is None or not config.enabled:
             return False
@@ -1936,14 +1966,15 @@ class EgressDaemon:
             # is active) may defer the selector switch to the outgoing leg's own
             # EOS -- see reload_policy.should_defer_switch's docstring.
             #
-            # Item 78 fix 3: ``rollover_plan_end_at`` was already popped at
-            # the top of this method (before any early return) -- this is
-            # the one and only dispatch that recorded value can ever apply
-            # to, and popping unconditionally guarantees a stale value from
-            # an earlier, already-settled (or abandoned) rollover attempt
-            # can never be read again for a later, unrelated reload of this
-            # same channel (e.g. a plain operator-issued reload with no
-            # rollover behind it at all).
+            # Item 78 fix 3: ``rollover_plan_end_at`` is this method's
+            # keyword-only parameter, sourced by ``_request_reload`` popping
+            # ``self._rollover_plan_end_at`` unconditionally at the top of
+            # ITS body -- before any of its own branches run, so this is the
+            # one and only reload attempt that recorded value can ever apply
+            # to, and a stale value from an earlier, already-settled (or
+            # abandoned) rollover can never be read again for a later,
+            # unrelated reload of this same channel (e.g. a plain operator-
+            # issued reload with no rollover behind it at all).
             switch_at_end_of_current=should_defer_switch(
                 previous_state=state.state if state else None,
                 manual_override_active=self.has_manual_override(channel_id),
@@ -2259,6 +2290,21 @@ class EgressDaemon:
             _process_terminate(process)
 
     def _request_reload(self, channel_id: str) -> None:
+        # Item 78 fix 3 (coordinator review, round 3): pop the automation-
+        # recorded rollover plan_end_at HERE, at the very top of the ONE
+        # method every "reload" command reaches, before any of this
+        # method's own branches run. Round 2 popped it inside
+        # ``_try_content_reload`` instead, which fixed every early return
+        # INSIDE that method but missed the three exits below that never
+        # call it at all: the worker is missing/dead (falls to ``_start``),
+        # there is no state row, or the strategy doesn't declare
+        # ``supports_content_reload`` (both fall straight to
+        # ``_fall_back_to_restart_reload``) -- each measurably left the
+        # value sitting in ``self._rollover_plan_end_at`` forever, to be
+        # read by whatever reload attempt for this channel came next.
+        # Passed down explicitly to ``_try_content_reload`` rather than
+        # having it read the (now already-emptied) dict itself.
+        rollover_plan_end_at = self._rollover_plan_end_at.pop(channel_id, None)
         state = self._store.read_state(channel_id)
         process = self._processes.get(channel_id)
         if process is None or _process_poll(process) is not None:
@@ -2277,7 +2323,9 @@ class EgressDaemon:
         if (
             state is not None
             and getattr(self._encoder_strategy, "supports_content_reload", False)
-            and self._try_content_reload(channel_id, state, process)
+            and self._try_content_reload(
+                channel_id, state, process, rollover_plan_end_at=rollover_plan_end_at
+            )
         ):
             # F1 redesign: True means ARMED, not settled -- _poll_reload_
             # settlement (in process_once's poll tuple) finishes the job (or
@@ -2315,6 +2363,13 @@ class EgressDaemon:
         )
 
     def _stop(self, channel_id: str, *, draining: bool) -> None:
+        # Item 78 fix 3 (coordinator review, round 3): the channel is coming
+        # off air (or draining toward it) -- any rollover plan_end automation
+        # recorded for an in-flight content-reload attempt is moot now (there
+        # is no "outgoing leg" left to defer a switch against), so discard it
+        # rather than leaving it to leak into whatever reload happens after
+        # this channel is eventually restarted.
+        self._rollover_plan_end_at.pop(channel_id, None)
         process = self._processes.pop(channel_id, None)
         self._started_at.pop(channel_id, None)
         self._reset_restart_tracking(channel_id)  # operator stop — clear crash back-off

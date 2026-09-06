@@ -2097,18 +2097,36 @@ class TestRolloverRetryFloorMeasuredFromTheLastRetryNotTheOriginalDispatch:
     ``_ROLLOVER_RETRY_MIN_INTERVAL_SECONDS`` (60s), not one every time the
     45s timeout re-arms."""
 
-    def test_a_crash_looping_worker_that_eventually_stabilizes_caps_retries_to_one_per_60s(
+    def test_a_worker_relaunching_faster_than_its_own_trigger_delay_gets_no_rollover_during_the_churn(
         self,
     ) -> None:
-        """A worker relaunches with a fresh pid every 30 monotonic seconds (so
-        the worker-pid-age guard alone blocks every retry attempt during that
-        churn) for the simulation's first 250s, then STABILIZES (stops
-        relaunching) -- the reload still never lands (the proof event never
-        changes) so the daemon keeps retrying indefinitely once unblocked.
-        Proves the two floors compose correctly: zero dispatches during the
-        churn, then a steady stream of retries once the pid ages past the
-        60s worker-age floor, each spaced at least 60s from the last (the
-        interval floor, not the 45s ISSUED_TIMEOUT, is what paces them)."""
+        """Coordinator review, round 3, item F: models a REAL worker relaunch
+        -- a non-ON_AIR tick (``STARTING``) followed by ON_AIR again with a
+        FRESH proof event and a new pid -- not merely a changed pid on an
+        otherwise-unbroken ON_AIR/proof-event stream (the round-2 shape,
+        which really only exercised the worker-pid-age guard in isolation
+        and never the "not ON_AIR" / "fresh plan took air" cleanup branches
+        item E's fix touches).
+
+        The plan here is two segments (40s, 200s): its boundary-aligned
+        trigger is 40s after establishment (the last segment's own start),
+        deliberately longer than the ~25s a horizon gets to live between one
+        relaunch's landing and the next relaunch's ``STARTING`` tick (30s
+        apart). Every relaunch therefore wipes ``_plan_horizon``/
+        ``_rollover_issued``/``_rollover_retry_dispatched_at`` (item E) via
+        the "not ON_AIR" branch and then re-establishes fresh via "a fresh
+        plan just took air" -- neither branch ever gets far enough to reach
+        its own trigger before the next relaunch resets it again. This is
+        the exact degrade mode named in the CHANGELOG: a worker that
+        relaunches faster than it can ever reach a rollover trigger gets NO
+        rollover at all while it keeps doing that -- not a hang, just a
+        reversion to the pre-item-78 shape (the channel reaches its own
+        EOS/crash cycle and the daemon's own crash back-off, untouched by
+        this fix, owns the restart). Once the worker stabilizes (stops
+        relaunching), the rollover mechanism gets a real chance to run: one
+        dispatch at the trigger and, since it never lands here either,
+        retries capped to the 60s floor -- the same steady-state behavior
+        the round-2 version of this test proved."""
         clock = {"now": 1000.0}
         store = InMemoryEgressStore()
         store.upsert_config(_config("public"))
@@ -2117,7 +2135,9 @@ class TestRolloverRetryFloorMeasuredFromTheLastRetryNotTheOriginalDispatch:
 
         def provider(_cid: str) -> EgressSourcePlan:
             calls["n"] += 1
-            return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+            return _plan_with_segments(
+                "public", (40.0, 200.0), source_ref_prefix=f"call{calls['n']}"
+            )
 
         service = ChannelAutomationService(
             store,
@@ -2127,47 +2147,82 @@ class TestRolloverRetryFloorMeasuredFromTheLastRetryNotTheOriginalDispatch:
             monotonic=lambda: clock["now"],
         )
 
-        def on_air(pid: int) -> None:
+        def starting(pid: int) -> None:
             store.write_state(
                 EgressStateRow(
                     channel_id="public",
-                    state="ON_AIR",
-                    current_source_label="Council Meeting",
-                    current_proof_event_id="ev-1",  # never changes -- never lands
+                    state="STARTING",
+                    current_proof_event_id=None,
                     updated_at=_NOW,
                     pid=pid,
                 )
             )
 
-        on_air(pid=1)
-        later = _NOW + timedelta(seconds=35)
-        service.run_once(now=_NOW)  # establish: 40s plan
-        service.run_once(now=later)  # first (non-retry) dispatch
-        assert _pending_actions(store, "public") == ["reload"]
+        def on_air(pid: int, proof_event_id: str) -> None:
+            store.write_state(
+                EgressStateRow(
+                    channel_id="public",
+                    state="ON_AIR",
+                    current_source_label="Council Meeting",
+                    current_proof_event_id=proof_event_id,
+                    updated_at=_NOW,
+                    pid=pid,
+                )
+            )
+
+        # Wall clock advances in lockstep with the monotonic clock (unlike
+        # every OTHER test in this module, which pins "now" to a single
+        # fixed instant) -- required here so the plan's own 40s-out trigger
+        # is ever actually reached by wall clock at all once the churn ends;
+        # a pinned "now" would leave ``now < trigger_at`` true forever.
+        wall_now = _NOW
+        on_air(pid=1, proof_event_id="ev-1")
+        service.run_once(now=wall_now)  # establish: 240s plan, trigger 40s out
 
         dispatch_times: list[float] = []
         pid_counter = 1
+        proof_counter = 1
         tick = 0.0
         step = 5.0
         last_relaunch_tick = 0.0
-        while tick < 1000.0:
+        pending_landing = False
+        # Bounded to stay within the ONE plan lifetime (240s) the LAST
+        # relaunch (landing by tick 250) establishes -- long enough to
+        # observe the churn producing nothing, then the original dispatch
+        # and several retries, short enough that the item-2 stale-horizon
+        # guard never re-establishes a SECOND lifetime and confuses the
+        # gap-spacing assertions below with another original-dispatch reset.
+        while tick < 460.0:
             clock["now"] += step
+            wall_now = wall_now + timedelta(seconds=step)
             tick += step
-            if tick <= 250.0 and tick - last_relaunch_tick >= 30.0:
+            if pending_landing:
+                # The relaunch "lands" the next tick after STARTING -- back
+                # ON_AIR with a fresh proof event, same new pid.
+                on_air(pid=pid_counter, proof_event_id=f"ev-{proof_counter}")
+                pending_landing = False
+            elif tick <= 250.0 and tick - last_relaunch_tick >= 30.0:
                 pid_counter += 1
+                proof_counter += 1
                 last_relaunch_tick = tick
-                on_air(pid=pid_counter)
-            service.run_once(now=later)
+                starting(pid=pid_counter)
+                pending_landing = True
+            service.run_once(now=wall_now)
             if _pending_actions(store, "public") == ["reload"]:
                 dispatch_times.append(clock["now"])
 
-        # Several retries land once the pid stabilizes and ages past the 60s
-        # floor -- this is not a vacuous "zero retries ever" result.
-        assert len(dispatch_times) >= 5, dispatch_times
-        # None of them landed during the crash-loop churn (pid always < 60s
-        # old through tick 250, clearing the age floor only at tick ~300).
+        # No rollover ever got far enough to dispatch during the churn (every
+        # relaunch wipes the horizon well before its own 40s trigger delay).
         assert all(t > 1000.0 + 250.0 for t in dispatch_times), dispatch_times
-        # And no two of them are closer together than the 60s interval floor
-        # -- the storm limiter this fix exists to make meaningful.
+        # The original dispatch plus several retries land once the worker
+        # stabilizes -- not a vacuous "zero dispatches ever" result.
+        assert len(dispatch_times) >= 3, dispatch_times
         gaps = [b - a for a, b in pairwise(dispatch_times)]
-        assert all(gap >= 60.0 for gap in gaps), gaps
+        # The FIRST gap is original-dispatch -> first-retry, legitimately
+        # governed by the 45s ISSUED_TIMEOUT alone (the interval floor is a
+        # no-op for a channel's very first retry -- nothing recorded yet to
+        # measure a gap from). Every gap AFTER that is retry -> retry, and
+        # must respect the 60s interval floor -- the storm limiter this fix
+        # exists to make meaningful.
+        assert gaps[0] >= 45.0, gaps
+        assert all(gap >= 60.0 for gap in gaps[1:]), gaps
