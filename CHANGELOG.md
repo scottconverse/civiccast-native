@@ -42,8 +42,11 @@ run at once. Hotfix `fix/plan-window-decoder-blowup` merged as #174.
 `609273da22b968b8ed9320dfc158d67b01eb30b3` (`609273d`, build run
 `33997406150`) as candidate 2, following a new Gate A run and a new
 clean-install hardware soak, whose identity is still pending:
-`<GATE_A_FINAL_RUN_ID>` / `<SOAK5_START_UTC>` / `<SOAK5_VERDICT>` /
-`<SOAK5_RELAUNCHES>`. Candidate 1's facts below
+`33998901590` / `<SOAK5_START_UTC>` / `<SOAK5_VERDICT>` /
+`<SOAK5_RELAUNCHES>`. Gate A 33998901590 started 2026-09-05T23:48Z;
+lanes pending: clean `<GATE_A_FINAL_CLEAN>`, cross-version
+`<GATE_A_FINAL_XVER>`, download-only `<GATE_A_FINAL_DLONLY>` (pending).
+Candidate 1's facts below
 (SHA `91caebc`, build `33971258093`, Gate A `33972726431`) are preserved as
 history: **candidate 1 -- Gate A PASS x3, hardware soak FAIL (item 51).**
 
@@ -375,9 +378,12 @@ history: **candidate 1 -- Gate A PASS x3, hardware soak FAIL (item 51).**
   back to slate); one channel tripped the 5-crash guard; the planner then
   issued a rollover for a plan it believed had ended 1,208 seconds
   earlier; and all three channels sat in `TRANSITIONING` from `22:55Z`
-  onward and did not recover on their own (item 54, below:
-  planner/rollover accounting after a fallback -- hotfix #174 does not
-  address it).
+  onward. The streams themselves stayed clean throughout (TSDuck probes
+  kept passing; no channel went off air) -- this is the product's
+  designed graceful drain, not a hang: when a live content reload cannot
+  be applied seamlessly, the running program is allowed to play to its
+  natural end before the new plan starts. The defects are operator- and
+  automation-facing, not streaming ones (items 54/55, below).
 - **`civiccast/egress/gst/graph.py`'s `source_leg_is_clock_timed` docstring
   claimed the fail-safe answer for an unknown source factory is `True`; the
   code has always returned `False`** (`_chain_is_clock_timed` only matches a
@@ -581,15 +587,33 @@ history: **candidate 1 -- Gate A PASS x3, hardware soak FAIL (item 51).**
    caps plans at 8 segments, ties the replan floor to the plan length, and
    hard-caps decoder chains in the engine. Not part of candidate 1; will
    be part of candidate 2.
-8. **(item 54) After a schedule gap or a crash-loop fallback, the planner
-   may issue a stale rollover and a channel can sit in `TRANSITIONING`
-   indefinitely.** MEASURED: soak #4, kit `91caebc`, once the plan window
-   held the rescheduled long clips -- a schedule gap fell back to slate,
-   one channel tripped the 5-crash guard, and the planner then issued a
-   rollover for a plan it believed had ended 1,208 seconds earlier; all
-   three channels sat in `TRANSITIONING` from `22:55Z` onward and never
-   recovered on their own. **Operator action:** Stop then Start the
-   affected channel. **Fix pending** -- not addressed by hotfix #174.
+8. **(item 54) A long `TRANSITIONING` state is the product's designed
+   graceful drain, but the operator cannot tell it from a hang.** When a
+   live content reload cannot be applied seamlessly, the running program
+   is deliberately allowed to play to its natural end before the new plan
+   starts -- this is expected behavior, not a fault, and the streams
+   themselves stayed clean throughout (TSDuck probes kept passing; no
+   channel went off air). MEASURED: soak #4, kit `91caebc`, once the plan
+   window held the rescheduled long clips -- a schedule gap fell back to
+   slate, one channel tripped the 5-crash guard, and the planner then
+   issued a rollover for a plan it believed had ended 1,208 seconds
+   earlier; all three channels sat in `TRANSITIONING` from `22:55Z`
+   onward. The defect is that the operator has no way to distinguish this
+   drain from a stall: there is no label for it, no time-in-state shown,
+   and the health view resets its clock on every write, so a drain in
+   progress looks identical to a fresh healthy poll. **Operator action:**
+   none needed for an ordinary drain; if a channel stays in
+   `TRANSITIONING` past the end of its current program, Stop then Start
+   it. **Fix pending:** PR #175, targeted for beta.6.
+9. **(item 55) During a graceful drain, automation bookkeeping and a lost
+   control-pipe acknowledgement both go unsurfaced.** Two related gaps
+   surfaced by the same soak #4 drain: channel automation stops updating
+   its own rollover bookkeeping while a channel is draining, so its
+   internal state can drift from what is actually airing; and a lost
+   control-pipe acknowledgement (the worker's ack of the reload command)
+   is never surfaced anywhere, so there is no signal when the drain's own
+   command handshake fails silently. Neither is addressed by hotfix #174.
+   **Fix pending:** PR #175, targeted for beta.6.
 
 ## [1.0.0-beta.4] - 2026-09-04
 

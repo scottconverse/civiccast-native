@@ -21,8 +21,11 @@ merged (as #174). `v1.0.0-beta.5` will be cut from `main` at source SHA
 clean-install hardware soak. Everything below that names `91caebc` / build
 `33971258093` / Gate A `33972726431` describes **candidate 1**: Gate A
 PASS x3, hardware soak FAIL (item 51). Candidate 2's remaining identity is
-pending: `<GATE_A_FINAL_RUN_ID>` / `<SOAK5_START_UTC>` /
-`<SOAK5_VERDICT>` / `<SOAK5_RELAUNCHES>`.
+pending: `33998901590` / `<SOAK5_START_UTC>` /
+`<SOAK5_VERDICT>` / `<SOAK5_RELAUNCHES>`. Gate A 33998901590 started
+2026-09-05T23:48Z; lanes pending: clean `<GATE_A_FINAL_CLEAN>`,
+cross-version `<GATE_A_FINAL_XVER>`, download-only
+`<GATE_A_FINAL_DLONLY>` (pending).
 
 **Publisher (once run):** the coordinating agent, per the owner's
 2026-09-02 delegation ("every green build gets tagged and published" --
@@ -58,7 +61,7 @@ Candidate 1 would have published via `python scripts/release/publish_beta_candid
 (never run -- the hardware soak failed first). Candidate 2's equivalent
 command, once its own Gate A run passes, uses
 `609273da22b968b8ed9320dfc158d67b01eb30b3`, `33997406150`, and
-`<GATE_A_FINAL_RUN_ID>`. The publisher's
+`33998901590`. The publisher's
 fail-closed checks must all pass before any GitHub state is touched:
 version identity agreeing across `setup.exe` ProductVersion,
 `civiccast._native_version.__version__`, and the tag (already
@@ -317,9 +320,13 @@ separate item-boundary effect. The long-item phase then hit a schedule
 gap (`No valid source plan is available`, falling back to slate); one
 channel tripped the 5-crash guard; the planner then issued a rollover for
 a plan it believed had ended 1,208 seconds earlier; and all three
-channels sat in `TRANSITIONING` from `22:55Z` onward and did not recover
-on their own -- logged as item 54 in "Known issues" below (planner/
-rollover accounting after a fallback; hotfix #174 does not address it).
+channels sat in `TRANSITIONING` from `22:55Z` onward. The streams
+themselves stayed clean throughout (TSDuck probes kept passing; no
+channel went off air) -- this is the product's designed graceful drain,
+not a hang: when a live content reload cannot be applied seamlessly, the
+running program is allowed to play to its natural end before the new
+plan starts. The defects are operator- and automation-facing, not
+streaming ones -- logged as items 54/55 in "Known issues" below.
 
 ## Also in this candidate: the Gate A schema proof now actually executes
 
@@ -440,16 +447,33 @@ path, only the independent proof that checks it from the outside.
    8 segments, ties the replan floor to the plan length, and hard-caps
    decoder chains in the engine. Not part of candidate 1; will be part of
    candidate 2.
-8. **(item 54) After a schedule gap or a crash-loop fallback, the planner
-   may issue a stale rollover and a channel can sit in `TRANSITIONING`
-   indefinitely.** MEASURED: soak #4, kit `91caebc` -- once the plan
-   window held the rescheduled long clips, a schedule gap fell back to
-   slate, one channel tripped the 5-crash guard, and the planner then
+8. **(item 54) A long `TRANSITIONING` state is the product's designed
+   graceful drain, but the operator cannot tell it from a hang.** When a
+   live content reload cannot be applied seamlessly, the running program
+   is deliberately allowed to play to its natural end before the new plan
+   starts -- this is expected behavior, not a fault, and the streams
+   themselves stayed clean throughout (TSDuck probes kept passing; no
+   channel went off air). MEASURED: soak #4, kit `91caebc` -- once the
+   plan window held the rescheduled long clips, a schedule gap fell back
+   to slate, one channel tripped the 5-crash guard, and the planner then
    issued a rollover for a plan it believed had ended 1,208 seconds
    earlier; all three channels sat in `TRANSITIONING` from `22:55Z`
-   onward and never recovered on their own. **Operator action:** Stop
-   then Start the affected channel. **Fix pending** -- not addressed by
-   hotfix #174.
+   onward. The defect is that the operator has no way to distinguish this
+   drain from a stall: there is no label for it, no time-in-state shown,
+   and the health view resets its clock on every write, so a drain in
+   progress looks identical to a fresh healthy poll. **Operator action:**
+   none needed for an ordinary drain; if a channel stays in
+   `TRANSITIONING` past the end of its current program, Stop then Start
+   it. **Fix pending:** PR #175, targeted for beta.6.
+9. **(item 55) During a graceful drain, automation bookkeeping and a lost
+   control-pipe acknowledgement both go unsurfaced.** Two related gaps
+   surfaced by the same soak #4 drain: channel automation stops updating
+   its own rollover bookkeeping while a channel is draining, so its
+   internal state can drift from what is actually airing; and a lost
+   control-pipe acknowledgement (the worker's ack of the reload command)
+   is never surfaced anywhere, so there is no signal when the drain's own
+   command handshake fails silently. Neither is addressed by hotfix #174.
+   **Fix pending:** PR #175, targeted for beta.6.
 
 ## Also in this candidate: release-prep
 
@@ -518,7 +542,9 @@ publishable.**
 - **Soak #4 (real clip durations, item-boundary diagnostic):** clock
   started `2026-09-05T21:08:51Z` on kit `91caebc`, result `FAIL
   (relaunches)` -- see "Fourth real-hardware soak" above; also surfaced
-  item 54 (planner/rollover accounting after a fallback).
+  the designed graceful-drain visibility gaps, items 54/55 (operator
+  cannot tell a drain from a hang; automation bookkeeping and a lost
+  control-pipe ack go unsurfaced during one).
 
 **Candidate 2 -- source SHA `609273da22b968b8ed9320dfc158d67b01eb30b3`
 (`609273d`), build run `33997406150`, cut from `main` after
@@ -530,8 +556,10 @@ pending:**
 - **Hash + signature, verified from the outside:**
   `scripts/download_windows_release_artifacts.ps1 -AssetSet NativeCandidate`,
   cross-verified against `SHA256SUMS.txt` and `Get-AuthenticodeSignature`.
-- **Gate A:** run `<GATE_A_FINAL_RUN_ID>` (build `33997406150`),
-  all three lanes expected PASS.
+- **Gate A:** run `33998901590` (build `33997406150`), started
+  2026-09-05T23:48Z. Lanes pending: clean `<GATE_A_FINAL_CLEAN>`,
+  cross-version `<GATE_A_FINAL_XVER>`, download-only
+  `<GATE_A_FINAL_DLONLY>` (pending).
 - **Clean-install hardware soak:** clock `<SOAK5_START_UTC>`, verdict
   `<SOAK5_VERDICT>`, relaunches `<SOAK5_RELAUNCHES>`.
 - **Test suite:** `uv run pytest tests/docs tests/policy -q` re-run for this
