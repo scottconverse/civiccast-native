@@ -180,15 +180,14 @@ class TestBoardFillerIntegration:
 
         plan = generator(_config())
 
-        assert len(plan.segments) == 4
-        assert len(calls) == 2
-        assert "board" in Path(plan.segments[0].path).parts
-        assert [s.source_ref for s in plan.segments[:4]] == [
-            "bulletin-cgb-1",
-            "bulletin-cgb-2",
-            "bulletin-cgb-1",
-            "bulletin-cgb-2",
-        ]
+        # 2 slides x 10s = a 20s rotation; a 25s target needs 2 repeats of
+        # that ONE rotation file (short of 25s -- rollover covers the rest).
+        assert len(plan.segments) == 2
+        assert len({s.path for s in plan.segments}) == 1
+        assert all(s.source_ref == "bulletin-rotation" for s in plan.segments)
+        # 2 board segment renders + 1 rotation concat.
+        assert len(calls) == 3
+        assert "board" in Path(calls[0][-1]).parts
         joined = " ".join(calls[0])
         assert "x2" in joined or "x3" in joined
 
@@ -213,9 +212,12 @@ class TestBoardFillerIntegration:
 
         plan = generator(_config())
 
-        assert all(segment.source_ref == "board-empty" for segment in plan.segments)
+        # No airable bulletins -> one "empty" board segment, rotated into a
+        # single-slide 10s rotation, repeated 3x to cover the 25s target.
+        assert all(segment.source_ref == "bulletin-rotation" for segment in plan.segments)
         assert len(plan.segments) == 3
-        assert len(calls) == 1
+        assert len({segment.path for segment in plan.segments}) == 1
+        assert len(calls) == 2  # 1 board segment render + 1 rotation concat
         assert all(segment.kind == "cg" for segment in plan.segments)
 
     def test_board_image_asset_ref_is_resolved_for_logo_overlay(self, tmp_path: Path) -> None:
@@ -313,7 +315,10 @@ class TestBoardFailOpenAndRetry:
             plan = generator(_config())
 
         assert len(plan.segments) == 1
-        assert len(calls) == 2, "expected a no-text retry after the first failure"
+        # attempt1: text fails; attempt2: no-text retry succeeds; attempt3:
+        # the rotation concat (a single bulletin's rotation is that one
+        # segment, but it still goes through the concat step).
+        assert len(calls) == 3, "expected a no-text retry after the first failure"
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert any("public" in r.getMessage() for r in warnings), (
             "the text-degradation warning must name the channel"
@@ -331,7 +336,7 @@ class TestBoardFailOpenAndRetry:
 
         generator(_config())
 
-        assert len(calls) == 2
+        assert len(calls) == 3  # render (fail), render retry, rotation concat
         assert "drawtext" in " ".join(calls[0]), "first attempt renders WITH text"
         assert "drawtext" not in " ".join(calls[1]), "retry must render image-only"
 

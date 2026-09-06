@@ -39,13 +39,22 @@ _LOUDNESS_TOLERANCE_LU = 2.0
 _DARK_STATES = {"STOPPED", "ERROR", "DRAINING", "STOPPING"}
 # Transient states: on the way up / switching — not steady-green, not dark.
 _TRANSIENT_STATES = {"STARTING", "TRANSITIONING"}
-# BLOCKER A fix (2026-09-05 tester finding): a channel's TRANSITIONING latch
-# could previously get stuck open indefinitely (daemon.py's pending-reload
-# latch, now self-healed after ``_PENDING_RELOAD_STUCK_BOUND_S``). Escalate
-# the runtime color past that self-heal bound so an operator is alerted even
-# if the daemon-side recovery itself has a bug, rather than staying yellow
-# ("coming up / switching") forever.
-_TRANSITIONING_ESCALATION_SECONDS = 60
+# BLOCKER A redo (2026-09-05 hostile review): a stuck-looking TRANSITIONING
+# row is not necessarily wrong -- for an ON_AIR program whose seamless
+# reload failed, daemon.py's terminate+restart fallback is DESIGNED to wait
+# for that program's own natural EOS (see daemon.py's _request_reload
+# "Programs keep the graceful drain" comment), which can legitimately take
+# as long as the program itself runs. Escalating on a flat wall-clock bound
+# would false-alarm on every long program. The real hang is a pending reload
+# that has outlived the plan it is waiting on: escalate once
+# ``pending_reload_deadline`` (the dispatched plan's own duration + a
+# margin, set by daemon.py's ``_request_reload``) has passed. When that
+# deadline is unknown (no dispatched-plan record to estimate from) -- and
+# for STARTING, which has no such per-plan concept at all -- fall back to a
+# generous, symmetric flat bound so a GENUINELY stuck transition (the
+# daemon-side estimate itself having a bug, or a worker wedged before ever
+# reaching ON_AIR) still surfaces eventually.
+_TRANSIENT_STATE_FALLBACK_ESCALATION_SECONDS = 600
 
 _COLOR_RANK: dict[SafeToAirColor, int] = {"green": 0, "yellow": 1, "red": 2}
 
@@ -59,12 +68,33 @@ def _worst(colors: list[SafeToAirColor]) -> SafeToAirColor:
 
 
 def _seconds_in_state(state_row: EgressStateRow | None, now: datetime) -> int:
+    """How long ``state_row.state`` itself has been unchanged.
+
+    Deliberately reads ``state_entered_at``, NOT ``updated_at`` -- the latter
+    is the row's public "last write" timestamp and advances on every write
+    (including a poll tick that rewrites an unchanged state), so it cannot
+    answer "how long has this channel been stuck" (BLOCKER A hostile-review
+    redo, 2026-09-05: an earlier pass conflated the two)."""
     if state_row is None:
         return 0
-    updated = state_row.updated_at
-    if updated.tzinfo is None:
-        updated = updated.replace(tzinfo=UTC)
-    return max(0, int((now - updated).total_seconds()))
+    entered = state_row.state_entered_at
+    if entered.tzinfo is None:
+        entered = entered.replace(tzinfo=UTC)
+    return max(0, int((now - entered).total_seconds()))
+
+
+def _pending_reload_overdue(state_row: EgressStateRow | None, now: datetime) -> bool:
+    """True once a pending content-reload has outlived the plan it was
+    estimated to hand off at (``pending_reload_deadline``, set by
+    daemon.py's ``_request_reload``/``_poll_process``). Never true when the
+    deadline is unknown -- an unknown deadline must not manufacture a false
+    escalation; the flat fallback bound covers that case instead."""
+    if state_row is None or state_row.pending_reload_deadline is None:
+        return False
+    deadline = state_row.pending_reload_deadline
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=UTC)
+    return now >= deadline
 
 
 def _loudness_out_of_tolerance(lufs: float | None) -> bool:
@@ -104,10 +134,18 @@ def compute_channel_runtime_status(
     if state in _DARK_STATES:
         color = "red"
     elif state in _TRANSIENT_STATES:
-        # Coming up / switching — not steady, not off-air. BLOCKER A fix: a
-        # TRANSITIONING channel that has sat that way past the escalation
-        # bound is stuck, not merely mid-switch — escalate to red.
-        if state == "TRANSITIONING" and seconds_in_state >= _TRANSITIONING_ESCALATION_SECONDS:
+        # Coming up / switching — not steady, not off-air. BLOCKER A
+        # hostile-review redo: escalate a TRANSITIONING row once its pending
+        # reload has genuinely outlived the plan it is waiting on (the real
+        # hang), not after a flat guess that would false-alarm on every
+        # long-running program's graceful drain. STARTING (and a
+        # TRANSITIONING row with no computable deadline) escalates
+        # symmetrically, but only past a generous flat fallback bound.
+        transitioning_overdue = state == "TRANSITIONING" and _pending_reload_overdue(state_row, now)
+        if (
+            transitioning_overdue
+            or seconds_in_state >= _TRANSIENT_STATE_FALLBACK_ESCALATION_SECONDS
+        ):
             color = "red"
         else:
             color = "yellow"

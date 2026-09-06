@@ -121,16 +121,19 @@ class TestBulletinFiller:
         plan = generator(_config())
 
         assert plan.channel_id == "public"
-        # The rotation repeats to span the fill target (CA-8); each cycle
-        # preserves the approved order and each slide renders exactly once.
-        assert [segment.label for segment in plan.segments[:2]] == ["Plant sale", "Food drive"]
-        assert len(plan.segments) % 2 == 0
+        # The approved order is preserved inside the ONE rotation file (see
+        # the concat-list assertion below); the egress plan itself just
+        # repeats that one file up to the playlist-subchain cap.
+        assert len(plan.segments) <= MAX_PLAYLIST_SUBCHAINS
         assert all(segment.kind == "cg" for segment in plan.segments)
-        assert [segment.source_ref for segment in plan.segments[:2]] == [
-            "bulletin-cgb-1",
-            "bulletin-cgb-2",
-        ]
-        assert len(calls) == 2
+        assert all(segment.source_ref == "bulletin-rotation" for segment in plan.segments)
+        assert len({segment.path for segment in plan.segments}) == 1
+        # 2 individual slide renders + 1 concat render of the rotation.
+        assert len(calls) == 3
+        concat_args = calls[2]
+        concat_list_path = Path(concat_args[concat_args.index("-i") + 1])
+        concat_text = concat_list_path.read_text(encoding="utf-8")
+        assert concat_text.index(calls[0][-1]) < concat_text.index(calls[1][-1])
 
     def test_unchanged_board_is_cached_changed_board_rerenders(self, tmp_path: Path) -> None:
         calls: list[list[str]] = []
@@ -143,12 +146,15 @@ class TestBulletinFiller:
         )
 
         generator(_config())
+        assert len(calls) == 2  # 1 slide render + 1 rotation concat
         generator(_config())
-        assert len(calls) == 1, "an unchanged board must not re-render"
+        assert len(calls) == 2, "an unchanged rotation must not re-render OR re-concat"
 
         bulletins.append(_bulletin("cgb-2", title="Food drive"))
         generator(_config())
-        assert len(calls) == 2, "a changed board renders only its NEW slides (per-slide cache)"
+        # The new slide renders once (per-slide cache); the rotation's
+        # content changed (a different slide set), so it re-concats too.
+        assert len(calls) == 4, "a changed rotation renders its NEW slide and re-concats"
 
     def test_no_approved_bulletins_delegates_to_slate(self, tmp_path: Path) -> None:
         slate_calls: list[list[str]] = []
@@ -234,7 +240,10 @@ class TestBulletinFiller:
         with caplog.at_level(logging.WARNING, logger="civiccast.egress.bulletin_filler"):
             generator(_config())
 
-        assert len(attempts) == 2, "expected a no-text retry after the first failure"
+        # attempt1: text render fails; attempt2: no-text retry succeeds;
+        # attempt3: the rotation concat (a single bulletin's rotation is
+        # just that one slide, but it still goes through the concat step).
+        assert len(attempts) == 3, "expected a no-text retry after the first failure"
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert any("public" in r.getMessage() for r in warnings), (
             "the text-degradation warning must name the channel"
@@ -281,8 +290,10 @@ class TestBulletinTimeWindow:
             clock=lambda: _NOW,
         )
         plan = generator(_config())
-        assert {s.source_ref for s in plan.segments} == {"bulletin-live", "bulletin-open"}
-        assert len(calls) == 2  # future + expired never render
+        assert {s.source_ref for s in plan.segments} == {"bulletin-rotation"}
+        # 2 airable slides rendered + 1 rotation concat; future + expired
+        # never render at all.
+        assert len(calls) == 3
 
     def test_all_expired_falls_back_to_slate(self, tmp_path: Path) -> None:
         slate_calls: list[list[str]] = []
@@ -318,19 +329,27 @@ class TestFillerSourceProvider:
         assert slate_plan.segments[0].kind == "slate"
 
 
-def test_bulletin_plan_cycles_slides_to_span_the_fill_target(tmp_path: Path) -> None:
+def test_bulletin_plan_builds_one_rotation_file_and_repeats_it_up_to_the_cap(
+    tmp_path: Path,
+) -> None:
     # CA-8 finding: one ~30s bulletin cycle per plan reset the TS session
-    # every cycle. The rotation now repeats to span the fill target with
-    # each slide still rendered exactly once.
+    # every cycle.
     #
-    # BLOCKER B fix (2026-09-05 regression from #174): a 2-slide, 10s-each
-    # rotation cycled to reach 600s used to build 30 cycles = 60 total
-    # segments -- gst/bridge.graph_from_config truncates a "cg"-kind plan
-    # past MAX_PLAYLIST_SUBCHAINS (12) segments, so the board/bulletin
-    # worker actually hit a real EOS (and restarted) after only ~120s of a
-    # 600s target. The generator now caps the cycle count at
-    # MAX_PLAYLIST_SUBCHAINS // segment_count and holds each slide longer
-    # instead, so the plan never NEEDS more than 12 total segments.
+    # Hostile-review redo (2026-09-05, regression from #174, then a
+    # follow-up review of the first fix): a 2-slide, 10s-each rotation
+    # cycled to reach 600s used to build 30 cycles = 60 total segments --
+    # gst/bridge.graph_from_config truncates a "cg"-kind plan past
+    # MAX_PLAYLIST_SUBCHAINS (12) segments, so the board/bulletin worker
+    # actually hit a real EOS (and restarted) after only ~120s of a 600s
+    # target. A first fix lengthened each slide's OWN hold duration instead
+    # of cycling -- but that changes what airs (a 10s slide became a 50s
+    # slide). The shipped fix instead concatenates the individual slides
+    # into ONE rotation file (each slide still exactly its configured 10s)
+    # and repeats THAT ONE file up to MAX_PLAYLIST_SUBCHAINS times -- 2
+    # slides x 10s = a 20s rotation, capped at 12 repeats = 240s of
+    # coverage (short of the 600s target; the rollover mechanism -- the
+    # same one that extends a schedule-derived program plan -- covers the
+    # rest for as long as the channel stays on this fill).
     rendered: list[list[str]] = []
 
     def runner(args: list[str]) -> FfmpegResult:
@@ -352,22 +371,73 @@ def test_bulletin_plan_cycles_slides_to_span_the_fill_target(tmp_path: Path) -> 
 
     plan = generator(_config())
 
-    assert len(rendered) == 2  # each slide rendered once
-    # 2 slides, capped at 12 // 2 = 6 cycles -> 12 segments, each held 50s
-    # (600 / (2*6)) instead of the configured 10s, so 12 segments still
-    # cover the full 600s target.
+    # 2 individual slide renders + 1 concat render of the rotation file.
+    assert len(rendered) == 3
     assert len(plan.segments) == 12
     assert len(plan.segments) <= MAX_PLAYLIST_SUBCHAINS
-    assert all(segment.duration_seconds == 50 for segment in plan.segments)
+    # Each slide keeps its configured ~10s hold; the rotation (all repeats
+    # of the SAME concatenated file) is 20s -- nothing was stretched.
+    assert all(segment.duration_seconds == 20 for segment in plan.segments)
+    assert len({segment.path for segment in plan.segments}) == 1  # one file, repeated
+    assert all(segment.source_ref == "bulletin-rotation" for segment in plan.segments)
     total = sum(segment.duration_seconds for segment in plan.segments)
-    assert total >= 600
-    # Rotation order is preserved within every cycle.
-    assert [s.source_ref for s in plan.segments[:4]] == [
-        "bulletin-cgb_1",
-        "bulletin-cgb_2",
-        "bulletin-cgb_1",
-        "bulletin-cgb_2",
-    ]
+    assert total == 240  # short of the 600s target -- rollover covers the rest
+
+    # The concat list (the third ffmpeg call) preserves rotation order.
+    slide_paths = [rendered[0][-1], rendered[1][-1]]
+    concat_args = rendered[2]
+    concat_list_path = Path(concat_args[concat_args.index("-i") + 1])
+    concat_text = concat_list_path.read_text(encoding="utf-8")
+    assert concat_text.index(slide_paths[0]) < concat_text.index(slide_paths[1])
+
+
+def test_bulletin_rotation_is_cached_and_not_rebuilt_on_a_second_prepare(
+    tmp_path: Path,
+) -> None:
+    """A second prepare with the same rotation must not re-concatenate --
+    only the individual per-slide cache mattered before this fix; the
+    rotation file itself needs the same posture."""
+    rendered: list[list[str]] = []
+    generator = BulletinFillerSourceGenerator(
+        work_dir=tmp_path,
+        bulletins_provider=lambda _cid: [_bulletin("cgb_1", title="Food drive Saturday")],
+        ffmpeg_runner=_ok_runner(rendered),
+        target_fill_seconds=60,
+    )
+
+    first = generator(_config())
+    calls_after_first = len(rendered)
+    second = generator(_config())
+
+    assert len(rendered) == calls_after_first  # no new ffmpeg calls at all
+    assert first.segments[0].path == second.segments[0].path
+
+
+@pytest.mark.parametrize("bulletin_count", [13, 40])
+def test_bulletin_rotation_caps_distinct_slides_at_the_playlist_subchain_limit(
+    tmp_path: Path, bulletin_count: int
+) -> None:
+    """Hostile-review "invariant" fix: the first pass's cap check
+    (``cycles * segment_count > MAX_PLAYLIST_SUBCHAINS``) never actually
+    bounded ``segment_count`` itself -- a rotation with MORE distinct slides
+    than the cap (13, 40, ...) still built that many segments regardless.
+    The rotation must never exceed MAX_PLAYLIST_SUBCHAINS distinct slides,
+    however many are airable."""
+    bulletins = [_bulletin(f"cgb_{i}", title=f"Bulletin {i}") for i in range(bulletin_count)]
+    generator = BulletinFillerSourceGenerator(
+        work_dir=tmp_path,
+        bulletins_provider=lambda _cid: bulletins,
+        ffmpeg_runner=_ok_runner([]),
+        target_fill_seconds=60,
+    )
+
+    plan = generator(_config())
+
+    assert len(plan.segments) <= MAX_PLAYLIST_SUBCHAINS
+    assert len({segment.path for segment in plan.segments}) == 1
+    # The rotation itself holds at most the capped number of slides (10s
+    # each) -- never bulletin_count's full, uncapped length.
+    assert plan.segments[0].duration_seconds <= MAX_PLAYLIST_SUBCHAINS * 10
 
 
 class TestDefaultImageResolver:

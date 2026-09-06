@@ -168,6 +168,20 @@ class _ChannelAutomationAlerts:
             detail=detail,
         )
 
+    def on_slate_reload_exhausted(self, channel_id: str, *, detail: str) -> None:
+        """Hostile-review "no flap" fix: a channel that gave up retrying a
+        FALLBACK_SLATE reload after too many consecutive failures. Called
+        every tick the give-up condition still holds (``_check_slate_replan``
+        has no other per-tick success/failure signal to bracket this with),
+        so mark this tick failed EVERY time (keeping the alert firing and
+        never auto-cleared by ``end_tick`` while still true) but only write
+        the DB row once -- mirrors ``end_tick``'s own "don't spam a resolved
+        event" guard, just the inverse."""
+        self._failed_this_tick.add(channel_id)
+        if channel_id in self._firing:
+            return  # already recorded; keep it firing without a duplicate row
+        self._raise(channel_id, summary=f"Channel {channel_id!r} is stuck on slate.", detail=detail)
+
     def end_tick(self, channel_id: str) -> None:
         """Call once a channel's pass has completed without raising."""
         if channel_id in self._failed_this_tick:
@@ -312,6 +326,12 @@ class ChannelAutomationService:
         self._reload_issued: set[str] = set()
         # Audit ENG-002: reload re-issue pacing (see _check_slate_replan).
         self._replan_retry_at: dict[str, float] = {}
+        # Hostile-review "no flap" fix (2026-09-05): consecutive
+        # FALLBACK_SLATE reload attempts (reset to 0 on the next ON_AIR
+        # success) -- backs the retry cooldown off exponentially and, past
+        # _SLATE_REPLAN_MAX_CONSECUTIVE_FAILURES, stops retrying entirely.
+        self._slate_replan_attempts: dict[str, int] = {}
+        self._slate_replan_gave_up: set[str] = set()
         # Soak evidence 2026-09-04 (kit 4b30c99): back-to-back scheduled
         # premieres EOS'd the engine at every source-plan boundary because
         # nothing ever extended a LIVE (ON_AIR) plan before it ran out --
@@ -360,6 +380,12 @@ class ChannelAutomationService:
 
     _START_RETRY_COOLDOWN_SECONDS = 30.0
     _RELOAD_RETRY_COOLDOWN_SECONDS = 30.0
+    # Hostile-review "no flap" fix: the FALLBACK_SLATE reload retry cooldown
+    # doubles with every consecutive failure (30s, 60s, 120s, 240s, ...),
+    # clamped at this ceiling, and stops retrying entirely past
+    # _SLATE_REPLAN_MAX_CONSECUTIVE_FAILURES attempts.
+    _SLATE_REPLAN_MAX_COOLDOWN_SECONDS = 300.0
+    _SLATE_REPLAN_MAX_CONSECUTIVE_FAILURES = 5
     # Hostile-review B3 fix: the floor of how far ahead of a live plan's
     # projected end the rollover trigger fires -- the actual trigger is
     # boundary-aligned (reload_policy.rollover_trigger_at: the moment the
@@ -637,15 +663,37 @@ class ChannelAutomationService:
             # clear it - that is the churn the cooldown exists to stop.
             if state_row is not None and state_row.state == "ON_AIR":
                 self._replan_retry_at.pop(channel_id, None)
+                self._slate_replan_attempts.pop(channel_id, None)
+                self._slate_replan_gave_up.discard(channel_id)
             return
         if channel_id in self._reload_issued:
+            return
+        # Hostile-review "no flap" fix (2026-09-05): a persistently-failing
+        # reload used to retry forever at a flat 30s cooldown -- indefinite
+        # kill/restart churn against a due item that is never going to
+        # prepare successfully. Past this many CONSECUTIVE failures (no
+        # success -- ON_AIR -- in between), stop retrying entirely and raise
+        # an operator alert; only a fresh success (or an external reset, e.g.
+        # the operator fixing the item and it airing) clears this.
+        if channel_id in self._slate_replan_gave_up:
+            if self._alerts is not None:
+                self._alerts.on_slate_reload_exhausted(
+                    channel_id,
+                    detail=(
+                        f"Channel {channel_id!r} gave up retrying a FALLBACK_SLATE "
+                        f"reload after {self._SLATE_REPLAN_MAX_CONSECUTIVE_FAILURES} "
+                        "consecutive failures; operator intervention needed."
+                    ),
+                )
             return
         # Audit ENG-002: when the due item persistently fails PREPARATION,
         # the channel flaps TRANSITIONING->FALLBACK_SLATE (clearing the
         # one-shot latch above) and a naive re-issue strobes kill/restart
         # every ~2 ticks for the item's whole duration. Reloads get the
         # same cooldown pacing as #152 gave starts: 30s of honest slate
-        # between retries.
+        # between retries, DOUBLING with every consecutive failure (up to a
+        # 5-minute ceiling) so a persistently-failing item backs off instead
+        # of hammering at a flat cadence forever.
         retry_at = self._replan_retry_at.get(channel_id)
         if retry_at is not None and self._monotonic() < retry_at:
             return
@@ -657,12 +705,40 @@ class ChannelAutomationService:
             return
         if plan is None:
             return
+        attempts = self._slate_replan_attempts.get(channel_id, 0) + 1
+        self._slate_replan_attempts[channel_id] = attempts
+        if attempts > self._SLATE_REPLAN_MAX_CONSECUTIVE_FAILURES:
+            self._slate_replan_gave_up.add(channel_id)
+            _LOG.error(
+                "Channel automation gave up retrying a FALLBACK_SLATE reload for %s "
+                "after %d consecutive failures; stopping the retry loop until an "
+                "operator intervenes.",
+                channel_id,
+                self._SLATE_REPLAN_MAX_CONSECUTIVE_FAILURES,
+            )
+            if self._alerts is not None:
+                self._alerts.on_slate_reload_exhausted(
+                    channel_id,
+                    detail=(
+                        f"Channel {channel_id!r} gave up retrying a FALLBACK_SLATE "
+                        f"reload after {self._SLATE_REPLAN_MAX_CONSECUTIVE_FAILURES} "
+                        "consecutive failures; operator intervention needed."
+                    ),
+                )
+            return
         self._enqueue(channel_id, "reload", now=now)
         self._reload_issued.add(channel_id)
-        self._replan_retry_at[channel_id] = self._monotonic() + self._RELOAD_RETRY_COOLDOWN_SECONDS
+        cooldown = min(
+            self._SLATE_REPLAN_MAX_COOLDOWN_SECONDS,
+            self._RELOAD_RETRY_COOLDOWN_SECONDS * (2 ** (attempts - 1)),
+        )
+        self._replan_retry_at[channel_id] = self._monotonic() + cooldown
         _LOG.info(
-            "Channel automation issued reload for %s: a scheduled program is due.",
+            "Channel automation issued reload for %s: a scheduled program is due "
+            "(attempt %d, next retry backs off %.0fs if this one fails too).",
             channel_id,
+            attempts,
+            cooldown,
         )
 
     def _rollover_min_lead_seconds(self, planned_seconds: float) -> float:
@@ -843,9 +919,24 @@ class ChannelAutomationService:
         """
 
         state_row = self._store.read_state(channel_id)
-        if state_row is None or state_row.state != "ON_AIR":
+        # BLOCKER A hostile-review redo (2026-09-05): a TRANSITIONING row
+        # carrying ``pending_reload_since`` is THIS method's own rollover
+        # reload, still legitimately draining toward the outgoing program's
+        # natural EOS handoff (daemon.py's graceful drain -- see
+        # ``_request_reload``'s "Programs keep the graceful drain" comment).
+        # That is a normal, self-resolving wait, not evidence the channel
+        # left the air -- the tracked horizon and the undelivered-reload
+        # retry below must survive it instead of being wiped and forced to
+        # re-establish from scratch once ON_AIR resumes.
+        pending_reload_draining = (
+            state_row is not None
+            and state_row.state == "TRANSITIONING"
+            and state_row.pending_reload_since is not None
+        )
+        if state_row is None or (state_row.state != "ON_AIR" and not pending_reload_draining):
             # Not airing a schedule-derived program right now (dark, slate,
-            # starting, transitioning, draining) -- nothing to extend.
+            # starting, an unrelated transition, draining) -- nothing to
+            # extend.
             self._plan_horizon.pop(channel_id, None)
             self._rollover_issued.discard(channel_id)
             self._rollover_issued_at.pop(channel_id, None)
@@ -943,17 +1034,27 @@ class ChannelAutomationService:
         # (observed logged as "the live plan ends in -1208s") -- the plan this
         # method thinks is airing has already run past its projected end, so
         # dispatching a rollover here would extend a projection that is
-        # already wrong. Leave it to the slate-replan/EOS path instead of
-        # paying for a synchronous prepare on a bad number.
+        # already wrong. Pop the tracked horizon (rather than merely
+        # returning) so the NEXT tick re-establishes a fresh, correct
+        # projection from "now" instead of repeating the same stale one --
+        # this also throttles the warning to once per stale horizon (a fresh
+        # projection cannot immediately be stale again in the same way) and
+        # lets a rollover fire again once that fresh projection is in place,
+        # rather than leaving the channel permanently stuck logging this
+        # warning until the plan happens to reach a real EOS.
         remaining_seconds = (plan_end_at - now).total_seconds()
         if remaining_seconds <= 0:
             _LOG.warning(
                 "Channel automation rollover horizon for %s is already in the past "
-                "(the live plan ends %.0fs ago); skipping this rollover dispatch and "
-                "leaving the channel to the slate-replan/EOS path.",
+                "(the live plan ends %.0fs ago); discarding it and leaving the next "
+                "tick to re-establish a fresh projection instead of dispatching "
+                "against a projection that is already wrong.",
                 channel_id,
                 -remaining_seconds,
             )
+            self._plan_horizon.pop(channel_id, None)
+            self._rollover_issued.discard(channel_id)
+            self._rollover_issued_at.pop(channel_id, None)
             return
 
         if not retrying_undelivered:

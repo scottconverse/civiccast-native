@@ -179,16 +179,17 @@ def test_daemon_processes_start_command_and_records_success_health(tmp_path: Pat
     assert store.recent_health("gov", 1)[0].sink_connected == {"Proof": True}
 
 
-def test_write_state_does_not_advance_updated_at_when_nothing_but_the_clock_changed(
+def test_write_state_advances_updated_at_but_not_state_entered_at_on_an_unchanged_state(
     tmp_path: Path,
 ) -> None:
-    """BLOCKER A fix: ``_poll_process`` calls ``_write_state`` every ~2s poll
-    tick even when NOTHING about the row changed (a healthy, untouched
-    ON_AIR worker) -- an unconditional ``now()`` there made
-    ``alerting/runtime_status.py``'s ``_seconds_in_state`` perpetually ~0,
-    exactly the blind spot that let a stuck TRANSITIONING latch go
-    undetected. ``updated_at`` must only advance when the state, source
-    label, proof event, pid, or last_error actually changed."""
+    """BLOCKER A hostile-review redo: ``updated_at`` is the row's public
+    "last write" timestamp -- it must advance on EVERY write, honestly,
+    including a poll tick that rewrites an unchanged state (an earlier pass
+    wrongly suppressed it, which conflated it with "how long has the state
+    itself been unchanged"). ``state_entered_at`` is the field that answers
+    THAT question instead, and only advances when ``state`` itself changes
+    -- this is what fixes ``alerting/runtime_status.py``'s ``_seconds_in_
+    state`` blind spot without breaking ``updated_at``'s own meaning."""
     store = InMemoryEgressStore()
     store.upsert_config(_config())
     store.enqueue_command(_command())
@@ -205,21 +206,24 @@ def test_write_state_does_not_advance_updated_at_when_nothing_but_the_clock_chan
     assert first is not None and first.state == "ON_AIR"
 
     # Repeated poll ticks with nothing changed (same pid, same state, same
-    # everything) must not advance updated_at -- it should be identical
-    # across ticks, not just "close in time".
+    # everything): updated_at still advances every time (it is a real
+    # "last write" timestamp), but state_entered_at stays fixed.
     daemon._poll_process("gov")  # type: ignore[attr-defined]
     daemon._poll_process("gov")  # type: ignore[attr-defined]
     second = store.read_state("gov")
     assert second is not None
-    assert second.updated_at == first.updated_at
+    assert second.updated_at >= first.updated_at
+    assert second.state_entered_at == first.state_entered_at
 
-    # A real change (the worker exits) DOES advance it.
+    # A real state change (the worker exits) advances BOTH.
     process.returncode = 0
     daemon._poll_process("gov")  # type: ignore[attr-defined]
     third = store.read_state("gov")
     assert third is not None
     assert third.state == "STOPPED"
     assert third.updated_at >= second.updated_at
+    assert third.state_entered_at >= second.state_entered_at
+    assert third.state_entered_at != second.state_entered_at
 
 
 def test_daemon_routes_storage_refusal_to_configured_fallback_slate_before_encoder_start(
@@ -1051,24 +1055,31 @@ def test_content_reload_falls_back_to_restart_when_worker_not_ready(tmp_path: Pa
     assert state.current_source_label == "Mayor interview"
 
 
-def test_stuck_pending_reload_latch_self_heals_to_on_air(tmp_path: Path) -> None:
-    """BLOCKER A fix (2026-09-05 tester finding): for an ON_AIR channel, the
-    terminate+restart reload path this test's sibling above exercises never
-    gets a natural EOS to progress on if the worker is genuinely healthy and
-    simply keeps streaming (no crash, no drain-to-completion, no operator
-    stop). Before this fix, ``_poll_process`` rewrote TRANSITIONING with the
-    unchanged pid every tick forever -- the tester observed three channels
-    stuck this way for 20+ minutes. Past ``_PENDING_RELOAD_STUCK_BOUND_S``,
-    ``_poll_process`` now self-heals the row back to the pre-reload state
-    (ON_AIR here) and clears the latch, so automation's next tick sees an
-    ordinary ON_AIR channel again instead of a permanently wedged one."""
+def test_pending_reload_drain_stays_honest_and_still_restarts_at_the_real_eos(
+    tmp_path: Path,
+) -> None:
+    """BLOCKER A hostile-review redo (2026-09-05): a first pass at this fix
+    cancelled the latch past a flat 15s bound -- WRONG. For an ON_AIR
+    program, the terminate+restart fallback's wait for a natural EOS is
+    DESIGNED behavior (see ``_request_reload``'s "Programs keep the
+    graceful drain" comment); the tester's 20-minute TRANSITIONING was that
+    drain working as designed for an unexpectedly long-running program, not
+    a stuck latch. Cancelling it early would have dropped
+    ``_pending_reloads``, so at the REAL eventual EOS the daemon would have
+    treated the exit as a clean stop (STOPPED) instead of restarting with
+    the new plan.
+
+    The fix is honesty, not cancellation: the row stays TRANSITIONING for
+    as long as the drain genuinely takes (no self-heal, ever), but
+    ``last_error``/``pending_reload_since``/``pending_reload_deadline`` make
+    WHY and WHEN-expected visible, and the real EOS still correctly
+    restarts with the NEW plan."""
     store = InMemoryEgressStore()
     store.upsert_config(_config())
     store.enqueue_command(_command())
     processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
     started: list[_FakeProcess] = []
     current_label = "Council meeting"
-    clock = {"now": 1000.0}
 
     def source_provider(_channel_id: str) -> EgressSourcePlan:
         return _source_plan_with_label(tmp_path, current_label)
@@ -1079,7 +1090,6 @@ def test_stuck_pending_reload_latch_self_heals_to_on_air(tmp_path: Path) -> None
         work_dir=tmp_path,
         source_plan_provider=source_provider,
         encoder_strategy=strategy,
-        monotonic=lambda: clock["now"],
     )
 
     daemon.process_once("gov")  # initial start -> ON_AIR
@@ -1092,31 +1102,36 @@ def test_stuck_pending_reload_latch_self_heals_to_on_air(tmp_path: Path) -> None
     assert state.current_source_label == "Council meeting"  # unchanged -- reload never applied
     assert state.current_proof_event_id is not None
     pending_proof_event_id = state.current_proof_event_id
+    assert state.pending_reload_since is not None
+    assert "Reload pending" in (state.last_error or "")
+    first_since = state.pending_reload_since
 
     # The worker never exits (no crash, no drain) -- poll() keeps returning
-    # None every tick, exactly like a genuinely healthy ON_AIR encoder that
-    # has nothing to naturally EOS on.
-    assert started[0].returncode is None
-
-    # Short of the self-heal bound: still latched.
-    clock["now"] += 5.0
-    daemon.process_once("gov")
+    # None every tick, exactly like a genuinely healthy ON_AIR encoder whose
+    # program just keeps running. Many ticks later, the row is STILL
+    # TRANSITIONING (no self-heal, ever) with the SAME since/proof event --
+    # the latch and the horizon it protects both survive.
+    for _ in range(20):
+        daemon.process_once("gov")
     state = store.read_state("gov")
     assert state.state == "TRANSITIONING"
+    assert state.current_proof_event_id == pending_proof_event_id
+    assert state.pending_reload_since == first_since
     assert "gov" in daemon._pending_reloads  # type: ignore[attr-defined]
+    assert len(started) == 1  # no second encoder was ever started
 
-    # Past the self-heal bound: recovers to the pre-reload state, keeping the
-    # previous source label and proof event, with the latch cleared.
-    clock["now"] += 15.0
+    # The program FINALLY reaches its real, natural EOS -- the pending
+    # reload resolves correctly: the daemon restarts with the NEW plan, not
+    # a clean STOPPED (which a cancelled/dropped latch would have produced).
+    started[0].returncode = 0
     daemon.process_once("gov")
     state = store.read_state("gov")
     assert state.state == "ON_AIR"
-    assert state.current_source_label == "Council meeting"
-    assert state.current_proof_event_id == pending_proof_event_id
+    assert state.current_source_label == "Mayor interview"
+    assert state.pending_reload_since is None  # resolved -- no longer pending
+    assert state.pending_reload_deadline is None
+    assert len(started) == 2  # restart landed the new program
     assert "gov" not in daemon._pending_reloads  # type: ignore[attr-defined]
-    assert "gov" not in daemon._pending_reload_at  # type: ignore[attr-defined]
-    # No second encoder was ever started -- the recovery only rewrites state.
-    assert len(started) == 1
 
 
 def test_content_reload_strategy_exception_falls_back_to_restart(tmp_path: Path) -> None:

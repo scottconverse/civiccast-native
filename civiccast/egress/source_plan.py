@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
@@ -81,8 +82,6 @@ class SlateSourceGenerator:
         self._target_fill_seconds = target_fill_seconds
 
     def __call__(self, config: EgressConfig) -> EgressSourcePlan:
-        output_path = self._work_dir / config.channel_id / "slate.ts"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
         # BLOCKER B fix (2026-09-05 regression from #174): this fill plan must
         # never NEED more than MAX_PLAYLIST_SUBCHAINS segments.
         # gst/bridge.graph_from_config builds one decoder sub-chain per
@@ -101,24 +100,37 @@ class SlateSourceGenerator:
         duration_seconds = self._duration_seconds
         if self._target_fill_seconds > duration_seconds * MAX_PLAYLIST_SUBCHAINS:
             duration_seconds = -(-self._target_fill_seconds // MAX_PLAYLIST_SUBCHAINS)
-        args = build_slate_source_args(
-            output_path=output_path,
-            config=config,
-            duration_seconds=duration_seconds,
-        )
-        result = self._ffmpeg_runner(args)
-        if result.returncode != 0:
+        # Hostile-review fix (2026-09-05): every prepare -- every automation
+        # poll tick this generator is asked for a plan -- used to re-encode
+        # the SAME slate video unconditionally, however long ``duration_seconds``
+        # got above. Cache it on disk, keyed by everything that changes its
+        # bytes (the duration this fix just computed, the message, and the
+        # canonical profile); a cache hit skips ffmpeg entirely. A miss (a
+        # config change, or the text-render fallback below) renders once and
+        # every later prepare for the SAME key reuses it.
+        cache_key = self._cache_key(config, duration_seconds)
+        output_path = self._work_dir / config.channel_id / f"slate-{cache_key}.ts"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if not output_path.exists():
             args = build_slate_source_args(
                 output_path=output_path,
                 config=config,
                 duration_seconds=duration_seconds,
-                include_text=False,
             )
             result = self._ffmpeg_runner(args)
-        if result.returncode != 0:
-            raise SourcePrepareError(
-                "Could not generate the egress slate source; inspect FFmpeg output before retrying."
-            )
+            if result.returncode != 0:
+                args = build_slate_source_args(
+                    output_path=output_path,
+                    config=config,
+                    duration_seconds=duration_seconds,
+                    include_text=False,
+                )
+                result = self._ffmpeg_runner(args)
+            if result.returncode != 0:
+                raise SourcePrepareError(
+                    "Could not generate the egress slate source; inspect FFmpeg "
+                    "output before retrying."
+                )
         repeats = min(
             MAX_PLAYLIST_SUBCHAINS,
             max(1, -(-self._target_fill_seconds // duration_seconds)),
@@ -134,6 +146,18 @@ class SlateSourceGenerator:
             channel_id=config.channel_id,
             segments=[segment] * repeats,
         )
+
+    @staticmethod
+    def _cache_key(config: EgressConfig, duration_seconds: int) -> str:
+        digest = hashlib.sha256()
+        for part in (
+            str(duration_seconds),
+            config.slate_message,
+            config.canonical_profile.model_dump_json(),
+        ):
+            digest.update(part.encode("utf-8"))
+            digest.update(b"\0")
+        return digest.hexdigest()[:24]
 
 
 class ScheduleSourcePlanProvider:

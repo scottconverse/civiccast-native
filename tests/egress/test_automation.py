@@ -311,6 +311,79 @@ class TestSlateReplan:
         raising_service.run_once(now=_NOW)
         assert _pending_actions(store, "public") == []
 
+    def test_slate_replan_backs_off_exponentially_and_gives_up_after_max_failures(
+        self,
+    ) -> None:
+        """Hostile-review "no flap" fix (2026-09-05): a persistently-failing
+        reload used to retry forever at a flat 30s cooldown -- indefinite
+        kill/restart churn against a due item that will never prepare
+        successfully. The cooldown now doubles with every consecutive
+        failure (30s, 60s, 120s, 240s, 300s-capped), and past
+        ``_SLATE_REPLAN_MAX_CONSECUTIVE_FAILURES`` (5) attempts, it stops
+        retrying entirely and raises an operator alert instead."""
+        clock = {"now": 1000.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._slate_state(store, "public")
+        daemon = _FakeDaemon(live_channels={"public"})
+        alerted: list[str] = []
+
+        class _FakeAlerts:
+            def begin_tick(self, channel_id: str) -> None:
+                pass
+
+            def end_tick(self, channel_id: str) -> None:
+                pass
+
+            def on_slate_reload_exhausted(self, channel_id: str, *, detail: str) -> None:
+                alerted.append(detail)
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan(cid),
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+            automation_alerts=_FakeAlerts(),  # type: ignore[arg-type]
+        )
+
+        expected_cooldowns = [30.0, 60.0, 120.0, 240.0, 300.0]  # doubling, capped at 300s
+        for attempt, cooldown in enumerate(expected_cooldowns, start=1):
+            service.run_once(now=_NOW)
+            assert _pending_actions(store, "public") == ["reload"], f"attempt {attempt}"
+            # Simulate the flap: the reload is dispatched (TRANSITIONING),
+            # then fails and lands back on slate -- still failing.
+            store.write_state(
+                EgressStateRow(channel_id="public", state="TRANSITIONING", updated_at=_NOW)
+            )
+            service.run_once(now=_NOW)  # clears the one-shot _reload_issued latch
+            self._slate_state(store, "public")
+            # Short of THIS attempt's cooldown: no retry yet.
+            clock["now"] += cooldown - 1.0
+            service.run_once(now=_NOW)
+            assert _pending_actions(store, "public") == [], (
+                f"cooldown not yet elapsed, attempt {attempt}"
+            )
+            clock["now"] += 1.0  # now past the cooldown
+
+        # Past _SLATE_REPLAN_MAX_CONSECUTIVE_FAILURES: no 6th reload, ever.
+        assert not alerted
+        service.run_once(now=_NOW)
+        assert _pending_actions(store, "public") == []
+        assert alerted and "public" in alerted[0]
+
+        # It stays given up on subsequent ticks (no further reload storm).
+        clock["now"] += 1000.0
+        service.run_once(now=_NOW)
+        assert _pending_actions(store, "public") == []
+
+        # A genuine success (ON_AIR) resets the streak for the next gap.
+        store.write_state(EgressStateRow(channel_id="public", state="ON_AIR", updated_at=_NOW))
+        service.run_once(now=_NOW)
+        self._slate_state(store, "public")
+        service.run_once(now=_NOW)
+        assert _pending_actions(store, "public") == ["reload"]
+
 
 class TestPlanRollover:
     """Soak evidence 2026-09-04 (kit 4b30c99, Desktop/CIVICCAST-EVIDENCE/
@@ -606,24 +679,24 @@ class TestPlanRollover:
         service.run_once(now=later)
         assert _pending_actions(store, "public") == ["reload"]
 
-    def test_rollover_retry_is_unreachable_while_transitioning_but_resumes_once_on_air_returns(
+    def test_rollover_bookkeeping_survives_a_pending_reload_drain_and_b2_retries_during_it(
         self,
     ) -> None:
-        """BLOCKER A companion (2026-09-05 tester finding): while
-        ``daemon._request_reload``'s terminate+restart path has a reload
-        latched (state row TRANSITIONING forever, pre-fix), this method's
-        ON_AIR-only gate makes rollover dispatch permanently UNREACHABLE for
-        that channel -- every tick returns early and even wipes this
-        method's own tracking (``_plan_horizon``/``_rollover_issued``/
-        ``_rollover_issued_at``). The daemon's own self-heal (see daemon.py's
-        ``_PENDING_RELOAD_STUCK_BOUND_S``) restores the row to ON_AIR with
-        the SAME ``current_proof_event_id`` once the latch has been stuck too
-        long, which is what makes rollover dispatch reachable again -- the
-        wiped tracking means what resumes is a fresh horizon establishment
-        rather than a literal continuation of the earlier timer, but the very
-        next boundary approach dispatches normally. Verified here from the
-        automation side by flipping the state row exactly the way the
-        daemon's self-heal does."""
+        """BLOCKER A hostile-review redo (2026-09-05): ``daemon._request_
+        reload``'s terminate+restart fallback, for an ON_AIR program, is
+        DESIGNED to wait for that program's own natural EOS (a graceful
+        drain, not a stuck latch) -- so the state row can legitimately stay
+        TRANSITIONING for a long time with a reload genuinely still pending
+        (``pending_reload_since`` set on the row, daemon.py's honest
+        annotation). A first pass at this fix wiped this method's own
+        tracking (``_plan_horizon``/``_rollover_issued``/
+        ``_rollover_issued_at``) on ANY non-ON_AIR tick, including this one --
+        making the B2 "reload never landed" retry permanently unreachable
+        for the whole drain. The redo carves out exactly this case: a
+        TRANSITIONING row WITH ``pending_reload_since`` set keeps its
+        bookkeeping, so B2's own undelivered-reload timeout still fires
+        DURING the drain, without needing the state to return to ON_AIR
+        first."""
         clock = {"now": 1000.0}
         store = InMemoryEgressStore()
         store.upsert_config(_config("public"))
@@ -648,8 +721,57 @@ class TestPlanRollover:
         service.run_once(now=later)
         assert _pending_actions(store, "public") == ["reload"]
 
-        # The dispatched reload gets stuck (daemon.py's pending-reload latch):
-        # the state row goes to TRANSITIONING with the proof event unchanged.
+        # The dispatched reload falls back to the terminate+restart drain
+        # (daemon.py's ``_request_reload``): the state row goes to
+        # TRANSITIONING with the SAME proof event, honestly marked as a
+        # pending reload (not just a bare, unexplained TRANSITIONING).
+        store.write_state(
+            EgressStateRow(
+                channel_id="public",
+                state="TRANSITIONING",
+                current_source_label="Council Meeting",
+                current_proof_event_id="ev-1",
+                updated_at=_NOW,
+                pending_reload_since=_NOW,
+            )
+        )
+        clock["now"] += 50.0  # well past _ROLLOVER_ISSUED_TIMEOUT_SECONDS (45s)
+        service.run_once(now=later)
+        # Reachable DURING the drain -- no need to wait for ON_AIR to return.
+        assert _pending_actions(store, "public") == ["reload"]
+
+    def test_rollover_bookkeeping_is_wiped_for_an_unrelated_transitioning_row(self) -> None:
+        """Contrast case: a TRANSITIONING row with NO pending reload (an
+        ordinary restart mid-flight, a manual takeover, ...) is NOT this
+        method's own drain -- the carve-out above must not swallow every
+        TRANSITIONING row, only the ones this method's own rollover reload
+        produced. Tracking is wiped exactly as before."""
+        clock = {"now": 1000.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _FakeDaemon(live_channels={"public"})
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            provider,
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+        )
+
+        service.run_once(now=_NOW)
+        later = _NOW + timedelta(seconds=35)
+        service.run_once(now=later)
+        assert _pending_actions(store, "public") == ["reload"]
+
+        # TRANSITIONING with NO pending_reload_since -- an unrelated
+        # transition, not this method's own drain.
         store.write_state(
             EgressStateRow(
                 channel_id="public",
@@ -659,28 +781,16 @@ class TestPlanRollover:
                 updated_at=_NOW,
             )
         )
-        clock["now"] += 50.0  # well past _ROLLOVER_ISSUED_TIMEOUT_SECONDS (45s)
+        clock["now"] += 50.0
         service.run_once(now=later)
-        # Unreachable: the ON_AIR-only gate returns before the retry logic
-        # ever runs, latched or not.
         assert _pending_actions(store, "public") == []
 
-        # The daemon self-heals: state returns to ON_AIR, same proof event.
-        # The ON_AIR-only gate above ALSO wiped this method's own tracking
-        # (``_plan_horizon``/``_rollover_issued``/``_rollover_issued_at``)
-        # every tick it spent returning early while TRANSITIONING, so what
-        # resumes is a fresh horizon establishment rather than a literal
-        # continuation of the earlier undelivered-reload timer -- still no
-        # dispatch on the tick that re-establishes it.
+        # Tracking was wiped: back on ON_AIR with the same proof event, this
+        # is a fresh horizon establishment (no immediate dispatch), not a
+        # continuation of the earlier undelivered-reload timer.
         self._on_air_state(store, "public", proof_event_id="ev-1")
         service.run_once(now=later)
         assert _pending_actions(store, "public") == []
-
-        # But the mechanism itself is reachable again: on the NEXT tick near
-        # the freshly-established plan's own boundary, a rollover dispatches
-        # normally. Before the daemon's self-heal fix this state never
-        # returned to ON_AIR at all, so no tick after the stuck latch would
-        # ever have reached a dispatch again.
         service.run_once(now=later + timedelta(seconds=390))
         assert _pending_actions(store, "public") == ["reload"]
 
@@ -799,6 +909,20 @@ class TestPlanRollover:
         service.run_once(now=much_later)
         assert _pending_actions(store, "public") == []
         assert calls["n"] == 1  # never re-queried the schedule for a stale horizon
+
+        # The stale horizon was discarded (not just skipped-in-place, per the
+        # coordinator's redo): a later tick re-establishes a fresh, correct
+        # projection from "now", and a rollover fires again once THAT
+        # projection's own boundary is reached -- the mechanism recovers
+        # rather than staying stuck on the first bad projection forever.
+        reestablish_at = much_later + timedelta(seconds=1)
+        service.run_once(now=reestablish_at)
+        assert calls["n"] == 2  # re-established fresh
+        assert _pending_actions(store, "public") == []
+
+        dispatch_at = reestablish_at + timedelta(seconds=35)  # >= 20s min-lead advance
+        service.run_once(now=dispatch_at)
+        assert _pending_actions(store, "public") == ["reload"]
 
     @pytest.mark.parametrize(
         ("second_plan_seconds", "expect_dispatch"),
@@ -997,20 +1121,23 @@ class TestRolloverCadence:
         other test in this class) keeps that lead at a steady ~120s
         indefinitely instead.
 
-        Rollover horizon guard update (tester finding, 2026-09-05): the flat
-        floor's shrinking lead used to be demonstrated all the way through a
-        NEGATIVE lead -- the third rollover dispatched anyway, with the
-        trigger arriving at or after the plan's own end. The horizon guard
-        added for that finding (``automation.py``'s "remaining <= 0" check)
-        now refuses to dispatch once the tracked horizon's own projected end
-        has already passed, so the flat floor's failure mode is cut off one
-        step earlier: the would-be THIRD dispatch (due at a lead of exactly
-        0s) is skipped instead, and -- because nothing else re-establishes
-        the horizon while the channel stays ON_AIR on the same proof event --
-        no further rollover ever fires for the rest of this plan. Worse in a
-        different way (no further extension at all, relying on the natural
-        EOS/restart to recover) but the guard no longer papers over a
-        provably-wrong projection with a doomed reload."""
+        Rollover horizon guard update (tester finding, 2026-09-05, redone
+        after a hostile review of the first fix): the flat floor's shrinking
+        lead is still demonstrated all the way through a NEGATIVE lead --
+        the horizon guard (``automation.py``'s "remaining <= 0" check) does
+        NOT stop the flat floor's cadence from ever going negative; it pops
+        the stale tracked horizon so the NEXT tick re-establishes a fresh
+        one (from "now", since ``switch_deferred`` has no earlier
+        ``previous_end_at`` to anchor to once the horizon is gone) instead
+        of dispatching against a projection already proven wrong. The flat
+        floor's OWN cadence (every 300s) still re-arrives at a boundary the
+        fresh projection cannot outrun for long, so the same shrinking-lead
+        failure recurs -- rollovers keep firing, but at an increasingly
+        negative lead, exactly like the un-guarded original bug. The guard's
+        job is narrower than "fix the flat floor" (the scaled floor already
+        does that): it only stops ONE bad dispatch from extending an
+        already-known-wrong number, and proves a rollover fires again once a
+        correct projection is back in place."""
 
         def flat_300s_floor(_planned_seconds: float) -> float:
             return 300.0
@@ -1029,8 +1156,12 @@ class TestRolloverCadence:
         buggy_leads = leads(buggy_dispatches)
         fixed_leads = leads(fixed_dispatches)
 
-        assert buggy_dispatches == [120.0, 420.0]
-        assert buggy_leads == [120.0, 60.0]
+        assert buggy_dispatches == [120.0, 420.0, 842.0, 1142.0, 1564.0]
+        assert min(buggy_leads) < 0  # the trigger arrives at/after EOS
+        # But the mechanism keeps working: rollovers keep firing after the
+        # horizon is discarded and re-established, rather than getting stuck
+        # forever on the first stale projection.
+        assert len(buggy_dispatches) > 2
 
         assert fixed_dispatches[:5] == [120.0, 360.0, 600.0, 840.0, 1080.0]
         assert all(lead >= 100.0 for lead in fixed_leads)
@@ -1053,9 +1184,18 @@ class TestRolloverCadence:
         daemon = _FakeDaemon(live_channels={"public"})
         plans = {"n": 0}
 
+        # n=1 establishes a 100s baseline; n=3 re-establishes another 100s
+        # baseline after the first reload lands. n=2/4/5 return a much
+        # LARGER duration so the min-lead-advance guard is cleared by a wide
+        # margin regardless of how much real time elapsed -- this decouples
+        # "is the guard satisfied" from "is the cadence floor satisfied" so
+        # the floor-blocked tick below discriminates the FLOOR specifically
+        # (coordinator redo note: the floor tests must not accidentally also
+        # be testing the min-lead guard at its own boundary).
         def provider(_cid: str) -> EgressSourcePlan:
             plans["n"] += 1
-            return _plan_with_duration("public", 100.0, source_ref=f"seg-{plans['n']}")
+            duration = 100.0 if plans["n"] in (1, 3) else 300.0
+            return _plan_with_duration("public", duration, source_ref=f"seg-{plans['n']}")
 
         service = ChannelAutomationService(
             store,
@@ -1068,8 +1208,7 @@ class TestRolloverCadence:
 
         # Establish a 100s horizon (a 100s plan is already inside its own
         # 120s lead floor -- the trigger fires from the first tick), then
-        # check once the schedule has advanced a full rollover lead (this
-        # plan's scaled 50s min-lead) beyond it.
+        # check once the schedule has advanced well beyond it.
         service.run_once(now=_NOW)
         clock["now"] += 55.0
         service.run_once(now=_NOW + timedelta(seconds=55))
@@ -1082,16 +1221,19 @@ class TestRolloverCadence:
         service.run_once(now=_NOW + timedelta(seconds=56))
         assert _pending_actions(store, "public") == []
 
-        # Within the scaled cadence floor (< 50s since the dispatch): no
-        # dispatch, regardless of schedule advance.
+        # Within the scaled cadence floor (< 50s since the dispatch, on the
+        # MONOTONIC clock): no dispatch -- even though the schedule advance
+        # here (n=4 returns 300s, comfortably clearing the 50s min-lead
+        # guard on its own) proves this block is the cadence floor, not the
+        # min-lead guard.
         clock["now"] += 40.0
         service.run_once(now=_NOW + timedelta(seconds=96))
         assert _pending_actions(store, "public") == []
 
-        # Past the scaled floor (60s since the dispatch) AND a full rollover
-        # lead of schedule advance since the re-establish: the next one is
-        # allowed through -- well before this 100-second plan would
-        # otherwise reach EOS.
+        # Past the scaled floor (60s since the dispatch, monotonic) AND a
+        # full rollover lead of schedule advance since the re-establish: the
+        # next one is allowed through -- well before this 100-second plan
+        # would otherwise reach EOS.
         clock["now"] += 20.0
         service.run_once(now=_NOW + timedelta(seconds=116))
         assert _pending_actions(store, "public") == ["reload"]
@@ -1175,12 +1317,13 @@ class TestRolloverCadence:
         service.run_once(now=_NOW + timedelta(seconds=91))  # re-establishes the horizon
         assert _pending_actions(store, "public") == []
 
-        # A full rollover lead (75s) of schedule advance since the
-        # re-establish -- the interval floor from before going off air must
-        # not still be throttling this (only 15s elapsed on the monotonic
-        # clock since the earlier dispatch).
+        # WELL past a full rollover lead of schedule advance since the
+        # re-establish (100s, comfortably above the 75s min-lead so this
+        # isn't right at that guard's own boundary) -- the interval floor
+        # from before going off air must not still be throttling this (only
+        # 15s elapsed on the MONOTONIC clock since the earlier dispatch).
         clock["now"] += 5.0
-        service.run_once(now=_NOW + timedelta(seconds=166))
+        service.run_once(now=_NOW + timedelta(seconds=191))
         assert _pending_actions(store, "public") == ["reload"]
 
 

@@ -110,24 +110,21 @@ class BulletinFillerSourceGenerator:
         branding = self._branding(config.channel_id)
         slide_dir = self._work_dir / config.channel_id / "bulletins"
         slide_dir.mkdir(parents=True, exist_ok=True)
-        slide_seconds, cycles = self._fill_plan_shape(len(bulletins))
         segments: list[EgressSourceSegment] = []
         for bulletin in bulletins:
-            slide_path = (
-                slide_dir / f"{self._slide_hash(bulletin, branding, config, slide_seconds)}.ts"
-            )
+            slide_path = slide_dir / f"{self._slide_hash(bulletin, branding, config)}.ts"
             if not slide_path.exists():
-                self._render_slide(slide_path, config, bulletin, branding, slide_seconds)
+                self._render_slide(slide_path, config, bulletin, branding)
             segments.append(
                 EgressSourceSegment(
                     label=bulletin.title,
                     path=str(slide_path),
-                    duration_seconds=slide_seconds,
+                    duration_seconds=self._slide_seconds,
                     kind="cg",
                     source_ref=f"bulletin-{bulletin.submission_id}",
                 )
             )
-        return EgressSourcePlan(channel_id=config.channel_id, segments=segments * cycles)
+        return self._plan_with_cycle(config, segments)
 
     def _render_board_plan(
         self,
@@ -143,7 +140,6 @@ class BulletinFillerSourceGenerator:
         board_dir = self._work_dir / config.channel_id / "board"
         board_dir.mkdir(parents=True, exist_ok=True)
 
-        slide_seconds, cycles = self._fill_plan_shape(len(board_bulletins))
         segments: list[EgressSourceSegment] = []
         for bulletin in board_bulletins:
             key = board_segment_cache_key(
@@ -151,7 +147,7 @@ class BulletinFillerSourceGenerator:
                 bulletin=bulletin,
                 background_color=self._background(branding),
                 station_short_name=branding.short_name if branding else "",
-                segment_seconds=float(slide_seconds),
+                segment_seconds=float(self._slide_seconds),
                 width=profile.width,
                 height=profile.height,
                 frame_rate=profile.fps,
@@ -171,56 +167,140 @@ class BulletinFillerSourceGenerator:
                     bulletin=bulletin,
                     branding=branding,
                     now=now,
-                    segment_seconds=slide_seconds,
                 )
                 staging.replace(segment_path)
             segments.append(
                 EgressSourceSegment(
                     label="Board" if bulletin is None else bulletin.title,
                     path=str(segment_path),
-                    duration_seconds=slide_seconds,
+                    duration_seconds=self._slide_seconds,
                     kind="cg",
                     source_ref=(
                         "board-empty" if bulletin is None else f"bulletin-{bulletin.submission_id}"
                     ),
                 )
             )
-        return EgressSourcePlan(channel_id=config.channel_id, segments=segments * cycles)
+        return self._plan_with_cycle(config, segments)
 
-    def _fill_plan_shape(self, segment_count: int) -> tuple[int, int]:
-        """BLOCKER B fix (2026-09-05 regression from #174): how long to hold
-        each of ``segment_count`` distinct slides, and how many times to cycle
-        through the whole rotation, so the TOTAL segment count (all cycles
-        combined) never NEEDS more than MAX_PLAYLIST_SUBCHAINS.
+    def _plan_with_cycle(
+        self, config: EgressConfig, segments: list[EgressSourceSegment]
+    ) -> EgressSourcePlan:
+        """Hostile-review redo (2026-09-05 regression from #174, then a
+        follow-up review of the first fix): this fill plan must never NEED
+        more than MAX_PLAYLIST_SUBCHAINS total segments --
+        gst/bridge.graph_from_config truncates a "cg"-kind plan past that
+        many decoder sub-chains as a fail-safe. The first fix lengthened
+        each individual slide's OWN hold duration to shrink the cycle count,
+        but that changes what airs (a 10s slide became a 300s slide) and its
+        own cap check (``cycles * segment_count > MAX_PLAYLIST_SUBCHAINS``)
+        did not actually bound ``segment_count`` itself -- a rotation with
+        MORE than 12 distinct slides (13, 40, ...) still built that many
+        segments regardless, silently reintroducing the truncation-as-
+        routine bug for a busy board.
 
-        gst/bridge.graph_from_config truncates a "cg"-kind plan past that many
-        decoder sub-chains as a fail-safe (see SlateSourceGenerator's matching
-        fix for the full regression story). The old approach -- cycle the
-        whole rotation as many times as it takes to reach
-        ``target_fill_seconds`` at a fixed slide duration -- relied on that
-        fail-safe every fill period instead of only as a rare one: 5 slides at
-        10s each is a 50s cycle, so reaching a 3600s target took 72 cycles
-        (360 segments), truncated to the first 12 (120s of real playback)
-        before the board/bulletin worker hit a real EOS and restarted (the
-        exact CA-8 symptom this generator exists to avoid).
+        Instead: keep every slide at its configured ~10s hold (unaffected),
+        cap the rotation at a sane number of distinct slides
+        (MAX_PLAYLIST_SUBCHAINS, truncated with a WARNING past that -- the
+        same fail-safe posture ``bridge.graph_from_config`` already uses for
+        an oversized plan), pre-render ONE concatenated "rotation" file
+        spanning the whole (possibly-truncated) cycle, and hold UP TO
+        MAX_PLAYLIST_SUBCHAINS repeats of that ONE file as separate egress
+        segments. Coverage is therefore
+        ``min(MAX_PLAYLIST_SUBCHAINS, ceil(target_fill_seconds / rotation_seconds))
+        * rotation_seconds`` -- for a long target or a long rotation this can
+        fall short of ``target_fill_seconds``; the scaled rollover floor
+        (``ChannelAutomationService._check_plan_rollover``) is what extends
+        the fill further for as long as the gap persists, exactly as it does
+        for a schedule-derived program plan."""
+        if not segments:
+            return EgressSourcePlan(channel_id=config.channel_id, segments=segments)
+        if len(segments) > MAX_PLAYLIST_SUBCHAINS:
+            _LOG.warning(
+                "channel %s: bulletin/board rotation has %d distinct slides, above "
+                "the %d-slide rotation cap; airing only the first %d.",
+                config.channel_id,
+                len(segments),
+                MAX_PLAYLIST_SUBCHAINS,
+                MAX_PLAYLIST_SUBCHAINS,
+            )
+            segments = segments[:MAX_PLAYLIST_SUBCHAINS]
+        rotation_seconds = self._slide_seconds * len(segments)
+        rotation_path = self._render_rotation(config, segments)
+        cycles = max(
+            1,
+            min(MAX_PLAYLIST_SUBCHAINS, -(-self._target_fill_seconds // rotation_seconds)),
+        )
+        coverage_seconds = cycles * rotation_seconds
+        _LOG.info(
+            "channel %s: bulletin/board fill covers %ds (%d x %ds rotation of %d "
+            "slide(s)) against a %ds target; the rollover mechanism extends this "
+            "further if the channel is still on this fill once the covered window "
+            "runs out.",
+            config.channel_id,
+            coverage_seconds,
+            cycles,
+            rotation_seconds,
+            len(segments),
+            self._target_fill_seconds,
+        )
+        rotation_segment = EgressSourceSegment(
+            label="Bulletin rotation",
+            path=str(rotation_path),
+            duration_seconds=rotation_seconds,
+            kind="cg",
+            source_ref="bulletin-rotation",
+        )
+        return EgressSourcePlan(
+            channel_id=config.channel_id,
+            segments=[rotation_segment] * cycles,
+        )
 
-        Caps the cycle count at ``MAX_PLAYLIST_SUBCHAINS // segment_count``
-        (at least one full rotation) and, if that many cycles at the
-        configured slide duration still falls short of the target, holds each
-        slide longer instead of cycling more -- the underlying renderer holds
-        a still for as long as asked, so lengthening it (rather than cycling)
-        is the natural fit, exactly as ``SlateSourceGenerator`` now does.
-        """
-        if segment_count <= 0:
-            return self._slide_seconds, 1
-        slide_seconds = self._slide_seconds
-        cycle_seconds = slide_seconds * segment_count
-        cycles = max(1, -(-self._target_fill_seconds // cycle_seconds))
-        if cycles * segment_count > MAX_PLAYLIST_SUBCHAINS:
-            cycles = max(1, MAX_PLAYLIST_SUBCHAINS // segment_count)
-            if slide_seconds * segment_count * cycles < self._target_fill_seconds:
-                slide_seconds = -(-self._target_fill_seconds // (segment_count * cycles))
-        return slide_seconds, cycles
+    def _render_rotation(self, config: EgressConfig, segments: list[EgressSourceSegment]) -> Path:
+        """Concatenate ``segments`` (each already an independently-cached,
+        pre-rendered ~``_slide_seconds``-long file) into ONE rotation file,
+        cached by a hash of the ordered list of source paths -- a cache hit
+        skips the concat entirely, same posture as the individual slide/board
+        segment caches above."""
+        rotation_dir = self._work_dir / config.channel_id / "rotations"
+        rotation_dir.mkdir(parents=True, exist_ok=True)
+        key = self._rotation_hash(segments)
+        rotation_path = rotation_dir / f"{key}.ts"
+        if not rotation_path.exists():
+            concat_list = rotation_dir / f"{key}.concat.txt"
+            concat_list.write_text(
+                "".join(f"file '{segment.path}'\n" for segment in segments),
+                encoding="utf-8",
+            )
+            staging = rotation_path.with_name(f".{key}.{os.getpid()}.partial.ts")
+            args = [
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list),
+                "-c",
+                "copy",
+                str(staging),
+            ]
+            result = self._run_ffmpeg_or_fail_open(
+                args, what=f"bulletin rotation for channel {config.channel_id}"
+            )
+            if result.returncode != 0:
+                raise SourcePrepareError(
+                    f"Could not concatenate the bulletin/board rotation for channel "
+                    f"{config.channel_id!r}; inspect FFmpeg output before retrying."
+                )
+            staging.replace(rotation_path)
+        return rotation_path
+
+    @staticmethod
+    def _rotation_hash(segments: list[EgressSourceSegment]) -> str:
+        digest = hashlib.sha256()
+        for segment in segments:
+            digest.update(segment.path.encode("utf-8"))
+            digest.update(b"\0")
+        return digest.hexdigest()[:24]
 
     def _render_board_segment(
         self,
@@ -231,10 +311,8 @@ class BulletinFillerSourceGenerator:
         bulletin: CgBulletinSubmission | None,
         branding: ChannelBranding | None,
         now: datetime,
-        segment_seconds: int | None = None,
     ) -> None:
         profile = config.canonical_profile
-        effective_seconds = self._slide_seconds if segment_seconds is None else segment_seconds
         args = build_board_segment_args(
             board=board,
             bulletin=bulletin,
@@ -243,7 +321,7 @@ class BulletinFillerSourceGenerator:
             frame_rate=profile.fps,
             background_color=self._background(branding),
             station_short_name=(branding.short_name if branding else ""),
-            segment_seconds=effective_seconds,
+            segment_seconds=self._slide_seconds,
             out_path=segment_path,
             include_text=True,
             now=now,
@@ -269,7 +347,7 @@ class BulletinFillerSourceGenerator:
                 frame_rate=profile.fps,
                 background_color=self._background(branding),
                 station_short_name=(branding.short_name if branding else ""),
-                segment_seconds=effective_seconds,
+                segment_seconds=self._slide_seconds,
                 out_path=segment_path,
                 include_text=False,
                 now=now,
@@ -321,15 +399,13 @@ class BulletinFillerSourceGenerator:
         config: EgressConfig,
         bulletin: CgBulletinSubmission,
         branding: ChannelBranding | None,
-        duration_seconds: int | None = None,
     ) -> None:
-        effective_seconds = self._slide_seconds if duration_seconds is None else duration_seconds
         args = build_bulletin_slide_args(
             output_path=slide_path,
             config=config,
             bulletin=bulletin,
             branding=branding,
-            duration_seconds=effective_seconds,
+            duration_seconds=self._slide_seconds,
         )
         result = self._run_ffmpeg_or_fail_open(
             args, what=f"bulletin slide {bulletin.submission_id!r}"
@@ -347,7 +423,7 @@ class BulletinFillerSourceGenerator:
                 config=config,
                 bulletin=bulletin,
                 branding=branding,
-                duration_seconds=effective_seconds,
+                duration_seconds=self._slide_seconds,
                 include_text=False,
             )
             result = self._ffmpeg_runner(args)
@@ -362,9 +438,7 @@ class BulletinFillerSourceGenerator:
         bulletin: CgBulletinSubmission,
         branding: ChannelBranding | None,
         config: EgressConfig,
-        slide_seconds: int | None = None,
     ) -> str:
-        effective_seconds = self._slide_seconds if slide_seconds is None else slide_seconds
         digest = hashlib.sha256()
         for part in (
             bulletin.submission_id,
@@ -373,7 +447,7 @@ class BulletinFillerSourceGenerator:
             bulletin.organization,
             branding.color if branding else "",
             branding.short_name if branding else "",
-            str(effective_seconds),
+            str(self._slide_seconds),
             config.canonical_profile.model_dump_json(),
         ):
             digest.update(part.encode("utf-8"))

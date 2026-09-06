@@ -145,8 +145,11 @@ def test_slate_source_generator_returns_source_plan(tmp_path: Path) -> None:
 
     assert plan.channel_id == "gov"
     assert plan.segments[0].label == "CivicCast slate"
-    assert plan.segments[0].path.endswith("slate.ts")
-    assert captured["args"][-1].endswith("slate.ts")
+    # Hostile-review fix: the rendered file is now cached by a content-hash
+    # filename (duration + message + profile), not a fixed "slate.ts".
+    assert plan.segments[0].path.endswith(".ts")
+    assert "slate-" in plan.segments[0].path
+    assert captured["args"][-1] == plan.segments[0].path
 
 
 def test_slate_source_generator_falls_back_to_plain_color(tmp_path: Path) -> None:
@@ -163,6 +166,35 @@ def test_slate_source_generator_falls_back_to_plain_color(tmp_path: Path) -> Non
     assert plan.segments[0].label == "CivicCast slate"
     assert "-vf" in calls[0]
     assert "-vf" not in calls[1]
+
+
+def test_slate_source_generator_caches_the_rendered_file_across_prepares(tmp_path: Path) -> None:
+    """Hostile-review fix (2026-09-05): every prepare call used to re-encode
+    the slate video unconditionally. A second prepare with the SAME config
+    (duration + message + profile) must not invoke ffmpeg again -- only a
+    changed message (a genuinely different cache key) re-renders."""
+    calls: list[list[str]] = []
+
+    def runner(args: list[str]) -> FfmpegResult:
+        calls.append(args)
+        out = Path(args[-1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"ts")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    generator = SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=runner)
+
+    first = generator(_config())
+    second = generator(_config())
+
+    assert len(calls) == 1  # second prepare is a pure cache hit
+    assert first.segments[0].path == second.segments[0].path
+
+    changed_config = _config().model_copy(update={"slate_message": "A different message entirely."})
+    third = generator(changed_config)
+
+    assert len(calls) == 2  # a different message is a different cache key
+    assert third.segments[0].path != first.segments[0].path
 
 
 def test_slate_source_generator_raises_on_ffmpeg_failure(tmp_path: Path) -> None:

@@ -36,13 +36,24 @@ def _config(
 
 
 def _state(
-    channel_id: str, state: str, *, age_s: int = 30, proof: str | None = "pf-1"
+    channel_id: str,
+    state: str,
+    *,
+    age_s: int = 30,
+    proof: str | None = "pf-1",
+    pending_reload_deadline: datetime | None = None,
 ) -> EgressStateRow:
     return EgressStateRow(
         channel_id=channel_id,
         state=state,  # type: ignore[arg-type]
         current_proof_event_id=proof,
         updated_at=_NOW - timedelta(seconds=age_s),
+        # BLOCKER A hostile-review redo: seconds_in_state now reads
+        # state_entered_at, not updated_at -- age_s must offset both so
+        # existing callers (and this file's own tests) get the "how long
+        # has this channel been in this state" reading they ask for.
+        state_entered_at=_NOW - timedelta(seconds=age_s),
+        pending_reload_deadline=pending_reload_deadline,
     )
 
 
@@ -172,17 +183,50 @@ class TestChannelRuntimeStatus:
             )
             assert c.color == "yellow", state
 
-    def test_transitioning_escalates_to_red_past_the_stuck_bound(self) -> None:
-        """BLOCKER A fix (2026-09-05 tester finding): a channel's TRANSITIONING
-        latch could previously stay open indefinitely (daemon.py's pending-
-        reload latch), reporting yellow ("coming up / switching") forever
-        instead of surfacing the stuck condition. Escalate past
-        ``_TRANSITIONING_ESCALATION_SECONDS`` -- this is deliberately
-        independent of the daemon's own self-heal bound, so an operator is
-        alerted even if that self-heal has a bug."""
+    def test_transitioning_with_a_known_deadline_escalates_once_it_passes(self) -> None:
+        """BLOCKER A hostile-review redo (2026-09-05): a stuck-looking
+        TRANSITIONING row is not necessarily wrong -- for an ON_AIR program
+        whose seamless reload failed, the terminate+restart fallback is
+        DESIGNED to wait for that program's own natural EOS, which can
+        legitimately take as long as the program itself runs. A flat
+        wall-clock escalation bound would false-alarm on every long
+        program. Escalate instead once ``pending_reload_deadline`` (the
+        dispatched plan's own duration + a margin, set by daemon.py's
+        ``_request_reload``) has actually passed -- a genuinely overdue
+        reload, regardless of how long the row has merely been
+        TRANSITIONING."""
+        deadline = _NOW - timedelta(seconds=1)  # already passed
+        overdue = compute_channel_runtime_status(
+            _config(),
+            # A short age_s: this is NOT a flat-time escalation -- only the
+            # deadline matters here.
+            _state("public", "TRANSITIONING", age_s=5, pending_reload_deadline=deadline),
+            _sample("public", "TRANSITIONING"),
+            now=_NOW,
+        )
+        assert overdue.color == "red"
+
+        not_yet_overdue = compute_channel_runtime_status(
+            _config(),
+            _state(
+                "public",
+                "TRANSITIONING",
+                age_s=5,
+                pending_reload_deadline=_NOW + timedelta(hours=1),
+            ),
+            _sample("public", "TRANSITIONING"),
+            now=_NOW,
+        )
+        assert not_yet_overdue.color == "yellow"
+
+    def test_transitioning_with_no_known_deadline_falls_back_to_the_flat_bound(self) -> None:
+        """No ``pending_reload_deadline`` (an ordinary TRANSITIONING with no
+        pending reload, or the daemon genuinely could not estimate one) must
+        still surface a GENUINELY stuck transition eventually -- falls back
+        to the generous flat bound, symmetric with STARTING below."""
         just_under = compute_channel_runtime_status(
             _config(),
-            _state("public", "TRANSITIONING", age_s=59),
+            _state("public", "TRANSITIONING", age_s=599),
             _sample("public", "TRANSITIONING"),
             now=_NOW,
         )
@@ -190,20 +234,29 @@ class TestChannelRuntimeStatus:
 
         at_bound = compute_channel_runtime_status(
             _config(),
-            _state("public", "TRANSITIONING", age_s=60),
+            _state("public", "TRANSITIONING", age_s=600),
             _sample("public", "TRANSITIONING"),
             now=_NOW,
         )
         assert at_bound.color == "red"
 
-        # STARTING is unaffected -- only a stuck TRANSITIONING escalates.
-        starting = compute_channel_runtime_status(
+        # STARTING escalates symmetrically, on the same flat bound (it has
+        # no per-plan deadline concept at all).
+        starting_ok = compute_channel_runtime_status(
+            _config(),
+            _state("public", "STARTING", age_s=599),
+            _sample("public", "STARTING"),
+            now=_NOW,
+        )
+        assert starting_ok.color == "yellow"
+
+        starting_stuck = compute_channel_runtime_status(
             _config(),
             _state("public", "STARTING", age_s=600),
             _sample("public", "STARTING"),
             now=_NOW,
         )
-        assert starting.color == "yellow"
+        assert starting_stuck.color == "red"
 
     def test_missing_state_treated_as_dark_red(self) -> None:
         c = compute_channel_runtime_status(_config(), None, None, now=_NOW)

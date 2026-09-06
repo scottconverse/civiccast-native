@@ -8,7 +8,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, NamedTuple, Protocol, cast
 
@@ -139,18 +139,21 @@ def _default_independent_slate_strategy() -> EncoderStrategy | None:
 # intended anti-churn behavior (a persistently-dead source must not hot-loop).
 _RESTART_COOLDOWN_SECONDS = 15.0
 _RESTART_STREAK_RESET_UPTIME_S = 60.0
-# BLOCKER A fix (2026-09-05 tester finding): _request_reload's terminate+restart
-# path only progresses on a natural process exit (EOS or the #157 filler kill).
-# For an ON_AIR channel there IS no natural EOS to wait for -- the worker is
-# genuinely healthy and just keeps streaming, so the TRANSITIONING latch this
-# sets (``_pending_reloads``) would otherwise never clear on its own, and
-# ``_poll_process`` kept rewriting the same TRANSITIONING row with the
-# unchanged pid every tick forever. Bound how long the latch is trusted before
-# _poll_process self-heals back to the previous on-air state: three times the
-# seamless reload's own worker-pipe ack timeout
-# (gst/strategy.py's ``_WORKER_PIPE_ACK_TIMEOUT_S``, 5.0s) gives the seamless
-# attempt AND a full terminate+restart drain a fair shot first.
-_PENDING_RELOAD_STUCK_BOUND_S = 15.0
+# BLOCKER A redo (2026-09-05 hostile review of the first pass): a flat
+# self-heal bound here was WRONG. For an ON_AIR program, ``_request_reload``'s
+# terminate+restart fallback is DESIGNED to wait for the plan's own natural
+# EOS -- see that method's "Programs keep the graceful drain" comment. The
+# tester's 20-minute TRANSITIONING was that drain working as designed for an
+# unexpectedly long-running program, not a stuck latch; cancelling it early
+# would have dropped ``_pending_reloads`` and, at the real EOS, made
+# ``_poll_process`` treat the exit as a clean stop (writing STOPPED) instead
+# of restarting with the new plan (see the ``returncode == 0`` handling
+# below). The fix is visibility, not cancellation: ``_write_state`` now
+# carries ``pending_reload_since``/``pending_reload_deadline`` so the row is
+# honest about WHY it is TRANSITIONING and WHEN it is expected to resolve,
+# and ``alerting/runtime_status.py`` escalates only once a pending reload has
+# genuinely outlived the plan it is waiting on -- never a flat guess here.
+_PENDING_RELOAD_DEADLINE_MARGIN_S = 60.0
 # Emit an escalation proof event at this restart streak and every multiple after
 # (the S8 alerting hook — the actual alert dispatch is wired when S8 lands, build
 # step 4; until then the escalation is durably recorded as a proof event).
@@ -340,11 +343,6 @@ class EgressDaemon:
         self._backoff_relaunch: dict[str, tuple[str, str | None]] = {}
         self._draining_channels: set[str] = set()
         self._pending_reloads: dict[str, tuple[str | None, str | None]] = {}
-        # BLOCKER A fix: monotonic timestamp of when each pending-reload latch
-        # above was set, so _poll_process can bound how long it trusts a
-        # TRANSITIONING channel to still be mid-reload (see
-        # _PENDING_RELOAD_STUCK_BOUND_S).
-        self._pending_reload_at: dict[str, float] = {}
         # Issue #157: channels whose encoder WE terminated for a filler
         # reload - their non-zero exit still honors the pending reload.
         self._reload_kills: set[str] = set()
@@ -886,6 +884,8 @@ class EgressDaemon:
         current_proof_event_id: str | None = None,
         last_error: str | None = None,
         pid: int | None = None,
+        pending_reload_since: datetime | None = None,
+        pending_reload_deadline: datetime | None = None,
     ) -> None:
         # Gate A T4 diagnosability fix (2026-09): this is the ONE choke point
         # every pipeline state transition passes through -- every
@@ -923,35 +923,35 @@ class EgressDaemon:
             pid if pid is not None else "-",
             last_error or "-",
         )
-        # BLOCKER A fix: this is called every ~2s poll tick even when NOTHING
-        # about the row changed (e.g. an ON_AIR channel with a healthy, un-
-        # touched worker) -- an unconditional ``now()`` here made
-        # ``alerting/runtime_status.py``'s ``_seconds_in_state`` perpetually
-        # ~0 for a channel that has actually been sitting in the same state
-        # for a long time, which is exactly the signal a stuck TRANSITIONING
-        # latch needs to be detected from the outside. Only advance the
-        # timestamp when something besides the clock actually changed.
+        # ``updated_at`` is the row's public "last write" timestamp -- it
+        # advances on EVERY write, honestly, including a poll tick that
+        # rewrites an unchanged state (this IS the public meaning of
+        # "updated"; a caller that wants "how long has the STATE itself been
+        # unchanged" wants ``state_entered_at`` below, not this).
+        #
+        # ``state_entered_at`` only advances when ``state`` itself changes --
+        # that is the real "stuck in this state" signal
+        # ``alerting/runtime_status.py`` reads (BLOCKER A hostile-review
+        # redo, 2026-09-05: an earlier pass conflated the two by suppressing
+        # ``updated_at`` instead, which is wrong for a field the rest of the
+        # system reads as "was this row touched").
         existing = self._store.read_state(channel_id)
-        if (
-            existing is not None
-            and existing.state == state
-            and existing.current_source_label == current_source_label
-            and existing.current_proof_event_id == current_proof_event_id
-            and existing.pid == pid
-            and existing.last_error == last_error
-        ):
-            updated_at = existing.updated_at
+        if existing is not None and existing.state == state:
+            state_entered_at = existing.state_entered_at
         else:
-            updated_at = datetime.now(UTC)
+            state_entered_at = datetime.now(UTC)
         self._store.write_state(
             EgressStateRow(
                 channel_id=channel_id,
                 state=state,
                 current_source_label=current_source_label,
                 current_proof_event_id=current_proof_event_id,
-                updated_at=updated_at,
+                updated_at=datetime.now(UTC),
+                state_entered_at=state_entered_at,
                 pid=pid,
                 last_error=last_error,
+                pending_reload_since=pending_reload_since,
+                pending_reload_deadline=pending_reload_deadline,
             )
         )
 
@@ -1210,37 +1210,34 @@ class EgressDaemon:
         if returncode is None:
             state = self._store.read_state(channel_id)
             config = self._store.get_config(channel_id)
+            # BLOCKER A redo: pending_reload_since/deadline are carried
+            # forward ONLY while a reload is genuinely still pending on THIS
+            # tick -- any other branch below (DRAINING/FALLBACK_SLATE/ON_AIR)
+            # clears them by simply not passing a value, so a resolved (or
+            # never-pending) channel's row never carries a stale pending
+            # marker forward.
+            pending_reload_since: datetime | None = None
+            pending_reload_deadline: datetime | None = None
+            pending_reload_last_error: str | None = None
             if channel_id in self._draining_channels:
                 current_state: EgressState = "DRAINING"
             elif channel_id in self._pending_reloads:
-                # BLOCKER A fix: the terminate+restart reload this latch tracks
-                # only progresses on a natural process exit -- for an ON_AIR
-                # channel that never arrives (the worker is genuinely healthy),
-                # so without a bound this rewrote TRANSITIONING with the same
-                # pid forever (the tester observed three channels stuck this
-                # way for 20+ minutes while their workers streamed fine).
-                # Self-heal back to the pre-reload state once the latch has
-                # been open longer than a fair shot at the seamless AND
-                # terminate+restart reload paths needs.
-                pending_since = self._pending_reload_at.get(channel_id)
-                if pending_since is not None and (
-                    self._monotonic() - pending_since >= _PENDING_RELOAD_STUCK_BOUND_S
-                ):
-                    previous_state, _previous_source_label = self._pending_reloads.pop(channel_id)
-                    self._pending_reload_at.pop(channel_id, None)
-                    current_state = (
-                        "FALLBACK_SLATE" if previous_state == "FALLBACK_SLATE" else "ON_AIR"
-                    )
-                    _LOG.warning(
-                        "channel %s: pending content-reload never landed within %.0fs "
-                        "(TRANSITIONING latch stuck with the worker still alive); "
-                        "recovering to %s so automation can retry the reload.",
-                        channel_id,
-                        self._monotonic() - pending_since,
-                        current_state,
-                    )
-                else:
-                    current_state = "TRANSITIONING"
+                # BLOCKER A redo (hostile review of the first pass): for an
+                # ON_AIR program, _request_reload's terminate+restart fallback
+                # is DESIGNED to wait for the plan's own natural EOS (see its
+                # "Programs keep the graceful drain" comment) -- there is no
+                # bound to self-heal past here, only honesty about what is
+                # happening and when it is expected to resolve. Preserve the
+                # since/deadline this channel's row already carries (set at
+                # latch time by _request_reload) and refresh the label so an
+                # operator reading it sees live elapsed time, not a stale
+                # first-tick snapshot.
+                current_state = "TRANSITIONING"
+                pending_reload_since = state.pending_reload_since if state else None
+                pending_reload_deadline = state.pending_reload_deadline if state else None
+                pending_reload_last_error = self._pending_reload_label(
+                    pending_reload_since, datetime.now(UTC)
+                )
             elif state and state.state == "FALLBACK_SLATE":
                 current_state = "FALLBACK_SLATE"
             else:
@@ -1259,6 +1256,9 @@ class EgressDaemon:
                 current_source_label=state.current_source_label if state else None,
                 current_proof_event_id=state.current_proof_event_id if state else None,
                 pid=_process_pid(process),
+                last_error=pending_reload_last_error,
+                pending_reload_since=pending_reload_since,
+                pending_reload_deadline=pending_reload_deadline,
             )
             self._sync_cg_overlay_proof(channel_id, current_state)
             if self._seconds_on_air(channel_id) >= _RESTART_STREAK_RESET_UPTIME_S and (
@@ -1287,7 +1287,6 @@ class EgressDaemon:
             if returncode == 0 or deliberate_kill
             else None
         )
-        self._pending_reload_at.pop(channel_id, None)
         _process_close(process)
         if pending_reload is not None:
             previous_state, previous_source_label = pending_reload
@@ -1321,7 +1320,6 @@ class EgressDaemon:
             self._append_health(channel_id, "STOPPED", sink_connected={})
             return
         self._pending_reloads.pop(channel_id, None)
-        self._pending_reload_at.pop(channel_id, None)
         state = self._store.read_state(channel_id)
         if state is not None and state.state in {"ON_AIR", "FALLBACK_SLATE", "TRANSITIONING"}:
             self._relaunch_after_crash(channel_id, state, uptime)
@@ -1733,6 +1731,47 @@ class EgressDaemon:
         )
         return True
 
+    def _estimate_pending_reload_deadline(
+        self,
+        channel_id: str,
+        state: EgressStateRow | None,
+        since: datetime,
+    ) -> datetime | None:
+        """Best-effort wall-clock estimate of when a pending content-reload
+        that fell back to the terminate+restart drain SHOULD resolve (the
+        currently-airing plan's own duration, from ``since``, plus a margin).
+
+        Returns None when the daemon cannot say (no dispatched-plan record,
+        or the record does not match what is actually airing right now) --
+        an unknown deadline never escalates a false alarm; see
+        ``alerting/runtime_status.py``'s fallback bound for that case.
+        """
+        if state is None:
+            return None
+        horizon = self.dispatched_plan_horizon(channel_id)
+        if horizon is None:
+            return None
+        proof_event_id, durations, _switch_deferred = horizon
+        if proof_event_id != state.current_proof_event_id or not durations:
+            return None
+        total_seconds = sum(durations)
+        if total_seconds <= 0:
+            return None
+        return since + timedelta(seconds=total_seconds + _PENDING_RELOAD_DEADLINE_MARGIN_S)
+
+    @staticmethod
+    def _pending_reload_label(since: datetime | None, now: datetime) -> str:
+        """Human-facing, honest annotation for a TRANSITIONING row whose
+        terminate+restart reload is waiting for the outgoing program's own
+        natural EOS (daemon.py's ``_request_reload``) -- NOT a stuck latch."""
+        if since is None:
+            return "Reload pending: waiting for the current program to reach its natural end."
+        elapsed = max(0.0, (now - since).total_seconds())
+        return (
+            "Reload pending: waiting for the current program to reach its natural end "
+            f"(requested at {since.strftime('%H:%M:%SZ')}, {elapsed:.0f}s ago)."
+        )
+
     def _request_reload(self, channel_id: str) -> None:
         state = self._store.read_state(channel_id)
         process = self._processes.get(channel_id)
@@ -1759,13 +1798,17 @@ class EgressDaemon:
             state.state if state else None,
             state.current_source_label if state else None,
         )
-        self._pending_reload_at[channel_id] = self._monotonic()
+        since = datetime.now(UTC)
+        deadline = self._estimate_pending_reload_deadline(channel_id, state, since)
         self._write_state(
             channel_id,
             "TRANSITIONING",
             current_source_label=state.current_source_label if state else None,
             current_proof_event_id=state.current_proof_event_id if state else None,
             pid=_process_pid(process),
+            last_error=self._pending_reload_label(since, since),
+            pending_reload_since=since,
+            pending_reload_deadline=deadline,
         )
         if state is not None and state.state == "FALLBACK_SLATE":
             # Issue #157 (CA-8 live finding): filler is interruptible by
@@ -1786,7 +1829,6 @@ class EgressDaemon:
         config = self._store.get_config(channel_id)
         self._draining_channels.add(channel_id)
         self._pending_reloads.pop(channel_id, None)
-        self._pending_reload_at.pop(channel_id, None)
         self._reload_kills.discard(channel_id)  # drain cancels a pending kill
         self._write_state(
             channel_id,
@@ -1810,7 +1852,6 @@ class EgressDaemon:
         self._reset_restart_tracking(channel_id)  # operator stop — clear crash back-off
         self._draining_channels.discard(channel_id)
         self._pending_reloads.pop(channel_id, None)
-        self._pending_reload_at.pop(channel_id, None)
         # Audit ENG-005: a leaked reload-kill flag would later misclassify a
         # genuine crash as a clean reload handoff.
         self._reload_kills.discard(channel_id)

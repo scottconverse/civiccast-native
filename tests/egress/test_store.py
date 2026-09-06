@@ -278,6 +278,10 @@ def test_postgres_egress_store_state_and_recent_health(store: PostgresEgressStor
         current_source_label="Council meeting",
         current_proof_event_id="proof-1",
         updated_at=now,
+        # Pinned explicitly (not the field's own default_factory "now") so
+        # the round-trip comparison below is deterministic, same as
+        # updated_at.
+        state_entered_at=now,
         pid=4242,
     )
 
@@ -307,8 +311,16 @@ def test_postgres_egress_store_state_and_recent_health(store: PostgresEgressStor
 
     got = store.read_state("gov")
     assert got is not None
-    assert got.model_copy(update={"updated_at": _strip_tz(got.updated_at)}) == state.model_copy(
-        update={"updated_at": _strip_tz(state.updated_at)}
+    assert got.model_copy(
+        update={
+            "updated_at": _strip_tz(got.updated_at),
+            "state_entered_at": _strip_tz(got.state_entered_at),
+        }
+    ) == state.model_copy(
+        update={
+            "updated_at": _strip_tz(state.updated_at),
+            "state_entered_at": _strip_tz(state.state_entered_at),
+        }
     )
     assert [sample.seconds_on_air for sample in store.recent_health("gov", 2)] == [11, 10]
     assert [sample.caption_status for sample in store.recent_health("gov", 2)] == [

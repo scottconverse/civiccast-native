@@ -412,9 +412,13 @@ class TestSingleAlembicHead:
         # so 0083 was the sole other head when this branch re-parented onto
         # it. Updated to ``0087_retention_terms`` (WP-08: value/unit/forever
         # retention-term authoring on assets), chained after
-        # ``0086_live_source_probe_state`` and is the current head.
-        assert heads[0] == "0087_retention_terms", (
-            f"Expected head '0087_retention_terms'; got {heads[0]!r}."
+        # ``0086_live_source_probe_state``. Updated to
+        # ``0088_egress_state_reload_visibility`` (hostile-review redo of
+        # the pending-content-reload latch fix: state_entered_at/pending_
+        # reload_since/pending_reload_deadline on egress_states), chained
+        # after ``0087_retention_terms`` and is the current head.
+        assert heads[0] == "0088_egress_state_reload_visibility", (
+            f"Expected head '0088_egress_state_reload_visibility'; got {heads[0]!r}."
         )
 
 

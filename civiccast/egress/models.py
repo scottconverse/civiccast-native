@@ -321,6 +321,17 @@ class EgressStateDb(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # BLOCKER A redo: see EgressStateRow's docstring comment for what these
+    # mean and why they are separate from updated_at. Migration
+    # 0088_egress_state_reload_visibility backfills state_entered_at from
+    # updated_at for existing rows.
+    state_entered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    pending_reload_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    pending_reload_deadline: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class EgressHealthSampleDb(Base):
@@ -515,6 +526,32 @@ class EgressStateRow(BaseModel):
     updated_at: datetime
     pid: Annotated[int | None, Field(default=None, ge=0)] = None
     last_error: Annotated[str | None, Field(default=None, max_length=1000)] = None
+    # BLOCKER A redo (2026-09-05 hostile review): ``updated_at`` above is the
+    # public "last write" timestamp -- it advances on every write, honestly,
+    # including a poll tick that rewrites the same state. ``state_entered_at``
+    # is the DIFFERENT thing ``alerting/runtime_status.py``'s "how long has
+    # this channel been stuck" reading actually needs: it only advances when
+    # ``state`` itself changes (see ``daemon.py``'s ``_write_state``).
+    # Defaults to "now" so the many existing call sites that construct a row
+    # without this field (tests, mostly) keep working; a real write always
+    # supplies it.
+    state_entered_at: Annotated[datetime, Field(default_factory=lambda: datetime.now(UTC))]
+    # Durable, honest visibility into a pending content-reload that has
+    # fallen back to the terminate+restart path (``daemon.py``'s
+    # ``_request_reload``): for an ON_AIR program that path is a graceful
+    # DRAIN to the outgoing leg's own natural EOS, by design (see
+    # ``_request_reload``'s "Programs keep the graceful drain" comment) --
+    # not a bug to be cancelled. ``pending_reload_since`` is the wall clock
+    # the drain started; ``pending_reload_deadline`` is the daemon's best
+    # estimate of when the drain SHOULD resolve (the dispatched plan's own
+    # duration + a margin, when known), used to escalate an operator alert
+    # only once a pending reload has genuinely outlived the program it is
+    # waiting on -- never a flat guess. Both None whenever no reload is
+    # pending; a write that resolves (or never had) a pending reload clears
+    # them by simply not passing a value (see ``_write_state``'s "None
+    # clears" convention already used by every other optional field here).
+    pending_reload_since: datetime | None = None
+    pending_reload_deadline: datetime | None = None
 
 
 class EgressHealthSample(BaseModel):
