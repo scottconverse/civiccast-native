@@ -478,15 +478,37 @@ if (-not (Test-Path $donePath)) {
 
 function Copy-StationLogs {
     <#
-      Copies the station's daemon/worker/install logs + installer-state.json
-      into $LocalDir\logs (the shipper mirrors it out from there). Called at
-      the end AND every 3 minutes during the soak loop, so a hung sandbox
-      still leaves partial evidence on the host. TARGETED, bounded candidate
-      paths only -- no full-tree recursive scan over the install directory
-      (In-Sandbox-Report.ps1:18-28's HARDENED note: a full `Get-ChildItem
-      -Recurse` over a multi-thousand-file install tree is exactly the kind
-      of thing that is fast on a real disk and can take minutes on Windows
-      Sandbox's virtualized/differencing storage).
+      Copies the station's daemon/worker/install logs, installer-state.json,
+      station-set.json, and (round-4 item 2) the PER-CHANNEL egress worker
+      logs into $LocalDir\logs (the shipper mirrors it out from there).
+      Called at the end, on EVERY FAIL path (via Write-FailVerdictAndExit /
+      Write-HarnessErrorVerdictAndExit), and every 3 minutes during the soak
+      loop, so a hung sandbox still leaves partial evidence on the host.
+
+      Round-4 finding: run 4's evidence had ONLY C:\ProgramData\CivicCast\
+      logs\* (the daemon-level log, which just says "issued start" / "TS
+      relay up") -- never the per-channel egress worker's own logs, which
+      civiccast/egress/gst/strategy.py:748 places OUTSIDE that tree, at
+      <egress_work_dir>\<channel_id>\logs\ (egress_work_dir defaults to
+      C:\ProgramData\CivicCast\data\egress -- children.py's
+      default_egress_work_dir). That is exactly where a worker's own
+      startup failure/traceback would actually be. Ported from
+      In-Sandbox-Report.ps1:1369-1400's Invoke-StationDiagCapture (Gate A's
+      own T4 fix for the identical gap), narrowed the same way: robocopy
+      ONLY <channel>\logs with a *.log filter, never the sibling media/
+      segment artifacts in the same work dir. Also copies each channel's
+      small top-level JSON state (playout-graph.json, compliance-last.json,
+      compliance-report.json -- civiccast/egress/gst/strategy.py:745,
+      civiccast/egress/compliance.py:459/567) and writes a DIRECTORY
+      LISTING (never a copy -- prepared\ holds transcoded media, easily
+      hundreds of MB per clip) of <channel>\prepared\.
+
+      TARGETED, bounded candidate paths only throughout -- no full-tree
+      recursive scan over the install directory (In-Sandbox-Report.ps1:18-28's
+      HARDENED note: a full `Get-ChildItem -Recurse` over a multi-thousand-
+      file install tree is exactly the kind of thing that is fast on a real
+      disk and can take minutes on Windows Sandbox's virtualized/
+      differencing storage).
     #>
     param([string]$Label)
     $dst = Join-Path $LocalDir "logs\$Label"
@@ -495,6 +517,9 @@ function Copy-StationLogs {
         (Join-Path $InstallDir 'install-progress.log'),
         (Join-Path $InstallDir 'installer-state.json'),
         'C:\ProgramData\CivicCast\installer-state.json',
+        (Join-Path $InstallDir 'station-set.json'),
+        (Join-Path $InstallDir 'app\station-set.json'),
+        'C:\ProgramData\CivicCast\station-set.json',
         'C:\ProgramData\CivicCast\logs',
         (Join-Path $InstallDir 'logs')
     )
@@ -506,6 +531,55 @@ function Copy-StationLogs {
                 & robocopy.exe $c (Join-Path $dst (Split-Path -Leaf $c)) /E /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
             }
         } catch { }
+    }
+
+    $egressWorkDirCandidates = @(
+        'C:\ProgramData\CivicCast\data\egress'
+    )
+    $egressSrc = $egressWorkDirCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $egressNote = Join-Path $dst 'egress-work-dir-note.txt'
+    if (-not $egressSrc) {
+        "egress work dir not present under any of: $($egressWorkDirCandidates -join ', ')" | Set-Content -Path $egressNote -Encoding UTF8
+        return
+    }
+    "egress work dir: $egressSrc" | Set-Content -Path $egressNote -Encoding UTF8
+    $egressDst = Join-Path $dst 'egress-per-channel'
+    New-Item -ItemType Directory -Force -Path $egressDst | Out-Null
+    $channelDirs = @(Get-ChildItem -LiteralPath $egressSrc -Directory -ErrorAction SilentlyContinue)
+    if ($channelDirs.Count -eq 0) {
+        "no per-channel subdirectories under $egressSrc" | Add-Content -Path $egressNote -Encoding UTF8
+    }
+    foreach ($cd in $channelDirs) {
+        $channelName = $cd.Name
+        $chDst = Join-Path $egressDst $channelName
+        New-Item -ItemType Directory -Force -Path $chDst | Out-Null
+
+        $logsSrc = Join-Path $cd.FullName 'logs'
+        if (Test-Path $logsSrc) {
+            & robocopy.exe $logsSrc (Join-Path $chDst 'logs') '*.log' /S /R:1 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+        } else {
+            "no logs\ under $($cd.FullName)" | Add-Content -Path $egressNote -Encoding UTF8
+        }
+
+        foreach ($stateFile in @('playout-graph.json', 'compliance-last.json', 'compliance-report.json')) {
+            $sfPath = Join-Path $cd.FullName $stateFile
+            if (Test-Path $sfPath -PathType Leaf) {
+                Copy-Item -LiteralPath $sfPath -Destination (Join-Path $chDst $stateFile) -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        # Listing only, NEVER a copy -- prepared\ holds transcoded media
+        # (easily hundreds of MB per clip); the point is to see WHAT was
+        # prepared and WHEN, not to duplicate it into evidence.
+        $preparedSrc = Join-Path $cd.FullName 'prepared'
+        if (Test-Path $preparedSrc) {
+            try {
+                Get-ChildItem -LiteralPath $preparedSrc -File -ErrorAction SilentlyContinue |
+                    Select-Object Name, Length, LastWriteTimeUtc |
+                    ConvertTo-Json -Depth 3 |
+                    Set-Content -Path (Join-Path $chDst 'prepared-listing.json') -Encoding UTF8
+            } catch { }
+        }
     }
 }
 
@@ -917,33 +991,73 @@ foreach ($c in $channelSpecs) {
     $configOk = ($cfgR.status -eq 200)
     if (-not $configOk) { Write-SoakLog "PUT config $($c.id) FAILED: status=$($cfgR.status) body=$($cfgR.body_raw) error=$($cfgR.error)" }
     $startOk = $false
+    # Round-4 item 4: log both the EXACT body this lane sends to /commands
+    # and the raw response body -- run 4's control-plane app.log showed
+    # automation issuing 'start' for only ONE of the three channels
+    # (education); this needs to distinguish "the lane sent 3 POSTs and the
+    # product only acted on 1" from "the lane never sent all 3 in the first
+    # place."
+    $startBody = @{ action = 'start' }
     if ($configOk) {
-        $startR = Invoke-CivicCastApi -Method 'Post' -Url "$Base/api/staff/egress/channels/$($c.id)/commands" -BodyObj (@{ action = 'start' }) -BearerToken $token
+        $startR = Invoke-CivicCastApi -Method 'Post' -Url "$Base/api/staff/egress/channels/$($c.id)/commands" -BodyObj $startBody -BearerToken $token
         $startOk = ($startR.status -eq 202)
-        if (-not $startOk) { Write-SoakLog "start command $($c.id) FAILED: status=$($startR.status) body=$($startR.body_raw) error=$($startR.error)" }
+        Write-SoakLog "start command $($c.id): sent_body=$($startBody | ConvertTo-Json -Compress) status=$($startR.status) response_body=$($startR.body_raw) error=$($startR.error)"
+    } else {
+        Write-SoakLog "start command $($c.id): SKIPPED (config PUT did not return 200)"
     }
-    $summary.channels_started += [ordered]@{ channel_id = $c.id; config_ok = $configOk; start_ok = $startOk }
+    $summary.channels_started += [ordered]@{ channel_id = $c.id; config_ok = $configOk; start_ok = $startOk; start_sent_body = $startBody; start_response_body = $startR.body_raw }
 }
 Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 
-# Poll up to 6 minutes for at least one channel ON_AIR before starting the
-# soak clock (mirrors AUTORUN-9m's own guard: never start the clock against
-# a setup that silently failed).
-$onAirDeadline = (Get-Date).AddMinutes(6)
+# Round-4 item 3 (item 59): raised from 6 to 10 minutes -- a fresh station
+# measured >3 minutes to bring channels ON_AIR on REAL hardware per item 59,
+# and Windows Sandbox's virtualized storage/CPU is slower still; run 4's own
+# evidence shows config+start all succeeded (200/202) but the 6-minute bound
+# expired before any channel reported ON_AIR, so this lane's own bound was
+# the failure, not necessarily the product. Poll cadence stays 15s.
+#
+# Round-4 item 1: log the FULL per-channel state on every poll (state, pid,
+# current_source_label, last_error) -- run 4 left no record of what state
+# each channel actually reported during the 6-minute wait, which is exactly
+# what would have shown whether channels were STARTING/dark/erroring vs.
+# genuinely never told to start. Also log the raw response body on the
+# FIRST poll and every time it changes, so the evidence has at least one
+# verbatim example of the API's actual shape without spamming an identical
+# line every 15s for 10 minutes.
+$onAirBoundMinutes = 10
+$onAirDeadline = (Get-Date).AddMinutes($onAirBoundMinutes)
 $anyOnAir = $false
+$lastStateRawByChannel = @{}
+$pollN = 0
 do {
+    $pollN++
     foreach ($c in $channelSpecs) {
         try {
-            $st = Invoke-RestMethod -Uri "$Base/api/staff/egress/channels/$($c.id)/state" -Headers @{ Authorization = "Bearer $token" } -TimeoutSec 20
-            if ($st.state -eq 'ON_AIR') { $anyOnAir = $true }
-        } catch { }
+            $stR = Invoke-CivicCastApi -Method 'Get' -Url "$Base/api/staff/egress/channels/$($c.id)/state" -BearerToken $token -TimeoutSec 20
+            if ($stR.ok -and $stR.body_json) {
+                $st = $stR.body_json
+                Write-SoakLog "ON_AIR poll #$pollN channel=$($c.id): state=$($st.state) pid=$($st.pid) src=$($st.current_source_label) err=$($st.last_error)"
+                $rawNow = "$($stR.body_raw)"
+                $rawBefore = $(if ($lastStateRawByChannel.ContainsKey($c.id)) { $lastStateRawByChannel[$c.id] } else { $null })
+                if ($rawBefore -ne $rawNow) {
+                    Write-SoakLog "ON_AIR poll #$pollN channel=$($c.id) raw state body (first-seen or changed): $rawNow"
+                    $lastStateRawByChannel[$c.id] = $rawNow
+                }
+                if ($st.state -eq 'ON_AIR') { $anyOnAir = $true }
+            } else {
+                Write-SoakLog "ON_AIR poll #$pollN channel=$($c.id): state read FAILED status=$($stR.status) body=$($stR.body_raw) error=$($stR.error)"
+            }
+        } catch {
+            Write-SoakLog "ON_AIR poll #$pollN channel=$($c.id): state read THREW $_"
+        }
     }
     if ($anyOnAir) { break }
     Start-Sleep -Seconds 15
 } while ((Get-Date) -lt $onAirDeadline)
 
 if (-not $anyOnAir) {
-    Write-FailVerdictAndExit -Reason "no channel reached ON_AIR within 6 minutes of the start command -- soak clock not started"
+    Copy-StationLogs -Label 'onair-poll-timeout'
+    Write-FailVerdictAndExit -Reason "no channel reached ON_AIR within ${onAirBoundMinutes} minutes of the start command -- soak clock not started (see the ON_AIR poll #N lines in soak-log.txt for every channel's state/pid/src/err each cycle, and logs\onair-poll-timeout\ for station/egress logs at the moment of failure)"
 }
 
 # --------------------------------------------------------------------------
