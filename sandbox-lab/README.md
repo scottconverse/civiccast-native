@@ -133,11 +133,23 @@ create intermediate directories for a log-file path itself), and
 `Copy-StationLogs` copies that file — plus any rotated/sibling files
 matching the same base name or a `*.gstdebug` extension in the same
 directory — into `logs\checkpoint-cycleN\gst-debug\` and `logs\final\
-gst-debug\` on every checkpoint, alongside the rest of that checkpoint's
-evidence. A single matching file over 200 MB has its **last 200 MB kept**
-(streamed, not skipped) rather than the whole file copied — the most
-recent debug output is where a real failure almost always is — so a heavy
-`GST_DEBUG` level across a long soak can never itself stall a checkpoint.
+gst-debug\`, alongside the rest of that checkpoint's evidence. A single
+matching file over 200 MB has its **last 200 MB kept** (streamed, never
+loaded whole into memory, and never simply skipped) rather than the whole
+file copied — the most recent debug output is where a real failure almost
+always is — under the name `<original-name>.tailNNNmb` (never overwriting/
+being confused with a complete copy), with a one-line banner prepended to
+the bytes themselves so a reader of the file knows content was dropped.
+
+Capture is **gated and volume-capped**, not run on every single checkpoint:
+periodic rollup checkpoints (every ~3 minutes) capture only the **first**
+one and every **10th** thereafter; `final` (and an early-failure label like
+the ON_AIR-poll-timeout path) is always attempted. Regardless of that gate,
+once this run's own running total of bytes captured reaches a **600 MB**
+aggregate cap, every further capture — periodic or not, including `final`
+— is skipped with a note. Without this gate, an earlier version captured
+on every single checkpoint with no aggregate bound, measured to project to
+roughly 8 GB shipped over a 2-hour soak.
 
 **What `-WorkerEnv` can and cannot change today.** Not every environment
 variable that reaches the CivicCastSupervisor service's own registry

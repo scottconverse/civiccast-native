@@ -792,106 +792,102 @@ function Copy-StationLogs {
     # gst-debug\ subfolder -- called on every Copy-StationLogs invocation
     # (every checkpoint-cycleN AND 'final'), same as the rest of this
     # function, so a mid-soak GStreamer debug log is visible in the
-    # evidence trail even if the run never reaches 'final'. Bounded: a
-    # single file over 200 MB has its LAST 200 MB (the most recent debug
-    # output, not the earliest) copied instead of the whole file -- GST_DEBUG
-    # at level 4 across four elements for a whole soak can grow large fast,
+    # evidence trail even if the run never reaches 'final'. GST_DEBUG at
+    # level 4 across four elements for a whole soak can grow large fast,
     # and this evidence capture must never itself become the thing that
-    # stalls a checkpoint. Round-2 review finding (optional item): an
-    # earlier version SKIPPED the whole file with a note instead -- the
-    # tail is what a human actually wants when a GStreamer worker is
-    # investigated (the failure is almost always at the END of the log,
-    # not the start), so truncating-and-keeping beats dropping entirely.
-    # Round-3 review findings 1-3: the truncation itself is
-    # Copy-GstDebugTail (defined just above this function) -- see its own
-    # header for the live-open-file share-mode fix, the growing-file
-    # bound fix, and the "<name>.tail200mb" naming + banner-line fix.
+    # stalls a checkpoint OR flood the host with gigabytes of shipped
+    # evidence -- see Get-GstDebugCaptureDecision (GstDebugTail.ps1,
+    # round-4 review finding 2) for the gating/aggregate-cap rules applied
+    # just below, and Copy-GstDebugTail's own header for the tail-copy
+    # mechanics (live-open-file share mode, growing-file bound, banner).
     $gstDebugDst = Join-Path $dst 'gst-debug'
     $gstDebugNote = Join-Path $dst 'gst-debug-note.txt'
     if (-not $script:GstDebugFilePath) {
         "GST_DEBUG_FILE was not requested via -WorkerEnv for this run -- nothing to capture" | Set-Content -Path $gstDebugNote -Encoding UTF8
     } else {
         $gstDebugMaxBytes = 200MB
-        $gstDebugDir = Split-Path -Parent $script:GstDebugFilePath
-        $gstDebugBaseName = Split-Path -Leaf $script:GstDebugFilePath
-        $gstDebugNoteLines = @("GST_DEBUG_FILE requested: $($script:GstDebugFilePath)")
-        if (-not (Test-Path $gstDebugDir)) {
-            $gstDebugNoteLines += "directory does not exist (yet): $gstDebugDir"
+        $isPeriodicCheckpoint = ($Label -match '^checkpoint-cycle\d+$')
+        if ($isPeriodicCheckpoint) { $script:GstDebugPeriodicCheckpointCount++ }
+        $captureDecision = Get-GstDebugCaptureDecision `
+            -IsPeriodicCheckpoint $isPeriodicCheckpoint `
+            -PeriodicCheckpointIndex $script:GstDebugPeriodicCheckpointCount `
+            -EveryN $GstDebugCaptureEveryN `
+            -AggregateBytesSoFar $script:GstDebugAggregateBytesCopied `
+            -AggregateCapBytes $GstDebugAggregateCapBytes
+
+        if (-not $captureDecision.should_capture) {
+            "SKIPPED for label '$Label': $($captureDecision.reason) (aggregate so far: $([math]::Round($script:GstDebugAggregateBytesCopied / 1MB, 1)) MB of a $([math]::Round($GstDebugAggregateCapBytes / 1MB, 0)) MB cap)" | Set-Content -Path $gstDebugNote -Encoding UTF8
         } else {
-            # Candidates come from TWO independent, deliberately separate
-            # rules, never a blind directory-wide sweep: (1) the primary
-            # file plus GStreamer's own rotation convention (a numeric/
-            # backup suffix appended to the base name), matched by PREFIX
-            # against the requested base name; and (2) any file with a
-            # `.gstdebug` extension in this same directory, matched by
-            # EXTENSION ALONE -- NOT gated on the base-name prefix at all.
-            # Rule (2) is a deliberately wider net (the accepted risk: a
-            # stray, unrelated `.gstdebug` file some other tool dropped in
-            # this exact directory would also be swept), because this is a
-            # directory THIS RUN itself created for its own GST_DEBUG_FILE
-            # (see the New-Item -Force call at this run's own registry-
-            # write step) -- something else writing into it is already
-            # unexpected enough that surfacing it as evidence is more
-            # useful than silently excluding it.
-            $gstCandidates = @(
-                Get-ChildItem -LiteralPath $gstDebugDir -File -ErrorAction SilentlyContinue |
-                    Where-Object { $_.Name -eq $gstDebugBaseName -or $_.Name -like "$gstDebugBaseName*" -or $_.Extension -eq '.gstdebug' }
+            $gstDebugDir = Split-Path -Parent $script:GstDebugFilePath
+            $gstDebugBaseName = Split-Path -Leaf $script:GstDebugFilePath
+            $gstDebugNoteLines = @(
+                "GST_DEBUG_FILE requested: $($script:GstDebugFilePath)"
+                "capture reason: $($captureDecision.reason)"
             )
-            if ($gstCandidates.Count -eq 0) {
-                $gstDebugNoteLines += "directory exists but no matching file(s) found yet: $gstDebugDir (looked for '$gstDebugBaseName', '$gstDebugBaseName*', and '*.gstdebug')"
+            if (-not (Test-Path $gstDebugDir)) {
+                $gstDebugNoteLines += "directory does not exist (yet): $gstDebugDir"
             } else {
-                New-Item -ItemType Directory -Force -Path $gstDebugDst | Out-Null
-                foreach ($f in $gstCandidates) {
-                    if ($f.Length -gt $gstDebugMaxBytes) {
-                        # Round-3 review findings 1-3 (all confirmed against
-                        # a live-open file / a growing file):
-                        #   (1) [System.IO.File]::OpenRead uses FileShare.Read
-                        #       -- opening the SAME GST_DEBUG_FILE the
-                        #       GStreamer worker still has open for write
-                        #       (no read-sharing on its side) threw "being
-                        #       used by another process" every time, while
-                        #       Copy-Item on the identical file succeeded
-                        #       (Copy-Item goes through a different Win32
-                        #       CopyFile path that tolerates this). Fixed by
-                        #       opening with FileShare.ReadWrite explicitly.
-                        #   (2) the previous version snapshotted $f.Length
-                        #       ONCE, then let CopyTo read to whatever EOF
-                        #       actually was by the time the copy ran -- a
-                        #       file that kept growing during the copy (the
-                        #       live/expected case for GST_DEBUG_FILE) could
-                        #       end up with MORE than 200 MB kept. Fixed by
-                        #       bounding the READ LOOP itself to
-                        #       $gstDebugMaxBytes total bytes, counted down
-                        #       as each chunk is read -- growth past the
-                        #       start position during the copy can never
-                        #       push the kept size over the bound.
-                        #   (3) the truncated file was written under the
-                        #       SAME name as the original, with no marker
-                        #       that anything was dropped. Fixed: written as
-                        #       "<name>.tail200mb" (never overwrites/is
-                        #       confused with a complete copy) with a
-                        #       one-line ASCII banner prepended (safe: a
-                        #       GStreamer debug log is plain text).
-                        $destPath = Join-Path $gstDebugDst "$($f.Name).tail200mb"
+                # Candidates come from TWO independent, deliberately separate
+                # rules, never a blind directory-wide sweep: (1) the primary
+                # file plus GStreamer's own rotation convention (a numeric/
+                # backup suffix appended to the base name), matched by PREFIX
+                # against the requested base name; and (2) any file with a
+                # `.gstdebug` extension in this same directory, matched by
+                # EXTENSION ALONE -- NOT gated on the base-name prefix at all.
+                # Rule (2) is a deliberately wider net (the accepted risk: a
+                # stray, unrelated `.gstdebug` file some other tool dropped in
+                # this exact directory would also be swept), because this is a
+                # directory THIS RUN itself created for its own GST_DEBUG_FILE
+                # (see the New-Item -Force call at this run's own registry-
+                # write step) -- something else writing into it is already
+                # unexpected enough that surfacing it as evidence is more
+                # useful than silently excluding it.
+                $gstCandidates = @(
+                    Get-ChildItem -LiteralPath $gstDebugDir -File -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Name -eq $gstDebugBaseName -or $_.Name -like "$gstDebugBaseName*" -or $_.Extension -eq '.gstdebug' }
+                )
+                if ($gstCandidates.Count -eq 0) {
+                    $gstDebugNoteLines += "directory exists but no matching file(s) found yet: $gstDebugDir (looked for '$gstDebugBaseName', '$gstDebugBaseName*', and '*.gstdebug')"
+                } else {
+                    New-Item -ItemType Directory -Force -Path $gstDebugDst | Out-Null
+                    $tailSuffix = ".tail$([math]::Round($gstDebugMaxBytes / 1MB, 0))mb"
+                    foreach ($f in $gstCandidates) {
+                        if ($script:GstDebugAggregateBytesCopied -ge $GstDebugAggregateCapBytes) {
+                            $gstDebugNoteLines += "SKIPPED $($f.Name): aggregate cap reached mid-loop ($([math]::Round($script:GstDebugAggregateBytesCopied / 1MB, 1)) MB captured this run already)"
+                            continue
+                        }
+                        # Round-4 review finding 1 (HIGH): the size branch
+                        # this used to have here (Copy-Item for a file <=
+                        # 200 MB, Copy-GstDebugTail only above that) gated
+                        # on $f.Length -- the Get-ChildItem-derived NTFS
+                        # directory-entry stat, which is STALE for a file a
+                        # live process still has open for write (measured
+                        # directly: directory entry reported 1,048,576 bytes
+                        # while the actual open stream was 84,934,656 bytes
+                        # -- 81x larger). Trusting that stale stat routed the
+                        # EXACT live file this feature exists to capture down
+                        # the unbounded Copy-Item path. Fixed by dropping the
+                        # size branch entirely: Copy-GstDebugTail is now
+                        # ALWAYS called -- its own startPos clamp (`[Math]::
+                        # Max(0, currentLength - MaxBytes)`) already handles
+                        # a source shorter than the bound correctly (copies
+                        # the whole thing), using the STREAM's own Length
+                        # (read live, at open time, never the directory
+                        # entry) as the source of truth.
+                        $destPath = Join-Path $gstDebugDst "$($f.Name)$tailSuffix"
                         try {
                             Copy-GstDebugTail -SourcePath $f.FullName -DestPath $destPath -MaxBytes $gstDebugMaxBytes
-                            $gstDebugNoteLines += "TRUNCATED $($f.Name) -> $($f.Name).tail200mb: kept at most the LAST $([math]::Round($gstDebugMaxBytes / 1MB, 0)) MB (source was $([math]::Round($f.Length / 1MB, 1)) MB when listed -- may have grown further since; earlier content dropped, not the whole file)"
+                            $writtenBytes = (Get-Item -LiteralPath $destPath).Length
+                            $script:GstDebugAggregateBytesCopied += $writtenBytes
+                            $gstDebugNoteLines += "$($f.Name) -> $($f.Name)${tailSuffix}: wrote $([math]::Round($writtenBytes / 1MB, 2)) MB (bound $([math]::Round($gstDebugMaxBytes / 1MB, 0)) MB; directory-entry size at listing time was $([math]::Round($f.Length / 1MB, 1)) MB -- may be stale for a live-open/growing file, never trusted for the copy bound itself). Run aggregate so far: $([math]::Round($script:GstDebugAggregateBytesCopied / 1MB, 1)) MB"
                         } catch {
-                            $gstDebugNoteLines += "FAILED to truncate-copy $($f.Name): $_"
+                            $gstDebugNoteLines += "FAILED to copy $($f.Name): $_"
                         }
-                        continue
-                    }
-                    $destPath = Join-Path $gstDebugDst $f.Name
-                    try {
-                        Copy-Item -LiteralPath $f.FullName -Destination $destPath -Force -ErrorAction Stop
-                        $gstDebugNoteLines += "copied $($f.Name) ($([math]::Round($f.Length / 1MB, 2)) MB)"
-                    } catch {
-                        $gstDebugNoteLines += "FAILED to copy $($f.Name): $_"
                     }
                 }
             }
+            $gstDebugNoteLines | Set-Content -Path $gstDebugNote -Encoding UTF8
         }
-        $gstDebugNoteLines | Set-Content -Path $gstDebugNote -Encoding UTF8
     }
 }
 
@@ -953,6 +949,15 @@ $workerEnvParsed = ConvertTo-WorkerEnvEntries -WorkerEnv $WorkerEnv
 $workerEnvDeduped = @(Get-DedupedWorkerEnvEntries -Entries $workerEnvParsed.entries)
 $workerEnvRequestedStrings = @(Format-WorkerEnvArg -Entries $workerEnvDeduped) -split ';' | Where-Object { $_.Length -gt 0 }
 $script:GstDebugFilePath = Get-GstDebugFilePath -Entries $workerEnvDeduped
+# Round-4 review finding 2: gst-debug capture is gated and volume-capped --
+# see Copy-StationLogs's own gst-debug section and
+# GstDebugTail.ps1's Get-GstDebugCaptureDecision for why. State tracked here
+# (script scope) so it persists correctly across every Copy-StationLogs call
+# for the life of this run.
+$script:GstDebugPeriodicCheckpointCount = 0
+$script:GstDebugAggregateBytesCopied = 0
+$GstDebugCaptureEveryN = 10
+$GstDebugAggregateCapBytes = 600MB
 
 # --------------------------------------------------------------------------
 # 1. Locate and run the installer silently, bounded to $InstallBoundMinutes.

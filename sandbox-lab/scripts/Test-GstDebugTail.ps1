@@ -101,7 +101,14 @@ try {
             $bytes1 = [System.IO.File]::ReadAllBytes($dest1)
             $split1 = Get-BannerAndContentSplit -Bytes $bytes1
             Assert-True 'scenario1 banner line present' ($null -ne $split1.BannerText -and $split1.BannerText -match '^# sandbox-lab TRUNCATED')
-            Assert-Equal 'scenario1 content length == MaxBytes exactly (source was static, 5 MB > 1 MB bound)' 1048576 $split1.ContentLength
+            # Round-4 review finding 3: the bound applies to the TOTAL
+            # output FILE (banner + content), not content alone -- assert
+            # the file itself never exceeds MaxBytes (algebraically
+            # guaranteed to equal it exactly whenever the source has
+            # enough data past the chosen start position, as here: 5 MB
+            # of static source, 1 MB bound).
+            Assert-Equal 'scenario1 TOTAL FILE length == MaxBytes exactly (banner + content together, never over the bound)' 1048576 $bytes1.Length
+            Assert-True 'scenario1 content length == MaxBytes MINUS the banner (never the full MaxBytes on top of it)' ($split1.ContentLength -lt 1048576 -and $split1.ContentLength -gt 1048000) "(content length: $($split1.ContentLength))"
         }
     } finally {
         $writer1.Dispose()
@@ -144,7 +151,12 @@ try {
         $bytes2 = [System.IO.File]::ReadAllBytes($dest2)
         $split2 = Get-BannerAndContentSplit -Bytes $bytes2
         Assert-True 'scenario2 banner line present' ($null -ne $split2.BannerText -and $split2.BannerText -match '^# sandbox-lab TRUNCATED')
-        Assert-Equal 'scenario2 (growing-file bound) content length == MaxBytes EXACTLY, never more, despite the source growing well past it during the copy' ([int64]$maxBytes2) $split2.ContentLength
+        # Round-4 review finding 3: assert the TOTAL FILE (banner +
+        # content), never just content, against the bound -- this holds
+        # exactly regardless of the growing file's own final size or the
+        # banner's exact text length (banner-length cancels out
+        # algebraically: total = bannerLength + (MaxBytes - bannerLength)).
+        Assert-Equal 'scenario2 (growing-file bound) TOTAL FILE length == MaxBytes EXACTLY, never more, despite the source growing well past it during the copy' ([int64]$maxBytes2) $bytes2.Length
     } finally {
         Remove-Job $job -Force -ErrorAction SilentlyContinue
     }
@@ -163,7 +175,14 @@ try {
     Copy-GstDebugTail -SourcePath $src3 -DestPath $dest3 -MaxBytes $maxBytes3
     $bytes3 = [System.IO.File]::ReadAllBytes($dest3)
     $split3 = Get-BannerAndContentSplit -Bytes $bytes3
-    $expectedTail = $patternBytes[($patternBytes.Length - $maxBytes3)..($patternBytes.Length - 1)]
+    Assert-True 'scenario3 TOTAL FILE length <= MaxBytes (banner + content together)' ($bytes3.Length -le $maxBytes3) "(file length: $($bytes3.Length), MaxBytes: $maxBytes3)"
+    # Round-4 review finding 3: the retained content is (MaxBytes - banner
+    # length) bytes, not a full MaxBytes -- derive the expected slice from
+    # the ACTUALLY MEASURED content length (split3.ContentLength) rather
+    # than re-deriving the banner's exact byte length by hand here, so
+    # this test stays correct regardless of exactly how long the banner
+    # text turns out to be.
+    $expectedTail = $patternBytes[($patternBytes.Length - $split3.ContentLength)..($patternBytes.Length - 1)]
     $actualTailBytes = New-Object byte[] $split3.ContentLength
     [Array]::Copy($bytes3, $bytes3.Length - $split3.ContentLength, $actualTailBytes, 0, $split3.ContentLength)
     $tailMatches = ($actualTailBytes.Length -eq $expectedTail.Length)
@@ -172,7 +191,7 @@ try {
             if ($actualTailBytes[$i] -ne $expectedTail[$i]) { $tailMatches = $false; break }
         }
     }
-    Assert-True 'scenario3 kept content is byte-for-byte the LAST MaxBytes bytes of the source (not the head, not some other slice)' $tailMatches
+    Assert-True 'scenario3 kept content is byte-for-byte the LAST (MaxBytes - banner) bytes of the source -- ends at the true EOF, not the head, not some other slice' $tailMatches
 
     # ---------------------------------------------------------- scenario 4
     # Sanity: called standalone (not via the real caller, which only ever
@@ -189,10 +208,129 @@ try {
     $bytes4 = [System.IO.File]::ReadAllBytes($dest4)
     $split4 = Get-BannerAndContentSplit -Bytes $bytes4
     Assert-Equal 'scenario4 (MaxBytes > source size) content length == the WHOLE source, not padded/truncated' $smallBytes.Length $split4.ContentLength
+    Assert-True 'scenario4 TOTAL FILE length <= MaxBytes' ($bytes4.Length -le 1MB) "(file length: $($bytes4.Length))"
+
+    # ---------------------------------------------------------- scenario 5
+    # Round-4 review finding 1 (HIGH): a Get-ChildItem-derived FileInfo's
+    # own .Length property is a SNAPSHOT taken when that FileInfo object
+    # was first populated -- .NET does NOT auto-refresh it; a caller has
+    # to call .Refresh() explicitly. In-Sandbox-Soak.ps1's OLD gst-debug
+    # capture listed candidates once via Get-ChildItem, then branched on
+    # that cached $f.Length later in the same loop iteration -- by which
+    # time the real, live GST_DEBUG_FILE had grown far past it (MEASURED
+    # directly: a directory-entry snapshot of 1,048,576 bytes against a
+    # live stream of 84,934,656 bytes -- 81x larger), routing the exact
+    # live file this feature exists to capture down the UNBOUNDED
+    # Copy-Item path instead of the bounded tail-copy path. The fix was to
+    # drop the size branch entirely -- Copy-GstDebugTail is now called
+    # UNCONDITIONALLY and NEVER accepts or trusts a caller-supplied
+    # Length; it always re-stats via its own freshly opened stream
+    # (Copy-GstDebugTail's own $srcStream.Length, read after this test's
+    # OWN growth already happened). This regression guard reproduces the
+    # stale-FileInfo precondition directly, then proves the fix (driven
+    # only by -SourcePath, a live path, never a pre-fetched Length) still
+    # produces a correctly bounded, correctly-tailed capture.
+    $src5 = Join-Path $tmpRoot 'stale-entry.log'
+    [System.IO.File]::WriteAllBytes($src5, (New-Object byte[] (1MB)))
+    $staleFileInfo = Get-ChildItem -LiteralPath $src5 -File
+    $staleLengthBeforeGrowth = $staleFileInfo.Length
+    # Grow the file well past the (soon to be stale) cached FileInfo's own
+    # .Length, via a SEPARATE handle -- mirrors a live GStreamer worker
+    # continuing to write after this run's own candidate listing already
+    # captured a FileInfo for it.
+    $writer5 = [System.IO.File]::Open($src5, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
+    try {
+        $writer5.Seek(0, [System.IO.SeekOrigin]::End) | Out-Null
+        # Filled with a non-zero pattern (0xAA throughout) -- the FIRST
+        # 1 MB of the file (written via WriteAllBytes above) is all-zero
+        # by construction (New-Object byte[] default-initializes to zero),
+        # so a non-zero pattern here makes "the kept content reflects the
+        # live/grown region, not the stale/original one" directly
+        # checkable byte-for-byte below.
+        $extra = New-Object byte[] (4MB)
+        for ($i = 0; $i -lt $extra.Length; $i++) { $extra[$i] = 0xAA }
+        $writer5.Write($extra, 0, $extra.Length)
+        $writer5.Flush()
+    } finally {
+        $writer5.Dispose()
+    }
+    $liveLengthNow = (Get-Item -LiteralPath $src5).Length
+    Assert-Equal 'scenario5 setup sanity: the file really did grow to 5 MB total' 5242880 $liveLengthNow
+    Assert-True 'scenario5 reproduces the bug precondition: the OLD (unrefreshed) FileInfo.Length is now genuinely STALE vs. the live file' ($staleFileInfo.Length -eq $staleLengthBeforeGrowth -and $staleFileInfo.Length -lt $liveLengthNow) "(cached FileInfo.Length: $($staleFileInfo.Length), live length: $liveLengthNow)"
+
+    $dest5 = Join-Path $tmpRoot 'stale-entry.tail200mb'
+    $maxBytes5 = 2MB
+    # THE FIX under test: called with only -SourcePath (a path, not the
+    # stale FileInfo or its cached .Length at all) -- must reflect the
+    # file's TRUE current size, not whatever a caller might have cached.
+    Copy-GstDebugTail -SourcePath $src5 -DestPath $dest5 -MaxBytes $maxBytes5
+    $bytes5 = [System.IO.File]::ReadAllBytes($dest5)
+    $split5 = Get-BannerAndContentSplit -Bytes $bytes5
+    Assert-True 'scenario5 (stale-entry live file) TOTAL FILE length == MaxBytes exactly -- correctly bounded despite the stale FileInfo, because Copy-GstDebugTail never consulted it' ($bytes5.Length -eq $maxBytes5) "(file length: $($bytes5.Length), MaxBytes: $maxBytes5)"
+    # Content correctness: must be the tail of the LIVE (5 MB) file, not
+    # bounded against the stale (1 MB) snapshot -- e.g. NOT simply "the
+    # whole stale-length region copied verbatim" (which -- since the first
+    # 1 MB was all zero bytes from New-Object byte[] -- would show up here
+    # as an all-zero content region if this test's fix somehow regressed).
+    $anyNonZero = @($split5.ContentLength) -gt 0 -and (0..([Math]::Min(4095, $split5.ContentLength - 1)) | Where-Object {
+        $bytes5[$bytes5.Length - $split5.ContentLength + $_] -ne 0
+    }).Count -gt 0
+    Assert-True 'scenario5 kept content is NOT merely the (all-zero) stale-length region -- it reflects the live, grown file' $anyNonZero
 
 } finally {
     Remove-Item -Recurse -Force $tmpRoot -ErrorAction SilentlyContinue
 }
+
+# ============================================================ capture gate
+# Round-4 review finding 2: Get-GstDebugCaptureDecision is a pure function
+# (no filesystem) -- gate/aggregate-cap logic tested with synthetic inputs,
+# no live sandbox or real files needed at all.
+
+# scenario 6: a non-periodic label ('final', or an early-failure label)
+# is always attempted, as long as the aggregate cap has not been reached.
+$g6a = Get-GstDebugCaptureDecision -IsPeriodicCheckpoint $false -PeriodicCheckpointIndex 0 -EveryN 10 -AggregateBytesSoFar 0 -AggregateCapBytes 600MB
+Assert-True 'g6a (non-periodic, under cap) should_capture' $g6a.should_capture
+
+# scenario 7: the aggregate cap overrides EVERYTHING, including a
+# non-periodic ('final'-shaped) label.
+$g7 = Get-GstDebugCaptureDecision -IsPeriodicCheckpoint $false -PeriodicCheckpointIndex 0 -EveryN 10 -AggregateBytesSoFar 600MB -AggregateCapBytes 600MB
+Assert-True 'g7 (aggregate cap reached, non-periodic) should NOT capture' (-not $g7.should_capture)
+Assert-True 'g7 reason names the aggregate cap' ($g7.reason -match 'aggregate cap')
+
+# scenario 8: periodic checkpoint #1 is ALWAYS captured (an early
+# baseline), even though 1 is not a multiple of EveryN=10.
+$g8 = Get-GstDebugCaptureDecision -IsPeriodicCheckpoint $true -PeriodicCheckpointIndex 1 -EveryN 10 -AggregateBytesSoFar 0 -AggregateCapBytes 600MB
+Assert-True 'g8 (periodic checkpoint #1) should_capture' $g8.should_capture
+
+# scenario 9: periodic checkpoints #2-#9 (neither the first nor a
+# multiple of 10) are all gated OUT.
+foreach ($idx in 2..9) {
+    $g9 = Get-GstDebugCaptureDecision -IsPeriodicCheckpoint $true -PeriodicCheckpointIndex $idx -EveryN 10 -AggregateBytesSoFar 0 -AggregateCapBytes 600MB
+    Assert-True "g9 (periodic checkpoint #$idx) should NOT capture" (-not $g9.should_capture)
+}
+
+# scenario 10: periodic checkpoints #10, #20, #30 (multiples of
+# EveryN=10) ARE captured.
+foreach ($idx in @(10, 20, 30)) {
+    $g10 = Get-GstDebugCaptureDecision -IsPeriodicCheckpoint $true -PeriodicCheckpointIndex $idx -EveryN 10 -AggregateBytesSoFar 0 -AggregateCapBytes 600MB
+    Assert-True "g10 (periodic checkpoint #$idx, a multiple of 10) should_capture" $g10.should_capture
+}
+
+# scenario 11: #11 (one past a multiple, not itself a multiple, not the
+# first) is gated out again -- the "every Nth" gate is not "sticky".
+$g11 = Get-GstDebugCaptureDecision -IsPeriodicCheckpoint $true -PeriodicCheckpointIndex 11 -EveryN 10 -AggregateBytesSoFar 0 -AggregateCapBytes 600MB
+Assert-True 'g11 (periodic checkpoint #11) should NOT capture' (-not $g11.should_capture)
+
+# scenario 12: the aggregate cap also overrides a periodic checkpoint
+# that would otherwise be captured (e.g. #10, a multiple of 10).
+$g12 = Get-GstDebugCaptureDecision -IsPeriodicCheckpoint $true -PeriodicCheckpointIndex 10 -EveryN 10 -AggregateBytesSoFar 601MB -AggregateCapBytes 600MB
+Assert-True 'g12 (aggregate cap reached, periodic checkpoint #10) should NOT capture' (-not $g12.should_capture)
+
+# scenario 13: a different -EveryN (e.g. 5) is honored, not hardcoded.
+$g13a = Get-GstDebugCaptureDecision -IsPeriodicCheckpoint $true -PeriodicCheckpointIndex 5 -EveryN 5 -AggregateBytesSoFar 0 -AggregateCapBytes 600MB
+$g13b = Get-GstDebugCaptureDecision -IsPeriodicCheckpoint $true -PeriodicCheckpointIndex 6 -EveryN 5 -AggregateBytesSoFar 0 -AggregateCapBytes 600MB
+Assert-True 'g13a (EveryN=5, checkpoint #5) should_capture' $g13a.should_capture
+Assert-True 'g13b (EveryN=5, checkpoint #6) should NOT capture' (-not $g13b.should_capture)
 
 Write-Host ""
 Write-Host "GstDebugTail unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })

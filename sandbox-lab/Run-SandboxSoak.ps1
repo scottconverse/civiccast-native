@@ -641,6 +641,7 @@ function Get-ShipperHeartbeatUtc {
     return (Get-Item $p).LastWriteTimeUtc
 }
 
+
 $phase = 'installing'
 $installDeadlineUtc = $launchTimeUtc.AddMinutes($InstallBoundMinutes)
 $healthDeadlineUtc = $null
@@ -684,22 +685,38 @@ while ($true) {
             $healthDeadlineUtc = (Get-Item $installDoneMarker).LastWriteTimeUtc.AddMinutes($HealthBoundMinutes)
             Write-Step "phase -> awaiting-health (health bound: $($healthDeadlineUtc.ToString('o')))"
         } elseif ((Get-Date).ToUniversalTime() -gt $installDeadlineUtc) {
-            Write-StallAndExit -Reason "installer bound (${InstallBoundMinutes}m from launch $($launchTimeUtc.ToString('o'))) exceeded -- PHASE-INSTALL-DONE.json never appeared" -LaunchedPids $launchedPids -OutputDir $outputDir
+            # Round-4 review finding 4: give VERDICT.txt the same bounded
+            # grace (Wait-ForVerdictWithGrace, factored above) as
+            # awaiting-soak-start already does -- follow-up D added
+            # Write-HarnessErrorVerdictAndExit call sites (an unparsable
+            # -WorkerEnv value, a missing installer) that fire BEFORE
+            # PHASE-INSTALL-DONE.json is ever written, so a harness error
+            # here has the same in-principle shipper-tick race as the
+            # original awaiting-soak-start finding.
+            $graceResult = Wait-ForVerdictWithGrace -VerdictTxtPath $verdictTxtPath -PhaseDescription "installer bound (${InstallBoundMinutes}m from launch $($launchTimeUtc.ToString('o'))) exceeded" -LogSuccess { param($m) Write-Step $m }
+            if ($graceResult.verdict_arrived) { break }
+            Write-StallAndExit -Reason "installer bound (${InstallBoundMinutes}m from launch $($launchTimeUtc.ToString('o'))) exceeded -- PHASE-INSTALL-DONE.json never appeared, and VERDICT.txt still had not arrived after a $($graceResult.waited_seconds)s grace wait" -LaunchedPids $launchedPids -OutputDir $outputDir
         }
     } elseif ($phase -eq 'awaiting-health') {
         if (Test-Path $healthyMarker) {
             $phase = 'awaiting-soak-start'
             Write-Step "phase -> awaiting-soak-start (generic quiet-bound covers first-admin/assets/schedule/channel-start from here)"
         } elseif ((Get-Date).ToUniversalTime() -gt $healthDeadlineUtc) {
-            Write-StallAndExit -Reason "station-healthy bound (${HealthBoundMinutes}m from install-done) exceeded -- PHASE-HEALTHY.json never appeared" -LaunchedPids $launchedPids -OutputDir $outputDir
+            # Round-4 review finding 4: same grace, same reason -- follow-up
+            # D's own registry-write/verify harness-error call sites fire
+            # BEFORE PHASE-HEALTHY.json is ever written.
+            $graceResult = Wait-ForVerdictWithGrace -VerdictTxtPath $verdictTxtPath -PhaseDescription "station-healthy bound (${HealthBoundMinutes}m from install-done) exceeded" -LogSuccess { param($m) Write-Step $m }
+            if ($graceResult.verdict_arrived) { break }
+            Write-StallAndExit -Reason "station-healthy bound (${HealthBoundMinutes}m from install-done) exceeded -- PHASE-HEALTHY.json never appeared, and VERDICT.txt still had not arrived after a $($graceResult.waited_seconds)s grace wait" -LaunchedPids $launchedPids -OutputDir $outputDir
         }
     } elseif ($phase -eq 'awaiting-soak-start') {
         if (Test-Path $soakStartMarker) {
             # Round-follow-up-B finding: SOAK-START.json's mere EXISTENCE is
             # not proof the soak clock actually started -- In-Sandbox-Soak.ps1's
-            # own harness-error path (Write-VerdictAndExit's backstop, see its
-            # header) writes a SOAK-START.json of its own on a run that failed
-            # BEFORE reaching the real clock-start write, explicitly marked
+            # own harness-error path (Write-HarnessErrorVerdictAndExit's own
+            # backstop marker; see that function's header) writes a
+            # SOAK-START.json of its own on a run that failed BEFORE
+            # reaching the real clock-start write, explicitly marked
             # `harness_error_before_soak_start: true` with `soak_start_utc:
             # $null` so it is never mistaken for the real one. Flipping to
             # 'running' on that backstop marker armed a rollup-stall bound
@@ -716,24 +733,24 @@ while ($true) {
             if ($soakStartObj -and ($soakStartObj.harness_error_before_soak_start -eq $true -or $null -eq $soakStartObj.soak_start_utc)) {
                 # Round-follow-up-C finding: SOAK-START.json's backstop
                 # marker and VERDICT.txt/.json ride the SAME ~15s shipper
-                # tick (In-Sandbox-Soak.ps1:400/416-417/419's own write
-                # order) -- "SOAK-START.json" sorts before "VERDICT.txt" in
-                # a robocopy tick, so a tick that lands mid-write-sequence
-                # can ship the marker without yet shipping the verdict.
-                # Killing the VM the instant the marker is seen (the
-                # pre-fix behavior) could beat VERDICT.txt to the share by
-                # a matter of seconds, leaving the operator with only
-                # HOST-QUIET-SHARE.txt even though the real verdict had
-                # already been written in the guest. Give VERDICT.txt a
-                # bounded grace (Wait-ForVerdictAfterBackstopMarker,
-                # BackstopMarkerGrace.ps1 -- unit-tested in
+                # tick (In-Sandbox-Soak.ps1's shipper script, and
+                # Write-HarnessErrorVerdictAndExit's own write order --
+                # SOAK-START.json, then VERDICT.json/.txt, then
+                # Invoke-FinalFlush) -- "SOAK-START.json" sorts before
+                # "VERDICT.txt" in a robocopy tick, so a tick that lands
+                # mid-write-sequence can ship the marker without yet
+                # shipping the verdict. Killing the VM the instant the
+                # marker is seen (the pre-fix behavior) could beat
+                # VERDICT.txt to the share by a matter of seconds, leaving
+                # the operator with only HOST-QUIET-SHARE.txt even though
+                # the real verdict had already been written in the guest.
+                # Give VERDICT.txt a bounded grace (Wait-ForVerdictWithGrace,
+                # factored above, wrapping Wait-ForVerdictAfterBackstopMarker
+                # -- BackstopMarkerGrace.ps1, unit-tested in
                 # Test-BackstopMarkerGrace.ps1) before falling back to the
                 # quiet-share exit.
-                $graceResult = Wait-ForVerdictAfterBackstopMarker -TestVerdictPathExists { Test-Path $verdictTxtPath }
-                if ($graceResult.verdict_arrived) {
-                    Write-Step "SOAK-START.json is the harness-error backstop marker, but VERDICT.txt arrived after a $($graceResult.waited_seconds)s grace wait ($($graceResult.polls) poll(s)) -- taking the normal verdict path instead of a premature quiet-share exit."
-                    break
-                }
+                $graceResult = Wait-ForVerdictWithGrace -VerdictTxtPath $verdictTxtPath -PhaseDescription 'SOAK-START.json is the harness-error backstop marker' -LogSuccess { param($m) Write-Step $m }
+                if ($graceResult.verdict_arrived) { break }
                 Write-QuietShareAndExit -Reason "SOAK-START.json is the harness-error backstop marker (harness_error_before_soak_start=$($soakStartObj.harness_error_before_soak_start), soak_start_utc=$($soakStartObj.soak_start_utc)) -- the guest failed before the soak clock actually started, and VERDICT.txt still had not arrived after a $($graceResult.waited_seconds)s grace wait; see this run's own VERDICT.txt/.json for the underlying reason if it ships later" -LaunchedPids $launchedPids -OutputDir $outputDir
             } elseif ($soakStartObj) {
                 $phase = 'running'
