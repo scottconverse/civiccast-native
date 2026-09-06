@@ -61,6 +61,46 @@ class TestLoudnessComplianceRealFfmpeg:
         assert result.status == "ok"
         assert result.measured_lufs == -16.2
 
+    def test_loudness_probe_decodes_audio_only(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        """Item 66 follow-up (measured on HALO): an ebur128 pass on a 39-minute
+        clip took 46.7s -- it decodes video too, since nothing told ffmpeg not
+        to. ``-vn`` drops the video stream from the loudness probe entirely;
+        it never changes the LUFS measurement (video frames never feed
+        ebur128)."""
+        loudness_module = import_module("civiccast.stream.loudness")
+
+        media = tmp_path / "meeting.wav"
+        media.write_bytes(b"RIFFplaceholder")
+
+        captured: dict[str, list[str]] = {}
+
+        def _fake_run_ffmpeg(args: list[str]):
+            captured["args"] = args
+            return type(
+                "Result",
+                (),
+                {
+                    "returncode": 0,
+                    "stdout": "",
+                    "stderr": "Integrated loudness:\n    I:         -16.2 LUFS\n",
+                },
+            )()
+
+        monkeypatch.setattr(loudness_module, "check_ffmpeg", lambda: ("7.0", True))
+        monkeypatch.setattr(loudness_module, "run_ffmpeg", _fake_run_ffmpeg)
+
+        loudness_module.check_streaming_loudness(
+            media_path=media,
+            target_lufs=-16.0,
+            tolerance_lufs=1.0,
+        )
+
+        assert "-vn" in captured["args"]
+
 
 class TestCheckLoudnessGeneralized:
     """S11b: check_loudness parameterises the standard label + target so cable

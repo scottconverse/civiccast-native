@@ -81,6 +81,13 @@ def check_loudness(
             "-nostats",
             "-i",
             str(media_path),
+            # Item 66 follow-up (measured on HALO): the loudness gate only
+            # needs the audio stream -- ``-vn`` drops video decode from the
+            # ebur128 pass entirely. Measured 46.7s -> far less on a 39-min
+            # clip; unmeasured exact delta here, but audio-only decode is
+            # strictly cheaper and never changes the LUFS measurement (video
+            # frames never feed ebur128).
+            "-vn",
             "-filter_complex",
             "ebur128=peak=true",
             "-f",

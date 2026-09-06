@@ -32,6 +32,7 @@ import hashlib
 import json
 import logging
 import os
+import queue
 import shutil
 import threading
 import time
@@ -49,7 +50,11 @@ from civiccast.egress.models import (
 )
 from civiccast.egress.runtime import FfmpegRunner
 from civiccast.stream._ffmpeg import run_ffmpeg
-from civiccast.stream.loudness import LoudnessGateResult, check_streaming_loudness
+from civiccast.stream.loudness import (
+    DEFAULT_LOUDNESS_STANDARD,
+    LoudnessGateResult,
+    check_streaming_loudness,
+)
 
 LoudnessChecker = Callable[..., LoudnessGateResult]
 _LOG = logging.getLogger(__name__)
@@ -91,9 +96,49 @@ def _dir_size_bytes(directory: Path) -> int:
     return total
 
 
+_warm_queue: queue.Queue[Callable[[], None]] = queue.Queue()
+_warm_worker_lock = threading.Lock()
+_warm_worker_started = False
+
+
+def _warm_worker() -> None:
+    """Single background worker draining ``_warm_queue`` FIFO, one job at a
+    time, forever -- see ``_default_warm_scheduler``. A job's own exception
+    handling (``_schedule_warm``'s ``_job`` already catches and logs) should
+    make this outer catch unreachable in practice; it exists purely so a
+    bug in that handling can never permanently kill warming for the rest of
+    the process (the worker is started exactly once -- see
+    ``_warm_worker_started`` -- so a thread that dies uncaught would never
+    be replaced)."""
+    while True:
+        job = _warm_queue.get()
+        try:
+            job()
+        except Exception:
+            _LOG.exception("Conform-cache warm job raised past its own error handling.")
+        finally:
+            _warm_queue.task_done()
+
+
 def _default_warm_scheduler(job: Callable[[], None]) -> None:
-    """Run a cache warm on a daemon thread (production default)."""
-    threading.Thread(target=job, name="conform-cache-warm", daemon=True).start()
+    """Queue a cache warm onto a single background worker (production
+    default).
+
+    Item 66 (point 4, Opus review): this used to spawn one daemon thread
+    PER job -- unbounded, so every distinct asset aired while a previous
+    warm was still running got its own thread, all contending for CPU with
+    the synchronous foreground conforms this whole feature exists to keep
+    fast. Now FIFO through one long-lived worker: at most one background
+    warm conform runs at a time, queued jobs simply wait. ``_schedule_warm``'s
+    own per-key dedupe (``self._warming``) still prevents the same asset
+    from being queued twice while its warm is pending or running.
+    """
+    global _warm_worker_started
+    with _warm_worker_lock:
+        if not _warm_worker_started:
+            threading.Thread(target=_warm_worker, name="conform-cache-warm", daemon=True).start()
+            _warm_worker_started = True
+    _warm_queue.put(job)
 
 
 def _cache_budget_bytes() -> float:
@@ -103,6 +148,22 @@ def _cache_budget_bytes() -> float:
     except ValueError:
         gb = _DEFAULT_CACHE_GB
     return gb * 1e9
+
+
+def _foreground_thread_cap() -> int:
+    """Item 66 (point 2, Opus review, measured on HALO): conforming 300s of
+    content at ``-threads 1`` took 233s vs 36.6s unthrottled -- the
+    original item-66 fix's unconditional single-threaded background=False
+    knob was dead on the shipped default (``playout_trim_supported=False``)
+    and, once reached via ``EgressDaemon._try_content_reload``'s
+    synchronous prepare on the ffmpeg-concat engine (``daemon.py`` around
+    line 1839, which can run while another channel is genuinely on air),
+    fully unthrottled foreground encodes would starve everything else on
+    the box. Cap foreground (synchronous, blocks the caller) conforms at
+    half the machine's cores instead of leaving them fully unbounded or
+    fully serialized."""
+    cpu_count = os.cpu_count() or 2
+    return max(1, cpu_count // 2)
 
 
 @dataclass(frozen=True)
@@ -226,12 +287,19 @@ class SourcePreparer:
         return data if isinstance(data, dict) else None
 
     def _write_cache_meta(self, key: str, loudness: LoudnessGateResult, normalized: bool) -> None:
+        """Item 66 (point 1): now also called BEFORE any conform for this
+        asset exists (a loudness-only probe result, persisted early so
+        later segments of the same asset can skip re-probing) -- so this
+        must create the cache directory itself rather than assume a conform
+        call already did."""
+        cache_dir = self._cache_dir()
+        cache_dir.mkdir(parents=True, exist_ok=True)
         meta = {
             "loudness_status": loudness.status,
             "measured_lufs": loudness.measured_lufs,
             "normalized": normalized,
         }
-        (self._cache_dir() / f"{key}.json").write_text(json.dumps(meta), encoding="utf-8")
+        (cache_dir / f"{key}.json").write_text(json.dumps(meta), encoding="utf-8")
 
     def _conform_lock(self, key: str) -> threading.Lock:
         """A per-cache-key lock: a background warm and a foreground
@@ -248,25 +316,25 @@ class SourcePreparer:
         loudness: LoudnessGateResult,
         normalized: bool,
         *,
-        background: bool = True,
+        threads: int = 1,
     ) -> Path:
         """Conform the WHOLE asset (no trim) into the cache, atomically.
 
-        ``background`` (item 66): the warm-behind path (``_schedule_warm``)
-        always conforms off the automation thread and keeps the default
-        ``True`` -- single-threaded (``-threads 1``, see
-        ``build_conform_source_args``) so it can never starve the on-air
-        encoder. The synchronous start-path call (the untrimmed-MISS branch
-        in ``_prepare_segment``, reachable only when
-        ``self._playout_trim_supported`` is True -- see the guard added
-        there) passes ``background=False`` explicitly: that call blocks
-        ``prepare()`` and therefore first ON_AIR, so it gets a full-speed
-        multi-threaded encode instead of being capped at one thread on the
-        very path latency matters most for.
+        ``threads`` (item 66, revised): the warm-behind path
+        (``_schedule_warm``) keeps the default ``1`` -- single-threaded, so a
+        background warm can never starve the on-air encoder. The synchronous
+        start-path call (the untrimmed-MISS branch in ``_prepare_segment``,
+        reachable only when ``self._playout_trim_supported`` is True -- see
+        the guard there) passes ``_foreground_thread_cap()`` instead: an
+        Opus-review follow-up found the original fix's unconditional
+        ``background=False`` (fully unthrottled) starved the ffmpeg-concat
+        engine's synchronous content-reload prepare (``daemon.py``'s
+        ``_try_content_reload``, which runs this call ON the automation
+        thread while other channels may be on air) -- a bounded cap keeps
+        the synchronous path fast without letting it claim every core.
         """
-        cache_dir = self._cache_dir()
-        final = cache_dir / f"{key}.ts"
         with self._conform_lock(key):
+            cache_dir = self._cache_dir()
             cache_dir.mkdir(parents=True, exist_ok=True)
             tmp = cache_dir / f"{key}.ts.tmp"
             args = build_conform_source_args(
@@ -275,12 +343,7 @@ class SourcePreparer:
                 segment=None,
                 profile=config.canonical_profile,
                 loudness_target_lufs=config.loudness_target_lufs if normalized else None,
-                # ponytail: single-threaded background encode so a warm can't
-                # starve the on-air encoder; add priority-class control if
-                # field data shows starvation anyway. The synchronous
-                # start-path caller opts out (background=False) -- see the
-                # docstring above.
-                background=background,
+                threads=threads,
             )
             result = self._ffmpeg_runner(args)
             if result.returncode != 0:
@@ -288,19 +351,48 @@ class SourcePreparer:
                 raise SourcePrepareError(
                     f"Full-asset conform for cache failed for {source_path.name!r}."
                 )
-            tmp.replace(final)
-            self._write_cache_meta(key, loudness, normalized)
-            self._evict_cache_over_budget()
-            if not final.exists():
-                # The just-written entry alone exceeded the budget and was
-                # evicted by the call above -- fail cleanly instead of
-                # returning a path the encoder will find missing at air time.
-                (cache_dir / f"{key}.json").unlink(missing_ok=True)
-                raise SourcePrepareError(
-                    f"Conform-cache budget too small to retain {source_path.name!r}; "
-                    "increase CIVICCAST_CONFORM_CACHE_GB or exclude this asset."
-                )
-            return final
+            return self._promote_conform_into_cache(key, tmp, source_path, loudness, normalized)
+
+    def _promote_conform_into_cache(
+        self,
+        key: str,
+        tmp: Path,
+        source_path: Path,
+        loudness: LoudnessGateResult,
+        normalized: bool,
+    ) -> Path:
+        """Move an already-conformed ``tmp`` file (a full-asset conform, no
+        trim) into the persistent conform cache atomically: rename into
+        place, write the sidecar meta, run eviction, and fail cleanly if the
+        just-written entry alone exceeds budget.
+
+        Shared tail of two call sites: ``_conform_full_asset_into_cache``
+        (which runs the ffmpeg conform itself, under ``self._conform_lock``
+        for the whole call -- ``tmp`` there already lives at the SHARED
+        ``{key}.ts.tmp`` cache path, so the lock must cover the ffmpeg run
+        too, not just this promotion) and (item 66, point 3)
+        ``_prepare_segment``'s untrimmed-foreground-conform path, whose
+        ffmpeg run already wrote to a PRIVATE per-plan ``.tmp`` file no
+        other writer can reach -- only the move into the shared cache path
+        needs the lock there, acquired at that call site around just this
+        method.
+        """
+        cache_dir = self._cache_dir()
+        final = cache_dir / f"{key}.ts"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        tmp.replace(final)
+        self._write_cache_meta(key, loudness, normalized)
+        self._evict_cache_over_budget()
+        if not final.exists():
+            # The just-written entry alone exceeded the budget and was
+            # evicted by the call above -- fail cleanly instead of
+            # returning a path the encoder will find missing at air time.
+            (cache_dir / f"{key}.json").unlink(missing_ok=True)
+            raise SourcePrepareError(
+                f"Conform-cache budget too small to retain {source_path.name!r}; "
+                "increase CIVICCAST_CONFORM_CACHE_GB or exclude this asset."
+            )
+        return final
 
     def _emit_prepared_from_cache(
         self,
@@ -662,9 +754,9 @@ class SourcePreparer:
         # probing (#156: an aired-before program starts within seconds). Trim is
         # applied at playout when the engine supports it, else as a fast
         # stream-copy into the per-plan output.
+        meta = self._read_cache_meta(key) if key is not None else None
         if key is not None:
             cached_ts = self._cache_dir() / f"{key}.ts"
-            meta = self._read_cache_meta(key)
             if cached_ts.is_file() and meta is not None:
                 os.utime(cached_ts)  # refresh the eviction clock on hit
                 return self._emit_prepared_from_cache(
@@ -681,17 +773,52 @@ class SourcePreparer:
                     normalized=bool(meta.get("normalized", False)),
                 )
 
-        loudness = self._loudness_checker(
-            media_path=source_path,
-            target_lufs=config.loudness_target_lufs,
-            tolerance_lufs=config.loudness_tolerance_lufs,
-        )
-        if loudness.status != "ok" and loudness.measured_lufs is None:
-            raise SourcePrepareError(
-                f"Egress source {segment.label!r} could not be measured for loudness: "
-                f"{loudness.operator_action}"
+        if meta is not None:
+            # Item 66 (point 1, Opus review): the full conform isn't cached
+            # yet, but a loudness probe for this SAME asset fingerprint
+            # already ran and its meta was persisted -- by an earlier
+            # segment of this asset in this very prepare() call, or an
+            # earlier prepare() call whose warm never landed. Reuse it: an
+            # 8-segment plan of one asset used to mean 8 full-file ebur128
+            # passes (measured ~46.7s each on a 39-min clip) all on the
+            # synchronous start path; now it's exactly one.
+            loudness_status = str(meta.get("loudness_status", "ok"))
+            loudness = LoudnessGateResult(
+                status=loudness_status,
+                standard=DEFAULT_LOUDNESS_STANDARD,
+                target_lufs=config.loudness_target_lufs,
+                used_ffmpeg_wrapper=True,
+                measured_lufs=(
+                    float(lufs)
+                    if isinstance(lufs := meta.get("measured_lufs"), int | float)
+                    else None
+                ),
+                operator_action=(
+                    "Loudness is within tolerance."
+                    if loudness_status == "ok"
+                    else f"Normalize audio to {config.loudness_target_lufs:g} LUFS "
+                    "and rerun the loudness gate."
+                ),
             )
-        normalized = loudness.status != "ok"
+            normalized = bool(meta.get("normalized", False))
+        else:
+            loudness = self._loudness_checker(
+                media_path=source_path,
+                target_lufs=config.loudness_target_lufs,
+                tolerance_lufs=config.loudness_tolerance_lufs,
+            )
+            if loudness.status != "ok" and loudness.measured_lufs is None:
+                raise SourcePrepareError(
+                    f"Egress source {segment.label!r} could not be measured for loudness: "
+                    f"{loudness.operator_action}"
+                )
+            normalized = loudness.status != "ok"
+            if key is not None:
+                # Persist the probe result immediately -- BEFORE any conform
+                # runs -- so every other segment of this asset (this
+                # prepare() call or a later one) skips the probe too, even
+                # though the full-asset conform itself may still be a MISS.
+                self._write_cache_meta(key, loudness, normalized)
 
         # Untrimmed MISS: the full-asset conform IS what airs — conform it once,
         # directly into the cache, then emit from the cache (duration truncation
@@ -705,11 +832,12 @@ class SourcePreparer:
         # playout (the GStreamer engine), fall through to the trimmed-MISS
         # branch below instead: it conforms only the wanted window
         # (``-t segment.duration_seconds``) straight to the prepared file --
-        # bounded, not a whole-clip re-encode -- and schedules the full-asset
-        # warm behind it for later airings.
+        # bounded, not a whole-clip re-encode -- and (point 3) promotes that
+        # same conform straight into the cache instead of scheduling a
+        # redundant warm.
         if key is not None and not trimmed and self._playout_trim_supported:
             cached_ts = self._conform_full_asset_into_cache(
-                key, source_path, config, loudness, normalized, background=False
+                key, source_path, config, loudness, normalized, threads=_foreground_thread_cap()
             )
             return self._emit_prepared_from_cache(
                 cached_ts,
@@ -726,8 +854,14 @@ class SourcePreparer:
         # (self._playout_trim_supported is False, e.g. GStreamer): either way
         # conform only the wanted window straight to air -- bounded by
         # ``-t segment.duration_seconds`` in build_conform_source_args below,
-        # never a whole-clip re-encode -- and warm the full-asset cache behind
-        # it for next time.
+        # never a whole-clip re-encode. Foreground (synchronous) conforms are
+        # thread-capped rather than single-threaded or unbounded (point 2,
+        # Opus review, measured on HALO): this call is reachable both on
+        # first ON_AIR and on ``EgressDaemon._try_content_reload``'s
+        # synchronous prepare while another channel may be on air
+        # (``daemon.py`` around line 1839) -- fully serializing it
+        # (233s/300s measured) regressed latency there, and leaving it fully
+        # unbounded (36.6s/300s) risked starving everything else on the box.
         # H5 fix (atomic write, second half): same tmp+rename pattern as the
         # cache-hit stream-copy branch above -- see that branch's comment.
         # F7 fix: create the per-plan directory lazily -- see the sibling
@@ -740,6 +874,7 @@ class SourcePreparer:
             segment=segment,
             profile=config.canonical_profile,
             loudness_target_lufs=config.loudness_target_lufs if normalized else None,
+            threads=_foreground_thread_cap(),
         )
         result = self._ffmpeg_runner(args)
         if result.returncode != 0:
@@ -747,8 +882,38 @@ class SourcePreparer:
             raise SourcePrepareError(
                 f"Egress source {segment.label!r} could not be conformed; inspect FFmpeg output."
             )
+
+        if key is not None and not trimmed:
+            # Item 66 (point 3, Opus review): an UNTRIMMED segment is, by
+            # definition, the whole asset (source_plan.py's untrimmed-segment
+            # contract) -- this bounded conform's output already IS the
+            # full-asset conform the persistent cache wants. Promote it
+            # straight in instead of throwing the work away and scheduling a
+            # warm to reconform the identical bytes a second time; emit the
+            # per-plan segment from the cache via the normal cache-hit path
+            # (a fast ``-c copy`` window, since this is only reached when
+            # ``self._playout_trim_supported`` is False -- see the guard
+            # above).
+            with self._conform_lock(key):
+                cached_ts = self._promote_conform_into_cache(
+                    key, tmp_output_path, source_path, loudness, normalized
+                )
+            return self._emit_prepared_from_cache(
+                cached_ts,
+                segment,
+                source_path=source_path,
+                output_path=output_path,
+                loudness_status=loudness.status,
+                measured_lufs=loudness.measured_lufs,
+                normalized=normalized,
+            )
+
         tmp_output_path.replace(output_path)
         if key is not None:
+            # Only a genuinely TRIMMED miss reaches here (the untrimmed case
+            # returns above) -- this window is NOT the whole asset, so warm
+            # the full-asset cache behind it for later airings, same as
+            # before item 66.
             self._schedule_warm(key, source_path, config, loudness, normalized)
         return (
             EgressSourceSegment(
@@ -776,14 +941,25 @@ def build_conform_source_args(
     segment: EgressSourceSegment | None,
     profile: CanonicalProfile,
     loudness_target_lufs: float | None = None,
-    background: bool = False,
+    threads: int | None = None,
 ) -> list[str]:
     """Build FFmpeg args that conform one media source to the canonical profile.
 
     ``segment=None`` conforms the WHOLE asset (no ``-ss``/``-t``) — the
     persistent conform-cache unit; trim happens at playout via the ffconcat
-    plan. ``background=True`` caps the encode at one thread so a warm-behind
-    conform cannot starve the on-air encoder.
+    plan.
+
+    ``threads`` (item 66, revised after Opus review): when given, caps the
+    encode at that many threads (``-threads <N>``); ``None`` leaves ffmpeg's
+    own default untouched. Warm-behind conforms (``_schedule_warm`` /
+    ``_conform_full_asset_into_cache``'s default) pass ``threads=1`` so a
+    background warm can never starve the on-air encoder. Synchronous
+    (foreground) conforms pass ``_foreground_thread_cap()`` instead of
+    either extreme -- the original item-66 fix's unconditional single
+    thread measured 233s for a 300s foreground conform on HALO vs 36.6s
+    fully unthrottled, an unacceptable regression on the synchronous
+    start/content-reload path (``daemon.py``'s ``_try_content_reload``,
+    which can run this call while another channel is genuinely on air).
     """
 
     args = ["-hide_banner", "-loglevel", "warning"]
@@ -802,8 +978,8 @@ def build_conform_source_args(
     args.extend(["-vf", ",".join(filters)])
     if loudness_target_lufs is not None:
         args.extend(["-af", f"loudnorm=I={loudness_target_lufs:g}:LRA=11:TP=-1.5"])
-    if background:
-        args.extend(["-threads", "1"])
+    if threads is not None:
+        args.extend(["-threads", str(threads)])
     args.extend(
         [
             "-c:v",

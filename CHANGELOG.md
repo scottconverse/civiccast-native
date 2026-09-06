@@ -40,25 +40,64 @@ below.
 - **First ON_AIR no longer waits for a whole-clip re-encode (item 66).**
   MEASURED: a fresh station took 8.5-12+ minutes to first ON_AIR because
   `civiccast/egress/preparer.py`'s `_prepare_segment` conformed the WHOLE
-  first asset synchronously, single-threaded (`-threads 1`), on the
-  automation thread before the channel could start, and every channel
-  queued behind that one conform. Two fixes: (1)
-  `_conform_full_asset_into_cache` now takes a `background` parameter
-  (default `True`, forwarded to `build_conform_source_args`) instead of
-  hardcoding the single-threaded background encode -- the synchronous
-  start-path call now passes `background=False` so it runs at full speed
-  instead of capped at one thread on the path where speed matters most; the
-  warm-behind path (`_schedule_warm`) is unaffected and still conforms
-  single-threaded so a warm can never starve the on-air encoder. (2) an
-  untrimmed cache MISS now only takes the whole-asset synchronous conform
-  when the playout engine can actually use the result
-  (`self._playout_trim_supported`, true only for the legacy ffmpeg-concat
-  engine); on the GStreamer engine (`playout_trim_supported=False`) an
-  untrimmed miss now falls through to the existing bounded per-segment
-  conform (`-t <duration>`, no full-asset re-encode) and schedules the
-  full-asset cache warm behind it, the same latency shape the trimmed-MISS
-  path already had. Behavior for `playout_trim_supported=True` is
-  unchanged.
+  first asset synchronously on the automation thread before the channel
+  could start, and every channel queued behind that one conform. An initial
+  pass at this fix also tried making the synchronous conform single-threaded
+  (`-threads 1`) or fully unthrottled, and probing loudness once per
+  segment; an Opus review measured both of those choices on real hardware
+  (HALO) and found real regressions, so the shipped fix is different from
+  that first pass. What actually ships, all measured on HALO:
+  - **A foreground thread cap, not `-threads 1` and not unthrottled.**
+    Conforming 300s of content took 233s at `-threads 1` vs 36.6s fully
+    unthrottled — serializing every synchronous conform to one thread (the
+    first pass's fix) was itself the kind of regression item 66 exists to
+    close, and it's reachable outside first-ON_AIR too:
+    `EgressDaemon._try_content_reload` (`daemon.py` around line 1839) runs
+    this same synchronous conform on the automation thread on the legacy
+    ffmpeg-concat engine while ANOTHER channel may genuinely be on air, so
+    fully unthrottled isn't safe there either. `build_conform_source_args`
+    now takes a `threads: int | None` argument instead of a `background:
+    bool` flag: warm-behind conforms (`_schedule_warm`) still pass
+    `threads=1` (a background warm must never starve the on-air encoder),
+    but every SYNCHRONOUS conform — first-ON_AIR and the content-reload path
+    above — now passes a cap of `max(1, os.cpu_count() // 2)` instead. This
+    is a real behavior change for `playout_trim_supported=True` (the legacy
+    ffmpeg-concat engine): its synchronous untrimmed-MISS conform used to run
+    fully unthrottled and is now thread-capped too.
+  - **Loudness probing is memoized per asset, not per segment.** A
+    `ebur128` loudness pass on a 39-minute clip took 46.7s (it decodes video
+    too — `check_loudness` in `civiccast/stream/loudness.py` now passes
+    `-vn`, audio-only decode, cutting that cost). An 8-segment plan of one
+    asset (8 distinct trims of the same recording) used to mean 8 full-file
+    probes — ~6.3 minutes, still on the synchronous start path. `_prepare_segment`
+    now consults the persisted cache meta (`_read_cache_meta`, keyed by the
+    same source fingerprint `_cache_key` uses) BEFORE probing; a miss probes
+    once and writes the meta immediately — even before any conform for that
+    asset exists — so every other segment of the same asset, in this
+    `prepare()` call or a later one, reuses it instead of re-probing.
+  - **An untrimmed foreground conform now populates the cache directly
+    instead of scheduling a redundant warm.** Untrimmed segments are the
+    full asset by definition (`source_plan.py`'s untrimmed-segment
+    contract) — on the GStreamer engine an untrimmed MISS's bounded
+    conform (`-t <duration>`) IS already a full-asset conform, so it's
+    promoted straight into the persistent cache (`tmp.replace(...)` +
+    `_write_cache_meta`) and the per-plan segment is produced from the
+    cache via the normal copy-out path, instead of writing the same bytes
+    once to the per-plan file and then a second time via a background
+    warm. TRIMMED misses are unchanged: bounded conform straight to air,
+    full-asset warm scheduled behind it.
+  - **The warm scheduler is a single-worker FIFO queue, not one thread per
+    job.** `_default_warm_scheduler` used to spawn an unbounded daemon
+    thread per warm job; it now queues onto one long-lived background
+    worker, so at most one warm conform runs at a time regardless of how
+    many distinct assets are warming. The existing per-key dedupe
+    (`self._warming`) is unchanged.
+  See `docs/ops/channel-egress-runbook.md`'s new "Cache HIT accuracy vs MISS
+  accuracy" note: after this change, a cache MISS's bounded conform
+  re-encodes its window sample-accurately, while a later cache HIT's
+  copy-out still floors to the previous keyframe (up to ~2s early) — so a
+  later airing of the same asset can start slightly less precisely than the
+  first, which is the opposite of what "cached = better" intuition suggests.
 - **A seamless plan rollover collided its own concat aggregators, silently
   failed to join the pipeline, and was acked "applied" anyway -- so
   automation kept re-triggering it forever while the channel bounced.**

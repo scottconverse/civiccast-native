@@ -225,6 +225,16 @@ itself — no CLI worker needed. Posture for a three-channel station:
   one GOP — about 2 seconds — early); on the GStreamer engine the cached copy is
   re-cut by stream copy rather than re-encoded, which costs seconds, not
   minutes.
+- **Cache HIT accuracy vs MISS accuracy (item 66):** a cache HIT's window is a
+  `-c copy` cut out of the shared conform (fast, but floors to the previous
+  keyframe — up to ~2 seconds early, per the keyframe note above); a cache
+  MISS's bounded conform re-encodes the exact wanted window sample-accurately.
+  On the GStreamer engine this means the FIRST airing of an asset (a MISS,
+  re-encoded) can start slightly more precisely than a LATER airing of the
+  same asset served from the cache (a HIT, keyframe-floored) — the opposite of
+  what "cache = faster and better" intuition suggests. Neither is a defect;
+  don't read a later airing's ~2s-early start as a regression from the first.
+
 - Never run the inline automation driver AND a `civiccast egress run` CLI
   worker for the same channels: two daemons would race the same durable
   command queue.

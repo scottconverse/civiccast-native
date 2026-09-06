@@ -882,18 +882,47 @@ def test_cache_hit_stream_copies_when_engine_cannot_trim(tmp_path: Path) -> None
 
 
 # ---------------------------------------------------------------------------
-# Item 66 — first ON_AIR no longer waits behind a whole-clip single-threaded
-# conform on the synchronous start path.
+# Item 66 — first ON_AIR no longer waits behind a whole-clip conform on the
+# synchronous start path. Revised after Opus review of PR #180: the original
+# single-threaded (`-threads 1`) foreground conform and unconditional
+# untrimmed-MISS-into-cache promotion both measured badly on real hardware
+# (HALO) and are replaced below by a thread cap, per-asset loudness
+# memoization, foreground-conform-promotes-into-cache, and a single-worker
+# warm queue.
 # ---------------------------------------------------------------------------
 
 
-def test_conform_full_asset_into_cache_background_flag_controls_threads(tmp_path: Path) -> None:
-    """``_conform_full_asset_into_cache``'s ``background`` parameter must reach
-    ``build_conform_source_args``: the warm-behind path (default,
-    ``background=True``) still caps the encode at one thread, but the
-    synchronous start-path caller (``background=False``) must NOT -- that is
-    the whole point of item 66's fix, so assert both sides explicitly rather
-    than only the one the bug report cared about."""
+def test_build_conform_source_args_threads_param(tmp_path: Path) -> None:
+    """``build_conform_source_args``'s ``threads`` argument (replacing the
+    old boolean ``background`` flag) emits ``-threads <N>`` only when given,
+    and omits the flag entirely (ffmpeg's own default) when ``None``."""
+    source = tmp_path / "source.mp4"
+    output = tmp_path / "prepared.ts"
+    profile = _config().canonical_profile
+
+    default_args = build_conform_source_args(
+        source_path=source, output_path=output, segment=None, profile=profile
+    )
+    assert "-threads" not in default_args
+
+    capped_args = build_conform_source_args(
+        source_path=source, output_path=output, segment=None, profile=profile, threads=3
+    )
+    assert capped_args[capped_args.index("-threads") : capped_args.index("-threads") + 2] == [
+        "-threads",
+        "3",
+    ]
+
+
+def test_conform_full_asset_into_cache_thread_param(tmp_path: Path) -> None:
+    """``_conform_full_asset_into_cache``'s ``threads`` parameter must reach
+    ``build_conform_source_args``: the warm-behind path (default, ``threads=1``)
+    still caps the encode at one thread so a background warm can never starve
+    the on-air encoder, but an explicit foreground cap must be honored
+    verbatim for the synchronous caller (point 2, Opus review: the prior
+    unconditional ``background=False`` -- fully unthrottled -- measured
+    233s/300s at `-threads 1` vs 36.6s/300s unthrottled on HALO, an
+    unacceptable regression on the synchronous content-reload path)."""
     calls: list[list[str]] = []
     preparer = SourcePreparer(
         work_dir=tmp_path / "work",
@@ -916,28 +945,30 @@ def test_conform_full_asset_into_cache_background_flag_controls_threads(tmp_path
     ]
 
     # A different source (different cache key) so the second call is not
-    # short-circuited by the first call's cache entry -- exercise the
-    # synchronous start-path shape (background=False) explicitly.
+    # short-circuited by the first call's cache entry -- exercise an
+    # explicit foreground cap.
     source2 = tmp_path / "long-recording-2.mp4"
     source2.write_text("different fake long media", encoding="utf-8")
     key_fg = preparer._cache_key(source2, config)
     assert key_fg is not None
     calls.clear()
-    preparer._conform_full_asset_into_cache(
-        key_fg, source2, config, loudness, False, background=False
-    )
-    start_path_args = calls[-1]
-    assert "-threads" not in start_path_args
+    preparer._conform_full_asset_into_cache(key_fg, source2, config, loudness, False, threads=4)
+    fg_args = calls[-1]
+    assert fg_args[fg_args.index("-threads") : fg_args.index("-threads") + 2] == [
+        "-threads",
+        "4",
+    ]
 
 
-def test_untrimmed_miss_runs_bounded_conform_when_engine_cannot_trim(tmp_path: Path) -> None:
-    """Item 66: with the GStreamer engine (``playout_trim_supported=False``,
-    the constructor default) an untrimmed cache MISS must NOT take the
-    whole-asset synchronous conform (measured 8.5-12+ min to first ON_AIR on
-    a fresh station) -- it must fall through to the bounded per-segment
-    conform (``-t <duration>``) straight to the prepared file, and schedule
-    the full-asset warm behind it, exactly like the existing trimmed-MISS
-    path."""
+def test_untrimmed_miss_runs_bounded_conform_and_promotes_into_cache(tmp_path: Path) -> None:
+    """Item 66, points 2+3: with the GStreamer engine (``playout_trim_supported
+    =False``, the constructor default) an untrimmed cache MISS must NOT take
+    the whole-asset synchronous conform (measured 8.5-12+ min to first
+    ON_AIR on a fresh station) -- it falls through to a bounded per-segment
+    conform (``-t <duration>``, thread-capped, not single-threaded/unthrottled).
+    Because an untrimmed segment IS the whole asset by definition, that
+    bounded conform's output is promoted straight into the persistent
+    conform cache instead of a redundant warm being scheduled."""
     calls: list[list[str]] = []
     warm_jobs: list = []
     preparer = SourcePreparer(
@@ -951,21 +982,62 @@ def test_untrimmed_miss_runs_bounded_conform_when_engine_cannot_trim(tmp_path: P
 
     report = preparer.prepare(_untrimmed_plan(tmp_path), _config())
 
-    assert len(calls) == 1
-    args = calls[0]
-    assert args[args.index("-t") : args.index("-t") + 2] == ["-t", "3600"]
-    assert "conform-cache" not in args[-1]  # bounded conform to the per-plan file, not the cache
+    # Two ffmpeg calls: (1) the bounded foreground conform into a private
+    # per-plan tmp file, then (2) _emit_prepared_from_cache's normal `-c
+    # copy` copy-out from the now-populated cache into the per-plan output
+    # (the same shape a genuine cache HIT would take) -- never a second
+    # re-encode of the asset.
+    assert len(calls) == 2
+    conform_args = calls[0]
+    assert conform_args[conform_args.index("-t") : conform_args.index("-t") + 2] == [
+        "-t",
+        "3600",
+    ]
+    assert "-threads" in conform_args  # foreground-capped, not unthrottled/single-threaded
+    assert "conform-cache" not in conform_args[-1]  # conforms to a private per-plan tmp, not the
+    # cache path directly -- the promotion is a Python rename, not an ffmpeg output target.
+    copy_out_args = calls[1]
+    assert copy_out_args[copy_out_args.index("-c") : copy_out_args.index("-c") + 2] == [
+        "-c",
+        "copy",
+    ]
+    assert "-b:v" not in copy_out_args  # no re-encode on the copy-out
     seg = report.source_plan.segments[0]
-    assert "conform-cache" not in seg.path  # per-plan output emitted, not the cache object
-    assert len(warm_jobs) == 1  # full-asset cache warm scheduled behind it
+    assert "conform-cache" not in seg.path  # per-plan output emitted via copy-out
+    assert len(warm_jobs) == 0  # no redundant warm -- this conform already populated the cache
+
+    key = preparer._cache_key(tmp_path / "long-recording.mp4", _config())
+    assert key is not None
+    assert (tmp_path / "work" / "conform-cache" / f"{key}.ts").is_file()
+    assert (tmp_path / "work" / "conform-cache" / f"{key}.json").is_file()
+
+    # A second prepare() of the same asset is now a genuine cache HIT: the
+    # engine still can't trim at playout, so it costs one fast `-c copy`
+    # copy-out (never a re-encode) and zero warms -- never a second
+    # full-asset conform.
+    calls.clear()
+    warm_jobs.clear()
+    preparer.prepare(_untrimmed_plan(tmp_path), _config())
+    assert len(calls) == 1
+    hit_copy_args = calls[0]
+    assert hit_copy_args[hit_copy_args.index("-c") : hit_copy_args.index("-c") + 2] == [
+        "-c",
+        "copy",
+    ]
+    assert "-b:v" not in hit_copy_args
+    assert warm_jobs == []
 
 
 def test_untrimmed_miss_still_conforms_full_asset_when_engine_can_trim(tmp_path: Path) -> None:
     """Companion to the test above: with ``playout_trim_supported=True`` (the
-    legacy ffmpeg-concat engine) behavior is UNCHANGED by item 66 -- an
-    untrimmed miss still conforms the whole asset synchronously straight into
-    the cache (no ``-t``/``-ss``), matching the pre-existing
-    ``test_aired_before_asset_prepares_with_zero_ffmpeg_work`` contract."""
+    legacy ffmpeg-concat engine) the SHAPE of an untrimmed miss is unchanged
+    by item 66 -- it still conforms the whole asset synchronously straight
+    into the cache (no ``-t``/``-ss``), matching the pre-existing
+    ``test_aired_before_asset_prepares_with_zero_ffmpeg_work`` contract.
+    What DOES change (point 2, Opus review): this synchronous conform is now
+    thread-capped rather than fully unthrottled, since it is reachable
+    outside first-ON_AIR too (``EgressDaemon._try_content_reload``'s
+    synchronous prepare while another channel may be on air)."""
     calls: list[list[str]] = []
     preparer = SourcePreparer(
         work_dir=tmp_path / "work",
@@ -981,5 +1053,129 @@ def test_untrimmed_miss_still_conforms_full_asset_when_engine_can_trim(tmp_path:
     args = calls[0]
     assert "-t" not in args  # whole-asset conform, not bounded to the segment
     assert "-ss" not in args
+    assert "-threads" in args  # point 2: thread-capped, no longer fully unthrottled
     seg = report.source_plan.segments[0]
     assert "conform-cache" in seg.path  # emitted straight from the cache object
+
+
+def test_loudness_probed_once_for_all_segments_of_one_asset_in_one_prepare(
+    tmp_path: Path,
+) -> None:
+    """Item 66, point 1: 8 differently-trimmed segments of the SAME asset
+    (same cache key, distinct (path, inpoint, outpoint) so prepare()'s own
+    ``seen`` dedupe does not short-circuit them) used to mean 8 full-file
+    loudness probes on the synchronous start path (~6.3 minutes measured).
+    The first segment probes and persists the meta immediately -- before any
+    conform for the asset exists -- so the other 7 reuse it."""
+    probes: list[dict] = []
+    calls: list[list[str]] = []
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **kwargs: probes.append(kwargs) or _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+
+    def plan() -> EgressSourcePlan:
+        return EgressSourcePlan(
+            channel_id="gov",
+            segments=[
+                EgressSourceSegment(
+                    label=f"segment-{i}",
+                    path=str(source),
+                    duration_seconds=30.0,
+                    inpoint_seconds=float(i * 30),
+                    outpoint_seconds=float(i * 30 + 30),
+                )
+                for i in range(8)
+            ],
+        )
+
+    preparer.prepare(plan(), _config())
+
+    assert len(probes) == 1  # exactly one loudness probe for all 8 segments
+    assert len(calls) == 8  # each distinct trim still gets its own bounded conform
+
+
+def test_loudness_probe_reused_across_prepares_of_the_same_asset(tmp_path: Path) -> None:
+    """Companion: a SECOND prepare() of the same asset (a fresh
+    ``SourcePreparer`` sharing ``work_dir``, no warm ever run) must run ZERO
+    loudness probes -- the meta persisted by the first prepare() survives on
+    disk and is read back before any probe is attempted."""
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+
+    def plan() -> EgressSourcePlan:
+        return EgressSourcePlan(
+            channel_id="gov",
+            segments=[
+                EgressSourceSegment(
+                    label="joined-late",
+                    path=str(source),
+                    duration_seconds=30.0,
+                    inpoint_seconds=5.0,
+                    outpoint_seconds=35.0,
+                )
+            ],
+        )
+
+    probes_1: list[dict] = []
+    SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **kwargs: probes_1.append(kwargs) or _loudness(),
+        warm_scheduler=lambda job: None,  # the warm never runs -- no full conform is cached
+    ).prepare(plan(), _config())
+    assert len(probes_1) == 1
+
+    probes_2: list[dict] = []
+    SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **kwargs: probes_2.append(kwargs) or _loudness(),
+        warm_scheduler=lambda job: None,
+    ).prepare(plan(), _config())
+    assert probes_2 == []  # reused from the meta the first prepare() persisted
+
+
+def test_default_warm_scheduler_runs_one_job_at_a_time_fifo(tmp_path: Path) -> None:
+    """Item 66, point 4: the production ``_default_warm_scheduler`` used to
+    spawn one daemon thread PER job -- unbounded. It must instead queue jobs
+    onto a single worker: 3 distinct assets queue 3 jobs, but at most 1 ever
+    runs concurrently."""
+    active = 0
+    max_active = 0
+    guard = threading.Lock()
+    started = threading.Event()
+    release = threading.Event()
+    completed: list[int] = []
+
+    def make_job(n: int):
+        def _job() -> None:
+            nonlocal active, max_active
+            with guard:
+                active += 1
+                max_active = max(max_active, active)
+            if n == 0:
+                started.set()
+                release.wait(timeout=5)
+            with guard:
+                active -= 1
+            completed.append(n)
+
+        return _job
+
+    for n in range(3):
+        preparer_module._default_warm_scheduler(make_job(n))
+
+    assert started.wait(timeout=5)  # the first job is running
+    assert max_active == 1  # never more than one warm job active at once
+    release.set()
+    # Give the single worker time to drain the remaining queued jobs.
+    deadline = time.monotonic() + 5
+    while len(completed) < 3 and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert sorted(completed) == [0, 1, 2]
+    assert max_active == 1
