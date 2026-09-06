@@ -264,3 +264,8 @@ Soak #5's 02:56Z probe shows one relaunch per channel in the first 30 minutes on
 ## Addendum -- AUTORUN-9zn (read-only, item-60 proof)
 
 Diagnosis: every in-place plan reload builds concat elements named `vconcat_program`/`aconcat_program` while the live ones still exist, so GStreamer refuses to add them (`Name ... is not unique in bin ... not adding` on stderr), the reload never commits (`CTRL reload aborted: new program produced no buffer within 10s` on worker STDOUT), the worker acks success anyway, and automation re-issues the rollover forever while the doubled decoder tree starves the encoder (`CTRL stall`). `AUTORUN-9zn.ps1` (runs once, changes nothing) counts and quotes those lines from each channel's gst-worker.stdout.log / stderr.log. Result `soak/DIAG-9zn-<stamp>.md`.
+
+
+## Addendum -- AUTORUN-9zzz (read-only)
+
+DIAG-9zn: worker stdout has no `CTRL reload` lines and stderr no name-collision warnings, so the reload never reached the worker (or its output was lost). `AUTORUN-9zzz.ps1` (runs once, changes nothing) lists each channel's work-dir files with mtimes (are prepared segment files replaced/evicted while the worker plays them?), the daemon log lines in the 25 s after each `Content-reload source preparation`, all daemon `reload` lines, and the worker stdout head/tail. Result `soak/DIAG-9zzz-<stamp>.md`.
