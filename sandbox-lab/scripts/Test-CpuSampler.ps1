@@ -122,6 +122,18 @@ Assert-Equal 'scenario13 (ffmpeg.exe, unresolved) -> other' 'other' $r13
 $r13b = Get-ProcessRoleLabel -ProcessName 'ffmpeg' -ProcessId 7002 -GstWorkerPidMap @{} -PidToChannelId (@{ 7002 = 'community' })
 Assert-Equal 'scenario13b (ffmpeg.exe, resolved channel) -> ffmpeg-fallback:community' 'ffmpeg-fallback:community' $r13b
 
+# -------------------------------------------------------------- scenario 13c
+# Round-follow-up-C finding (regression guard): a python-named pid that is
+# NOT in GstWorkerPidMap but DOES resolve to a channel via PidToChannelId
+# (e.g. an ffmpeg-fallback engine launched via a python-named process) must
+# be labeled by its channel resolution, NOT swallowed by the generic python
+# catch-all -- matching this function's own docstring, which defines
+# "control-plane" as a python process not resolved to a channel. The branch
+# order previously checked the python catch-all before the channel
+# resolution, so this exact input returned 'control-plane' instead.
+$r13c = Get-ProcessRoleLabel -ProcessName 'python' -ProcessId 9001 -PidToChannelId (@{ 9001 = 'public' })
+Assert-Equal 'scenario13c (python pid, resolved channel, not a gst-worker) -> ffmpeg-fallback:public' 'ffmpeg-fallback:public' $r13c
+
 Write-Host ""
 Write-Host "CpuSampler unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })
 if ($script:failures -gt 0) { exit 1 }

@@ -10,6 +10,20 @@
 # System event log. Both In-Sandbox-Soak.ps1 (the real driver) and
 # Test-ServiceStartFailure.ps1 dot-source this SAME file.
 
+# WS5-owner-approved DISPLAY_NAME constant, duplicated from
+# civiccast/native/supervisor/config.py:38 (PowerShell reads no Python at
+# runtime, so this string cannot be imported -- it must be kept in sync by
+# hand). Round-follow-up-C finding: this used to be a bare literal inside
+# the function body with a comment telling readers to "re-verify against
+# HEAD before trusting this constant blindly" -- a comment is not a gate,
+# so drift between the two files could go unnoticed indefinitely. Hoisted
+# to a script-scope constant so Test-ServiceStartFailure.ps1 can read
+# config.py's own DISPLAY_NAME literal (via regex, no Python interpreter
+# required) and assert equality against THIS value -- a rename in either
+# file without the other now fails the lane's unit tests instead of
+# silently reintroducing round-14 finding 1's exact bug class.
+$script:ServiceStartFailureWellKnownDisplayName = 'CivicCast Native Supervisor'
+
 # Round-11 finding 5 (MEDIUM) / round-12 findings 4-5: neither a
 # Start-Service THROW nor a Start-Service SUCCESS followed by the service
 # never reaching Running is automatically a harness/setup problem -- if
@@ -83,16 +97,18 @@ function Test-ServiceStartFailureIsProductCrash {
     #>
     param([string]$ExceptionText, [datetime]$SinceUtc)
     # Followup finding 3 (round 14 addendum): the well-known display name
-    # the installer ships (main bcb3ebe -- re-verify against HEAD before
-    # trusting this constant blindly), used ONLY as a fallback when
-    # Get-Service itself throws (service uninstalled/renamed concurrently,
-    # or -- exactly the scenario this whole function exists for -- the
-    # service never even registered because the SCM refused the launch).
-    # Skipping the event-log check entirely in that case (the round-14
-    # behavior) meant a genuine crash could go undetected purely because
-    # Get-Service happened to fail at the wrong moment, silently
-    # defaulting to HARNESS_ERROR with no attempt to look.
-    $wellKnownDisplayName = 'CivicCast Native Supervisor'
+    # the installer ships (config.py's own DISPLAY_NAME constant -- see the
+    # script-scope $script:ServiceStartFailureWellKnownDisplayName defined
+    # above, and Test-ServiceStartFailure.ps1's drift-guard scenario), used
+    # ONLY as a fallback when Get-Service itself throws (service
+    # uninstalled/renamed concurrently, or -- exactly the scenario this
+    # whole function exists for -- the service never even registered
+    # because the SCM refused the launch). Skipping the event-log check
+    # entirely in that case (the round-14 behavior) meant a genuine crash
+    # could go undetected purely because Get-Service happened to fail at
+    # the wrong moment, silently defaulting to HARNESS_ERROR with no
+    # attempt to look.
+    $wellKnownDisplayName = $script:ServiceStartFailureWellKnownDisplayName
     try {
         $displayName = $null
         try {

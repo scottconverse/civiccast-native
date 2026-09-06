@@ -151,6 +151,36 @@ $r7 = Test-ServiceStartFailureIsProductCrash -ExceptionText '' -SinceUtc $sinceU
 Assert-Equal 'scenario7 (Get-Service throws, but a real 7034 exists under the well-known constant name) -> IsProductCrash=True' 'True' "$($r7.IsProductCrash)"
 $script:MockDisplayName = 'CivicCast Native Supervisor'   # restore for tidiness
 
+# ---------------------------------------------------------------- scenario 8
+# Round-follow-up-C finding: ServiceStartFailureCheck.ps1's fallback
+# well-known display name (used only when Get-Service itself throws, see
+# scenario 7 above) is a hand-duplicated copy of
+# civiccast/native/supervisor/config.py's own DISPLAY_NAME constant -- no
+# import path exists from PowerShell into that Python module. A comment
+# alone cannot stop the two copies drifting apart, so this scenario reads
+# config.py's own source line via regex and asserts it is byte-identical
+# to $script:ServiceStartFailureWellKnownDisplayName: a rename in either
+# file without the other now fails this suite instead of silently
+# reintroducing round-14 finding 1's exact bug class (the function looking
+# for a display name the installer no longer uses).
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
+$configPyPath = Join-Path $repoRoot 'civiccast\native\supervisor\config.py'
+if (-not (Test-Path $configPyPath)) {
+    $script:total++
+    $script:failures++
+    Write-Host "[FAIL] scenario8 (config.py DISPLAY_NAME drift guard) -- config.py not found at $configPyPath" -ForegroundColor Red
+} else {
+    $configPyText = Get-Content -Path $configPyPath -Raw
+    $displayNameMatch = [regex]::Match($configPyText, 'DISPLAY_NAME\s*=\s*"([^"]*)"')
+    if (-not $displayNameMatch.Success) {
+        $script:total++
+        $script:failures++
+        Write-Host "[FAIL] scenario8 (config.py DISPLAY_NAME drift guard) -- DISPLAY_NAME constant not found in $configPyPath" -ForegroundColor Red
+    } else {
+        Assert-Equal 'scenario8 (config.py DISPLAY_NAME matches the PowerShell fallback constant)' $displayNameMatch.Groups[1].Value $script:ServiceStartFailureWellKnownDisplayName
+    }
+}
+
 Write-Host ""
 Write-Host "ServiceStartFailure unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })
 if ($script:failures -gt 0) { exit 1 }

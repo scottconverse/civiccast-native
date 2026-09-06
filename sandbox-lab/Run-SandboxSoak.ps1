@@ -159,6 +159,12 @@ if (-not (Test-Path $hostLivenessPath)) {
 }
 . $hostLivenessPath
 
+$backstopMarkerGracePath = Join-Path $Root 'scripts\BackstopMarkerGrace.ps1'
+if (-not (Test-Path $backstopMarkerGracePath)) {
+    Exit-HarnessError "BackstopMarkerGrace.ps1 not found at $backstopMarkerGracePath"
+}
+. $backstopMarkerGracePath
+
 # --------------------------------------------------------------------------
 # 1a. Refuse if Windows Sandbox is already running (Gate A owns it, and
 #     Codex uses it too). Process name list is the PROVEN one from
@@ -325,6 +331,9 @@ $scriptsToCheck = @(
     (Join-Path $scriptsDir 'SoakVerdict.ps1'),
     (Join-Path $scriptsDir 'RestartClassifier.ps1'),
     (Join-Path $scriptsDir 'HostLiveness.ps1'),
+    # Round-follow-up-C finding: BackstopMarkerGrace.ps1 -- dot-sourced by
+    # THIS host script itself (same pattern as HostLiveness.ps1 above).
+    (Join-Path $scriptsDir 'BackstopMarkerGrace.ps1'),
     # Round-14 finding 6: DaemonLogPatterns.ps1 -- the shared regex/
     # formula literals both In-Sandbox-Soak.ps1 and
     # Test-RestartClassifier.ps1 now dot-source instead of each keeping
@@ -647,7 +656,27 @@ while ($true) {
             $soakStartObj = $null
             try { $soakStartObj = Get-Content -Path $soakStartMarker -Raw | ConvertFrom-Json } catch { }
             if ($soakStartObj -and ($soakStartObj.harness_error_before_soak_start -eq $true -or $null -eq $soakStartObj.soak_start_utc)) {
-                Write-QuietShareAndExit -Reason "SOAK-START.json is the harness-error backstop marker (harness_error_before_soak_start=$($soakStartObj.harness_error_before_soak_start), soak_start_utc=$($soakStartObj.soak_start_utc)) -- the guest failed before the soak clock actually started; see this run's own VERDICT.txt/.json for the underlying reason" -LaunchedPids $launchedPids -OutputDir $outputDir
+                # Round-follow-up-C finding: SOAK-START.json's backstop
+                # marker and VERDICT.txt/.json ride the SAME ~15s shipper
+                # tick (In-Sandbox-Soak.ps1:400/416-417/419's own write
+                # order) -- "SOAK-START.json" sorts before "VERDICT.txt" in
+                # a robocopy tick, so a tick that lands mid-write-sequence
+                # can ship the marker without yet shipping the verdict.
+                # Killing the VM the instant the marker is seen (the
+                # pre-fix behavior) could beat VERDICT.txt to the share by
+                # a matter of seconds, leaving the operator with only
+                # HOST-QUIET-SHARE.txt even though the real verdict had
+                # already been written in the guest. Give VERDICT.txt a
+                # bounded grace (Wait-ForVerdictAfterBackstopMarker,
+                # BackstopMarkerGrace.ps1 -- unit-tested in
+                # Test-BackstopMarkerGrace.ps1) before falling back to the
+                # quiet-share exit.
+                $graceResult = Wait-ForVerdictAfterBackstopMarker -TestVerdictPathExists { Test-Path $verdictTxtPath }
+                if ($graceResult.verdict_arrived) {
+                    Write-Step "SOAK-START.json is the harness-error backstop marker, but VERDICT.txt arrived after a $($graceResult.waited_seconds)s grace wait ($($graceResult.polls) poll(s)) -- taking the normal verdict path instead of a premature quiet-share exit."
+                    break
+                }
+                Write-QuietShareAndExit -Reason "SOAK-START.json is the harness-error backstop marker (harness_error_before_soak_start=$($soakStartObj.harness_error_before_soak_start), soak_start_utc=$($soakStartObj.soak_start_utc)) -- the guest failed before the soak clock actually started, and VERDICT.txt still had not arrived after a $($graceResult.waited_seconds)s grace wait; see this run's own VERDICT.txt/.json for the underlying reason if it ships later" -LaunchedPids $launchedPids -OutputDir $outputDir
             } elseif ($soakStartObj) {
                 $phase = 'running'
                 $lastRollupProgressUtc = (Get-Date).ToUniversalTime()
