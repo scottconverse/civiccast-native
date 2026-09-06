@@ -22,19 +22,38 @@ segment's bytes to ``SegmentWriterThread``, a dedicated background thread
 that owns all the blocking I/O. The hand-off itself
 (``SegmentWriterThread.submit``) is non-blocking: a bounded queue that
 drops the OLDEST pending segment (not the newest, and never by blocking)
-when full, logging the drop at most once a minute. A slow disk now degrades
-caption continuity -- a dropped few seconds of caption audio -- instead of
-ever being able to stall the tee, and therefore the mux, and therefore the
-channel.
+when full -- the drop is COUNTED on the caller's thread (a plain lock
+increment) but LOGGED only from the writer thread itself (see
+``_maybe_log_drop``), at most once a minute, so no ``print`` (a real,
+if usually fast, I/O call) ever runs on the streaming thread either.
+A slow disk now degrades caption continuity -- a dropped few seconds of
+caption audio -- instead of ever being able to stall the tee, and
+therefore the mux, and therefore the channel.
+
+Round-2 review BLOCKER: stopping this writer must itself be bounded. A
+wedged disk (the exact failure this module exists to survive) can leave
+``SegmentWriterThread`` stuck inside a single blocking ``_publish`` call
+indefinitely -- Python cannot interrupt a thread out of a blocking syscall,
+so ``stop()``/``close()`` cannot force that thread to exit. What they CAN
+guarantee is that the CALLER is never blocked past a bound: ``stop()`` signals
+a ``threading.Event`` (never an unbounded queue ``put`` -- a full queue would
+otherwise make even the STOP signal block) and joins with a timeout. If the
+thread is still alive after that bound, ``stop()``/``close()`` log a WARNING
+and return ``"abandoned"`` rather than waiting further; the (daemon) thread is
+left running in the background and may finish later or never. Callers that
+need "did everything really land on disk" must check the return value --
+``"drained"`` is the only value that promises that.
 
 Companion fix on the GStreamer graph side (``engine.py``'s
-``_build_audio_tap``): the ``caption_audio_tap_queue`` element is now
-``leaky=2`` (downstream -- drop the OLDEST buffered data rather than block
-upstream) with a much deeper buffer cap, and the appsink is ``drop=True``.
-Both layers exist because they guard different failure points: the queue
-protects the tee from a slow appsink callback; this module's own bounded
-queue protects the appsink callback from a slow disk. Removing either layer
-re-opens a path for the caption side-channel to take the channel off air.
+``_build_audio_tap`` / ``_audio_tap_element_specs``): the
+``caption_audio_tap_queue`` element is now ``leaky=2`` (downstream -- drop
+the OLDEST buffered data rather than block upstream) with its ``max-size-time``
+default disabled (see that module's own comment for why bytes/buffers stay at
+GStreamer's stock defaults), and the appsink is ``drop=True``. Both layers
+exist because they guard different failure points: the queue protects the tee
+from a slow appsink callback; this module's own bounded queue protects the
+appsink callback from a slow disk. Removing either layer re-opens a path for
+the caption side-channel to take the channel off air.
 """
 
 from __future__ import annotations
@@ -42,15 +61,28 @@ from __future__ import annotations
 import os
 import queue
 import re
+import sys
 import threading
 import time
 import wave
 from collections.abc import Callable
 from pathlib import Path
-from typing import BinaryIO, Final
+from typing import BinaryIO, Final, Literal
 
 TAP_SAMPLE_RATE_HZ: Final[int] = 16_000
 _SEGMENT_RE: Final[re.Pattern[str]] = re.compile(r"chunk-(\d{6})\.wav(?:\.partial)?\Z")
+
+#: The segment filename format (``chunk-{index:06d}.wav``) is a fixed
+#: six-digit field -- ``_SEGMENT_RE`` above only ever matches exactly six
+#: digits. Restored from the pre-item-88 ``_open_segment`` (removed in that
+#: rewrite without carrying the guard forward): past this index the filename
+#: would silently grow a seventh digit, becoming invisible to
+#: ``_discover_next_index`` on the next restart (a different worker/writer
+#: could then reuse -- and collide with -- an already-published index).
+#: Effectively unreachable in practice (a channel would need ~58 YEARS of
+#: continuous 5s segments to get here), but a silent, undiscoverable-filename
+#: failure mode is worse than a loud, immediate one.
+_MAX_SEGMENT_INDEX: Final[int] = 999_999
 
 #: How many finished-but-unpublished segments the writer thread's queue holds
 #: before it starts dropping the OLDEST one to accept a new one. 8 segments
@@ -59,13 +91,25 @@ _SEGMENT_RE: Final[re.Pattern[str]] = re.compile(r"chunk-(\d{6})\.wav(?:\.partia
 #: indefinitely wedged disk grow unbounded memory.
 _DEFAULT_QUEUE_MAXSIZE: Final[int] = 8
 
-#: Rate-limit for the "queue full, dropped a segment" warning -- item 88's
-#: own root cause was an I/O path calling into a lock-holding fsync on the
-#: streaming thread; a log line printed on every single drop under sustained
-#: contention would itself become a (much smaller, but real) source of
-#: streaming-thread-adjacent overhead. One line per minute is plenty to see
-#: the condition on a live soak without spamming it.
-_DROP_LOG_INTERVAL_S: Final[float] = 60.0
+#: Rate-limit for the "queue full, dropped a segment" warning and the
+#: "publish failed" error -- item 88's own root cause was an I/O path
+#: (implicitly) reachable from the streaming thread; a log line printed on
+#: every single drop/failure under sustained contention would itself become
+#: a source of overhead, and both are logged from the writer thread now
+#: regardless (see ``_maybe_log_drop`` and ``run()``), so this bound also
+#: keeps a 100%-failing disk from spamming stderr forever. One line per
+#: minute is plenty to see either condition on a live soak.
+_LOG_INTERVAL_S: Final[float] = 60.0
+
+#: How long ``stop()``/``close()`` wait for the writer thread to drain before
+#: giving up and abandoning it in the background (Round-2 review BLOCKER --
+#: see the module docstring). Deliberately similar in magnitude to
+#: ``GstPlayoutEngine.teardown_timeout_s``'s own 5s default so a wedged
+#: caption tap and a wedged pipeline teardown add comparable, not
+#: compounding, delay to the worker's overall bounded-teardown budget.
+_DEFAULT_STOP_TIMEOUT_S: Final[float] = 5.0
+
+DrainStatus = Literal["drained", "abandoned"]
 
 
 class SegmentWriterThread(threading.Thread):
@@ -81,7 +125,11 @@ class SegmentWriterThread(threading.Thread):
     concurrent consumer races the drop and refills the slot first, the NEW
     segment is dropped instead rather than retrying in a way that could
     block -- either way ``submit`` returns immediately.
-    """
+
+    ``stop()`` is signalled via a ``threading.Event``, never by enqueueing a
+    sentinel through the same bounded queue ``submit()`` uses -- a full queue
+    would otherwise make even the stop signal itself block (Round-2 review
+    BLOCKER; see the module docstring)."""
 
     def __init__(
         self,
@@ -97,12 +145,29 @@ class SegmentWriterThread(threading.Thread):
         self.sample_rate_hz = sample_rate_hz
         self._fsync = fsync
         self._monotonic = monotonic
-        self._queue: queue.Queue[tuple[int, bytes] | None] = queue.Queue(maxsize=maxsize)
-        self._dropped_total = 0
-        self._last_drop_log_t = 0.0
+        self._queue: queue.Queue[tuple[int, bytes]] = queue.Queue(maxsize=maxsize)
+        self._stop_event = threading.Event()
+
         self._drop_lock = threading.Lock()
-        self.publish_errors: list[BaseException] = []
-        self._errors_lock = threading.Lock()
+        self._dropped_total = 0
+        self._drop_log_pending = False
+        self._last_drop_log_t = 0.0
+
+        # Round-2 review BLOCKER: publish failures used to be invisible --
+        # an unbounded ``publish_errors`` list nobody read, and ``_error``
+        # was never set anywhere. A 100%-failing tap (e.g. a full disk) must
+        # be VISIBLE without being made FATAL to air -- captions are a
+        # side-channel, not the broadcast itself. ``consecutive_publish_
+        # failures`` is a cheap health signal callers (e.g. a future engine-
+        # side health surface) can poll; it resets to 0 on any successful
+        # publish, so it reads "how long has this been broken right now",
+        # not "how many failures ever". ``last_publish_error`` holds the most
+        # recent failure's ``repr()`` (a string, not the exception object
+        # itself, so nothing here can ever grow an unbounded object graph).
+        self._failure_lock = threading.Lock()
+        self.consecutive_publish_failures = 0
+        self.last_publish_error: str | None = None
+        self._last_failure_log_t = 0.0
 
     def submit(self, index: int, pcm: bytes) -> None:
         """Non-blocking hand-off of one finished segment's PCM bytes."""
@@ -124,39 +189,75 @@ class SegmentWriterThread(threading.Thread):
             # THIS segment rather than ever retrying/blocking.
             dropped = True
         if dropped:
-            self._log_drop()
+            # Count here (cheap, lock-only) but never PRINT here -- printing
+            # is I/O, and keeping I/O off the streaming thread is this
+            # module's whole point. The writer thread itself logs, rate-
+            # limited, from ``_maybe_log_drop`` (called only from ``run()``).
+            with self._drop_lock:
+                self._dropped_total += 1
+                self._drop_log_pending = True
 
-    def _log_drop(self) -> None:
+    def _maybe_log_drop(self) -> None:
+        """Writer-thread-only: print the rate-limited drop warning if one is
+        pending. Never called from ``submit()`` (see there for why)."""
         with self._drop_lock:
-            self._dropped_total += 1
+            if not self._drop_log_pending:
+                return
             now = self._monotonic()
-            if now - self._last_drop_log_t < _DROP_LOG_INTERVAL_S:
+            if now - self._last_drop_log_t < _LOG_INTERVAL_S:
                 return
             self._last_drop_log_t = now
+            self._drop_log_pending = False
             total = self._dropped_total
         print(
             f"WARN: caption audio tap writer queue full; dropped {total} segment(s) "
             "so far (rate-limited: at most one line per 60s)",
+            file=sys.stderr,
             flush=True,
         )
 
     def run(self) -> None:
+        # Poll with a bounded timeout rather than an unbounded ``get()`` so
+        # the stop event is checked regularly even while idle, and so a
+        # pending drop warning still gets logged (rate-limited) during a
+        # quiet stretch. 0.5s adds, at most, that much latency to a
+        # cooperative shutdown -- bounded and cheap.
         while True:
-            item = self._queue.get()
-            if item is None:  # stop() sentinel
-                return
-            index, pcm = item
+            self._maybe_log_drop()
+            try:
+                index, pcm = self._queue.get(timeout=0.5)
+            except queue.Empty:
+                if self._stop_event.is_set():
+                    return
+                continue
             try:
                 self._publish(index, pcm)
+                with self._failure_lock:
+                    self.consecutive_publish_failures = 0
             except Exception as exc:  # never let the writer thread die silently
-                with self._errors_lock:
-                    self.publish_errors.append(exc)
-                print(
-                    f"ERROR: caption audio tap writer failed to publish segment {index}: {exc}",
-                    flush=True,
-                )
+                self._log_publish_failure(index, exc)
+            if self._stop_event.is_set() and self._queue.empty():
+                return
+
+    def _log_publish_failure(self, index: int, exc: Exception) -> None:
+        with self._failure_lock:
+            self.consecutive_publish_failures += 1
+            self.last_publish_error = repr(exc)
+            count = self.consecutive_publish_failures
+            now = self._monotonic()
+            if now - self._last_failure_log_t < _LOG_INTERVAL_S:
+                return
+            self._last_failure_log_t = now
+        print(
+            f"ERROR: caption audio tap writer failed to publish segment {index}: {exc!r} "
+            f"({count} consecutive failure(s); rate-limited: at most one line per 60s)",
+            file=sys.stderr,
+            flush=True,
+        )
 
     def _publish(self, index: int, pcm: bytes) -> None:
+        if index > _MAX_SEGMENT_INDEX:
+            raise RuntimeError("caption audio tap exhausted its six-digit segment sequence")
         target = self.tap_dir / f"chunk-{index:06d}.wav"
         partial = target.with_suffix(".wav.partial")
         if target.exists() or partial.exists():
@@ -179,12 +280,30 @@ class SegmentWriterThread(threading.Thread):
             partial.unlink(missing_ok=True)
             raise
 
-    def stop(self, *, timeout: float | None = 5.0) -> None:
-        """Drain the queue and join. Blocking by design -- called from
-        ``RollingWavSegmentWriter.close()``, which is the publish boundary
-        callers already expect to wait on."""
-        self._queue.put(None)
+    def stop(self, *, timeout: float | None = _DEFAULT_STOP_TIMEOUT_S) -> DrainStatus:
+        """Signal the writer thread to drain and exit, bounded by ``timeout``.
+
+        Returns ``"drained"`` if the thread exited within the bound (having
+        flushed everything queued at the time ``stop()`` was called), or
+        ``"abandoned"`` if it is still alive after the bound -- e.g. wedged
+        inside a single slow/hung ``_publish`` call, which Python cannot
+        interrupt from another thread. On ``"abandoned"``, the (daemon)
+        thread is left running in the background rather than waited on
+        further, so a stuck disk can never make THIS call block past
+        ``timeout`` -- the caller must treat an ``"abandoned"`` result as
+        "some segments may still be pending or lost", never as "drained"."""
+        self._stop_event.set()
         self.join(timeout=timeout)
+        if self.is_alive():
+            print(
+                f"WARN: caption audio tap writer thread did not stop within {timeout}s "
+                "(likely wedged I/O) -- abandoning it in the background; any segment "
+                "still queued or in flight may never publish",
+                file=sys.stderr,
+                flush=True,
+            )
+            return "abandoned"
+        return "drained"
 
 
 class RollingWavSegmentWriter:
@@ -193,7 +312,8 @@ class RollingWavSegmentWriter:
     ``write_pcm_s16le`` never blocks on disk I/O: it only appends bytes to an
     in-memory buffer and, once a segment's worth has accumulated, hands the
     finished segment to a ``SegmentWriterThread`` for publishing. See the
-    module docstring for why (item 88)."""
+    module docstring for why (item 88), and ``close()`` for why draining is
+    bounded rather than unconditional (Round-2 review BLOCKER)."""
 
     def __init__(
         self,
@@ -223,6 +343,19 @@ class RollingWavSegmentWriter:
         )
         self._writer_thread.start()
 
+    @property
+    def consecutive_publish_failures(self) -> int:
+        """Health signal: how many publishes have failed in a row right now
+        (0 once any publish succeeds). Never fatal to air on its own -- a
+        caller may choose to surface this, but this module never acts on it
+        beyond logging (see ``SegmentWriterThread``)."""
+        return self._writer_thread.consecutive_publish_failures
+
+    @property
+    def last_publish_error(self) -> str | None:
+        """The most recent publish failure's ``repr()``, or ``None``."""
+        return self._writer_thread.last_publish_error
+
     def _discover_next_index(self) -> int:
         observed = -1
         for path in self.tap_dir.rglob("chunk-*.wav*"):
@@ -233,7 +366,12 @@ class RollingWavSegmentWriter:
 
     def _submit_locked(self, segment: bytes) -> None:
         """Caller must hold ``self._lock``. Hands one finished segment to
-        the writer thread -- non-blocking (see ``SegmentWriterThread.submit``)."""
+        the writer thread -- non-blocking (see ``SegmentWriterThread.submit``).
+        Raises if the six-digit segment sequence is exhausted (restored
+        guard -- see ``_MAX_SEGMENT_INDEX``), consistent with the pre-item-88
+        ``_open_segment``'s own behavior for the same condition."""
+        if self._next_index > _MAX_SEGMENT_INDEX:
+            raise RuntimeError("caption audio tap exhausted its six-digit segment sequence")
         index = self._next_index
         self._next_index += 1
         self._writer_thread.submit(index, segment)
@@ -255,25 +393,41 @@ class RollingWavSegmentWriter:
                 raise RuntimeError("caption audio tap writer is closed")
             self._buffer.extend(body)
             while len(self._buffer) >= self._segment_bytes:
+                # Check the sequence guard BEFORE consuming from the buffer --
+                # a caller that catches this ``RuntimeError`` and retries
+                # should not find its audio already silently discarded.
+                if self._next_index > _MAX_SEGMENT_INDEX:
+                    raise RuntimeError("caption audio tap exhausted its six-digit segment sequence")
                 segment = bytes(self._buffer[: self._segment_bytes])
                 del self._buffer[: self._segment_bytes]
                 self._submit_locked(segment)
 
-    def close(self) -> None:
+    def close(self, *, timeout: float | None = _DEFAULT_STOP_TIMEOUT_S) -> DrainStatus:
         """Publish a non-empty trailing segment and make subsequent writes
-        fail. Blocks until the writer thread has drained its queue -- the
-        publish boundary callers already rely on (segments existing on disk
-        once ``close()`` returns)."""
+        fail.
+
+        Round-2 review BLOCKER: this is bounded by ``timeout``, NOT
+        unconditional -- a wedged disk can leave the writer thread stuck
+        inside a single blocking publish forever, and Python cannot
+        interrupt a thread out of a blocking syscall. Returns ``"drained"``
+        if the writer thread exited within the bound (everything queued at
+        close time is on disk), or ``"abandoned"`` if it is still alive
+        after the bound (the daemon thread is left running in the
+        background; a trailing segment, or more, may never publish). Callers
+        that need "segments really are on disk" must check the return value
+        rather than assuming it from a bare successful return, unlike this
+        method's pre-item-88 predecessor (which really was unconditional,
+        because it did the I/O synchronously, on the caller's own thread)."""
 
         with self._lock:
             if self._closed:
-                return
+                return "drained"
             self._closed = True
             if self._buffer:
                 segment = bytes(self._buffer)
                 self._buffer.clear()
                 self._submit_locked(segment)
-        self._writer_thread.stop()
+        return self._writer_thread.stop(timeout=timeout)
 
     def __enter__(self) -> RollingWavSegmentWriter:
         return self

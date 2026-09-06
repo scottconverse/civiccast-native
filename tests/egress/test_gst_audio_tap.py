@@ -123,7 +123,8 @@ class TestSegmentWriterThread:
         finally:
             release.set()
             thread.stop(timeout=5.0)
-        assert not thread.publish_errors
+        assert thread.consecutive_publish_failures == 0
+        assert thread.last_publish_error is None
 
     def test_full_queue_drops_the_oldest_segment_not_the_newest(self, tmp_path: Path) -> None:
         """A full queue must drop the OLDEST pending segment to make room --
@@ -188,7 +189,108 @@ class TestSegmentWriterThread:
         before returning, even though normal writes are non-blocking."""
         writer = RollingWavSegmentWriter(tmp_path, segment_seconds=0.01, sample_rate_hz=1_000)
         writer.write_pcm_s16le(bytes(range(20)))
-        writer.close()
+        status = writer.close()
 
+        assert status == "drained"
         assert sorted(tmp_path.glob("chunk-*.wav"))
         assert not list(tmp_path.glob("*.partial"))
+
+    def test_stop_is_bounded_even_when_the_writer_thread_is_permanently_wedged(
+        self, tmp_path: Path
+    ) -> None:
+        """Round-2 review BLOCKER: a wedged disk (fsync that never returns)
+        must never make ``stop()``/``close()`` hang past their own timeout --
+        Python cannot interrupt a thread stuck in a blocking syscall, so the
+        only guarantee available is that the CALLER is bounded. ``stop()``
+        must return ``"abandoned"`` promptly rather than waiting forever, and
+        must not raise."""
+        never_release = threading.Event()  # deliberately never set
+
+        def _wedged_fsync(fd: int) -> None:
+            never_release.wait()  # blocks until the process itself exits
+
+        thread = SegmentWriterThread(tmp_path, 1_000, maxsize=4, fsync=_wedged_fsync)
+        thread.start()
+        thread.submit(0, b"\x00\x00")
+        time.sleep(0.1)  # let the consumer pick it up and wedge inside fsync
+
+        started = time.monotonic()
+        status = thread.stop(timeout=0.3)
+        elapsed = time.monotonic() - started
+
+        assert status == "abandoned"
+        assert elapsed < 2.0, f"stop() blocked for {elapsed:.2f}s past its own 0.3s bound"
+        assert thread.is_alive()  # left running in the background, not killed
+
+    def test_rolling_writer_close_is_bounded_and_reports_abandoned(self, tmp_path: Path) -> None:
+        """Same contract as above, through the public
+        ``RollingWavSegmentWriter.close()`` entry point the engine actually
+        calls."""
+        never_release = threading.Event()
+
+        def _wedged_fsync(fd: int) -> None:
+            never_release.wait()
+
+        writer = RollingWavSegmentWriter(
+            tmp_path, segment_seconds=0.01, sample_rate_hz=1_000, fsync=_wedged_fsync
+        )
+        writer.write_pcm_s16le(bytes(range(20)))  # forces at least one segment to publish
+
+        started = time.monotonic()
+        status = writer.close(timeout=0.3)
+        elapsed = time.monotonic() - started
+
+        assert status == "abandoned"
+        assert elapsed < 2.0, f"close() blocked for {elapsed:.2f}s past its own 0.3s bound"
+        # A trailing ``.partial`` file is the honest, documented consequence of an
+        # abandoned close -- NOT silently reported as if everything landed.
+        assert list(tmp_path.glob("*.partial"))
+
+    def test_drop_warning_prints_only_from_the_writer_thread_never_from_submit(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Item 88 round-2 review: ``submit()`` (called on the streaming
+        thread in production) must never itself call ``print`` -- even the
+        drop-warning log line is real I/O and belongs on the writer thread.
+        Proven here with the writer thread NEVER STARTED: every drop is
+        counted synchronously by ``submit()`` alone, so if ``submit()`` were
+        still printing directly, this test would see output before any
+        writer-thread code ever ran."""
+        thread = SegmentWriterThread(tmp_path, 1_000, maxsize=1)
+        # No thread.start() -- nothing ever drains the queue, so the second
+        # submit() is guaranteed to hit the full-queue drop path.
+        thread.submit(0, b"\x00\x00")
+        thread.submit(1, b"\x00\x00")  # queue (maxsize=1) is full -> drops segment 0
+
+        assert capsys.readouterr().err == ""  # submit() alone must print nothing
+        assert thread._dropped_total == 1
+
+        thread._maybe_log_drop()  # the writer-thread-only method
+
+        assert "dropped 1 segment" in capsys.readouterr().err
+
+    def test_segment_sequence_guard_is_restored(self, tmp_path: Path) -> None:
+        """Item 88 round-2 review: the six-digit segment sequence guard
+        (``_open_segment``'s own check, pre-item-88) was dropped without a
+        replacement when that method was removed. Past ``chunk-999999.wav``
+        the filename would grow a seventh digit, invisible to
+        ``_discover_next_index``'s six-digit regex on the next restart --
+        restored as a loud, immediate ``RuntimeError`` instead."""
+        writer = RollingWavSegmentWriter(tmp_path, segment_seconds=0.01, sample_rate_hz=1_000)
+        writer._next_index = 999_999  # simulate having reached the last valid index
+
+        writer.write_pcm_s16le(bytes(range(20)))  # publishes chunk-999999.wav -- still valid
+        with pytest.raises(RuntimeError, match="six-digit segment sequence"):
+            writer.write_pcm_s16le(bytes(range(20)))  # would need chunk-1000000.wav -- refused
+
+        # The rejected segment's bytes are deliberately left in the in-memory
+        # buffer (checked BEFORE consuming it, not after) rather than
+        # silently discarded -- so a still-exhausted close() also raises
+        # honestly, instead of pretending the trailing audio was published.
+        try:
+            with pytest.raises(RuntimeError, match="six-digit segment sequence"):
+                writer.close()
+        finally:
+            # close() raised before it could stop the writer thread -- clean
+            # it up directly so this test doesn't leak a running thread.
+            writer._writer_thread.stop(timeout=5.0)

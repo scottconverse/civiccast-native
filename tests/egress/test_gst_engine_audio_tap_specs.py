@@ -82,17 +82,23 @@ def test_audio_tap_specs_element_order_is_unchanged(engine_module) -> None:
 def test_audio_tap_queue_is_downstream_leaky_with_a_deep_buffer_cap(engine_module) -> None:
     """Item 88: a non-leaky queue could back up the tee once the appsink
     callback fell behind -- ``leaky=2`` (GST_QUEUE_LEAK_DOWNSTREAM) drops the
-    OLDEST buffered data instead. The generous ``max-size-buffers`` cap (and
-    unlimited time/bytes) means this should never actually trigger in normal
-    operation -- it is the backstop of last resort, not the primary fix (the
-    primary fix is the writer thread in ``audio_tap.py``)."""
+    OLDEST buffered data instead. ``max-size-buffers=200`` is GStreamer's own
+    stock ``queue`` default (kept explicit here, not "deepened"). The real
+    fix is ``max-size-time=0``, disabling the stock 1s default -- this tap's
+    audio format takes ~4.6s to fill 200 buffers, so leaving the 1s time
+    bound in place would have made TIME the first (and far too tight) limit
+    reached, not buffer count. ``max-size-bytes`` is deliberately left at
+    GStreamer's own stock 10 MB default as a memory guard of last resort --
+    this should never actually trigger in normal operation; it is the
+    backstop of last resort, not the primary fix (the primary fix is the
+    writer thread in ``audio_tap.py``)."""
     specs = engine_module._audio_tap_element_specs()
     queue_spec = specs[0]
     assert queue_spec.factory == "queue"
     assert queue_spec.props["leaky"] == 2
     assert queue_spec.props["max-size-buffers"] == 200
     assert queue_spec.props["max-size-time"] == 0
-    assert queue_spec.props["max-size-bytes"] == 0
+    assert queue_spec.props["max-size-bytes"] == 10_485_760
 
 
 def test_audio_tap_appsink_drops_rather_than_blocks(engine_module) -> None:

@@ -45,6 +45,7 @@ from civiccast.egress.errors import (
 from civiccast.egress.gst.exit_codes import (
     GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE,
     GST_PREROLL_TIMEOUT_EXIT_CODE,
+    GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE,
 )
 from civiccast.egress.gst.reload_policy import should_defer_switch
 from civiccast.egress.health import (
@@ -1922,7 +1923,11 @@ class EgressDaemon:
             proof_event_id = escalation.event_id
         if self._restart_latch.should_run_now(channel_id):
             self._begin_relaunch(
-                channel_id, state.state, state.current_source_label, proof_event_id
+                channel_id,
+                state.state,
+                state.current_source_label,
+                proof_event_id,
+                returncode=returncode,
             )
         else:
             # Within the cooldown after a recent relaunch — defer instead of hot-looping.
@@ -1975,6 +1980,8 @@ class EgressDaemon:
         previous_state: str,
         previous_source_label: str | None,
         proof_event_id: str | None,
+        *,
+        returncode: int | None = None,
     ) -> None:
         # BLOCKER B1: a crash-relaunch streak that has never once reached a
         # healthy uptime is the "unreachable/dropping live source" signature —
@@ -2008,14 +2015,29 @@ class EgressDaemon:
             if force_fallback_slate
             else None
         )
+        # Item 85: a reload-commit-timeout exit (the worker's own commit
+        # watchdog force-exiting out of a detected wedge -- see engine.py's
+        # _arm_commit_watchdog) is a genuine failure of an already-running
+        # channel, not a slow-but-progressing start -- classify it distinctly
+        # in the relaunch log line so an operator/on-call reading last_error
+        # sees "reload commit wedged" rather than a generic non-zero exit.
+        # Deliberately NOT exempted from the crash-loop streak anywhere in
+        # this method or _relaunch_after_crash above (unlike
+        # GST_PREROLL_TIMEOUT_EXIT_CODE): every occurrence counts as an
+        # ordinary crash toward escalation to fallback slate.
+        relaunch_suffix = (
+            "the reload commit itself did not finish in time "
+            "(reload-commit-timeout); relaunching encoder."
+            if returncode == GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE
+            else "relaunching encoder."
+        )
         self._write_state(
             channel_id,
             "STARTING",
             current_source_label=previous_source_label,
             current_proof_event_id=proof_event_id,
             last_error=(
-                force_fallback_reason
-                or self._child_exit_error(channel_id, suffix="relaunching encoder.")
+                force_fallback_reason or self._child_exit_error(channel_id, suffix=relaunch_suffix)
             ),
         )
         self._append_health(channel_id, "STARTING", sink_connected={}, dropped_frames=0)
@@ -2494,6 +2516,54 @@ class EgressDaemon:
                 channel_id,
                 reason or "no reason reported by the encoder strategy",
             )
+            # Item 85 daemon-side fix: an "ack timeout" here is the daemon-visible
+            # symptom of the engine-side reload-commit wedge this item's engine.py
+            # fix addresses (see GstPlayoutEngine._commit_reload / _dispose_source_
+            # leg) -- the worker's GLib main-loop thread is blocked forever inside
+            # a synchronous GStreamer call and will NEVER again answer a pipe
+            # command (every command is marshalled onto that same loop via
+            # GLib.idle_add; see worker.py's _windows_pipe_reader_loop). The
+            # process itself is confirmed alive here (``_request_reload`` already
+            # early-returned to ``_start`` above if it were not), so simply
+            # falling back to restart -- which, for anything but FALLBACK_SLATE,
+            # does not terminate the process at all -- leaves the wedged pid
+            # running forever: ``_poll_process`` only ever turns a
+            # ``_pending_reloads`` entry into a real restart once the worker's OWN
+            # exit code is observed, so nothing but the process itself exiting
+            # would ever clear it, and it never will on its own. Measured: the
+            # daemon rewrote TRANSITIONING every ~2s for minutes against exactly
+            # this condition (sandbox soaks 12/14/15). Terminate it now, bounded
+            # (terminate -> wait -> kill), reusing the SAME deliberate-kill
+            # bookkeeping (``_reload_kills``) the FALLBACK_SLATE branch below
+            # already relies on, so ``_poll_process``'s existing worker-exit
+            # handling picks this up as a clean deliberate kill (not a crash) and
+            # actually restarts the channel next tick instead of pinning
+            # TRANSITIONING against a pid that will never exit on its own.
+            if (
+                isinstance(reason, str)
+                and "ack timeout" in reason
+                and _process_poll(process) is None
+            ):
+                _LOG.warning(
+                    "Worker for %s appears wedged (reload ack timed out on a live "
+                    "pid, reason=%r); terminating it so the channel can restart.",
+                    channel_id,
+                    reason,
+                )
+                # Hostile-review follow-up: set the ``_pending_reloads`` fallback
+                # entry BEFORE terminating, not after. ``_process_terminate_
+                # bounded`` blocks (bounded) waiting for the process to actually
+                # exit; if something else observed that exit (``_poll_process``)
+                # before this entry existed, the exit would be misread as an
+                # ordinary crash (no pending-reload entry to restore FROM) rather
+                # than the pending-reload restart it actually is. Mirrors exactly
+                # what ``_fall_back_to_restart_reload`` (called next, by
+                # ``_request_reload``, once this method returns False) sets --
+                # setting it here first closes the window; that later call
+                # harmlessly re-sets the same value.
+                self._pending_reloads[channel_id] = (state.state, state.current_source_label)
+                self._reload_kills.add(channel_id)
+                _process_terminate_bounded(process)
             return False
         # Item 3 fix: a still-pending PREVIOUS reload for this channel (this
         # attempt supersedes it -- e.g. automation issued another rollover
@@ -3203,6 +3273,32 @@ def _process_poll(process: object) -> int | None:
 
 def _process_terminate(process: object) -> None:
     process.terminate()  # type: ignore[attr-defined]
+
+
+_WEDGED_WORKER_TERMINATE_WAIT_S = 3.0
+
+
+def _process_terminate_bounded(
+    process: object, *, wait_s: float = _WEDGED_WORKER_TERMINATE_WAIT_S
+) -> None:
+    """Item 85: terminate -> bounded wait -> kill, for a worker confirmed wedged
+    (a reload ack timeout on a still-alive pid -- see ``_try_content_reload``'s
+    "not armed" branch). A wedged worker's GLib main-loop thread is blocked
+    inside a synchronous GStreamer call, not inside Python, so ``terminate()``
+    (SIGTERM / a Windows console-control-style request) is not guaranteed to be
+    observed promptly -- escalate to ``kill()`` if the process has not actually
+    exited within ``wait_s``, so this call is itself bounded and can never hang
+    the calling thread the way the wedge itself hangs the worker's own."""
+    with contextlib.suppress(Exception):
+        _process_terminate(process)
+    poller = cast(_PollableProcess, process)
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        if poller.poll() is not None:
+            return
+        time.sleep(0.1)
+    with contextlib.suppress(Exception):
+        process.kill()  # type: ignore[attr-defined]
 
 
 def _process_close(process: object) -> None:
