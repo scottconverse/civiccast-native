@@ -37,6 +37,59 @@ below.
 
 ### Fixed
 
+- **The caption audio tap can no longer take a channel off air, and the
+  `CTRL first-output` marker now measures real post-PLAYING output instead of
+  a tautology (items 88, 84c).** MEASURED in the sandbox on
+  soak-a6d7871-20260906-213332Z (run 17, Opus diagnosis): every worker
+  reached PLAYING, pushed real TS output at ~3.2 Mbps for 26-100s, then
+  output silently stopped and the 10s stall watchdog killed the worker.
+  Root cause: the caption-audio-tap appsink's `_on_new_sample` callback ran
+  its blocking I/O (WAV close, `flush`, `os.fsync`, atomic
+  `partial.replace(target)`) directly on the GStreamer STREAMING thread.
+  Once that I/O fell behind (two ffmpeg jobs plus a Whisper ASR pass sharing
+  the box), the tap's plain (default, non-leaky) `queue` backed up, the tee
+  it forks from stalled, and the mux's audio pad — fed by the SAME tee —
+  starved, stopping real TS output. A caption side-channel was able to take
+  the CHANNEL off air. Fixed on both the graph and writer sides, in
+  `civiccast/egress/gst/engine.py` and `civiccast/egress/gst/audio_tap.py`,
+  so no single layer removal re-opens the hole: the caption-audio-tap
+  `queue` element is now `leaky=2` (`GST_QUEUE_LEAK_DOWNSTREAM` — drop the
+  OLDEST buffered data rather than ever block upstream) with a much deeper
+  buffer cap, and the appsink is `drop=True` (was `False`). More
+  importantly, `RollingWavSegmentWriter.write_pcm_s16le` no longer does ANY
+  blocking I/O itself — it only appends PCM to an in-memory buffer under a
+  lock that guards ONLY that bookkeeping, and hands finished segments to a
+  new `SegmentWriterThread`, a dedicated background thread that owns all
+  the blocking I/O. The hand-off never blocks: a bounded queue (8 segments
+  by default) drops the OLDEST pending segment — never the newest, never by
+  waiting — when full, logging the drop at most once a minute.
+  `RollingWavSegmentWriter.close()` still blocks until the writer thread
+  drains (the publish boundary callers already rely on), but ordinary
+  writes during live playout never can.
+
+  Separately, item 84's own `CTRL first-output: first buffer after 0.0s`
+  marker turned out to be a TAUTOLOGY, not evidence: the persistent output
+  half's `queue -> udpsink` sink chain is async, so the pipeline cannot even
+  reach PLAYING before at least one buffer (PAT/PMT/SDT tables plus the
+  first media buffer) has already prerolled through the mux —
+  `_arm_stall_watchdog` latching `_first_output_seen = self._output_buffers
+  > 0` at arm time was therefore true for essentially every worker that ever
+  reached PLAYING, real media flow or not, defeating the exact
+  escalation-cliff guard item 84 (round-2) existed to close. Fixed:
+  `_arm_stall_watchdog` now snapshots the output-buffer count at arm time
+  (`_output_buffers_at_arm`) instead of crediting it, and `_check_stall`
+  requires the count to exceed that snapshot by at least 2 buffers observed
+  STRICTLY AFTER arming (one alone could still be a table-refresh
+  coincidence) before crediting real first output. The marker text is
+  unchanged, so `civiccast.egress.health.worker_produced_output` and the
+  daemon's on-air evidence check needed no change. Addendum: `_check_stall`
+  now also prints a bounded, at-most-one-line-per-5s `CTRL output: <N>
+  buffers (+<delta>) since PLAYING` progress line (both while advancing and
+  while flat) so the next soak shows exactly when real output stops instead
+  of only the eventual stall-kill line. Item 89 (daemon reaps a dead child
+  only on the 30s automation tick, so a worker that exits ~20ms after
+  `issued start` can report ON_AIR with a dead pid for up to 30s) is a
+  known, deliberately deferred follow-up — not fixed here.
 - **Reload-commit wedge: diagnostic instrumentation, a commit watchdog with a
   stack-dump, and wedged-worker termination (item 85). The wedge itself is
   NOT YET LOCALIZED** -- this is not the fix, it is the tooling that finds
