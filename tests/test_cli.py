@@ -545,16 +545,23 @@ def test_egress_runner_wires_schedule_source_provider(
         "build_filler_source_provider",
         lambda session_factory, *, work_dir: f"filler:{session_factory}",
     )
+
     # F3/item 5 fix: _run_egress_service now also wires source_preparer_
     # instance.release (as prepared_plan_release) and calls
     # .set_protected_plan_dirs_provider(...) on the SAME instance -- a real
     # SourcePreparer always implements both (a concrete class, not a
     # Protocol with optional members), so this fake needs the full surface
     # to keep standing in for it.
-    monkeypatch.setattr(
-        egress_module,
-        "SourcePreparer",
-        lambda work_dir: type(
+    # Item 66 round-3 (Opus review): _run_egress_service also now passes
+    # playout_trim_supported=not gstreamer_engine_selected() to the real
+    # constructor -- the fake must accept that keyword (not just **kwargs
+    # swallow it) and this test asserts the actual value passed matches
+    # what the SAME process's own gstreamer_engine_selected() reports,
+    # rather than assuming a hardcoded True/False that could go stale if
+    # the ambient CIVICCAST_EGRESS_ENGINE default ever changes.
+    def _fake_source_preparer(*, work_dir: Path, playout_trim_supported: bool) -> object:
+        captured["playout_trim_supported"] = playout_trim_supported
+        return type(
             "_FakePreparer",
             (),
             {
@@ -562,8 +569,9 @@ def test_egress_runner_wires_schedule_source_provider(
                 "release": lambda self, _plan_dir: None,
                 "set_protected_plan_dirs_provider": lambda self, _provider: None,
             },
-        )(),
-    )
+        )()
+
+    monkeypatch.setattr(egress_module, "SourcePreparer", _fake_source_preparer)
 
     report = cli_module._run_egress_service(
         channel_ids=("council",),
@@ -571,6 +579,8 @@ def test_egress_runner_wires_schedule_source_provider(
         poll_seconds=0.1,
         once=True,
     )
+
+    from civiccast.egress.engine_select import gstreamer_engine_selected
 
     assert report.channel_ids == ("council",)
     assert captured["store"] is store
@@ -581,6 +591,7 @@ def test_egress_runner_wires_schedule_source_provider(
     assert captured["poll_seconds"] == 0.1
     assert captured["should_stop"] is None
     assert captured["run"] == {"max_iterations": 1}
+    assert captured["playout_trim_supported"] == (not gstreamer_engine_selected())
 
 
 def test_egress_runner_wires_stop_predicate_for_continuous_runs(
@@ -621,13 +632,17 @@ def test_egress_runner_wires_stop_predicate_for_continuous_runs(
     monkeypatch.setattr(egress_module, "EgressDaemon", _FakeDaemon)
     monkeypatch.setattr(egress_module, "EgressService", _FakeService)
     monkeypatch.setattr(egress_module, "SlateSourceGenerator", lambda work_dir: object())
+
     # F3/item 5 fix: see the matching comment on the sibling test above -- a
     # real SourcePreparer always implements .release and
     # .set_protected_plan_dirs_provider too.
-    monkeypatch.setattr(
-        egress_module,
-        "SourcePreparer",
-        lambda work_dir: type(
+    # Item 66 round-3 (Opus review): see the matching comment on the sibling
+    # test above -- the fake must accept playout_trim_supported and this
+    # test asserts the actual value against the same process's own
+    # gstreamer_engine_selected() rather than a hardcoded guess.
+    def _fake_source_preparer(*, work_dir: Path, playout_trim_supported: bool) -> object:
+        captured["playout_trim_supported"] = playout_trim_supported
+        return type(
             "_FakePreparer",
             (),
             {
@@ -635,8 +650,9 @@ def test_egress_runner_wires_stop_predicate_for_continuous_runs(
                 "release": lambda self, _plan_dir: None,
                 "set_protected_plan_dirs_provider": lambda self, _provider: None,
             },
-        )(),
-    )
+        )()
+
+    monkeypatch.setattr(egress_module, "SourcePreparer", _fake_source_preparer)
 
     report = cli_module._run_egress_service(
         channel_ids=("council",),
@@ -645,12 +661,15 @@ def test_egress_runner_wires_stop_predicate_for_continuous_runs(
         once=False,
     )
 
+    from civiccast.egress.engine_select import gstreamer_engine_selected
+
     assert report.stopped_by == "stop_predicate"
     assert captured["channel_ids"] == ("council",)
     assert captured["poll_seconds"] == 0.1
     assert callable(captured["should_stop"])
     assert captured["should_stop"]() is False
     assert captured["run"] == {"max_iterations": None}
+    assert captured["playout_trim_supported"] == (not gstreamer_engine_selected())
 
 
 def test_egress_continuity_proof_json(
