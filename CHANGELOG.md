@@ -260,7 +260,45 @@ below.
     and crash-relaunch routes inside `_poll_process` deliberately do not,
     since those keep the channel effectively on air and rely on
     `_request_reload`'s own pop instead (the same round-4 rule that keeps
-    `_start` from popping this dict).
+    `_start` from popping this dict). Note: `_poll_process`'s clean-exit
+    branch is shared by two cases -- a worker that simply exited on its
+    own, and a drain that has finished (`was_draining`). Only the former
+    was actually leaking; a drain's own `_stop(draining=True)` call already
+    pops this entry unconditionally the moment the drain begins, so the
+    drain-completed case reaching this branch later is redundant, not a
+    route this fix newly closes.
+  - **Round 6 (coordinator review): the round-5 fix's "nothing recorded
+    before a channel goes fully dark can ever survive" claim was still
+    false -- two more routes leaked, both MEASURED.** First, a worker
+    that crashes twice within the back-off cooldown takes
+    `_relaunch_after_crash`'s DEFERRED branch: the channel sits in
+    `STARTING` with no process running for the entire cooldown, and that
+    branch never popped the entry. MEASURED: crash once (immediate
+    relaunch), crash again inside the cooldown (deferred), let
+    `_service_backoff_relaunch` fire the deferred relaunch once the latch
+    permits, then issue a plain operator reload -- `switch_at_end_of_
+    current` came back `False` (cut) instead of the deferred `True` a
+    rollover plan_end sitting in the dict should have produced, and the
+    dict was confirmed empty during the back-off window itself. The same
+    leak reached the operator via a second path: an explicit operator
+    start command superseding a still-deferred relaunch (`_process_command`
+    already pops `_backoff_relaunch` there, but was not popping this
+    dict). Second, `_start`'s own two terminal-`ERROR` `except` clauses
+    (`ConfigInvalidError`/`SecretUnresolvedError`/`FfmpegNotFoundError`,
+    and the general `EgressError` fallback) never popped -- `ERROR` is
+    off-air by the same definition every other route in this list uses,
+    so a value recorded going into a `_start` call that lands in `ERROR`
+    survived across it. Both routes now pop, closing those two gaps.
+    Exactly two routes deliberately still do not pop, unchanged from
+    round 4: the pending-reload restart inside `_poll_process`, and the
+    IMMEDIATE crash-relaunch path (`_relaunch_after_crash` ->
+    `_begin_relaunch` -> `_start`, taken when the back-off latch permits
+    running right away instead of deferring) -- both keep the channel
+    effectively on air through the transition and rely on
+    `_request_reload`'s own pop instead. The daemon's in-code docstring
+    for `_rollover_plan_end_at` names both of these still-standing
+    exceptions explicitly rather than repeating the "nothing can ever
+    survive" claim this round disproved twice.
 - **Install-over could leave the PREVIOUS kit's application payload silently
   running.** MEASURED on a real tester (2026-09-05): installing kit B `/S`
   (install-over) on a station kit A had already installed, where both kits

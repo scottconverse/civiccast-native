@@ -404,14 +404,41 @@ class EgressDaemon:
         # _stop -- _poll_process's clean-exit and terminal-ERROR worker-exit
         # branches, _drain's process-is-None branch, and stop_all_channels'
         # "already gone" branch -- now pops this itself, the same as _stop
-        # does, so nothing recorded before a channel goes fully dark can
-        # ever survive to feed a later, unrelated reload. The pending-
-        # reload restart and crash-relaunch routes inside _poll_process
-        # deliberately do NOT pop here (per round 4's _start fix above --
-        # the channel stays effectively on air through those, and
-        # _request_reload's own pop is what those routes rely on instead).
-        # See reload_policy.should_defer_switch's plan_end_at/now
-        # parameters, which this feeds.
+        # does.
+        #
+        # Round 5 claimed this made it impossible for anything recorded
+        # before a channel goes fully dark to survive to a later, unrelated
+        # reload. That claim was ALSO false, MEASURED two more ways (round 6,
+        # coordinator review):
+        #
+        # - Crash 1, then crash 2 landing inside the back-off cooldown, took
+        #   the DEFERRED branch of _relaunch_after_crash: the channel sits in
+        #   STARTING with no process running for the whole cooldown, and this
+        #   value survived untouched (that branch never popped). When
+        #   _service_backoff_relaunch later fired the deferred relaunch it
+        #   re-resolved a fresh plan same as any other relaunch, so the stale
+        #   value never fed that relaunch -- but it was still there to wrongly
+        #   bind a DIFFERENT, later, plain operator reload landing during the
+        #   cooldown. The same leak reached the same place when an operator
+        #   explicit start command superseded the deferred relaunch instead
+        #   (_process_command pops ``_backoff_relaunch`` there but was not
+        #   popping this dict).
+        # - _start's own two terminal-ERROR ``except`` clauses (ConfigInvalid/
+        #   SecretUnresolved/FfmpegNotFound and the general EgressError
+        #   fallback) never popped either. ERROR is not on air by any
+        #   definition this dict cares about, so a value recorded going into
+        #   a start attempt that lands in ERROR survived across it.
+        #
+        # Both routes now pop, closing those two gaps. Exactly two routes
+        # deliberately still do NOT pop, and both are call sites of _start
+        # that keep the channel effectively ON AIR through the transition
+        # (per round 4's _start-must-never-pop fix above), relying on
+        # _request_reload's own pop instead: the pending-reload restart
+        # inside _poll_process, and the IMMEDIATE crash-relaunch path
+        # (_relaunch_after_crash -> _begin_relaunch -> _start, taken when the
+        # back-off latch permits running now rather than deferring). See
+        # reload_policy.should_defer_switch's plan_end_at/now parameters,
+        # which this feeds.
         self._rollover_plan_end_at: dict[str, datetime] = {}
         # S9-5 crash-relaunch back-off: a latch paces rapid repeat relaunches, a
         # per-channel streak counts consecutive rapid crashes (for escalation +
@@ -1080,9 +1107,16 @@ class EgressDaemon:
             # channel silently hanging or the supervisor crashing.
             self._write_state(channel_id, "ERROR", last_error=str(exc))
             self._append_health(channel_id, "ERROR", sink_connected={})
+            # Round 6 fix: ERROR is not on air -- a value recorded before this
+            # start attempt (or one this attempt's own caller carried forward)
+            # must not survive to feed a later, unrelated reload. See
+            # ``_rollover_plan_end_at``'s docstring for the full route
+            # inventory.
+            self._rollover_plan_end_at.pop(channel_id, None)
         except EgressError as exc:
             self._write_state(channel_id, "ERROR", last_error=str(exc))
             self._append_health(channel_id, "ERROR", sink_connected={})
+            self._rollover_plan_end_at.pop(channel_id, None)
 
     def _write_state(
         self,
@@ -1489,16 +1523,21 @@ class EgressDaemon:
             self._append_health(channel_id, "STOPPED", sink_connected={})
             # Round 5 (coordinator review): a clean exit with no pending
             # reload is genuinely off-air -- unlike the pending_reload
-            # restart above and the crash-relaunch below (both of which
-            # keep the channel effectively on air and must NOT pop this,
-            # per _start's own no-pop rule), nothing is left to defer a
-            # switch against. Bypasses _stop entirely (this route is
-            # reached from a worker exit _poll_process observes on its own,
-            # not from an operator/drain stop), so _stop's own pop never
-            # ran -- MEASURED to otherwise leave a stale entry sitting here
-            # across the channel going fully dark and being freshly
-            # restarted, ready to wrongly bind to a later, unrelated plain
-            # reload. See ``_rollover_plan_end_at``'s docstring.
+            # restart above (which keeps the channel effectively on air and
+            # must NOT pop this, per _start's own no-pop rule) and unlike
+            # the IMMEDIATE crash-relaunch below (same reasoning: it
+            # re-resolves and starts a fresh plan right away), nothing is
+            # left here to defer a switch against. Bypasses _stop entirely
+            # (this route is reached from a worker exit _poll_process
+            # observes on its own, not from an operator/drain stop), so
+            # _stop's own pop never ran -- MEASURED to otherwise leave a
+            # stale entry sitting here across the channel going fully dark
+            # and being freshly restarted, ready to wrongly bind to a later,
+            # unrelated plain reload. See ``_rollover_plan_end_at``'s
+            # docstring. (The DEFERRED crash-relaunch branch inside
+            # ``_relaunch_after_crash`` is a separate case, fixed in round 6:
+            # it leaves no process running for the whole cooldown, so it
+            # pops there too -- see that branch's own comment.)
             self._rollover_plan_end_at.pop(channel_id, None)
             return
         self._pending_reloads.pop(channel_id, None)
@@ -1563,6 +1602,18 @@ class EgressDaemon:
                 ),
             )
             self._append_health(channel_id, "STARTING", sink_connected={}, dropped_frames=0)
+            # Round 6 fix: unlike the immediate relaunch below (_begin_relaunch,
+            # which re-resolves a fresh plan through _start right away) and the
+            # pending-reload restart in _poll_process, this deferred branch
+            # leaves NO process running for the entire cooldown -- STARTING
+            # with nothing actually airing. _service_backoff_relaunch's own
+            # eventual _begin_relaunch call re-resolves a fresh plan same as
+            # the immediate case, so a value sitting here does not feed that
+            # relaunch; it only survives to wrongly bind to a DIFFERENT,
+            # later, unrelated plain operator reload landing during the
+            # cooldown (MEASURED). Pop it here, same as every other off-air
+            # route. See ``_rollover_plan_end_at``'s docstring.
+            self._rollover_plan_end_at.pop(channel_id, None)
 
     def _service_backoff_relaunch(self, channel_id: str) -> None:
         """Fire a deferred crash-relaunch once the back-off latch permits. Driven by
