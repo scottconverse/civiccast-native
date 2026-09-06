@@ -911,6 +911,12 @@ class ChannelAutomationService:
 
         retrying_undelivered = False
         if channel_id in self._rollover_issued:
+            if self._daemon_has_pending_reload_settlement(channel_id):
+                # F1 redesign follow-up: the daemon reports this specific
+                # reload is armed and still settling (a deferred switch can
+                # take ~120s-900s) -- never retry while that is true; the
+                # daemon's own deadline resolves it one way or the other.
+                return
             issued_at = self._rollover_issued_at.get(channel_id)
             if issued_at is not None and (
                 self._monotonic() - issued_at >= self._ROLLOVER_ISSUED_TIMEOUT_SECONDS
@@ -1064,6 +1070,38 @@ class ChannelAutomationService:
         if not callable(has_override):
             return False
         return bool(has_override(channel_id))
+
+    def _daemon_has_pending_reload_settlement(self, channel_id: str) -> bool:
+        """F1 redesign follow-up (coordinator hostile review, 2026-09-06): a
+        DEFERRED/boundary-aligned reload's ``current_proof_event_id`` does not
+        change until it actually SETTLES (``EgressDaemon._commit_reload_
+        settlement``) -- for an automation-driven ON_AIR extension that can be
+        ~120s+ after ``_check_plan_rollover`` dispatched it (the whole point of
+        triggering early, ``reload_policy.rollover_trigger_at``), and up to the
+        engine's own ``defer_switch_timeout_s`` (900s default) in the worst
+        case. ``_ROLLOVER_ISSUED_TIMEOUT_SECONDS`` (45s) is far shorter than
+        that, so without this check the "did the dispatched reload land"
+        timeout below would clear its latch and retry -- re-preparing
+        synchronously, superseding the still-armed leg in the engine, and
+        creating another prepared-plan directory -- every ~45s while a
+        perfectly healthy deferred reload is still legitimately settling.
+
+        ``has_pending_reload_settlement`` is an OPTIONAL daemon capability
+        (only ``EgressDaemon``/``PlayoutSupervisor`` implement it; a bare test
+        double need not), resolved via ``getattr`` like
+        ``has_manual_override``/``dispatched_plan_horizon`` above. While it
+        reports True, this method treats the rollover as "landed, waiting" --
+        never retrying -- and relies entirely on the DAEMON's own bounded
+        deadline (``_PENDING_RELOAD_SETTLE_DEADLINE_S``) to eventually either
+        commit (which changes ``current_proof_event_id``, handled by the
+        existing "fresh plan just took air" branch above) or fall back to
+        restart (which flips the state row away from ON_AIR, handled by this
+        method's own top-of-function early return)."""
+
+        reader = getattr(self._daemon, "has_pending_reload_settlement", None)
+        if not callable(reader):
+            return False
+        return bool(reader(channel_id))
 
     def _enqueue(self, channel_id: str, action: str, *, now: datetime) -> None:
         self._store.enqueue_command(
@@ -1378,6 +1416,10 @@ def build_channel_automation(
         # a bare direct store write) instead of a fresh unwired recorder.
         as_run_recorder=StoreAsRunRecorder(ReportingStore(session_factory), outbox=as_run_outbox),
     )
+    # Item 5 fix: only the daemon knows which per-plan directories are
+    # currently LIVE (active on-air + armed-not-yet-settled) -- wire it back
+    # into the preparer's own GC pass now that both exist.
+    source_preparer_instance.set_protected_plan_dirs_provider(daemon.live_prepared_plan_dirs)
     # GStreamer degraded-mode tier 3: if the station bootstrap found the
     # GStreamer closure corrupt/unrepairable and switched egress to FFmpeg
     # (build_encoder_strategy above therefore returned ConcatEncoderStrategy),

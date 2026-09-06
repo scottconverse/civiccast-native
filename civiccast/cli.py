@@ -1221,6 +1221,10 @@ def _run_egress_service(
         # CIVICCAST_EGRESS_ENGINE.
         encoder_strategy=build_encoder_strategy(),
     )
+    # Item 5 fix: only the daemon knows which per-plan directories are
+    # currently LIVE (active on-air + armed-not-yet-settled) -- wire it back
+    # into the preparer's own GC pass now that both exist.
+    source_preparer_instance.set_protected_plan_dirs_provider(daemon.live_prepared_plan_dirs)
     with _egress_stop_signal_context(enabled=not once) as should_stop:
         service = EgressService(
             daemon,

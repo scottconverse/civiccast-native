@@ -412,6 +412,13 @@ class EgressDaemon:
         # ``_poll_reload_settlement``) rather than left for GC alone.
         self._active_prepared_plan_dir: dict[str, Path] = {}
         self._prepared_plan_release = prepared_plan_release
+        # Hostile-review follow-up (2026-09-06), item 1: the reload_id a
+        # discarded (worker-exited/superseded/restarted) pending settlement
+        # last carried, kept ONLY so a late-arriving status write for that
+        # dead attempt can be recognized and logged as ignored instead of
+        # silently doing nothing -- see ``_discard_pending_reload_settlement``
+        # and ``_poll_reload_settlement``.
+        self._discarded_reload_ids: dict[str, str] = {}
 
     def process_once(self, channel_id: str) -> int:
         """Process all currently queued commands for one channel.
@@ -673,6 +680,17 @@ class EgressDaemon:
                     seconds_on_air=self._seconds_on_air(channel_id),
                 )
                 return
+            # Hostile-review follow-up, items 1 & 4: reaching here means either
+            # no process was tracked at all, or the tracked one has ALREADY
+            # exited (the guard above only returns early while it is still
+            # alive) -- some callers reach _start directly on a dead process
+            # without going through _poll_process (e.g. _request_reload's own
+            # poll check), so this is the other place that exit must be
+            # recognized. Any armed-but-unsettled reload for the OLD process
+            # is moot, and the OLD active plan is no longer being read by
+            # anything -- reclaim both before starting fresh.
+            self._discard_pending_reload_settlement(channel_id, reason="channel restarting")
+            self._discard_active_prepared_plan_dir(channel_id)
             self._reap_orphan(channel_id)
             using_fallback_slate = False
             fallback_reason: str | None = None
@@ -743,10 +761,19 @@ class EgressDaemon:
                     f"Source plan channel {source_plan.channel_id!r} does not match "
                     f"requested channel {channel_id!r}."
                 )
+            # Hostile-review follow-up, item 4: None unless the preparer
+            # actually reports a discrete per-plan directory for the plan
+            # this worker ends up airing -- tracked into
+            # _active_prepared_plan_dir below once the encoder actually
+            # starts, so the flag-OFF (shipped default) path releases it too
+            # instead of relying solely on _try_content_reload's tracking
+            # (which never runs at all while supports_content_reload is False).
+            prepared_plan_dir: Path | None = None
             if self._source_preparer is not None:
                 try:
                     preparation_report = self._source_preparer(source_plan, config)
                     source_plan = preparation_report.source_plan
+                    prepared_plan_dir = preparation_report.plan_dir
                     self._record_prepared_loudness(channel_id, preparation_report)
                 except SourcePrepareError as exc:
                     if self._fallback_source_provider is None:
@@ -871,6 +898,18 @@ class EgressDaemon:
             process = encoder_result.process
             self._processes[channel_id] = process
             self._started_at[channel_id] = self._monotonic()
+            # Hostile-review follow-up, item 4: track the plan actually being
+            # aired so it gets released on the next exit/stop even when the
+            # seamless-reload flag is OFF (supports_content_reload=False, the
+            # shipped default) -- _try_content_reload/_commit_reload_
+            # settlement never run at all on that path, so without this the
+            # only cleanup for a _start()-launched plan was age/budget GC.
+            # Skipped when a fallback slate ended up airing instead (built by
+            # _fallback_source_provider, never by the preparer) -- tracking
+            # prepared_plan_dir there would point at a plan that was never
+            # actually dispatched to this encoder.
+            if not using_fallback_slate and prepared_plan_dir is not None:
+                self._active_prepared_plan_dir[channel_id] = prepared_plan_dir
             proof_event = self._build_proof_event(
                 channel_id=channel_id,
                 state=running_state,
@@ -1284,6 +1323,15 @@ class EgressDaemon:
             else None
         )
         _process_close(process)
+        # Hostile-review follow-up, items 1 & 4: the worker that would have
+        # settled any armed reload (and that was reading the currently-active
+        # prepared plan) is now DEFINITELY gone -- reclaim both immediately
+        # rather than let a spurious restart fire at the 960s deadline against
+        # a channel that has already moved on (possibly restarted onto a
+        # completely different plan by the branches below), or wait for GC to
+        # notice the active plan is no longer referenced.
+        self._discard_pending_reload_settlement(channel_id, reason="worker exited")
+        self._discard_active_prepared_plan_dir(channel_id)
         if pending_reload is not None:
             previous_state, previous_source_label = pending_reload
             # Audit ENG-001: the state row still carries the just-exited
@@ -1579,6 +1627,92 @@ class EgressDaemon:
             )
         )
 
+    def _release_prepared_plan_dir(self, plan_dir: Path | None) -> None:
+        """Best-effort call into the configured ``prepared_plan_release`` hook
+        (F3) -- a no-op if no hook is configured or ``plan_dir`` is None. A
+        release hiccup must never break the caller's own state transition."""
+        if self._prepared_plan_release is None or plan_dir is None:
+            return
+        with contextlib.suppress(Exception):
+            self._prepared_plan_release(plan_dir)
+
+    def _discard_pending_reload_settlement(self, channel_id: str, *, reason: str) -> None:
+        """Hostile-review follow-up (2026-09-06), items 1 & 3: drop any
+        armed-but-unsettled reload tracking for ``channel_id`` and release its
+        plan directory immediately (never leave it for GC/the 960s deadline).
+
+        Called from every path where the pending attempt is definitely moot:
+        the worker that would have settled it exited (``_poll_process``), the
+        channel is restarting fresh (``_start``), a newer reload superseded it
+        before it settled (``_try_content_reload``, item 3 -- the previous
+        code silently overwrote ``_pending_reload_settle`` here, leaking the
+        replaced entry's plan_dir), and the explicit restart fallback
+        (``_fall_back_to_restart_reload``) as a defensive backstop.
+
+        Records the discarded reload_id (``_discarded_reload_ids``) so a
+        LATE-arriving status write for that dead attempt is recognized and
+        logged as ignored by ``_poll_reload_settlement``, instead of the
+        previous silent no-op (pending already gone, nothing left to compare
+        against) that gave no evidence the late write was even seen.
+
+        Deliberately does NOT clear ``_discarded_reload_ids`` when there is no
+        pending entry to discard: this method is called defensively from
+        several places in a row for the SAME exit (e.g. ``_poll_process``'s
+        crash branch calling ``_start``, which calls this again) -- an
+        unconditional clear here would wipe out the very tracking the FIRST
+        call just recorded before ``_poll_reload_settlement`` ever gets a
+        chance to observe a late arrival against it."""
+        pending = self._pending_reload_settle.pop(channel_id, None)
+        if pending is None:
+            return
+        _LOG.info(
+            "Content-reload for %s (reload_id=%s) discarded: %s.",
+            channel_id,
+            pending.reload_id,
+            reason,
+        )
+        self._discarded_reload_ids[channel_id] = pending.reload_id
+        self._release_prepared_plan_dir(pending.plan_dir)
+
+    def _discard_active_prepared_plan_dir(self, channel_id: str) -> None:
+        """Hostile-review follow-up, item 4: release the plan directory
+        backing whatever ``channel_id`` was ACTUALLY airing (tracked from both
+        ``_start`` and ``_commit_reload_settlement``), once the worker reading
+        it is confirmed gone -- a real process exit (``_poll_process``), a
+        fresh ``_start`` past its already-alive guard (which only reaches
+        here when the previously-tracked process has already exited), or an
+        operator stop (``_stop``). Deliberately NOT called from
+        ``_fall_back_to_restart_reload``: that path's worker may still be
+        alive and draining/airing the very plan this would release."""
+        self._release_prepared_plan_dir(self._active_prepared_plan_dir.pop(channel_id, None))
+
+    def live_prepared_plan_dirs(self, channel_id: str) -> frozenset[Path]:
+        """Hostile-review follow-up, item 5: every ``SourcePreparer`` per-plan
+        directory this daemon currently considers LIVE for ``channel_id`` --
+        the active on-air plan and any armed-but-not-yet-settled reload's
+        plan. Wired into the configured ``SourcePreparer`` (via
+        ``set_protected_plan_dirs_provider``, see cli.py/automation.py) as the
+        ``keep=`` set its own GC pass must never evict, regardless of age,
+        size, or keep-N recency -- closing the gap where nothing but this
+        daemon actually knows which directories are still referenced."""
+        pending = self._pending_reload_settle.get(channel_id)
+        return frozenset(
+            plan_dir
+            for plan_dir in (
+                self._active_prepared_plan_dir.get(channel_id),
+                pending.plan_dir if pending is not None else None,
+            )
+            if plan_dir is not None
+        )
+
+    def has_pending_reload_settlement(self, channel_id: str) -> bool:
+        """Public capability ``ChannelAutomationService`` probes (via
+        ``getattr``, like ``has_manual_override``/``dispatched_plan_horizon``)
+        so its rollover cadence latch can tell "armed, still settling" (never
+        retry -- wait for this daemon's own deadline) apart from "genuinely
+        dropped" (retry after ``_ROLLOVER_ISSUED_TIMEOUT_SECONDS``)."""
+        return channel_id in self._pending_reload_settle
+
     def _try_content_reload(self, channel_id: str, state: EgressStateRow, process: object) -> bool:
         """Seamless program content-reload for a content-reload-capable strategy.
 
@@ -1740,6 +1874,14 @@ class EgressDaemon:
                 reason or "no reason reported by the encoder strategy",
             )
             return False
+        # Item 3 fix: a still-pending PREVIOUS reload for this channel (this
+        # attempt supersedes it -- e.g. automation issued another rollover
+        # before the first settled) used to be silently overwritten below,
+        # leaking its plan_dir forever. Discard it properly first.
+        if channel_id in self._pending_reload_settle:
+            self._discard_pending_reload_settlement(
+                channel_id, reason="superseded by a newer reload attempt"
+            )
         # Armed, not yet settled: record it and return. _poll_reload_settlement
         # finishes the ON_AIR bookkeeping once reload-status.json confirms
         # "applied" (or falls back to restart on "aborted:<reason>"/deadline).
@@ -1824,10 +1966,7 @@ class EgressDaemon:
         # engine has disposed its leg; see engine.reload_program's on_settled
         # contract). Release it immediately rather than waiting for GC, then
         # start tracking the new plan as active.
-        previous_plan_dir = self._active_prepared_plan_dir.pop(channel_id, None)
-        if self._prepared_plan_release is not None and previous_plan_dir is not None:
-            with contextlib.suppress(Exception):  # a release hiccup must never break settlement
-                self._prepared_plan_release(previous_plan_dir)
+        self._release_prepared_plan_dir(self._active_prepared_plan_dir.pop(channel_id, None))
         if pending.plan_dir is not None:
             self._active_prepared_plan_dir[channel_id] = pending.plan_dir
 
@@ -1852,36 +1991,81 @@ class EgressDaemon:
           ``_PENDING_RELOAD_SETTLE_DEADLINE_S`` has elapsed since this reload
           was armed, in which case treat it as lost and fall back to restart
           rather than wait forever for a status update that may never come
-          (e.g. the worker crashed between arming and writing the file)."""
+          (e.g. the worker crashed between arming and writing the file).
+        * a status matching the pending id but carrying an UNRECOGNIZED
+          result value (hostile-review follow-up: neither ``"applied"`` nor
+          ``"aborted:..."`` -- a malformed write, a future/older worker
+          version) is treated as aborted IMMEDIATELY, not silently waited out
+          for the full deadline: whatever wrote it clearly ran, so waiting
+          longer buys nothing, and a channel that is really fine should not
+          sit unresolved for up to 960s over a status the daemon simply
+          cannot interpret.
+
+        If ``channel_id`` has no pending entry at all (already discarded --
+        see ``_discard_pending_reload_settlement``), this also checks whether
+        a LATE status write matches the most recently discarded reload_id and
+        logs that it is being ignored, rather than the previous silent no-op
+        that left no evidence the late write was ever observed."""
         pending = self._pending_reload_settle.get(channel_id)
         if pending is None:
+            discarded_id = self._discarded_reload_ids.get(channel_id)
+            if discarded_id is not None:
+                status = self._read_reload_status(channel_id)
+                if status is not None and status.get("id") == discarded_id:
+                    _LOG.info(
+                        "Content-reload settlement for %s (reload_id=%s) arrived after "
+                        "that attempt was already discarded (worker exit/supersede/"
+                        "restart); ignoring.",
+                        channel_id,
+                        discarded_id,
+                    )
+                    self._discarded_reload_ids.pop(channel_id, None)
             return
         status = self._read_reload_status(channel_id)
         if status is not None and status.get("id") == pending.reload_id:
             result = status.get("result")
             if result == "applied":
+                # NOTE: a plain pop here, not _discard_pending_reload_settlement --
+                # this attempt is COMMITTING, not being discarded; its plan_dir
+                # becomes the new active one inside _commit_reload_settlement,
+                # never released.
                 self._pending_reload_settle.pop(channel_id, None)
                 self._commit_reload_settlement(channel_id, pending)
                 return
             if isinstance(result, str) and result.startswith("aborted:"):
-                self._pending_reload_settle.pop(channel_id, None)
                 _LOG.warning(
                     "Seamless content-reload for %s did not land (%s); falling back to restart.",
                     channel_id,
                     result,
                 )
+                self._discard_pending_reload_settlement(
+                    channel_id, reason=f"worker reported {result}"
+                )
                 self._fall_back_to_restart_reload(channel_id)
                 return
-            # An unrecognized result string: fall through to the deadline check
-            # below rather than trust an unknown value as either outcome.
+            # Unrecognized result value -- see the docstring note above.
+            _LOG.warning(
+                "Seamless content-reload for %s reported an unrecognized settlement "
+                "result %r (reload_id=%s); treating as aborted and falling back to restart.",
+                channel_id,
+                result,
+                pending.reload_id,
+            )
+            self._discard_pending_reload_settlement(
+                channel_id, reason=f"unrecognized settlement result {result!r}"
+            )
+            self._fall_back_to_restart_reload(channel_id)
+            return
         if self._monotonic() - pending.since >= _PENDING_RELOAD_SETTLE_DEADLINE_S:
-            self._pending_reload_settle.pop(channel_id, None)
             _LOG.warning(
                 "Seamless content-reload for %s reported no settlement within %.0fs "
                 "(reload_id=%s); falling back to restart.",
                 channel_id,
                 _PENDING_RELOAD_SETTLE_DEADLINE_S,
                 pending.reload_id,
+            )
+            self._discard_pending_reload_settlement(
+                channel_id, reason=f"no settlement within {_PENDING_RELOAD_SETTLE_DEADLINE_S:.0f}s"
             )
             self._fall_back_to_restart_reload(channel_id)
 
@@ -1902,7 +2086,14 @@ class EgressDaemon:
         """The terminate+restart reload path a declined/aborted/lost content-
         reload always falls through to -- factored out of ``_request_reload``
         so ``_poll_reload_settlement`` can take the exact same path for a
-        reload that armed successfully but then failed to settle."""
+        reload that armed successfully but then failed to settle.
+
+        Hostile-review follow-up, item 1: defensively discards any pending
+        reload-settlement tracking for this channel too (a no-op if the
+        caller already did -- every current call site does). Kept here as a
+        backstop so a future call site reaching this method can never leave a
+        stale pending entry (and its leaked plan_dir) behind."""
+        self._discard_pending_reload_settlement(channel_id, reason="falling back to restart")
         state = self._store.read_state(channel_id)
         process = self._processes.get(channel_id)
         self._pending_reloads[channel_id] = (

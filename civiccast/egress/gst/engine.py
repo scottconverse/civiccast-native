@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import json
 import os
 import re
 import signal
@@ -114,9 +115,13 @@ except ImportError:
     )
 
 try:
-    from civiccast.egress.gst.reload_policy import reload_switch_is_deferred
+    from civiccast.egress.gst.reload_policy import (
+        reload_id_from_sidecar_path,
+        reload_switch_is_deferred,
+    )
 except ImportError:
     from reload_policy import (  # type: ignore[import-not-found,no-redef]
+        reload_id_from_sidecar_path,
         reload_switch_is_deferred,
     )
 
@@ -1192,6 +1197,25 @@ class GstPlayoutEngine:
         )
         return keepalive_fd
 
+    @staticmethod
+    def _write_reload_status(channel_dir: Path, *, reload_id: str, result: str) -> None:
+        """POSIX FIFO counterpart of ``worker.py``'s ``_write_reload_status``
+        (the Windows D2 pipe dispatch's identical helper) -- writes the SAME
+        ``<channel_dir>/reload-status.json`` file ``EgressDaemon._poll_reload_
+        settlement`` polls, so a reload's eventual settle outcome is reported
+        the same way regardless of which control-channel transport dispatched
+        it. Atomic write (tmp + replace); best-effort (a write hiccup must
+        never crash the channel -- the daemon's own deadline is the backstop
+        if a status update never arrives at all)."""
+        status_path = channel_dir / "reload-status.json"
+        tmp_path = status_path.with_name(status_path.name + ".tmp")
+        payload = json.dumps({"id": reload_id, "result": result, "ts": time.time()})
+        try:
+            tmp_path.write_text(payload, encoding="utf-8")
+            tmp_path.replace(status_path)
+        except OSError as exc:
+            print(f"WARN: failed to write reload-status.json: {exc!r}", flush=True)
+
     def _dispatch_control(self, line: str) -> None:
         command = parse_control_line(line)
         if command is None:
@@ -1204,13 +1228,38 @@ class GstPlayoutEngine:
                 print(f"CTRL swap {command[1]} failed: {exc!r}", flush=True)
         elif command[0] == "reload":
             try:
-                with Path(command[1]).open(encoding="utf-8") as handle:
+                reload_path = Path(command[1])
+                channel_dir = reload_path.parent
+                reload_id = reload_id_from_sidecar_path(command[1])
+                with reload_path.open(encoding="utf-8") as handle:
                     new_graph = graph_from_json(handle.read())
                 with contextlib.suppress(OSError):
-                    Path(command[1]).unlink()  # one-shot graph file: consume it after read
+                    reload_path.unlink()  # one-shot graph file: consume it after read
+
+                # Hostile-review follow-up (2026-09-06): the POSIX FIFO path used
+                # to call reload_program with no ``on_settled`` at all, so a
+                # reload dispatched here NEVER reported its eventual commit/abort
+                # -- the daemon's ``_poll_reload_settlement`` would wait out the
+                # full 960s deadline and fall back to restart even for a reload
+                # that landed perfectly. Write the SAME ``reload-status.json``
+                # file the Windows D2 pipe seam's worker.py writes (using the
+                # reload id embedded in this sidecar's own filename -- the FIFO
+                # has no separate envelope/ack id field to carry the daemon's
+                # own id, see ``reload_policy.reload_id_from_sidecar_path``),
+                # so the daemon can observe settlement on this platform too.
+                def _on_settled(
+                    committed: bool,
+                    reason: str | None,
+                    _channel_dir: Path = channel_dir,
+                    _reload_id: str = reload_id,
+                ) -> None:
+                    result = "applied" if committed else f"aborted:{reason or 'unknown'}"
+                    self._write_reload_status(_channel_dir, reload_id=_reload_id, result=result)
+
                 self.reload_program(
                     new_graph.sources[0],
                     switch_at_end_of_current=reload_switch_is_deferred(command[1]),
+                    on_settled=_on_settled,
                 )
                 # BLOCKER fix: a content-reload must also re-apply the graphics-overlay
                 # leg (station bug / lower-third) from the SAME reloaded graph — reload

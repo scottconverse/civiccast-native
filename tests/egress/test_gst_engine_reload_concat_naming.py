@@ -38,16 +38,21 @@ class _FakePadLinkReturn:
 class _FakePad:
     """Minimal stand-in for ``Gst.Pad`` -- only what ``_build_playlist``'s
     no-decoder path touches: linking a sub-chain's tail into a concat's request
-    pad."""
+    pad. Also tracks ``unlink`` calls for the F2 selector-pad-release tests."""
 
     def __init__(self, name: str) -> None:
         self.name = name
         self.peer: _FakePad | None = None
+        self.unlinked_with: list[_FakePad] = []
 
     def link(self, other: _FakePad) -> int:
         self.peer = other
         other.peer = self
         return _FakePadLinkReturn.OK
+
+    def unlink(self, other: _FakePad) -> bool:
+        self.unlinked_with.append(other)
+        return True
 
 
 class _FakeElement:
@@ -59,6 +64,7 @@ class _FakeElement:
         self.props: dict[str, Any] = {}
         self._pads: dict[str, _FakePad] = {}
         self._request_pad_count = 0
+        self.states: list[Any] = []
 
     def set_property(self, key: str, value: Any) -> None:
         self.props[key] = value
@@ -79,15 +85,25 @@ class _FakeElement:
     def connect(self, *_a: Any, **_k: Any) -> None:  # pragma: no cover - unused here
         pass
 
+    def set_state(self, state: Any) -> None:
+        self.states.append(state)
+
+
+class _FakeState:
+    NULL = "NULL"
+
 
 class _FakePipeline:
     """Mirrors the ONE real-``Gst.Bin`` contract this bug turned on:
     ``add()`` returns ``False`` (never raises) on a duplicate element name in
-    the same bin, exactly like ``Gst.Bin.add()`` really does."""
+    the same bin, exactly like ``Gst.Bin.add()`` really does. ``remove`` frees
+    the name for reuse (mirroring real ``Gst.Bin.remove``) and records the
+    call, for the F2 dispose-on-failure tests."""
 
     def __init__(self) -> None:
         self._names: set[str] = set()
         self.added: list[str] = []
+        self.removed: list[str] = []
 
     def add(self, element: _FakeElement) -> bool:
         if element.get_name() in self._names:
@@ -95,6 +111,10 @@ class _FakePipeline:
         self._names.add(element.get_name())
         self.added.append(element.get_name())
         return True
+
+    def remove(self, element: _FakeElement) -> None:
+        self._names.discard(element.get_name())
+        self.removed.append(element.get_name())
 
 
 class _FakeElementFactory:
@@ -114,11 +134,30 @@ class _FakeCaps:
         return value
 
 
+class _FakeSelector:
+    """Minimal stand-in for the ``input-selector`` element
+    ``_link_leg_to_selectors`` requests pads from -- tracks
+    ``release_request_pad`` calls for the F2 pad-release-on-failure tests."""
+
+    def __init__(self, name: str = "sel") -> None:
+        self._name = name
+        self._request_count = 0
+        self.released: list[_FakePad] = []
+
+    def request_pad_simple(self, _pattern: str) -> _FakePad:
+        self._request_count += 1
+        return _FakePad(f"{self._name}.req{self._request_count}")
+
+    def release_request_pad(self, pad: _FakePad) -> None:
+        self.released.append(pad)
+
+
 def _install_fake_gst() -> types.ModuleType:
     fake_gst = types.ModuleType("gi.repository.Gst")
     fake_gst.ElementFactory = _FakeElementFactory  # type: ignore[attr-defined]
     fake_gst.Caps = _FakeCaps  # type: ignore[attr-defined]
     fake_gst.PadLinkReturn = _FakePadLinkReturn  # type: ignore[attr-defined]
+    fake_gst.State = _FakeState  # type: ignore[attr-defined]
     return fake_gst
 
 
@@ -238,3 +277,118 @@ def test_the_pre_fix_bare_label_would_have_collided(engine_module) -> None:
         # simulates a reload rebuilding the SAME bare name while the first is
         # still in the bin -- exactly the measured H1 defect.
         engine._make(ElementSpec("concat", f"vconcat_{leg.label}"))
+
+
+# --- F2 (hostile-review follow-up, 2026-09-06): a build/link failure must not
+# leak the elements/pads already claimed before it ------------------------------
+
+
+def test_a_mid_build_failure_disposes_the_elements_already_added(engine_module) -> None:
+    """``_instantiate_source_leg``: a build failure partway through a sub-chain
+    (here, the SECOND element of one sub-chain colliding on name with the
+    FIRST -- simulating ``_make``'s fail-loud ``pipeline.add`` refusal) must
+    NULL-and-remove whatever was already added to the pipeline before the
+    failure (the aggregator built first, plus the first sub-chain element),
+    not just re-raise and leak them."""
+    engine = _bare_engine(engine_module)
+    leg = PlaylistLeg(
+        label="program",
+        subchains=(
+            (
+                ElementSpec("videotestsrc", name="dup"),
+                ElementSpec("videoconvert", name="dup"),  # collides -> _make raises
+            ),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="dup"):
+        engine._instantiate_source_leg(leg)
+
+    # The aggregator (vconcat_program_1) and the first sub-chain element
+    # ("dup", the videotestsrc) were both successfully added before the
+    # failure -- both must have been disposed (NULLed + removed), and the
+    # duplicate name is free again in the pipeline's own bookkeeping.
+    assert engine.pipeline.added == ["vconcat_program_1", "dup"]
+    assert sorted(engine.pipeline.removed) == ["dup", "vconcat_program_1"]
+    assert "dup" not in engine.pipeline._names
+    assert "vconcat_program_1" not in engine.pipeline._names
+
+
+def test_link_failure_releases_the_video_pad_it_already_requested(engine_module) -> None:
+    """``_link_leg_to_selectors``: when audio is enabled but the leg has no
+    audio pad, the method already successfully requested (and linked) a VIDEO
+    selector pad before discovering the audio problem -- that pad must be
+    unlinked and released, not left as a permanently-orphaned selector request
+    pad (a request pad is never automatically freed)."""
+    engine = _bare_engine(engine_module)
+    video_selector = _FakeSelector("vsel")
+    audio_selector = _FakeSelector("asel")
+    engine.selector = video_selector
+    engine.audio_selector = audio_selector
+    out_pad = _FakePad("leg.video_src")
+
+    with pytest.raises(RuntimeError, match="no audio leg"):
+        engine._link_leg_to_selectors("test-leg", out_pad, None)  # audio_out_pad=None
+
+    assert len(video_selector.released) == 1
+    released_pad = video_selector.released[0]
+    assert released_pad.name == "vsel.req1"  # the video sink pad it requested
+    assert out_pad.unlinked_with == [released_pad]
+    assert audio_selector.released == []  # never got as far as requesting one
+
+
+def test_link_failure_releases_both_pads_when_the_audio_link_itself_fails(
+    engine_module,
+) -> None:
+    """Same as above, but the audio leg DOES exist and gets as far as
+    requesting its own selector pad -- when ITS link then fails (modeled here
+    via a pad whose ``link`` reports failure), both the video AND the audio
+    request pads must be released, not just the video one."""
+    engine = _bare_engine(engine_module)
+    video_selector = _FakeSelector("vsel")
+    audio_selector = _FakeSelector("asel")
+    engine.selector = video_selector
+    engine.audio_selector = audio_selector
+    out_pad = _FakePad("leg.video_src")
+
+    class _NeverLinksPad(_FakePad):
+        def link(self, other: _FakePad) -> int:  # pragma: no cover - trivial
+            return 1  # anything other than _FakePadLinkReturn.OK (0)
+
+    audio_out_pad = _NeverLinksPad("leg.audio_src")
+
+    with pytest.raises(RuntimeError, match="failed to link audio"):
+        engine._link_leg_to_selectors("test-leg", out_pad, audio_out_pad)
+
+    assert len(video_selector.released) == 1
+    assert len(audio_selector.released) == 1
+    assert out_pad.unlinked_with == video_selector.released
+    # The audio pad's own link failed, so nothing ever linked it -- only the
+    # already-linked VIDEO pad needs an unlink call; the audio release is a
+    # bare release_request_pad with no prior link to undo.
+
+
+def test_release_selector_pad_best_effort_is_a_direct_unit(engine_module) -> None:
+    """Direct unit coverage of the shared static helper both tests above
+    exercise indirectly: unlinks (when a ``linked_pad`` is given) then
+    releases the pad; is a no-op for ``sink_pad=None``; and swallows any
+    error from either call (an already-failing path must never raise a
+    SECOND exception that would replace the caller's real one)."""
+    engine_module_cls = engine_module.GstPlayoutEngine
+    selector = _FakeSelector("sel")
+    sink_pad = _FakePad("sel.req1")
+    linked_pad = _FakePad("leg.video_src")
+
+    engine_module_cls._release_selector_pad_best_effort(selector, None)
+    assert selector.released == []  # no-op for None
+
+    engine_module_cls._release_selector_pad_best_effort(selector, sink_pad, linked_pad=linked_pad)
+    assert linked_pad.unlinked_with == [sink_pad]
+    assert selector.released == [sink_pad]
+
+    class _RaisingSelector(_FakeSelector):
+        def release_request_pad(self, pad: _FakePad) -> None:
+            raise RuntimeError("simulated GStreamer failure")
+
+    # Must not raise even though release_request_pad blows up.
+    engine_module_cls._release_selector_pad_best_effort(_RaisingSelector(), sink_pad)

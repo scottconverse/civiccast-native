@@ -501,6 +501,12 @@ def test_last_send_command_failure_reason_reports_the_workers_ack(tmp_path) -> N
         pipe_channel_factory=lambda channel_id: cast(
             _WindowsPipeChannel, _DecliningPipeChannel(channel_id)
         ),
+        # This test exercises the Windows D2 named-pipe control path
+        # specifically (bug fix, coordinator hostile review 2026-09-06:
+        # start()/send_command() used to branch on the real os.name instead
+        # of this injectable seam, so this test silently exercised the FIFO
+        # branch instead on a POSIX CI runner and failed there).
+        is_windows=True,
     )
     strategy.start(_start_request(tmp_path))
 
@@ -514,6 +520,7 @@ def test_last_send_command_failure_reason_clears_on_a_later_success(tmp_path) ->
     strategy = GstPlayoutStrategy(
         worker_launcher=lambda *a: None,
         pipe_channel_factory=_fake_pipe_channel_factory,  # always succeeds
+        is_windows=True,  # exercises the Windows D2 pipe path -- see the test above
     )
     strategy.start(_start_request(tmp_path))
     strategy._last_send_command_failure["ch1"] = "stale reason from a prior failure"

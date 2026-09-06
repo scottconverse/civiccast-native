@@ -878,7 +878,7 @@ class GstPlayoutStrategy:
         log_dir = channel_dir / "logs"
         stdout_path = log_dir / "gst-worker.stdout.log"
         stderr_path = log_dir / "gst-worker.stderr.log"
-        if os.name == "nt":
+        if self._is_windows:
             # D2 Windows worker-pipe seam (design.md sec4): the STRATEGY is the pipe
             # SERVER and must exist before the worker -- create+serve it here, before
             # launch, then pass the worker the pipe NAME (not a filesystem path).
@@ -940,8 +940,22 @@ class GstPlayoutStrategy:
         returns False (drops the command) if the FIFO is missing (worker not
         started) or has no reader yet — never raises and never blocks waiting for
         a reader (audit M2). In production the supervisor calls this on a role
-        change to swap the active source instead of restarting the encoder."""
-        if os.name == "nt":
+        change to swap the active source instead of restarting the encoder.
+
+        Bug fix (coordinator hostile review, 2026-09-06, CI mutation-report):
+        this used to branch on the real ``os.name`` directly instead of the
+        injectable ``self._is_windows`` this class already carries (and
+        already uses for the encoder-override decision, ``_resolve_encoder_
+        override``) -- so a test constructing this strategy with
+        ``is_windows=True`` to exercise the Windows pipe path on a POSIX CI
+        runner silently fell through to the FIFO branch instead (the FIFO
+        never existed, so it failed with a misleading "control FIFO missing"
+        reason rather than the pipe channel's own). Both branch points below
+        (here and in ``start()``) now consult ``self._is_windows``, matching
+        the encoder-override seam -- production behavior is unchanged
+        (``self._is_windows`` still defaults to the real ``os.name`` unless a
+        caller overrides it)."""
+        if self._is_windows:
             channel = self._pipe_channels.get(channel_id)
             if channel is None:
                 self._last_send_command_failure[channel_id] = (
@@ -1074,8 +1088,16 @@ class GstPlayoutStrategy:
         # reading, so concurrent reloads can't clobber a fixed path mid-read. B3 fix:
         # the filename also carries the switch-mode flag (see reload_policy.py's
         # docstring for why the control-line grammar itself can't carry it).
+        # Hostile-review follow-up (2026-09-06): the filename's unique component is
+        # now the CALLER'S ``command_id`` when one is given, rather than an
+        # independently generated uuid -- the POSIX FIFO control channel has no
+        # separate envelope/ack id field the way the Windows D2 pipe does, so this
+        # is the only way a reload dispatched over the FIFO can report its eventual
+        # settlement (``reload-status.json``) under an id the daemon can correlate
+        # back to this specific attempt (``reload_policy.reload_id_from_sidecar_path``,
+        # read by ``engine._dispatch_control``).
         suffix = reload_sidecar_suffix(switch_at_end_of_current=request.switch_at_end_of_current)
-        reload_path = channel_dir / f"playout-graph.reload.{uuid.uuid4().hex}{suffix}"
+        reload_path = channel_dir / f"playout-graph.reload.{command_id or uuid.uuid4().hex}{suffix}"
         _write_graph_file(reload_path, graph_to_json(graph))
         return self.send_command(
             work_dir, channel_id, f"reload {reload_path}", command_id=command_id

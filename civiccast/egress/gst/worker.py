@@ -434,9 +434,22 @@ def _windows_pipe_reader_loop(
             # re-ack, not re-enact (re-arming would supersede the FIRST
             # attempt's own still-settling reload for no reason).
             try:
-                result, detail = _dispatch_control_with_ack(
-                    engine_instance, line_text, command_id=cid
-                )
+                try:
+                    result, detail = _dispatch_control_with_ack(
+                        engine_instance, line_text, command_id=cid
+                    )
+                except Exception as exc:
+                    # Hostile-review follow-up (2026-09-06): _dispatch_control_
+                    # with_ack already catches everything INSIDE its own body,
+                    # but a raise from code that runs before its try block
+                    # (e.g. a malformed line reaching parse_control_line) would
+                    # otherwise escape all the way past this bare try/finally
+                    # with NO ack ever written -- the strategy's send_and_wait
+                    # would then sit out its full timeout and report a lost ack
+                    # instead of a clean, immediate error. Write one here so a
+                    # bug in dispatch itself is still an honest, fast "error"
+                    # ack rather than a silent hang.
+                    result, detail = "error", repr(exc)
                 if result in ("applied", "armed"):
                     applied.mark_applied(cid)
                 _windows_pipe_write_line(

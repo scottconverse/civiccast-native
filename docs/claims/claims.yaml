@@ -571,11 +571,56 @@ entries:
       # two test files named above (test_gst_engine_reload_concat_naming.py,
       # test_gst_worker_reload_ack.py), re-run green against the new design.
       # Blob IDs re-hashed with `git hash-object --path <file> <file>` per D2.
+      # Re-provisioned again (same branch, second hostile-review pass,
+      # 2026-09-06): worker.py and engine.py drifted a FOURTH time -- this
+      # pass fixed real gaps in the settlement-tracking design above rather
+      # than the design itself: (1) an armed-but-unsettled reload's tracking
+      # (and its plan_dir) is now released on EVERY worker-exit path
+      # (_poll_process, a fresh _start), not just the two call sites that
+      # already released it (_poll_reload_settlement's own commit/abort/
+      # deadline branches, _stop) -- a crash mid-settle used to leave the
+      # tracking behind, firing a spurious restart at the 960s deadline
+      # against a channel that had already moved on, and a LATE settlement
+      # for that dead attempt is now recognized and logged as ignored
+      # (daemon.py's new _discarded_reload_ids, out of this claim's scope);
+      # (2) superseding a still-pending reload with a newer one now releases
+      # the superseded attempt's plan_dir instead of silently leaking it;
+      # (3) an unrecognized (neither "applied" nor "aborted:...") settlement
+      # result is now treated as aborted immediately rather than silently
+      # waited out for the full deadline. engine.py specifically: the POSIX
+      # FIFO dispatch path (_dispatch_control) now passes an on_settled
+      # callback too (it previously passed none at all, so a FIFO-dispatched
+      # reload could never report settlement and always fell back to
+      # restart at the deadline regardless of whether it actually landed) --
+      # its reload id rides the reload sidecar's own filename
+      # (reload_policy.reload_id_from_sidecar_path, a NEW gi-free sibling
+      # function; reload_policy.py itself remains out of this claim's bound
+      # module set per the existing narrowing note above) since the FIFO has
+      # no separate envelope/ack id field the way the Windows D2 pipe does.
+      # worker.py specifically: _dispatch_and_ack's dispatch call is now
+      # wrapped in its own try/except (a raise escaping _dispatch_control_
+      # with_ack's own internal handling -- e.g. from code that runs before
+      # its try block -- used to leave NO ack written at all, so the
+      # strategy's send_and_wait sat out its full timeout instead of getting
+      # an immediate, honest "error" ack). Neither change touches
+      # decode_policy.py, graph.py, control.py, or audio_tap.py, which keep
+      # their recorded blobs. Current-source proof for these bytes is this
+      # PR's own updated/added unit coverage: tests/egress/test_daemon.py
+      # (worker-crash-during-arm discard + late-arrival log, supersede
+      # releasing the previous plan_dir, _start tracking/releasing its own
+      # active plan_dir), tests/egress/test_automation.py (the rollover
+      # latch never retrying while the daemon reports a pending settlement),
+      # and tests/egress/test_gst_engine_reload_concat_naming.py (new direct
+      # coverage for _dispose_elements_best_effort and _release_selector_
+      # pad_best_effort on the build/link failure paths -- the PRIOR
+      # re-provisioning note above claimed this coverage before it existed;
+      # it exists now). Blob IDs re-hashed with
+      # `git hash-object --path <file> <file>` per D2.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 9c2cbff12ac9fc977738ad2c0ca33a098266bfe9
+          blob: 30a9b5231b0d06f82622015264da9727a30da52d
         - path: civiccast/egress/gst/engine.py
-          blob: 4b7a9456165ccf5e1888b28a7b75de6974c95d91
+          blob: 3bf9f45f355cd8ca3914adca6f0d8015f4da8ce2
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -839,11 +884,56 @@ entries:
       # two test files named above (test_gst_engine_reload_concat_naming.py,
       # test_gst_worker_reload_ack.py), re-run green against the new design.
       # Blob IDs re-hashed with `git hash-object --path <file> <file>` per D2.
+      # Re-provisioned again (same branch, second hostile-review pass,
+      # 2026-09-06): worker.py and engine.py drifted a FOURTH time -- this
+      # pass fixed real gaps in the settlement-tracking design above rather
+      # than the design itself: (1) an armed-but-unsettled reload's tracking
+      # (and its plan_dir) is now released on EVERY worker-exit path
+      # (_poll_process, a fresh _start), not just the two call sites that
+      # already released it (_poll_reload_settlement's own commit/abort/
+      # deadline branches, _stop) -- a crash mid-settle used to leave the
+      # tracking behind, firing a spurious restart at the 960s deadline
+      # against a channel that had already moved on, and a LATE settlement
+      # for that dead attempt is now recognized and logged as ignored
+      # (daemon.py's new _discarded_reload_ids, out of this claim's scope);
+      # (2) superseding a still-pending reload with a newer one now releases
+      # the superseded attempt's plan_dir instead of silently leaking it;
+      # (3) an unrecognized (neither "applied" nor "aborted:...") settlement
+      # result is now treated as aborted immediately rather than silently
+      # waited out for the full deadline. engine.py specifically: the POSIX
+      # FIFO dispatch path (_dispatch_control) now passes an on_settled
+      # callback too (it previously passed none at all, so a FIFO-dispatched
+      # reload could never report settlement and always fell back to
+      # restart at the deadline regardless of whether it actually landed) --
+      # its reload id rides the reload sidecar's own filename
+      # (reload_policy.reload_id_from_sidecar_path, a NEW gi-free sibling
+      # function; reload_policy.py itself remains out of this claim's bound
+      # module set per the existing narrowing note above) since the FIFO has
+      # no separate envelope/ack id field the way the Windows D2 pipe does.
+      # worker.py specifically: _dispatch_and_ack's dispatch call is now
+      # wrapped in its own try/except (a raise escaping _dispatch_control_
+      # with_ack's own internal handling -- e.g. from code that runs before
+      # its try block -- used to leave NO ack written at all, so the
+      # strategy's send_and_wait sat out its full timeout instead of getting
+      # an immediate, honest "error" ack). Neither change touches
+      # decode_policy.py, graph.py, control.py, or audio_tap.py, which keep
+      # their recorded blobs. Current-source proof for these bytes is this
+      # PR's own updated/added unit coverage: tests/egress/test_daemon.py
+      # (worker-crash-during-arm discard + late-arrival log, supersede
+      # releasing the previous plan_dir, _start tracking/releasing its own
+      # active plan_dir), tests/egress/test_automation.py (the rollover
+      # latch never retrying while the daemon reports a pending settlement),
+      # and tests/egress/test_gst_engine_reload_concat_naming.py (new direct
+      # coverage for _dispose_elements_best_effort and _release_selector_
+      # pad_best_effort on the build/link failure paths -- the PRIOR
+      # re-provisioning note above claimed this coverage before it existed;
+      # it exists now). Blob IDs re-hashed with
+      # `git hash-object --path <file> <file>` per D2.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 9c2cbff12ac9fc977738ad2c0ca33a098266bfe9
+          blob: 30a9b5231b0d06f82622015264da9727a30da52d
         - path: civiccast/egress/gst/engine.py
-          blob: 4b7a9456165ccf5e1888b28a7b75de6974c95d91
+          blob: 3bf9f45f355cd8ca3914adca6f0d8015f4da8ce2
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py

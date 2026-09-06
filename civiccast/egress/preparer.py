@@ -163,6 +163,29 @@ class SourcePreparer:
         # ponytail: one Lock per cache key ever seen, never pruned -- bounded
         # by the number of distinct assets aired over the process lifetime.
         self._conform_locks: dict[str, threading.Lock] = {}
+        # Hostile-review follow-up, item 5: this module has no visibility of
+        # its own into which per-plan directories a caller still considers
+        # LIVE (an active on-air plan, an armed-but-not-yet-settled reload) --
+        # only the daemon knows that. None means GC falls back to keep-N/
+        # budget/age alone (still safe, just less precise); see
+        # ``set_protected_plan_dirs_provider``.
+        self._protected_plan_dirs_provider: Callable[[str], frozenset[Path]] | None = None
+
+    def set_protected_plan_dirs_provider(
+        self, provider: Callable[[str], frozenset[Path]] | None
+    ) -> None:
+        """Wire a callback ``prepare()`` consults before every GC pass to learn
+        which of THIS channel's per-plan directories must never be evicted,
+        however old, large, or far outside keep-N recency they are.
+
+        A setter rather than a constructor arg because of construction order:
+        production wiring builds the ``SourcePreparer`` instance FIRST (so its
+        ``.prepare``/``.release`` bound methods can be passed into
+        ``EgressDaemon.__init__``), and only the resulting daemon can answer
+        "which directories are live" (``EgressDaemon.live_prepared_plan_dirs``)
+        -- see cli.py's/automation.py's wiring, both of which call this right
+        after constructing the daemon."""
+        self._protected_plan_dirs_provider = provider
 
     # -- persistent conform cache -------------------------------------------
 
@@ -527,7 +550,17 @@ class SourcePreparer:
 
         channel_prepared_root = self._work_dir / config.channel_id / "prepared"
         channel_prepared_root.mkdir(parents=True, exist_ok=True)
-        self._gc_prepared_plan_dirs(channel_prepared_root)
+        # Item 5 fix: ask the wired provider (the daemon, if one is
+        # configured -- set_protected_plan_dirs_provider) which of this
+        # channel's directories are LIVE right now, so GC can never evict one
+        # regardless of age, size, or keep-N recency -- not just the
+        # keep-N-most-recent heuristic on its own.
+        protected = (
+            self._protected_plan_dirs_provider(config.channel_id)
+            if self._protected_plan_dirs_provider is not None
+            else frozenset()
+        )
+        self._gc_prepared_plan_dirs(channel_prepared_root, keep=protected)
         prepared_dir = channel_prepared_root / uuid.uuid4().hex[:12]
         prepared_segments: list[EgressSourceSegment] = []
         records: list[PreparedSegmentRecord] = []

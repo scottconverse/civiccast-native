@@ -141,6 +141,31 @@ below.
     test/demo schedule -- and, per the TRANSITIONING note above, the state
     row reads `TRANSITIONING` for that whole rollover-trigger-to-natural-end
     window even though playout itself never glitches.
+  - **Second-round hostile-review fixes (same branch):** an armed-but-not-
+    yet-settled reload's tracking (and its prepared-plan directory) is now
+    released on every worker-exit path (a crash mid-settle no longer fires a
+    spurious restart 960s later against a channel that already moved on, and
+    a late-arriving settlement for a dead attempt is logged as ignored
+    instead of silently doing nothing), on a fresh restart, and when a newer
+    reload supersedes a still-pending one (the previous code silently leaked
+    the superseded attempt's directory). `ChannelAutomationService`'s
+    45-second "did the reload land" retry now checks the daemon's own
+    "armed, still settling" signal first, so a legitimately-settling deferred
+    reload (~120s+ before its `current_proof_event_id` changes) is never
+    retried out from under itself (previously: a re-prep, a superseded leg,
+    and another prepared-plan directory every ~45s while it was still
+    healthy). `SourcePreparer`'s GC now also protects every directory the
+    daemon reports as live (not just the keep-N-most-recent heuristic), and
+    the `_start` path -- not just the seamless-reload path -- tracks and
+    releases its own prepared-plan directory, so the fallback-flag-off
+    (shipped) default gets the same cleanup. The POSIX FIFO control channel
+    now reports reload settlement too (it previously never did, so a FIFO-
+    dispatched reload always waited out the full 960s deadline and fell back
+    to restart regardless of whether it actually landed). Automation's own
+    reload dispatch remains synchronous on its shared poll thread, now
+    bounded by the ~5-second "armed" ack instead of up to 900 seconds (F5 --
+    documented, not eliminated; a dedicated dispatch thread per channel would
+    remove even that bound but is a separate change).
 - **Install-over could leave the PREVIOUS kit's application payload silently
   running.** MEASURED on a real tester (2026-09-05): installing kit B `/S`
   (install-over) on a station kit A had already installed, where both kits

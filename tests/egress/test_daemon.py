@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -1250,6 +1251,184 @@ def test_pending_reload_settlement_deadline_falls_back_to_restart(tmp_path: Path
     state = store.read_state("gov")
     assert state.state == "ON_AIR"
     assert state.current_source_label == "Mayor interview"
+
+
+def test_worker_crash_during_the_armed_window_discards_pending_settlement(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Hostile-review follow-up, item 1: a worker that crashes WHILE a reload
+    it armed is still settling must not leave that tracking behind -- the
+    entry is gone immediately (no spurious restart fires 960s later against a
+    channel that has already been relaunched onto something else), and a
+    LATE-arriving "applied" status for that dead attempt is recognized and
+    ignored (logged), not silently discarded with no evidence it was even
+    observed."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222), _FakeProcess(pid=333)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    fake_now = [1_000_000.0]
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+        monotonic=lambda: fake_now[0],
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR (pid 111)
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # armed; strategy did NOT write reload-status.json
+
+    armed_reload_id = strategy.reload_ids[-1]
+    assert daemon._pending_reload_settle.get("gov") is not None  # type: ignore[attr-defined]
+
+    # The worker crashes (non-zero exit) WHILE the reload is still armed --
+    # nothing ever settled it.
+    started[0].returncode = 1
+    daemon.process_once("gov")  # _poll_process observes the crash -> relaunches at once
+
+    assert daemon._pending_reload_settle.get("gov") is None  # type: ignore[attr-defined]
+    assert len(started) == 2  # the crash relaunch landed (pid 222)
+
+    # Advance well past the 960s settlement deadline -- with the pending entry
+    # already gone, no fallback-to-restart fires because of the dead attempt
+    # (a real bug here would show up as a SECOND, spurious TRANSITIONING/
+    # restart cycle beyond the one the crash itself already caused).
+    fake_now[0] += 1000.0
+    daemon.process_once("gov")
+    assert len(started) == 2  # no additional restart triggered by the stale reload
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+
+    # The dead attempt's worker finally (late) writes its status file.
+    with caplog.at_level(logging.INFO, logger="civiccast.egress.daemon"):
+        _write_fake_reload_status(tmp_path, "gov", armed_reload_id, "applied")
+        daemon.process_once("gov")
+
+    assert len(started) == 2  # still no restart -- the late write changes nothing
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(
+        "gov" in message and armed_reload_id in message and "ignoring" in message
+        for message in messages
+    ), messages
+
+
+def _prepare_with_tracked_plan_dirs(
+    tmp_path: Path, counter: dict[str, int]
+) -> Callable[[EgressSourcePlan, EgressConfig], SourcePreparationReport]:
+    """A fake ``source_preparer`` that mints a fresh, real, uniquely-named
+    directory (mirroring ``SourcePreparer.prepare``'s own per-call directory)
+    on every call, so tests can assert on exactly which one gets released."""
+
+    def prepare(source_plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
+        counter["n"] += 1
+        plan_dir = tmp_path / f"plan-{counter['n']}"
+        plan_dir.mkdir()
+        return SourcePreparationReport(source_plan=source_plan, records=(), plan_dir=plan_dir)
+
+    return prepare
+
+
+def test_superseding_a_pending_reload_releases_its_previous_plan_dir(tmp_path: Path) -> None:
+    """Hostile-review follow-up, item 3: ``_try_content_reload`` used to
+    silently overwrite ``_pending_reload_settle`` when a newer reload attempt
+    superseded a still-pending one, leaking the replaced entry's plan_dir
+    forever (never released, never GC'd until age/budget eventually caught
+    it)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+    )
+
+    daemon.process_once("gov")  # initial start -> plan-1 (becomes ACTIVE, not pending)
+    assert released == []
+
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # arms reload #1 -> plan-2 (PENDING, never settles)
+    assert released == []
+
+    current_label = "Evening news"
+    # A distinct command_id -- ``_command("reload")`` always returns the SAME
+    # fixed id ("cmd-reload"), which the store's dedup would silently drop as
+    # a re-enqueue of the already-consumed first reload command.
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 12, 1, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-reload-2",
+        )
+    )
+    daemon.process_once("gov")  # a second rollover supersedes reload #1
+
+    # The FIRST reload's plan (plan-2) is released the moment it is
+    # superseded -- not left dangling until GC eventually notices.
+    assert released == [tmp_path / "plan-2"]
+
+
+def test_start_tracks_and_releases_its_active_plan_dir_on_worker_exit(tmp_path: Path) -> None:
+    """Hostile-review follow-up, item 4: with the seamless-reload flag OFF
+    (``supports_content_reload=False``, the shipped default),
+    ``_try_content_reload``/``_commit_reload_settlement`` never run at all --
+    only ``_start`` ever prepares a plan for that channel, so without this
+    the ONLY cleanup for its directory was age/budget GC. Proves ``_start``
+    tracks its own plan as active and releases it once the worker exits."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111)]
+    started: list[_FakeProcess] = []
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        encoder_strategy=_FakeContentReloadStrategy(processes, started),
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+    )
+
+    daemon.process_once("gov")  # _start -> plan-1
+    process = started[0]
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-1"})
+    assert released == []
+
+    process.returncode = 0  # a clean exit (e.g. an operator-issued stop landed)
+    daemon.process_once("gov")
+
+    assert released == [tmp_path / "plan-1"]
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset()
 
 
 def test_content_reload_strategy_exception_falls_back_to_restart(tmp_path: Path) -> None:
