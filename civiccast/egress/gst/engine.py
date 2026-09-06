@@ -312,7 +312,26 @@ class GstPlayoutEngine:
         # the channel every ~30s). Fail loud instead: the caller
         # (``reload_program``'s try/except ENG-008 path) aborts the in-flight
         # reload cleanly and the current program keeps playing.
-        if not self.pipeline.add(element):
+        #
+        # Candidate-3 smoke regression (2026-09-06, real GStreamer 1.28.5 on the
+        # installed product closure): this check's own contract assumption was
+        # wrong for gst-python's ``overrides/Gst.py``, which wraps the raw C
+        # ``gst_bin_add()`` -- ``Gst.Bin.add()`` there does NOT return the raw
+        # bool at all: it returns ``None`` on SUCCESS and RAISES ``Gst.AddError``
+        # on failure (never returns a plain ``False``). ``if not self.pipeline.
+        # add(element):`` treated that ``None`` success return as falsy, so the
+        # very FIRST element ever added to a freshly built pipeline (the video
+        # selector, name "sel") always raised this RuntimeError even though
+        # GStreamer's own C code had just logged "added element sel" --
+        # confirmed directly: ``pipeline.add(el)`` returned ``None`` on a real
+        # add, ``pipeline.iterate_elements()`` showed the element really was a
+        # child, and a genuine duplicate raised ``Gst.AddError`` rather than
+        # returning ``False``. This broke every initial build against a real,
+        # override-wrapped gst-python -- unit tests never caught it because the
+        # fake pipeline fixture modeled the assumed (raw-bool) contract, not
+        # this one. ``_bin_add`` below normalizes both contracts to a plain
+        # bool so this check works against either.
+        if not self._bin_add(element):
             raise RuntimeError(
                 f"GStreamer refused to add element {spec.factory!r} "
                 f"(name={element.get_name()!r}) to the pipeline -- a duplicate "
@@ -323,6 +342,30 @@ class GstPlayoutEngine:
             # as a unit on a later content-reload.
             self._collecting.append(element)
         return element
+
+    def _bin_add(self, element: Gst.Element) -> bool:
+        """``self.pipeline.add(element)``, normalized to a plain bool regardless
+        of which of TWO real contracts this GStreamer's Python binding follows:
+
+        * the raw C ``gst_bin_add()`` contract (a gboolean return, no
+          exception) -- what the fake pipeline fixture in
+          ``tests/egress/test_gst_engine_reload_concat_naming.py`` models, and
+          what an older/unwrapped binding may still do; or
+        * gst-python's ``overrides/Gst.py`` ``Bin.add()`` override -- confirmed
+          directly against GStreamer 1.28.5 (the candidate-3 installed
+          product's own runtime): returns ``None`` on success and RAISES
+          ``Gst.AddError`` on failure, never a bare ``False``.
+
+        ``getattr(Gst, "AddError", ())`` degrades to an empty tuple (an
+        ``except ()`` that matches nothing) when this binding has no
+        ``AddError`` at all -- e.g. the fake ``Gst`` module the unit tests
+        install -- so this helper needs no test-fixture changes to keep
+        working against either contract."""
+        try:
+            added = self.pipeline.add(element)
+        except getattr(Gst, "AddError", ()):
+            return False
+        return added is not False
 
     @staticmethod
     def _link(upstream: Gst.Element, downstream: Gst.Element) -> None:

@@ -117,6 +117,40 @@ class _FakePipeline:
         self.removed.append(element.get_name())
 
 
+class _FakeAddError(Exception):
+    """Stand-in for ``Gst.AddError`` -- see ``_FakeOverrideStylePipeline``."""
+
+
+class _FakeOverrideStylePipeline:
+    """Candidate-3 smoke regression (2026-09-06): mirrors gst-python's
+    ``overrides/Gst.py`` ``Bin.add()`` contract, confirmed directly against
+    the real installed GStreamer 1.28.5 closure -- NOT the raw C
+    ``gst_bin_add()`` contract ``_FakePipeline`` above models. ``add()``
+    returns ``None`` on a SUCCESSFUL add (never a bare ``True``) and RAISES
+    ``Gst.AddError`` (here, ``_FakeAddError``) on a genuine duplicate name --
+    never returns a bare ``False``. ``_make``'s old
+    ``if not self.pipeline.add(element):`` treated that ``None`` success
+    return as a failure, so the very FIRST element ever added to a real
+    pipeline always raised -- this is the fixture that would have caught
+    that regression, which ``_FakePipeline`` (returns a real bool, matching
+    the assumed-but-wrong contract) could not."""
+
+    def __init__(self) -> None:
+        self._names: set[str] = set()
+        self.added: list[str] = []
+        self.removed: list[str] = []
+
+    def add(self, element: _FakeElement) -> None:
+        if element.get_name() in self._names:
+            raise _FakeAddError(element)
+        self._names.add(element.get_name())
+        self.added.append(element.get_name())
+
+    def remove(self, element: _FakeElement) -> None:
+        self._names.discard(element.get_name())
+        self.removed.append(element.get_name())
+
+
 class _FakeElementFactory:
     _auto_counter = 0
 
@@ -158,6 +192,7 @@ def _install_fake_gst() -> types.ModuleType:
     fake_gst.Caps = _FakeCaps  # type: ignore[attr-defined]
     fake_gst.PadLinkReturn = _FakePadLinkReturn  # type: ignore[attr-defined]
     fake_gst.State = _FakeState  # type: ignore[attr-defined]
+    fake_gst.AddError = _FakeAddError  # type: ignore[attr-defined]
     return fake_gst
 
 
@@ -204,6 +239,17 @@ def _bare_engine(module: types.ModuleType) -> Any:
     ``_build_playlist`` actually touch."""
     engine = object.__new__(module.GstPlayoutEngine)
     engine.pipeline = _FakePipeline()
+    engine._collecting = None
+    engine._source_leg_seq = 0
+    return engine
+
+
+def _bare_engine_with_override_style_pipeline(module: types.ModuleType) -> Any:
+    """Same as ``_bare_engine``, but with ``_FakeOverrideStylePipeline`` --
+    real gst-python's ``None``-on-success/raises-on-failure ``Bin.add()``
+    contract, not the raw-bool one ``_bare_engine`` models."""
+    engine = object.__new__(module.GstPlayoutEngine)
+    engine.pipeline = _FakeOverrideStylePipeline()
     engine._collecting = None
     engine._source_leg_seq = 0
     return engine
@@ -277,6 +323,78 @@ def test_the_pre_fix_bare_label_would_have_collided(engine_module) -> None:
         # simulates a reload rebuilding the SAME bare name while the first is
         # still in the bin -- exactly the measured H1 defect.
         engine._make(ElementSpec("concat", f"vconcat_{leg.label}"))
+
+
+# --- candidate-3 smoke regression (2026-09-06): _bin_add must normalize BOTH
+# real Gst.Bin.add() contracts, not just the raw-bool one ------------------
+
+
+def test_bin_add_accepts_the_none_on_success_override_style_contract(engine_module) -> None:
+    """Direct unit coverage of ``_bin_add`` against
+    ``_FakeOverrideStylePipeline`` (gst-python's real ``overrides/Gst.py``
+    contract, confirmed against GStreamer 1.28.5): a successful add returns
+    ``None``, not ``True`` -- the pre-fix ``if not self.pipeline.add(...):``
+    treated that as a failure, so a fresh pipeline's VERY FIRST element (the
+    video selector, "sel") always raised, even though GStreamer's own C code
+    had genuinely just added it. Proves ``_make`` no longer raises for a
+    first-ever, genuinely-unique add against this contract."""
+    engine = _bare_engine_with_override_style_pipeline(engine_module)
+
+    element = engine._make(ElementSpec("input-selector", "sel"))
+
+    assert element.get_name() == "sel"
+    assert engine.pipeline.added == ["sel"]
+
+
+def test_bin_add_still_raises_on_a_genuine_duplicate_under_the_override_style_contract(
+    engine_module,
+) -> None:
+    """Same fixture, the failure side: a genuine duplicate name raises
+    ``Gst.AddError`` (never returns a bare ``False``) under this contract --
+    ``_make`` must still fail loud, just via a different underlying signal."""
+    engine = _bare_engine_with_override_style_pipeline(engine_module)
+    engine._make(ElementSpec("input-selector", "sel"))
+
+    with pytest.raises(RuntimeError, match="sel"):
+        engine._make(ElementSpec("input-selector", "sel"))
+
+
+def test_selector_and_source_leg_names_stay_unique_across_initial_build_and_three_reloads(
+    engine_module,
+) -> None:
+    """Candidate-3 smoke regression, item 3: asserts name uniqueness holds
+    across an initial build's selector creation PLUS a program leg built
+    once (the initial build) and rebuilt three more times (simulating three
+    content-reloads), using ``_FakeOverrideStylePipeline`` so this would
+    have caught the actual regression (a real ``Gst.Bin.add()`` returning
+    ``None`` on every successful add, not just on a duplicate) -- the
+    existing ``_FakePipeline``-based tests above only prove the SEQUENCE
+    NUMBER logic; this proves the add-result handling underneath it too."""
+    engine = _bare_engine_with_override_style_pipeline(engine_module)
+    leg = _program_leg()
+
+    # Initial build: both selectors, then the program leg's first build.
+    engine._make(ElementSpec("input-selector", "sel"))
+    engine._make(ElementSpec("input-selector", "asel"))
+    vconcat_initial, _ = engine._build_playlist(leg)
+
+    # Three simulated content-reloads: each rebuilds the SAME-labeled leg
+    # while the previous one(s) are still (in this simplified model) present
+    # in the bin -- exactly the shape a real deferred-switch reload leaves
+    # behind until the outgoing leg is disposed.
+    reload_names = []
+    for _ in range(3):
+        vconcat_reload, _ = engine._build_playlist(leg)
+        reload_names.append(vconcat_reload.get_name())
+
+    all_names = ["sel", "asel", vconcat_initial.get_name(), *reload_names]
+    assert len(all_names) == len(set(all_names)), all_names
+    # No add() call across the whole sequence (selectors, the initial leg
+    # build, and all three reload rebuilds -- including each build's own
+    # videotestsrc sub-chain elements) ever collided: every element the
+    # fake pipeline accepted has a distinct name.
+    assert len(engine.pipeline.added) == len(set(engine.pipeline.added)), engine.pipeline.added
+    assert set(all_names) <= set(engine.pipeline.added)
 
 
 # --- F2 (hostile-review follow-up, 2026-09-06): a build/link failure must not
