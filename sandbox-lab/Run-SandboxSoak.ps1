@@ -121,6 +121,20 @@ param(
     # SOAK-START.json/VERDICT.json regardless of whether this is passed.
     [switch]$CaptionsOff,
 
+    # sandbox-lab lane follow-up D: threaded through to In-Sandbox-Soak.ps1's
+    # own -WorkerEnv via the .wsb template's {{WORKER_ENV_ARG}} placeholder
+    # (same empty-when-unset convention as -SeamlessReload/-CaptionsOff's
+    # own placeholders). Accepts either a single ';'-separated string
+    # ("NAME=VALUE;NAME2=VALUE2") or an array of one-pair-per-element
+    # strings (@('A=1','B=2')) -- see scripts/WorkerEnv.ps1's own header
+    # for why PowerShell's `[string[]]` coercion makes both call shapes
+    # parse identically. Parsed, deduped (later wins), and validated HERE
+    # before ever rendering the .wsb or launching a sandbox -- a malformed
+    # -WorkerEnv value is a config problem this host can diagnose
+    # immediately, not something worth discovering only after the guest's
+    # own install+health window has already burned.
+    [string[]]$WorkerEnv,
+
     [switch]$DryRun
 )
 
@@ -151,7 +165,7 @@ function Exit-HarnessError {
 
 if (-not $Root) { $Root = $PSScriptRoot }
 if (-not $Root) { $Root = (Get-Location).Path }
-Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), OnAirBoundMinutes: $OnAirBoundMinutes, KitRoot: $KitRoot, SeamlessReload: $($SeamlessReload.IsPresent), CaptionsOff: $($CaptionsOff.IsPresent), DryRun: $($DryRun.IsPresent)"
+Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), OnAirBoundMinutes: $OnAirBoundMinutes, KitRoot: $KitRoot, SeamlessReload: $($SeamlessReload.IsPresent), CaptionsOff: $($CaptionsOff.IsPresent), WorkerEnv: $($WorkerEnv -join '; '), DryRun: $($DryRun.IsPresent)"
 
 $hostLivenessPath = Join-Path $Root 'scripts\HostLiveness.ps1'
 if (-not (Test-Path $hostLivenessPath)) {
@@ -164,6 +178,24 @@ if (-not (Test-Path $backstopMarkerGracePath)) {
     Exit-HarnessError "BackstopMarkerGrace.ps1 not found at $backstopMarkerGracePath"
 }
 . $backstopMarkerGracePath
+
+# sandbox-lab lane follow-up D: parsed/validated/rendered well before the
+# kit-verify/render/parse-check sequence below (section 2/3), same
+# fail-fast-on-the-host principle as HostLiveness.ps1/BackstopMarkerGrace.ps1
+# just above.
+$workerEnvScriptPath = Join-Path $Root 'scripts\WorkerEnv.ps1'
+if (-not (Test-Path $workerEnvScriptPath)) {
+    Exit-HarnessError "WorkerEnv.ps1 not found at $workerEnvScriptPath"
+}
+. $workerEnvScriptPath
+$workerEnvParsed = ConvertTo-WorkerEnvEntries -WorkerEnv $WorkerEnv
+if ($workerEnvParsed.errors.Count -gt 0) {
+    foreach ($e in $workerEnvParsed.errors) { Write-Warning $e }
+    Exit-HarnessError "-WorkerEnv failed to parse ($($workerEnvParsed.errors.Count) error(s)) -- see warnings above"
+}
+$workerEnvDeduped = @(Get-DedupedWorkerEnvEntries -Entries $workerEnvParsed.entries)
+$workerEnvCanonical = Format-WorkerEnvArg -Entries $workerEnvDeduped
+Write-Step "WorkerEnv: $($workerEnvDeduped.Count) entry(ies) parsed/deduped -> canonical arg: $(if ($workerEnvCanonical) { $workerEnvCanonical } else { '(none)' })"
 
 # --------------------------------------------------------------------------
 # 1a. Refuse if Windows Sandbox is already running (Gate A owns it, and
@@ -283,6 +315,14 @@ if (-not (Test-Path $templatePath)) {
 }
 $seamlessReloadArg = $(if ($SeamlessReload) { '-SeamlessReload' } else { '' })
 $captionsOffArg = $(if ($CaptionsOff) { '-CaptionsOff' } else { '' })
+# sandbox-lab lane follow-up D: Get-QuotedWorkerEnvArgToken already returns
+# '' for an empty canonical arg (same empty-when-unset convention as the
+# two args just above) and throws on a character this render step could
+# never safely embed -- a throw here is a real bug (ConvertTo-
+# WorkerEnvEntries already rejected every such character at parse time
+# above), so it is deliberately NOT caught: let it surface as an
+# unhandled, loud failure rather than silently render a broken command.
+$workerEnvArg = Get-QuotedWorkerEnvArgToken -CanonicalArg $workerEnvCanonical
 $template = Get-Content -Path $templatePath -Raw -Encoding UTF8
 $rendered = $template `
     -replace [regex]::Escape('{{KIT_ROOT}}'), $kitDir `
@@ -291,14 +331,25 @@ $rendered = $template `
     -replace [regex]::Escape('{{MINUTES}}'), "$Minutes" `
     -replace [regex]::Escape('{{ON_AIR_BOUND_MINUTES}}'), "$OnAirBoundMinutes" `
     -replace [regex]::Escape('{{SEAMLESS_RELOAD_ARG}}'), $seamlessReloadArg `
-    -replace [regex]::Escape('{{CAPTIONS_OFF_ARG}}'), $captionsOffArg
+    -replace [regex]::Escape('{{CAPTIONS_OFF_ARG}}'), $captionsOffArg `
+    -replace [regex]::Escape('{{WORKER_ENV_ARG}}'), $workerEnvArg
 
 $wsbPath = Join-Path $Root "CivicCastSandboxSoak-$runName.wsb"
 Set-Content -Path $wsbPath -Value $rendered -Encoding UTF8
 Write-Step "Rendered $wsbPath"
 
-$logonCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes $Minutes -OnAirBoundMinutes $OnAirBoundMinutes $seamlessReloadArg $captionsOffArg"
+$logonCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes $Minutes -OnAirBoundMinutes $OnAirBoundMinutes $seamlessReloadArg $captionsOffArg $workerEnvArg"
 Write-Step "LogonCommand: $logonCommand"
+
+# sandbox-lab lane follow-up D: round-trip the rendered LogonCommand
+# BEFORE ever launching a sandbox (and every time -DryRun runs) -- a
+# quoting regression here must fail the run, never silently ship a
+# truncated/mangled -WorkerEnv value into the guest.
+$workerEnvRoundTrip = Test-RenderedWorkerEnvRoundTrip -RenderedCommand $logonCommand -ExpectedCanonicalArg $workerEnvCanonical
+if (-not $workerEnvRoundTrip.ok) {
+    Exit-HarnessError "-WorkerEnv rendered-command round-trip check FAILED: $($workerEnvRoundTrip.reason) -- refusing to launch with a possibly-mangled LogonCommand"
+}
+Write-Step "WorkerEnv rendered-command round-trip: OK ($(if ($workerEnvCanonical) { "found '$($workerEnvRoundTrip.found)'" } else { 'no -WorkerEnv token, none expected' }))"
 
 # --------------------------------------------------------------------------
 # 3. Parse-check both in-sandbox scripts before ever launching anything --
@@ -350,7 +401,11 @@ $scriptsToCheck = @(
     # its own Test-*.ps1.
     (Join-Path $scriptsDir 'CaptionsOffCheck.ps1'),
     (Join-Path $scriptsDir 'WorkerStdoutParser.ps1'),
-    (Join-Path $scriptsDir 'CpuSampler.ps1')
+    (Join-Path $scriptsDir 'CpuSampler.ps1'),
+    # sandbox-lab lane follow-up D: WorkerEnv.ps1 -- dot-sourced by THIS
+    # host script (near the top, alongside HostLiveness.ps1/
+    # BackstopMarkerGrace.ps1) AND by In-Sandbox-Soak.ps1 in the guest.
+    (Join-Path $scriptsDir 'WorkerEnv.ps1')
 )
 $parseResults = @($scriptsToCheck | ForEach-Object { Test-ScriptParses -Path $_ })
 $parseOk = -not @($parseResults | Where-Object { -not $_.ok }).Count
@@ -392,7 +447,7 @@ if ($httpCheckOutStr -match '^OK') {
 }
 
 if ($DryRun) {
-    Write-Step "DRY RUN complete. Kit verified ($verifiedCount files), .wsb rendered at $wsbPath, all in-sandbox scripts parse cleanly, HttpClientHandler self-check OK. SeamlessReload=$($SeamlessReload.IsPresent) CaptionsOff=$($CaptionsOff.IsPresent) (LogonCommand: $logonCommand)"
+    Write-Step "DRY RUN complete. Kit verified ($verifiedCount files), .wsb rendered at $wsbPath, all in-sandbox scripts parse cleanly, HttpClientHandler self-check OK. SeamlessReload=$($SeamlessReload.IsPresent) CaptionsOff=$($CaptionsOff.IsPresent) WorkerEnv=$(if ($workerEnvCanonical) { $workerEnvCanonical } else { '(none)' }) (WorkerEnv round-trip: OK) (LogonCommand: $logonCommand)"
     Write-Step "Would launch: Start-Process -FilePath 'C:\Windows\System32\WindowsSandbox.exe' -ArgumentList `"$wsbPath`""
     Write-Step "Would poll for: $outputDir\VERDICT.txt (phase bounds: install=${InstallBoundMinutes}m, health=${HealthBoundMinutes}m after install, rollup-stall=${RollupStallMinutes}m once soak_start_utc is set, generic quiet-bound=${QuietMinutes}m throughout)"
     Write-Step "Output directory prepared at: $outputDir (empty -- no sandbox launched)"

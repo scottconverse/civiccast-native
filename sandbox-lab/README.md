@@ -27,7 +27,7 @@ header for exactly which lines came from where) at a much shorter default
 duration.
 
 ```powershell
-pwsh -File sandbox-lab/Run-SandboxSoak.ps1 -Sha <full sha> [-Minutes 15] [-KitRoot C:\CivicCastTester\kit-safe] [-SeamlessReload] [-CaptionsOff]
+pwsh -File sandbox-lab/Run-SandboxSoak.ps1 -Sha <full sha> [-Minutes 15] [-KitRoot C:\CivicCastTester\kit-safe] [-SeamlessReload] [-CaptionsOff] [-WorkerEnv "NAME=VALUE;NAME2=VALUE2"]
 ```
 
 Add `-DryRun` to verify the kit, render the `.wsb`, run the
@@ -63,6 +63,70 @@ first-admin, this lane always does one GET
 `civiccast/platform/station_router.py`'s `get_station_profile`) and records
 the real read-back (conservatively `true` only when the GET itself
 couldn't be confirmed) — never a hardcoded assumption.
+
+`-WorkerEnv "NAME=VALUE;NAME2=VALUE2"` (or `-WorkerEnv @('A=1','B=2')` —
+both shapes parse identically, see `scripts/WorkerEnv.ps1`'s header)
+injects arbitrary environment variables into the CivicCastSupervisor
+service's own per-service `Environment` `REG_MULTI_SZ`, and therefore into
+every GStreamer egress worker, which inherits the daemon's process
+environment wholesale (`civiccast/egress/gst/strategy.py`'s
+`_default_worker_launcher` builds `env = {key: value for key, value in
+os.environ.items() if key not in ("SWAPS", "INTERVAL")}` and passes that
+straight to `subprocess.Popen`). Entries are deduped by name (later wins)
+and merged into the **same** registry write and the **same**
+Stop-Service/Start-Service cycle as `-SeamlessReload` — one restart total,
+never two, even when both are passed together. An empty value (`NAME=`)
+is the explicit **unset/remove** form: it deletes that name from the
+service's registry entry entirely rather than writing an empty string.
+This matters because the product does not treat "empty" and "absent" the
+same way for every variable that could be worth injecting —
+`civiccast/captions/tap.py:67-73`'s `build_audio_tap_plan` happens to treat
+`CIVICCAST_CAPTION_TAP_DIR=""` the same as unset (`.strip()` then `if not
+root: return None`), but this lane does not assume every future experiment
+variable shares that fallback, so `NAME=` is defined once, uniformly, as a
+real removal. `<`, `>`, `&`, `|`, `^`, and a literal `"` are rejected
+outright in any name or value (a parse error, not a best-effort escape):
+the `.wsb` `<LogonCommand>` runs through `cmd.exe`, whose
+redirection/pipe/escape-metacharacter scan runs before (and independently
+of) the quote-aware argv tokenizing `powershell.exe` performs on its own
+`-File` arguments — `<`/`>` are real redirection operators to `cmd.exe`
+even inside a double-quoted token. `-DryRun` renders the `.wsb` and the
+LogonCommand exactly as a real run would and round-trips the rendered
+`-WorkerEnv "..."` token back through the same parser
+(`Test-RenderedWorkerEnvRoundTrip`) to catch a quoting regression before it
+ever reaches a live sandbox.
+
+Verified the same way `-SeamlessReload` already is — reading another
+process's real environment block from outside it is not something this
+harness can do (`Win32_Process` carries no environment-adjacent property at
+all), so "verified" means the per-service registry value matches what was
+requested for that entry (present with the exact value for a set entry;
+genuinely absent for an unset/removal entry) **and** a live post-restart
+control-plane process exists. Recorded per-entry as
+`worker_env_requested`/`worker_env_verified` in `SOAK-START.json` and
+`VERDICT.json`; any entry that cannot be confirmed is `HARNESS_ERROR`, same
+principle as `-SeamlessReload`/`-CaptionsOff` — never an unconfirmed
+premise of a PASS/FAIL verdict for a flag the operator explicitly asked to
+test.
+
+If the injected env sets `GST_DEBUG_FILE=<path>`, the guest creates that
+path's containing directory before the service restart (GStreamer does not
+create intermediate directories for a log-file path itself), and
+`Copy-StationLogs` copies that file — plus any rotated/sibling files
+matching the same base name or a `*.gstdebug` extension in the same
+directory — into `logs\checkpoint-cycleN\gst-debug\` and `logs\final\
+gst-debug\` on every checkpoint, alongside the rest of that checkpoint's
+evidence. A single matching file over 200 MB is **skipped with a note**
+rather than copied, so a heavy `GST_DEBUG` level across a long soak can
+never itself stall a checkpoint.
+
+**The experiment this follow-up exists to run** (stall-timeout override,
+caption tap explicitly disabled via the removal form, captions forced
+embedded, and a targeted `GST_DEBUG` scope with its own debug-log file):
+
+```powershell
+pwsh -File sandbox-lab/Run-SandboxSoak.ps1 -Sha <full sha> -WorkerEnv "CIVICCAST_STALL_TIMEOUT_S=60;CIVICCAST_CAPTION_TAP_DIR=;CIVICCAST_EGRESS_EMBED_CAPTIONS=1;GST_DEBUG=concat:4,tee:4,appsink:4,mpegtsmux:4;GST_DEBUG_FILE=C:\CivicCastSoak\gst-debug.log"
+```
 
 `-Minutes` is **SOAK minutes**, not wall-clock minutes from launch: the
 clock starts only once the station reports healthy AND all three channels
@@ -278,6 +342,7 @@ pwsh -File sandbox-lab/scripts/Test-ServiceStartFailure.ps1
 pwsh -File sandbox-lab/scripts/Test-CaptionsOffCheck.ps1
 pwsh -File sandbox-lab/scripts/Test-WorkerStdoutParser.ps1
 pwsh -File sandbox-lab/scripts/Test-CpuSampler.ps1
+pwsh -File sandbox-lab/scripts/Test-WorkerEnv.ps1
 ```
 
 Or run every `Test-*.ps1` suite in one step with
@@ -302,6 +367,15 @@ judgment), `scripts/WorkerStdoutParser.ps1` (item 2's per-line matcher for
 each channel's `gst-worker.stdout.log`/`gst-worker.stderr.log`), and
 `scripts/CpuSampler.ps1` (item 3's per-pid CPU-delta/working-set math)
 follow the same dot-sourced-and-unit-tested extraction pattern.
+
+`scripts/WorkerEnv.ps1` (lane follow-up D's `-WorkerEnv` feature: string/
+array parsing into NAME=VALUE entries, dedupe-by-name-later-wins, the
+empty-value unset/removal semantic, merging entries into a service's
+existing `Environment` `REG_MULTI_SZ`, and the `.wsb` LogonCommand quoting
+round trip) follows the same pattern — dot-sourced by both
+`Run-SandboxSoak.ps1` (host-side parse/render/round-trip) and
+`In-Sandbox-Soak.ps1` (guest-side parse/merge/verify), unit-tested in
+`Test-WorkerEnv.ps1`.
 
 `scripts/CpuSampler.ps1`'s `Get-ProcessRoleLabel` checked the generic
 python/pythonw catch-all (`'control-plane'`) BEFORE resolving the pid to a
