@@ -1961,12 +1961,20 @@ function Update-DaemonLogRing {
 $script:workerStdoutOffsetByChannel = @{}
 $script:workerStdoutFirstLineByChannel = @{}
 $script:workerStdoutCountsByChannel = @{}
+# Round-follow-up-B finding 2b: separate offset/first-line bookkeeping for
+# gst-worker.stderr.log, mirroring the stdout tracking above -- the two
+# files rotate independently and are read by two different functions
+# (Update-WorkerStdoutCounters / Update-WorkerStderrCounters), so they need
+# their own cursors.
+$script:workerStderrOffsetByChannel = @{}
+$script:workerStderrFirstLineByChannel = @{}
 foreach ($c0 in $channelSpecs) {
     $script:workerStdoutCountsByChannel[$c0.id] = [ordered]@{
-        reload_committed_count = 0
-        reload_aborted_count   = 0
-        reload_aborted_reasons = @()
-        worker_stall_count     = 0
+        reload_committed_count   = 0
+        reload_aborted_count     = 0
+        reload_aborted_reasons   = @()
+        worker_stall_count       = 0
+        worker_stall_stderr_count = 0
     }
 }
 
@@ -2053,6 +2061,88 @@ function Update-WorkerStdoutCounters {
     }
     if ($parsed.worker_stall_count -gt 0) {
         Write-SoakLog "worker stdout channel=${ChannelId}: stall x$($parsed.worker_stall_count) (cumulative=$($counts.worker_stall_count))"
+    }
+}
+
+function Update-WorkerStderrCounters {
+    <#
+      .SYNOPSIS
+      Round-follow-up-B finding 2b: the stderr-side counterpart to
+      Update-WorkerStdoutCounters immediately above -- same incremental-
+      byte-offset, rotation-safe read pattern, against
+      <egress_work_dir>\<channel>\logs\gst-worker.stderr.log instead of
+      gst-worker.stdout.log. Feeds ConvertFrom-WorkerStderrLines
+      (WorkerStdoutParser.ps1) the newly-appended lines and accumulates
+      worker_stall_stderr_count onto the SAME per-channel counts object
+      Update-WorkerStdoutCounters writes (so both fields ride together in
+      every row/rollup/VERDICT.json reader without a second lookup).
+
+      Exists to close the blind spot documented in WorkerStdoutParser.ps1's
+      own header: a stall whose teardown itself hangs never reaches
+      worker.py's WORKER_RESULT stdout receipt (engine.py's
+      `stop(force_exit_on_hang=True)` calls `os._exit(70)` first), but the
+      stall watchdog's own "CTRL stall: ..." stderr line is written before
+      teardown is even attempted, so it survives that exit.
+    #>
+    param([string]$ChannelId)
+    $egressRoot = $script:EgressWorkDirCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $egressRoot) { return }
+    $path = Join-Path $egressRoot "$ChannelId\logs\gst-worker.stderr.log"
+    if (-not (Test-Path $path)) { return }
+    try { $length = (Get-Item -Path $path -ErrorAction Stop).Length } catch { return }
+
+    $firstLineNow = $null
+    try {
+        $fsProbe = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $srProbe = New-Object System.IO.StreamReader($fsProbe)
+            $firstLineNow = $srProbe.ReadLine()
+        } finally { $fsProbe.Close() }
+    } catch { }
+
+    $prevOffset = $(if ($script:workerStderrOffsetByChannel.ContainsKey($ChannelId)) { $script:workerStderrOffsetByChannel[$ChannelId] } else { 0 })
+    $prevFirstLine = $(if ($script:workerStderrFirstLineByChannel.ContainsKey($ChannelId)) { $script:workerStderrFirstLineByChannel[$ChannelId] } else { $null })
+    $rotated = ($length -lt $prevOffset) -or
+        ($null -ne $prevFirstLine -and $null -ne $firstLineNow -and $firstLineNow -ne $prevFirstLine)
+    if ($rotated) {
+        Write-SoakLog "worker stderr log rotation detected for channel=$ChannelId -- resetting read offset to 0"
+        $prevOffset = 0
+    }
+    $script:workerStderrFirstLineByChannel[$ChannelId] = $firstLineNow
+
+    if ($prevOffset -ge $length) {
+        $script:workerStderrOffsetByChannel[$ChannelId] = $prevOffset
+        return
+    }
+
+    try {
+        $fs = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $fs.Seek($prevOffset, [System.IO.SeekOrigin]::Begin) | Out-Null
+            $bytesToRead = $length - $prevOffset
+            $buffer = New-Object byte[] $bytesToRead
+            $readCount = $fs.Read($buffer, 0, $bytesToRead)
+            $text = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $readCount)
+        } finally { $fs.Close() }
+    } catch { return }
+
+    $lastNewlineIdx = $text.LastIndexOf("`n")
+    if ($lastNewlineIdx -lt 0) {
+        $script:workerStderrOffsetByChannel[$ChannelId] = $prevOffset
+        return
+    }
+    $completeText = $text.Substring(0, $lastNewlineIdx + 1)
+    $script:workerStderrOffsetByChannel[$ChannelId] = $prevOffset + [System.Text.Encoding]::UTF8.GetByteCount($completeText)
+
+    $newLines = @($completeText -split "`r?`n" | Where-Object { $_ })
+    if ($newLines.Count -eq 0) { return }
+    $parsedErr = ConvertFrom-WorkerStderrLines -Lines $newLines
+
+    $counts = $script:workerStdoutCountsByChannel[$ChannelId]
+    if (-not $counts) { return }
+    $counts.worker_stall_stderr_count += $parsedErr.worker_stall_stderr_count
+    if ($parsedErr.worker_stall_stderr_count -gt 0) {
+        Write-SoakLog "worker stderr channel=${ChannelId}: stall x$($parsedErr.worker_stall_stderr_count) (cumulative=$($counts.worker_stall_stderr_count))"
     }
 }
 
@@ -2323,6 +2413,10 @@ while ((Get-Date) -lt $deadline) {
         # interleaved pass -- reading the file 3x/cycle for the same data
         # would be pure overhead.
         Update-WorkerStdoutCounters -ChannelId $c.id
+        # Round-follow-up-B finding 2b: read gst-worker.stderr.log at the
+        # same cadence, into the same per-channel counts object -- see
+        # Update-WorkerStderrCounters's own header for why this exists.
+        Update-WorkerStderrCounters -ChannelId $c.id
         $workerStdoutCounts = $script:workerStdoutCountsByChannel[$c.id]
 
         $row = [ordered]@{
@@ -2380,6 +2474,7 @@ while ((Get-Date) -lt $deadline) {
         $row.reload_aborted_count_worker = $workerStdoutCounts.reload_aborted_count
         $row.reload_aborted_reasons_worker = @($workerStdoutCounts.reload_aborted_reasons)
         $row.worker_stall_count = $workerStdoutCounts.worker_stall_count
+        $row.worker_stall_stderr_count = $workerStdoutCounts.worker_stall_stderr_count
         $rows += $row
     }
 
@@ -2441,6 +2536,7 @@ while ((Get-Date) -lt $deadline) {
                         reload_committed_count = $wc.reload_committed_count
                         reload_aborted_count_worker = $wc.reload_aborted_count
                         worker_stall_count = $wc.worker_stall_count
+                        worker_stall_stderr_count = $wc.worker_stall_stderr_count
                     }
                 }
                 $snap
@@ -2460,17 +2556,11 @@ while ((Get-Date) -lt $deadline) {
 # is finalized and events are flushed below, not silently missed.
 Update-DaemonLogRing -Context $restartCtx -MeasuredCyclePeriodSeconds $measuredCyclePeriodSeconds
 
-# Round-2 finding 2 (HIGH): same principle as the daemon-log final drain
-# immediately above -- the last IN-LOOP Update-WorkerStdoutCounters call
-# (inside the poll loop, before each cycle's tsp probe/rollup) is up to one
-# whole cycle period (~60-75s) stale by the time the loop actually exits. A
-# reload committed in that final gap left $script:workerStdoutCountsByChannel
-# stale for BOTH the armed-never-committed computation just below (a false
-# reload_armed_never_committed FAIL under -SeamlessReload) and VERDICT.json's
-# own worker_stdout_by_channel snapshot further down. Drained here, for
-# EVERY channel, before either of those readers runs.
+# Round-follow-up-B finding 2b: same final-drain principle for the
+# stderr-side counter -- run separately from the stdout drain below (it
+# does not feed the armed-never-committed computation).
 foreach ($c0 in $channelSpecs) {
-    Update-WorkerStdoutCounters -ChannelId $c0.id
+    Update-WorkerStderrCounters -ChannelId $c0.id
 }
 
 $eventsBeforeFinalFlush = $restartCtx.RestartEvents.Count
@@ -2513,12 +2603,24 @@ Write-SoakLog "poll loop complete: $cycleN cycles recorded, $($restartEventsArra
 # whole soak. Computed regardless of -SeamlessReload (cheap, and visible
 # in VERDICT.json either way); Get-SoakVerdict itself only acts on this
 # list under -SeamlessReload (see SoakVerdict.ps1's own header). Round-2
-# finding 2: the filter itself now lives in Get-ReloadArmedNeverCommittedChannels
-# (DaemonLogPatterns.ps1) so it is directly unit-testable -- called here
-# AFTER the final per-channel worker-stdout drain just above, never before.
-$reloadArmedNeverCommittedChannels = @(
-    Get-ReloadArmedNeverCommittedChannels -ArmedChannelIds @($script:reloadArmedChannels.Keys) -WorkerStdoutCountsByChannel $script:workerStdoutCountsByChannel
-)
+# finding 2: the filter itself lives in Get-ReloadArmedNeverCommittedChannels
+# (DaemonLogPatterns.ps1) so it is directly unit-testable. Round-follow-up-B
+# finding 2d: the final per-channel worker-stdout drain (up to one whole
+# cycle period, ~60-75s, stale by the time the poll loop exits -- a reload
+# committed in that final gap would otherwise leave
+# $script:workerStdoutCountsByChannel stale for both this computation, a
+# false reload_armed_never_committed FAIL under -SeamlessReload, and
+# VERDICT.json's own worker_stdout_by_channel snapshot further down) and
+# this computation are now both driven through
+# Invoke-FinalWorkerStdoutDrainAndComputeArmedNeverCommitted
+# (DaemonLogPatterns.ps1), whose own ordering contract guarantees the
+# drain completes for every channel before the computation runs --
+# provable directly (Test-RestartClassifier.ps1) without a live soak.
+$reloadArmedNeverCommittedChannels = Invoke-FinalWorkerStdoutDrainAndComputeArmedNeverCommitted `
+    -ChannelIds @($channelSpecs | ForEach-Object { $_.id }) `
+    -ArmedChannelIds @($script:reloadArmedChannels.Keys) `
+    -WorkerStdoutCountsByChannel $script:workerStdoutCountsByChannel `
+    -DrainAction { param($cid) Update-WorkerStdoutCounters -ChannelId $cid }
 if ($reloadArmedNeverCommittedChannels.Count -gt 0) {
     Write-SoakLog "reload_armed_never_committed: $($reloadArmedNeverCommittedChannels -join ', ') (daemon log confirmed armed, worker stdout never logged a commit)"
 }
@@ -2589,6 +2691,7 @@ $verdict = [ordered]@{
                 reload_aborted_count_worker = $wc.reload_aborted_count
                 reload_aborted_reasons_worker = @($wc.reload_aborted_reasons)
                 worker_stall_count          = $wc.worker_stall_count
+                worker_stall_stderr_count   = $wc.worker_stall_stderr_count
             }
         }
         $wsnap

@@ -24,15 +24,26 @@
 #     alone is NOT the production path for worker_stall_count -- see the
 #     WORKER_RESULT rule directly below, which is.
 #   - "WORKER_RESULT {'error': ('stall', 'output stalled'), ...}" (round-2
-#     finding 1, HIGH: worker.py:521 always prints this line to STDOUT at
-#     process exit, regardless of why the worker exited -- engine.py's own
-#     `run_forever`/`run` return value, echoed verbatim via Python dict
-#     repr. This is the ACTUAL production signal for a stall:
+#     finding 1, HIGH: worker.py:576 (and :574 on the preroll-timeout exit
+#     path) prints this line to STDOUT at
+#     process exit on every path this parser's own callers have traced --
+#     engine.py's own `run_forever`/`run` return value, echoed verbatim via
+#     Python dict repr. NOT actually unconditional, though (round-follow-up-
+#     B finding 2b, downgrading the earlier "always" claim -- see this
+#     file's own header note further down for the os._exit(70) blind spot
+#     this leaves and how worker_stall_stderr_count covers it). This is the
+#     ACTUAL production signal for a stall when it DOES print:
 #     Update-WorkerStdoutCounters (In-Sandbox-Soak.ps1) only ever opens
 #     gst-worker.stdout.log, never gst-worker.stderr.log (strategy.py:879-880
 #     routes the `^CTRL stall:` line above to the STDERR file specifically),
-#     so the stderr-only regex above was structurally dead code -- always
-#     zero -- until this rule was added. Anchored on the `'error': ('stall'`
+#     so the stderr-only regex above was structurally dead code against
+#     THIS parser's stdout-only reads -- until Update-WorkerStderrCounters
+#     (In-Sandbox-Soak.ps1, round-follow-up-B) started feeding this same
+#     regex stderr lines via ConvertFrom-WorkerStderrLines below, closing
+#     the os._exit(70) blind spot documented above: engine.py's stall
+#     watchdog prints "CTRL stall: ..." to stderr BEFORE teardown even
+#     starts, so it survives a hung-teardown exit that eats the STDOUT
+#     WORKER_RESULT receipt. Anchored on the `'error': ('stall'`
 #     sub-tuple specifically (not a bare "stall" substring): engine.py's
 #     other `self._error = (...)` assignments use different tuple heads
 #     (`"caption-gap"`, a raw string, or a GstMessage error object -- engine.py
@@ -118,5 +129,47 @@ function ConvertFrom-WorkerStdoutLines {
         reload_aborted_count   = $reloadAbortedCount
         reload_aborted_reasons = @($reloadAbortedReasons)
         worker_stall_count     = $workerStallCount
+    }
+}
+
+function ConvertFrom-WorkerStderrLines {
+    <#
+      .SYNOPSIS
+      Round-follow-up-B finding 2b: the stderr-side counterpart to
+      ConvertFrom-WorkerStdoutLines above. Pure line-matcher: given an
+      array of already-split gst-worker.stderr.log lines, counts how many
+      match $script:WorkerStallRegex ("^CTRL stall: ...", strategy.py:879-
+      880's actual destination for that line). This is the ONLY thing this
+      function looks for -- gst-worker.stderr.log carries no reload-
+      committed/aborted lines of its own, so there is nothing else worth
+      counting here.
+
+      Exists because worker.py's own WORKER_RESULT stdout receipt (see
+      $WorkerResultStallRegex's header comment above) is NOT written when
+      engine.py's `stop(force_exit_on_hang=True)` teardown backstop itself
+      hangs -- `os._exit(70)` fires before `print(f"WORKER_RESULT
+      {result}")` ever runs. The stderr stall line, by contrast, is printed
+      by the stall watchdog BEFORE teardown is even attempted, so it is
+      present for every real stall regardless of how teardown then goes.
+      Called by Update-WorkerStderrCounters (In-Sandbox-Soak.ps1) using the
+      SAME incremental-byte-offset, rotation-safe read pattern as
+      Update-WorkerStdoutCounters, against gst-worker.stderr.log instead of
+      gst-worker.stdout.log.
+
+      .OUTPUTS
+      [pscustomobject] @{ worker_stall_stderr_count = int }
+    #>
+    param([string[]]$Lines = @())
+
+    $workerStallStderrCount = 0
+    foreach ($line in @($Lines)) {
+        if ([string]::IsNullOrEmpty($line)) { continue }
+        if ($script:WorkerStallRegex.IsMatch($line)) {
+            $workerStallStderrCount++
+        }
+    }
+
+    return [pscustomobject]@{
+        worker_stall_stderr_count = $workerStallStderrCount
     }
 }

@@ -628,9 +628,31 @@ while ($true) {
         }
     } elseif ($phase -eq 'awaiting-soak-start') {
         if (Test-Path $soakStartMarker) {
-            $phase = 'running'
-            $lastRollupProgressUtc = (Get-Date).ToUniversalTime()
-            Write-Step "phase -> running (soak clock started; rollup-stall bound now armed at ${RollupStallMinutes}m)"
+            # Round-follow-up-B finding: SOAK-START.json's mere EXISTENCE is
+            # not proof the soak clock actually started -- In-Sandbox-Soak.ps1's
+            # own harness-error path (Write-VerdictAndExit's backstop, see its
+            # header) writes a SOAK-START.json of its own on a run that failed
+            # BEFORE reaching the real clock-start write, explicitly marked
+            # `harness_error_before_soak_start: true` with `soak_start_utc:
+            # $null` so it is never mistaken for the real one. Flipping to
+            # 'running' on that backstop marker armed a rollup-stall bound
+            # (${RollupStallMinutes}m) on a run that will never produce a
+            # rollup -- VERDICT.txt/.json for that same run already reports
+            # the harness error, so this host would eventually also fire its
+            # own stall/quiet-share exit, but only after burning the full
+            # rollup-stall window first. Parse the marker's own content: a
+            # transient partial-write (file exists, JSON incomplete) is NOT
+            # treated as the backstop -- keep waiting for either a valid real
+            # marker or the awaiting-soak-start quiet-bound to fire instead.
+            $soakStartObj = $null
+            try { $soakStartObj = Get-Content -Path $soakStartMarker -Raw | ConvertFrom-Json } catch { }
+            if ($soakStartObj -and ($soakStartObj.harness_error_before_soak_start -eq $true -or $null -eq $soakStartObj.soak_start_utc)) {
+                Write-QuietShareAndExit -Reason "SOAK-START.json is the harness-error backstop marker (harness_error_before_soak_start=$($soakStartObj.harness_error_before_soak_start), soak_start_utc=$($soakStartObj.soak_start_utc)) -- the guest failed before the soak clock actually started; see this run's own VERDICT.txt/.json for the underlying reason" -LaunchedPids $launchedPids -OutputDir $outputDir
+            } elseif ($soakStartObj) {
+                $phase = 'running'
+                $lastRollupProgressUtc = (Get-Date).ToUniversalTime()
+                Write-Step "phase -> running (soak clock started; rollup-stall bound now armed at ${RollupStallMinutes}m)"
+            }
         }
     } elseif ($phase -eq 'running') {
         $rollupCount = 0

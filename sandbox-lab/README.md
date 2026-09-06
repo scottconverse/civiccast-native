@@ -157,22 +157,37 @@ concurrent Gate A run). Every run writes `summary.json`, per-cycle JSON
 under `cycles/` (each channel row carries its own up-to-12-sample
 `sample_ring`, the cycle's `measured_cycle_period_seconds`, and now the
 per-channel `reload_committed_count`/`reload_aborted_count_worker`/
-`reload_aborted_reasons_worker`/`worker_stall_count` parsed from that
-channel's own `gst-worker.stdout.log` (`worker_stall_count` counts the
-worker's own `WORKER_RESULT {'error': ('stall', ...` exit record, which is
-always on stdout regardless of where the underlying `CTRL stall:` line
-itself was printed — see `scripts/WorkerStdoutParser.ps1`'s header), plus a
+`reload_aborted_reasons_worker`/`worker_stall_count`/`worker_stall_stderr_count`
+parsed from that channel's own `gst-worker.stdout.log`/`gst-worker.stderr.log`
+(`worker_stall_count` counts the worker's own
+`WORKER_RESULT {'error': ('stall', ...` exit record on stdout — **not**
+unconditional: `engine.py`'s `stop(force_exit_on_hang=True)` teardown
+backstop calls `os._exit(70)` directly when teardown itself hangs, which
+skips the `WORKER_RESULT` print entirely, so a stall whose own teardown
+hangs is invisible to this count. `worker_stall_stderr_count` covers that
+blind spot: it counts the stall watchdog's own `CTRL stall: ...` stderr
+line, written unconditionally before teardown is even attempted — see
+`scripts/WorkerStdoutParser.ps1`'s header and its
+`ConvertFrom-WorkerStderrLines`/`Update-WorkerStderrCounters`), plus a
 cycle-wide `processes` array (per-pid `cpu_seconds_delta`/`working_set_mb`/
 `role` for every python.exe/pythonw.exe/pythonservice.exe/ffmpeg.exe
 process — `role` is one of `gst-worker:<channel_id>`, `gst-worker:unknown`,
-`supervisor` (the `pythonservice.exe` Windows service host),
-`control-plane` (the control-plane child), or `other`, labeled from pid
-facts this lane already holds, never an extra process query — see
-`scripts/CpuSampler.ps1`'s `Get-ProcessRoleLabel`) and `cpu_total_percent`;
+`ffmpeg-fallback:<channel_id>` (a channel running the ffmpeg-fallback
+engine, resolved via the same per-channel pid map a gst-worker pid uses —
+fixed to actually resolve outside the gst-worker branch, since it
+previously always fell through to `other` even when the channel mapping
+was already in scope), `supervisor` (the `pythonservice.exe` Windows
+service host), `control-plane` (the control-plane child), or `other`,
+labeled from pid facts this lane already holds, never an extra process
+query — see `scripts/CpuSampler.ps1`'s `Get-ProcessRoleLabel`) and `cpu_total_percent`;
 `SOAK-START.json` additionally records the guest's `cpu_count` once),
 `restart-events.json`, a rollup every 3 minutes under `rollups/` (each
-carrying a `worker_stdout_cumulative_by_channel` snapshot), per-channel
-egress worker logs (`logs/<label>/egress-per-channel/
+carrying a `worker_stdout_cumulative_by_channel` snapshot, plus
+`harness_notes_count` and `harness_notes_recent` — the last 3 entries only;
+re-embedding the full, potentially-20-entry `harness_notes` list in every
+single rollup was needless repetition of the same notes over a long soak,
+so the full (deduped, capped) list lives only in the final `VERDICT.json`,
+below), per-channel egress worker logs (`logs/<label>/egress-per-channel/
 <channel>/`, plus a `prepared/` directory LISTING, never a copy) alongside
 the daemon-level logs at each checkpoint and on every FAIL, and a final
 `VERDICT.json` / `VERDICT.txt` (verdict one of `PASS`, `FAIL`,
@@ -181,12 +196,52 @@ confirmed armed a seamless content-reload for but whose worker stdout
 never logged a commit for the whole soak is reported `FAIL` ("seamless
 reload never committed"), a product finding, not a harness note (see
 `scripts/WorkerStdoutParser.ps1` and `scripts/DaemonLogPatterns.ps1`'s
-`$DaemonReloadArmedRegex`/`Get-ReloadArmedNeverCommittedChannels`). This
-check (and `VERDICT.json`'s own `worker_stdout_by_channel` snapshot) reads
-from one FINAL per-channel drain of every worker's stdout counters, taken
-right after the poll loop exits — a reload committed in the last cycle's
-own write window is always counted before this check runs, never missed
-by up to one stale cycle.
+`$DaemonReloadArmedRegex`/`Get-ReloadArmedNeverCommittedChannels`/
+`Invoke-FinalWorkerStdoutDrainAndComputeArmedNeverCommitted`). This check
+(and `VERDICT.json`'s own `worker_stdout_by_channel` snapshot) reads from
+one FINAL per-channel drain of every worker's stdout counters, taken right
+after the poll loop exits — a reload committed in the last cycle's own
+write window is always counted before this check runs, never missed by up
+to one stale cycle; the drain-then-compute order is itself a tested
+contract (`Invoke-FinalWorkerStdoutDrainAndComputeArmedNeverCommitted`,
+exercised directly by `Test-RestartClassifier.ps1`'s scenario27e-g), not
+just an ordering claim in a comment.
+
+`VERDICT.json` also carries the full, deduped (one entry per distinct
+message, capped at 20 via `Add-HarnessNote`) `harness_notes` array, and
+`Run-SandboxSoak.ps1`'s own final console block prints those same notes
+and appends them to the host's own copy of `VERDICT.txt` — on every
+verdict-read path (whichever of `VERDICT.txt`-direct or the
+`VERDICT.json`-fallback path actually produced the verdict), not only the
+fallback one.
+
+Three read paths (`RestartClassifier.ps1`'s planned-restart walk-back
+exclusion, `SoakVerdict.ps1`'s ON_AIR-check exclusion and 3-consecutive-
+failure escalation) used to each keep their own hand-typed
+`-like 'state read failed*'` copy of the same "a channel row's own state
+read failed" contract. `scripts/DaemonLogPatterns.ps1` now holds the one
+shared predicate, `Test-IsReadFailureMarker` — the consumer side of
+`New-StateReadFailureLastError`'s producer-side formula — and all three
+call sites, plus `Test-SoakVerdict.ps1`'s own fixtures, use it instead of
+re-typing the literal.
+
+`scripts/ServiceStartFailureCheck.ps1`: when `Get-Service` itself throws
+(rather than returning a normal not-running/stopped result), the event-log
+crash check now falls back to the well-known constant service display
+name (`CivicCast Native Supervisor`) instead of skipping the check
+entirely — a genuine crash should still be caught even when `Get-Service`
+happens to fail.
+
+`Run-SandboxSoak.ps1`'s `awaiting-soak-start` phase no longer flips to
+`running` on `SOAK-START.json`'s mere existence: `In-Sandbox-Soak.ps1`'s
+own harness-error path writes a *backstop* `SOAK-START.json`
+(`harness_error_before_soak_start: true`, `soak_start_utc: null`) on a run
+that failed BEFORE the real soak clock ever started, so downstream tooling
+still finds a `SOAK-START.json` on every run. The host now parses the
+marker's own content — a backstop marker (or a still-partial write) is
+reported as the harness error it actually is (`HOST-QUIET-SHARE.txt`, exit
+6) instead of arming a rollup-stall bound on a run that will never produce
+a rollup.
 
 The verify/verdict logic lives in `scripts/SoakVerdict.ps1` (the per-cycle
 PASS/FAIL/HARNESS_ERROR judgment), `scripts/RestartClassifier.ps1` (planned-
@@ -206,8 +261,25 @@ pwsh -File sandbox-lab/scripts/Test-WorkerStdoutParser.ps1
 pwsh -File sandbox-lab/scripts/Test-CpuSampler.ps1
 ```
 
+Or run every `Test-*.ps1` suite in one step with
+`scripts/Invoke-LaneUnitTests.ps1` (discovers every `Test-*.ps1` directly
+in `scripts/` dynamically, sorted by name, so a newly-added suite is
+picked up automatically; runs each as a child `powershell.exe` process —
+Windows PowerShell 5.1, the actual guest engine, not `pwsh` — and exits
+non-zero if any suite fails):
+
+```powershell
+powershell.exe -NoProfile -File sandbox-lab/scripts/Invoke-LaneUnitTests.ps1
+```
+
+CI (`.github/workflows/ci-sandbox-lab.yml`, `windows-latest`, triggered on
+pull requests touching `sandbox-lab/**`) runs `Invoke-LaneUnitTests.ps1`
+under `powershell.exe -NoProfile` and parse-checks every `.ps1` file under
+`sandbox-lab/` (`[System.Management.Automation.PSParser]::Tokenize`, no
+execution) — fails the job on any suite failure or parse error.
+
 `scripts/CaptionsOffCheck.ps1` (item 1's -CaptionsOff PUT/GET verification
 judgment), `scripts/WorkerStdoutParser.ps1` (item 2's per-line matcher for
-each channel's `gst-worker.stdout.log`), and `scripts/CpuSampler.ps1`
-(item 3's per-pid CPU-delta/working-set math) follow the same
-dot-sourced-and-unit-tested extraction pattern.
+each channel's `gst-worker.stdout.log`/`gst-worker.stderr.log`), and
+`scripts/CpuSampler.ps1` (item 3's per-pid CPU-delta/working-set math)
+follow the same dot-sourced-and-unit-tested extraction pattern.

@@ -1,0 +1,82 @@
+# SPDX-License-Identifier: Apache-2.0
+name: ci-sandbox-lab
+
+# Round-follow-up-B item 3: sandbox-lab's own PowerShell unit-test suites
+# (Test-*.ps1) and its every .ps1 file's own syntax were, until this
+# workflow, only ever exercised by hand -- a manually-repeated ritual every
+# round of this lane's own review has had to re-run itself. Scoped to
+# sandbox-lab/** only: this is a harness/test-lane gate, not a product gate,
+# and must never block or slow down a PR that never touches this folder.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "sandbox-lab/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sandbox-lab:
+    name: sandbox-lab unit tests + syntax
+    # windows-latest: every sandbox-lab script is written and reviewed
+    # against powershell.exe (Windows PowerShell 5.1), the actual guest
+    # engine these scripts run under in production -- PS 5.1/PS 7
+    # behavioral differences have been a recurring root cause in this
+    # lane's own review history. windows-latest ships both powershell.exe
+    # and pwsh.
+    runs-on: windows-latest
+    timeout-minutes: 30
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run every sandbox-lab unit test suite (Windows PowerShell 5.1)
+        # Invoke-LaneUnitTests.ps1 discovers every Test-*.ps1 in
+        # sandbox-lab/scripts/ dynamically and runs each as its own child
+        # powershell.exe process, exiting non-zero if any suite fails --
+        # exactly what CI needs, with no hand-maintained suite list to go
+        # stale here a second time.
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          powershell.exe -NoProfile -File sandbox-lab/scripts/Invoke-LaneUnitTests.ps1
+          if ($LASTEXITCODE -ne 0) {
+            throw "Invoke-LaneUnitTests.ps1 reported $LASTEXITCODE -- see the suite-by-suite summary above"
+          }
+
+      - name: Parse-check every sandbox-lab .ps1 file
+        # A syntax error in a script with no unit-test file of its own
+        # (e.g. Run-SandboxSoak.ps1, Run-GateA.ps1, In-Sandbox-Soak.ps1
+        # itself -- these drive a real sandbox/install and are not
+        # unit-tested directly) would otherwise only surface on a live
+        # soak/Gate A run. PSParser.Tokenize parses without executing --
+        # no sandbox, install, or network access required.
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = Get-ChildItem -Path 'sandbox-lab' -Filter '*.ps1' -Recurse -File
+          $failed = @()
+          foreach ($f in $files) {
+            $errors = $null
+            $null = [System.Management.Automation.PSParser]::Tokenize((Get-Content -Path $f.FullName -Raw), [ref]$errors)
+            if ($errors -and $errors.Count -gt 0) {
+              $failed += $f.FullName
+              Write-Host "[PARSE ERROR] $($f.FullName)" -ForegroundColor Red
+              foreach ($e in $errors) { Write-Host "  $($e.Message) (line $($e.Token.StartLine))" -ForegroundColor Red }
+            } else {
+              Write-Host "[ok] $($f.FullName)"
+            }
+          }
+          if ($failed.Count -gt 0) {
+            throw "$($failed.Count) sandbox-lab .ps1 file(s) failed to parse: $($failed -join ', ')"
+          }
+          Write-Host ""
+          Write-Host "All $($files.Count) sandbox-lab .ps1 file(s) parsed cleanly." -ForegroundColor Green

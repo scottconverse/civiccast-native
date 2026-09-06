@@ -150,6 +150,65 @@ function Get-ReloadArmedNeverCommittedChannels {
     )
 }
 
+function Invoke-FinalWorkerStdoutDrainAndComputeArmedNeverCommitted {
+    <#
+      .SYNOPSIS
+      Round-follow-up-B finding 2d: factors the exact post-poll-loop
+      sequence In-Sandbox-Soak.ps1 depends on -- drain EVERY channel's
+      worker-stdout counters one more time, THEN compute the
+      armed-but-never-committed list from those (now up to date) counts --
+      into a function whose ORDER is directly provable without a live
+      sandbox/worker process.
+
+      Test-RestartClassifier.ps1's old scenario27b ("caught by the final
+      drain") tested Get-ReloadArmedNeverCommittedChannels alone, against
+      pre-baked counts that already ASSUMED the drain had already run. That
+      proved the computation is correct given already-drained counts; it
+      never proved the drain actually happens before the computation is
+      invoked -- a regression that swapped the two calls' order (or
+      dropped the drain call entirely) would not have failed that test.
+      This function makes the order an explicit, testable contract:
+      DrainAction is invoked once per ChannelId, IN ORDER, and every one of
+      those calls completes before Get-ReloadArmedNeverCommittedChannels is
+      ever called.
+
+      .PARAMETER ChannelIds
+      Every channel this soak is running ($channelSpecs' own ids in the
+      real driver) -- the final drain runs for ALL of them, not just the
+      armed ones, mirroring the real call site.
+
+      .PARAMETER ArmedChannelIds
+      Channel ids the daemon log confirmed "Seamless content-reload
+      armed" for at least once.
+
+      .PARAMETER WorkerStdoutCountsByChannel
+      The SAME per-channel counts hashtable DrainAction mutates -- read by
+      Get-ReloadArmedNeverCommittedChannels only AFTER every DrainAction
+      call has completed.
+
+      .PARAMETER DrainAction
+      Scriptblock invoked once per ChannelId (real driver:
+      `{ param($cid) Update-WorkerStdoutCounters -ChannelId $cid }`;
+      tests: a fake that mutates a synthetic WorkerStdoutCountsByChannel
+      and/or records call order).
+
+      .OUTPUTS
+      string[] -- same contract as Get-ReloadArmedNeverCommittedChannels.
+    #>
+    param(
+        [AllowEmptyCollection()]
+        [array]$ChannelIds = @(),
+        [AllowEmptyCollection()]
+        [array]$ArmedChannelIds = @(),
+        $WorkerStdoutCountsByChannel = @{},
+        [scriptblock]$DrainAction
+    )
+    foreach ($cid in $ChannelIds) {
+        if ($DrainAction) { & $DrainAction $cid }
+    }
+    return @(Get-ReloadArmedNeverCommittedChannels -ArmedChannelIds $ArmedChannelIds -WorkerStdoutCountsByChannel $WorkerStdoutCountsByChannel)
+}
+
 function Test-IsReadFailureMarker {
     <#
       .SYNOPSIS

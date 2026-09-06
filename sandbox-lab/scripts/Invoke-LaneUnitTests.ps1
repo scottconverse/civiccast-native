@@ -1,21 +1,31 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
 #
-# Invoke-LaneUnitTests.ps1 -- runs all four sandbox-soak-lane unit test
-# suites (Test-RestartClassifier.ps1, Test-SoakVerdict.ps1,
-# Test-HostLiveness.ps1, Test-ServiceStartFailure.ps1) under powershell.exe
-# (Windows PowerShell 5.1 -- the actual guest engine every one of these
-# files is written to run under, and the one this project's own coordinator
-# has repeatedly required re-verification against across many rounds,
-# since PS 5.1/PS 7 behavioral differences have been a recurring root
-# cause here), and exits non-zero if ANY suite reports a failure.
+# Invoke-LaneUnitTests.ps1 -- runs every sandbox-soak-lane unit test suite
+# (Test-*.ps1 in this folder) under powershell.exe (Windows PowerShell 5.1
+# -- the actual guest engine every one of these files is written to run
+# under, and the one this project's own coordinator has repeatedly required
+# re-verification against across many rounds, since PS 5.1/PS 7 behavioral
+# differences have been a recurring root cause here), and exits non-zero if
+# ANY suite reports a failure.
 #
 # Followup finding 5 (round 14 addendum): every prior round manually ran
-# these four files one at a time and eyeballed the tail of each transcript
-# for a failure count -- this script makes that a single, scriptable,
-# CI-runnable step (wired into .github/workflows/sandbox-lane-unit-tests.yml
-# as the `sandbox-lane-unit` job on windows-latest, where powershell.exe
-# 5.1 is present alongside pwsh) instead of a manually-repeated ritual.
+# these files one at a time and eyeballed the tail of each transcript for a
+# failure count -- this script makes that a single, scriptable, CI-runnable
+# step (wired into .github/workflows/ci-sandbox-lab.yml's `sandbox-lab`
+# job on windows-latest, where powershell.exe 5.1 is present alongside
+# pwsh) instead of a manually-repeated ritual.
+#
+# Round-follow-up-B finding: originally authored (2b9cc55) against a
+# hand-typed 4-suite list (Test-RestartClassifier.ps1, Test-SoakVerdict.ps1,
+# Test-HostLiveness.ps1, Test-ServiceStartFailure.ps1) that was already
+# stale by the time this file was cherry-picked onto main -- PR #184 had
+# since added Test-CaptionsOffCheck.ps1, Test-CpuSampler.ps1, and
+# Test-WorkerStdoutParser.ps1, none of which the hand-typed list would ever
+# have run. Discovered dynamically instead (every `Test-*.ps1` directly in
+# $ScriptsDir, sorted by name for a stable, reproducible run order) so a
+# future new suite is picked up automatically and this file never goes
+# stale again the same way.
 #
 # Run: powershell.exe -NoProfile -File sandbox-lab/scripts/Invoke-LaneUnitTests.ps1
 #  (or pwsh, for a quick local sanity check -- CI always uses powershell.exe)
@@ -27,10 +37,9 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $suites = @(
-    'Test-RestartClassifier.ps1'
-    'Test-SoakVerdict.ps1'
-    'Test-HostLiveness.ps1'
-    'Test-ServiceStartFailure.ps1'
+    Get-ChildItem -Path $ScriptsDir -Filter 'Test-*.ps1' -File |
+        Sort-Object -Property Name |
+        ForEach-Object { $_.Name }
 )
 
 $overallFailures = 0
