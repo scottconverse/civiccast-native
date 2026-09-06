@@ -302,10 +302,12 @@ class TestCaptionTapWorker:
             _write_wav(tap_root / channel / "chunk-000000.wav")
             _write_wav(tap_root / channel / "chunk-000001.wav")
         runtime = _ConcurrencyProbeRuntime()
-        # Explicit: the DEFAULT bound is CPU-derived and is 1 on an 8-core box
-        # (see test_asr_concurrency_is_bounded_by_cpu_count). This test is
+        # Explicit: the DEFAULT bound is a flat 1, station-wide, regardless of
+        # core count (see test_default_concurrency_is_always_one_channel_station_wide
+        # and test_asr_concurrency_is_bounded_by_cpu_count). This test is
         # about the executor actually running channels in parallel when the
-        # bound allows it, so it states the bound it is testing.
+        # bound allows it, so it states the bound it is testing rather than
+        # relying on the default.
         worker = _worker(
             tap_root,
             runtime,
@@ -354,10 +356,13 @@ class TestCaptionTapWorker:
     ) -> None:
         """Item 79: the default is a flat 1, regardless of core count.
 
-        This replaces the previous "one channel per 8 CPUs" formula, which
-        still let a 16+ core station run more than one channel's ASR at
-        once -- exactly the mechanism the original DESKTOP-VBMA6O5 field
-        defect (see the module docstring) already proved unsafe.
+        Tightened from the previous "one channel per 8 CPUs, max 3" formula.
+        Read this as knob hardening, not as a standalone fix for the original
+        DESKTOP-VBMA6O5 field defect (see the module docstring): every
+        channel already shares one speech recognition model instance built
+        with CTranslate2's ``inter_threads=1``, so the previous default of 3
+        never actually ran 3 concurrent inferences -- that model-level queue
+        was already serializing them.
         """
 
         monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 4)

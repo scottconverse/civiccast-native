@@ -331,10 +331,11 @@ workflow is. Two things to know before relying on it for a real meeting:
 
 ### Live Captions, And When To Turn Them Off {#live-captions-switch}
 
-When live captions are on, CivicCast listens to every channel that is on air
-and writes captions as the meeting happens. It is useful, and it is hard work
-for the computer — hard enough that on a station without a suitable graphics
-card it can compete with the broadcast itself for the processor.
+When live captions are on, CivicCast writes captions as the meeting happens —
+but it captions **one channel at a time; the others pause** while they wait
+their turn. It is useful, and it is hard work for the computer — hard enough
+that on a station without a suitable graphics card it can compete with the
+broadcast itself for the processor.
 
 **The switch:** *Setup → Station Profile → **Show live captions on air***.
 It is on when the station is installed. Only a setup admin can change it.
@@ -351,12 +352,12 @@ your station publishes captioned recordings to meet an accessibility
 requirement, that keeps working with this switch off.
 
 **If you leave it on and the station cannot keep up,** CivicCast does not
-simply grind: it stops captioning that channel for a while (one minute, then
-two, then four, up to fifteen), clears the captions that were on screen rather
-than showing stale ones, and tries again later. You will see one warning in
-the log each time that happens. Repeated warnings on the same channel mean
-that station cannot caption that channel live — turn the switch off, or ask
-about a lower-quality caption model or a supported graphics card.
+simply grind: it stops captioning that channel for a while (two minutes, then
+four, then eight, up to fifteen), clears the captions that were on screen
+rather than showing stale ones, and tries again later. You will see one
+warning in the log each time that happens. Repeated warnings on the same
+channel mean that station cannot caption that channel live — turn the switch
+off, or ask about a lower-quality caption model or a supported graphics card.
 
 ### Operator Graphics Control (Lower-Third Banner) {#operator-graphics-control}
 

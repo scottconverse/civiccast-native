@@ -62,7 +62,10 @@ below.
   small station, up to 2 on a bigger one, never more, logged once when the
   tap starts alongside `cpu_count` and the channel concurrency bound;
   override: `CIVICCAST_CAPTION_TAP_CPU_THREADS`, clamped rather than fatal on
-  a bad value so a typo cannot take an activated station off air) --
+  a bad value so a typo cannot take an activated station off air; the
+  existing, more general `CIVICCAST_WHISPER_CPU_THREADS` is clamped the same
+  way now too, and its `0` ("every core") is refused specifically for the
+  live tap regardless of which of the two variables asked for it) --
   recorded meeting transcription is untouched, it still uses as many threads
   as the box allows. (3) the first pause after an overload is now twice as
   long (120 seconds instead of 60) so a station that just proved it cannot

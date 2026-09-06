@@ -35,6 +35,7 @@ from civiccast.captions.review import InMemoryCaptionReviewStore
 from civiccast.captions.runtime import (
     CaptionRuntime,
     FasterWhisperRuntime,
+    default_live_tap_cpu_threads,
 )
 from civiccast.captions.tap_worker import CaptionTapWorker
 from civiccast.native.app_payload import (
@@ -646,7 +647,19 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--beam-size", type=int, default=5)
     parser.add_argument("--overlap-seconds", type=float, default=4.0)
-    parser.add_argument("--cpu-threads", type=int, default=0)
+    parser.add_argument(
+        "--cpu-threads",
+        type=int,
+        # Deliberately NOT 0 ("every core"): this proof exists to measure the
+        # shipped LIVE tap, and 0 is the batch/VOD default, not the live
+        # tap's. Defaulting to the same `default_live_tap_cpu_threads()`
+        # production actually uses (item 79) means this flag only overrides
+        # for a deliberate hardware-exploration trial -- an unoverridden run
+        # measures the real deployed sizing instead of a station nobody
+        # ships, the same doctrine `build_caption_runtime`'s omitted
+        # `num_workers` already follows above.
+        default=default_live_tap_cpu_threads(),
+    )
     parser.add_argument(
         "--device",
         default=CAPTION_DEVICE,

@@ -181,7 +181,9 @@ negotiable at runtime by the caption feature itself:
   This is knob hardening on top of a design that already shares ONE speech
   recognition model instance across every channel with CTranslate2's
   `inter_threads=1`, so the old default of 3 never actually ran 3 concurrent
-  transcriptions — the model's own queue was already serializing them.
+  **inferences** — the model's own queue was already serializing the decode
+  step, even though VAD and feature extraction for different channels could
+  still overlap ahead of it.
   Within a single scan, channels beyond the concurrency bound queue on the
   worker pool rather than being dropped outright — but a station with more
   channels ON_AIR than the bound will still spend most of a scan

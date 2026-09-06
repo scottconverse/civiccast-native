@@ -218,6 +218,69 @@ def _clamped_caption_tap_cpu_threads_env(default: int) -> int:
     return value
 
 
+def _clamped_whisper_cpu_threads_env(default: int, *, live: bool) -> int:
+    """``CIVICCAST_WHISPER_CPU_THREADS``, CLAMPED rather than fatal, and never
+    "every core" for the live tap.
+
+    Every numeric CTranslate2 setting on this class used to fail fast via
+    :func:`_env_int`, this one included -- but ``FasterWhisperRuntime(live=
+    True)`` is constructed UNGUARDED during control-plane startup
+    (``civiccast.app`` -> :func:`civiccast.ai_models.runtime.build_caption_runtime`,
+    no try/except around it), so a mistyped value here must not raise and
+    take an activated station off air, the same reasoning as
+    :func:`_clamped_caption_tap_cpu_threads_env` above.
+
+    For the BATCH/VOD runtime (``live=False``), ``0`` ("every core") is
+    honoured exactly as before -- a finalization pass is allowed to use the
+    machine, and the native capacity proof
+    (``scripts/prove_native_caption_capacity.py``) is pinned to it.
+
+    For the LIVE tap, ``0`` is refused even when this GENERIC variable
+    (rather than the live-only :data:`CAPTION_TAP_CPU_THREADS_ENV_VAR`) is
+    what set it: an operator setting ``CIVICCAST_WHISPER_CPU_THREADS=0``
+    almost always means "let the batch/finalization pass use every core,"
+    and honouring that literally for the live tap too would silently hand it
+    the exact "every core" sizing that produced the DESKTOP-VBMA6O5 field
+    failure this module exists to prevent. A live runtime that reads ``0``
+    here falls back to ``default`` (the already-resolved, core-count-aware
+    live default) instead, logged so the override is visible rather than
+    silent.
+    """
+
+    raw = os.environ.get("CIVICCAST_WHISPER_CPU_THREADS", "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "CIVICCAST_WHISPER_CPU_THREADS must be an integer; got %r. Using "
+            "%d so caption transcription still starts -- captions are best "
+            "effort and must never take a station off air.",
+            raw,
+            default,
+        )
+        return default
+    if value < 0:
+        logger.warning(
+            "CIVICCAST_WHISPER_CPU_THREADS must be at least 0; got %d. Using %d instead.",
+            value,
+            default,
+        )
+        return default
+    if live and value == 0:
+        logger.warning(
+            "CIVICCAST_WHISPER_CPU_THREADS=0 ('every core') is refused for "
+            "the LIVE caption tap -- that is the exact sizing that produced "
+            "the DESKTOP-VBMA6O5 field failure this module exists to "
+            "prevent. Using %d instead; set CIVICCAST_CAPTION_TAP_CPU_THREADS "
+            "if the live tap genuinely needs a different value.",
+            default,
+        )
+        return default
+    return value
+
+
 #: Greedy decoding for the live tap on CPU: beam search costs roughly its
 #: width in decoder passes, and the live tap has a hard real-time budget that
 #: a VOD pass does not. Overridable with ``CIVICCAST_WHISPER_BEAM_SIZE``.
@@ -563,6 +626,8 @@ class FasterWhisperRuntime:
         # That stays the batch/VOD default -- a finalization pass is allowed to
         # use the machine, and the native capacity proof
         # (``scripts/prove_native_caption_capacity.py``) is pinned to it.
+        # For the LIVE tap, 0 is refused even via CIVICCAST_WHISPER_CPU_THREADS
+        # (see ``_clamped_whisper_cpu_threads_env`` below).
         #
         # Precedence for the live tap: CIVICCAST_WHISPER_CPU_THREADS (below,
         # applies to both live and batch) > an explicit `cpu_threads`
@@ -582,10 +647,14 @@ class FasterWhisperRuntime:
             )
         else:
             default_cpu_threads = 0
-        self.cpu_threads = _env_int(
-            "CIVICCAST_WHISPER_CPU_THREADS",
+        # CLAMPED here too, not `_env_int` (fail-fast) -- see
+        # `_clamped_whisper_cpu_threads_env`: this generic override is read
+        # for the live tap just as unguarded as the tap-only one above, and
+        # `0` ("every core") is refused for `live=True` regardless of which
+        # of the two variables asked for it.
+        self.cpu_threads = _clamped_whisper_cpu_threads_env(
             default_cpu_threads if cpu_threads is None else cpu_threads,
-            minimum=0,
+            live=live,
         )
         if live:
             # Logged ONCE, at tap start (this constructor runs once per live

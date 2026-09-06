@@ -413,6 +413,67 @@ class TestCaptionsRuntimeSeam:
         assert "CIVICCAST_CAPTION_TAP_CPU_THREADS" in caplog.text
         assert "'two'" in caplog.text
 
+    def test_civiccast_whisper_cpu_threads_zero_is_refused_for_the_live_tap(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The GENERIC override must never hand the live tap "every core" either.
+
+        `CIVICCAST_WHISPER_CPU_THREADS=0` legitimately means "every core" for
+        the batch/VOD runtime (unchanged, see the sibling test below) -- but
+        an operator setting this generic variable almost always means to
+        raise the BATCH ceiling, not to hand the live tap the exact `0`
+        sizing that produced the DESKTOP-VBMA6O5 field failure. `live=True`
+        must refuse `0` here too, not just via the tap-only
+        `CIVICCAST_CAPTION_TAP_CPU_THREADS`.
+        """
+
+        from civiccast.ai_models.runtime import build_caption_runtime
+        from civiccast.captions.runtime import FasterWhisperRuntime
+
+        monkeypatch.setattr("civiccast.captions.runtime.os.cpu_count", lambda: 8)
+        monkeypatch.setenv("CIVICCAST_WHISPER_CPU_THREADS", "0")
+
+        service = _service(tmp_path)
+        with caplog.at_level("WARNING", logger="civiccast.captions.runtime"):
+            live = build_caption_runtime(service, live=True)
+        batch = build_caption_runtime(service)
+
+        assert isinstance(live, FasterWhisperRuntime)
+        assert live.cpu_threads == 1  # refused; falls back to the live default
+        assert "CIVICCAST_WHISPER_CPU_THREADS=0" in caplog.text
+        # The batch/VOD runtime still honours 0 ("every core") exactly as before.
+        assert isinstance(batch, FasterWhisperRuntime)
+        assert batch.cpu_threads == 0
+
+    def test_civiccast_whisper_cpu_threads_unparseable_falls_back_without_raising(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """`FasterWhisperRuntime(live=True)` runs unguarded at app startup
+        (`civiccast.app` -> `build_caption_runtime`, no try/except) -- a
+        mistyped `CIVICCAST_WHISPER_CPU_THREADS` must not raise and take an
+        activated station off air."""
+
+        from civiccast.ai_models.runtime import build_caption_runtime
+        from civiccast.captions.runtime import FasterWhisperRuntime
+
+        monkeypatch.setattr("civiccast.captions.runtime.os.cpu_count", lambda: 8)
+        monkeypatch.setenv("CIVICCAST_WHISPER_CPU_THREADS", "lots")
+
+        service = _service(tmp_path)
+        with caplog.at_level("WARNING", logger="civiccast.captions.runtime"):
+            live = build_caption_runtime(service, live=True)
+
+        assert isinstance(live, FasterWhisperRuntime)
+        assert live.cpu_threads == 1
+        assert "CIVICCAST_WHISPER_CPU_THREADS" in caplog.text
+        assert "'lots'" in caplog.text
+
     def test_the_app_builds_its_live_tap_runtime_through_the_live_seam(self) -> None:
         """Wiring proof: `civiccast.app` must ask for the LIVE sizing.
 
