@@ -574,7 +574,23 @@ def main() -> int:
         print(f"WORKER_RESULT {preroll_result}", flush=True)
         return int(exit_codes_mod.GST_PREROLL_TIMEOUT_EXIT_CODE)
     print(f"WORKER_RESULT {result}", flush=True)
-    return 0 if result.get("error") is None else 1
+    error = result.get("error")
+    if error is None:
+        return 0
+    # Item 84: unlike PrerollTimeoutError above (raised as an exception, so
+    # its own except-clause chooses the exit code), a first-output timeout is
+    # NOT raised -- ``GstPlayoutEngine._check_stall`` sets ``self._error`` and
+    # quits the loop exactly like the ordinary post-first-buffer stall does
+    # (see the ``("stall", ...)`` reason, which still falls through to the
+    # generic exit code 1 below), so ``run_forever`` returns normally and this
+    # reason has to be told apart from every OTHER engine failure here instead.
+    # A distinct exit code (never 1) is what lets the daemon's relaunch path
+    # (``EgressDaemon._relaunch_after_crash``) rate-limit this the same way it
+    # already does ``GST_PREROLL_TIMEOUT_EXIT_CODE``, instead of counting a
+    # slow-but-healthy start toward the crash-loop fallback-slate streak.
+    if isinstance(error, (tuple, list)) and error and error[0] == "first-output-timeout":
+        return int(exit_codes_mod.GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE)
+    return 1
 
 
 if __name__ == "__main__":

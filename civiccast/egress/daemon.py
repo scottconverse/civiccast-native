@@ -42,7 +42,10 @@ from civiccast.egress.errors import (
     SecretUnresolvedError,
     SourcePrepareError,
 )
-from civiccast.egress.gst.exit_codes import GST_PREROLL_TIMEOUT_EXIT_CODE
+from civiccast.egress.gst.exit_codes import (
+    GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE,
+    GST_PREROLL_TIMEOUT_EXIT_CODE,
+)
 from civiccast.egress.gst.reload_policy import should_defer_switch
 from civiccast.egress.health import (
     EgressEncoderMetrics,
@@ -183,6 +186,22 @@ _STDERR_TAIL_MAX_CHARS = 600
 # above) more than once per this window -- see _relaunch_after_crash's own
 # docstring for why an uncapped counter would misfire on a healthy source.
 _PREROLL_TIMEOUT_STREAK_COOLDOWN_S = 60.0
+
+# Item 84: a GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE exit (PLAYING was reached, but
+# no output buffer crossed the mux within the engine's own, separate bound --
+# see engine.py's ``_check_stall``) is the SAME kind of thing as a
+# preroll-timeout exit for every purpose _relaunch_after_crash cares about: a
+# slow-but-progressing start under load, not a crash, that must relaunch
+# through the normal back-off path while being rate-limited out of the
+# crash-loop streak the same way, using the SAME per-channel cooldown window
+# and the same ``_preroll_timeout_streak_incr_at`` bookkeeping (one shared
+# "was there a recent slow-start streak increment for this channel" clock is
+# correct here -- a channel legitimately alternating between the two exit
+# reasons is still one and the same "slow start" situation, not two
+# independent ones needing two separate rate limits).
+_SLOW_START_EXIT_CODES = frozenset(
+    {GST_PREROLL_TIMEOUT_EXIT_CODE, GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE}
+)
 
 # F1 redesign (coordinator hostile review, 2026-09-06): absolute backstop for a
 # pending reload settlement that never arrives at all (e.g. the worker crashed
@@ -564,9 +583,11 @@ class EgressDaemon:
             default_cooldown_seconds=restart_cooldown_seconds, clock=self._monotonic
         )
         self._restart_streak: dict[str, int] = {}
-        # Item 82: last _monotonic() the crash-loop streak was actually
-        # incremented FOR a preroll-timeout exit -- rate-limits how often that
-        # specific exit reason can advance the streak (see
+        # Item 82 (extended by item 84): last _monotonic() the crash-loop
+        # streak was actually incremented for a "slow start" exit --
+        # GST_PREROLL_TIMEOUT_EXIT_CODE or GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE
+        # (see _SLOW_START_EXIT_CODES) -- rate-limits how often either of
+        # those exit reasons can advance the streak (see
         # _relaunch_after_crash). Ordinary crashes are unaffected and always
         # increment the streak on every exit.
         self._preroll_timeout_streak_incr_at: dict[str, float] = {}
@@ -1817,12 +1838,15 @@ class EgressDaemon:
         ``process_once`` tick services once the latch permits) so a worker that keeps
         dying at startup can't hot-loop. A worker that ran healthily resets the streak.
 
-        Item 82: a GStreamer worker that exits with
+        Item 82 (extended by item 84): a GStreamer worker that exits with
         ``civiccast.egress.gst.exit_codes.GST_PREROLL_TIMEOUT_EXIT_CODE`` (a slow,
-        CPU-load-bound preroll, not a crash) still relaunches through the exact
-        same path below -- the existing back-off/cooldown pacing applies
-        unchanged -- but does NOT advance the crash-loop streak more than once
-        per ``_PREROLL_TIMEOUT_STREAK_COOLDOWN_S`` (60s). Left uncapped, a train
+        CPU-load-bound preroll) OR ``GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE`` (PLAYING
+        was reached, but no output buffer crossed the mux within the engine's own
+        separate bound -- see ``_SLOW_START_EXIT_CODES``) -- neither a crash --
+        still relaunches through the exact same path below -- the existing
+        back-off/cooldown pacing applies unchanged -- but does NOT advance the
+        crash-loop streak more than once per ``_PREROLL_TIMEOUT_STREAK_COOLDOWN_S``
+        (60s), shared across both exit reasons. Left uncapped, a train
         of successive slow starts (each individually a legitimate retry) would
         trip ``_LIVE_SOURCE_FAILURE_FALLBACK_STREAK`` and force the channel onto
         fallback slate for a source that was never actually unreachable -- the
@@ -1846,7 +1870,7 @@ class EgressDaemon:
         if (
             uptime is not None
             and uptime >= _RESTART_STREAK_RESET_UPTIME_S
-            and returncode != GST_PREROLL_TIMEOUT_EXIT_CODE
+            and returncode not in _SLOW_START_EXIT_CODES
         ):
             # Belt-and-suspenders with the healthy-poll reset in _poll_process: that
             # path clears the streak while the worker is RUNNING healthily; this one
@@ -1860,7 +1884,7 @@ class EgressDaemon:
             # last incremented the streak before this healthy stretch) is
             # never rate-limited by a now-irrelevant past timestamp.
             self._preroll_timeout_streak_incr_at.pop(channel_id, None)
-        if returncode == GST_PREROLL_TIMEOUT_EXIT_CODE:
+        if returncode in _SLOW_START_EXIT_CODES:
             last_incr_at = self._preroll_timeout_streak_incr_at.get(channel_id)
             if (
                 last_incr_at is not None

@@ -576,6 +576,40 @@ The OBS bridge is operationally outside CivicCast — its supervision is
 OBS's job, and the SDI readiness endpoint will not report it. It is the
 right answer when the station wants SDI today without building FFmpeg.
 
+## Diagnosing A Worker Exit: Never Produced Output vs Stopped Producing It
+
+A GStreamer worker's stderr distinguishes two DIFFERENT failure shapes that
+both end in a daemon-driven restart -- read the exact marker before assuming
+a bounced channel is the same failure mode as any other:
+
+- `CTRL first-output: no output within Ns of PLAYING - quitting for daemon
+  restart` (item 84) -- the pipeline reached `PLAYING` (see the preceding
+  `CTRL preroll: reached PLAYING after ...s` line) but never produced a
+  single output buffer within `first_output_timeout_s` (45s default,
+  `CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S` env override, clamped `[10, 120]`s).
+  This is a SLOW START under load (a concurrent conform, a synchronous
+  content-reload source preparation, live caption-tap overload), not a
+  stalled or dead pipeline -- the daemon relaunches it through the normal
+  back-off path but rate-limits how often it counts toward the crash-loop
+  streak that forces fallback slate, the same way it already does for
+  `CTRL preroll: worker exiting -- ...` (item 82, a preroll that never
+  reached `PLAYING` at all). If this line recurs steadily on a box, look at
+  what else is competing for CPU/IO at worker start (an `ffmpeg` conform, a
+  slow disk, another channel's caption tap) before assuming the source
+  itself is unreachable.
+- `CTRL stall: no output for 10s - quitting for daemon restart` (S9-5,
+  unchanged by item 84) -- the pipeline WAS producing output and then
+  stopped for `stall_timeout_s` (10s default). This is the pipeline going
+  silently dead after already airing (a frozen live source that never posts
+  an error) -- treat it as a genuine on-air interruption, not a slow start.
+
+Both lines land in the operator state row's `last_error` (folded from the
+worker's stderr tail); the exit code the daemon actually observed
+(`GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE` vs the ordinary crash code for a
+`("stall", ...)` exit vs `GST_PREROLL_TIMEOUT_EXIT_CODE`) is not itself
+operator-visible, so the stderr marker text is the fastest way to tell the
+three apart when triaging a relaunch storm.
+
 ## What To Do With Failures
 
 Use the exact blocker code in the report. Do not paraphrase it away.

@@ -1247,6 +1247,75 @@ below.
     no encoder evidence at all -- exactly the bug this round closes -- to
     instead write real evidence and assert the reset only fires once that
     evidence has been held for the healthy-uptime window.
+- **A fresh GStreamer worker could reach PLAYING quickly and still get killed
+  before its first output buffer, distinct from item 82's slow-preroll case**
+  (item 84, measured in sandbox run 15, soak-fcfcb81-20260906-183448Z, and in
+  three seamless-OFF runs). Every affected worker printed
+  `CTRL preroll: reached PLAYING after 0.3s` -- a real, fast PLAYING
+  transition -- immediately followed by
+  `CTRL stall: no output for 10s - quitting for daemon restart`.
+  `_await_playing` accepts `NO_PREROLL` as success (unchanged, and correctly
+  so -- some pipelines legitimately never preroll), so PLAYING is not
+  evidence a single buffer crossed the mux, but `_arm_stall_watchdog` armed
+  the 10s post-first-buffer `stall_timeout_s` the instant PLAYING was
+  reached. Under start-up load (a concurrent `ffmpeg -threads 1 h264_mf +
+  loudnorm` conform, a ~10s synchronous content-reload source preparation on
+  the automation thread, live caption-tap overload) the first output buffer
+  can legitimately take longer than 10s, killing a perfectly healthy worker.
+  `engine.py`'s `_check_stall` now measures two DISTINCT budgets: while no
+  output buffer has been observed yet, a new, separate, configurable
+  `first_output_timeout_s` (45s default, `CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S`
+  env override, clamped to `[10, 120]`s, `math.isfinite`-guarded exactly like
+  `preroll_timeout_s`); only once the first buffer IS observed does the
+  original 10s `stall_timeout_s` apply, completely unchanged. A distinct
+  stderr marker (`CTRL first-output: no output within Ns of PLAYING -
+  quitting for daemon restart`) and a distinct `("first-output-timeout", ...)`
+  `WORKER_RESULT` error reason let `worker.py` exit with a new, distinct
+  `civiccast.egress.gst.exit_codes.GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE`
+  instead of the generic crash code every other engine failure uses.
+  `EgressDaemon._relaunch_after_crash` treats this new exit code exactly like
+  `GST_PREROLL_TIMEOUT_EXIT_CODE` (`_SLOW_START_EXIT_CODES`, sharing the same
+  per-channel rate-limit bookkeeping) -- still relaunches through the normal
+  back-off path, but never advances the crash-loop streak more than once per
+  60s and is exempt from the healthy-uptime streak reset, so a train of
+  legitimate slow-first-output starts under load can no longer force a
+  healthy source onto fallback slate. `_arm_stall_watchdog` now arms
+  whenever EITHER budget is active (before this fix, an operator setting
+  `stall_timeout_s <= 0` to disable the post-first-buffer check also
+  silently disabled the independently useful first-output check).
+  - **Related automation.py fix (same item, same soak evidence):** the
+    channel-rollover "reload for `<ch>` did not land within 45s; retrying"
+    WARNING used to log on EVERY ~2s poll tick for as long as the actual
+    retry stayed gated behind either the retry-cadence floor or the
+    worker-pid-age floor (measured 1:1 with "deferred: worker pid has only
+    been alive Ns" -- a worker that keeps crashing/relaunching right after
+    every reload never gets a chance to settle) because the WARNING fires
+    before either gate and `_rollover_issued_at` is never cleared by a gated
+    tick. Now logs once when the 45s threshold is first crossed, at most
+    once more per 60s while still gated (DEBUG for every other gated tick),
+    and a separate WARNING when the retry actually dispatches. The gating
+    logic itself is unchanged.
+  - New tests: `tests/egress/test_gst_engine_first_output_timeout.py` (the
+    `_check_stall`/`_arm_stall_watchdog` two-budget split, and
+    `_resolve_first_output_timeout_s`'s default/env/clamp/NaN-guard coverage
+    mirroring the preroll resolver's own),
+    `tests/egress/test_gst_worker_first_output_timeout_exit.py` (the
+    worker's distinct exit code and `WORKER_RESULT` receipt on this reason,
+    contrasted against the unchanged generic-crash-code path for an ordinary
+    stall), `tests/egress/test_daemon_first_output_timeout_relaunch.py` (the
+    daemon's shared rate-limited streak across both slow-start exit reasons,
+    the healthy-uptime exemption, and sustained-failure escalation to
+    fallback slate), and
+    `tests/egress/test_automation_rollover_retry_log_cadence.py` (the log
+    cadence fix: one WARNING on first crossing, DEBUG while still gated, a
+    repeat WARNING at the 60s mark while STILL gated -- simulating a worker
+    that keeps relaunching with a fresh, still-too-young pid -- and a
+    distinct WARNING once the retry actually dispatches).
+  - **Runbook note:** a worker's stderr distinguishes "never produced
+    output" (`CTRL first-output: ...`, item 84) from "stopped producing
+    output after airing" (`CTRL stall: ...`, S9-5/unchanged) -- read the
+    exact marker before assuming a channel bounce is the same failure mode
+    as any other stall.
 
 ### Changed
 

@@ -746,6 +746,56 @@ entries:
       # ever wrong. Only engine.py's re-hash reflects this round; worker.py
       # is unchanged and its blob is unchanged from the round-3 value.
       #
+      # engine.py and worker.py drifted a SEVENTH time (item 84, measured in
+      # sandbox run 15, soak-fcfcb81-20260906-183448Z, and in three
+      # seamless-OFF runs, 2026-09-06): every fresh worker reached PLAYING
+      # quickly (``CTRL preroll: reached PLAYING after 0.3s``) then
+      # immediately hit ``CTRL stall: no output for 10s - quitting for daemon
+      # restart`` -- ``_arm_stall_watchdog`` armed the 10s post-first-buffer
+      # stall bound the instant PLAYING was reached, but PLAYING (even
+      # NO_PREROLL) is not evidence a single buffer crossed the mux, and
+      # under start-up load (a concurrent ffmpeg conform, a ~10s synchronous
+      # content-reload source preparation, live caption-tap overload) the
+      # first buffer legitimately took longer than 10s, killing healthy
+      # workers. Fixed: ``_check_stall`` now measures two DISTINCT budgets --
+      # while no output has been observed yet, a new, separate, configurable
+      # ``first_output_timeout_s`` (45s default,
+      # ``CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S`` env override, clamped to
+      # ``[10, 120]``s, ``math.isfinite``-guarded exactly like
+      # ``_resolve_preroll_timeout_s``); only once the first buffer IS
+      # observed does the original 10s ``stall_timeout_s`` apply, unchanged.
+      # A distinct stderr marker (``CTRL first-output: no output within Ns of
+      # PLAYING``) and a distinct ``("first-output-timeout", ...)``
+      # ``WORKER_RESULT`` error reason let ``worker.py`` exit with a new,
+      # distinct ``civiccast.egress.gst.exit_codes.
+      # GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE`` (the same gi-free sibling module
+      # as ``GST_PREROLL_TIMEOUT_EXIT_CODE``, NOT itself bound here) instead
+      # of the generic crash code 1 every other engine failure uses.
+      # ``EgressDaemon._relaunch_after_crash`` (``civiccast/egress/
+      # daemon.py``, not itself a code input of this claim, same as every
+      # other daemon-side file noted above) now rate-limits this new exit
+      # code the same way it already does ``GST_PREROLL_TIMEOUT_EXIT_CODE``
+      # (``_SLOW_START_EXIT_CODES``, shared cooldown bookkeeping) -- exempt
+      # from the healthy-uptime streak reset, capped to one streak increment
+      # per 60s -- so a train of legitimate slow starts never trips the
+      # crash-loop escalation to fallback slate for a source that is
+      # actually fine. Neither graph.py, control.py, decode_policy.py, nor
+      # audio_tap.py changed.
+      #
+      # Current-source proof (item 84):
+      # tests/egress/test_gst_engine_first_output_timeout.py (the
+      # ``_check_stall``/``_arm_stall_watchdog`` split: the first-output
+      # budget firing before any buffer is seen, the stall budget still
+      # applying unchanged once the first buffer IS seen, and
+      # ``_resolve_first_output_timeout_s``'s default/clamp/env/NaN-guard
+      # coverage mirroring ``_resolve_preroll_timeout_s``'s own),
+      # tests/egress/test_gst_worker_first_output_timeout_exit.py (the
+      # worker's exit code and WORKER_RESULT receipt on this new reason),
+      # and tests/egress/test_daemon_first_output_timeout_relaunch.py (the
+      # daemon's shared rate-limited streak across both slow-start exit
+      # reasons, and that an ordinary crash remains unaffected). Blob IDs
+      # re-hashed with `git hash-object --path <file> <file>` per D2.
+      #
       # Current-source proof: tests/egress/test_gst_engine_preroll_timeout.py
       # (engine side, including the 45s clamp, the current+pending log line,
       # the new ``reached PLAYING`` success marker now carrying a pid, and
@@ -772,9 +822,9 @@ entries:
       # Blob IDs re-hashed with `git hash-object --path <file> <file>`.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 06cdff1b94409a5f1c15afd7b063630fd162e60e
+          blob: bf6554490665c0681dd6f29fec326ed3fb4adeb0
         - path: civiccast/egress/gst/engine.py
-          blob: 59ba6fddbd87ae500fb6a336aa3594cd70e8fab6
+          blob: e84e6e0dcefa62fc3d2a083d4624e6a14fef2214
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -1213,6 +1263,56 @@ entries:
       # ever wrong. Only engine.py's re-hash reflects this round; worker.py
       # is unchanged and its blob is unchanged from the round-3 value.
       #
+      # engine.py and worker.py drifted a SEVENTH time (item 84, measured in
+      # sandbox run 15, soak-fcfcb81-20260906-183448Z, and in three
+      # seamless-OFF runs, 2026-09-06): every fresh worker reached PLAYING
+      # quickly (``CTRL preroll: reached PLAYING after 0.3s``) then
+      # immediately hit ``CTRL stall: no output for 10s - quitting for daemon
+      # restart`` -- ``_arm_stall_watchdog`` armed the 10s post-first-buffer
+      # stall bound the instant PLAYING was reached, but PLAYING (even
+      # NO_PREROLL) is not evidence a single buffer crossed the mux, and
+      # under start-up load (a concurrent ffmpeg conform, a ~10s synchronous
+      # content-reload source preparation, live caption-tap overload) the
+      # first buffer legitimately took longer than 10s, killing healthy
+      # workers. Fixed: ``_check_stall`` now measures two DISTINCT budgets --
+      # while no output has been observed yet, a new, separate, configurable
+      # ``first_output_timeout_s`` (45s default,
+      # ``CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S`` env override, clamped to
+      # ``[10, 120]``s, ``math.isfinite``-guarded exactly like
+      # ``_resolve_preroll_timeout_s``); only once the first buffer IS
+      # observed does the original 10s ``stall_timeout_s`` apply, unchanged.
+      # A distinct stderr marker (``CTRL first-output: no output within Ns of
+      # PLAYING``) and a distinct ``("first-output-timeout", ...)``
+      # ``WORKER_RESULT`` error reason let ``worker.py`` exit with a new,
+      # distinct ``civiccast.egress.gst.exit_codes.
+      # GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE`` (the same gi-free sibling module
+      # as ``GST_PREROLL_TIMEOUT_EXIT_CODE``, NOT itself bound here) instead
+      # of the generic crash code 1 every other engine failure uses.
+      # ``EgressDaemon._relaunch_after_crash`` (``civiccast/egress/
+      # daemon.py``, not itself a code input of this claim, same as every
+      # other daemon-side file noted above) now rate-limits this new exit
+      # code the same way it already does ``GST_PREROLL_TIMEOUT_EXIT_CODE``
+      # (``_SLOW_START_EXIT_CODES``, shared cooldown bookkeeping) -- exempt
+      # from the healthy-uptime streak reset, capped to one streak increment
+      # per 60s -- so a train of legitimate slow starts never trips the
+      # crash-loop escalation to fallback slate for a source that is
+      # actually fine. Neither graph.py, control.py, decode_policy.py, nor
+      # audio_tap.py changed.
+      #
+      # Current-source proof (item 84):
+      # tests/egress/test_gst_engine_first_output_timeout.py (the
+      # ``_check_stall``/``_arm_stall_watchdog`` split: the first-output
+      # budget firing before any buffer is seen, the stall budget still
+      # applying unchanged once the first buffer IS seen, and
+      # ``_resolve_first_output_timeout_s``'s default/clamp/env/NaN-guard
+      # coverage mirroring ``_resolve_preroll_timeout_s``'s own),
+      # tests/egress/test_gst_worker_first_output_timeout_exit.py (the
+      # worker's exit code and WORKER_RESULT receipt on this new reason),
+      # and tests/egress/test_daemon_first_output_timeout_relaunch.py (the
+      # daemon's shared rate-limited streak across both slow-start exit
+      # reasons, and that an ordinary crash remains unaffected). Blob IDs
+      # re-hashed with `git hash-object --path <file> <file>` per D2.
+      #
       # Current-source proof: tests/egress/test_gst_engine_preroll_timeout.py
       # (engine side, including the 45s clamp, the current+pending log line,
       # the new ``reached PLAYING`` success marker now carrying a pid, and
@@ -1239,9 +1339,9 @@ entries:
       # Blob IDs re-hashed with `git hash-object --path <file> <file>`.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 06cdff1b94409a5f1c15afd7b063630fd162e60e
+          blob: bf6554490665c0681dd6f29fec326ed3fb4adeb0
         - path: civiccast/egress/gst/engine.py
-          blob: 59ba6fddbd87ae500fb6a336aa3594cd70e8fab6
+          blob: e84e6e0dcefa62fc3d2a083d4624e6a14fef2214
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py

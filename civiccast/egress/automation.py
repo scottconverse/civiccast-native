@@ -361,6 +361,15 @@ class ChannelAutomationService:
         # for a proof-event change that a dropped/failed reload will never
         # produce.
         self._rollover_issued_at: dict[str, float] = {}
+        # Item 84 fix: last _monotonic() the "did not land; retrying" WARNING
+        # was actually logged for this channel's current undelivered-rollover
+        # window -- rate-limits that WARNING to at most once per
+        # _ROLLOVER_RETRY_WARN_INTERVAL_SECONDS while the retry stays gated
+        # (see the docstring on that constant). Cleared whenever
+        # _rollover_issued_at/_rollover_retry_dispatched_at are (a resolved
+        # rollover, or the retry actually dispatching) so a FUTURE undelivered
+        # window logs its own fresh first-crossing WARNING.
+        self._rollover_retry_warned_at: dict[str, float] = {}
         # Hostile-review B2 fix: mirrors _replan_retry_at (see
         # _check_slate_replan) -- backs off re-querying the schedule after a
         # SourcePrepareError or an empty/None plan, instead of hammering the
@@ -412,6 +421,17 @@ class ChannelAutomationService:
     # on a proof-event change a failed/lost reload will never produce. Shorter
     # than _ROLLOVER_MIN_LEAD_SECONDS so a retry still has lead time to land.
     _ROLLOVER_ISSUED_TIMEOUT_SECONDS = 45.0
+    # Item 84 fix: once a dispatched rollover is confirmed undelivered (past
+    # _ROLLOVER_ISSUED_TIMEOUT_SECONDS above), the retry itself can stay GATED
+    # for many ~2s poll ticks in a row (the retry-min-interval floor or the
+    # worker-pid-age guard, both below) before it actually dispatches. Logging
+    # a fresh WARNING every gated tick spammed the log 1:1 with "deferred:
+    # worker pid has only been alive Ns" (measured). This bounds how often the
+    # "did not land; retrying" WARNING repeats for the SAME still-gated
+    # channel; every other gated tick logs at DEBUG instead. See
+    # ``_check_plan_rollover``'s ``retrying_undelivered`` branch and
+    # ``_rollover_retry_warned_at``.
+    _ROLLOVER_RETRY_WARN_INTERVAL_SECONDS = 60.0
     # Hostile-review B2 fix: mirrors _RELOAD_RETRY_COOLDOWN_SECONDS -- how long
     # to back off re-querying the schedule after the provider raises
     # SourcePrepareError or returns no/empty plan for a rollover check.
@@ -922,6 +942,7 @@ class ChannelAutomationService:
             # must never be throttled by an earlier rollover).
             self._rollover_dispatched_at.pop(channel_id, None)
             self._rollover_retry_dispatched_at.pop(channel_id, None)
+            self._rollover_retry_warned_at.pop(channel_id, None)
             return
         if self._daemon_has_manual_override(channel_id):
             # B1 fix: an operator override is live -- never fight it. Leave any
@@ -945,6 +966,7 @@ class ChannelAutomationService:
             # established -- clear the retry-interval floor's own timestamp
             # here too, everywhere _rollover_issued itself is discarded.
             self._rollover_retry_dispatched_at.pop(channel_id, None)
+            self._rollover_retry_warned_at.pop(channel_id, None)
             previous_end_at = tracked[1] if tracked is not None else None
             self._reestablish_plan_horizon(
                 channel_id,
@@ -982,6 +1004,7 @@ class ChannelAutomationService:
             # sequence must not suppress the first retry of whatever
             # rollover the re-established horizon triggers next.
             self._rollover_retry_dispatched_at.pop(channel_id, None)
+            self._rollover_retry_warned_at.pop(channel_id, None)
             self._reestablish_plan_horizon(
                 channel_id,
                 now=now,
@@ -1015,12 +1038,36 @@ class ChannelAutomationService:
                 # guards entirely. Leaving it set means a blocked tick simply
                 # re-enters this same branch next time with a fresh
                 # ``_monotonic()`` reading and a fresh pid-age reading.
-                _LOG.warning(
-                    "Channel automation rollover reload for %s did not land within "
-                    "%.0fs (current_proof_event_id unchanged); retrying.",
-                    channel_id,
-                    self._ROLLOVER_ISSUED_TIMEOUT_SECONDS,
-                )
+                # Item 84 fix: this branch re-enters on EVERY ~2s poll tick for
+                # as long as the channel stays gated below (the retry-min-
+                # interval floor or the worker-pid-age guard can block the
+                # actual dispatch for many ticks in a row) -- logging a fresh
+                # WARNING every single tick spammed the log 1:1 with "deferred:
+                # worker pid has only been alive Ns" (measured, soak evidence).
+                # Log the WARNING once when the 45s threshold is first crossed
+                # for this undelivered reload, then at most once more per
+                # _ROLLOVER_RETRY_WARN_INTERVAL_SECONDS while it stays gated;
+                # every other gated tick logs at DEBUG instead. The gating
+                # logic itself (the two floor checks below) is unchanged --
+                # only the log cadence changes here.
+                last_warned_at = self._rollover_retry_warned_at.get(channel_id)
+                if last_warned_at is None or (
+                    self._monotonic() - last_warned_at >= self._ROLLOVER_RETRY_WARN_INTERVAL_SECONDS
+                ):
+                    _LOG.warning(
+                        "Channel automation rollover reload for %s did not land within "
+                        "%.0fs (current_proof_event_id unchanged); retrying.",
+                        channel_id,
+                        self._ROLLOVER_ISSUED_TIMEOUT_SECONDS,
+                    )
+                    self._rollover_retry_warned_at[channel_id] = self._monotonic()
+                else:
+                    _LOG.debug(
+                        "Channel automation rollover reload for %s still has not "
+                        "landed (last warned %.0fs ago; still gated).",
+                        channel_id,
+                        self._monotonic() - last_warned_at,
+                    )
                 retrying_undelivered = True
             else:
                 return  # already dispatched for this plan boundary; wait for it to land
@@ -1145,6 +1192,17 @@ class ChannelAutomationService:
             # floor check is measured from THIS retry, not from the original
             # dispatch that started the whole retry sequence.
             self._rollover_retry_dispatched_at[channel_id] = self._monotonic()
+            # Item 84 fix: the retry actually dispatched this tick -- log at
+            # WARNING (an operator-visible signal that a rollover needed a
+            # retry at all) regardless of the rate-limited "still gated"
+            # cadence above, and clear that cadence state so a FUTURE
+            # undelivered window for this channel logs its own fresh
+            # first-crossing WARNING instead of inheriting this timestamp.
+            _LOG.warning(
+                "Channel automation rollover retry for %s dispatched.",
+                channel_id,
+            )
+            self._rollover_retry_warned_at.pop(channel_id, None)
         _LOG.info(
             "Channel automation issued a seamless plan rollover for %s: the live plan "
             "ends in %.0fs and the schedule continues %.0fs further; extending in place "
