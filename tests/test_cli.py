@@ -508,6 +508,15 @@ def test_egress_runner_wires_schedule_source_provider(
             captured["store"] = store
             captured.update(kwargs)
 
+        # F3/item 5 fix (hostile-review follow-up, 2026-09-06): _run_egress_
+        # service wires this back into the preparer's own GC pass
+        # (source_preparer_instance.set_protected_plan_dirs_provider(daemon.
+        # live_prepared_plan_dirs)) right after constructing the daemon --
+        # a real EgressDaemon always provides this method, so the fake needs
+        # it too, not because this test asserts anything about it.
+        def live_prepared_plan_dirs(self, _channel_id: str) -> frozenset[object]:
+            return frozenset()
+
     class _FakeService:
         def __init__(self, daemon: object, **kwargs: object) -> None:
             captured["daemon"] = daemon
@@ -536,10 +545,24 @@ def test_egress_runner_wires_schedule_source_provider(
         "build_filler_source_provider",
         lambda session_factory, *, work_dir: f"filler:{session_factory}",
     )
+    # F3/item 5 fix: _run_egress_service now also wires source_preparer_
+    # instance.release (as prepared_plan_release) and calls
+    # .set_protected_plan_dirs_provider(...) on the SAME instance -- a real
+    # SourcePreparer always implements both (a concrete class, not a
+    # Protocol with optional members), so this fake needs the full surface
+    # to keep standing in for it.
     monkeypatch.setattr(
         egress_module,
         "SourcePreparer",
-        lambda work_dir: type("_FakePreparer", (), {"prepare": "prepare"})(),
+        lambda work_dir: type(
+            "_FakePreparer",
+            (),
+            {
+                "prepare": "prepare",
+                "release": lambda self, _plan_dir: None,
+                "set_protected_plan_dirs_provider": lambda self, _provider: None,
+            },
+        )(),
     )
 
     report = cli_module._run_egress_service(
@@ -577,6 +600,11 @@ def test_egress_runner_wires_stop_predicate_for_continuous_runs(
         def __init__(self, _store: object, **_kwargs: object) -> None:
             pass
 
+        # F3/item 5 fix: see the matching comment on the sibling test above --
+        # a real EgressDaemon always provides this method.
+        def live_prepared_plan_dirs(self, _channel_id: str) -> frozenset[object]:
+            return frozenset()
+
     class _FakeService:
         def __init__(self, _daemon: object, **kwargs: object) -> None:
             captured.update(kwargs)
@@ -593,10 +621,21 @@ def test_egress_runner_wires_stop_predicate_for_continuous_runs(
     monkeypatch.setattr(egress_module, "EgressDaemon", _FakeDaemon)
     monkeypatch.setattr(egress_module, "EgressService", _FakeService)
     monkeypatch.setattr(egress_module, "SlateSourceGenerator", lambda work_dir: object())
+    # F3/item 5 fix: see the matching comment on the sibling test above -- a
+    # real SourcePreparer always implements .release and
+    # .set_protected_plan_dirs_provider too.
     monkeypatch.setattr(
         egress_module,
         "SourcePreparer",
-        lambda work_dir: type("_FakePreparer", (), {"prepare": object()})(),
+        lambda work_dir: type(
+            "_FakePreparer",
+            (),
+            {
+                "prepare": object(),
+                "release": lambda self, _plan_dir: None,
+                "set_protected_plan_dirs_provider": lambda self, _provider: None,
+            },
+        )(),
     )
 
     report = cli_module._run_egress_service(
