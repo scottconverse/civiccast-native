@@ -53,7 +53,17 @@ param(
 
     [string]$KitRoot = 'C:\CivicCastTester\kit-safe',
 
-    [string]$Root = $PSScriptRoot,
+    # NOT defaulted to $PSScriptRoot here: Windows PowerShell 5.1 (not
+    # pwsh/PS7) evaluates param-block default-value expressions with
+    # $PSScriptRoot UNSET whenever the same param block also declares a
+    # [Parameter(Mandatory=$true)] parameter (confirmed by direct repro --
+    # a minimal script with a mandatory -Sha and `[string]$Root =
+    # $PSScriptRoot` prints Root=[] under `powershell.exe -File ... -Sha x`,
+    # while the identical script under `pwsh` and any script WITHOUT the
+    # mandatory parameter both resolve Root correctly). $PSScriptRoot IS
+    # reliably populated once the script BODY starts executing in both
+    # engines, so this defaults empty here and is resolved just below.
+    [string]$Root = '',
 
     # Phase bounds (minutes). Keep these in sync with In-Sandbox-Soak.ps1's
     # own $InstallBoundMinutes/$HealthBoundMinutes -- the in-sandbox
@@ -123,6 +133,7 @@ function Exit-HarnessError {
     exit $Code
 }
 
+if (-not $Root) { $Root = $PSScriptRoot }
 if (-not $Root) { $Root = (Get-Location).Path }
 Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), KitRoot: $KitRoot, SeamlessReload: $($SeamlessReload.IsPresent), DryRun: $($DryRun.IsPresent)"
 

@@ -10,6 +10,11 @@
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'SoakVerdict.ps1')
+# Round-9 finding N6: also dot-source RestartClassifier.ps1 so one scenario
+# below can exercise the EXACT end-to-end driver shape
+# (RestartClassifier's Get-FlushedRestartEvents -> Get-SoakVerdict
+# -RestartEvents), not just SoakVerdict.ps1 in isolation.
+. (Join-Path $PSScriptRoot 'RestartClassifier.ps1')
 
 $script:failures = 0
 $script:total = 0
@@ -293,6 +298,64 @@ $cycles11c = @(
 )
 $v11c = Get-SoakVerdict -Cycles $cycles11c -StartUtc $startUtc -WarmupSeconds 180
 Assert-Equal 'scenario11c (tsp fail-timed-out, tool ran) -> FAIL (not HARNESS_ERROR)' 'FAIL' $v11c.verdict
+
+# --------------------------------------------------------------- scenario 12
+# Round-9 finding N3: the FULL tsp verdict -> classification routing table,
+# one assertion per verdict string, so every tsp verdict this lane can
+# produce (Test-TsProof in In-Sandbox-Soak.ps1) is proven to route to the
+# right class in one place. 'fail-no-report'/'fail-unparsable-report'/
+# 'fail-no-ts-section' join 'not-run'/'error:*' as HARNESS_ERROR (tsp exited
+# 0 but produced nothing analyzable -- the beta.3 empty-report precedent);
+# every other 'fail-*' shape and 'pass' are unchanged.
+$tspRoutingTable = @(
+    @{ Verdict = 'not-run'; Expect = 'HARNESS_ERROR' }
+    @{ Verdict = 'not-run: tsp.exe not found'; Expect = 'HARNESS_ERROR' }
+    @{ Verdict = 'error: could not start process'; Expect = 'HARNESS_ERROR' }
+    @{ Verdict = 'fail-no-report'; Expect = 'HARNESS_ERROR' }
+    @{ Verdict = 'fail-unparsable-report'; Expect = 'HARNESS_ERROR' }
+    @{ Verdict = 'fail-no-ts-section'; Expect = 'HARNESS_ERROR' }
+    @{ Verdict = 'fail-timed-out'; Expect = 'FAIL' }
+    @{ Verdict = 'fail-zero-packets'; Expect = 'FAIL' }
+    @{ Verdict = 'fail-exit-1'; Expect = 'FAIL' }
+    @{ Verdict = 'fail-stream-errors'; Expect = 'FAIL' }
+    @{ Verdict = 'pass'; Expect = 'PASS' }
+)
+foreach ($row in $tspRoutingTable) {
+    $channelsRow = @(
+        (New-Channel -Id 'public' -Tsduck $row.Verdict), (New-Channel -Id 'education' -Tsduck $row.Verdict), (New-Channel -Id 'government' -Tsduck $row.Verdict)
+    )
+    $cyclesRow = @((New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $channelsRow))
+    $vRow = Get-SoakVerdict -Cycles $cyclesRow -StartUtc $startUtc -WarmupSeconds 180
+    Assert-Equal "scenario12 tsp routing '$($row.Verdict)' -> $($row.Expect)" $row.Expect $vRow.verdict
+}
+
+# --------------------------------------------------------------- scenario 13
+# Round-9 finding N6 (BLOCKER), end to end through the EXACT real-driver
+# shape: RestartClassifier.ps1's Register-ChannelSample/Get-FlushedRestartEvents
+# (real functions, not synthetic New-RestartEvent objects) feeding
+# Get-SoakVerdict -RestartEvents, exactly as In-Sandbox-Soak.ps1 wires them.
+# TWO planned restarts (different channels), each recovering in 200s --
+# past the 60s PASS bound. The previous `return ,@(...)` form double-wrapped
+# this exact 2-event array under the driver's own `@(Get-FlushedRestartEvents
+# ...)` calling shape (confirmed directly), so Get-SoakVerdict never saw
+# more than a single nested element, max_restart_gap_seconds came back
+# empty, and the >60s rule never fired -- this is precisely the
+# "two planned restarts recovering in 200s => PASS" false-negative the
+# review reported. Expect FAIL and max_restart_gap_seconds=200.
+$n6Start = [datetime]::Parse('2026-09-05T19:00:00Z').ToUniversalTime()
+$n6Ctx = New-RestartClassifierContext
+foreach ($chan in 'public', 'education') {
+    Register-ChannelSample -Context $n6Ctx -ChannelId $chan -NowUtc $n6Start -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
+    Register-ChannelSample -Context $n6Ctx -ChannelId $chan -NowUtc $n6Start.AddSeconds(20) -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
+    Register-ChannelSample -Context $n6Ctx -ChannelId $chan -NowUtc $n6Start.AddSeconds(40) -State 'STARTING' -NewPid 1002 -UpdatedAt $null -Engine $null
+    Register-ChannelSample -Context $n6Ctx -ChannelId $chan -NowUtc $n6Start.AddSeconds(240) -State 'ON_AIR' -NewPid 1002 -UpdatedAt $null -Engine 'gstreamer'
+}
+$n6Events = @(Get-FlushedRestartEvents -Context $n6Ctx)
+Assert-Equal 'scenario13a (2 planned restarts, real driver shape) -> both events present' 2 $n6Events.Count
+$v13 = Get-SoakVerdict -Cycles @() -StartUtc $n6Start -WarmupSeconds 180 -RestartEvents $n6Events
+Assert-Equal 'scenario13b (both recovered in 200s, exceeds 60s bound) -> FAIL' 'FAIL' $v13.verdict
+Assert-Equal 'scenario13c (max_restart_gap_seconds = 200, not empty/nested)' 200 $v13.max_restart_gap_seconds
+Assert-Equal 'scenario13d (planned_restart_count = 2, both counted)' 2 $v13.planned_restart_count
 
 Write-Host ""
 Write-Host "SoakVerdict unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })

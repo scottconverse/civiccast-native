@@ -88,19 +88,35 @@ function Test-SoakCycle {
         return [pscustomobject]@{ ok = $false; harness_error = $false; reason = 'no channel data in cycle'; not_on_air = @(); tsp_fail = @() }
     }
 
-    # Round-8 finding 5 (HIGH): tsp verdicts 'not-run' (tsp.exe missing from
-    # the bounded candidate list) and 'error: ...' (the process threw
-    # trying to launch) are HARNESS/TOOLING defects -- the probe never ran
-    # at all, so they say nothing about the product. 'fail-timed-out' and
-    # 'fail-zero-packets' (and every other 'fail-*' shape: tsp DID run and
-    # observed something concrete about the actual stream) stay product
-    # FAIL, unchanged. Checked BEFORE anything else, in every cycle
-    # (including warm-up -- a missing tool is not something warm-up should
+    # Round-8 finding 5 (HIGH) / round-9 finding N3 (MEDIUM): tsp verdicts
+    # that mean the PROBE ITSELF never produced a usable result are
+    # HARNESS/TOOLING defects, never a product finding:
+    #   - 'not-run' / 'not-run:*'    -- tsp.exe missing from the bounded
+    #     candidate list; the probe never launched at all.
+    #   - 'error:*'                  -- the process threw trying to launch.
+    #   - 'fail-no-report'           -- tsp exited 0 but wrote no report
+    #     file at all.
+    #   - 'fail-unparsable-report'   -- tsp exited 0, wrote a report, but it
+    #     is not valid JSON.
+    #   - 'fail-no-ts-section'       -- tsp exited 0, wrote valid JSON, but
+    #     it carries no `ts` analysis section.
+    # (round-9's own citation: this is the same beta.3 empty-report
+    # precedent Gate A's own judge already treats as a harness condition,
+    # not a station-acceptance FAIL -- an exit-0 tool that produced nothing
+    # analyzable proves nothing about the stream either way.) 'fail-timed-out',
+    # 'fail-zero-packets', 'fail-exit-N', and 'fail-stream-errors' (tsp DID
+    # run and observed something concrete about the actual stream) stay
+    # product FAIL, unchanged. Checked BEFORE anything else, in every cycle
+    # (including warm-up -- a broken probe is not something warm-up should
     # ever mask, since it means NO cycle's tsp result can be trusted).
-    $tspHarnessError = @($channels | Where-Object { "$($_.tsduck_verdict)" -eq 'not-run' -or "$($_.tsduck_verdict)" -like 'not-run:*' -or "$($_.tsduck_verdict)" -like 'error:*' })
+    $tspHarnessError = @($channels | Where-Object {
+        $v = "$($_.tsduck_verdict)"
+        $v -eq 'not-run' -or $v -like 'not-run:*' -or $v -like 'error:*' -or
+            $v -eq 'fail-no-report' -or $v -eq 'fail-unparsable-report' -or $v -eq 'fail-no-ts-section'
+    })
     if ($tspHarnessError.Count -gt 0) {
         $ids = ($tspHarnessError | ForEach-Object { "$($_.channel_id)=$($_.tsduck_verdict)" }) -join ', '
-        return [pscustomobject]@{ ok = $false; harness_error = $true; reason = "tsp harness/tooling defect (tool missing or failed to launch, not a product finding): $ids"; not_on_air = @(); tsp_fail = @() }
+        return [pscustomobject]@{ ok = $false; harness_error = $true; reason = "tsp harness/tooling defect (tool missing, failed to launch, or produced no usable analysis -- not a product finding): $ids"; not_on_air = @(); tsp_fail = @() }
     }
 
     # engine must be exactly 'gstreamer' post-warmup -- $null (worker not

@@ -85,7 +85,7 @@ Assert-Equal 'scenario5 (pid change w/o TRANSITIONING -> unplanned_relaunch)' 'u
 $ctx6 = New-RestartClassifierContext -RestartTrackingMaxSeconds 300
 Register-ChannelSample -Context $ctx6 -ChannelId 'public' -NowUtc $baseUtc -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
 Register-ChannelSample -Context $ctx6 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(20) -State 'TRANSITIONING' -NewPid 1002 -UpdatedAt $null -Engine $null
-$flushed6 = Get-FlushedRestartEvents -Context $ctx6
+$flushed6 = @(Get-FlushedRestartEvents -Context $ctx6)
 Assert-Equal 'scenario6 (never-recovered restart flushed at soak end)' 1 $flushed6.Count
 Assert-Equal 'scenario6 recovered=false' 'False' $flushed6[0].recovered
 Assert-Equal 'scenario6 recovery_gap_seconds is null' '' "$($flushed6[0].recovery_gap_seconds)"
@@ -103,6 +103,109 @@ Assert-Equal 'scenario7a (90s in, 75s-period cycle -> still exempt)' $true (Test
 Assert-Equal 'scenario7b (200s in, 75s-period cycle -> no longer exempt)' $false (Test-InActivePlannedRestartWindow -Context $ctx7 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(205) -MeasuredCyclePeriodSeconds 75)
 # A fast (30s) measured period never shrinks the exemption below the 60s floor.
 Assert-Equal 'scenario7c (50s in, 30s-period cycle -> exempt via the 60s floor)' $true (Test-InActivePlannedRestartWindow -Context $ctx7 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(55) -MeasuredCyclePeriodSeconds 30)
+
+# ---------------------------------------------------------------- scenario 8
+# Round-9 finding N1 (BLOCKER): TWO consecutive pid changes for the SAME
+# channel before the FIRST one resolves. The old code silently overwrote
+# PendingRestarts, erasing the first event entirely (measured: 2 relaunches
+# -> 1 recorded event). Both must now be recorded as their own events -- the
+# first flushed as recovered=$false, superseded=$true (its ORIGINAL
+# classification preserved, never silently dropped), the second following
+# the normal detection/classification path.
+$ctx8 = New-RestartClassifierContext
+Register-ChannelSample -Context $ctx8 -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
+# pid change #1 (1001->1002), NO TRANSITIONING seen -> unplanned_relaunch, still pending (never reaches ON_AIR).
+Register-ChannelSample -Context $ctx8 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(10) -State 'ERROR' -NewPid 1002 -UpdatedAt $null -Engine $null
+Assert-Equal 'scenario8a (first pid change, no TRANSITIONING) -> unplanned_relaunch, pending' 'unplanned_relaunch' $ctx8.PendingRestarts['public'].classification
+# pid change #2 (1002->1003) arrives BEFORE #1 ever resolved -- #1 must be
+# flushed as its own event now, not silently overwritten.
+Register-ChannelSample -Context $ctx8 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(20) -State 'ERROR' -NewPid 1003 -UpdatedAt $null -Engine $null
+Assert-Equal 'scenario8b (two pid changes before first resolves) -> BOTH events recorded' 1 $ctx8.RestartEvents.Count
+Assert-Equal 'scenario8c (event 1 = the FIRST, superseded, classification preserved)' 'unplanned_relaunch' $ctx8.RestartEvents[0].classification
+Assert-Equal 'scenario8d (event 1 marked superseded, not silently recovered)' 'True' "$($ctx8.RestartEvents[0].superseded)"
+Assert-Equal 'scenario8e (event 1 recovered=false -- it never actually reached ON_AIR)' 'False' "$($ctx8.RestartEvents[0].recovered)"
+Assert-Equal 'scenario8f (second pid change now pending, its own classification)' 'unplanned_relaunch' $ctx8.PendingRestarts['public'].classification
+$flushed8 = @(Get-FlushedRestartEvents -Context $ctx8)
+Assert-Equal 'scenario8g (flush at soak end captures the SECOND event too -- both relaunches counted)' 2 $flushed8.Count
+
+# --------------------------------------------------------------- scenario 9
+# "CLASSIFIER TRUTH": crash-then-rollover. A crash (event 1, unplanned)
+# immediately followed by a legitimate scheduled rollover (event 2,
+# planned) must NOT collapse into a false PASS with unplanned=0 -- this is
+# the exact measured failure mode the review reported ("crash followed by
+# rollover -> PASS with unplanned=0"). Simulated via two real Register-
+# ChannelSample sequences sharing one context, mirroring scenario 8's shape
+# but with the second restart actually completing.
+Assert-Equal 'scenario9 (crash-then-rollover) -> unplanned_relaunch_count > 0, never silently absorbed' $true (@($flushed8 | Where-Object { $_.classification -eq 'unplanned_relaunch' }).Count -gt 0)
+
+# -------------------------------------------------------------- scenario 10
+# "CLASSIFIER TRUTH": TRANSITIONING -> ERROR sample -> new pid. Even though
+# TRANSITIONING technically preceded the pid change (the OLD rule's only
+# check), an ERROR sample in between is a crash signal that must override
+# it -- measured on 609273d (item 60): the daemon writes TRANSITIONING and
+# the worker crashes ~1s later. Expect unplanned_relaunch.
+$ctx10 = New-RestartClassifierContext
+Register-ChannelSample -Context $ctx10 -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
+Register-ChannelSample -Context $ctx10 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(20) -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
+Register-ChannelSample -Context $ctx10 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(21) -State 'ERROR' -NewPid 1001 -UpdatedAt $null -Engine $null -LastError 'worker crashed'
+Register-ChannelSample -Context $ctx10 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(25) -State 'ERROR' -NewPid 1002 -UpdatedAt $null -Engine $null
+Assert-Equal 'scenario10 (TRANSITIONING -> ERROR sample -> new pid) -> unplanned_relaunch' 'unplanned_relaunch' $ctx10.PendingRestarts['public'].classification
+
+# -------------------------------------------------------------- scenario 11
+# "CLASSIFIER TRUTH": TRANSITIONING -> STARTING -> ON_AIR (new pid) within
+# 60s -- the REAL planned (flag-OFF) shape at main 250026b: worker exits 0
+# after EOS, daemon _start, STARTING, ON_AIR. No ERROR/FALLBACK_SLATE/
+# last_error anywhere in between. Expect planned_restart, and a full
+# recovery recorded once ON_AIR actually lands.
+$ctx11 = New-RestartClassifierContext
+Register-ChannelSample -Context $ctx11 -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
+Register-ChannelSample -Context $ctx11 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(20) -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
+Register-ChannelSample -Context $ctx11 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(35) -State 'STARTING' -NewPid 1002 -UpdatedAt $null -Engine $null
+Assert-Equal 'scenario11a (TRANSITIONING -> STARTING, new pid) -> planned_restart' 'planned_restart' $ctx11.PendingRestarts['public'].classification
+Register-ChannelSample -Context $ctx11 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(50) -State 'ON_AIR' -NewPid 1002 -UpdatedAt $null -Engine 'gstreamer'
+Assert-Equal 'scenario11b (recovered within 60s of detection)' 1 $ctx11.RestartEvents.Count
+Assert-Equal 'scenario11c (classification stayed planned_restart)' 'planned_restart' $ctx11.RestartEvents[0].classification
+Assert-Equal 'scenario11d (recovery_gap_seconds = 15, from detection at +35 to ON_AIR at +50)' 15 $ctx11.RestartEvents[0].recovery_gap_seconds
+
+# -------------------------------------------------------------- scenario 12
+# Round-9 finding N7 (second half): TRANSITIONING is only credited if it is
+# the sample IMMEDIATELY PRECEDING the pid change, within ~30s -- not
+# merely "seen somewhere in the last 180s." A TRANSITIONING sample 155s
+# ago, followed by an intervening STARTING sample right before the actual
+# pid change, must NOT count as planned even though the OLD (round-8) rule
+# would have credited it (TRANSITIONING technically fell inside its 180s
+# lookback). This is the exact gap N7 exists to close.
+$ctx12 = New-RestartClassifierContext
+Register-ChannelSample -Context $ctx12 -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
+Register-ChannelSample -Context $ctx12 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(20) -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
+Register-ChannelSample -Context $ctx12 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(170) -State 'STARTING' -NewPid 1001 -UpdatedAt $null -Engine $null
+Register-ChannelSample -Context $ctx12 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(175) -State 'ON_AIR' -NewPid 1002 -UpdatedAt $null -Engine $null
+Assert-Equal 'scenario12 (TRANSITIONING 155s ago, NOT the immediately-preceding sample) -> unplanned_relaunch' 'unplanned_relaunch' $ctx12.PendingRestarts['public'].classification
+
+# -------------------------------------------------------------- scenario 13
+# Round-9 finding N6 (BLOCKER): Get-FlushedRestartEvents through the EXACT
+# caller shape the real driver uses (`@(Get-FlushedRestartEvents ...)`),
+# for N=0, 1, 2, and 3 pending restarts. The previous `return ,@(...)` form
+# double-wrapped EVERY N under this exact calling shape (confirmed
+# directly: a 3-element ArrayList came back as a 1-element array whose
+# sole element was the real 3-element array) -- silently collapsing
+# multiple relaunches into what looked like one event, so
+# max_restart_gap_seconds and the >60s recovery-time FAIL rule stopped
+# seeing anything past the first event.
+function New-PendingOnly {
+    param($Context, [int]$Count)
+    for ($i = 0; $i -lt $Count; $i++) {
+        $ch = "chan$i"
+        Register-ChannelSample -Context $Context -ChannelId $ch -NowUtc $baseUtc -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
+        Register-ChannelSample -Context $Context -ChannelId $ch -NowUtc $baseUtc.AddSeconds(10) -State 'TRANSITIONING' -NewPid 1002 -UpdatedAt $null -Engine $null
+    }
+}
+foreach ($n in 0, 1, 2, 3) {
+    $ctxN = New-RestartClassifierContext -RestartTrackingMaxSeconds 300
+    New-PendingOnly -Context $ctxN -Count $n
+    $flushedN = @(Get-FlushedRestartEvents -Context $ctxN)
+    Assert-Equal "scenario13 (N=$n pending restarts, exact @() driver caller shape) -> Count=$n" $n $flushedN.Count
+}
 
 Write-Host ""
 Write-Host "RestartClassifier unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })

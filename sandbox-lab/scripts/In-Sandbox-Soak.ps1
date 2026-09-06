@@ -769,6 +769,17 @@ Write-SoakLog "station healthy: $healthy (last body: status=$($lastHealthBody.st
 Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 
 if (-not $healthy) {
+    # Round-9 finding N2 (HIGH): when -SeamlessReload is set, THIS script
+    # itself just forced a Stop-Service + Start-Service cycle (to make the
+    # per-service registry Environment value actually take effect -- see
+    # the seamless-reload block above). A health timeout immediately after
+    # a restart WE ourselves triggered is not evidence the product is
+    # broken -- it may simply be a station that needed longer to come back
+    # up after being stopped on purpose by this lane. HARNESS_ERROR, never
+    # FAIL, in that specific case.
+    if ($SeamlessReload) {
+        Write-HarnessErrorVerdictAndExit -Reason "station never reported status=healthy AND schema=current at $Base/health within ${HealthBoundMinutes}m after THIS SCRIPT's own Stop-Service/Start-Service cycle for -SeamlessReload (last body: status=$($lastHealthBody.status) schema=$($lastHealthBody.schema)) -- a harness-triggered restart, not evidence of a product defect"
+    }
     Write-FailVerdictAndExit -Reason "station never reported status=healthy AND schema=current at $Base/health within ${HealthBoundMinutes}m (last body: status=$($lastHealthBody.status) schema=$($lastHealthBody.schema))"
 }
 Write-PhaseMarker -Name 'PHASE-HEALTHY.json' -Obj ([ordered]@{ utc = (Get-Date).ToUniversalTime().ToString('o'); body_status = $lastHealthBody.status; body_schema = $lastHealthBody.schema })
@@ -1410,21 +1421,43 @@ function Test-TsProof {
     return $result
 }
 
-# Engine census, ported from AUTORUN-3.ps1:244-251: EgressStateRow has no
-# `engine` field, so the engine actually running for a channel's worker pid
-# is inferred from the OS process itself -- ffmpeg.exe means the software
-# fallback engaged; a python.exe running civiccast\egress\gst\worker.py
-# means GStreamer; anything else (including "no such pid") is reported as
-# unknown/$null rather than guessed into 'gstreamer'.
-function Get-EngineForWorkerPid {
-    param([Nullable[int]]$ProcId)
+# Round-9 finding N4 (MEDIUM): the interleaved sampling fix (round-8
+# finding 2) turned engine resolution into 9 HTTP + up to 12 Win32_Process
+# queries PER CYCLE (one CIM query per sample -- 3 channels x 3 passes --
+# PLUS a redundant re-resolution for the row's own channel, PLUS
+# Get-GlobalEngineCensus's own separate query). CPU starvation is this
+# box's own measured soak-failure mode, so adding WMI load specifically to
+# a lane whose job is to detect that starvation is directly
+# counterproductive. Get-GstWorkerPidMap makes exactly ONE Win32_Process
+# query per PASS (one pass = one inner sampling loop over all 3 channels),
+# caching every currently-running gst-worker pid; Resolve-EngineForPid then
+# resolves each of that pass's 3 samples from the cached map (a cheap
+# Get-Process -Id lookup, not CIM, only for the rare "pid not a known gst
+# worker" case). With 3 passes per heavy cycle, this caps CIM usage at
+# ~3 queries/cycle -- Get-GlobalEngineCensus reuses the LAST pass's map
+# instead of issuing its own 4th query.
+function Get-GstWorkerPidMap {
+    $procs = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match 'egress[\\/]gst[\\/]worker\.py' })
+    $map = @{}
+    foreach ($p in $procs) { $map[[int]$p.ProcessId] = $true }
+    return $map
+}
+
+function Resolve-EngineForPid {
+    <#
+      Engine resolution, ported from AUTORUN-3.ps1:244-251's logic but now
+      resolving against an already-fetched $GstWorkerPidMap instead of
+      querying Win32_Process per pid. EgressStateRow has no `engine` field
+      (civiccast/egress/models.py:506-518), so this is inferred from the OS
+      process itself regardless.
+    #>
+    param([Nullable[int]]$ProcId, $GstWorkerPidMap)
     if (-not $ProcId) { return $null }
+    if ($GstWorkerPidMap.ContainsKey($ProcId)) { return 'gstreamer' }
     try {
-        $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcId" -ErrorAction SilentlyContinue
-        if (-not $cim) { return $null }
-        if ($cim.Name -match '^ffmpeg') { return 'ffmpeg-fallback' }
-        if ($cim.CommandLine -and ($cim.CommandLine -match 'egress[\\/]gst[\\/]worker\.py')) { return 'gstreamer' }
-        return "unknown:$($cim.Name)"
+        $p = Get-Process -Id $ProcId -ErrorAction Stop
+        if ($p.ProcessName -match '^ffmpeg') { return 'ffmpeg-fallback' }
+        return "unknown:$($p.ProcessName)"
     } catch {
         return $null
     }
@@ -1432,18 +1465,20 @@ function Get-EngineForWorkerPid {
 
 # M8 leftover: a GLOBAL process census across all three channels, ported
 # from AUTORUN-3.ps1:244-251 ($gst/$ff/$gstWorkers). Diagnostic only -- it
-# never feeds the per-channel verdict (Get-EngineForWorkerPid above already
+# never feeds the per-channel verdict (Resolve-EngineForPid above already
 # does that, keyed to each channel's own worker pid) -- but a global
 # ffmpeg.exe count that goes to 0 unexpectedly, or a gst-worker count that
 # doesn't match the number of ON_AIR channels, is exactly the kind of cross-
-# channel signal a per-channel-only view can miss.
+# channel signal a per-channel-only view can miss. Round-9 finding N4:
+# reuses the caller's already-fetched $GstWorkerPidMap instead of issuing
+# its own separate Win32_Process query.
 function Get-GlobalEngineCensus {
-    $gstWorkers = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match 'egress[\\/]gst[\\/]worker\.py' })
+    param($GstWorkerPidMap)
     $ffmpegCount = @(Get-Process -Name 'ffmpeg' -ErrorAction SilentlyContinue).Count
     return [ordered]@{
         ffmpeg_processes = $ffmpegCount
-        gst_worker_processes = $gstWorkers.Count
-        gst_worker_pids = @($gstWorkers | ForEach-Object { $_.ProcessId })
+        gst_worker_processes = $GstWorkerPidMap.Count
+        gst_worker_pids = @($GstWorkerPidMap.Keys)
     }
 }
 
@@ -1501,25 +1536,31 @@ function Get-ChannelStateSample {
 function Invoke-ChannelSampleAndRegister {
     <#
       Thin wrapper: takes one Get-ChannelStateSample result, resolves its
-      engine (needs Win32_Process, which is why RestartClassifier.ps1
-      itself never does this -- it stays pure/synthetic-data-testable),
-      and registers it against $restartCtx. Logs a restart
+      engine against an already-fetched $GstWorkerPidMap (round-9 finding
+      N4 -- never its own fresh Win32_Process query), registers it against
+      $restartCtx (round-9 finding N7: -LastError now wired from the
+      sample's own last_error field, feeding
+      Test-PlannedRestartSignal's crash-signal veto -- it was previously
+      never passed at all, so that veto was inert), and returns the
+      resolved engine so the caller can reuse it for the cycle row instead
+      of resolving it a second time. Logs a restart
       DETECTED/RECOVERED/NEVER-RECOVERED line whenever $restartCtx's own
       event/pending counts change, so the log keeps the same visibility
       the old inline version had.
     #>
-    param([string]$ChannelId, [datetime]$NowUtc, $Sample)
-    $engine = Get-EngineForWorkerPid -ProcId $Sample.pid
+    param([string]$ChannelId, [datetime]$NowUtc, $Sample, $GstWorkerPidMap)
+    $engine = Resolve-EngineForPid -ProcId $Sample.pid -GstWorkerPidMap $GstWorkerPidMap
     $pendingBefore = $restartCtx.PendingRestarts.ContainsKey($ChannelId)
     $eventsBefore = $restartCtx.RestartEvents.Count
-    Register-ChannelSample -Context $restartCtx -ChannelId $ChannelId -NowUtc $NowUtc -State $Sample.state -NewPid $Sample.pid -UpdatedAt $Sample.updated_at -Engine $engine
+    Register-ChannelSample -Context $restartCtx -ChannelId $ChannelId -NowUtc $NowUtc -State $Sample.state -NewPid $Sample.pid -UpdatedAt $Sample.updated_at -Engine $engine -LastError $Sample.last_error
     if ($restartCtx.RestartEvents.Count -gt $eventsBefore) {
         $ev = $restartCtx.RestartEvents[$restartCtx.RestartEvents.Count - 1]
-        Write-SoakLog "restart $(if ($ev.recovered) { 'RECOVERED' } else { 'NEVER RECOVERED' }) channel=$ChannelId classification=$($ev.classification) gap_seconds=$($ev.recovery_gap_seconds)"
+        Write-SoakLog "restart $(if ($ev.recovered) { 'RECOVERED' } else { 'NEVER RECOVERED' }) channel=$ChannelId classification=$($ev.classification) gap_seconds=$($ev.recovery_gap_seconds) superseded=$($ev.superseded)"
     } elseif (-not $pendingBefore -and $restartCtx.PendingRestarts.ContainsKey($ChannelId)) {
         $p = $restartCtx.PendingRestarts[$ChannelId]
         Write-SoakLog "restart DETECTED channel=$ChannelId old_pid=$($p.old_pid) new_pid=$($p.new_pid) classification=$($p.classification)"
     }
+    return $engine
 }
 
 $allCycles = @()
@@ -1549,24 +1590,46 @@ while ((Get-Date) -lt $deadline) {
     $lastCycleStartUtc = $cycleUtc
 
     $rows = @()
+    $gstWorkerPidMap = @{}
     foreach ($c in $channelSpecs) {
         # Interleaved light sample: ALL channels, not just $c -- see the
         # header note above. Also captures the sample this row itself uses,
         # so no extra round-trip for $c specifically.
+        #
+        # Round-9 finding N4: ONE Win32_Process query per PASS (not per
+        # sample) -- $gstWorkerPidMap is fetched once here and reused by
+        # every one of this pass's 3 engine resolutions, capping CIM usage
+        # at ~3 queries/cycle (one per outer $c iteration) instead of the
+        # previous 9-12. $gstWorkerPidMap deliberately stays in scope after
+        # this loop ends so Get-GlobalEngineCensus below can reuse the LAST
+        # pass's map instead of issuing its own separate query.
+        $gstWorkerPidMap = Get-GstWorkerPidMap
         $samplesThisPass = @{}
+        $enginesThisPass = @{}
+        $sampledUtcThisPass = @{}
         foreach ($c2 in $channelSpecs) {
             $s2 = Get-ChannelStateSample -ChannelId $c2.id
-            Invoke-ChannelSampleAndRegister -ChannelId $c2.id -NowUtc (Get-Date).ToUniversalTime() -Sample $s2
+            $nowUtc2 = (Get-Date).ToUniversalTime()
+            $engine2 = Invoke-ChannelSampleAndRegister -ChannelId $c2.id -NowUtc $nowUtc2 -Sample $s2 -GstWorkerPidMap $gstWorkerPidMap
             $samplesThisPass[$c2.id] = $s2
+            $enginesThisPass[$c2.id] = $engine2
+            $sampledUtcThisPass[$c2.id] = $nowUtc2
         }
         $sample = $samplesThisPass[$c.id]
 
         $row = [ordered]@{
-            channel_id = $c.id; engine_state = $sample.state; engine = $null
+            channel_id = $c.id; engine_state = $sample.state
+            # Round-9 finding N4: reuse the engine ALREADY resolved during
+            # the interleaved pass above -- never a second
+            # Resolve-EngineForPid call for the same pid.
+            engine = $enginesThisPass[$c.id]
             last_error = $(if ($sample.ok) { $sample.last_error } else { "state read failed: status=$($sample.status) error=$($sample.error)" })
             pid = $sample.pid; tsduck_verdict = $null; in_planned_restart_window = $false
+            # Round-9 finding N5: per-row timestamp -- rows within one
+            # cycle_utc are actually ~20-25s apart (one per interleaved
+            # pass), not simultaneous.
+            sampled_utc = $sampledUtcThisPass[$c.id].ToString('o')
         }
-        $row.engine = Get-EngineForWorkerPid -ProcId $sample.pid
         $row.in_planned_restart_window = Test-InActivePlannedRestartWindow -Context $restartCtx -ChannelId $c.id -NowUtc (Get-Date).ToUniversalTime() -MeasuredCyclePeriodSeconds $measuredCyclePeriodSeconds
 
         $ts = Test-TsProof -TspExe $tsp -Port $c.port -Seconds 20 -OutDir (Join-Path $LocalDir 'cycles') -Label "$($c.id)-c$cycleN"
@@ -1575,7 +1638,7 @@ while ((Get-Date) -lt $deadline) {
         $rows += $row
     }
 
-    $globalCensus = Get-GlobalEngineCensus
+    $globalCensus = Get-GlobalEngineCensus -GstWorkerPidMap $gstWorkerPidMap
     $cycle = [ordered]@{ cycle_utc = $cycleUtc.ToString('o'); channels = $rows; global_engine_observed = $globalCensus; measured_cycle_period_seconds = [math]::Round($measuredCyclePeriodSeconds, 1) }
     $allCycles += $cycle
     Save-Json -Obj $cycle -Path (Join-Path $LocalDir "cycles\cycle-$('{0:d4}' -f $cycleN).json")
