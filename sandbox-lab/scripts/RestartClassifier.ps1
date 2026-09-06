@@ -216,11 +216,29 @@ function Add-LogRingSample {
       relevant TRANSITIONING/ON_AIR line forward into a much later
       classification. Defaults to "now" so existing callers/tests that
       never pass it keep working unchanged.
+
+      .PARAMETER MaxRingSize
+      Round-13 finding 5 (HIGH): a FIXED 30-line cap holds only ~60s of
+      real daemon traffic -- `_poll_process` logs one state line PER
+      CHANNEL on every ~2s automation tick, UNCONDITIONALLY, even when
+      nothing changed (a channel sitting healthy on ON_AIR still writes a
+      fresh "egress state -> ON_AIR" line every tick). Update-DaemonLogRing
+      is only called once per interleaved PASS (every ~20-25s, 3 passes
+      per heavy cycle), so between calls dozens of these routine lines can
+      accumulate and get pushed through a 30-line cap all at once -- easily
+      evicting the OLD pid's own anchor line before its matching NEW pid's
+      ON_AIR ever shows up, especially once the measured cycle period runs
+      well past the ~60-75s baseline (a slow install/schedule phase, or a
+      station under load). The caller (In-Sandbox-Soak.ps1) now sizes this
+      from the measured cycle period: ceil(period_s/2)*2 + 30, floored at
+      60 -- enough capacity for one full period's worth of ~2s-tick lines
+      PLUS the original 30-line safety margin. Default 30 preserves
+      existing callers'/tests' behavior unchanged when not specified.
     #>
-    param($Context, [string]$ChannelId, [string]$State, [string]$LastError, [string]$LogPid = '-', [datetime]$ObservedUtc = (Get-Date).ToUniversalTime())
+    param($Context, [string]$ChannelId, [string]$State, [string]$LastError, [string]$LogPid = '-', [datetime]$ObservedUtc = (Get-Date).ToUniversalTime(), [int]$MaxRingSize = 30)
     if (-not $Context.LogRing.ContainsKey($ChannelId)) { $Context.LogRing[$ChannelId] = New-Object System.Collections.ArrayList }
     $null = $Context.LogRing[$ChannelId].Add([ordered]@{ state = $State; last_error = $LastError; pid = $LogPid; observed_utc = $ObservedUtc })
-    while ($Context.LogRing[$ChannelId].Count -gt 30) { $Context.LogRing[$ChannelId].RemoveAt(0) }
+    while ($Context.LogRing[$ChannelId].Count -gt $MaxRingSize) { $Context.LogRing[$ChannelId].RemoveAt(0) }
     # Age expiry: drop entries older than 10 minutes relative to THIS
     # sample's own observation time (monotonic with the ring's append
     # order, since entries are always added in real-time order).
@@ -234,21 +252,36 @@ function Add-ReloadAbortSample {
     <#
       .SYNOPSIS
       Round-11 finding 4 (MEDIUM) / round-12 finding 3 (HIGH, two more
-      variants found): a seamless content-reload abort is invisible to
-      everything above -- it is NOT a `_write_state` line at all, it is
-      one of SIX distinct daemon.py WARNING lines (main bcb3ebe:1946
-      "declined", :2111 "falling back to restart instead of stamping
-      ON_AIR" (a worker exited before an "applied" settlement could be
-      committed), :2132 "did not land", :2143 "...treating as aborted and
-      falling back to restart", :2156 "no settlement within", and :1860
-      "Content-reload source preparation FAILED..." -- no "Seamless"
-      prefix at all) that all contain the substring "falling back to
-      restart" somewhere in the line. A channel that hits any of these DID
-      fall back to a real worker restart -- exactly what -SeamlessReload
-      exists to prove never happens -- so this needs its own event class,
-      never silently folded into (or missed by) the planned/unplanned
-      restart classification above. See In-Sandbox-Soak.ps1's
-      $script:daemonReloadAbortRegex for the actual parsing.
+      variants found) / round-13 finding 3 (a SEVENTH matching line found,
+      excluded rather than counted -- see below): a seamless content-
+      reload abort is invisible to everything above -- it is NOT a
+      `_write_state` line at all, it is one of SIX distinct daemon.py
+      WARNING-level MESSAGE TEMPLATES (main bcb3ebe:1946 "declined", :2111
+      "falling back to restart instead of stamping ON_AIR" (a worker
+      exited before an "applied" settlement could be committed), :2132
+      "did not land", :2143 "...treating as aborted and falling back to
+      restart", :2156 "no settlement within", and :1860 "Content-reload
+      source preparation FAILED..." -- no "Seamless" prefix at all) that
+      all contain the substring "falling back to restart" somewhere in the
+      line. A channel that hits any of these DID fall back to a real
+      worker restart -- exactly what -SeamlessReload exists to prove never
+      happens -- so this needs its own event class, never silently folded
+      into (or missed by) the planned/unplanned restart classification
+      above.
+
+      A SEVENTH line also matches the same substring test: every one of
+      the six WARNING lines is immediately followed by a separate INFO-
+      level echo from `_discard_pending_reload_settlement` (daemon.py:
+      1732-1738, "Content-reload for %s (reload_id=%s) discarded: %s."),
+      because the shared `_fall_back_to_restart_reload` path (daemon.py:
+      2180-2191) that ALL SIX aborts fall through to always discards with
+      `reason="falling back to restart"` -- so this echo line ALSO reads
+      "...discarded: falling back to restart." for every real abort. This
+      is not a seventh independent event, just a mechanical restatement of
+      the SAME abort -- In-Sandbox-Soak.ps1's parsing excludes it (by its
+      unique literal "discarded:" text) so one real abort is recorded
+      once, not twice. See In-Sandbox-Soak.ps1's $script:daemonReloadAbortRegex
+      for the actual parsing and exclusion.
     #>
     param($Context, [string]$ChannelId, [string]$Reason)
     $null = $Context.ReloadAbortEvents.Add([ordered]@{ channel_id = $ChannelId; reason = $Reason })
@@ -281,11 +314,16 @@ function Test-PlannedRestartFromLog {
       (local-time, would need a timezone reconciliation against this
       script's UTC clock not worth risking).
 
-      The anchor line itself (old pid's last state) is NOT itself treated
-      as crash evidence -- only what happens strictly AFTER it is. This is
-      what correctly handles a channel stably parked on FALLBACK_SLATE the
-      whole time (its own steady state is not a crash; a NEW FALLBACK_SLATE/
-      ERROR appearing during the actual transition is).
+      The anchor line's own STATE is NOT itself treated as crash evidence
+      (round-13 finding 2, narrowed from round-12's original "state/
+      last_error both excluded") -- only a NEW ERROR/FALLBACK_SLATE state
+      appearing strictly AFTER it counts. This is what correctly handles a
+      channel stably parked on FALLBACK_SLATE the whole time (its own
+      steady STATE is not a crash). The anchor's own last_error IS still
+      checked, though: a dirty last_error on the anchor itself (e.g. an
+      unresolved crash-flavored message still sitting on the old pid's
+      last logged line) is real evidence and must not be silently ignored
+      just because it happens to be the anchor.
 
       .PARAMETER OldPid
       .PARAMETER NewPid
@@ -334,10 +372,20 @@ function Test-PlannedRestartFromLog {
     }
     if ($newPidOnAirIdx -lt 0) { return $null }
 
-    # The dirty-evidence/STARTING check runs on everything STRICTLY AFTER
-    # the anchor through the terminal ON_AIR, inclusive of the terminal --
-    # the anchor line's own state/last_error is deliberately excluded (see
-    # .SYNOPSIS: a stable FALLBACK_SLATE baseline is not itself a crash).
+    # Round-13 finding 2: the anchor line's own STATE is excluded from the
+    # dirty check (a stable FALLBACK_SLATE baseline is not itself a crash
+    # -- see .SYNOPSIS and scenario (e)/(f)), but its own last_error is
+    # NOT excluded -- a dirty last_error on the anchor (e.g. a STARTING
+    # line at the OLD pid that already carries a crash-flavored last_error
+    # from an EARLIER, unresolved failure) is still real evidence of
+    # trouble and must not be silently ignored just because it happens to
+    # be the anchor.
+    $anchorErr = "$($lines[$oldPidIdx].last_error)"
+    if ($anchorErr -ne '-' -and -not [string]::IsNullOrWhiteSpace($anchorErr)) { return $false }
+
+    # The STATE dirty-check (ERROR/FALLBACK_SLATE) and the STARTING-presence
+    # check run on everything STRICTLY AFTER the anchor through the
+    # terminal ON_AIR, inclusive of the terminal.
     $window = @($lines[($oldPidIdx + 1)..$newPidOnAirIdx])
     $sawStarting = $false
     foreach ($l in $window) {

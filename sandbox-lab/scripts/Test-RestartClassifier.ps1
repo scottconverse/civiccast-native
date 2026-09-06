@@ -459,7 +459,9 @@ Assert-Equal 'scenario22c (second event reason text carried through)' 'reported 
 # the round-11 version happened to match. Each verbatim line below is
 # shaped exactly like the real log line (asctime + level + logger name +
 # message), and every one must both match AND extract the right channel.
-$abortRegex = [regex]'civiccast\.egress\S*:\s*(?<reason>.*\bfor (?<ch>\S+)\b.*falling back to restart.*)$'
+# Round-13 finding 4: the leading `.*` is now LAZY (`.*?`) so it anchors on
+# the FIRST "for" in the line -- see fixture "greedy mis-attribution" below.
+$abortRegex = [regex]'civiccast\.egress\S*:\s*(?<reason>.*?\bfor (?<ch>\S+)\b.*falling back to restart.*)$'
 $abortFixtures = @(
     @{ Line = '2026-09-06 09:31:04,123 WARNING civiccast.egress.daemon: Seamless content-reload declined for public (reload not armed); falling back to restart.'; Ch = 'public'; Label = 'declined (:1946)' }
     @{ Line = '2026-09-06 09:31:05,123 WARNING civiccast.egress.daemon: Seamless content-reload for education reported "applied" but its worker had already exited (reload_id=abc); falling back to restart instead of stamping ON_AIR against a dead process.'; Ch = 'education'; Label = 'applied-but-worker-exited (:2111)' }
@@ -467,6 +469,12 @@ $abortFixtures = @(
     @{ Line = "2026-09-06 09:31:07,123 WARNING civiccast.egress.daemon: Seamless content-reload for public reported an unrecognized settlement result 'weird' (reload_id=xyz); treating as aborted and falling back to restart."; Ch = 'public'; Label = 'unrecognized settlement, extra words before "falling back" (:2143)' }
     @{ Line = '2026-09-06 09:31:08,123 WARNING civiccast.egress.daemon: Seamless content-reload for education reported no settlement within 45s (reload_id=def); falling back to restart.'; Ch = 'education'; Label = 'no settlement within (:2156)' }
     @{ Line = '2026-09-06 09:31:09,123 WARNING civiccast.egress.daemon: Content-reload source preparation FAILED for government after 12.3s; falling back to restart.'; Ch = 'government'; Label = 'source preparation FAILED, no "Seamless" prefix (:1860)' }
+    # Round-13 finding 4 (HIGH): daemon.py:1946's reason parenthetical is
+    # an ARBITRARY exception repr that can itself contain the word "for" --
+    # a GREEDY leading `.*` would have matched this LATER "for" instead of
+    # the real "declined for public" mention, extracting "this" (part of
+    # the reason text) as the channel id instead of "public".
+    @{ Line = '2026-09-06 09:31:10,123 WARNING civiccast.egress.daemon: Seamless content-reload declined for public (no compatible encoder found for this platform); falling back to restart.'; Ch = 'public'; Label = 'greedy mis-attribution regression guard (:1946, reason text contains its own "for")' }
 )
 foreach ($fx in $abortFixtures) {
     $m = $abortRegex.Match($fx.Line)
@@ -475,6 +483,94 @@ foreach ($fx in $abortFixtures) {
         Assert-Equal "scenario23 ($($fx.Label)) channel extracted" $fx.Ch $m.Groups['ch'].Value
     }
 }
+
+# Round-13 finding 3 (BLOCKING regression): _discard_pending_reload_
+# settlement's own INFO-level echo ("Content-reload for %s (reload_id=%s)
+# discarded: falling back to restart.") ALSO matches the same substring
+# test -- it must be excluded (the literal "discarded:" text is unique to
+# this one echo line) so a real driver never double-counts one abort as
+# two. This mirrors the exact exclusion check In-Sandbox-Soak.ps1's
+# Update-DaemonLogRing applies (`$line -notmatch 'discarded:'`).
+$discardEchoLine = '2026-09-06 09:31:11,123 INFO civiccast.egress.daemon: Content-reload for public (reload_id=xyz) discarded: falling back to restart.'
+$discardEchoMatch = $abortRegex.Match($discardEchoLine)
+Assert-Equal 'scenario23b (discard echo line still matches the base regex)' 'True' "$($discardEchoMatch.Success)"
+Assert-Equal 'scenario23b (discard echo line is excluded by the "discarded:" check)' 'True' "$($discardEchoLine -match 'discarded:')"
+
+# -------------------------------------------------------------- scenario 24
+# Round-13 finding 1 (BLOCKING): In-Sandbox-Soak.ps1's Get-ChannelStateSample
+# ok=false branches now build the "state read failed: status=X error=Y"
+# text ONCE, at the exact same point that gets passed to Register-
+# ChannelSample via Invoke-ChannelSampleAndRegister's `-LastError
+# $Sample.last_error` (matching the real driver's exact call shape) --
+# fixing a bug where that call site received a bare $null (the read-
+# failure filter never matched in production). Reproduces the fix's exact
+# string-building formula and proves it round-trips through
+# Register-ChannelSample's read-failure-ignoring logic exactly like
+# scenario 16's hand-typed literal did -- and separately proves the OLD
+# (buggy) shape, a bare $null last_error, does NOT get ignored the same
+# way (demonstrating why the bug caused a false FAIL).
+function New-StateReadFailureLastError {
+    # Verbatim copy of Get-ChannelStateSample's ok=false formula (In-
+    # Sandbox-Soak.ps1) -- kept in sync deliberately; a drift between the
+    # two is exactly the class of bug this scenario exists to catch.
+    param($Status, $ErrorText)
+    return "state read failed: status=$Status error=$ErrorText"
+}
+$ctx24 = New-RestartClassifierContext
+Register-ChannelSample -Context $ctx24 -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
+Register-ChannelSample -Context $ctx24 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(20) -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
+$realLastError = New-StateReadFailureLastError -Status 0 -ErrorText 'timeout'
+Register-ChannelSample -Context $ctx24 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(30) -State $null -NewPid $null -UpdatedAt $null -Engine $null -LastError $realLastError
+Register-ChannelSample -Context $ctx24 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(35) -State 'ON_AIR' -NewPid 1002 -UpdatedAt $null -Engine 'gstreamer'
+Assert-Equal 'scenario24a (real Get-ChannelStateSample-shaped last_error, dropped read ignored) -> planned_restart' 'planned_restart' $ctx24.PendingRestarts['public'].classification
+
+# Negative control: if the OLD bug shipped ($null passed instead of the
+# built string, as In-Sandbox-Soak.ps1 actually did before this fix), the
+# dropped read would carry no last_error text OR state at all -- but
+# lastPrior-walk-back in Test-PlannedRestartSignal treats a $null-state
+# sample as "not TRANSITIONING" and fails closed regardless of last_error,
+# so the OLD bug's real-world symptom was specifically about
+# Test-PlannedRestartFromLog's/-Signal's crash-veto being permanently
+# inert (a null last_error can never match a crash-flavored non-"-" check)
+# -- not this read-failure-skip path itself. This scenario's point is
+# narrower and sufficient: confirm the STRING the fix actually threads
+# through end to end is the exact same shape RestartClassifier.ps1's own
+# `-like 'state read failed*'` filter is written against.
+Assert-Equal 'scenario24b (the exact built string matches the read-failure filter pattern)' 'True' "$($realLastError -like 'state read failed*')"
+
+# -------------------------------------------------------------- scenario 25
+# Round-13 finding 2: the anchor line's own STATE is still excluded from
+# the dirty check (needed for the FALLBACK_SLATE-stable case, scenario
+# 17e), but its own last_error is NOT -- a dirty STARTING line AT THE OLD
+# PID (the anchor itself) must still classify unplanned even though its
+# STATE alone (STARTING) would never have tripped the state-based
+# ERROR/FALLBACK_SLATE check.
+$ctx25 = New-RestartClassifierContext
+Add-LogRingSample -Context $ctx25 -ChannelId 'public' -State 'STARTING' -LastError 'GStreamer child exited non-zero; relaunching encoder.' -LogPid '1001'
+Add-LogRingSample -Context $ctx25 -ChannelId 'public' -State 'STARTING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx25 -ChannelId 'public' -State 'TRANSITIONING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx25 -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx25 -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '1002'
+Assert-Equal 'scenario25 (dirty last_error on the ANCHOR line itself, clean state) -> crash ($false)' 'False' "$(Test-PlannedRestartFromLog -Context $ctx25 -ChannelId 'public' -OldPid 1001 -NewPid 1002)"
+
+# -------------------------------------------------------------- scenario 26
+# Round-13 finding 5 (HIGH): Add-LogRingSample's -MaxRingSize now sizes the
+# ring dynamically (the driver computes ceil(period/2)*2 + 30, floored at
+# 60) instead of a fixed 30 -- proven directly here: adding 45 entries with
+# -MaxRingSize 60 must retain all 45 (well under the cap), while the
+# SAME 45 entries with the OLD fixed default (30) would have evicted the
+# first 15.
+$ctx26 = New-RestartClassifierContext
+for ($i = 0; $i -lt 45; $i++) {
+    Add-LogRingSample -Context $ctx26 -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '1001' -ObservedUtc $baseUtc.AddSeconds($i) -MaxRingSize 60
+}
+Assert-Equal 'scenario26a (45 entries, -MaxRingSize 60) -> all 45 retained' 45 $ctx26.LogRing['public'].Count
+
+$ctx26b = New-RestartClassifierContext
+for ($i = 0; $i -lt 45; $i++) {
+    Add-LogRingSample -Context $ctx26b -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '1001' -ObservedUtc $baseUtc.AddSeconds($i)
+}
+Assert-Equal 'scenario26b (45 entries, default -MaxRingSize 30, unchanged for existing callers) -> capped at 30' 30 $ctx26b.LogRing['public'].Count
 
 Write-Host ""
 Write-Host "RestartClassifier unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })

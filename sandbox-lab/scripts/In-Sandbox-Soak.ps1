@@ -762,31 +762,50 @@ if ($SeamlessReload) {
 function Test-ServiceStartFailureIsProductCrash {
     <#
       .SYNOPSIS
-      Evidence checked, in order: (1) the System event log for a Service
-      Control Manager EventID 7034 (terminated unexpectedly) or 7031
-      (crashed, scheduled for restart) for CivicCastSupervisor, with
-      TimeCreated at or after $SinceUtc (round-12 finding 5: the actual
-      moment THIS SCRIPT attempted Start-Service, not a fixed "last 5
-      minutes" window that could span an unrelated PRIOR crash from
-      before this run even started) -- either event ID means the SCM DID
-      launch the process and it died: a real product crash, FAIL. Matched
-      by the event's own structured service-name PROPERTY
-      (Properties[0].Value -- Service Control Manager's 7034/7031 events
-      carry the service name as their first parameter), never by matching
-      localized message TEXT, which is locale-dependent and not a
-      structural guarantee. (2) the exception text itself for the SCM's
-      own refusal phrasing ("access is denied", "marked for deletion",
-      "dependency"). Neither a positive crash-event match NOR a clear
-      SCM-refusal phrase found defaults to HARNESS_ERROR (the conservative
-      default when evidence is ambiguous -- never guess FAIL without a
-      positive product-crash signal).
+      Evidence checked, in order: (1) the System event log for Service
+      Control Manager events naming CivicCastSupervisor, with TimeCreated
+      at or after $SinceUtc (round-12 finding 5: the actual moment THIS
+      SCRIPT attempted Start-Service, not a fixed "last 5 minutes" window
+      that could span an unrelated PRIOR crash from before this run even
+      started), matched by the event's own structured service-name
+      PROPERTY (Properties[0].Value), never by matching localized message
+      TEXT. Round-13 finding 6 (MEDIUM) widens the event ID set beyond
+      7034/7031:
+        - 7034 (terminated unexpectedly) / 7031 (crashed, scheduled for
+          restart) / 7024 (terminated with a specific service-defined
+          exit code) -- all three mean the SCM DID launch the process and
+          it died: a real product crash, FAIL.
+        - 7000 (service failed to start due to an error) / 7009 (timeout
+          waiting for the service to report itself started) -- these mean
+          the SCM ITSELF could not get the process running (binary
+          missing, wrong path, never responded in time) -- HARNESS_ERROR,
+          UNLESS the event's own message text shows the process actually
+          launched and then failed (a specific exit/termination phrase),
+          in which case it is promoted to a product crash too.
+      (2) the exception text itself for the SCM's own refusal phrasing
+      ("access is denied", "marked for deletion", "dependency"). Neither a
+      positive crash-event match NOR a clear SCM-refusal phrase found
+      defaults to HARNESS_ERROR (the conservative default when evidence is
+      ambiguous -- never guess FAIL without a positive product-crash
+      signal).
     #>
     param([string]$ExceptionText, [datetime]$SinceUtc)
     try {
-        $crashEvents = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; Id = 7034, 7031; StartTime = $SinceUtc.ToLocalTime() } -ErrorAction SilentlyContinue |
+        $scmEvents = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; Id = 7034, 7031, 7024, 7000, 7009; StartTime = $SinceUtc.ToLocalTime() } -ErrorAction SilentlyContinue |
             Where-Object { $_.Properties.Count -gt 0 -and "$($_.Properties[0].Value)" -eq 'CivicCastSupervisor' })
-        if ($crashEvents.Count -gt 0) {
-            return [pscustomobject]@{ IsProductCrash = $true; Reason = "System event log: Service Control Manager logged event ID $($crashEvents[0].Id) for service name 'CivicCastSupervisor' (structured property match) at $($crashEvents[0].TimeCreated.ToString('o')), at/after this script's own Start-Service attempt ($($SinceUtc.ToString('o')))" }
+        if ($scmEvents.Count -gt 0) {
+            $ev = $scmEvents[0]
+            if ($ev.Id -in 7034, 7031, 7024) {
+                return [pscustomobject]@{ IsProductCrash = $true; Reason = "System event log: Service Control Manager logged event ID $($ev.Id) for service name 'CivicCastSupervisor' (structured property match) at $($ev.TimeCreated.ToString('o')), at/after this script's own Start-Service attempt ($($SinceUtc.ToString('o')))" }
+            }
+            # 7000/7009: the SCM itself could not get the process running
+            # (or never heard back in time) -- HARNESS_ERROR, unless the
+            # event's own message text shows the process actually started
+            # and then failed.
+            if ("$($ev.Message)" -match 'terminated|exited|returned the following error|service-specific error') {
+                return [pscustomobject]@{ IsProductCrash = $true; Reason = "System event log: Service Control Manager logged event ID $($ev.Id) for 'CivicCastSupervisor' at $($ev.TimeCreated.ToString('o')), and its own message text indicates the process actually started and then failed: '$($ev.Message)'" }
+            }
+            return [pscustomobject]@{ IsProductCrash = $false; Reason = "System event log: Service Control Manager logged event ID $($ev.Id) for 'CivicCastSupervisor' at $($ev.TimeCreated.ToString('o')) -- the SCM itself could not get the process running (or never heard back in time), with no message text indicating the process actually launched: '$($ev.Message)'" }
         }
     } catch {
         # Get-WinEvent itself can fail (channel not present, permissions) --
@@ -796,7 +815,7 @@ function Test-ServiceStartFailureIsProductCrash {
     if ("$ExceptionText" -match 'access is denied|marked for deletion|dependen') {
         return [pscustomobject]@{ IsProductCrash = $false; Reason = "Start-Service exception text indicates the SCM itself refused the launch: $ExceptionText" }
     }
-    return [pscustomobject]@{ IsProductCrash = $false; Reason = "no SCM crash event (7034/7031, matched by structured service-name property) for CivicCastSupervisor at/after this script's Start-Service attempt ($($SinceUtc.ToString('o'))), and the exception text (if any) does not match a known SCM-refusal phrase -- defaulting to HARNESS_ERROR (ambiguous evidence, not a confirmed product crash)$(if ($ExceptionText) { ": $ExceptionText" })" }
+    return [pscustomobject]@{ IsProductCrash = $false; Reason = "no SCM event (7034/7031/7024/7000/7009, matched by structured service-name property) for CivicCastSupervisor at/after this script's Start-Service attempt ($($SinceUtc.ToString('o'))), and the exception text (if any) does not match a known SCM-refusal phrase -- defaulting to HARNESS_ERROR (ambiguous evidence, not a confirmed product crash)$(if ($ExceptionText) { ": $ExceptionText" })" }
 }
 
 $startServiceOk = $false
@@ -1687,11 +1706,11 @@ $script:daemonLogLineRegex = [regex]'channel (?<ch>\S+): egress state -> (?<stat
 # Round-11 finding 4 (MEDIUM) / round-12 finding 3 (HIGH, the round-11
 # regex missed half of its own target lines): a seamless content-reload
 # abort is NOT a _write_state line -- it is one of SIX distinct daemon.py
-# WARNING lines (main bcb3ebe:1946 "declined", :2111 "falling back to
-# restart instead of stamping ON_AIR" -- a worker exited before an
-# "applied" settlement could be committed, :2132 "did not land", :2143
-# "...treating as aborted and falling back to restart" -- NOTE the extra
-# words between the semicolon and "falling back", which the round-11
+# WARNING-level MESSAGE TEMPLATES (main bcb3ebe:1946 "declined", :2111
+# "falling back to restart instead of stamping ON_AIR" -- a worker exited
+# before an "applied" settlement could be committed, :2132 "did not land",
+# :2143 "...treating as aborted and falling back to restart" -- NOTE the
+# extra words between the semicolon and "falling back", which the round-11
 # regex's literal `; falling back to restart\.` anchor missed entirely,
 # :2156 "no settlement within", and :1860 "Content-reload source
 # preparation FAILED for %s..." -- NO "Seamless" prefix at all, a
@@ -1699,10 +1718,47 @@ $script:daemonLogLineRegex = [regex]'channel (?<ch>\S+): egress state -> (?<stat
 # literal substring "falling back to restart" appearing SOMEWHERE later
 # in the same civiccast.egress-logged line as "for <channel_id>" -- match
 # on that instead of trying to anchor each variant's own punctuation.
-$script:daemonReloadAbortRegex = [regex]'civiccast\.egress\S*:\s*(?<reason>.*\bfor (?<ch>\S+)\b.*falling back to restart.*)$'
+#
+# Round-13 finding 4 (HIGH): the leading `.*` before `\bfor` was GREEDY,
+# so it prefers the LAST "for" substring in the line -- daemon.py:1946's
+# reason parenthetical `(%s)` is an ARBITRARY exception repr that can
+# itself contain the word "for" (e.g. "no compatible encoder found for
+# this platform"), which would then be greedily matched as the channel-id
+# position instead of the real "declined for <channel>" mention earlier
+# in the same line. Changed to LAZY (`.*?`) so it anchors on the FIRST
+# "for" in the line, which is always the real channel mention in every one
+# of the six known shapes (none of them has an earlier, unrelated "for"
+# before the real one).
+#
+# Round-13 finding 3 (BLOCKING regression, found alongside): EVERY one of
+# these six WARNING lines is immediately followed by a SEPARATE INFO-level
+# echo from `_discard_pending_reload_settlement` (daemon.py:1732-1738),
+# because `_fall_back_to_restart_reload` (the terminate+restart path all
+# six aborts fall through to, daemon.py:2180-2191) calls
+# `self._discard_pending_reload_settlement(channel_id, reason="falling
+# back to restart")` -- whose own log line, "Content-reload for %s
+# (reload_id=%s) discarded: %s.", formats to "...discarded: falling back
+# to restart." for EVERY real abort, ALSO matching this same regex (it
+# has "for <ch>" and "falling back to restart" too). Left unexcluded, ONE
+# real abort was recorded TWICE (the WARNING, then this INFO echo).
+# Excluded below by checking for the literal substring "discarded:",
+# which appears ONLY in this one echo line's own fixed text, never in any
+# of the six primary WARNING templates.
+$script:daemonReloadAbortRegex = [regex]'civiccast\.egress\S*:\s*(?<reason>.*?\bfor (?<ch>\S+)\b.*falling back to restart.*)$'
 
 function Update-DaemonLogRing {
-    param($Context)
+    <#
+      .PARAMETER MeasuredCyclePeriodSeconds
+      Round-13 finding 5 (HIGH): sizes RestartClassifier.ps1's per-channel
+      LogRing (Add-LogRingSample's -MaxRingSize) from the ACTUAL measured
+      cycle period, not a fixed 30 -- see that function's own doc for why
+      a fixed 30-line cap (~60s of real ~2s-tick daemon traffic) risks
+      evicting the OLD pid's anchor line before this function is even
+      called again. Default 60 matches the driver's own pre-first-cycle
+      default.
+    #>
+    param($Context, [double]$MeasuredCyclePeriodSeconds = 60)
+    $logRingSize = [Math]::Max(60, ([Math]::Ceiling($MeasuredCyclePeriodSeconds / 2) * 2) + 30)
     if (-not (Test-Path $script:daemonLogPath)) { return }
 
     try {
@@ -1753,13 +1809,23 @@ function Update-DaemonLogRing {
         if (-not $line) { continue }
         $m = $script:daemonLogLineRegex.Match($line)
         if ($m.Success) {
-            Add-LogRingSample -Context $Context -ChannelId $m.Groups['ch'].Value -State $m.Groups['state'].Value -LastError $m.Groups['err'].Value -LogPid $m.Groups['pid'].Value -ObservedUtc $nowUtc
+            Add-LogRingSample -Context $Context -ChannelId $m.Groups['ch'].Value -State $m.Groups['state'].Value -LastError $m.Groups['err'].Value -LogPid $m.Groups['pid'].Value -ObservedUtc $nowUtc -MaxRingSize $logRingSize
             continue
         }
         $ra = $script:daemonReloadAbortRegex.Match($line)
         if ($ra.Success) {
-            Add-ReloadAbortSample -Context $Context -ChannelId $ra.Groups['ch'].Value -Reason $ra.Groups['reason'].Value
-            Write-SoakLog "reload_aborted channel=$($ra.Groups['ch'].Value) reason=$($ra.Groups['reason'].Value)"
+            # Round-13 finding 3: skip _discard_pending_reload_settlement's
+            # own INFO-level echo (daemon.py:1732-1738's "...discarded:
+            # falling back to restart." line) -- it fires immediately
+            # after EVERY one of the six primary WARNING lines this regex
+            # already caught, and would otherwise double-count one real
+            # abort as two. "discarded:" is literal fixed text unique to
+            # this one echo line, never present in any of the six primary
+            # templates.
+            if ($line -notmatch 'discarded:') {
+                Add-ReloadAbortSample -Context $Context -ChannelId $ra.Groups['ch'].Value -Reason $ra.Groups['reason'].Value
+                Write-SoakLog "reload_aborted channel=$($ra.Groups['ch'].Value) reason=$($ra.Groups['reason'].Value)"
+            }
         }
     }
 }
@@ -1777,6 +1843,24 @@ function Get-ChannelStateSample {
       had not failed at all. Status 200 with a null/empty body is now its
       own ok=true, state=$null outcome; only a non-2xx status or a thrown
       exception is a real read failure.
+
+      Round-13 finding 1 (BLOCKING): the "state read failed: status=X
+      error=Y" text that RestartClassifier.ps1's read-failure filter
+      matches on (`-like 'state read failed*'`) was previously built ONLY
+      at the cycle-row-construction call site further down in this file
+      ("$row = ... last_error = $(if ($sample.ok) ... else "state read
+      failed: ...")"). But Invoke-ChannelSampleAndRegister passes
+      `-LastError $Sample.last_error` straight from THIS function's own
+      ok=false branches, which returned last_error=$null, never that
+      string -- so the real driver fed RestartClassifier.ps1 a $null
+      last_error on every dropped HTTP read, and the read-failure filter
+      (both Test-PlannedRestartSignal's ignore-on-walk-back and
+      SoakVerdict.ps1's ON_AIR-check exclusion) never matched anything in
+      production. A single transient network blip during a genuinely
+      planned rollover could misclassify the whole run FAIL. Fixed by
+      building the string ONCE here, in the ok=false branches themselves,
+      so every consumer reads the exact same value; the row construction
+      below no longer rebuilds it separately.
     #>
     param([string]$ChannelId)
     try {
@@ -1795,9 +1879,9 @@ function Get-ChannelStateSample {
             # `null`, or an empty body) -- no state row yet, NOT a failure.
             return [pscustomobject]@{ ok = $true; state = $null; pid = $null; updated_at = $null; last_error = $null; status = $stR.status; body_raw = $stR.body_raw; error = $null }
         }
-        return [pscustomobject]@{ ok = $false; state = $null; pid = $null; updated_at = $null; last_error = $null; status = $stR.status; body_raw = $stR.body_raw; error = $stR.error }
+        return [pscustomobject]@{ ok = $false; state = $null; pid = $null; updated_at = $null; last_error = "state read failed: status=$($stR.status) error=$($stR.error)"; status = $stR.status; body_raw = $stR.body_raw; error = $stR.error }
     } catch {
-        return [pscustomobject]@{ ok = $false; state = $null; pid = $null; updated_at = $null; last_error = $null; status = $null; body_raw = $null; error = "$_" }
+        return [pscustomobject]@{ ok = $false; state = $null; pid = $null; updated_at = $null; last_error = "state read failed: status=`$null error=$_"; status = $null; body_raw = $null; error = "$_" }
     }
 }
 
@@ -1876,7 +1960,7 @@ while ((Get-Date) -lt $deadline) {
         # own app log BEFORE registering this pass's samples, so a pid
         # change detected below has the freshest possible log evidence to
         # classify against.
-        Update-DaemonLogRing -Context $restartCtx
+        Update-DaemonLogRing -Context $restartCtx -MeasuredCyclePeriodSeconds $measuredCyclePeriodSeconds
         $samplesThisPass = @{}
         $enginesThisPass = @{}
         $sampledUtcThisPass = @{}
@@ -1896,12 +1980,26 @@ while ((Get-Date) -lt $deadline) {
             # the interleaved pass above -- never a second
             # Resolve-EngineForPid call for the same pid.
             engine = $enginesThisPass[$c.id]
-            last_error = $(if ($sample.ok) { $sample.last_error } else { "state read failed: status=$($sample.status) error=$($sample.error)" })
+            # Round-13 finding 1: $sample.last_error already carries the
+            # "state read failed: ..." text built once in
+            # Get-ChannelStateSample's own ok=false branches -- reused
+            # here verbatim, the SAME value already passed to
+            # Register-ChannelSample via Invoke-ChannelSampleAndRegister,
+            # never rebuilt separately (which is exactly how this drifted
+            # out of sync with what the classifier actually received).
+            last_error = $sample.last_error
             pid = $sample.pid; tsduck_verdict = $null; in_planned_restart_window = $false
             # Round-9 finding N5: per-row timestamp -- rows within one
             # cycle_utc are actually ~20-25s apart (one per interleaved
             # pass), not simultaneous.
             sampled_utc = $sampledUtcThisPass[$c.id].ToString('o')
+            # Round-13 finding 5: visible warning when the measured cycle
+            # period is running exceptionally slow (>=180s, i.e.
+            # period/6 >= 30s) -- the dynamically-sized LogRing still
+            # covers it (ceil(period/2)*2 + 30), but a period this slow is
+            # itself a sign of station/box distress worth an operator's
+            # attention independent of the classification outcome.
+            log_ring_sizing_warning = ($measuredCyclePeriodSeconds / 6 -ge 30)
         }
         $row.in_planned_restart_window = Test-InActivePlannedRestartWindow -Context $restartCtx -ChannelId $c.id -NowUtc (Get-Date).ToUniversalTime() -MeasuredCyclePeriodSeconds $measuredCyclePeriodSeconds
 
@@ -1944,7 +2042,7 @@ while ((Get-Date) -lt $deadline) {
 # call was up to one whole cycle period (~60-75s) ago; a crash/rollover
 # that logged in that final gap deserves to be seen before classification
 # is finalized and events are flushed below, not silently missed.
-Update-DaemonLogRing -Context $restartCtx
+Update-DaemonLogRing -Context $restartCtx -MeasuredCyclePeriodSeconds $measuredCyclePeriodSeconds
 
 $eventsBeforeFinalFlush = $restartCtx.RestartEvents.Count
 # Round-11 finding 3 (HIGH): pass the REAL soak-end instant explicitly
