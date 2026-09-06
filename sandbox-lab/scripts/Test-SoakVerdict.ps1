@@ -15,6 +15,12 @@ $ErrorActionPreference = 'Stop'
 # (RestartClassifier's Get-FlushedRestartEvents -> Get-SoakVerdict
 # -RestartEvents), not just SoakVerdict.ps1 in isolation.
 . (Join-Path $PSScriptRoot 'RestartClassifier.ps1')
+# Followup finding 2 (round 14 addendum): dot-sourced explicitly (SoakVerdict.ps1
+# and RestartClassifier.ps1 above already pull this in transitively, but an
+# explicit dot-source here means this test file calls the SAME
+# New-StateReadFailureLastError producer the real driver uses, instead of
+# re-typing its own "state read failed: ..." string literals.
+. (Join-Path $PSScriptRoot 'DaemonLogPatterns.ps1')
 
 $script:failures = 0
 $script:total = 0
@@ -381,7 +387,7 @@ Assert-Equal 'scenario13d (planned_restart_count = 2, both counted)' 2 $v13.plan
 # broken), never silently pass forever with engine_state=$null the whole
 # time, and never present as a product FAIL either.
 $channelsOneReadFailure = @(
-    (New-Channel -Id 'public' -State $null -Engine $null -LastError 'state read failed: status=0 error=timeout'), (New-Channel -Id 'education'), (New-Channel -Id 'government')
+    (New-Channel -Id 'public' -State $null -Engine $null -LastError (New-StateReadFailureLastError -Status 0 -ErrorText 'timeout')), (New-Channel -Id 'education'), (New-Channel -Id 'government')
 )
 $cycles14a = @(
     (New-Cycle -Utc '2026-09-05T18:01:00Z' -Channels $threeChannelsGood)
@@ -539,7 +545,7 @@ Assert-Equal 'scenario18c (post-warmup tsp harness-defect, no product FAIL) -> H
 # (not reset at the boundary), but the ESCALATION only fires once the
 # triggering cycle is itself post-warmup.
 $channelsOneReadFailure18d = @(
-    (New-Channel -Id 'public' -State $null -Engine $null -LastError 'state read failed: status=0 error=timeout'), (New-Channel -Id 'education'), (New-Channel -Id 'government')
+    (New-Channel -Id 'public' -State $null -Engine $null -LastError (New-StateReadFailureLastError -Status 0 -ErrorText 'timeout')), (New-Channel -Id 'education'), (New-Channel -Id 'government')
 )
 $cycles18d = @(
     (New-Cycle -Utc '2026-09-05T18:00:10Z' -Channels $channelsOneReadFailure18d)   # T+10s, warm-up, streak=1
