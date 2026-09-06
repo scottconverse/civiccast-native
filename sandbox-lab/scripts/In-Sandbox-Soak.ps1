@@ -745,11 +745,40 @@ if ($SeamlessReload) {
     }
 }
 
+$startServiceOk = $false
 try {
     Start-Service -Name 'CivicCastSupervisor' -ErrorAction Stop
     Write-SoakLog "Start-Service CivicCastSupervisor: requested"
+    $startServiceOk = $true
 } catch {
-    Write-SoakLog "Start-Service CivicCastSupervisor: $_ (service may already be running or auto-started)"
+    Write-SoakLog "Start-Service CivicCastSupervisor: $_ (may not have been running yet -- proceeding to Start-Service regardless, which will still launch fresh with the registry value in place)"
+}
+
+# Round-10 finding 3 (HIGH): the round-9 N2 fix over-corrected -- it routed
+# EVERY health timeout under -SeamlessReload to HARNESS_ERROR, including a
+# station that came up (service Running) but genuinely never answers
+# healthy, which IS a real product finding regardless of -SeamlessReload.
+# Split the two: confirm the SERVICE itself actually reached Running
+# BEFORE trusting the health poll to mean anything -- Start-Service
+# throwing, or the service settling into any state OTHER than Running
+# (short poll below to ride out a transient StartPending), is a
+# harness/setup failure (the station process itself never came up, so no
+# health result can be judged as a product finding); a service that IS
+# Running and simply never reports healthy is judged as FAIL below,
+# unconditionally (seamless-reload or not).
+$serviceRunning = $false
+$svc = $null
+$svcPollDeadline = (Get-Date).AddSeconds(30)
+while ((Get-Date) -lt $svcPollDeadline) {
+    try {
+        $svc = Get-Service -Name 'CivicCastSupervisor' -ErrorAction Stop
+        if ($svc.Status -eq 'Running') { $serviceRunning = $true; break }
+    } catch { }
+    Start-Sleep -Seconds 2
+}
+Write-SoakLog "CivicCastSupervisor service status after Start-Service: $(if ($svc) { $svc.Status } else { '<Get-Service failed>' }) (serviceRunning=$serviceRunning)"
+if (-not $startServiceOk -or -not $serviceRunning) {
+    Write-HarnessErrorVerdictAndExit -Reason "Start-Service CivicCastSupervisor $(if (-not $startServiceOk) { 'threw' } else { "left the service in state '$(if ($svc) { $svc.Status } else { '<unknown>' })', never reached Running within 30s" }) -- the station process itself never came up, so no health poll result can be judged as a product finding"
 }
 
 Write-SoakLog "polling for station health (bounded to ${HealthBoundMinutes}m): require status=='healthy' AND schema=='current'"
@@ -769,18 +798,17 @@ Write-SoakLog "station healthy: $healthy (last body: status=$($lastHealthBody.st
 Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 
 if (-not $healthy) {
-    # Round-9 finding N2 (HIGH): when -SeamlessReload is set, THIS script
-    # itself just forced a Stop-Service + Start-Service cycle (to make the
-    # per-service registry Environment value actually take effect -- see
-    # the seamless-reload block above). A health timeout immediately after
-    # a restart WE ourselves triggered is not evidence the product is
-    # broken -- it may simply be a station that needed longer to come back
-    # up after being stopped on purpose by this lane. HARNESS_ERROR, never
-    # FAIL, in that specific case.
-    if ($SeamlessReload) {
-        Write-HarnessErrorVerdictAndExit -Reason "station never reported status=healthy AND schema=current at $Base/health within ${HealthBoundMinutes}m after THIS SCRIPT's own Stop-Service/Start-Service cycle for -SeamlessReload (last body: status=$($lastHealthBody.status) schema=$($lastHealthBody.schema)) -- a harness-triggered restart, not evidence of a product defect"
-    }
-    Write-FailVerdictAndExit -Reason "station never reported status=healthy AND schema=current at $Base/health within ${HealthBoundMinutes}m (last body: status=$($lastHealthBody.status) schema=$($lastHealthBody.schema))"
+    # Round-9 finding N2 (HIGH) as narrowed by round-10 finding 3: the
+    # service-running gate above already routes the case where THIS
+    # SCRIPT's own -SeamlessReload Stop-Service/Start-Service cycle never
+    # got the process back up at all (HARNESS_ERROR). By the time control
+    # reaches here, Get-Service already confirmed CivicCastSupervisor
+    # reached Running -- a station that IS running and simply never
+    # answers /health with status=healthy is a real product finding,
+    # unconditionally, seamless-reload or not (round-9's SeamlessReload
+    # special-case here was too broad: it would have masked a genuine
+    # health-check regression any time -SeamlessReload happened to be set).
+    Write-FailVerdictAndExit -Reason "station never reported status=healthy AND schema=current at $Base/health within ${HealthBoundMinutes}m (service confirmed Running; last body: status=$($lastHealthBody.status) schema=$($lastHealthBody.schema))"
 }
 Write-PhaseMarker -Name 'PHASE-HEALTHY.json' -Obj ([ordered]@{ utc = (Get-Date).ToUniversalTime().ToString('o'); body_status = $lastHealthBody.status; body_schema = $lastHealthBody.schema })
 
@@ -1391,34 +1419,56 @@ Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 # --------------------------------------------------------------------------
 function Test-TsProof {
     param([string]$TspExe, [int]$Port, [int]$Seconds, [string]$OutDir, [string]$Label)
-    $result = [ordered]@{ verdict = 'not-run'; packets_total = $null; invalid_syncs = $null; transport_errors = $null; discontinuities = $null }
+    $result = [ordered]@{ verdict = 'not-run'; packets_total = $null; invalid_syncs = $null; transport_errors = $null; discontinuities = $null; tsp_output_tail = $null }
     if (-not $TspExe -or -not (Test-Path $TspExe)) { $result.verdict = 'not-run: tsp.exe not found'; return $result }
     $report = Join-Path $OutDir "tsduck-$Label-report.json"
     $tspArgs = @('-I', 'ip', "$Port", '--buffer-size', '16777216', '-P', 'until', '--seconds', "$Seconds", '-P', 'analyze', '--json', '--output-file', $report, '-O', 'drop')
+    # Round-10 finding 10 (LOW): tsp's own stdout/stderr were redirected to
+    # temp files that were never read back OR deleted -- silent evidence
+    # loss on every non-pass verdict (no visibility into WHY tsp failed
+    # beyond the bare verdict string), plus a slow accumulation of tiny
+    # abandoned temp files across a long soak. Capture the paths so the
+    # `finally` block below can read the last 20 lines of each into the
+    # result on any non-'pass' verdict, and ALWAYS delete them afterward
+    # regardless of verdict.
+    $stdoutFile = [System.IO.Path]::GetTempFileName()
+    $stderrFile = [System.IO.Path]::GetTempFileName()
     try {
-        $proc = Start-Process -FilePath $TspExe -ArgumentList $tspArgs -PassThru -NoNewWindow -RedirectStandardOutput ([System.IO.Path]::GetTempFileName()) -RedirectStandardError ([System.IO.Path]::GetTempFileName())
-        $null = $proc.Handle   # PS 5.1: ExitCode is $null unless the handle was cached before exit.
-        $exited = $proc.WaitForExit(($Seconds + 20) * 1000)
-        if (-not $exited) {
-            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-            $result.verdict = 'fail-timed-out'
-            return $result
+        try {
+            $proc = Start-Process -FilePath $TspExe -ArgumentList $tspArgs -PassThru -NoNewWindow -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
+            $null = $proc.Handle   # PS 5.1: ExitCode is $null unless the handle was cached before exit.
+            $exited = $proc.WaitForExit(($Seconds + 20) * 1000)
+            if (-not $exited) {
+                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+                $result.verdict = 'fail-timed-out'
+                return $result
+            }
+            $proc.Refresh()
+            if ($proc.ExitCode -ne 0) { $result.verdict = "fail-exit-$($proc.ExitCode)"; return $result }
+        } catch { $result.verdict = "error: $_"; return $result }
+        if (-not (Test-Path $report)) { $result.verdict = 'fail-no-report'; return $result }
+        try { $j = Get-Content $report -Raw | ConvertFrom-Json } catch { $result.verdict = 'fail-unparsable-report'; return $result }
+        $ts = $j.ts
+        if (-not $ts) { $result.verdict = 'fail-no-ts-section'; return $result }
+        $result.packets_total = $ts.packets
+        $result.invalid_syncs = $ts.invalid_syncs
+        $result.transport_errors = $ts.transport_errors
+        $result.discontinuities = $(if ($null -ne $ts.pcr_discontinuities) { $ts.pcr_discontinuities } else { $ts.discontinuities })
+        if (-not $result.packets_total -or [int]$result.packets_total -le 0) { $result.verdict = 'fail-zero-packets'; return $result }
+        $clean = ([int]$result.invalid_syncs -eq 0) -and ([int]$result.transport_errors -eq 0) -and ([int]$result.discontinuities -eq 0)
+        $result.verdict = $(if ($clean) { 'pass' } else { 'fail-stream-errors' })
+        return $result
+    } finally {
+        if ($result.verdict -ne 'pass') {
+            try {
+                $outTail = @(Get-Content -Path $stdoutFile -Tail 20 -ErrorAction SilentlyContinue)
+                $errTail = @(Get-Content -Path $stderrFile -Tail 20 -ErrorAction SilentlyContinue)
+                $result.tsp_output_tail = [ordered]@{ stdout = $outTail; stderr = $errTail }
+            } catch { }
         }
-        $proc.Refresh()
-        if ($proc.ExitCode -ne 0) { $result.verdict = "fail-exit-$($proc.ExitCode)"; return $result }
-    } catch { $result.verdict = "error: $_"; return $result }
-    if (-not (Test-Path $report)) { $result.verdict = 'fail-no-report'; return $result }
-    try { $j = Get-Content $report -Raw | ConvertFrom-Json } catch { $result.verdict = 'fail-unparsable-report'; return $result }
-    $ts = $j.ts
-    if (-not $ts) { $result.verdict = 'fail-no-ts-section'; return $result }
-    $result.packets_total = $ts.packets
-    $result.invalid_syncs = $ts.invalid_syncs
-    $result.transport_errors = $ts.transport_errors
-    $result.discontinuities = $(if ($null -ne $ts.pcr_discontinuities) { $ts.pcr_discontinuities } else { $ts.discontinuities })
-    if (-not $result.packets_total -or [int]$result.packets_total -le 0) { $result.verdict = 'fail-zero-packets'; return $result }
-    $clean = ([int]$result.invalid_syncs -eq 0) -and ([int]$result.transport_errors -eq 0) -and ([int]$result.discontinuities -eq 0)
-    $result.verdict = $(if ($clean) { 'pass' } else { 'fail-stream-errors' })
-    return $result
+        Remove-Item -Path $stdoutFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $stderrFile -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # Round-9 finding N4 (MEDIUM): the interleaved sampling fix (round-8
@@ -1457,6 +1507,22 @@ function Resolve-EngineForPid {
     try {
         $p = Get-Process -Id $ProcId -ErrorAction Stop
         if ($p.ProcessName -match '^ffmpeg') { return 'ffmpeg-fallback' }
+        # Round-10 finding 7 (MEDIUM): $GstWorkerPidMap is snapshotted ONCE
+        # per PASS (round-9 finding N4) -- a worker relaunched (new pid)
+        # mid-pass, after that snapshot was taken but before THIS sample,
+        # is alive (Get-Process succeeds) yet absent from the map, and
+        # previously fell straight through to "unknown:<name>" -- a false
+        # FAIL (engine != gstreamer) for a channel that is actually fine.
+        # Before giving up, re-resolve JUST this one pid with a single
+        # TARGETED Win32_Process query (never a full re-scan) -- rare
+        # enough (only a mid-pass relaunch race) that one extra CIM query
+        # here does not reintroduce the load round-9 N4 was fixing.
+        if ($p.ProcessName -match '^python') {
+            try {
+                $reResolved = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcId" -ErrorAction SilentlyContinue
+                if ($reResolved -and $reResolved.CommandLine -match 'egress[\\/]gst[\\/]worker\.py') { return 'gstreamer' }
+            } catch { }
+        }
         return "unknown:$($p.ProcessName)"
     } catch {
         return $null
@@ -1495,6 +1561,39 @@ function Get-GlobalEngineCensus {
 # --------------------------------------------------------------------------
 . (Join-Path 'C:\CivicCastSoakScripts' 'RestartClassifier.ps1')
 $restartCtx = New-RestartClassifierContext -RestartTrackingMaxSeconds 300
+
+# Round-10 finding 5 (MEDIUM, "the important one"): feed the daemon's own
+# app log into $restartCtx.LogRing so Register-ChannelSample's log-based
+# classification (Test-PlannedRestartFromLog, RestartClassifier.ps1) has
+# real data -- see that file's header for the full citation of the log
+# line format and why it is the PRIMARY signal. Read incrementally (only
+# lines appended since the last read, tracked as a running line count) so
+# a 15-minute soak never re-parses the whole file every pass; a missing or
+# unreadable log file is not an error here -- Update-DaemonLogRing simply
+# adds nothing, and Test-PlannedRestartFromLog correctly reports $null
+# (no evidence) for every channel in that case, so Register-ChannelSample
+# falls back to the sample-ring signal with log_evidence='missing'.
+$script:daemonLogPath = 'C:\ProgramData\CivicCast\logs\control_plane-app.log'
+$script:daemonLogLineCount = 0
+# civiccast/egress/daemon.py:901-902's exact format string:
+#   "channel %s: egress state -> %s (source=%s, pid=%s, last_error=%s)"
+$script:daemonLogLineRegex = [regex]'channel (?<ch>\S+): egress state -> (?<state>\S+) \(source=.*?, pid=\S+, last_error=(?<err>.*)\)\s*$'
+
+function Update-DaemonLogRing {
+    param($Context)
+    if (-not (Test-Path $script:daemonLogPath)) { return }
+    try {
+        $allLines = @(Get-Content -Path $script:daemonLogPath -ErrorAction Stop)
+    } catch { return }
+    if ($allLines.Count -le $script:daemonLogLineCount) { return }
+    $newLines = $allLines[$script:daemonLogLineCount..($allLines.Count - 1)]
+    $script:daemonLogLineCount = $allLines.Count
+    foreach ($line in $newLines) {
+        $m = $script:daemonLogLineRegex.Match("$line")
+        if (-not $m.Success) { continue }
+        Add-LogRingSample -Context $Context -ChannelId $m.Groups['ch'].Value -State $m.Groups['state'].Value -LastError $m.Groups['err'].Value
+    }
+}
 
 function Get-ChannelStateSample {
     <#
@@ -1548,17 +1647,17 @@ function Invoke-ChannelSampleAndRegister {
       event/pending counts change, so the log keeps the same visibility
       the old inline version had.
     #>
-    param([string]$ChannelId, [datetime]$NowUtc, $Sample, $GstWorkerPidMap)
+    param([string]$ChannelId, [datetime]$NowUtc, $Sample, $GstWorkerPidMap, [double]$MeasuredCyclePeriodSeconds = 60)
     $engine = Resolve-EngineForPid -ProcId $Sample.pid -GstWorkerPidMap $GstWorkerPidMap
     $pendingBefore = $restartCtx.PendingRestarts.ContainsKey($ChannelId)
     $eventsBefore = $restartCtx.RestartEvents.Count
-    Register-ChannelSample -Context $restartCtx -ChannelId $ChannelId -NowUtc $NowUtc -State $Sample.state -NewPid $Sample.pid -UpdatedAt $Sample.updated_at -Engine $engine -LastError $Sample.last_error
+    Register-ChannelSample -Context $restartCtx -ChannelId $ChannelId -NowUtc $NowUtc -State $Sample.state -NewPid $Sample.pid -UpdatedAt $Sample.updated_at -Engine $engine -LastError $Sample.last_error -MeasuredCyclePeriodSeconds $MeasuredCyclePeriodSeconds
     if ($restartCtx.RestartEvents.Count -gt $eventsBefore) {
         $ev = $restartCtx.RestartEvents[$restartCtx.RestartEvents.Count - 1]
-        Write-SoakLog "restart $(if ($ev.recovered) { 'RECOVERED' } else { 'NEVER RECOVERED' }) channel=$ChannelId classification=$($ev.classification) gap_seconds=$($ev.recovery_gap_seconds) superseded=$($ev.superseded)"
+        Write-SoakLog "restart $(if ($ev.recovered) { 'RECOVERED' } else { 'NEVER RECOVERED' }) channel=$ChannelId classification=$($ev.classification) gap_seconds=$($ev.recovery_gap_seconds) superseded=$($ev.superseded) log_evidence=$($ev.log_evidence)"
     } elseif (-not $pendingBefore -and $restartCtx.PendingRestarts.ContainsKey($ChannelId)) {
         $p = $restartCtx.PendingRestarts[$ChannelId]
-        Write-SoakLog "restart DETECTED channel=$ChannelId old_pid=$($p.old_pid) new_pid=$($p.new_pid) classification=$($p.classification)"
+        Write-SoakLog "restart DETECTED channel=$ChannelId old_pid=$($p.old_pid) new_pid=$($p.new_pid) classification=$($p.classification) log_evidence=$($p.log_evidence)"
     }
     return $engine
 }
@@ -1604,13 +1703,18 @@ while ((Get-Date) -lt $deadline) {
         # this loop ends so Get-GlobalEngineCensus below can reuse the LAST
         # pass's map instead of issuing its own separate query.
         $gstWorkerPidMap = Get-GstWorkerPidMap
+        # Round-10 finding 5: refresh $restartCtx.LogRing from the daemon's
+        # own app log BEFORE registering this pass's samples, so a pid
+        # change detected below has the freshest possible log evidence to
+        # classify against.
+        Update-DaemonLogRing -Context $restartCtx
         $samplesThisPass = @{}
         $enginesThisPass = @{}
         $sampledUtcThisPass = @{}
         foreach ($c2 in $channelSpecs) {
             $s2 = Get-ChannelStateSample -ChannelId $c2.id
             $nowUtc2 = (Get-Date).ToUniversalTime()
-            $engine2 = Invoke-ChannelSampleAndRegister -ChannelId $c2.id -NowUtc $nowUtc2 -Sample $s2 -GstWorkerPidMap $gstWorkerPidMap
+            $engine2 = Invoke-ChannelSampleAndRegister -ChannelId $c2.id -NowUtc $nowUtc2 -Sample $s2 -GstWorkerPidMap $gstWorkerPidMap -MeasuredCyclePeriodSeconds $measuredCyclePeriodSeconds
             $samplesThisPass[$c2.id] = $s2
             $enginesThisPass[$c2.id] = $engine2
             $sampledUtcThisPass[$c2.id] = $nowUtc2
@@ -1634,6 +1738,9 @@ while ((Get-Date) -lt $deadline) {
 
         $ts = Test-TsProof -TspExe $tsp -Port $c.port -Seconds 20 -OutDir (Join-Path $LocalDir 'cycles') -Label "$($c.id)-c$cycleN"
         $row.tsduck_verdict = $ts.verdict
+        # Round-10 finding 10: captured tail of tsp's own stdout/stderr,
+        # $null on a 'pass' verdict (nothing to explain).
+        $row.tsp_output_tail = $ts.tsp_output_tail
         $row.sample_ring = @($restartCtx.Ring[$c.id])
         $rows += $row
     }
@@ -1668,7 +1775,17 @@ $restartEventsArray = @(Get-FlushedRestartEvents -Context $restartCtx)
 foreach ($ev in ($restartEventsArray | Select-Object -Skip $eventsBeforeFinalFlush)) {
     Write-SoakLog "restart still pending at soak end, flushed as not-recovered: channel=$($ev.channel_id) classification=$($ev.classification)"
 }
-Save-Json -Obj $restartEventsArray -Path (Join-Path $LocalDir 'restart-events.json')
+# Round-10 finding 6 (MEDIUM): Save-Json's `$Obj | ConvertTo-Json` pipes a
+# top-level ARRAY object-by-object into ConvertTo-Json under PS 5.1;
+# ConvertTo-Json has no way to tell "one object piped through" from "an
+# array of exactly one object piped through" -- N=1 serializes as a bare
+# JSON OBJECT (no enclosing `[...]`), and N=0 (nothing flows through the
+# pipeline at all) serializes as an EMPTY FILE, not `[]`. Wrapping in a
+# hashtable makes the top-level pipeline object always be exactly ONE
+# object (the wrapper), regardless of how many events are inside its
+# `events` array -- confirmed directly for N=0, 1, 2 (Test-RestartClassifier.ps1
+# scenario 14).
+Save-Json -Obj ([ordered]@{ events = @($restartEventsArray) }) -Path (Join-Path $LocalDir 'restart-events.json')
 
 Write-SoakLog "poll loop complete: $cycleN cycles recorded, $($restartEventsArray.Count) restart event(s) ($(@($restartEventsArray | Where-Object { $_.classification -eq 'planned_restart' }).Count) planned, $(@($restartEventsArray | Where-Object { $_.classification -eq 'unplanned_relaunch' }).Count) unplanned)"
 

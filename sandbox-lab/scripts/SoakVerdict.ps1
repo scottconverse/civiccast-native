@@ -130,7 +130,22 @@ function Test-SoakCycle {
     # a channel that happens to still look ON_AIR. The ONE exception:
     # `in_planned_restart_window` -- a channel legitimately draining/
     # restarting under a classified planned restart is not an outage.
-    $notOnAir = @($channels | Where-Object { -not $_.in_planned_restart_window -and ($_.engine_state -ne 'ON_AIR' -or $_.engine -ne 'gstreamer') })
+    #
+    # Round-10 finding 4 (HIGH): a channel row whose OWN state read failed
+    # (In-Sandbox-Soak.ps1's Get-ChannelStateSample returning ok=$false)
+    # carries engine_state=$null -- previously indistinguishable from a
+    # channel that is genuinely down, so a single dropped HTTP read (a
+    # harness/network blip, not a product finding) failed the whole cycle.
+    # last_error starting with the literal "state read failed" (the exact
+    # prefix Get-ChannelStateSample stamps, see In-Sandbox-Soak.ps1) marks
+    # this row as a HARNESS sample -- excluded from the ON_AIR check here;
+    # Get-SoakVerdict below separately tracks 3 CONSECUTIVE such rows per
+    # channel and escalates to HARNESS_ERROR if that ever happens (a lone
+    # dropped read is excused silently; a channel that cannot be read three
+    # times running means the read path itself is broken, not that the
+    # channel fell off air, and must never present as a product FAIL).
+    $isStateReadFailure = { param($row) "$($row.last_error)" -like 'state read failed*' }
+    $notOnAir = @($channels | Where-Object { -not $_.in_planned_restart_window -and -not (& $isStateReadFailure $_) -and ($_.engine_state -ne 'ON_AIR' -or $_.engine -ne 'gstreamer') })
     $tspFail = @($channels | Where-Object { $_.tsduck_verdict -ne 'pass' })
 
     if ($IsWarmup) {
@@ -211,6 +226,23 @@ function Get-SoakVerdict {
 
     $sorted = @($Cycles | Sort-Object { [datetime]$_.cycle_utc })
 
+    # Round-10 finding 4 (HIGH): a channel whose state read fails THREE
+    # CONSECUTIVE cycles running (last_error starting with the literal
+    # "state read failed", the exact prefix Get-ChannelStateSample stamps
+    # in In-Sandbox-Soak.ps1) means the read path itself is broken, not
+    # that the channel actually fell off air -- Test-SoakCycle above
+    # already excludes a single such row from the ON_AIR check, but a
+    # PERSISTENT read failure needs its own escalation (a channel that is
+    # actually down would otherwise sail through cycle after cycle with
+    # every row silently excused, engine_state=$null the entire time, and
+    # never be reported as anything at all). Tracked per-channel across the
+    # whole run, in cycle order, resetting to 0 on any row that is NOT a
+    # read failure -- checked in the SAME pass as the tsp harness-defect
+    # check below (both are harness/tooling conditions, checked first,
+    # before any product PASS/FAIL classification).
+    $isStateReadFailure = { param($row) "$($row.last_error)" -like 'state read failed*' }
+    $consecutiveReadFailures = @{}
+
     # Round-8 finding 5: a tsp harness/tooling defect (tool missing, or
     # threw trying to launch) in ANY cycle -- warm-up or not -- means NO
     # cycle's tsp result in this run can be trusted, so this is checked
@@ -219,6 +251,29 @@ function Get-SoakVerdict {
     foreach ($cycle in $sorted) {
         $cycleUtc = [datetime]$cycle.cycle_utc
         $isWarmup = ($cycleUtc.ToUniversalTime() - $StartUtc.ToUniversalTime()).TotalSeconds -lt $WarmupSeconds
+
+        foreach ($row in @($cycle.channels)) {
+            $chId = "$($row.channel_id)"
+            if (& $isStateReadFailure $row) {
+                $consecutiveReadFailures[$chId] = $(if ($consecutiveReadFailures.ContainsKey($chId)) { $consecutiveReadFailures[$chId] + 1 } else { 1 })
+                if ($consecutiveReadFailures[$chId] -ge 3) {
+                    return [pscustomobject]@{
+                        verdict = 'HARNESS_ERROR'
+                        reason = "cycle $($cycle.cycle_utc): channel=$chId state read failed $($consecutiveReadFailures[$chId]) consecutive cycles running (last_error: $($row.last_error)) -- the read path itself is broken, not a product finding"
+                        first_failing_cycle = "$($cycle.cycle_utc)"
+                        cycles_total = $sorted.Count
+                        cycles_warmup = 0
+                        cycles_evaluated = 0
+                        unplanned_relaunch_count = $unplannedCount
+                        planned_restart_count = $plannedCount
+                        max_restart_gap_seconds = $maxGap
+                    }
+                }
+            } else {
+                $consecutiveReadFailures[$chId] = 0
+            }
+        }
+
         $r = Test-SoakCycle -Cycle $cycle -IsWarmup $isWarmup
         if ($r.harness_error) {
             return [pscustomobject]@{
@@ -247,7 +302,21 @@ function Get-SoakVerdict {
     }
 
     if (-not $failResult) {
-        $slowOrMissing = @($plannedEvents | Where-Object { -not $_.recovered -or $null -eq $_.recovery_gap_seconds -or [double]$_.recovery_gap_seconds -gt 60 })
+        # Round-10 finding 8 (MEDIUM): a SUPERSEDED planned-restart event
+        # (RestartClassifier.ps1's round-9 N1 fix -- flushed with
+        # recovered=$false, recovery_gap_seconds=$null the moment a SECOND
+        # pid change arrives before the first one resolves) is not itself
+        # a recovery failure -- it is accounted for by whatever pid change
+        # superseded it (that successor event is its own, separate entry
+        # in $plannedEvents/$unplannedEvents and is judged on its own
+        # merits above/below). Counting a superseded event against the
+        # 60s-recovery rule double-penalizes a channel that simply
+        # restarted twice in quick succession for a FAIL neither restart,
+        # on its own, actually earned. Superseded events are still counted
+        # in planned_restart_count/unplanned_relaunch_count above (via
+        # $restartEvents, unfiltered) -- only excluded from THIS recovery
+        # check.
+        $slowOrMissing = @($plannedEvents | Where-Object { -not ($_.superseded -eq $true) -and (-not $_.recovered -or $null -eq $_.recovery_gap_seconds -or [double]$_.recovery_gap_seconds -gt 60) })
         if ($slowOrMissing.Count -gt 0) {
             $first = $slowOrMissing | Sort-Object { [datetime]$_.detected_utc } | Select-Object -First 1
             $gapDesc = $(if ($null -ne $first.recovery_gap_seconds) { "$($first.recovery_gap_seconds)s" } else { 'never (not recovered within the tracking window)' })

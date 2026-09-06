@@ -45,11 +45,15 @@ function New-Channel {
         # Get-EngineForWorkerPid, which returns $null, never '').
         $Engine = 'gstreamer',
         [string]$Tsduck = 'pass',
-        [bool]$InPlannedRestartWindow = $false
+        [bool]$InPlannedRestartWindow = $false,
+        # Round-10 finding 4: lets a scenario build a row that carries the
+        # exact "state read failed" prefix Get-ChannelStateSample stamps in
+        # In-Sandbox-Soak.ps1, to test the harness-read-failure exclusion.
+        $LastError = $null
     )
     return [ordered]@{
         channel_id = $Id; engine_state = $State; engine = $Engine
-        tsduck_verdict = $Tsduck; last_error = $null
+        tsduck_verdict = $Tsduck; last_error = $LastError
         in_planned_restart_window = $InPlannedRestartWindow
     }
 }
@@ -72,13 +76,19 @@ function New-RestartEvent {
         [int]$OldPid = 1000,
         [int]$NewPid = 1001,
         [bool]$Recovered = $true,
-        $RecoveryGapSeconds = 20
+        $RecoveryGapSeconds = 20,
+        # Round-10 finding 8: lets a scenario build a superseded event
+        # exactly as RestartClassifier.ps1's Register-ChannelSample flushes
+        # one (round-9 N1) -- recovered=$false, recovery_gap_seconds=$null,
+        # superseded=$true.
+        [bool]$Superseded = $false
     )
     return [ordered]@{
         channel_id = $ChannelId; detected_utc = $DetectedUtc
         old_pid = $OldPid; new_pid = $NewPid
         classification = $Classification
         recovered = $Recovered; recovery_gap_seconds = $RecoveryGapSeconds
+        superseded = $Superseded
     }
 }
 
@@ -356,6 +366,71 @@ $v13 = Get-SoakVerdict -Cycles @() -StartUtc $n6Start -WarmupSeconds 180 -Restar
 Assert-Equal 'scenario13b (both recovered in 200s, exceeds 60s bound) -> FAIL' 'FAIL' $v13.verdict
 Assert-Equal 'scenario13c (max_restart_gap_seconds = 200, not empty/nested)' 200 $v13.max_restart_gap_seconds
 Assert-Equal 'scenario13d (planned_restart_count = 2, both counted)' 2 $v13.planned_restart_count
+
+# --------------------------------------------------------------- scenario 14
+# Round-10 finding 4 (HIGH): a channel row whose state read FAILED
+# (last_error starting with the literal "state read failed") carries
+# engine_state=$null -- previously indistinguishable from a channel
+# genuinely off air. A SINGLE such row, post-warmup, must be excused from
+# the ON_AIR check (not FAIL) -- but THREE CONSECUTIVE such rows for the
+# same channel must escalate to HARNESS_ERROR (the read path itself is
+# broken), never silently pass forever with engine_state=$null the whole
+# time, and never present as a product FAIL either.
+$channelsOneReadFailure = @(
+    (New-Channel -Id 'public' -State $null -Engine $null -LastError 'state read failed: status=0 error=timeout'), (New-Channel -Id 'education'), (New-Channel -Id 'government')
+)
+$cycles14a = @(
+    (New-Cycle -Utc '2026-09-05T18:01:00Z' -Channels $threeChannelsGood)
+    (New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $channelsOneReadFailure)
+    (New-Cycle -Utc '2026-09-05T18:05:00Z' -Channels $threeChannelsGood)
+)
+$v14a = Get-SoakVerdict -Cycles $cycles14a -StartUtc $startUtc -WarmupSeconds 180
+Assert-Equal 'scenario14a (ONE state-read-failure row post-warmup) -> PASS (excused, not FAIL)' 'PASS' $v14a.verdict
+
+$cycles14b = @(
+    (New-Cycle -Utc '2026-09-05T18:01:00Z' -Channels $threeChannelsGood)
+    (New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $channelsOneReadFailure)
+    (New-Cycle -Utc '2026-09-05T18:05:00Z' -Channels $channelsOneReadFailure)
+    (New-Cycle -Utc '2026-09-05T18:06:00Z' -Channels $channelsOneReadFailure)
+)
+$v14b = Get-SoakVerdict -Cycles $cycles14b -StartUtc $startUtc -WarmupSeconds 180
+Assert-Equal 'scenario14b (THREE consecutive state-read-failure rows) -> HARNESS_ERROR' 'HARNESS_ERROR' $v14b.verdict
+
+# A read failure that is NOT consecutive (a good read in between) must
+# reset the streak and never escalate.
+$cycles14c = @(
+    (New-Cycle -Utc '2026-09-05T18:01:00Z' -Channels $threeChannelsGood)
+    (New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $channelsOneReadFailure)
+    (New-Cycle -Utc '2026-09-05T18:05:00Z' -Channels $threeChannelsGood)
+    (New-Cycle -Utc '2026-09-05T18:06:00Z' -Channels $channelsOneReadFailure)
+    (New-Cycle -Utc '2026-09-05T18:07:00Z' -Channels $channelsOneReadFailure)
+)
+$v14c = Get-SoakVerdict -Cycles $cycles14c -StartUtc $startUtc -WarmupSeconds 180
+Assert-Equal 'scenario14c (read failures NOT consecutive, streak resets) -> PASS' 'PASS' $v14c.verdict
+
+# --------------------------------------------------------------- scenario 15
+# Round-10 finding 8 (MEDIUM): a SUPERSEDED planned-restart event
+# (recovered=$false, recovery_gap_seconds=$null, superseded=$true --
+# RestartClassifier.ps1's round-9 N1 flush) must NOT itself count against
+# the 60s recovery-time FAIL rule -- it is accounted for by whatever pid
+# change superseded it. Only the superseded event is present here (no
+# successor event added), isolating the exclusion itself.
+$restartEvents15 = @(
+    (New-RestartEvent -ChannelId 'public' -DetectedUtc '2026-09-05T18:04:30Z' -Classification 'planned_restart' -Recovered $false -RecoveryGapSeconds $null -Superseded $true)
+)
+$v15 = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents15
+Assert-Equal 'scenario15 (superseded planned restart, recovered=false/gap=null) -> PASS (excluded from recovery rule)' 'PASS' $v15.verdict
+Assert-Equal 'scenario15 planned_restart_count still counts the superseded event' 1 $v15.planned_restart_count
+
+# The NON-superseded negative control: the identical recovered=false/gap=null
+# shape, but superseded=$false, must still FAIL exactly as scenario9 proves
+# for a slow recovery -- confirming the exclusion is scoped to superseded
+# events only, not a blanket pass for "never recovered".
+$restartEvents15b = @(
+    (New-RestartEvent -ChannelId 'public' -DetectedUtc '2026-09-05T18:04:30Z' -Classification 'planned_restart' -Recovered $false -RecoveryGapSeconds $null -Superseded $false)
+)
+$v15b = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents15b
+Assert-Equal 'scenario15b (NOT superseded, never recovered) -> FAIL' 'FAIL' $v15b.verdict
 
 Write-Host ""
 Write-Host "SoakVerdict unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })

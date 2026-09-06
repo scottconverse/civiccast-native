@@ -63,6 +63,58 @@
 # while a restart is in flight) -- deliberately a SEPARATE number from the
 # 60s PASS bound (how long a restart is ALLOWED to take before the run
 # fails), which Get-SoakVerdict / SoakVerdict.ps1 still enforces unchanged.
+#
+# ROUND-10 finding 1 (HIGH): Test-PlannedRestartSignal's "immediately
+# preceding" adjacency check used a HARDCODED -MaxGapSeconds 30 against a
+# REAL sample spacing that runs ~20-25s under a fast cycle but is not
+# guaranteed to stay under 30s (a slightly slower cycle pass, e.g. tsp
+# taking a touch longer, puts the same genuinely-planned TRANSITIONING ->
+# pid-change gap at 31s+ -- measured misclassified unplanned). Register-
+# ChannelSample now computes the gap as max(60s, 2x the measured
+# per-sample interval) -- the SAME max(60, 2x) shape
+# Test-InActivePlannedRestartWindow already uses for its own exemption
+# window, just applied to the adjacency check instead. Also: a dropped/
+# failed state read (In-Sandbox-Soak.ps1's Get-ChannelStateSample returning
+# ok=$false, recorded into the ring with state=$null and a last_error that
+# STARTS WITH the literal "state read failed" -- that exact prefix is the
+# contract between the two files, see Get-ChannelStateSample) is a HARNESS
+# artifact, not a real sample of the channel's own state -- it must not
+# break the "immediately preceding sample" chain (walking back must skip
+# over it, not treat its absence-of-state as "not TRANSITIONING" and fail
+# closed) NOR trip the crash-signal veto (its last_error text is about the
+# HTTP read, never the product's own last_error field).
+#
+# ROUND-10 finding 5 (MEDIUM, "the important one"): sample-based
+# classification (Test-PlannedRestartSignal, above) can only see WHATEVER
+# STATE HAPPENED TO BE TRUE at each poll's exact instant -- a crash that
+# begins and fully resolves inside one ~20-25s poll gap (worker crashes,
+# daemon relaunches it, new pid reaches ON_AIR, all between two samples)
+# is invisible to polling and would misclassify as planned if the LAST
+# thing polling saw was TRANSITIONING. The daemon's own app log
+# (control_plane-app.log) is a strictly better signal because it is
+# written at EVERY state transition the daemon itself makes, not just
+# whichever instant this lane happens to poll -- civiccast/egress/
+# daemon.py:901-908 (`_write_state`) is the ONE choke point every
+# transition passes through, logged as:
+#   "channel {id}: egress state -> {STATE} (source={label}, pid={pid}, last_error={err})"
+# `last_error` is the literal text "-" when there is none (daemon.py:900's
+# db_safe_text_or_none fold + line 907's `last_error or "-"`). A PLANNED
+# rollover (_poll_process's pending_reload branch, daemon.py:1232-1238)
+# writes its STARTING line with NO last_error at all -- literal "-". A
+# CRASH relaunch (_relaunch_after_crash -> _begin_relaunch, daemon.py:
+# 1374-1383) writes ITS STARTING line with last_error set from
+# _child_exit_error (daemon.py:1020-1025, always contains the literal
+# substring "child exited non-zero") or, past the escalation streak
+# threshold, _begin_relaunch's own force-fallback text (contains
+# "crash-relaunches", daemon.py:1368-1370). Test-PlannedRestartFromLog
+# below reads this directly: log evidence is authoritative whenever it is
+# available (a clean TRANSITIONING-then-nothing-crash-shaped scan is
+# planned; any ERROR/FALLBACK_SLATE state or non-"-" last_error before
+# that is a crash) -- Register-ChannelSample only falls back to the
+# sample-ring signal when the log ring has no evidence at all for this
+# channel (log file missing/unreadable, or no TRANSITIONING line landed in
+# the retained window), and marks that pending restart's log_evidence
+# accordingly ('log' vs 'missing') for transparency in the final report.
 
 function New-RestartClassifierContext {
     <#
@@ -73,11 +125,77 @@ function New-RestartClassifierContext {
     param([int]$RestartTrackingMaxSeconds = 300)
     return [pscustomobject]@{
         Ring = @{}
+        LogRing = @{}
         PendingRestarts = @{}
         LastPidForChannel = @{}
         RestartEvents = New-Object System.Collections.ArrayList
         RestartTrackingMaxSeconds = $RestartTrackingMaxSeconds
     }
+}
+
+function Add-LogRingSample {
+    <#
+      .SYNOPSIS
+      Round-10 finding 5: append one PARSED daemon-log state-transition
+      line for one channel (see this file's header for the exact log
+      shape/citations). Deliberately separate from Add-RingSample's
+      poll-sample ring -- log lines and poll samples arrive on independent
+      cadences (a transition logs once, the moment it happens; polling
+      only sees whatever was true at its next scheduled instant) and
+      neither should be conflated with the other's history.
+
+      .PARAMETER LastError
+      The raw captured `last_error=...` text from the log line -- compare
+      against the literal "-" sentinel (daemon.py's own "no error" marker),
+      never against $null/empty (this is parsed log TEXT, not a
+      PowerShell-native value).
+    #>
+    param($Context, [string]$ChannelId, [string]$State, [string]$LastError)
+    if (-not $Context.LogRing.ContainsKey($ChannelId)) { $Context.LogRing[$ChannelId] = New-Object System.Collections.ArrayList }
+    $null = $Context.LogRing[$ChannelId].Add([ordered]@{ state = $State; last_error = $LastError })
+    while ($Context.LogRing[$ChannelId].Count -gt 30) { $Context.LogRing[$ChannelId].RemoveAt(0) }
+}
+
+function Test-PlannedRestartFromLog {
+    <#
+      .SYNOPSIS
+      Round-10 finding 5 (MEDIUM, "the important one"): classify a pid
+      change from the daemon's OWN log lines for this channel, when any
+      are available, instead of (or in addition to) inferring it from
+      polled state -- see this file's header for the full citation of why
+      this catches a crash-and-recover that happened entirely inside one
+      poll gap, which polling alone cannot.
+
+      Scans the retained log ring BACKWARD (most recent first, log lines
+      arrive in the file's own append order so no timestamp comparison is
+      needed or attempted -- this deliberately does NOT parse/compare the
+      log's own %(asctime)s text, which is local-time and would need a
+      timezone reconciliation against this script's UTC clock that is not
+      worth the risk of getting subtly wrong): the first TRANSITIONING
+      line encountered going backward, with nothing crash-shaped seen
+      before it, is a clean planned-rollover marker. Anything crash-shaped
+      encountered FIRST (before any TRANSITIONING line) is crash evidence.
+
+      .OUTPUTS
+      $null   -- no evidence either way (empty ring, or nothing but
+                 unrelated/ON_AIR-ish lines with no TRANSITIONING marker
+                 found at all) -- caller should fall back to the
+                 sample-ring signal (Test-PlannedRestartSignal) and record
+                 log_evidence='missing'.
+      $true   -- log evidence supports a planned rollover.
+      $false  -- log evidence shows a crash.
+    #>
+    param($Context, [string]$ChannelId)
+    if (-not $Context.LogRing.ContainsKey($ChannelId)) { return $null }
+    $lines = @($Context.LogRing[$ChannelId])
+    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+        $l = $lines[$i]
+        if ($l.state -eq 'ERROR' -or $l.state -eq 'FALLBACK_SLATE') { return $false }
+        $err = "$($l.last_error)"
+        if ($err -ne '-' -and -not [string]::IsNullOrWhiteSpace($err)) { return $false }
+        if ($l.state -eq 'TRANSITIONING') { return $true }
+    }
+    return $null
 }
 
 function Add-RingSample {
@@ -152,18 +270,31 @@ function Test-PlannedRestartSignal {
         if ($sUtc) { [pscustomobject]@{ utc = $sUtc; state = $_.state; last_error = $_.last_error } }
     } | Sort-Object utc)
 
+    # Round-10 finding 1 (HIGH, part 2): a dropped/failed state read is a
+    # HARNESS artifact (In-Sandbox-Soak.ps1's Get-ChannelStateSample
+    # returning ok=$false records state=$null, last_error starting with
+    # the literal "state read failed" -- that exact prefix is this file's
+    # contract with the driver) -- it is NOT a real observation of the
+    # channel and must not break the "immediately preceding sample" chain
+    # (skip over it when walking back for lastPrior) nor trip the
+    # crash-signal veto below (its last_error text describes the HTTP read
+    # failing, never the product's own last_error field).
+    $isReadFailureSample = { param($s) "$($s.last_error)" -like 'state read failed*' }
+    $realSamples = @($samples | Where-Object { -not (& $isReadFailureSample $_) })
+
     # The sample AT $BeforeUtc is the pid-change sample itself (already
     # added to the ring by Add-RingSample before this is called) -- the
     # "last non-ON_AIR state of the OLD pid" is the sample immediately
-    # PRECEDING it, i.e. the most recent one strictly earlier than $BeforeUtc.
-    $priorSamples = @($samples | Where-Object { $_.utc -lt $BeforeUtc })
+    # PRECEDING it, i.e. the most recent REAL (non-read-failure) one
+    # strictly earlier than $BeforeUtc.
+    $priorSamples = @($realSamples | Where-Object { $_.utc -lt $BeforeUtc })
     if ($priorSamples.Count -eq 0) { return $false }
     $lastPrior = $priorSamples[-1]
 
     if ($lastPrior.state -ne 'TRANSITIONING') { return $false }
     if (($BeforeUtc - $lastPrior.utc).TotalSeconds -gt $MaxGapSeconds) { return $false }
 
-    foreach ($s in $samples) {
+    foreach ($s in $realSamples) {
         if ($s.utc -le $lastPrior.utc -or $s.utc -gt $BeforeUtc) { continue }
         if ($s.state -eq 'ERROR' -or $s.state -eq 'FALLBACK_SLATE') { return $false }
         if (-not [string]::IsNullOrWhiteSpace("$($s.last_error)")) { return $false }
@@ -192,8 +323,22 @@ function Register-ChannelSample {
       The state row's own last_error field for THIS sample -- feeds
       Test-PlannedRestartSignal's crash-signal check (round-9
       "CLASSIFIER TRUTH").
+
+      .PARAMETER MeasuredCyclePeriodSeconds
+      Round-10 finding 1 (HIGH): the actual observed time between the
+      driver's heavy cycles (same number Test-InActivePlannedRestartWindow
+      already takes) -- used to compute the "immediately preceding sample"
+      adjacency gap as max(60s, 2x the per-sample interval), replacing a
+      previously HARDCODED 30s that a real ~20-25s sample spacing could
+      exceed on a slightly slower cycle (measured: a genuinely planned
+      restart at +31s misclassified unplanned). Each heavy cycle
+      interleaves 3 samples per channel (see this file's header), so the
+      per-sample interval is estimated as $MeasuredCyclePeriodSeconds / 3.
+      Default 60 (matching Test-InActivePlannedRestartWindow's own default)
+      so a caller with no measurement yet still gets a sane, generous
+      answer -- max(60, 2*(60/3)) = 60.
     #>
-    param($Context, [string]$ChannelId, [datetime]$NowUtc, $State, [Nullable[int]]$NewPid, $UpdatedAt, $Engine, $LastError)
+    param($Context, [string]$ChannelId, [datetime]$NowUtc, $State, [Nullable[int]]$NewPid, $UpdatedAt, $Engine, $LastError, [double]$MeasuredCyclePeriodSeconds = 60)
 
     # Round-9 finding N1 (BLOCKER): a SECOND pid change arriving while a
     # PREVIOUS one for the same channel is still pending (unresolved) used
@@ -214,6 +359,7 @@ function Register-ChannelSample {
             old_pid = $superseded.old_pid; new_pid = $superseded.new_pid
             classification = $superseded.classification
             recovered = $false; recovery_gap_seconds = $null; superseded = $true
+            log_evidence = $(if ($superseded.log_evidence) { $superseded.log_evidence } else { 'missing' })
         })
         $Context.PendingRestarts.Remove($ChannelId)
     }
@@ -229,6 +375,7 @@ function Register-ChannelSample {
                 old_pid = $pending.old_pid; new_pid = $pending.new_pid
                 classification = $pending.classification
                 recovered = $true; recovery_gap_seconds = [math]::Round($gap, 1); superseded = $false
+                log_evidence = $(if ($pending.log_evidence) { $pending.log_evidence } else { 'missing' })
             })
             $Context.PendingRestarts.Remove($ChannelId)
         } elseif ((($NowUtc) - $pending.detected_utc).TotalSeconds -gt $Context.RestartTrackingMaxSeconds) {
@@ -237,15 +384,33 @@ function Register-ChannelSample {
                 old_pid = $pending.old_pid; new_pid = $pending.new_pid
                 classification = $pending.classification
                 recovered = $false; recovery_gap_seconds = $null; superseded = $false
+                log_evidence = $(if ($pending.log_evidence) { $pending.log_evidence } else { 'missing' })
             })
             $Context.PendingRestarts.Remove($ChannelId)
         }
     }
 
     if ($pidChangedThisSample) {
-        $isPlanned = Test-PlannedRestartSignal -Context $Context -ChannelId $ChannelId -BeforeUtc $NowUtc -MaxGapSeconds 30
+        # Round-10 finding 5: the daemon's own log lines are the PRIMARY
+        # signal -- try them first. Only fall back to the sample-ring
+        # signal (Test-PlannedRestartSignal) when the log ring has no
+        # evidence at all for this channel (log unreadable, or no
+        # TRANSITIONING line landed in the retained window) -- see this
+        # file's header for why the log wins when both are available (it
+        # sees transitions polling can miss entirely inside one gap).
+        $logVerdict = Test-PlannedRestartFromLog -Context $Context -ChannelId $ChannelId
+        if ($null -ne $logVerdict) {
+            $isPlanned = $logVerdict
+            $logEvidence = 'log'
+        } else {
+            # Round-10 finding 1: max(60s, 2x the measured per-sample
+            # interval) -- see this function's .PARAMETER doc above.
+            $effectiveMaxGapSeconds = [Math]::Max(60, 2 * ($MeasuredCyclePeriodSeconds / 3))
+            $isPlanned = Test-PlannedRestartSignal -Context $Context -ChannelId $ChannelId -BeforeUtc $NowUtc -MaxGapSeconds $effectiveMaxGapSeconds
+            $logEvidence = 'missing'
+        }
         $classification = $(if ($isPlanned) { 'planned_restart' } else { 'unplanned_relaunch' })
-        $Context.PendingRestarts[$ChannelId] = [ordered]@{ detected_utc = $NowUtc; old_pid = $prevPidBeforeThisSample; new_pid = $NewPid; classification = $classification }
+        $Context.PendingRestarts[$ChannelId] = [ordered]@{ detected_utc = $NowUtc; old_pid = $prevPidBeforeThisSample; new_pid = $NewPid; classification = $classification; log_evidence = $logEvidence }
     }
     if ($null -ne $NewPid) { $Context.LastPidForChannel[$ChannelId] = $NewPid }
 }
@@ -305,6 +470,16 @@ function Get-FlushedRestartEvents {
       the plain `@(...)` return AND always call this function through an
       `@()` wrapper -- never through a bare assignment, which is the one
       calling shape this plain form does not handle safely for N=1.
+
+      Round-10 finding 11 (LOW, defense-in-depth): the return value is now
+      explicitly typed `[object[]]` before returning -- this does NOT by
+      itself change PowerShell's enumeration-on-return behavior (a `return`
+      of an [object[]]-typed variable still enumerates onto the pipeline
+      exactly like `return @(...)` does; the calling convention above is
+      still the thing that actually matters and is UNCHANGED and still
+      REQUIRED), but makes the function's declared output shape explicit
+      for a future reader/reviewer rather than implicit in the `@(...)`
+      call alone.
     #>
     param($Context)
     foreach ($channelId in @($Context.PendingRestarts.Keys)) {
@@ -314,8 +489,10 @@ function Get-FlushedRestartEvents {
             old_pid = $pending.old_pid; new_pid = $pending.new_pid
             classification = $pending.classification
             recovered = $false; recovery_gap_seconds = $null; superseded = $false
+            log_evidence = $(if ($pending.log_evidence) { $pending.log_evidence } else { 'missing' })
         })
         $Context.PendingRestarts.Remove($channelId)
     }
-    return @($Context.RestartEvents)
+    [object[]]$out = @($Context.RestartEvents)
+    return $out
 }

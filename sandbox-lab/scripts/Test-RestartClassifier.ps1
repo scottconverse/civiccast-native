@@ -207,6 +207,137 @@ foreach ($n in 0, 1, 2, 3) {
     Assert-Equal "scenario13 (N=$n pending restarts, exact @() driver caller shape) -> Count=$n" $n $flushedN.Count
 }
 
+# -------------------------------------------------------------- scenario 14
+# Round-10 finding 6 (MEDIUM): the wrap-in-a-hashtable JSON round trip fix
+# for In-Sandbox-Soak.ps1's restart-events.json, N=0/1/2. PS 5.1's
+# `$Obj | ConvertTo-Json` collapses a top-level array to a bare object for
+# N=1 and an empty file for N=0 -- wrapping `@{ events = @(...) }` makes
+# the top-level pipeline object always be exactly ONE object regardless of
+# how many events are inside, so `.events` always round-trips as an array.
+foreach ($n in 0, 1, 2) {
+    $eventsN = @()
+    for ($i = 0; $i -lt $n; $i++) { $eventsN += [ordered]@{ channel_id = "chan$i"; classification = 'planned_restart' } }
+    $json = ([ordered]@{ events = @($eventsN) } | ConvertTo-Json -Depth 6)
+    $roundTripped = $json | ConvertFrom-Json
+    $readBack = @($roundTripped.events)
+    Assert-Equal "scenario14 (restart-events.json wrap round-trip, N=$n)" $n $readBack.Count
+}
+
+# -------------------------------------------------------------- scenario 15
+# Round-10 finding 1 (HIGH, part 1): -MaxGapSeconds is no longer a
+# hardcoded 30 -- Register-ChannelSample now computes
+# max(60s, 2x measured-per-sample-interval). A genuinely planned restart
+# at a 31s TRANSITIONING-to-pid-change gap (the exact measured failure:
+# "TRANSITIONING -> pid change at +31s => unplanned" under the OLD
+# hardcoded 30s) must now classify planned under the default (no
+# -MeasuredCyclePeriodSeconds passed -> effective gap = max(60,2*(60/3))=60).
+$ctx15a = New-RestartClassifierContext
+Register-ChannelSample -Context $ctx15a -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
+Register-ChannelSample -Context $ctx15a -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(20) -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
+Register-ChannelSample -Context $ctx15a -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(51) -State 'STARTING' -NewPid 1002 -UpdatedAt $null -Engine $null
+Assert-Equal 'scenario15a (31s TRANSITIONING-to-pid-change gap, default 60s floor) -> planned_restart' 'planned_restart' $ctx15a.PendingRestarts['public'].classification
+
+# A slower measured cycle widens the gap further: period=200s -> per-sample
+# ~66.7s -> effective gap = max(60, 133.3) = 133.3s. A 120s gap is inside
+# it (planned); a 140s gap on the SAME measured period is outside it
+# (unplanned) -- proves the computation actually scales with the
+# measurement, not just the 60s floor.
+$ctx15b = New-RestartClassifierContext
+Register-ChannelSample -Context $ctx15b -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
+Register-ChannelSample -Context $ctx15b -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(20) -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
+Register-ChannelSample -Context $ctx15b -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(140) -State 'STARTING' -NewPid 1002 -UpdatedAt $null -Engine $null -MeasuredCyclePeriodSeconds 200
+Assert-Equal 'scenario15b (120s gap, 200s-period cycle -> within 133.3s effective gap) -> planned_restart' 'planned_restart' $ctx15b.PendingRestarts['public'].classification
+
+$ctx15c = New-RestartClassifierContext
+Register-ChannelSample -Context $ctx15c -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
+Register-ChannelSample -Context $ctx15c -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(20) -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
+Register-ChannelSample -Context $ctx15c -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(160) -State 'STARTING' -NewPid 1002 -UpdatedAt $null -Engine $null -MeasuredCyclePeriodSeconds 200
+Assert-Equal 'scenario15c (140s gap, 200s-period cycle -> exceeds 133.3s effective gap) -> unplanned_relaunch' 'unplanned_relaunch' $ctx15c.PendingRestarts['public'].classification
+
+# -------------------------------------------------------------- scenario 16
+# Round-10 finding 1 (HIGH, part 2): a dropped/failed state read (state=$null,
+# last_error starting with "state read failed" -- In-Sandbox-Soak.ps1's own
+# contract) must NOT break the "immediately preceding sample" chain. A
+# TRANSITIONING sample, then a failed-read sample, then the pid change --
+# lastPrior must skip the failed read and find TRANSITIONING underneath it.
+$ctx16 = New-RestartClassifierContext
+Register-ChannelSample -Context $ctx16 -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
+Register-ChannelSample -Context $ctx16 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(20) -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
+Register-ChannelSample -Context $ctx16 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(30) -State $null -NewPid $null -UpdatedAt $null -Engine $null -LastError 'state read failed: status=0 error=timeout'
+Register-ChannelSample -Context $ctx16 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(35) -State 'ON_AIR' -NewPid 1002 -UpdatedAt $null -Engine 'gstreamer'
+Assert-Equal 'scenario16 (dropped read between TRANSITIONING and pid change is ignored) -> planned_restart' 'planned_restart' $ctx16.PendingRestarts['public'].classification
+
+# -------------------------------------------------------------- scenario 17
+# Round-10 finding 5: Test-PlannedRestartFromLog, the PURE log-line
+# classifier, fed synthetic lines shaped exactly like
+# civiccast/egress/daemon.py:901-902's format string
+# ("channel %s: egress state -> %s (source=%s, pid=%s, last_error=%s)") --
+# only the parsed (state, last_error) fields matter here, matching what
+# Add-LogRingSample stores.
+$ctx17a = New-RestartClassifierContext
+Add-LogRingSample -Context $ctx17a -ChannelId 'public' -State 'ON_AIR' -LastError '-'
+Add-LogRingSample -Context $ctx17a -ChannelId 'public' -State 'TRANSITIONING' -LastError '-'
+Add-LogRingSample -Context $ctx17a -ChannelId 'public' -State 'STARTING' -LastError '-'
+Assert-Equal 'scenario17a (clean TRANSITIONING -> STARTING, last_error=-) -> planned ($true)' 'True' "$(Test-PlannedRestartFromLog -Context $ctx17a -ChannelId 'public')"
+
+$ctx17b = New-RestartClassifierContext
+Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'ON_AIR' -LastError '-'
+Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'TRANSITIONING' -LastError '-'
+# daemon.py:1022's exact _child_exit_error text shape.
+Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'STARTING' -LastError 'GStreamer child exited non-zero; relaunching encoder.'
+Assert-Equal 'scenario17b (STARTING line carries child-exited-non-zero last_error) -> crash ($false)' 'False' "$(Test-PlannedRestartFromLog -Context $ctx17b -ChannelId 'public')"
+
+$ctx17c = New-RestartClassifierContext
+Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'ON_AIR' -LastError '-'
+Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'ON_AIR' -LastError '-'
+Assert-Equal 'scenario17c (no TRANSITIONING line anywhere) -> inconclusive ($null)' '' "$(Test-PlannedRestartFromLog -Context $ctx17c -ChannelId 'public')"
+
+$ctx17d = New-RestartClassifierContext
+Add-LogRingSample -Context $ctx17d -ChannelId 'public' -State 'TRANSITIONING' -LastError '-'
+Add-LogRingSample -Context $ctx17d -ChannelId 'public' -State 'ERROR' -LastError 'some daemon error text'
+Assert-Equal 'scenario17d (ERROR line after TRANSITIONING, before classification point) -> crash ($false)' 'False' "$(Test-PlannedRestartFromLog -Context $ctx17d -ChannelId 'public')"
+
+Assert-Equal 'scenario17e (no log ring at all for this channel) -> inconclusive ($null)' '' "$(Test-PlannedRestartFromLog -Context (New-RestartClassifierContext) -ChannelId 'public')"
+
+# -------------------------------------------------------------- scenario 18
+# Round-10 finding 5 end to end via Register-ChannelSample: the daemon LOG
+# is the PRIMARY signal and overrides what the sample ring alone would
+# conclude. 18a: sample ring shows a clean TRANSITIONING immediately
+# before the pid change (sample-only would say planned) but the log shows
+# the crash text -- log wins, unplanned, log_evidence='log'. 18b: the
+# reverse -- sample ring has NO TRANSITIONING at all (sample-only would
+# say unplanned) but the log shows the clean planned path -- log wins,
+# planned, log_evidence='log'.
+$ctx18a = New-RestartClassifierContext
+Register-ChannelSample -Context $ctx18a -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
+Register-ChannelSample -Context $ctx18a -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(20) -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
+Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'TRANSITIONING' -LastError '-'
+Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'STARTING' -LastError 'GStreamer child exited non-zero; relaunching encoder.'
+Register-ChannelSample -Context $ctx18a -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(35) -State 'STARTING' -NewPid 1002 -UpdatedAt $null -Engine $null
+Assert-Equal 'scenario18a (log shows crash despite clean sample ring) -> unplanned_relaunch' 'unplanned_relaunch' $ctx18a.PendingRestarts['public'].classification
+Assert-Equal 'scenario18a log_evidence=log' 'log' $ctx18a.PendingRestarts['public'].log_evidence
+
+$ctx18b = New-RestartClassifierContext
+Register-ChannelSample -Context $ctx18b -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
+Add-LogRingSample -Context $ctx18b -ChannelId 'public' -State 'TRANSITIONING' -LastError '-'
+Add-LogRingSample -Context $ctx18b -ChannelId 'public' -State 'STARTING' -LastError '-'
+Register-ChannelSample -Context $ctx18b -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(15) -State 'STARTING' -NewPid 1002 -UpdatedAt $null -Engine $null
+Assert-Equal 'scenario18b (log shows clean planned path despite no TRANSITIONING in sample ring) -> planned_restart' 'planned_restart' $ctx18b.PendingRestarts['public'].classification
+Assert-Equal 'scenario18b log_evidence=log' 'log' $ctx18b.PendingRestarts['public'].log_evidence
+
+# -------------------------------------------------------------- scenario 19
+# Round-10 finding 5 fallback: when the log ring has NO evidence for this
+# channel (log unreadable/missing, or nothing parsed), Register-
+# ChannelSample must fall back to the sample-ring signal and mark
+# log_evidence='missing' -- this is scenario 4's exact shape, re-asserted
+# for the log_evidence field.
+$ctx19 = New-RestartClassifierContext
+Register-ChannelSample -Context $ctx19 -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
+Register-ChannelSample -Context $ctx19 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(20) -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
+Register-ChannelSample -Context $ctx19 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(40) -State 'TRANSITIONING' -NewPid 1002 -UpdatedAt $null -Engine $null
+Assert-Equal 'scenario19 (no log ring evidence) -> falls back to sample signal, planned_restart' 'planned_restart' $ctx19.PendingRestarts['public'].classification
+Assert-Equal 'scenario19 log_evidence=missing' 'missing' $ctx19.PendingRestarts['public'].log_evidence
+
 Write-Host ""
 Write-Host "RestartClassifier unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })
 if ($script:failures -gt 0) { exit 1 }
