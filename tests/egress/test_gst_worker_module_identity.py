@@ -190,6 +190,10 @@ def test_worker_imports_no_civiccast_package_module(worker_probe: dict[str, Any]
         # engine's package-form import would drag in the real civiccast.egress package.
         "civiccast.egress.gst.decode_policy",
         "civiccast.egress.gst.engine",
+        # Item 82: gi-free exit-code contract shared with the daemon. Not
+        # imported by engine.py itself (no identity-split risk), but published
+        # the same way as every other sibling for consistency.
+        "civiccast.egress.gst.exit_codes",
         "civiccast.egress.gst.graph",
         # B3 fix: engine.py also imports the gi-free reload-switch-mode decoder
         # from this sibling at module scope, same reasoning as decode_policy.

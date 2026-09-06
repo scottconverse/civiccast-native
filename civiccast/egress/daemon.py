@@ -42,6 +42,7 @@ from civiccast.egress.errors import (
     SecretUnresolvedError,
     SourcePrepareError,
 )
+from civiccast.egress.gst.exit_codes import GST_PREROLL_TIMEOUT_EXIT_CODE
 from civiccast.egress.gst.reload_policy import should_defer_switch
 from civiccast.egress.health import (
     EgressEncoderMetrics,
@@ -171,6 +172,14 @@ _LIVE_SOURCE_FAILURE_FALLBACK_STREAK = _RESTART_ESCALATION_STREAK
 # Bound on the child-stderr tail folded into ``last_error`` -- the state row is an
 # operator-facing string, not a log sink.
 _STDERR_TAIL_MAX_CHARS = 600
+
+# Item 82: a GST_PREROLL_TIMEOUT_EXIT_CODE exit (a slow-but-progressing preroll
+# under CPU load) still relaunches through _relaunch_after_crash's normal
+# back-off path, but must not advance _restart_streak (the crash-loop counter
+# that eventually forces fallback slate, _LIVE_SOURCE_FAILURE_FALLBACK_STREAK
+# above) more than once per this window -- see _relaunch_after_crash's own
+# docstring for why an uncapped counter would misfire on a healthy source.
+_PREROLL_TIMEOUT_STREAK_COOLDOWN_S = 60.0
 
 # F1 redesign (coordinator hostile review, 2026-09-06): absolute backstop for a
 # pending reload settlement that never arrives at all (e.g. the worker crashed
@@ -364,6 +373,12 @@ class EgressDaemon:
             default_cooldown_seconds=restart_cooldown_seconds, clock=self._monotonic
         )
         self._restart_streak: dict[str, int] = {}
+        # Item 82: last _monotonic() the crash-loop streak was actually
+        # incremented FOR a preroll-timeout exit -- rate-limits how often that
+        # specific exit reason can advance the streak (see
+        # _relaunch_after_crash). Ordinary crashes are unaffected and always
+        # increment the streak on every exit.
+        self._preroll_timeout_streak_incr_at: dict[str, float] = {}
         self._backoff_relaunch: dict[str, tuple[str, str | None]] = {}
         self._draining_channels: set[str] = set()
         self._pending_reloads: dict[str, tuple[str | None, str | None]] = {}
@@ -1430,7 +1445,7 @@ class EgressDaemon:
         self._pending_reloads.pop(channel_id, None)
         state = self._store.read_state(channel_id)
         if state is not None and state.state in {"ON_AIR", "FALLBACK_SLATE", "TRANSITIONING"}:
-            self._relaunch_after_crash(channel_id, state, uptime)
+            self._relaunch_after_crash(channel_id, state, uptime, returncode)
             return
         self._reset_restart_tracking(channel_id)
         self._clear_cg_overlay_proof(channel_id, "ERROR")
@@ -1445,12 +1460,29 @@ class EgressDaemon:
         self._append_health(channel_id, "ERROR", sink_connected={}, dropped_frames=0)
 
     def _relaunch_after_crash(
-        self, channel_id: str, state: EgressStateRow, uptime: float | None
+        self,
+        channel_id: str,
+        state: EgressStateRow,
+        uptime: float | None,
+        returncode: int | None = None,
     ) -> None:
         """Crash-relaunch with back-off (S9-5). The first crash relaunches at once;
         a crash recurring within the cooldown is paced (a deferred relaunch the
         ``process_once`` tick services once the latch permits) so a worker that keeps
-        dying at startup can't hot-loop. A worker that ran healthily resets the streak."""
+        dying at startup can't hot-loop. A worker that ran healthily resets the streak.
+
+        Item 82: a GStreamer worker that exits with
+        ``civiccast.egress.gst.exit_codes.GST_PREROLL_TIMEOUT_EXIT_CODE`` (a slow,
+        CPU-load-bound preroll, not a crash) still relaunches through the exact
+        same path below -- the existing back-off/cooldown pacing applies
+        unchanged -- but does NOT advance the crash-loop streak more than once
+        per ``_PREROLL_TIMEOUT_STREAK_COOLDOWN_S`` (60s). Left uncapped, a train
+        of successive slow starts (each individually a legitimate retry) would
+        trip ``_LIVE_SOURCE_FAILURE_FALLBACK_STREAK`` and force the channel onto
+        fallback slate for a source that was never actually unreachable -- the
+        exact failure this rate limit exists to prevent, without weakening the
+        streak's real job of catching a genuinely dead/unreachable source
+        (an ordinary non-zero exit still increments on every single crash)."""
         streak = self._restart_streak.get(channel_id, 0)
         if uptime is not None and uptime >= _RESTART_STREAK_RESET_UPTIME_S:
             # Belt-and-suspenders with the healthy-poll reset in _poll_process: that
@@ -1459,8 +1491,22 @@ class EgressDaemon:
             # between polls (so the poll-reset never saw it). Either way a fresh
             # failure after a healthy run is streak 1 → immediate relaunch.
             streak = 0
-        streak += 1
-        self._restart_streak[channel_id] = streak
+        if returncode == GST_PREROLL_TIMEOUT_EXIT_CODE:
+            last_incr_at = self._preroll_timeout_streak_incr_at.get(channel_id)
+            if (
+                last_incr_at is not None
+                and self._monotonic() - last_incr_at < _PREROLL_TIMEOUT_STREAK_COOLDOWN_S
+            ):
+                # Rate-limited: still persist any healthy-uptime reset above,
+                # but don't advance the streak again inside this cooldown window.
+                self._restart_streak[channel_id] = streak
+            else:
+                streak += 1
+                self._restart_streak[channel_id] = streak
+                self._preroll_timeout_streak_incr_at[channel_id] = self._monotonic()
+        else:
+            streak += 1
+            self._restart_streak[channel_id] = streak
         failure_event = self._append_encoder_child_failure_event(channel_id, state)
         proof_event_id = failure_event.event_id
         if streak >= _RESTART_ESCALATION_STREAK and streak % _RESTART_ESCALATION_STREAK == 0:
@@ -1586,6 +1632,7 @@ class EgressDaemon:
         """Clear crash-relaunch back-off state — the channel reached a good state
         (clean stop, error terminal, or a healthy run)."""
         self._restart_streak.pop(channel_id, None)
+        self._preroll_timeout_streak_incr_at.pop(channel_id, None)
         self._backoff_relaunch.pop(channel_id, None)
         self._restart_latch.force_reset(channel_id)
 

@@ -372,6 +372,29 @@ below.
   changed files (`source_plan.py`, `automation.py`, `bridge.py`) are D2
   blob-drift-bound in `docs/claims/claims.yaml`; `models.py` is not bound
   either.
+- **A fresh GStreamer worker under CPU load could die with `pipeline did not
+  reach PLAYING within 5.0s`, which the daemon treated as an ordinary crash
+  and relaunched into a storm** (item 82, sandbox run 13 evidence). The old
+  bound reused `teardown_timeout_s` (5.0s), a constant never meant to double
+  as a preroll bound. `engine.py`'s `_await_playing` now waits up to a
+  dedicated, configurable `preroll_timeout_s` (30s default,
+  `CIVICCAST_GST_PREROLL_TIMEOUT_S` env override, clamped >= 5s), polling in
+  5s slices and logging the pipeline's `get_state`/pending state on every
+  slice instead of blocking silently for the whole bound. Once the bound is
+  actually exceeded it raises the distinct `PrerollTimeoutError` (a
+  `RuntimeError` subclass) rather than a bare `RuntimeError`; `worker.py`
+  catches that and exits with a new, distinct
+  `civiccast.egress.gst.exit_codes.GST_PREROLL_TIMEOUT_EXIT_CODE` instead of
+  the generic crash code. `EgressDaemon._relaunch_after_crash` still
+  relaunches that exit through the exact same back-off path as any other
+  crash, but no longer counts it toward the crash-loop streak that eventually
+  forces fallback slate (`_LIVE_SOURCE_FAILURE_FALLBACK_STREAK`) more than
+  once per 60s -- a train of legitimate slow starts under load can no longer
+  force a healthy source onto fallback slate. New tests:
+  `tests/egress/test_gst_engine_preroll_timeout.py` (the engine's bounded
+  wait, env-var resolution/clamp, and the distinct exception) and
+  `tests/egress/test_daemon_preroll_timeout_relaunch.py` (the daemon's
+  rate-limited streak, per-channel isolation, and reset behavior).
 
 ### Changed
 

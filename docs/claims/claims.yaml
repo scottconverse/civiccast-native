@@ -643,11 +643,31 @@ entries:
       # source-leg names stay unique across an initial build and three
       # simulated reloads). Blob IDs re-hashed with
       # `git hash-object --path <file> <file>` per D2.
+      #
+      # engine.py and worker.py drifted a SIXTH time (item 82, sandbox run 13
+      # evidence, 2026-09-06): a fresh worker under CPU load hit
+      # ``pipeline did not reach PLAYING within 5.0s`` -- the old bound reused
+      # ``teardown_timeout_s`` (5.0s), never meant to double as a preroll
+      # bound -- and the daemon relaunched it as an ordinary crash. Fixed:
+      # ``_await_playing`` now waits up to a dedicated, configurable
+      # ``preroll_timeout_s`` (30s default, ``CIVICCAST_GST_PREROLL_TIMEOUT_S``
+      # env override, clamped >= 5s), polling and logging pipeline state every
+      # 5s instead of blocking silently, and raises the distinct
+      # ``PrerollTimeoutError`` once the bound is exceeded. ``worker.py``
+      # catches that and exits with the distinct
+      # ``civiccast.egress.gst.exit_codes.GST_PREROLL_TIMEOUT_EXIT_CODE`` (a
+      # new, gi-free sibling module, NOT itself bound here -- the daemon's own
+      # ``civiccast/egress/daemon.py`` reads it and is not a code input of
+      # this native-Windows-line spike claim). Neither graph.py, control.py,
+      # decode_policy.py, nor audio_tap.py changed. Current-source proof:
+      # tests/egress/test_gst_engine_preroll_timeout.py (engine side) and
+      # tests/egress/test_daemon_preroll_timeout_relaunch.py (daemon relaunch
+      # path). Blob IDs re-hashed with `git hash-object --path <file> <file>`.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 30a9b5231b0d06f82622015264da9727a30da52d
+          blob: 32f222de0da01f7d3fc1be08e4b6ffc643d6824b
         - path: civiccast/egress/gst/engine.py
-          blob: f062bb505e75fab8e94d357b19b5ca75c6e63a7b
+          blob: 386c072ef963a090fbb0a1e9d37873a941af42f3
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -983,11 +1003,31 @@ entries:
       # source-leg names stay unique across an initial build and three
       # simulated reloads). Blob IDs re-hashed with
       # `git hash-object --path <file> <file>` per D2.
+      #
+      # engine.py and worker.py drifted a SIXTH time (item 82, sandbox run 13
+      # evidence, 2026-09-06): a fresh worker under CPU load hit
+      # ``pipeline did not reach PLAYING within 5.0s`` -- the old bound reused
+      # ``teardown_timeout_s`` (5.0s), never meant to double as a preroll
+      # bound -- and the daemon relaunched it as an ordinary crash. Fixed:
+      # ``_await_playing`` now waits up to a dedicated, configurable
+      # ``preroll_timeout_s`` (30s default, ``CIVICCAST_GST_PREROLL_TIMEOUT_S``
+      # env override, clamped >= 5s), polling and logging pipeline state every
+      # 5s instead of blocking silently, and raises the distinct
+      # ``PrerollTimeoutError`` once the bound is exceeded. ``worker.py``
+      # catches that and exits with the distinct
+      # ``civiccast.egress.gst.exit_codes.GST_PREROLL_TIMEOUT_EXIT_CODE`` (a
+      # new, gi-free sibling module, NOT itself bound here -- the daemon's own
+      # ``civiccast/egress/daemon.py`` reads it and is not a code input of
+      # this native-Windows-line spike claim). Neither graph.py, control.py,
+      # decode_policy.py, nor audio_tap.py changed. Current-source proof:
+      # tests/egress/test_gst_engine_preroll_timeout.py (engine side) and
+      # tests/egress/test_daemon_preroll_timeout_relaunch.py (daemon relaunch
+      # path). Blob IDs re-hashed with `git hash-object --path <file> <file>`.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 30a9b5231b0d06f82622015264da9727a30da52d
+          blob: 32f222de0da01f7d3fc1be08e4b6ffc643d6824b
         - path: civiccast/egress/gst/engine.py
-          blob: f062bb505e75fab8e94d357b19b5ca75c6e63a7b
+          blob: 386c072ef963a090fbb0a1e9d37873a941af42f3
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py

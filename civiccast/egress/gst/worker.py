@@ -109,6 +109,10 @@ _sibling_module("decode_policy")
 # B3 fix: engine.py also imports the gi-free reload-switch-mode decoder from this
 # sibling at module scope -- same reasoning as decode_policy above.
 reload_policy_mod = _sibling_module("reload_policy")
+# Item 82: gi-free exit-code contract with the daemon (civiccast.egress.daemon
+# reads this same module -- see exit_codes.py's own docstring for why it must
+# stay side-effect-free rather than living in engine.py).
+exit_codes_mod = _sibling_module("exit_codes")
 enginemod = _sibling_module("engine")
 
 # -- D2 Windows worker-pipe seam (spec-supervisor D2, design.md sec4) --------------
@@ -512,12 +516,27 @@ def main() -> int:
         playout, reload_timeout_s=reload_timeout, stall_timeout_s=stall_timeout
     )
     swaps = int(os.environ.get("SWAPS", "0"))
-    if swaps > 0:
-        result = engine_instance.run(swaps=swaps, interval_s=int(os.environ.get("INTERVAL", "2")))
-    elif os.name == "nt" and control_fifo:
-        result = _run_forever_windows_pipe(engine_instance, control_fifo)
-    else:
-        result = engine_instance.run_forever(control_fifo=control_fifo)
+    try:
+        if swaps > 0:
+            result = engine_instance.run(
+                swaps=swaps, interval_s=int(os.environ.get("INTERVAL", "2"))
+            )
+        elif os.name == "nt" and control_fifo:
+            result = _run_forever_windows_pipe(engine_instance, control_fifo)
+        else:
+            result = engine_instance.run_forever(control_fifo=control_fifo)
+    except enginemod.PrerollTimeoutError as exc:
+        # Item 82: a slow-but-progressing preroll under CPU load is a slow
+        # start, not a crash. Exit with a DISTINCT code (never 1, the generic
+        # crash code every other engine failure below still uses) so the
+        # daemon's relaunch path (civiccast.egress.daemon._relaunch_after_crash
+        # / _begin_relaunch) can retry with the existing backoff WITHOUT
+        # counting this toward the crash-loop force-fallback-slate streak the
+        # same way an ordinary crash does. A distinct stderr message too, so an
+        # operator reading the worker's own log (folded into the daemon's
+        # last_error) sees "slow preroll", not a generic crash.
+        print(f"CTRL preroll: worker exiting -- {exc}", file=sys.stderr, flush=True)
+        return int(exit_codes_mod.GST_PREROLL_TIMEOUT_EXIT_CODE)
     print(f"WORKER_RESULT {result}", flush=True)
     return 0 if result.get("error") is None else 1
 

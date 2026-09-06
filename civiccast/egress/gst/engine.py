@@ -126,6 +126,52 @@ except ImportError:
     )
 
 
+class PrerollTimeoutError(RuntimeError):
+    """The pipeline did not reach PLAYING within the configured preroll bound.
+
+    Distinct from a bare ``RuntimeError`` (item 82, sandbox run 13 evidence) so
+    ``worker.py`` can exit with ``GST_PREROLL_TIMEOUT_EXIT_CODE`` — a distinct
+    code the daemon's relaunch path (``EgressDaemon._relaunch_after_crash`` /
+    ``_begin_relaunch``) reads to treat a slow-but-progressing preroll under
+    CPU load as a slow start, not a crash, instead of counting every such exit
+    toward the crash-loop force-fallback-slate streak like an ordinary crash.
+    """
+
+
+# Item 82: how long ``_await_playing`` waits for the PLAYING transition before
+# giving up. 30s default — generous enough to ride out ordinary CPU-load
+# preroll jitter (the measured failure was a 5.0s bound tripping under load),
+# never so long that a genuinely wedged pipeline hangs the worker
+# indefinitely (the time-bounded-teardown audit finding M1 this method
+# already exists for). Configurable per-instance and via env var for ops
+# tuning without a code change; always clamped to >= 5s.
+_DEFAULT_PREROLL_TIMEOUT_S = 30.0
+_MIN_PREROLL_TIMEOUT_S = 5.0
+_PREROLL_TIMEOUT_ENV_VAR = "CIVICCAST_GST_PREROLL_TIMEOUT_S"
+# How often _await_playing logs the pipeline's still-waiting state while a
+# preroll is in flight, so a SLOW preroll is visible on stderr (and in the
+# daemon's stderr-tail last_error) well before it either finishes or times
+# out — before this fix a preroll wedged anywhere under the bound was
+# completely silent until it either succeeded or the worker died.
+_PREROLL_POLL_INTERVAL_S = 5.0
+
+
+def _resolve_preroll_timeout_s(explicit: float | None) -> float:
+    """Resolve the PLAYING-preroll bound: an explicit constructor value wins,
+    else the ``CIVICCAST_GST_PREROLL_TIMEOUT_S`` env var, else the 30s
+    default — always clamped to >= 5s (a tighter bound would false-positive
+    on ordinary CPU-load preroll jitter, the exact item 82 failure mode)."""
+    if explicit is not None:
+        return max(explicit, _MIN_PREROLL_TIMEOUT_S)
+    raw = os.environ.get(_PREROLL_TIMEOUT_ENV_VAR)
+    if raw:
+        try:
+            return max(float(raw), _MIN_PREROLL_TIMEOUT_S)
+        except ValueError:
+            pass
+    return _DEFAULT_PREROLL_TIMEOUT_S
+
+
 class SwapController:
     """Pluggable hot-swap mechanism. Lets GstInterpipe drop in later (S15 §9)."""
 
@@ -180,6 +226,7 @@ class GstPlayoutEngine:
         reload_timeout_s: float = 10.0,
         stall_timeout_s: float = 10.0,
         defer_switch_timeout_s: float = 900.0,
+        preroll_timeout_s: float | None = None,
     ) -> None:
         prefer_cpu_decoders_by_default()
         Gst.init([])
@@ -209,6 +256,10 @@ class GstPlayoutEngine:
         # on-air, the pipeline has silently stalled — quit so the daemon restarts the
         # worker to a known state (a live source that freezes without posting an error).
         self.stall_timeout_s = stall_timeout_s
+        # Item 82: bounded PLAYING-preroll wait (see ``_await_playing`` / the
+        # module-level ``_resolve_preroll_timeout_s`` for the constructor-arg /
+        # env-var / default resolution and clamp).
+        self.preroll_timeout_s = _resolve_preroll_timeout_s(preroll_timeout_s)
         self.pipeline = Gst.Pipeline.new("civiccast-playout")
         self.mux: Gst.Element | None = None
         self.selector: Gst.Element | None = None
@@ -1134,14 +1185,56 @@ class GstPlayoutEngine:
 
     def _await_playing(self) -> None:
         """Bounded wait for the PLAYING transition so a wedged preroll can't hang the
-        run loop before the time-bounded teardown could ever run (audit M1)."""
-        result, _current, _pending = self.pipeline.get_state(
-            int(self.teardown_timeout_s * Gst.SECOND)
-        )
-        if result not in (Gst.StateChangeReturn.SUCCESS, Gst.StateChangeReturn.NO_PREROLL):
-            raise RuntimeError(
-                f"pipeline did not reach PLAYING within {self.teardown_timeout_s}s "
-                f"(get_state={result.value_nick})"
+        run loop before the time-bounded teardown could ever run (audit M1).
+
+        Item 82 (sandbox run 13 evidence): a fresh worker under CPU load took
+        longer than the old hard-coded 5.0s bound (``teardown_timeout_s``, which
+        was never meant to double as a preroll bound) to reach PLAYING, and the
+        daemon treated the resulting crash as an ordinary one — a relaunch storm
+        against a source that was never actually broken. This now:
+
+        * waits up to ``self.preroll_timeout_s`` (30s default, configurable —
+          see ``_resolve_preroll_timeout_s``), polling in
+          ``_PREROLL_POLL_INTERVAL_S``-second slices rather than blocking on one
+          ``get_state`` call for the whole bound, so a slow-but-progressing
+          preroll is VISIBLE on stderr instead of silent until it either
+          finishes or the bound is hit;
+        * raises the distinct ``PrerollTimeoutError`` (not a bare
+          ``RuntimeError``) only once the bound is actually exceeded, so
+          ``worker.py`` can exit with a distinct code and the daemon's relaunch
+          path can tell a slow start apart from a genuine crash.
+        """
+        deadline = time.monotonic() + self.preroll_timeout_s
+        result = Gst.StateChangeReturn.ASYNC
+        pending = Gst.State.VOID_PENDING
+        while True:
+            remaining = deadline - time.monotonic()
+            slice_s = (
+                remaining if remaining < _PREROLL_POLL_INTERVAL_S else _PREROLL_POLL_INTERVAL_S
+            )
+            result, _current, pending = self.pipeline.get_state(int(max(slice_s, 0.0) * Gst.SECOND))
+            if result in (Gst.StateChangeReturn.SUCCESS, Gst.StateChangeReturn.NO_PREROLL):
+                return
+            if result == Gst.StateChangeReturn.FAILURE:
+                # Not a slow preroll -- the pipeline itself failed. Distinct from
+                # the timeout case: this is a real construction/link problem, not
+                # something a slow-start retry would ever recover from.
+                raise RuntimeError(
+                    f"pipeline failed while waiting for PLAYING (get_state={result.value_nick})"
+                )
+            now = time.monotonic()
+            if now >= deadline:
+                raise PrerollTimeoutError(
+                    f"pipeline did not reach PLAYING within {self.preroll_timeout_s}s "
+                    f"(get_state={result.value_nick})"
+                )
+            print(
+                f"CTRL preroll: still waiting for PLAYING after "
+                f"{self.preroll_timeout_s - (deadline - now):.1f}s of "
+                f"{self.preroll_timeout_s:.1f}s (get_state={result.value_nick}, "
+                f"pending={pending.value_nick})",
+                file=sys.stderr,
+                flush=True,
             )
 
     def run(self, *, swaps: int, interval_s: int) -> dict[str, Any]:
