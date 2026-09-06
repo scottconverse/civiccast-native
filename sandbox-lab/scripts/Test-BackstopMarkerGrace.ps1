@@ -135,6 +135,46 @@ $r7 = Wait-ForVerdictWithGrace `
 Assert-Equal 'scenario7 -VerdictTxtPath reaches the TestVerdictPathExists closure unmodified' 'C:\fake\a-specific-run\VERDICT.txt' $script:s7ReceivedPath
 Assert-Equal 'scenario7 (matching path) -> verdict_arrived=True' 'True' "$($r7.verdict_arrived)"
 
+# scenario 8 (round-5 review finding 8): NAMED regression guard for the
+# parameter-name-collision infinite-recursion bug this function's own
+# implementation hit while it was first being wired up (see
+# Wait-ForVerdictWithGrace's own header/inline comment). The bug: a
+# wrapping scriptblock that referenced `$TestVerdictPathExists` directly
+# -- the SAME name as Wait-ForVerdictAfterBackstopMarker's own parameter
+# -- recursed into itself under PowerShell's dynamic (not lexical)
+# scriptblock variable resolution, because by the time that scriptblock
+# actually RUNS (inside Wait-ForVerdictAfterBackstopMarker's own function
+# body), the name `$TestVerdictPathExists` resolves to THAT function's own
+# same-named parameter -- which, by then, IS the very scriptblock trying
+# to run, so invoking it calls itself, forever ("call depth overflow" was
+# the observed failure). This test passes a -TestVerdictPathExists
+# scriptblock whose OWN BODY deliberately references a variable literally
+# named `$TestVerdictPathExists` (shadowing-by-name, the exact collision
+# shape that broke this the first time) and confirms the CALL STILL
+# TERMINATES normally instead of recursing -- proving
+# Wait-ForVerdictWithGrace's own internal rename (capturing the injected
+# closure into a differently-named local variable before wrapping it) is
+# what actually prevents the collision, regardless of what name a CALLER
+# happens to use for its own variables.
+$script:s8CallCount = 0
+$r8 = Wait-ForVerdictWithGrace `
+    -VerdictTxtPath 'C:\fake\collision-test\VERDICT.txt' `
+    -PhaseDescription 'collision regression guard' `
+    -TestVerdictPathExists {
+        param($p)
+        # This scriptblock's OWN body names a variable
+        # $TestVerdictPathExists -- deliberately shadowing the name of
+        # Wait-ForVerdictAfterBackstopMarker's own parameter, the exact
+        # collision shape that caused the original infinite recursion.
+        $TestVerdictPathExists = 'deliberately shadowing the collision name'
+        $script:s8CallCount++
+        $script:s8CallCount -ge 1
+    } `
+    -LogSuccess { param($m) } `
+    -SleepSeconds { param($s) }
+Assert-Equal 'scenario8 (parameter-name-collision regression guard) call terminates normally, does not recurse' 'True' "$($r8.verdict_arrived)"
+Assert-Equal 'scenario8 the (potentially colliding) closure was invoked exactly once, not recursively' 1 $script:s8CallCount
+
 Write-Host ""
 Write-Host "BackstopMarkerGrace unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })
 if ($script:failures -gt 0) { exit 1 }

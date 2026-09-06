@@ -53,8 +53,9 @@
 # unparsable -WorkerEnv value, a missing installer, a failed registry
 # write/verify) -- so the SAME shipper-tick race is reachable from
 # Run-SandboxSoak.ps1's 'installing' and 'awaiting-health' phases too.
-# Wait-ForVerdictWithGrace (Run-SandboxSoak.ps1, a thin wrapper around
-# Wait-ForVerdictAfterBackstopMarker below) is now the ONE place all three
+# Wait-ForVerdictWithGrace (below in THIS file, a thin wrapper around
+# Wait-ForVerdictAfterBackstopMarker just above it -- called by
+# Run-SandboxSoak.ps1, not defined there) is now the ONE place all three
 # phases call this grace wait from.
 #
 # THE FIX: on seeing the backstop marker, do NOT kill immediately. Give

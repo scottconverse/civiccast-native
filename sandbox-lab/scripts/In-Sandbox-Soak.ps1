@@ -797,9 +797,10 @@ function Copy-StationLogs {
     # and this evidence capture must never itself become the thing that
     # stalls a checkpoint OR flood the host with gigabytes of shipped
     # evidence -- see Get-GstDebugCaptureDecision (GstDebugTail.ps1,
-    # round-4 review finding 2) for the gating/aggregate-cap rules applied
-    # just below, and Copy-GstDebugTail's own header for the tail-copy
-    # mechanics (live-open-file share mode, growing-file bound, banner).
+    # round-4/round-5 review findings) for the gating/split-budget rules
+    # applied just below, and Copy-GstDebugTail's own header for the
+    # tail-copy mechanics (live-open-file share mode, growing-file bound,
+    # banner-only-when-truncated).
     $gstDebugDst = Join-Path $dst 'gst-debug'
     $gstDebugNote = Join-Path $dst 'gst-debug-note.txt'
     if (-not $script:GstDebugFilePath) {
@@ -812,11 +813,13 @@ function Copy-StationLogs {
             -IsPeriodicCheckpoint $isPeriodicCheckpoint `
             -PeriodicCheckpointIndex $script:GstDebugPeriodicCheckpointCount `
             -EveryN $GstDebugCaptureEveryN `
-            -AggregateBytesSoFar $script:GstDebugAggregateBytesCopied `
-            -AggregateCapBytes $GstDebugAggregateCapBytes
+            -PeriodicBytesSoFar $script:GstDebugPeriodicBytesCopied `
+            -PeriodicCapBytes $GstDebugPeriodicCapBytes `
+            -NonPeriodicBytesSoFar $script:GstDebugNonPeriodicBytesCopied `
+            -NonPeriodicCapBytes $GstDebugNonPeriodicCapBytes
 
         if (-not $captureDecision.should_capture) {
-            "SKIPPED for label '$Label': $($captureDecision.reason) (aggregate so far: $([math]::Round($script:GstDebugAggregateBytesCopied / 1MB, 1)) MB of a $([math]::Round($GstDebugAggregateCapBytes / 1MB, 0)) MB cap)" | Set-Content -Path $gstDebugNote -Encoding UTF8
+            "SKIPPED for label '$Label': $($captureDecision.reason) (periodic so far: $([math]::Round($script:GstDebugPeriodicBytesCopied / 1MB, 1)) MB of a $([math]::Round($GstDebugPeriodicCapBytes / 1MB, 0)) MB cap; non-periodic so far: $([math]::Round($script:GstDebugNonPeriodicBytesCopied / 1MB, 1)) MB of a $([math]::Round($GstDebugNonPeriodicCapBytes / 1MB, 0)) MB reserve)" | Set-Content -Path $gstDebugNote -Encoding UTF8
         } else {
             $gstDebugDir = Split-Path -Parent $script:GstDebugFilePath
             $gstDebugBaseName = Split-Path -Leaf $script:GstDebugFilePath
@@ -850,36 +853,67 @@ function Copy-StationLogs {
                     $gstDebugNoteLines += "directory exists but no matching file(s) found yet: $gstDebugDir (looked for '$gstDebugBaseName', '$gstDebugBaseName*', and '*.gstdebug')"
                 } else {
                     New-Item -ItemType Directory -Force -Path $gstDebugDst | Out-Null
-                    $tailSuffix = ".tail$([math]::Round($gstDebugMaxBytes / 1MB, 0))mb"
+                    # Round-4 review finding 1 (HIGH), comment corrected in
+                    # round-5 review finding 7: each $f below is a
+                    # [System.IO.FileInfo] populated once by the Get-ChildItem
+                    # call above -- its .Length property is a SNAPSHOT taken
+                    # at THAT moment; .NET does not auto-refresh it, and this
+                    # code never calls .Refresh() on it either. An EARLIER
+                    # version of this loop branched on that cached $f.Length
+                    # to decide whether the file "needed" truncation, so by
+                    # the time that branch actually ran (after whatever else
+                    # happened earlier in the same checkpoint), the live
+                    # GST_DEBUG_FILE could already be far larger than what
+                    # $f.Length still reported (measured directly, via
+                    # Test-GstDebugTail.ps1's own regression guard: a file
+                    # written to 1 MB, stat'd via Get-ChildItem, then grown to
+                    # 5 MB through a separate handle -- the ORIGINAL FileInfo
+                    # object's own .Length stayed frozen at the 1 MB value it
+                    # captured, never reflecting the grown, live size).
+                    # Trusting that cached value would have routed the EXACT
+                    # live file this feature exists to capture down an
+                    # unbounded path. Fixed by dropping any size-based branch
+                    # on $f.Length entirely: Copy-GstDebugTail is always
+                    # called, and it establishes truncated-vs-whole from ITS
+                    # OWN freshly opened stream's live Length, never from a
+                    # FileInfo any caller might have cached earlier.
                     foreach ($f in $gstCandidates) {
-                        if ($script:GstDebugAggregateBytesCopied -ge $GstDebugAggregateCapBytes) {
-                            $gstDebugNoteLines += "SKIPPED $($f.Name): aggregate cap reached mid-loop ($([math]::Round($script:GstDebugAggregateBytesCopied / 1MB, 1)) MB captured this run already)"
+                        # Round-5 review finding 1: periodic and non-periodic
+                        # captures draw against SEPARATE budgets/caps -- see
+                        # Get-GstDebugCaptureDecision's own header. Re-checked
+                        # here too (not just once per Copy-StationLogs call)
+                        # because a SINGLE checkpoint can have MULTIPLE
+                        # candidate files (the primary + rotated siblings),
+                        # and the budget can be exhausted partway through
+                        # that same foreach.
+                        $bytesSoFarForThisKind = $(if ($isPeriodicCheckpoint) { $script:GstDebugPeriodicBytesCopied } else { $script:GstDebugNonPeriodicBytesCopied })
+                        $capForThisKind = $(if ($isPeriodicCheckpoint) { $GstDebugPeriodicCapBytes } else { $GstDebugNonPeriodicCapBytes })
+                        $capRemaining = $capForThisKind - $bytesSoFarForThisKind
+                        # Round-5 review finding 6: the cap is enforced as a
+                        # HARD ceiling, not a pre-write check that can still
+                        # overshoot by up to one file's worth -- the residual
+                        # budget is passed through as THIS COPY's own
+                        # -MaxBytes, clamped to whatever is smaller (the
+                        # normal 200 MB bound, or what remains of this kind's
+                        # cap). Copy-GstDebugTail itself floors -MaxBytes at
+                        # 4096 bytes (round-5 finding 4) -- if the residual is
+                        # smaller than that, there is no meaningful budget
+                        # left at all, so this capture (and every later one
+                        # of the same kind, this checkpoint) is skipped
+                        # outright rather than attempting an invalid call.
+                        if ($capRemaining -lt 4096) {
+                            $gstDebugNoteLines += "SKIPPED $($f.Name): $(if ($isPeriodicCheckpoint) { 'periodic' } else { 'non-periodic' }) budget has less than 4 KB remaining ($([math]::Round($capRemaining / 1KB, 2)) KB) -- effectively exhausted"
                             continue
                         }
-                        # Round-4 review finding 1 (HIGH): the size branch
-                        # this used to have here (Copy-Item for a file <=
-                        # 200 MB, Copy-GstDebugTail only above that) gated
-                        # on $f.Length -- the Get-ChildItem-derived NTFS
-                        # directory-entry stat, which is STALE for a file a
-                        # live process still has open for write (measured
-                        # directly: directory entry reported 1,048,576 bytes
-                        # while the actual open stream was 84,934,656 bytes
-                        # -- 81x larger). Trusting that stale stat routed the
-                        # EXACT live file this feature exists to capture down
-                        # the unbounded Copy-Item path. Fixed by dropping the
-                        # size branch entirely: Copy-GstDebugTail is now
-                        # ALWAYS called -- its own startPos clamp (`[Math]::
-                        # Max(0, currentLength - MaxBytes)`) already handles
-                        # a source shorter than the bound correctly (copies
-                        # the whole thing), using the STREAM's own Length
-                        # (read live, at open time, never the directory
-                        # entry) as the source of truth.
-                        $destPath = Join-Path $gstDebugDst "$($f.Name)$tailSuffix"
+                        $effectiveMaxBytes = [Math]::Min($gstDebugMaxBytes, $capRemaining)
+                        $baseName = $f.Name
+                        $wholeDestPath = Join-Path $gstDebugDst $baseName
+                        $truncatedDestPath = Join-Path $gstDebugDst "$baseName.tail$([math]::Round($effectiveMaxBytes / 1MB, 0))mb"
                         try {
-                            Copy-GstDebugTail -SourcePath $f.FullName -DestPath $destPath -MaxBytes $gstDebugMaxBytes
-                            $writtenBytes = (Get-Item -LiteralPath $destPath).Length
-                            $script:GstDebugAggregateBytesCopied += $writtenBytes
-                            $gstDebugNoteLines += "$($f.Name) -> $($f.Name)${tailSuffix}: wrote $([math]::Round($writtenBytes / 1MB, 2)) MB (bound $([math]::Round($gstDebugMaxBytes / 1MB, 0)) MB; directory-entry size at listing time was $([math]::Round($f.Length / 1MB, 1)) MB -- may be stale for a live-open/growing file, never trusted for the copy bound itself). Run aggregate so far: $([math]::Round($script:GstDebugAggregateBytesCopied / 1MB, 1)) MB"
+                            $copyResult = Copy-GstDebugTail -SourcePath $f.FullName -DestPathWhole $wholeDestPath -DestPathTruncated $truncatedDestPath -MaxBytes $effectiveMaxBytes
+                            if ($isPeriodicCheckpoint) { $script:GstDebugPeriodicBytesCopied += $copyResult.bytes_written } else { $script:GstDebugNonPeriodicBytesCopied += $copyResult.bytes_written }
+                            $destLeaf = Split-Path -Leaf $copyResult.dest_path
+                            $gstDebugNoteLines += "$($f.Name) -> $destLeaf ($(if ($copyResult.truncated) { 'TRUNCATED' } else { 'whole file, untruncated' })): wrote $([math]::Round($copyResult.bytes_written / 1MB, 2)) MB (this copy's effective bound $([math]::Round($effectiveMaxBytes / 1MB, 2)) MB; directory-entry size at listing time was $([math]::Round($f.Length / 1MB, 1)) MB -- may be stale for a live-open/growing file, never trusted for the copy bound itself). $(if ($isPeriodicCheckpoint) { 'Periodic' } else { 'Non-periodic' }) budget used so far: $([math]::Round($(if ($isPeriodicCheckpoint) { $script:GstDebugPeriodicBytesCopied } else { $script:GstDebugNonPeriodicBytesCopied }) / 1MB, 1)) MB of $([math]::Round($capForThisKind / 1MB, 0)) MB"
                         } catch {
                             $gstDebugNoteLines += "FAILED to copy $($f.Name): $_"
                         }
@@ -949,15 +983,20 @@ $workerEnvParsed = ConvertTo-WorkerEnvEntries -WorkerEnv $WorkerEnv
 $workerEnvDeduped = @(Get-DedupedWorkerEnvEntries -Entries $workerEnvParsed.entries)
 $workerEnvRequestedStrings = @(Format-WorkerEnvArg -Entries $workerEnvDeduped) -split ';' | Where-Object { $_.Length -gt 0 }
 $script:GstDebugFilePath = Get-GstDebugFilePath -Entries $workerEnvDeduped
-# Round-4 review finding 2: gst-debug capture is gated and volume-capped --
-# see Copy-StationLogs's own gst-debug section and
-# GstDebugTail.ps1's Get-GstDebugCaptureDecision for why. State tracked here
-# (script scope) so it persists correctly across every Copy-StationLogs call
-# for the life of this run.
+# Round-4 review finding 2 (round-5 review finding 1 split this into two
+# INDEPENDENT budgets -- see Get-GstDebugCaptureDecision's own header for
+# why a single shared cap let periodic checkpoints starve 'final' out of
+# its own evidence budget): gst-debug capture is gated and volume-capped --
+# see Copy-StationLogs's own gst-debug section and GstDebugTail.ps1's
+# Get-GstDebugCaptureDecision for the full rules. State tracked here
+# (script scope) so it persists correctly across every Copy-StationLogs
+# call for the life of this run.
 $script:GstDebugPeriodicCheckpointCount = 0
-$script:GstDebugAggregateBytesCopied = 0
+$script:GstDebugPeriodicBytesCopied = 0
+$script:GstDebugNonPeriodicBytesCopied = 0
 $GstDebugCaptureEveryN = 10
-$GstDebugAggregateCapBytes = 600MB
+$GstDebugPeriodicCapBytes = 400MB
+$GstDebugNonPeriodicCapBytes = 200MB
 
 # --------------------------------------------------------------------------
 # 1. Locate and run the installer silently, bounded to $InstallBoundMinutes.

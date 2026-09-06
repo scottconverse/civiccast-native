@@ -686,8 +686,9 @@ while ($true) {
             Write-Step "phase -> awaiting-health (health bound: $($healthDeadlineUtc.ToString('o')))"
         } elseif ((Get-Date).ToUniversalTime() -gt $installDeadlineUtc) {
             # Round-4 review finding 4: give VERDICT.txt the same bounded
-            # grace (Wait-ForVerdictWithGrace, factored above) as
-            # awaiting-soak-start already does -- follow-up D added
+            # grace (Wait-ForVerdictWithGrace -- BackstopMarkerGrace.ps1,
+            # dot-sourced near the top of this script) as awaiting-soak-start
+            # already does -- follow-up D added
             # Write-HarnessErrorVerdictAndExit call sites (an unparsable
             # -WorkerEnv value, a missing installer) that fire BEFORE
             # PHASE-INSTALL-DONE.json is ever written, so a harness error
@@ -745,10 +746,10 @@ while ($true) {
                 # the operator with only HOST-QUIET-SHARE.txt even though
                 # the real verdict had already been written in the guest.
                 # Give VERDICT.txt a bounded grace (Wait-ForVerdictWithGrace,
-                # factored above, wrapping Wait-ForVerdictAfterBackstopMarker
-                # -- BackstopMarkerGrace.ps1, unit-tested in
-                # Test-BackstopMarkerGrace.ps1) before falling back to the
-                # quiet-share exit.
+                # wrapping Wait-ForVerdictAfterBackstopMarker -- both live in
+                # BackstopMarkerGrace.ps1, dot-sourced near the top of this
+                # script, unit-tested in Test-BackstopMarkerGrace.ps1) before
+                # falling back to the quiet-share exit.
                 $graceResult = Wait-ForVerdictWithGrace -VerdictTxtPath $verdictTxtPath -PhaseDescription 'SOAK-START.json is the harness-error backstop marker' -LogSuccess { param($m) Write-Step $m }
                 if ($graceResult.verdict_arrived) { break }
                 Write-QuietShareAndExit -Reason "SOAK-START.json is the harness-error backstop marker (harness_error_before_soak_start=$($soakStartObj.harness_error_before_soak_start), soak_start_utc=$($soakStartObj.soak_start_utc)) -- the guest failed before the soak clock actually started, and VERDICT.txt still had not arrived after a $($graceResult.waited_seconds)s grace wait; see this run's own VERDICT.txt/.json for the underlying reason if it ships later" -LaunchedPids $launchedPids -OutputDir $outputDir

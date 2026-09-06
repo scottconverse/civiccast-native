@@ -133,23 +133,34 @@ create intermediate directories for a log-file path itself), and
 `Copy-StationLogs` copies that file — plus any rotated/sibling files
 matching the same base name or a `*.gstdebug` extension in the same
 directory — into `logs\checkpoint-cycleN\gst-debug\` and `logs\final\
-gst-debug\`, alongside the rest of that checkpoint's evidence. A single
-matching file over 200 MB has its **last 200 MB kept** (streamed, never
-loaded whole into memory, and never simply skipped) rather than the whole
-file copied — the most recent debug output is where a real failure almost
-always is — under the name `<original-name>.tailNNNmb` (never overwriting/
-being confused with a complete copy), with a one-line banner prepended to
-the bytes themselves so a reader of the file knows content was dropped.
+gst-debug\`, alongside the rest of that checkpoint's evidence. A file that
+is still **within** the 200 MB per-file bound is copied **verbatim** — no
+banner, no rename — since nothing was dropped. Only a file that actually
+**exceeds** the bound is truncated: its **last** ~200 MB is kept (streamed,
+never loaded whole into memory), written under the name
+`<original-name>.tailNNNmb` (never overwriting/being confused with a
+complete copy) with a one-line banner prepended to the bytes themselves so
+a reader of the file knows content was dropped — an earlier version wrote
+that banner and rename even when nothing had been dropped at all, which
+was actively misleading for the common case where `GST_DEBUG` never grows
+past the bound.
 
-Capture is **gated and volume-capped**, not run on every single checkpoint:
+Capture is **gated and volume-capped**, not run on every single checkpoint,
+using **two independent budgets** so one can never starve the other:
 periodic rollup checkpoints (every ~3 minutes) capture only the **first**
-one and every **10th** thereafter; `final` (and an early-failure label like
-the ON_AIR-poll-timeout path) is always attempted. Regardless of that gate,
-once this run's own running total of bytes captured reaches a **600 MB**
-aggregate cap, every further capture — periodic or not, including `final`
-— is skipped with a note. Without this gate, an earlier version captured
-on every single checkpoint with no aggregate bound, measured to project to
-roughly 8 GB shipped over a 2-hour soak.
+one and every **10th** thereafter, and draw only against a **400 MB**
+periodic budget; `final` (and an early-failure label like the
+ON_AIR-poll-timeout path) is always attempted and draws only against its
+own separate **200 MB** reserve — a periodic checkpoint can never exhaust
+the reserve `final` needs, and vice versa. Each per-file copy's own 200 MB
+bound is additionally clamped to whatever remains of the relevant budget,
+so the combined ceiling (400 MB + 200 MB = 600 MB per run) is a **hard**
+one, never overshoot by "one file's worth" the way a simple pre-write check
+would allow. Without any of this, an earlier version captured on every
+single checkpoint with no budget at all, measured to project to roughly
+8 GB shipped over a 2-hour soak — and a single shared 600 MB cap (an
+earlier fix) still let periodic checkpoints consume the whole thing before
+`final` ever ran.
 
 **What `-WorkerEnv` can and cannot change today.** Not every environment
 variable that reaches the CivicCastSupervisor service's own registry
