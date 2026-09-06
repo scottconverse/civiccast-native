@@ -247,8 +247,23 @@ class SourcePreparer:
         config: EgressConfig,
         loudness: LoudnessGateResult,
         normalized: bool,
+        *,
+        background: bool = True,
     ) -> Path:
-        """Conform the WHOLE asset (no trim) into the cache, atomically."""
+        """Conform the WHOLE asset (no trim) into the cache, atomically.
+
+        ``background`` (item 66): the warm-behind path (``_schedule_warm``)
+        always conforms off the automation thread and keeps the default
+        ``True`` -- single-threaded (``-threads 1``, see
+        ``build_conform_source_args``) so it can never starve the on-air
+        encoder. The synchronous start-path call (the untrimmed-MISS branch
+        in ``_prepare_segment``, reachable only when
+        ``self._playout_trim_supported`` is True -- see the guard added
+        there) passes ``background=False`` explicitly: that call blocks
+        ``prepare()`` and therefore first ON_AIR, so it gets a full-speed
+        multi-threaded encode instead of being capped at one thread on the
+        very path latency matters most for.
+        """
         cache_dir = self._cache_dir()
         final = cache_dir / f"{key}.ts"
         with self._conform_lock(key):
@@ -262,8 +277,10 @@ class SourcePreparer:
                 loudness_target_lufs=config.loudness_target_lufs if normalized else None,
                 # ponytail: single-threaded background encode so a warm can't
                 # starve the on-air encoder; add priority-class control if
-                # field data shows starvation anyway.
-                background=True,
+                # field data shows starvation anyway. The synchronous
+                # start-path caller opts out (background=False) -- see the
+                # docstring above.
+                background=background,
             )
             result = self._ffmpeg_runner(args)
             if result.returncode != 0:
@@ -679,9 +696,20 @@ class SourcePreparer:
         # Untrimmed MISS: the full-asset conform IS what airs — conform it once,
         # directly into the cache, then emit from the cache (duration truncation
         # applied at playout or via stream-copy per engine capability).
-        if key is not None and not trimmed:
+        #
+        # Item 66: this branch's conform runs SYNCHRONOUSLY on the automation
+        # thread and blocks first ON_AIR (measured 8.5-12+ min on a fresh
+        # station) -- only take it when the engine can actually make use of
+        # the resulting untrimmed cache object via a playout-side trim
+        # (``self._playout_trim_supported``). When the engine cannot trim at
+        # playout (the GStreamer engine), fall through to the trimmed-MISS
+        # branch below instead: it conforms only the wanted window
+        # (``-t segment.duration_seconds``) straight to the prepared file --
+        # bounded, not a whole-clip re-encode -- and schedules the full-asset
+        # warm behind it for later airings.
+        if key is not None and not trimmed and self._playout_trim_supported:
             cached_ts = self._conform_full_asset_into_cache(
-                key, source_path, config, loudness, normalized
+                key, source_path, config, loudness, normalized, background=False
             )
             return self._emit_prepared_from_cache(
                 cached_ts,
@@ -693,9 +721,13 @@ class SourcePreparer:
                 normalized=normalized,
             )
 
-        # Trimmed MISS (first-ever join-in-progress start): conform only the
-        # remaining portion straight to air — identical latency to the historic
-        # behavior — and warm the full-asset cache behind it for next time.
+        # Trimmed MISS (first-ever join-in-progress start), OR (item 66) an
+        # untrimmed miss on an engine that cannot trim at playout
+        # (self._playout_trim_supported is False, e.g. GStreamer): either way
+        # conform only the wanted window straight to air -- bounded by
+        # ``-t segment.duration_seconds`` in build_conform_source_args below,
+        # never a whole-clip re-encode -- and warm the full-asset cache behind
+        # it for next time.
         # H5 fix (atomic write, second half): same tmp+rename pattern as the
         # cache-hit stream-copy branch above -- see that branch's comment.
         # F7 fix: create the per-plan directory lazily -- see the sibling

@@ -37,6 +37,28 @@ below.
 
 ### Fixed
 
+- **First ON_AIR no longer waits for a whole-clip re-encode (item 66).**
+  MEASURED: a fresh station took 8.5-12+ minutes to first ON_AIR because
+  `civiccast/egress/preparer.py`'s `_prepare_segment` conformed the WHOLE
+  first asset synchronously, single-threaded (`-threads 1`), on the
+  automation thread before the channel could start, and every channel
+  queued behind that one conform. Two fixes: (1)
+  `_conform_full_asset_into_cache` now takes a `background` parameter
+  (default `True`, forwarded to `build_conform_source_args`) instead of
+  hardcoding the single-threaded background encode -- the synchronous
+  start-path call now passes `background=False` so it runs at full speed
+  instead of capped at one thread on the path where speed matters most; the
+  warm-behind path (`_schedule_warm`) is unaffected and still conforms
+  single-threaded so a warm can never starve the on-air encoder. (2) an
+  untrimmed cache MISS now only takes the whole-asset synchronous conform
+  when the playout engine can actually use the result
+  (`self._playout_trim_supported`, true only for the legacy ffmpeg-concat
+  engine); on the GStreamer engine (`playout_trim_supported=False`) an
+  untrimmed miss now falls through to the existing bounded per-segment
+  conform (`-t <duration>`, no full-asset re-encode) and schedules the
+  full-asset cache warm behind it, the same latency shape the trimmed-MISS
+  path already had. Behavior for `playout_trim_supported=True` is
+  unchanged.
 - **A seamless plan rollover collided its own concat aggregators, silently
   failed to join the pipeline, and was acked "applied" anyway -- so
   automation kept re-triggering it forever while the channel bounced.**

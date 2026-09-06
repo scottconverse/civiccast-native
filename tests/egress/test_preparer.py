@@ -879,3 +879,107 @@ def test_cache_hit_stream_copies_when_engine_cannot_trim(tmp_path: Path) -> None
     seg = report.source_plan.segments[0]
     assert seg.inpoint_seconds is None and seg.outpoint_seconds is None  # trim-free contract
     assert "conform-cache" not in seg.path  # per-plan output, not the cache object
+
+
+# ---------------------------------------------------------------------------
+# Item 66 — first ON_AIR no longer waits behind a whole-clip single-threaded
+# conform on the synchronous start path.
+# ---------------------------------------------------------------------------
+
+
+def test_conform_full_asset_into_cache_background_flag_controls_threads(tmp_path: Path) -> None:
+    """``_conform_full_asset_into_cache``'s ``background`` parameter must reach
+    ``build_conform_source_args``: the warm-behind path (default,
+    ``background=True``) still caps the encode at one thread, but the
+    synchronous start-path caller (``background=False``) must NOT -- that is
+    the whole point of item 66's fix, so assert both sides explicitly rather
+    than only the one the bug report cared about."""
+    calls: list[list[str]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    config = _config()
+    loudness = _loudness()
+
+    key_bg = preparer._cache_key(source, config)
+    assert key_bg is not None
+    preparer._conform_full_asset_into_cache(key_bg, source, config, loudness, False)
+    warm_args = calls[-1]
+    assert warm_args[warm_args.index("-threads") : warm_args.index("-threads") + 2] == [
+        "-threads",
+        "1",
+    ]
+
+    # A different source (different cache key) so the second call is not
+    # short-circuited by the first call's cache entry -- exercise the
+    # synchronous start-path shape (background=False) explicitly.
+    source2 = tmp_path / "long-recording-2.mp4"
+    source2.write_text("different fake long media", encoding="utf-8")
+    key_fg = preparer._cache_key(source2, config)
+    assert key_fg is not None
+    calls.clear()
+    preparer._conform_full_asset_into_cache(
+        key_fg, source2, config, loudness, False, background=False
+    )
+    start_path_args = calls[-1]
+    assert "-threads" not in start_path_args
+
+
+def test_untrimmed_miss_runs_bounded_conform_when_engine_cannot_trim(tmp_path: Path) -> None:
+    """Item 66: with the GStreamer engine (``playout_trim_supported=False``,
+    the constructor default) an untrimmed cache MISS must NOT take the
+    whole-asset synchronous conform (measured 8.5-12+ min to first ON_AIR on
+    a fresh station) -- it must fall through to the bounded per-segment
+    conform (``-t <duration>``) straight to the prepared file, and schedule
+    the full-asset warm behind it, exactly like the existing trimmed-MISS
+    path."""
+    calls: list[list[str]] = []
+    warm_jobs: list = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=warm_jobs.append,
+        # playout_trim_supported left at its default (False) -- the
+        # GStreamer-engine wiring this fix targets.
+    )
+
+    report = preparer.prepare(_untrimmed_plan(tmp_path), _config())
+
+    assert len(calls) == 1
+    args = calls[0]
+    assert args[args.index("-t") : args.index("-t") + 2] == ["-t", "3600"]
+    assert "conform-cache" not in args[-1]  # bounded conform to the per-plan file, not the cache
+    seg = report.source_plan.segments[0]
+    assert "conform-cache" not in seg.path  # per-plan output emitted, not the cache object
+    assert len(warm_jobs) == 1  # full-asset cache warm scheduled behind it
+
+
+def test_untrimmed_miss_still_conforms_full_asset_when_engine_can_trim(tmp_path: Path) -> None:
+    """Companion to the test above: with ``playout_trim_supported=True`` (the
+    legacy ffmpeg-concat engine) behavior is UNCHANGED by item 66 -- an
+    untrimmed miss still conforms the whole asset synchronously straight into
+    the cache (no ``-t``/``-ss``), matching the pre-existing
+    ``test_aired_before_asset_prepares_with_zero_ffmpeg_work`` contract."""
+    calls: list[list[str]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+        playout_trim_supported=True,
+    )
+
+    report = preparer.prepare(_untrimmed_plan(tmp_path), _config())
+
+    assert len(calls) == 1
+    args = calls[0]
+    assert "-t" not in args  # whole-asset conform, not bounded to the segment
+    assert "-ss" not in args
+    seg = report.source_plan.segments[0]
+    assert "conform-cache" in seg.path  # emitted straight from the cache object
