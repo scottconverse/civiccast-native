@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import logging
+import os
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -58,6 +61,13 @@ _PLAYABLE_ASSET_STATES = {ASSET_STATE_VALIDATED, ASSET_STATE_RECORDED}
 #: gets rolled over comfortably inside its own lifetime.
 PLAN_MIN_SECONDS = 0.0
 
+#: Delta review fix (2026-09-05): folded into SlateSourceGenerator's cache
+#: key so a future change to the render recipe (build_slate_source_args'
+#: codec/filter settings, the lavfi source, ...) invalidates every
+#: previously-cached slate-*.ts file instead of silently reusing bytes
+#: rendered by the OLD recipe. Bump whenever that recipe changes.
+SLATE_RENDER_VERSION = 1
+
 
 class SlateSourceGenerator:
     """Generate a pre-conformed MPEG-TS slate source for an egress channel."""
@@ -81,31 +91,90 @@ class SlateSourceGenerator:
         self._target_fill_seconds = target_fill_seconds
 
     def __call__(self, config: EgressConfig) -> EgressSourcePlan:
-        output_path = self._work_dir / config.channel_id / "slate.ts"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        args = build_slate_source_args(
-            output_path=output_path,
-            config=config,
-            duration_seconds=self._duration_seconds,
+        # BLOCKER B fix (2026-09-05 regression from #174): this fill plan must
+        # never NEED more than MAX_PLAYLIST_SUBCHAINS segments.
+        # gst/bridge.graph_from_config builds one decoder sub-chain per
+        # segment and truncates a "slate"/"cg"-kind plan to that cap (with a
+        # WARNING) as a fail-safe -- but the fixed 30s ``duration_seconds``
+        # repeated to ``target_fill_seconds`` (120 x 30s for the 3600s
+        # default) relied on that fail-safe every time, so the slate worker
+        # hit a real EOS (and restarted, resetting the TS session -- the
+        # exact CA-8 symptom this generator exists to avoid) after only
+        # ~360s of a 3600s target. Cover the target with AT MOST
+        # MAX_PLAYLIST_SUBCHAINS repeats of a LONGER-held still/text card
+        # instead: the lavfi ``color``+``drawtext`` source this renders can
+        # hold a still for arbitrarily long, so lengthening the card is the
+        # natural fit (as opposed to teaching the GStreamer engine to loop a
+        # short one, which it does not support today).
+        duration_seconds = self._duration_seconds
+        if self._target_fill_seconds > duration_seconds * MAX_PLAYLIST_SUBCHAINS:
+            duration_seconds = -(-self._target_fill_seconds // MAX_PLAYLIST_SUBCHAINS)
+        # Hostile-review fix (2026-09-05): every prepare -- every automation
+        # poll tick this generator is asked for a plan -- used to re-encode
+        # the SAME slate video unconditionally, however long ``duration_seconds``
+        # got above. Cache it on disk, keyed by everything that changes its
+        # bytes (the duration this fix just computed, the message, and the
+        # canonical profile); a cache hit skips ffmpeg entirely. A miss (a
+        # config change, or the text-render fallback below) renders once and
+        # every later prepare for the SAME key reuses it.
+        cache_key = self._cache_key(config, duration_seconds)
+        slate_dir = self._work_dir / config.channel_id
+        slate_dir.mkdir(parents=True, exist_ok=True)
+        output_name = f"slate-{cache_key}.ts"
+        output_path = slate_dir / output_name
+        # Delta review fix: a cache "hit" is only trustworthy if the file is
+        # non-empty -- a zero-byte file (left by a crash before the atomic
+        # staging+replace fix below existed, or external corruption) must be
+        # re-rendered, not silently served as a valid slate source forever.
+        cache_valid = output_path.exists() and output_path.stat().st_size > 0
+        if not cache_valid:
+            # Delta review fix: render to a staging path and only publish
+            # atomically via .replace() -- matches bulletin_filler.py's
+            # rotation-file cache -- so a reader can never observe a
+            # partially-written (and later truncated-looking, on a crash
+            # mid-write) file at the real cache path.
+            staging = slate_dir / f".{cache_key}.{os.getpid()}.partial.ts"
+            try:
+                args = build_slate_source_args(
+                    output_path=staging,
+                    config=config,
+                    duration_seconds=duration_seconds,
+                )
+                result = self._ffmpeg_runner(args)
+                if result.returncode != 0:
+                    args = build_slate_source_args(
+                        output_path=staging,
+                        config=config,
+                        duration_seconds=duration_seconds,
+                        include_text=False,
+                    )
+                    result = self._ffmpeg_runner(args)
+                if result.returncode != 0:
+                    raise SourcePrepareError(
+                        "Could not generate the egress slate source; inspect FFmpeg "
+                        "output before retrying."
+                    )
+                staging.replace(output_path)
+                # Delta review fix: eviction moved to AFTER the new render
+                # publishes successfully (never on a failed render, which
+                # would otherwise leave the channel with no valid cached
+                # file at all) and each unlink is best-effort -- a stale
+                # file the running encoder still has open (a Windows
+                # sharing violation) must not crash this prepare; it is
+                # simply left for a later prepare to clean up once nothing
+                # holds it.
+                self._evict_stale_slate_renders(slate_dir, keep_name=output_name)
+            finally:
+                with contextlib.suppress(OSError):
+                    staging.unlink(missing_ok=True)
+        repeats = min(
+            MAX_PLAYLIST_SUBCHAINS,
+            max(1, -(-self._target_fill_seconds // duration_seconds)),
         )
-        result = self._ffmpeg_runner(args)
-        if result.returncode != 0:
-            args = build_slate_source_args(
-                output_path=output_path,
-                config=config,
-                duration_seconds=self._duration_seconds,
-                include_text=False,
-            )
-            result = self._ffmpeg_runner(args)
-        if result.returncode != 0:
-            raise SourcePrepareError(
-                "Could not generate the egress slate source; inspect FFmpeg output before retrying."
-            )
-        repeats = max(1, -(-self._target_fill_seconds // self._duration_seconds))
         segment = EgressSourceSegment(
             label="CivicCast slate",
             path=str(output_path),
-            duration_seconds=self._duration_seconds,
+            duration_seconds=duration_seconds,
             kind="slate",
             source_ref="civiccast-slate",
         )
@@ -113,6 +182,37 @@ class SlateSourceGenerator:
             channel_id=config.channel_id,
             segments=[segment] * repeats,
         )
+
+    @staticmethod
+    def _cache_key(config: EgressConfig, duration_seconds: int) -> str:
+        digest = hashlib.sha256()
+        for part in (
+            str(SLATE_RENDER_VERSION),
+            str(duration_seconds),
+            config.slate_message,
+            config.canonical_profile.model_dump_json(),
+        ):
+            digest.update(part.encode("utf-8"))
+            digest.update(b"\0")
+        return digest.hexdigest()[:24]
+
+    @staticmethod
+    def _evict_stale_slate_renders(slate_dir: Path, *, keep_name: str) -> None:
+        """Delta review fix: remove cached ``slate-*.ts`` files whose key no
+        longer matches ``keep_name`` (a config/duration change, or a
+        ``SLATE_RENDER_VERSION`` bump) so stale renders don't accumulate
+        forever. Bounded -- only ever lists ONE channel's own slate
+        directory (never a wider tree), which holds at most a handful of
+        cached renders. Called only after a fresh render has published
+        successfully (never on a failed render). Each unlink is best-effort:
+        a stale file the running encoder still has open (a Windows sharing
+        violation raises ``PermissionError``, an ``OSError`` subclass) is
+        left alone rather than raising out of a successful prepare -- a
+        later prepare, once nothing holds it, cleans it up instead."""
+        for candidate in slate_dir.glob("slate-*.ts"):
+            if candidate.name != keep_name:
+                with contextlib.suppress(OSError):
+                    candidate.unlink(missing_ok=True)
 
 
 class ScheduleSourcePlanProvider:

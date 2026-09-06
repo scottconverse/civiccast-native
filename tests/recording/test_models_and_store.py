@@ -855,9 +855,13 @@ class TestMigration0056AndMerge:
         # was the sole other head when this branch re-parented onto it.
         # Updated to 0087_retention_terms (WP-08: value/unit/forever
         # retention-term authoring on assets), chained after
-        # 0086_live_source_probe_state and is the current head.
-        assert list(heads) == ["0087_retention_terms"], (
-            f"Expected single head 0087_retention_terms, got {heads!r}"
+        # 0086_live_source_probe_state. Updated to
+        # 0088_egress_state_reload_visibility (hostile-review redo of the
+        # pending-content-reload latch fix: state_entered_at/pending_
+        # reload_since/pending_reload_deadline on egress_states), chained
+        # after 0087_retention_terms and is the current head.
+        assert list(heads) == ["0088_egress_state_reload_visibility"], (
+            f"Expected single head 0088_egress_state_reload_visibility, got {heads!r}"
         )
 
     def test_0056_down_revision_is_0055(self, tmp_path: Path) -> None:

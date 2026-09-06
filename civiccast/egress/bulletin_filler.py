@@ -32,7 +32,12 @@ from civiccast.egress.board_compositor import (
     build_board_segment_args,
 )
 from civiccast.egress.errors import SourcePrepareError
-from civiccast.egress.models import EgressConfig, EgressSourcePlan, EgressSourceSegment
+from civiccast.egress.models import (
+    MAX_PLAYLIST_SUBCHAINS,
+    EgressConfig,
+    EgressSourcePlan,
+    EgressSourceSegment,
+)
 from civiccast.egress.runtime import FfmpegRunner
 from civiccast.egress.source_plan import SlateSourceGenerator, _escape_drawtext
 from civiccast.schedule.store import PostgresAssetStore
@@ -88,6 +93,13 @@ class BulletinFillerSourceGenerator:
         self._slide_seconds = slide_seconds
         self._clock = clock or (lambda: datetime.now(UTC))
         self._target_fill_seconds = target_fill_seconds
+        # Delta review fix (2026-09-05): above MAX_PLAYLIST_SUBCHAINS PAGES
+        # (i.e. more than MAX_PLAYLIST_SUBCHAINS**2 distinct slides), a plan
+        # built from every page would itself exceed the segment cap again --
+        # see _plan_with_cycle. Tracks which page WINDOW to show on the next
+        # fill-plan generation so all pages (and therefore all slides) air
+        # across successive generations instead.
+        self._rotation_page_offset = 0
 
     def __call__(self, config: EgressConfig) -> EgressSourcePlan:
         now = self._clock()
@@ -180,9 +192,196 @@ class BulletinFillerSourceGenerator:
     def _plan_with_cycle(
         self, config: EgressConfig, segments: list[EgressSourceSegment]
     ) -> EgressSourcePlan:
-        cycle_seconds = self._slide_seconds * len(segments)
-        cycles = max(1, -(-self._target_fill_seconds // cycle_seconds))
-        return EgressSourcePlan(channel_id=config.channel_id, segments=segments * cycles)
+        """Hostile-review redo (2026-09-05 regression from #174, two
+        follow-up reviews): this fill plan must never NEED more than
+        MAX_PLAYLIST_SUBCHAINS total segments -- gst/bridge.graph_from_config
+        truncates a "cg"-kind plan past that many decoder sub-chains as a
+        fail-safe. Two earlier passes each fixed one problem and
+        reintroduced another: lengthening each slide's own hold duration
+        changed what actually airs, and capping the rotation at
+        MAX_PLAYLIST_SUBCHAINS distinct slides (truncating the rest) SILENTLY
+        DROPPED content for a busy board with more slides than that.
+
+        The shipped fix keeps every slide at its configured ~10s hold and
+        never drops one: slides are PAGED into groups of at most
+        MAX_PLAYLIST_SUBCHAINS (page k holds slides
+        ``MAX_PLAYLIST_SUBCHAINS*k .. MAX_PLAYLIST_SUBCHAINS*k + (MAX_PLAYLIST_SUBCHAINS - 1)``),
+        each page pre-rendered into its OWN concatenated rotation file (see
+        ``_render_rotation``), and the final plan cycles through ALL pages
+        together so every slide airs at least once per cycle -- the total
+        segment count (pages x cycles) is still capped at
+        MAX_PLAYLIST_SUBCHAINS, so more pages means fewer cycles rather than
+        exceeding the pipeline's decoder-subchain limit. Coverage is
+        therefore ``cycles * sum(page rotation durations)``, which can fall
+        short of ``target_fill_seconds`` for a long rotation or a long
+        target; the scaled rollover floor
+        (``ChannelAutomationService._check_plan_rollover``) extends the fill
+        further for as long as the gap persists, exactly as it does for a
+        schedule-derived program plan. A shortfall (more pages than one
+        cycle can repeat, or coverage under the target) is logged at
+        WARNING -- the operator-visible surface for this condition, same
+        posture as every other diagnosability fix in this module (Gate A T4:
+        a well-labeled log line IS what reaches an operator or a Gate A
+        probe reading the control-plane log)."""
+        if not segments:
+            return EgressSourcePlan(channel_id=config.channel_id, segments=segments)
+        all_pages = [
+            segments[i : i + MAX_PLAYLIST_SUBCHAINS]
+            for i in range(0, len(segments), MAX_PLAYLIST_SUBCHAINS)
+        ]
+        windowed = False
+        if len(all_pages) > MAX_PLAYLIST_SUBCHAINS:
+            # Delta review fix (2026-09-05): more than MAX_PLAYLIST_SUBCHAINS
+            # pages (i.e. more than MAX_PLAYLIST_SUBCHAINS**2 = 144 distinct
+            # slides) still built more than MAX_PLAYLIST_SUBCHAINS total
+            # segments -- ``max(1, MAX_PLAYLIST_SUBCHAINS // len(pages))``
+            # floors to 1 once ``len(pages) > MAX_PLAYLIST_SUBCHAINS``, which
+            # bounds CYCLES but not the page count itself. Select a rotating
+            # WINDOW of at most MAX_PLAYLIST_SUBCHAINS pages instead --
+            # advancing the offset every call -- so every page (and
+            # therefore every slide) airs across successive fill-plan
+            # generations rather than exceeding the segment cap at once.
+            windowed = True
+            offset = self._rotation_page_offset % len(all_pages)
+            pages = [
+                all_pages[(offset + i) % len(all_pages)] for i in range(MAX_PLAYLIST_SUBCHAINS)
+            ]
+            self._rotation_page_offset = (offset + MAX_PLAYLIST_SUBCHAINS) % len(all_pages)
+            _LOG.warning(
+                "channel %s: bulletin/board rotation has %d distinct slides across "
+                "%d pages, above the %d-page cap; rotating a window of %d pages "
+                "starting at page %d this generation so every page airs across "
+                "successive fill-plan generations instead of exceeding the "
+                "segment cap at once.",
+                config.channel_id,
+                len(segments),
+                len(all_pages),
+                MAX_PLAYLIST_SUBCHAINS,
+                MAX_PLAYLIST_SUBCHAINS,
+                offset,
+            )
+        else:
+            pages = all_pages
+        page_segments: list[EgressSourceSegment] = []
+        for page in pages:
+            rotation_seconds = self._slide_seconds * len(page)
+            rotation_path = self._render_rotation(config, page)
+            page_segments.append(
+                EgressSourceSegment(
+                    label="Bulletin rotation",
+                    path=str(rotation_path),
+                    duration_seconds=rotation_seconds,
+                    kind="cg",
+                    source_ref="bulletin-rotation",
+                )
+            )
+        total_page_seconds = sum(segment.duration_seconds for segment in page_segments)
+        max_cycles = max(1, MAX_PLAYLIST_SUBCHAINS // len(page_segments))
+        cycles = max(
+            1,
+            min(max_cycles, int(-(-self._target_fill_seconds // total_page_seconds))),
+        )
+        coverage_seconds = cycles * total_page_seconds
+        if len(pages) > 1 and not windowed:
+            _LOG.warning(
+                "channel %s: bulletin/board rotation has %d distinct slides, above "
+                "the %d-slide-per-rotation cap; paging across %d rotation files "
+                "(each holding up to %d slides) so every slide still airs, instead "
+                "of dropping the tail past the first %d.",
+                config.channel_id,
+                len(segments),
+                MAX_PLAYLIST_SUBCHAINS,
+                len(pages),
+                MAX_PLAYLIST_SUBCHAINS,
+                MAX_PLAYLIST_SUBCHAINS,
+            )
+        if coverage_seconds < self._target_fill_seconds:
+            _LOG.warning(
+                "channel %s: bulletin/board fill covers only %ds (%d x %ds across %d "
+                "rotation page(s)) against a %ds target; the rollover mechanism "
+                "extends this further if the channel is still on this fill once the "
+                "covered window runs out.",
+                config.channel_id,
+                coverage_seconds,
+                cycles,
+                total_page_seconds,
+                len(pages),
+                self._target_fill_seconds,
+            )
+        else:
+            _LOG.info(
+                "channel %s: bulletin/board fill covers %ds (%d x %ds across %d "
+                "rotation page(s)) against a %ds target.",
+                config.channel_id,
+                coverage_seconds,
+                cycles,
+                total_page_seconds,
+                len(pages),
+                self._target_fill_seconds,
+            )
+        return EgressSourcePlan(
+            channel_id=config.channel_id,
+            segments=page_segments * cycles,
+        )
+
+    def _render_rotation(self, config: EgressConfig, segments: list[EgressSourceSegment]) -> Path:
+        """Concatenate ``segments`` (each already an independently-cached,
+        pre-rendered ~``_slide_seconds``-long file) into ONE rotation file,
+        cached by a hash of the ordered list of source paths -- a cache hit
+        skips the concat entirely, same posture as the individual slide/board
+        segment caches above."""
+        rotation_dir = self._work_dir / config.channel_id / "rotations"
+        rotation_dir.mkdir(parents=True, exist_ok=True)
+        key = self._rotation_hash(segments)
+        rotation_path = rotation_dir / f"{key}.ts"
+        if not rotation_path.exists():
+            concat_list = rotation_dir / f"{key}.concat.txt"
+            staging = rotation_path.with_name(f".{key}.{os.getpid()}.partial.ts")
+            # Delta review fix (2026-09-05): a failed (or crashed-mid-render)
+            # concat used to leave the concat-list text file and a partial
+            # ``.ts`` behind in the rotations directory forever. Clean up
+            # both on ANY exit -- the ``staging.replace`` on success already
+            # removes ``staging`` by renaming it away, so this is a no-op
+            # then; on failure (or an exception from the ffmpeg call
+            # itself) both stray files are removed instead of accumulating.
+            try:
+                concat_list.write_text(
+                    "".join(f"file '{segment.path}'\n" for segment in segments),
+                    encoding="utf-8",
+                )
+                args = [
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    str(concat_list),
+                    "-c",
+                    "copy",
+                    str(staging),
+                ]
+                result = self._run_ffmpeg_or_fail_open(
+                    args, what=f"bulletin rotation for channel {config.channel_id}"
+                )
+                if result.returncode != 0:
+                    raise SourcePrepareError(
+                        f"Could not concatenate the bulletin/board rotation for "
+                        f"channel {config.channel_id!r}; inspect FFmpeg output "
+                        "before retrying."
+                    )
+                staging.replace(rotation_path)
+            finally:
+                concat_list.unlink(missing_ok=True)
+                staging.unlink(missing_ok=True)
+        return rotation_path
+
+    @staticmethod
+    def _rotation_hash(segments: list[EgressSourceSegment]) -> str:
+        digest = hashlib.sha256()
+        for segment in segments:
+            digest.update(segment.path.encode("utf-8"))
+            digest.update(b"\0")
+        return digest.hexdigest()[:24]
 
     def _render_board_segment(
         self,

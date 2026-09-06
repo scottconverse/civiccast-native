@@ -97,6 +97,57 @@ describe('EgressControlPanel egress-state pill tone', () => {
   })
 })
 
+describe('EgressControlPanel transition_note vs last_error rendering', () => {
+  // Delta review fix: a pending-content-reload annotation used to be
+  // written into last_error, which this panel renders as a red role="alert"
+  // -- clobbering a genuine error and mislabeling a routine, by-design
+  // drain wait as one. transition_note carries that annotation instead and
+  // must render as a plain info line, never role="alert".
+  function renderWithState(state: EgressStateRow) {
+    return render(
+      <EgressControlPanel
+        channelId="public"
+        state={state}
+        health={[]}
+        pendingCommand={null}
+        // canControl=true: avoids an unrelated permission-gated alert
+        // ("controls require the meeting operator role") competing with
+        // the alerts these tests are actually asserting on.
+        canControl={true}
+        error={null}
+        onCommand={() => {}}
+      />,
+    )
+  }
+
+  it('renders transition_note as a plain info line, not an alert', () => {
+    const { getByText, queryByRole } = renderWithState({
+      channel_id: 'public',
+      state: 'TRANSITIONING',
+      updated_at: '2026-05-31T18:00:00Z',
+      transition_note: 'Reload pending: waiting for the current program to reach its natural end.',
+      last_error: null,
+    })
+    const note = getByText(/Reload pending/)
+    expect(note.getAttribute('role')).not.toBe('alert')
+    expect(queryByRole('alert')).toBeNull()
+  })
+
+  it('renders last_error as role="alert" and transition_note separately, never clobbering each other', () => {
+    const { getByText, getByRole } = renderWithState({
+      channel_id: 'public',
+      state: 'TRANSITIONING',
+      updated_at: '2026-05-31T18:00:00Z',
+      transition_note: 'Reload pending: waiting for the current program to reach its natural end.',
+      last_error: 'A genuine encoder error.',
+    })
+    const alert = getByRole('alert')
+    expect(alert.textContent).toBe('A genuine encoder error.')
+    const note = getByText(/Reload pending/)
+    expect(note.getAttribute('role')).not.toBe('alert')
+  })
+})
+
 function graphicsOverlayState(overrides: Partial<GraphicsOverlayStateResponse> = {}): GraphicsOverlayStateResponse {
   return {
     channel_id: 'public',

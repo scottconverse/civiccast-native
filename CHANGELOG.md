@@ -243,6 +243,164 @@ below.
   changed files (`source_plan.py`, `automation.py`, `bridge.py`) are D2
   blob-drift-bound in `docs/claims/claims.yaml`; `models.py` is not bound
   either.
+- **A channel that failed to seamlessly reload its program could get stuck
+  showing TRANSITIONING forever, even while its worker was streaming fine --
+  but this is partly BY DESIGN, and the real fix is honesty, not
+  cancellation.** MEASURED by a real tester (2026-09-05): three channels sat
+  in `TRANSITIONING` for 20+ minutes although their encoders were healthy
+  the whole time. When the seamless content-reload can't apply (the
+  worker's control channel doesn't ack within 5s, or acks something other
+  than "applied"), the daemon falls back to a terminate-and-restart reload
+  -- and for an already-ON_AIR program that reload is DESIGNED to wait for
+  the outgoing program's own natural end (`_request_reload`'s "Programs
+  keep the graceful drain" comment): the 20-minute wait was that drain
+  working as intended for an unexpectedly long-running program, not a stuck
+  latch. A first pass at this fix cancelled the latch past a flat 15-second
+  bound, which a hostile review caught as WRONG: cancelling drops
+  `_pending_reloads`, so at the program's real eventual end the daemon would
+  have treated the exit as a clean stop (`STOPPED`) instead of restarting
+  with the new plan. The shipped fix is visibility instead: the row stays
+  `TRANSITIONING` for as long as the drain genuinely takes (no self-heal,
+  ever), but now carries `pending_reload_since` (when the drain started) and
+  `pending_reload_deadline` (the dispatched plan's own duration + a margin,
+  when the daemon can estimate one) plus a `last_error` label naming what is
+  happening and when it is expected to resolve -- two new nullable columns
+  on `egress_states` (migration `0088_egress_state_reload_visibility`), with
+  a matching `state_entered_at` column that tracks how long the row's
+  `state` value itself has been unchanged (`updated_at` keeps its existing
+  meaning: it now correctly advances on every write again, including a poll
+  tick that rewrites an unchanged state). `alerting/runtime_status.py`
+  escalates a pending reload to red once it has genuinely outlived the plan
+  it is waiting on (`pending_reload_deadline`), not after a flat guess that
+  would false-alarm on every long program; a TRANSITIONING or STARTING row
+  with no computable deadline still escalates symmetrically past a generous
+  10-minute flat bound, so a genuinely wedged transition still surfaces.
+  Two related hardening fixes from the same review: `ChannelAutomationService.
+  _check_plan_rollover` no longer wipes its own tracked horizon/undelivered-
+  reload bookkeeping while a reload is genuinely pending (a TRANSITIONING row
+  carrying `pending_reload_since`) -- that bookkeeping now survives the
+  drain, so its own "reload never landed" retry can still fire during a long
+  drain instead of only after the daemon happens to return to `ON_AIR`; and
+  a FALLBACK_SLATE reload that keeps failing now backs its retry cooldown
+  off exponentially (30s, 60s, 120s, 240s, 300s-capped) and stops retrying
+  entirely -- raising an operator alert -- after 5 consecutive failures,
+  instead of flapping kill/restart forever at a flat 30-second cadence. New
+  tests in `test_daemon.py` (the drain stays honest and still restarts with
+  the new plan at the real EOS), `test_automation.py` (rollover bookkeeping
+  survives a pending drain and its own retry fires during it; the
+  exponential backoff and give-up/alert sequence), and
+  `test_runtime_status.py` (deadline-based escalation, and the flat-bound
+  fallback for both TRANSITIONING and STARTING). `daemon.py` is not
+  claims.yaml-bound; neither is `alerting/runtime_status.py` or
+  `automation.py`.
+- **A slate or bulletin fill period made the encoder restart every few
+  minutes instead of running for its full target duration -- and every
+  prepare re-encoded from scratch even when nothing had changed.**
+  Regression from the #174 fix above: `SlateSourceGenerator` built a
+  hard-coded 30-second segment repeated enough times to cover an hour (120
+  segments), and `BulletinFillerSourceGenerator` cycled its whole
+  bulletin/board rotation the same way -- both relied on
+  `gst/bridge.graph_from_config`'s `MAX_PLAYLIST_SUBCHAINS` (12) truncation
+  to survive, which is a fail-safe for an unexpectedly large plan, not a
+  routine occurrence. Truncated to 12 segments, a 3600-second slate target
+  actually played for only ~360 seconds before the worker hit a real EOS and
+  restarted (resetting the TS session) -- the exact CA-8 symptom these
+  generators exist to prevent, now happening every slate/bulletin period
+  instead of never. A first fix lengthened each individual slide's own hold
+  duration to shrink the cycle count, but a hostile review caught two
+  problems: it changed what actually airs (a 10-second slide became a
+  50-second one), and its own cap check never actually bounded the number
+  of DISTINCT slides -- a busy board with more bulletins than the cap (13,
+  40, ...) still built that many segments regardless. The shipped fix
+  instead: (1) `SlateSourceGenerator` caches its rendered slate file on disk
+  keyed by (duration, message, profile) so an unchanged config is a pure
+  cache hit -- no re-encode on every prepare -- and still holds up to 12
+  repeats of a longer card (a 3600-second target now builds 12 segments of
+  300 seconds each instead of 120 of 30); (2) `BulletinFillerSourceGenerator`
+  keeps every slide at its configured ~10-second hold, caps the rotation at
+  12 distinct slides (truncated with a WARNING past that, same fail-safe
+  posture as the bridge truncation), pre-renders ONE concatenated "rotation"
+  file per cycle (cached by content hash, so an unchanged rotation is also a
+  pure cache hit), and holds up to 12 repeats of that ONE file -- coverage is
+  `cycles x rotation_seconds`, which can fall short of `target_fill_seconds`
+  for a long rotation or a long target; the existing rollover mechanism
+  (the same scaled floor that extends a schedule-derived program plan)
+  covers the rest for as long as the channel stays on the fill. `gst/
+  bridge.py`'s truncation-rationale docstring is updated to match: it is
+  purely a fail-safe now, not the routine path either generator's own
+  output is expected to take. New tests in `test_source_plan.py` (the
+  cache hit/miss behavior) and `test_bulletin_filler.py`/`test_bulletin_
+  filler_board.py` (the rotation file, its cache, and the 13/40-slide
+  truncation invariant). `source_plan.py`, `bulletin_filler.py`, and
+  `gst/bridge.py` are not claims.yaml-bound.
+- **A channel automation rollover could dispatch off an already-stale
+  projection, or pay for a synchronous prepare for a near-zero schedule
+  advance.** MEASURED by a real tester (2026-09-05): `_check_plan_rollover`
+  logged "the live plan ends in -1208s" and still dispatched, and separately
+  dispatched off a "schedule continues 0s further" advance -- the
+  `fresh_end <= plan_end_at` check it used had no epsilon, so even a
+  trivial or negative advance passed. `ChannelAutomationService.
+  _check_plan_rollover` now logs a WARNING and discards the tracked horizon
+  outright once its projected end has already passed, so the NEXT tick
+  re-establishes a fresh, correct projection from "now" instead of
+  dispatching against (or repeatedly warning about) one already proven
+  wrong -- a rollover can fire again once that fresh projection's own
+  boundary is reached, rather than the channel getting stuck on the first
+  bad projection forever. It also requires the fresh schedule query to
+  reach at least a full rollover lead (`_rollover_min_lead_seconds`) further
+  than the plan already on air before dispatching, replacing the
+  epsilon-less comparison. New table-driven tests in `test_automation.py`
+  cover a stale-horizon tick (no dispatch, no re-query, then a fresh
+  projection and a rollover firing again once its boundary arrives), a
+  near-zero advance (no dispatch), and a full-lead advance (dispatch);
+  existing cadence tests were updated so the ones checking the CADENCE
+  floor specifically use a schedule advance well above the min-lead guard
+  (so the two guards are never accidentally conflated), and the
+  flat-floor-bug counterfactual keeps demonstrating a lead reaching negative
+  (now via a fresh re-establish-and-repeat cycle rather than an
+  unconditional dispatch). `automation.py` is not claims.yaml-bound.
+- **Delta review of the three fixes above: nine further corrections.**
+  (1) The pending-reload annotation moved OUT of `last_error` (which the
+  operator console renders as a red alert, clobbering a genuine error and
+  mislabeling a routine drain wait as one) into a new `transition_note`
+  field (`EgressStateRow`, migration `0088`), rendered as a plain info line
+  on `ChannelOpsScreen`/`SystemHealthScreen`. (2) `runtime_status.py`'s flat
+  600s escalation bound now fires ONLY when `pending_reload_deadline` is
+  unknown -- a known, not-yet-due deadline is the sole signal once it
+  exists, so a 2-hour program's drain no longer escalates at the 10-minute
+  mark. (3) `pending_reload_deadline` now estimates off the plan's
+  REMAINING duration (a new `_dispatched_plan_started_at` wall-clock anchor
+  minus elapsed time), not its total, and a FALLBACK_SLATE-originated
+  pending reload (which terminates the process immediately) gets a short
+  flat bound instead of a plan-duration guess. (4) `_request_reload` now
+  ignores a duplicate "reload" request while one is already pending
+  (idempotent no-op -- no re-attempted prepare, no reset `since`/`deadline`,
+  no corrupted `previous_state`), and `automation.py`'s B2 undelivered-
+  reload retry fires at most once per drain instead of every 45s
+  indefinitely. (5) `SlateSourceGenerator` now renders to a staging path and
+  publishes atomically via `.replace()` (matching the bulletin rotation
+  cache), folds a new `SLATE_RENDER_VERSION` constant into its cache key,
+  and evicts stale `slate-*.ts` files on a miss. (6) `BulletinFillerSource
+  Generator` no longer silently drops slides past the 12-per-rotation cap --
+  a busy board PAGES across multiple rotation files (page k holds slides
+  `12k..12k+11`) so every slide still airs, logged at WARNING when coverage
+  falls short of the target. (7) A failed (or crashed-mid-render) rotation
+  concat now cleans up its staging file and concat-list text file in a
+  `finally` block instead of leaving them behind forever. (8) The slate
+  give-up counter now counts only CONFIRMED failures (detected the moment a
+  dispatched reload is observed flapping back to `FALLBACK_SLATE`, not on
+  every dispatch regardless of outcome) and resets on any success, instead
+  of creeping toward the give-up threshold across unrelated, always-
+  successful slate gaps. New/updated tests across `test_daemon.py`,
+  `test_automation.py`, `test_runtime_status.py`, `test_source_plan.py`,
+  `test_bulletin_filler.py`/`test_bulletin_filler_board.py`, and a new
+  `tests/egress/test_migration_0088.py` (upgrade/downgrade/round-trip,
+  `state_entered_at` backfill, and that the pre-existing `state` CHECK
+  constraint survives the SQLite batch-mode table rebuild). Operator-
+  console changes covered by `ChannelOpsScreen.test.tsx` and
+  `SystemHealthAlerting.test.tsx` (vitest); `client.ts`'s hand-maintained
+  `EgressStateRow` duplicate (a real drift risk flagged by this review) is
+  brought back in sync with the generated type.
 
 ### Changed
 

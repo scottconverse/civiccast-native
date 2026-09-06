@@ -129,6 +129,47 @@ describe('egress-state wording agreement across panels', () => {
     expect(panel.getByText('Needs attention')).toBeTruthy()
     panel.unmount()
   })
+
+  it('renders transition_note as a plain info line, separate from an alert-role last_error', () => {
+    // Delta review fix: the pending-content-reload annotation used to be
+    // written into last_error, which this panel renders as a red
+    // role="alert" -- clobbering a genuine error and mislabeling a
+    // routine, by-design drain wait as one. transition_note carries that
+    // annotation instead and must render as an info line, never
+    // role="alert", alongside a REAL last_error still rendering as one.
+    const states = new Map<string, EgressStateRow | null>([
+      [
+        'public',
+        {
+          channel_id: 'public',
+          state: 'TRANSITIONING',
+          updated_at: '2026-06-15T12:00:00Z',
+          last_error: 'A genuine encoder error.',
+          transition_note:
+            'Reload pending: waiting for the current program to reach its natural end.',
+        },
+      ],
+    ])
+    const { getByRole, getByText, queryAllByRole } = render(
+      <EgressReadinessPanel
+        channels={[CHANNEL]}
+        states={states}
+        health={new Map()}
+        currency={new Map()}
+        loading={false}
+        error={null}
+        pendingCommand={null}
+        canControl={false}
+        onCommand={vi.fn()}
+      />,
+    )
+    const alert = getByRole('alert')
+    expect(alert.textContent).toBe('A genuine encoder error.')
+    const note = getByText(/Reload pending/)
+    expect(note.getAttribute('role')).not.toBe('alert')
+    // Exactly one alert-role element -- the note never doubles as one.
+    expect(queryAllByRole('alert').length).toBe(1)
+  })
 })
 
 describe('SelfTestPanel', () => {

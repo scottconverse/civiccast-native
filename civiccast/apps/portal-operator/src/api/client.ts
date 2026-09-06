@@ -434,6 +434,14 @@ export interface EgressStateRow {
   updated_at: string
   pid?: number | null
   last_error?: string | null
+  state_entered_at?: string
+  pending_reload_since?: string | null
+  pending_reload_deadline?: string | null
+  // Delta review fix: the honest pending-content-reload annotation lives
+  // here now, NOT in last_error -- the console renders last_error as a
+  // red alert, which would clobber a real error and mislabel routine
+  // drain-waiting as one. Render this as an info line instead.
+  transition_note?: string | null
 }
 
 export interface EgressHealthSample {

@@ -42825,6 +42825,47 @@
               }
             ],
             "title": "Last Error"
+          },
+          "state_entered_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "State Entered At"
+          },
+          "pending_reload_since": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Reload Since"
+          },
+          "pending_reload_deadline": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pending Reload Deadline"
+          },
+          "transition_note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transition Note"
           }
         },
         "additionalProperties": false,

@@ -116,16 +116,19 @@ def test_expected_head_matches_the_single_migration_head() -> None:
     # the sole other head when 0086 re-parented onto it. 0087_retention_terms
     # (WP-08: value/unit/forever retention-term authoring --
     # retention_term_unit/retention_term_value/retention_anchor_at on
-    # assets) chains after 0086_live_source_probe_state and is the current
-    # head.
-    assert expected_migration_head() == "0087_retention_terms"
+    # assets) chains after 0086_live_source_probe_state.
+    # 0088_egress_state_reload_visibility (hostile-review redo of the
+    # pending-content-reload latch fix: state_entered_at/pending_reload_
+    # since/pending_reload_deadline on egress_states) chains after
+    # 0087_retention_terms and is the current head.
+    assert expected_migration_head() == "0088_egress_state_reload_visibility"
 
 
 def test_expected_head_does_not_depend_on_current_working_directory(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     expected_migration_head.cache_clear()
     monkeypatch.chdir(tmp_path)
     try:
-        assert expected_migration_head() == "0087_retention_terms"
+        assert expected_migration_head() == "0088_egress_state_reload_visibility"
     finally:
         expected_migration_head.cache_clear()
 
@@ -140,7 +143,7 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
         conn.execute("CREATE TABLE alembic_version (version_num VARCHAR(255) NOT NULL)")
         conn.execute(
             "INSERT INTO alembic_version (version_num) VALUES (?)",
-            ("0087_retention_terms",),
+            ("0088_egress_state_reload_visibility",),
         )
         conn.commit()
 
@@ -153,8 +156,8 @@ def test_schema_check_reports_current_from_non_repo_working_directory(
 
     assert status == SchemaStatus(
         state="current",
-        db_revision="0087_retention_terms",
-        expected_head="0087_retention_terms",
+        db_revision="0088_egress_state_reload_visibility",
+        expected_head="0088_egress_state_reload_visibility",
     )
 
 

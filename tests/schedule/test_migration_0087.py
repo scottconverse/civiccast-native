@@ -74,13 +74,18 @@ def _seed_minimal_assets_table(url: str) -> None:
 
 
 def test_single_head() -> None:
-    """WP-08's own head must be the ONLY head reachable from this
-    worktree's migration set (finalization plan section 7's "single-head
-    assertion" gate). The chain is 0086_live_source_probe_state -> 0087,
-    per the migration's own docstring."""
+    """WP-08's own revision must still be reachable and not itself a second
+    head (finalization plan section 7's "single-head assertion" gate). The
+    chain is 0086_live_source_probe_state -> 0087 -> 0088_egress_state_
+    reload_visibility (hostile-review redo of the pending-content-reload
+    latch fix), which re-parented onto this revision and is now the repo-
+    wide single head."""
     script = ScriptDirectory.from_config(_cfg("sqlite:///:memory:"))
     heads = script.get_heads()
-    assert heads == [_REVISION], f"expected a single head {_REVISION!r}, got {heads}"
+    assert heads == ["0088_egress_state_reload_visibility"], (
+        f"expected a single head '0088_egress_state_reload_visibility', got {heads}"
+    )
+    assert script.get_revision(_REVISION) is not None, f"{_REVISION!r} must still be reachable"
 
 
 def test_upgrade_adds_the_three_columns(tmp_path: Path) -> None:

@@ -6321,8 +6321,12 @@ Read CivicCast local federation metadata.
 - `current_proof_event_id` (optional): `string | null`
 - `current_source_label` (optional): `string | null`
 - `last_error` (optional): `string | null`
+- `pending_reload_deadline` (optional): `string | null`
+- `pending_reload_since` (optional): `string | null`
 - `pid` (optional): `number | null`
 - `state` (required): `'STOPPED' | 'STARTING' | 'ON_AIR' | 'TRANSITIONING' | 'FALLBACK_SLATE' | 'DRAINING' | 'STOPPING' | 'ERROR'`
+- `state_entered_at` (optional): `string`
+- `transition_note` (optional): `string | null`
 - `updated_at` (required): `string`
 
 ### `EmergencyOverlay`

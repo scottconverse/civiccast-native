@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -17,7 +17,12 @@ from civiccast.egress.cg_bridge import (
     CG_EGRESS_PROOF_BOUNDARY,
     build_cg_overlay_egress_proof,
 )
-from civiccast.egress.daemon import _RESTART_ESCALATION_STREAK, EgressDaemon
+from civiccast.egress.daemon import (
+    _PENDING_RELOAD_DEADLINE_MARGIN_S,
+    _PENDING_RELOAD_SLATE_DEADLINE_S,
+    _RESTART_ESCALATION_STREAK,
+    EgressDaemon,
+)
 from civiccast.egress.encoder_strategy import EncoderStartRequest, EncoderStartResult
 from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.models import (
@@ -177,6 +182,53 @@ def test_daemon_processes_start_command_and_records_success_health(tmp_path: Pat
 
     assert daemon.process_once("gov") == 0
     assert store.recent_health("gov", 1)[0].sink_connected == {"Proof": True}
+
+
+def test_write_state_advances_updated_at_but_not_state_entered_at_on_an_unchanged_state(
+    tmp_path: Path,
+) -> None:
+    """BLOCKER A hostile-review redo: ``updated_at`` is the row's public
+    "last write" timestamp -- it must advance on EVERY write, honestly,
+    including a poll tick that rewrites an unchanged state (an earlier pass
+    wrongly suppressed it, which conflated it with "how long has the state
+    itself been unchanged"). ``state_entered_at`` is the field that answers
+    THAT question instead, and only advances when ``state`` itself changes
+    -- this is what fixes ``alerting/runtime_status.py``'s ``_seconds_in_
+    state`` blind spot without breaking ``updated_at``'s own meaning."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    process = _FakeProcess()
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: process,
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    first = store.read_state("gov")
+    assert first is not None and first.state == "ON_AIR"
+
+    # Repeated poll ticks with nothing changed (same pid, same state, same
+    # everything): updated_at still advances every time (it is a real
+    # "last write" timestamp), but state_entered_at stays fixed.
+    daemon._poll_process("gov")  # type: ignore[attr-defined]
+    daemon._poll_process("gov")  # type: ignore[attr-defined]
+    second = store.read_state("gov")
+    assert second is not None
+    assert second.updated_at >= first.updated_at
+    assert second.state_entered_at == first.state_entered_at
+
+    # A real state change (the worker exits) advances BOTH.
+    process.returncode = 0
+    daemon._poll_process("gov")  # type: ignore[attr-defined]
+    third = store.read_state("gov")
+    assert third is not None
+    assert third.state == "STOPPED"
+    assert third.updated_at >= second.updated_at
+    assert third.state_entered_at >= second.state_entered_at
+    assert third.state_entered_at != second.state_entered_at
 
 
 def test_daemon_routes_storage_refusal_to_configured_fallback_slate_before_encoder_start(
@@ -581,6 +633,51 @@ def test_daemon_logs_last_error_at_info_on_fallback_slate_transition(
     info_records = [r for r in caplog.records if r.levelname == "INFO"]
     assert any(
         "FALLBACK_SLATE" in r.getMessage() and state.last_error in r.getMessage()
+        for r in info_records
+    ), [r.getMessage() for r in info_records]
+
+
+def test_daemon_logs_transition_note_at_info_on_a_pending_reload(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Delta review fix: ``_write_state``'s single-choke-point log line
+    named ``last_error`` but not ``transition_note`` -- the SAME
+    diagnosability gap Gate A T4 already fixed for ``last_error`` (a state
+    transition with no explanatory trail reaching the control-plane log).
+    A pending-reload drain writes its honest annotation into
+    transition_note (see the BLOCKER A hostile-review redo), so it must
+    reach the log too."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, reload_ok=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+
+    with caplog.at_level("INFO", logger="civiccast.egress.daemon"):
+        daemon.process_once("gov")  # seamless fails -> terminate+restart latches
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.transition_note is not None
+
+    info_records = [r for r in caplog.records if r.levelname == "INFO"]
+    assert any(
+        "TRANSITIONING" in r.getMessage() and state.transition_note in r.getMessage()
         for r in info_records
     ), [r.getMessage() for r in info_records]
 
@@ -1006,6 +1103,251 @@ def test_content_reload_falls_back_to_restart_when_worker_not_ready(tmp_path: Pa
     state = store.read_state("gov")
     assert state.state == "ON_AIR"
     assert state.current_source_label == "Mayor interview"
+
+
+def test_pending_reload_drain_stays_honest_and_still_restarts_at_the_real_eos(
+    tmp_path: Path,
+) -> None:
+    """BLOCKER A hostile-review redo (2026-09-05): a first pass at this fix
+    cancelled the latch past a flat 15s bound -- WRONG. For an ON_AIR
+    program, the terminate+restart fallback's wait for a natural EOS is
+    DESIGNED behavior (see ``_request_reload``'s "Programs keep the
+    graceful drain" comment); the tester's 20-minute TRANSITIONING was that
+    drain working as designed for an unexpectedly long-running program, not
+    a stuck latch. Cancelling it early would have dropped
+    ``_pending_reloads``, so at the REAL eventual EOS the daemon would have
+    treated the exit as a clean stop (STOPPED) instead of restarting with
+    the new plan.
+
+    The fix is honesty, not cancellation: the row stays TRANSITIONING for
+    as long as the drain genuinely takes (no self-heal, ever), but
+    ``last_error``/``pending_reload_since``/``pending_reload_deadline`` make
+    WHY and WHEN-expected visible, and the real EOS still correctly
+    restarts with the NEW plan."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, reload_ok=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # seamless reload fails -> terminate+restart latches
+
+    state = store.read_state("gov")
+    assert state.state == "TRANSITIONING"
+    assert state.current_source_label == "Council meeting"  # unchanged -- reload never applied
+    assert state.current_proof_event_id is not None
+    pending_proof_event_id = state.current_proof_event_id
+    assert state.pending_reload_since is not None
+    # Delta review fix: the pending-reload annotation moved from last_error
+    # (which the operator console renders as a red alert, clobbering a real
+    # error) to its own transition_note field.
+    assert state.last_error is None
+    assert "Reload pending" in (state.transition_note or "")
+    first_since = state.pending_reload_since
+
+    # The worker never exits (no crash, no drain) -- poll() keeps returning
+    # None every tick, exactly like a genuinely healthy ON_AIR encoder whose
+    # program just keeps running. Many ticks later, the row is STILL
+    # TRANSITIONING (no self-heal, ever) with the SAME since/proof event --
+    # the latch and the horizon it protects both survive.
+    for _ in range(20):
+        daemon.process_once("gov")
+    state = store.read_state("gov")
+    assert state.state == "TRANSITIONING"
+    assert state.current_proof_event_id == pending_proof_event_id
+    assert state.pending_reload_since == first_since
+    assert "gov" in daemon._pending_reloads  # type: ignore[attr-defined]
+    assert len(started) == 1  # no second encoder was ever started
+
+    # The program FINALLY reaches its real, natural EOS -- the pending
+    # reload resolves correctly: the daemon restarts with the NEW plan, not
+    # a clean STOPPED (which a cancelled/dropped latch would have produced).
+    started[0].returncode = 0
+    daemon.process_once("gov")
+    state = store.read_state("gov")
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Mayor interview"
+    assert state.pending_reload_since is None  # resolved -- no longer pending
+    assert state.pending_reload_deadline is None
+    assert len(started) == 2  # restart landed the new program
+    assert "gov" not in daemon._pending_reloads  # type: ignore[attr-defined]
+
+
+def test_pending_reload_deadline_uses_remaining_not_total_plan_duration(tmp_path: Path) -> None:
+    """Delta review fix: ``pending_reload_deadline`` used to be
+    ``since + TOTAL plan duration``, wrong the moment the plan is already
+    partway through -- the true runway is the total minus elapsed time
+    since the plan was dispatched (``_dispatched_plan_started_at``)."""
+    daemon = EgressDaemon(
+        InMemoryEgressStore(),
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+    )
+    dispatched_at = datetime(2026, 6, 5, 12, 0, 0, tzinfo=UTC)
+    daemon._dispatched_plan_horizon["gov"] = ("ev-1", (600.0,), False)  # type: ignore[attr-defined]
+    daemon._dispatched_plan_started_at["gov"] = dispatched_at  # type: ignore[attr-defined]
+    state = EgressStateRow(
+        channel_id="gov",
+        state="ON_AIR",
+        current_proof_event_id="ev-1",
+        updated_at=dispatched_at,
+    )
+
+    # 400s of the 600s plan have already elapsed -> 200s remaining.
+    since = dispatched_at + timedelta(seconds=400)
+    deadline = daemon._estimate_pending_reload_deadline("gov", state, since)  # type: ignore[attr-defined]
+
+    assert deadline == since + timedelta(seconds=200 + _PENDING_RELOAD_DEADLINE_MARGIN_S)
+
+
+def test_pending_reload_deadline_for_fallback_slate_uses_a_short_bound(tmp_path: Path) -> None:
+    """Delta review fix: a FALLBACK_SLATE-originated pending reload
+    terminates the process immediately (_request_reload) -- there is no
+    program content to wait out, so its deadline is a short flat bound
+    rather than a (meaningless) plan-duration estimate. Confirmed even when
+    a dispatched-plan record happens to exist (from an earlier ON_AIR
+    period) -- FALLBACK_SLATE is checked first and wins."""
+    daemon = EgressDaemon(
+        InMemoryEgressStore(),
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+    )
+    since = datetime(2026, 6, 5, 12, 0, 0, tzinfo=UTC)
+    daemon._dispatched_plan_horizon["gov"] = ("ev-1", (3600.0,), False)  # type: ignore[attr-defined]
+    daemon._dispatched_plan_started_at["gov"] = since  # type: ignore[attr-defined]
+    state = EgressStateRow(
+        channel_id="gov",
+        state="FALLBACK_SLATE",
+        current_proof_event_id="ev-1",
+        updated_at=since,
+    )
+
+    deadline = daemon._estimate_pending_reload_deadline("gov", state, since)  # type: ignore[attr-defined]
+
+    assert deadline == since + timedelta(seconds=_PENDING_RELOAD_SLATE_DEADLINE_S)
+
+
+def test_pending_reload_deadline_is_unknown_while_a_switch_is_deferred(tmp_path: Path) -> None:
+    """Delta review fix: a content-reload dispatched with
+    switch_at_end_of_current=True (switch_was_deferred on the recorded
+    horizon) does not start airing at dispatch time -- the engine holds it
+    until the OUTGOING leg's own natural end. ``_dispatched_plan_
+    started_at`` is stamped at DISPATCH time regardless, so while a switch
+    is still deferred that anchor is too early and would make the deadline
+    come due before the plan has even started airing. Nothing reports back
+    when a deferred switch actually lands, so the honest estimate while
+    switch_was_deferred is True is "unknown" (None) -- never a guessed-too-
+    early deadline."""
+    daemon = EgressDaemon(
+        InMemoryEgressStore(),
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+    )
+    dispatched_at = datetime(2026, 6, 5, 12, 0, 0, tzinfo=UTC)
+    daemon._dispatched_plan_horizon["gov"] = ("ev-1", (600.0,), True)  # type: ignore[attr-defined]
+    daemon._dispatched_plan_started_at["gov"] = dispatched_at  # type: ignore[attr-defined]
+    state = EgressStateRow(
+        channel_id="gov",
+        state="ON_AIR",
+        current_proof_event_id="ev-1",
+        updated_at=dispatched_at,
+    )
+
+    # Even long after "dispatch" -- which would otherwise look like the
+    # 600s plan is already overdue -- the deferred switch means we
+    # genuinely don't know when it actually started airing.
+    since = dispatched_at + timedelta(seconds=700)
+    deadline = daemon._estimate_pending_reload_deadline("gov", state, since)  # type: ignore[attr-defined]
+
+    assert deadline is None
+
+    # Contrast: the SAME horizon with switch_was_deferred=False estimates
+    # normally (the fix is specific to the deferred case, not a blanket
+    # regression).
+    daemon._dispatched_plan_horizon["gov"] = ("ev-1", (600.0,), False)  # type: ignore[attr-defined]
+    since2 = dispatched_at + timedelta(seconds=400)
+    deadline2 = daemon._estimate_pending_reload_deadline("gov", state, since2)  # type: ignore[attr-defined]
+    assert deadline2 == since2 + timedelta(seconds=200 + _PENDING_RELOAD_DEADLINE_MARGIN_S)
+
+
+def test_request_reload_ignores_a_duplicate_request_while_already_pending(
+    tmp_path: Path,
+) -> None:
+    """Delta review fix: a duplicate "reload" request while one is ALREADY
+    pending (e.g. automation's own B2 retry re-firing during a long drain)
+    must be an idempotent no-op -- not re-attempt the seamless path (a
+    wasted synchronous prepare) and, critically, not overwrite
+    ``_pending_reloads``/``pending_reload_since``/``pending_reload_deadline``
+    with ``state.state`` AT THAT MOMENT (which is TRANSITIONING, not the
+    true prior ON_AIR/FALLBACK_SLATE) -- that would lose the eventual
+    handoff's previous_state/proof event and reset the "since" timer so an
+    overdue reload could never actually escalate."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, reload_ok=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # seamless fails -> terminate+restart latches
+
+    first_state = store.read_state("gov")
+    assert first_state.state == "TRANSITIONING"
+    first_since = first_state.pending_reload_since
+    first_deadline = first_state.pending_reload_deadline
+    assert first_since is not None
+    reload_calls_after_first = len(strategy.reload_calls)
+
+    # 10 duplicate "reload" requests during the drain (B2 re-firing, or an
+    # operator re-issuing "Restart feed") -- each must be a pure no-op.
+    for _ in range(10):
+        store.enqueue_command(_command("reload"))
+        daemon.process_once("gov")
+
+    assert len(strategy.reload_calls) == reload_calls_after_first  # no re-attempted prepare
+    state = store.read_state("gov")
+    assert state.state == "TRANSITIONING"
+    assert state.pending_reload_since == first_since  # unchanged, not reset
+    assert state.pending_reload_deadline == first_deadline
+    assert state.current_source_label == "Council meeting"  # the ORIGINAL label preserved
+
+    # The real EOS still correctly restarts with the new plan afterward --
+    # previous_state was never overwritten with "TRANSITIONING".
+    started[0].returncode = 0
+    daemon.process_once("gov")
+    state = store.read_state("gov")
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Mayor interview"
+    assert len(started) == 2
 
 
 def test_content_reload_strategy_exception_falls_back_to_restart(tmp_path: Path) -> None:

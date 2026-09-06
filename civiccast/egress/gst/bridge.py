@@ -579,15 +579,24 @@ def graph_from_config(
     surfacing it.
 
     Truncating (with a WARNING, not an error) is still the right answer for
-    an ``EgressSourcePlan`` producer that is NOT clamped to this constant by
-    design: ``source_plan.SlateSourceGenerator`` and
-    ``bulletin_filler._plan_with_cycle`` intentionally repeat one
-    pre-conformed file ("slate"/"cg"-kind segments) well past 12 segments to
-    span an hour of slate/bulletin fill (CA-8: a short single-segment plan
-    relaunched the encoder, and reset the TS session, every
-    ``duration_seconds``). For those, playing only the first
-    ``MAX_PLAYLIST_SUBCHAINS`` repeats of the SAME file is a harmless,
-    graceful degradation, not a bug to fail the channel over.
+    a "slate"/"cg"-kind plan, because those producers are not clamped to
+    this constant the way a schedule-derived plan is -- but as of the
+    2026-09-05 hostile-review fix, ``source_plan.SlateSourceGenerator`` and
+    ``bulletin_filler.BulletinFillerSourceGenerator._plan_with_cycle`` no
+    longer NEED to exceed it in the first place: both now hold their
+    pre-rendered file (a longer slate card, or one concatenated bulletin/
+    board "rotation" file) for as many segments as it takes to span the
+    fill target, capped at ``MAX_PLAYLIST_SUBCHAINS`` repeats of that ONE
+    file, rather than repeating a short file well past this cap by design
+    (the CA-8-era approach: a short single-segment plan relaunched the
+    encoder, and reset the TS session, every ``duration_seconds`` -- fixed
+    by repeating one file, but that repeat count itself then grew past this
+    cap as ``target_fill_seconds`` grew, quietly relying on the truncation
+    below every fill period instead of only as a rare fail-safe). This
+    truncation stays in place purely as that fail-safe -- for a producer
+    bug, a future producer that forgets the cap, or a still-oversized
+    rotation -- not as the routine path either producer's own output is
+    expected to take.
     """
     profile = config.canonical_profile
     common_caps = (

@@ -1858,6 +1858,10 @@ export interface EgressStateRow {
   updated_at: string
   pid?: number | null
   last_error?: string | null
+  state_entered_at?: string
+  pending_reload_since?: string | null
+  pending_reload_deadline?: string | null
+  transition_note?: string | null
 }
 
 export interface EmergencyOverlay {
