@@ -894,6 +894,18 @@ entries:
       # worker 1's marker) -- all reproduce the reviewer's exact measured
       # bug shape against the PRE-fix gating logic before being restored to
       # the fix).
+      #
+      # engine.py and audio_tap.py drifted an EIGHTH time (items 88 + 84c,
+      # measured in sandbox run 17, soak-a6d7871-20260906-213332Z, Opus
+      # diagnosis) -- caption-audio-tap backpressure could stall the mux and
+      # take the channel off air, and the first-output marker was a
+      # tautology at arm time. Full rationale, the fix shape, and the
+      # current-source test proof are recorded once, in full, on the sibling
+      # claim entry below (same code files, ``test_build_play_teardown_
+      # clean`` node_id) rather than duplicated verbatim here -- see that
+      # entry's own comment block immediately above its ``code:`` list.
+      # worker.py, decode_policy.py, graph.py, and control.py are untouched
+      # this round.
       # Blob IDs re-hashed with `git hash-object --path <file> <file>`.
       #
       # engine.py and worker.py drifted an EIGHTH time (item 85, sandbox runs
@@ -995,7 +1007,7 @@ entries:
         - path: civiccast/egress/gst/worker.py
           blob: 8b4696f803df606acaa4e6754e87a82d19afed44
         - path: civiccast/egress/gst/engine.py
-          blob: 89a3cde87d712d12ffaae5e7e3052753ea555958
+          blob: 46ae29cc60414aee7f0879986ed336f3b0f7738b
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -1003,10 +1015,10 @@ entries:
         - path: civiccast/egress/gst/control.py
           blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
         - path: civiccast/egress/gst/audio_tap.py
-          blob: 338db038b43c0881bf41bee42a6d80b9864c32cc
+          blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 16e8c5bc5eaaa281d7a97432e14e896a6b5f1fc8
+        blob: dde875813952e46d4706f4d831c0b67de0bbdc76
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -1582,7 +1594,171 @@ entries:
       # worker 1's marker) -- all reproduce the reviewer's exact measured
       # bug shape against the PRE-fix gating logic before being restored to
       # the fix).
-      # Blob IDs re-hashed with `git hash-object --path <file> <file>`.
+      #
+      # engine.py and audio_tap.py drifted an EIGHTH time (items 88 + 84c,
+      # measured in sandbox run 17, soak-a6d7871-20260906-213332Z, Opus
+      # diagnosis; round-2 review corrections included in this same entry --
+      # both rounds landed before this claim's blobs were ever re-bound to a
+      # merged main, so there is one entry, not two). worker.py,
+      # decode_policy.py, graph.py, and control.py are untouched this round
+      # -- their blobs are unchanged from the entry immediately above.
+      #
+      # Item 88: every worker reached PLAYING and pushed real TS output at
+      # ~3.2 Mbps for 26-100s, then output stopped and the 10s stall
+      # watchdog killed it. Root cause: the caption-audio-tap appsink's
+      # ``_on_new_sample`` callback ran on the GStreamer STREAMING thread and
+      # did its blocking I/O there -- WAV close, ``flush``, ``os.fsync``,
+      # atomic ``partial.replace(target)`` -- every ``segment_seconds``. Once
+      # that I/O fell behind (two ffmpeg jobs + a Whisper ASR pass sharing
+      # the box), the tap's plain (default, NON-leaky) ``queue`` backed up,
+      # the tee it forks from stalled, and the mux's audio pad -- fed by the
+      # SAME tee -- starved, stopping real TS output. A caption side-channel
+      # was able to take the CHANNEL off air. Fixed on both the graph and
+      # writer sides so no single layer removal re-opens the hole:
+      # ``engine.py``'s ``_build_audio_tap`` now builds its element chain via
+      # the new pure, gi-free ``_audio_tap_element_specs()`` function, with
+      # ``caption_audio_tap_queue`` set ``leaky=2``
+      # (``GST_QUEUE_LEAK_DOWNSTREAM``, drop the OLDEST buffered data rather
+      # than ever block upstream) and its ``max-size-time`` disabled (``0``,
+      # was GStreamer's stock 1s default), and the appsink set ``drop=True``
+      # (was ``False``). Round-2 review correction: ``max-size-buffers=200``
+      # is NOT a "deeper" cap -- it is GStreamer's own stock ``queue``
+      # default, kept explicit only for clarity/testability; the actual
+      # load-bearing change is ``max-size-time=0`` -- this tap's measured
+      # audio format (F32LE, 44.1 kHz, stereo, 8192-byte buffers) takes ~4.6s
+      # to fill 200 buffers (~1.6 MB), so the stock 1s time bound, left in
+      # place, would have been the FIRST limit reached, leaking far sooner
+      # than intended. ``max-size-bytes`` is deliberately left at
+      # GStreamer's own stock 10 MB default (an original submission of this
+      # entry wrongly set it to 0/unlimited, removing a real memory guard for
+      # no benefit -- corrected here, never shipped as a release).
+      # ``audio_tap.py``'s ``RollingWavSegmentWriter.write_pcm_s16le`` no
+      # longer does ANY blocking I/O itself -- it only appends PCM to an
+      # in-memory ``bytearray`` under a lock that guards ONLY that
+      # bookkeeping, and hands finished segments to the new
+      # ``SegmentWriterThread``, a dedicated background thread that owns all
+      # the blocking I/O. The hand-off (``SegmentWriterThread.submit``) never
+      # blocks: a bounded queue (default 8 segments) drops the OLDEST pending
+      # segment -- never the newest, never by waiting -- when full; the drop
+      # is COUNTED on the caller's thread (a plain lock increment) but only
+      # ever LOGGED from the writer thread itself (round-2 review: the
+      # original submission printed straight from ``submit()``, i.e. from the
+      # streaming thread in production -- exactly the kind of I/O this item
+      # exists to keep off that thread; corrected to a counter-plus-flag the
+      # writer thread's own loop drains, rate-limited to at most once a
+      # minute).
+      #
+      # Round-2 review BLOCKER: stopping the writer must ALSO be bounded.
+      # The original submission's ``stop()`` sent its sentinel via a
+      # blocking, untimed ``queue.put(None)`` -- with the queue full and the
+      # writer thread wedged inside a slow/hung ``fsync``, this measured as
+      # ``close()`` never returning within 25s, and ``engine.py``'s own
+      # ``stop()`` called ``audio_tap_writer.close()`` BEFORE its
+      # ``force_exit_on_hang``/``os._exit(70)`` escape -- a stuck disk could
+      # therefore defeat the worker's entire bounded-teardown contract, the
+      # opposite of the fail-safe this item exists to build. Fixed:
+      # ``SegmentWriterThread`` now signals stop via a ``threading.Event``
+      # (never through the same bounded queue ``submit()`` uses) and
+      # ``stop()``/``close()`` join with a timeout; if the thread is still
+      # alive after that bound (Python cannot interrupt a thread out of a
+      # blocking syscall) they log a WARNING and return ``"abandoned"``
+      # rather than waiting further, leaving the daemon thread running in
+      # the background. ``engine.py``'s own ``stop()`` now passes
+      # ``teardown_timeout_s`` through to ``close()`` and logs (but does not
+      # escalate) an ``"abandoned"`` result -- the ``os._exit(70)`` escape
+      # can no longer be defeated by a wedged caption tap. Docstring/claim
+      # correction: ``close()`` returning does NOT unconditionally mean
+      # "segments exist on disk" any more -- callers must check the
+      # ``"drained"``/``"abandoned"`` return value; the original submission's
+      # docstring (and this claim's own prose) overclaimed an unconditional
+      # guarantee that was only ever true of the pre-item-88 SYNCHRONOUS
+      # implementation.
+      #
+      # Round-2 review: two more real defects found and fixed alongside the
+      # above. (1) Publish failures were invisible -- an unbounded
+      # ``publish_errors`` list nobody read, and no ``_error`` was ever set.
+      # ``SegmentWriterThread`` now tracks ``consecutive_publish_failures``
+      # (resets to 0 on any success) and ``last_publish_error`` (a bounded
+      # ``repr()`` string, not the exception object), logged at most once a
+      # minute -- a 100%-failing tap is now visible without being made fatal
+      # to air. (2) The six-digit segment-sequence guard (``_open_segment``'s
+      # own check, pre-item-88) was silently dropped when that method was
+      # removed -- past ``chunk-999999.wav`` the filename would grow a
+      # seventh digit, invisible to ``_discover_next_index``'s six-digit
+      # regex on the next restart. Restored, checked BEFORE consuming from
+      # the in-memory buffer (so a caller catching the resulting
+      # ``RuntimeError`` does not find its audio already silently discarded).
+      #
+      # Item 84c: the ``CTRL first-output: first buffer after 0.0s`` marker
+      # was a TAUTOLOGY, not evidence. The persistent output half's
+      # ``queue -> udpsink`` sink chain is async, so the pipeline cannot
+      # reach PLAYING at all before at least one buffer (PAT/PMT/SDT tables
+      # plus the first media buffer) has already prerolled through the mux --
+      # ``_arm_stall_watchdog`` latching ``_first_output_seen =
+      # self._output_buffers > 0`` at arm time was therefore true for
+      # essentially every worker that ever reached PLAYING, defeating the
+      # exact escalation-cliff guard item 84 (round-2) existed to close (a
+      # worker whose real media output later stalled still printed the
+      # marker at arm time and looked like on-air evidence to the daemon).
+      # Fixed: ``_arm_stall_watchdog`` now snapshots the count at arm time
+      # (``_output_buffers_at_arm``) instead of crediting it, and
+      # ``_check_stall`` requires the count to exceed that snapshot by at
+      # least ``_FIRST_OUTPUT_MIN_BUFFERS_AFTER_ARM`` (2 -- one alone could
+      # still be a table-refresh coincidence rather than genuine media flow)
+      # buffers observed STRICTLY AFTER arming before crediting real first
+      # output. The marker text is unchanged (``worker_produced_output``'s
+      # regex, and the daemon's evidence check, key on presence only, never
+      # the elapsed value, so neither needed a change). Addendum: added a
+      # bounded, at-most-one-line-per-5s ``CTRL output: <N> buffers (+<delta>)
+      # since PLAYING`` progress line from ``_check_stall`` (both while
+      # advancing and while flat) so the NEXT soak shows exactly when real
+      # output stops, instead of only the eventual stall-kill line.
+      #
+      # Current-source proof (item 88):
+      # tests/egress/test_gst_audio_tap.py::TestSegmentWriterThread (a
+      # blocking-fsync stub proves ``submit()`` never blocks the producer, a
+      # full bounded queue drops the OLDEST segment not the newest, publish
+      # order is preserved for kept segments, ``close()``/``stop()`` return
+      # ``"drained"`` on a normal shutdown, a PERMANENTLY wedged ``fsync``
+      # stub proves ``stop()``/``close()`` return ``"abandoned"`` within
+      # their own bound rather than hanging -- both the
+      # ``SegmentWriterThread``-level and the ``RollingWavSegmentWriter``-
+      # level entry points, the drop-warning print only ever fires from a
+      # direct call to the writer-thread-only ``_maybe_log_drop()``, never
+      # from ``submit()`` itself, and the six-digit sequence guard raises
+      # before silently discarding the rejected segment's bytes), and
+      # tests/egress/test_gst_engine_audio_tap_specs.py (a pure, gi-free unit
+      # test on ``_audio_tap_element_specs()``'s element order plus the
+      # queue's leaky/max-size-time/max-size-bytes and the appsink's drop/
+      # max-buffers properties -- ``max-size-bytes`` now asserts the real,
+      # corrected 10 MB stock default, not 0). Round-2 addition:
+      # tests/egress/test_gst_engine_wsl.py gained
+      # ``test_audio_tap_queue_and_appsink_carry_the_item88_safety_
+      # properties_live`` -- a REAL, in-process (no subprocess)
+      # ``GstPlayoutEngine`` built with an ``AudioTapLeg``, proving the live
+      # ``queue``/``appsink`` elements actually accepted these properties
+      # (``leaky`` reads back as the ``downstream`` enum nick, ``max-size-
+      # time`` reads back ``0``, the appsink's ``drop`` reads back ``True``)
+      # -- an ``ElementSpec`` with the right numbers is not proof a real
+      # element accepted them.
+      #
+      # Current-source proof (item 84c):
+      # tests/egress/test_gst_engine_first_output_timeout.py gained
+      # ``test_arm_stall_watchdog_snapshots_preroll_buffers_instead_of_
+      # crediting_them`` (arm time no longer credits already-flowing preroll
+      # buffers as evidence -- replaces the round-2 test that encoded the
+      # tautology as intended behavior), ``test_first_output_marker_prints_
+      # once_real_post_arm_output_is_observed`` (the positive case: +2
+      # buffers past the arm snapshot IS credited, with the correct elapsed
+      # time), and the three ``test_output_progress_line_*`` tests (bounded
+      # to one line per 5s, prints even while flat, delta is relative to the
+      # arm-time snapshot not to zero). The pre-existing budget-split,
+      # NaN-guard, and clamp coverage from item 84 round-1/round-2 is
+      # otherwise unchanged and still passes against the new snapshot
+      # semantics.
+      #
+      # Blob IDs re-hashed with `git hash-object --path <file> <file>` after
+      # merging main (item 85, PR #188, 5978ed5) into this branch.
       #
       # engine.py and worker.py drifted an EIGHTH time (item 85, sandbox runs
       # 12/14/15, 2026-09-06): a wedged reload commit -- the last line either
@@ -1683,7 +1859,7 @@ entries:
         - path: civiccast/egress/gst/worker.py
           blob: 8b4696f803df606acaa4e6754e87a82d19afed44
         - path: civiccast/egress/gst/engine.py
-          blob: 89a3cde87d712d12ffaae5e7e3052753ea555958
+          blob: 46ae29cc60414aee7f0879986ed336f3b0f7738b
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -1691,10 +1867,10 @@ entries:
         - path: civiccast/egress/gst/control.py
           blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
         - path: civiccast/egress/gst/audio_tap.py
-          blob: 338db038b43c0881bf41bee42a6d80b9864c32cc
+          blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 16e8c5bc5eaaa281d7a97432e14e896a6b5f1fc8
+        blob: dde875813952e46d4706f4d831c0b67de0bbdc76
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py

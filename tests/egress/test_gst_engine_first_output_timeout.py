@@ -93,6 +93,10 @@ def _bare_engine(
     # ``_arm_stall_watchdog`` now also touch these.
     engine._playing_reached_at = None
     engine._first_output_marker_printed = False
+    # Item 84c additions -- the arm-time snapshot the "real first output"
+    # check is measured against, and the progress-line throttle state.
+    engine._output_buffers_at_arm = 0
+    engine._last_output_progress_print_t = 0.0
     return engine
 
 
@@ -172,7 +176,10 @@ def test_check_stall_still_applies_the_ordinary_stall_bound_after_first_output(
     engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
     engine._loop = _FakeLoop()
 
-    engine._output_buffers = 1  # first buffer observed at t=0
+    # Item 84c: real first output requires the count to exceed the arm-time
+    # snapshot (0 here) by at least ``_FIRST_OUTPUT_MIN_BUFFERS_AFTER_ARM``
+    # (2) -- one buffer alone could still be a table-refresh coincidence.
+    engine._output_buffers = 2  # two real buffers observed post-arm at t=0
     assert engine._check_stall() is True
     assert engine._first_output_seen is True
 
@@ -204,7 +211,9 @@ def test_check_stall_ordinary_stall_disabled_at_zero_after_first_output(
     engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=0.0)
     engine._loop = _FakeLoop()
 
-    engine._output_buffers = 1
+    # Item 84c: two buffers past the arm-time snapshot (0), not one -- see
+    # ``_FIRST_OUTPUT_MIN_BUFFERS_AFTER_ARM``.
+    engine._output_buffers = 2
     assert engine._check_stall() is True
     assert engine._first_output_seen is True
 
@@ -238,7 +247,9 @@ def test_first_output_marker_prints_once_when_output_first_advances(
     engine._loop = _FakeLoop()
     engine._playing_reached_at = 5.0  # PLAYING was reached at this same instant
 
-    engine._output_buffers = 1
+    # Item 84c: two buffers past the arm-time snapshot (0, from _bare_engine)
+    # -- one alone would not yet count as real first output.
+    engine._output_buffers = 2
     clock["t"] = 8.5
     assert engine._check_stall() is True
 
@@ -265,28 +276,60 @@ def test_first_output_marker_never_prints_twice(
     assert err.count("CTRL first-output: first buffer after") == 1
 
 
-def test_first_output_marker_prints_at_arm_time_when_output_already_flowed(
+def test_arm_stall_watchdog_snapshots_preroll_buffers_instead_of_crediting_them(
     engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Round-2 review item 4's own scenario: a buffer can cross the mux
-    DURING preroll, before ``_arm_stall_watchdog`` is ever called (the
-    output-counter probe is installed before ``set_state(PLAYING)``, and
-    ``_await_playing`` can return well after buffers start flowing). The
-    marker must still print -- the daemon's evidence check must never miss
-    real output just because it happened to arrive before arming."""
+    """Item 84c (sandbox run 17, soak-a6d7871-20260906-213332Z): the OLD
+    round-2 behavior this test used to cover -- ``_output_buffers > 0`` at
+    arm time alone counting as first-output evidence -- was a TAUTOLOGY. The
+    persistent output half's async sink chain means the pipeline cannot even
+    reach PLAYING before at least one buffer (PAT/PMT/SDT tables + preroll)
+    has already crossed the mux, so that check was true for essentially
+    every worker on every arm, real media flow or not. Arming must snapshot
+    the count instead of crediting it: ``_first_output_seen`` stays False and
+    no marker prints at arm time, even though buffers were already flowing
+    before arm."""
     clock = {"t": 10.0}
     monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
     monkeypatch.setattr(engine_module.GLib, "timeout_add_seconds", lambda *a, **k: None)
     monkeypatch.setattr(engine_module.os, "getpid", lambda: 777)
     engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
     engine._playing_reached_at = 7.0  # PLAYING reached 3s before this arm call
-    engine._output_buffers = 5  # already flowing before arm
+    engine._output_buffers = 5  # preroll already produced buffers before arm
 
     engine._arm_stall_watchdog()
 
-    assert engine._first_output_seen is True  # item 4's own fix
+    assert engine._first_output_seen is False  # item 84c's own fix
+    assert engine._output_buffers_at_arm == 5  # snapshot, not credited as evidence
     err = capsys.readouterr().err
-    assert "CTRL first-output: first buffer after 3.0s pid=777" in err
+    assert "CTRL first-output: first buffer after" not in err  # no marker at arm time
+
+
+def test_first_output_marker_prints_once_real_post_arm_output_is_observed(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Continuing the arm-time snapshot scenario above: once
+    ``_FIRST_OUTPUT_MIN_BUFFERS_AFTER_ARM`` (2) further buffers arrive AFTER
+    arming, that IS real first-output evidence, and the marker prints
+    measuring elapsed from PLAYING as before."""
+    clock = {"t": 10.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(engine_module.GLib, "timeout_add_seconds", lambda *a, **k: None)
+    monkeypatch.setattr(engine_module.os, "getpid", lambda: 777)
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine._playing_reached_at = 7.0
+    engine._output_buffers = 5
+    engine._arm_stall_watchdog()  # snapshot at 5, no evidence yet
+    engine._loop = _FakeLoop()
+
+    clock["t"] = 13.0  # 3s after arm
+    engine._output_buffers = 7  # +2 past the snapshot -- real output
+
+    assert engine._check_stall() is True
+
+    assert engine._first_output_seen is True
+    err = capsys.readouterr().err
+    assert "CTRL first-output: first buffer after 6.0s pid=777" in err
 
 
 def test_first_output_marker_falls_back_to_zero_elapsed_when_playing_never_recorded(
@@ -302,7 +345,8 @@ def test_first_output_marker_falls_back_to_zero_elapsed_when_playing_never_recor
     engine._loop = _FakeLoop()
     assert engine._playing_reached_at is None
 
-    engine._output_buffers = 1
+    # Item 84c: two buffers past the arm-time snapshot (0, from _bare_engine).
+    engine._output_buffers = 2
     engine._check_stall()
 
     err = capsys.readouterr().err
@@ -441,3 +485,74 @@ def test_resolve_first_output_timeout_10s_is_still_the_allowed_minimum(
     engine_module,
 ) -> None:
     assert engine_module._resolve_first_output_timeout_s(10.0) == 10.0
+
+
+# --- _maybe_print_output_progress: item 84c addendum, bounded 5s breadcrumb --------
+#
+# Sandbox run 17 (soak-a6d7871-20260906-213332Z) had no signal at all between
+# "output was flowing" and the eventual watchdog kill -- the only evidence of
+# the item 88 stall was TSDuck's after-the-fact silence. This line gives the
+# NEXT soak exactly that signal, bounded to at most one line per 5s so it
+# cannot become its own source of log spam under sustained healthy output.
+
+
+def test_output_progress_line_prints_at_most_once_per_five_seconds(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clock = {"t": 0.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(engine_module.GLib, "timeout_add_seconds", lambda *a, **k: None)
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine._output_buffers = 100
+    engine._arm_stall_watchdog()  # snapshots at 100, starts the progress clock
+    engine._loop = _FakeLoop()
+
+    for i in range(1, 5):  # t=1,2,3,4 -- under the 5s interval, must not print
+        clock["t"] = float(i)
+        engine._output_buffers = 100 + i
+        assert engine._check_stall() is True
+    assert "CTRL output:" not in capsys.readouterr().err
+
+    clock["t"] = 5.0  # exactly at the interval -- prints now
+    engine._output_buffers = 106
+    assert engine._check_stall() is True
+    err = capsys.readouterr().err
+    assert "CTRL output: 106 buffers (+6) since PLAYING" in err
+
+
+def test_output_progress_line_prints_even_while_stalled(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The breadcrumb is not gated on output advancing -- it must also print
+    while the count is flat, so a soak shows the count stopped changing
+    (rather than going silent) in the run-up to the eventual stall kill."""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(engine_module.GLib, "timeout_add_seconds", lambda *a, **k: None)
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine._output_buffers = 50
+    engine._arm_stall_watchdog()
+    engine._loop = _FakeLoop()
+
+    clock["t"] = 5.0  # no advance at all since arm -- still due a progress line
+    assert engine._check_stall() is True
+    err = capsys.readouterr().err
+    assert "CTRL output: 50 buffers (+0) since PLAYING" in err
+
+
+def test_output_progress_line_delta_is_relative_to_the_arm_time_snapshot(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clock = {"t": 0.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(engine_module.GLib, "timeout_add_seconds", lambda *a, **k: None)
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine._output_buffers = 1_000  # a lot of preroll/table churn already counted
+    engine._arm_stall_watchdog()
+    engine._loop = _FakeLoop()
+
+    clock["t"] = 5.0
+    engine._output_buffers = 1_003
+    assert engine._check_stall() is True
+    err = capsys.readouterr().err
+    assert "CTRL output: 1003 buffers (+3) since PLAYING" in err

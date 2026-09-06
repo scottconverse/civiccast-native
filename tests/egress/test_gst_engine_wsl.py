@@ -1048,6 +1048,47 @@ def test_live_worker_forks_selected_program_audio_into_atomic_caption_wavs(
     assert total_frames > 16_000, f"caption tap captured too little audio; log:\n{log.read_text()}"
 
 
+def test_audio_tap_queue_and_appsink_carry_the_item88_safety_properties_live(
+    tmp_path: Path,
+) -> None:
+    """Item 88 round-2 review: the gi-free unit test in
+    ``test_gst_engine_audio_tap_specs.py`` checks the ``ElementSpec`` values
+    ``_audio_tap_element_specs()`` produces, but an ``ElementSpec`` with the
+    right numbers is not proof a REAL ``queue``/``appsink`` element actually
+    accepted them -- a typo'd property name, or an enum value GStreamer
+    coerces differently than expected, would pass that test and still be
+    wrong live. This builds a real ``GstPlayoutEngine`` (no subprocess --
+    direct, in-process construction, same pattern as
+    ``_cc_embed_elements_available`` above) with an ``AudioTapLeg`` and reads
+    the actually-constructed elements' live properties: the queue is
+    downstream-leaky with its time limit disabled, and the appsink drops
+    rather than blocks."""
+    from civiccast.egress.gst.engine import GstPlayoutEngine
+
+    tap_dir = tmp_path / "caption-tap" / "channel-1"
+    base = replace(
+        _av_demo_graph(),
+        audio_encoder=graphmod.audio_encode_specs(codec="voaacenc"),
+    )
+    graph = replace(
+        _filesink_graph(base, tmp_path / "out.ts"),
+        audio_tap=graphmod.AudioTapLeg(tap_dir=str(tap_dir), segment_seconds=0.5),
+    )
+
+    engine = GstPlayoutEngine(graph)
+    try:
+        queue_el = engine.pipeline.get_by_name("caption_audio_tap_queue")
+        assert queue_el is not None, "caption_audio_tap_queue was not built into the pipeline"
+        assert queue_el.get_property("leaky").value_nick == "downstream"
+        assert queue_el.get_property("max-size-time") == 0
+
+        appsink = engine.audio_tap_appsink
+        assert appsink is not None, "audio_tap_appsink was never set"
+        assert appsink.get_property("drop") is True
+    finally:
+        engine.stop()
+
+
 def _reload_graph(pattern: int, *, audio: bool = False):
     """A graph whose program leg (source 0) is a distinct videotestsrc pattern (used as
     a reload payload — only ``sources[0]`` is read by the worker)."""
