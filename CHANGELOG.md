@@ -29,26 +29,55 @@ for the draft publish record and
 [`docs/releases/v1.0.0-beta.5-verification.md`](docs/releases/v1.0.0-beta.5-verification.md)
 for the draft verification record.
 
-**Update 2026-09-05, post-soak: kit `91caebc` ("candidate 1") is NOT the
-beta.5 release candidate anymore.** Candidate 1's Gate A run passed all
-three lanes, but its clean-install hardware soak (soak #3) FAILED: every
-GStreamer playout worker exited with `CTRL stall: no output for 10s` and
-was relaunched -- one per channel in the first 30 minutes, then roughly
-every 30 seconds (rule is zero). Root cause (item 51, below) is a
-regression introduced by #170, not present in beta.4: a widened plan
-window builds far more decoder chains than an 8-core CPU-only station can
-run at once. Hotfix `fix/plan-window-decoder-blowup` merged as #174.
-`v1.0.0-beta.5` will be cut from `main` at source SHA
-`609273da22b968b8ed9320dfc158d67b01eb30b3` (`609273d`, build run
-`33997406150`) as candidate 2, following a new Gate A run and a new
-clean-install hardware soak, whose identity is still pending:
-`33998901590` / `<SOAK5_START_UTC>` / `<SOAK5_VERDICT>` /
-`<SOAK5_RELAUNCHES>`. Gate A 33998901590 started 2026-09-05T23:48Z;
-lanes pending: clean `<GATE_A_FINAL_CLEAN>`, cross-version
-`<GATE_A_FINAL_XVER>`, download-only `<GATE_A_FINAL_DLONLY>` (pending).
-Candidate 1's facts below
-(SHA `91caebc`, build `33971258093`, Gate A `33972726431`) are preserved as
-history: **candidate 1 -- Gate A PASS x3, hardware soak FAIL (item 51).**
+**Update 2026-09-05: kit `91caebc` ("candidate 1") was NOT the beta.5
+release candidate.** Candidate 1's Gate A run passed all three lanes, but
+its clean-install hardware soak (soak #3) FAILED: every GStreamer playout
+worker exited with `CTRL stall: no output for 10s` and was relaunched --
+one per channel in the first 30 minutes, then roughly every 30 seconds
+(rule is zero). Root cause (item 51, below) was a regression introduced by
+#170, not present in beta.4: a widened plan window builds far more decoder
+chains than an 8-core CPU-only station can run at once. Hotfix
+`fix/plan-window-decoder-blowup` merged as #174, cutting **candidate 2**
+at source SHA `609273da22b968b8ed9320dfc158d67b01eb30b3` (`609273d`, build
+run `33997406150`). Candidate 1's facts below (SHA `91caebc`, build
+`33971258093`, Gate A `33972726431`) are preserved as history: **candidate
+1 -- Gate A PASS x3, hardware soak FAIL (item 51).**
+
+**Update 2026-09-06: candidate 2 (`609273d`) is also NOT the beta.5
+release candidate.** Gate A run `33998901590` (started
+2026-09-05T23:48Z): clean lane `PASS`; the cross-version lane FAILED at
+its own phase 1 -- the pinned `v1.0.0-beta.4` baseline installer crashed
+inside the sandbox before any upgrade step ran, even though the baseline
+`setup.exe`'s bytes were independently verified identical to the
+published `v1.0.0-beta.4` release asset (SHA-256 match) -- a
+harness/sandbox gap (item 58, below), not a product defect; download-only
+was not reached. A re-run, Gate A `34004354641`, is in progress. Candidate
+2's clean-install hardware soak (soak #5, clock `2026-09-06T02:26:16Z`)
+confirmed both the caption-tap fix (#172) and the plan-window fix (item
+51) hold on real hardware for the first 30 minutes -- control plane at
+roughly 20% CPU with the caption tap backed off, and workers at roughly
+550 MB RSS / 178 threads instead of the prior candidate's 3.5 GB / 1,238
+threads -- but from roughly 02:58Z every worker began relaunching about
+every 30 seconds again, and `government` tripped the 5-crash guard at
+03:01Z. **Verdict: FAIL** (relaunches: one per channel by 02:56Z, then
+about every 30 s). Root cause (item 60, below, code-proven): every
+in-place plan rollover builds new GStreamer concat elements under the
+same fixed names as the live ones, GStreamer refuses to add them, the
+reload can never commit, and the worker acknowledges it as a success
+anyway -- automation keeps re-issuing the rollover and the doubled
+decoder tree eventually starves the encoder past the same stall
+watchdog. Present in beta.4 as well; it simply fired far less often
+there. Fix `fix/gst-reload-concat-collision` will cut **candidate 3**.
+Candidate 2's facts below (SHA `609273d`, build `33997406150`, Gate A
+`33998901590`) are preserved as history: **candidate 2 -- Gate A clean
+PASS / cross-version invalidated by harness gap (item 58) / download-only
+not reached, hardware soak FAIL (item 60).** `v1.0.0-beta.5` will be cut
+from `main` as **candidate 3** once `fix/gst-reload-concat-collision`
+merges, then re-run through a fresh Gate A and a fresh clean-install
+hardware soak, whose identity is still pending: source SHA
+`<BETA5_FINAL_SHA>`, build run `<BETA5_FINAL_BUILD_RUN>`, Gate A run
+`<GATE_A_FINAL_RUN_ID>`, hardware soak clock `<SOAK6_START_UTC>`, verdict
+`<SOAK6_VERDICT>`, relaunches `<SOAK6_RELAUNCHES>`.
 
 ### Added
 
@@ -482,6 +511,58 @@ history: **candidate 1 -- Gate A PASS x3, hardware soak FAIL (item 51).**
   changed files (`source_plan.py`, `automation.py`, `bridge.py`) are D2
   blob-drift-bound in `docs/claims/claims.yaml`; `models.py` is not bound
   either.
+- **Soak #5: clean-install retest of candidate 2 (`609273d`), confirms the
+  decoder-pileup fix above and surfaces a different, deeper defect (item
+  60).** Tester `DESKTOP-VBMA6O5`, fresh `/S` install, soak clock started
+  `2026-09-06T02:26:16Z`. **First 30 minutes: both carried-forward fixes
+  held on real hardware** -- control plane at roughly 20% CPU with the
+  caption tap backed off (#172), and workers at roughly 550 MB RSS / 178
+  threads instead of the prior candidate's 3.5 GB / 1,238 threads (the
+  decoder-pileup fix immediately above). **From roughly 02:58Z every
+  worker began relaunching about every 30 seconds again**, and
+  `government` tripped the 5-crash guard at 03:01Z. **Verdict: FAIL**
+  (one relaunch per channel by 02:56Z, then about every 30 seconds).
+  **Root cause (item 60), code-proven:** every in-place plan rollover
+  (the seamless extension #162 added) builds new GStreamer concat
+  elements under the same fixed names as the live ones already in the
+  pipeline -- `vconcat_program`/`aconcat_program`
+  (`civiccast/egress/gst/engine.py:361-363`,
+  `civiccast/egress/gst/bridge.py:639`). GStreamer refuses to add a
+  duplicate-named element, so the reload can never commit and is aborted
+  by the existing 10-second stall watchdog -- but the worker acknowledges
+  the reload as a success anyway, so channel automation believes the
+  rollover landed and issues the same doomed rollover again at the next
+  projected plan boundary, a few minutes later. Each failed attempt
+  leaves a duplicate decoder tree behind it before the watchdog tears the
+  failed elements down; repeated attempts compound the CPU cost until the
+  encoder itself starves and the worker trips the same stall watchdog and
+  is relaunched -- the same `CTRL stall: no output for 10s` signature as
+  the decoder-pileup fix above, from a different mechanism. **No in-place
+  rollover has ever committed on real hardware.** Present in beta.4 as
+  well -- the concat-name collision is not new code in this candidate,
+  but beta.4 fired the in-place rollover path far less often because
+  #162 (the feature that attempts an in-place rollover at all) postdates
+  beta.4. **This is why `609273d` is not the beta.5 release candidate.**
+  Fix pending: `fix/gst-reload-concat-collision` (open, not yet merged)
+  -- fails loud when GStreamer refuses to add a duplicately-named
+  element instead of silently timing out, gives each rollover's new
+  concat elements unique names, makes the worker's reload
+  acknowledgement honest, and, until unique naming is proven stable on
+  hardware, disables the seamless in-place rollover by default for the
+  GStreamer engine in beta.5 (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=1`
+  re-enables it) so a plan's natural end becomes one ordinary encoder
+  restart instead of an attempted in-place splice -- rare with real
+  10-40 minute schedule items, but roughly every 4 minutes with 30-second
+  items. Not part of candidate 2; will be part of candidate 3.
+- **Gate A `33998901590`'s cross-version-upgrade lane failed at its own
+  phase 1 on a harness/sandbox gap, not a product defect (item 58).** The
+  pinned `v1.0.0-beta.4` baseline installer crashed inside the sandbox
+  before any upgrade step ran. The baseline `setup.exe`'s bytes were
+  independently verified identical to the published `v1.0.0-beta.4`
+  release asset (SHA-256 match), ruling out a corrupted or wrong baseline
+  artifact. The lane never reached candidate 2's own upgrade or
+  post-upgrade schema proof, so this run says nothing either way about
+  candidate 2's upgrade path. Re-run in progress as Gate A `34004354641`.
 
 ### Changed
 
@@ -574,19 +655,22 @@ history: **candidate 1 -- Gate A PASS x3, hardware soak FAIL (item 51).**
    rebuilt kit. Workaround: uninstall, then install fresh. Fix pending:
    `fix/pack-staging-identity-not-version-string`, not part of this
    candidate.
-7. **(item 51) Every GStreamer playout worker relaunches under a real
-   schedule -- a regression from #170, not present in beta.4.** #170's
-   30-minute plan window (`PLAN_MIN_SECONDS=1800`, `PLAN_MAX_SEGMENTS=120`
-   in `civiccast/egress/source_plan.py`) builds far more decoder chains
-   than an 8-core CPU-only station can run at once when schedule items
-   are short. MEASURED: soak #3, clean install of kit `91caebc`,
+7. **(item 51, RESOLVED -- confirmed fixed on hardware by soak #5) Every
+   GStreamer playout worker relaunched under a real schedule -- a
+   regression from #170, not present in beta.4.** #170's 30-minute plan
+   window (`PLAN_MIN_SECONDS=1800`, `PLAN_MAX_SEGMENTS=120` in
+   `civiccast/egress/source_plan.py`) built far more decoder chains than
+   an 8-core CPU-only station can run at once when schedule items are
+   short. MEASURED broken: soak #3, clean install of kit `91caebc`,
    30-second schedule items, `FAIL` -- one relaunch per channel in the
-   first 30 minutes, then roughly every 30 seconds (rule is zero). **This
-   is why kit `91caebc` is not the beta.5 release candidate.** Fix
-   pending: `fix/plan-window-decoder-blowup` (open, not yet merged) --
-   caps plans at 8 segments, ties the replan floor to the plan length, and
-   hard-caps decoder chains in the engine. Not part of candidate 1; will
-   be part of candidate 2.
+   first 30 minutes, then roughly every 30 seconds (rule is zero). Fixed
+   by `fix/plan-window-decoder-blowup` (merged as #174, part of candidate
+   2) -- caps plans at 8 segments, ties the replan floor to the plan
+   length, and hard-caps decoder chains in the engine. **MEASURED fixed:**
+   soak #5 (candidate 2, `609273d`), first 30 minutes -- workers at
+   roughly 550 MB RSS / 178 threads, against the prior 3.5 GB / 1,238
+   threads. Candidate 2's hardware soak still FAILED overall, but on a
+   different, later-firing defect -- item 60, below.
 8. **(item 54) A long `TRANSITIONING` state is the product's designed
    graceful drain, but the operator cannot tell it from a hang.** When a
    live content reload cannot be applied seamlessly, the running program
@@ -614,6 +698,54 @@ history: **candidate 1 -- Gate A PASS x3, hardware soak FAIL (item 51).**
    is never surfaced anywhere, so there is no signal when the drain's own
    command handshake fails silently. Neither is addressed by hotfix #174.
    **Fix pending:** PR #175, targeted for beta.6.
+10. **(item 58) Gate A's cross-version-upgrade lane failed at its own phase
+    1 on a harness/sandbox gap, not a product defect.** Gate A run
+    `33998901590` (candidate 2, `609273d`): the pinned `v1.0.0-beta.4`
+    baseline installer crashed inside the sandbox before any upgrade step
+    ran. The baseline `setup.exe`'s bytes were independently verified
+    identical to the published `v1.0.0-beta.4` release asset, ruling out a
+    corrupted or wrong baseline artifact. Because the lane never reached
+    the candidate's own upgrade or post-upgrade schema proof, this run
+    says nothing either way about candidate 2's upgrade path. **Fix
+    pending:** the sandbox/harness gap that let the baseline install
+    itself crash before phase 1 started; re-run in progress as Gate A
+    `34004354641`.
+11. **(item 60) In-place plan rollover can never actually commit --
+    root-caused, present since #162, previously masked by item 51.** Every
+    in-place rollover rebuilds GStreamer concat elements under the same
+    fixed names the live ones already use (`vconcat_program`/
+    `aconcat_program`, `civiccast/egress/gst/engine.py:361-363`,
+    `civiccast/egress/gst/bridge.py:639`); GStreamer refuses to add a
+    duplicate-named element, so the reload can never commit and is aborted
+    by the existing 10-second stall watchdog -- but the worker still
+    acknowledges the reload as a success, so automation re-issues the same
+    doomed rollover every few minutes, and the resulting doubled decoder
+    tree eventually starves the encoder past the same watchdog. No
+    in-place rollover has ever committed on real hardware. Present in
+    beta.4 as well -- beta.4 simply never exercised the code path, since
+    #162 postdates beta.4. **MEASURED:** soak #5 (candidate 2, `609273d`),
+    clean install, FAIL from roughly 02:58Z. **This is why `609273d` is
+    not the beta.5 release candidate.** Fix: `fix/gst-reload-concat-
+    collision` (open, not yet merged) -- fails loud on a refused element
+    add, gives each rollover's concat elements unique names, makes the
+    reload acknowledgement honest, and disables the seamless in-place
+    rollover by default for the GStreamer engine in beta.5
+    (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` re-enables it). Not part of
+    candidate 2; will be part of candidate 3.
+12. **(item 61, targeted for beta.6) A worker's reload acknowledgement
+    reports success before the reload actually commits.** The same defect
+    underlying item 60's masking: the control-pipe reload ack is sent once
+    a reload is attempted, not once GStreamer confirms the new elements
+    are actually in the pipeline. Item 60's fix makes this specific ack
+    honest for the concat-collision case; a general, structural
+    ack-after-commit guarantee is tracked separately for beta.6.
+13. **(item 62, targeted for beta.6) The decoder-chain cap is enforced per
+    plan, not per pipeline.** `MAX_PLAYLIST_SUBCHAINS` bounds how many
+    decoder chains a single plan can build, but a pipeline can briefly
+    carry more than one plan's worth of chains during a rollover attempt
+    (the outgoing plan's chains plus the incoming plan's chains
+    coexisting) -- the cap does not account for that overlap. Tracked for
+    beta.6.
 
 ## [1.0.0-beta.4] - 2026-09-04
 
