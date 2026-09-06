@@ -302,10 +302,12 @@ class TestCaptionTapWorker:
             _write_wav(tap_root / channel / "chunk-000000.wav")
             _write_wav(tap_root / channel / "chunk-000001.wav")
         runtime = _ConcurrencyProbeRuntime()
-        # Explicit: the DEFAULT bound is CPU-derived and is 1 on an 8-core box
-        # (see test_asr_concurrency_is_bounded_by_cpu_count). This test is
+        # Explicit: the DEFAULT bound is a flat 1, station-wide, regardless of
+        # core count (see test_default_concurrency_is_always_one_channel_station_wide
+        # and test_asr_concurrency_is_bounded_by_cpu_count). This test is
         # about the executor actually running channels in parallel when the
-        # bound allows it, so it states the bound it is testing.
+        # bound allows it, so it states the bound it is testing rather than
+        # relying on the default.
         worker = _worker(
             tap_root,
             runtime,
@@ -348,22 +350,81 @@ class TestCaptionTapWorker:
         assert sorted(result.channels) == ["education", "government", "public"]
         assert runtime.max_active == 1
 
-    def test_default_concurrency_is_one_channel_per_eight_cpus(
+    def test_default_concurrency_is_always_one_channel_station_wide(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 8)
-        assert default_max_channel_workers() == 1
+        """Item 79: the default is a flat 1, regardless of core count.
+
+        Tightened from the previous "one channel per 8 CPUs, max 3" formula.
+        Read this as knob hardening, not as a standalone fix for the original
+        DESKTOP-VBMA6O5 field defect (see the module docstring): every
+        channel already shares one speech recognition model instance built
+        with CTranslate2's ``inter_threads=1``, so the previous default of 3
+        never actually ran 3 concurrent inferences -- that model-level queue
+        was already serializing them.
+        """
+
         monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 4)
         assert default_max_channel_workers() == 1
-        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 16)
-        assert default_max_channel_workers() == 2
-        # Never more than the historical flat maximum, however large the box.
-        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 128)
-        assert default_max_channel_workers() == 3
-        # `os.cpu_count()` is documented as possibly None.
+        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 8)
+        assert default_max_channel_workers() == 1
+        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 32)
+        assert default_max_channel_workers() == 1
+        # `os.cpu_count()` is documented as possibly None; still 1.
         monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: None)
         assert default_max_channel_workers() == 1
+
+    def test_default_concurrency_env_override_still_works(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The documented ``CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`` override
+        is read by ``CaptionTapWorkerSettings.from_env``, not by
+        ``default_max_channel_workers`` itself -- confirm the settings seam
+        still honours a value above the new flat default."""
+
+        from civiccast.captions.tap_worker import CaptionTapWorkerSettings
+
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "inline")
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", "/tmp/does-not-need-to-exist")
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS", "3")
+
+        settings = CaptionTapWorkerSettings.from_env()
+
+        assert settings.max_channel_workers == 3
+
+    def test_startup_logs_cpu_count_and_the_chosen_sizing_in_one_line(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Item 79: one line at tap start records what box a run happened on.
+
+        `getattr(runtime, "cpu_threads", "n/a")` reads the live sizing off
+        whatever runtime was injected -- a real `FasterWhisperRuntime` has the
+        attribute, the `_ScriptedRuntime` test double used elsewhere in this
+        module does not, so this test uses a small stand-in that does.
+        """
+
+        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 8)
+
+        class _RuntimeWithCpuThreads(_ScriptedRuntime):
+            cpu_threads = 1
+
+        with caplog.at_level("INFO", logger="civiccast.captions.tap_worker"):
+            _worker(
+                tmp_path / "tap",
+                _RuntimeWithCpuThreads(),
+                InMemoryCaptionReviewStore(),
+                max_channel_workers=1,
+            )
+
+        assert "Caption tap starting" in caplog.text
+        assert "cpu_count=8" in caplog.text
+        assert "max_channel_workers=1" in caplog.text
+        assert "live_cpu_threads=1" in caplog.text
 
     def test_backlog_fails_closed_instead_of_publishing_stale_captions(
         self,

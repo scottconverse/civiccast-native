@@ -331,8 +331,12 @@ workflow is. Two things to know before relying on it for a real meeting:
 
 ### Live Captions, And When To Turn Them Off {#live-captions-switch}
 
-When live captions are on, CivicCast listens to every channel that is on air
-and writes captions as the meeting happens. It is useful, and it is hard work
+When live captions are on, CivicCast writes captions as the meeting happens —
+but it captions **one channel at a time**. On a station with more than one
+channel on air, the others are **paused, most of the time**, with no live
+captions showing and their audio discarded rather than saved up for later —
+this is not a brief wait, it is the normal state for every channel that
+isn't the one currently being captioned. It is useful, and it is hard work
 for the computer — hard enough that on a station without a suitable graphics
 card it can compete with the broadcast itself for the processor.
 
@@ -351,12 +355,12 @@ your station publishes captioned recordings to meet an accessibility
 requirement, that keeps working with this switch off.
 
 **If you leave it on and the station cannot keep up,** CivicCast does not
-simply grind: it stops captioning that channel for a while (one minute, then
-two, then four, up to fifteen), clears the captions that were on screen rather
-than showing stale ones, and tries again later. You will see one warning in
-the log each time that happens. Repeated warnings on the same channel mean
-that station cannot caption that channel live — turn the switch off, or ask
-about a lower-quality caption model or a supported graphics card.
+simply grind: it stops captioning that channel for a while (two minutes, then
+four, then eight, up to fifteen), clears the captions that were on screen
+rather than showing stale ones, and tries again later. You will see one
+warning in the log each time that happens. Repeated warnings on the same
+channel mean that station cannot caption that channel live — turn the switch
+off, or ask about a lower-quality caption model or a supported graphics card.
 
 ### Operator Graphics Control (Lower-Third Banner) {#operator-graphics-control}
 
@@ -828,16 +832,32 @@ station needs.
 - **`CIVICCAST_CAPTION_TAP_DIR`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_POLL_SECONDS`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`** — Live caption tap configuration.
-- **`CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`** — How many channels may be
-  transcribed at the same time. Default: one per 8 CPUs, never more than 3.
+- **`CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`** — How many channels' ASR
+  calls may be in flight at the same time. Default: `1`, station-wide,
+  regardless of core count (item 79, 2026-09, tightened from a per-core-count
+  formula, max 3). A station with more channels ON_AIR than this bound will
+  have live captions paused on the others most of the time — see
+  `docs/ops/background-workers.md`.
 - **`CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS`** — First pause after a
-  channel falls behind (default 60); each further overload doubles it.
+  channel falls behind (default 120, doubled from 60 as of item 79, 2026-09);
+  each further overload doubles it.
 - **`CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS`** — Ceiling on that
   doubling (default 900). Both backoff values are clamped to a usable value
   with a warning if misconfigured, rather than stopping the station.
-- **`CIVICCAST_WHISPER_CPU_THREADS`** — Processor threads per transcription.
-  The live tap uses 1; `0` means "every core" and is the batch default. Do not
-  set it to `0` on a station that is also on air.
+- **`CIVICCAST_CAPTION_TAP_CPU_THREADS`** — Processor threads for the **live
+  tap only** (item 79, 2026-09). Default: one per 8 CPUs, never more than 2.
+  That "never more than 2" is not just the default's own shape — it is a
+  ceiling on any operator override too: a value above 2 is refused and
+  capped at 2, with a warning logged, rather than honoured. Recorded-meeting
+  transcription is unaffected.
+- **`CIVICCAST_WHISPER_CPU_THREADS`** — Processor threads per transcription;
+  overrides `..._TAP_CPU_THREADS` above when set. For batch, `0` means "every
+  core" and is honoured as before, with no ceiling. For the **live tap**, `0`
+  is refused (item 79, 2026-09): it falls back to the live default instead,
+  with a warning logged, so this variable can no longer hand the live tap
+  "every core" — on air or otherwise. The same live ceiling as
+  `..._TAP_CPU_THREADS` also applies here: a live value above 2 is capped at
+  2, with a warning, instead of being honoured.
 - **`CIVICCAST_WHISPER_BEAM_SIZE`** — Live-tap decoder beam width (default 1 on
   CPU, 5 on a GPU). Does not affect recorded-file captioning.
 - **`CIVICCAST_CAPTION_FEED_POLL_SECONDS`** — Caption feed and decode-back proof cadence.

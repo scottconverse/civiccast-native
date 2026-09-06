@@ -37,6 +37,50 @@ below.
 
 ### Fixed
 
+- **Live caption tap knob hardening: one channel at a time, bounded live ASR
+  threads, a longer first pause after an overload (item 79).** MEASURED in
+  the sandbox on candidate 3b: 10 "Caption tap overload" events, with
+  GStreamer playout worker stalls clustered inside them -- the same root
+  cause class as the tester's beta.4 soak, and PR #172's backoff alone was
+  not enough. Three changes, all in `civiccast/captions/tap_worker.py` and
+  `civiccast/captions/runtime.py`: (1) the live caption tap's per-scan
+  concurrency bound is now a flat **one channel's ASR call in flight at a
+  time, station-wide**, always -- tightened from "one channel per 8 CPUs,
+  never more than 3" (override: `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`,
+  unchanged). Read this as hardening, not as the mechanism that fixed the
+  original field failure by itself: every channel already shares ONE speech
+  recognition model instance built with CTranslate2's `inter_threads=1`, so
+  the previous default of 3 never actually ran 3 concurrent inferences --
+  that model-level queue was already serializing them. A station with more
+  channels ON_AIR than this bound will spend most of a scan transcribing one
+  channel while the others' backlog grows; once a channel's backlog exceeds
+  `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` its stale audio is
+  **discarded**, not queued, and it is paused under the same exponential
+  backoff as any other overload -- a 3-channel station will have live
+  captions paused most of the time. (2) the speech recognition model used by
+  the live tap now caps how many CPU threads it uses per channel (1 on a
+  small station, up to 2 on a bigger one, never more, logged once when the
+  tap starts alongside `cpu_count` and the channel concurrency bound;
+  override: `CIVICCAST_CAPTION_TAP_CPU_THREADS`, clamped rather than fatal on
+  a bad value, and capped at 2 with a warning if it asks for more, so a typo
+  or an over-aggressive value cannot take an activated station off air or
+  hand the live tap "every core" worth of threads. The existing, more
+  general `CIVICCAST_WHISPER_CPU_THREADS` keeps its original fail-fast
+  (raise) behaviour for recorded-meeting transcription, unchanged -- but for
+  the **live tap specifically** it is now clamped the same way as the
+  tap-only variable (a bad value warns and falls back instead of raising),
+  its `0` ("every core") is refused regardless of which of the two variables
+  asked for it, and a value above 2 is capped the same way. Recorded meeting
+  transcription itself is untouched either way -- it still uses as many
+  threads as the box allows. (3) the first pause after an overload is now
+  twice as long (120 seconds instead of 60) so a station that just proved it cannot
+  keep up gets real recovery time before speech recognition is attempted
+  again. Does not add any new cross-module wiring to the stall watchdog --
+  that stays a separate, medium-risk item. `scripts/prove_native_caption_capacity.py`'s
+  `--cpu-threads`/`--beam-size` flags now default to the same live sizing
+  production ships, and the proof constructs its runtime with `live=True`, so
+  an unoverridden capacity-proof run measures the actual deployed
+  configuration instead of a station nobody ships.
 - **First ON_AIR no longer waits for a whole-clip re-encode (item 66).**
   MEASURED: a fresh station took 8.5-12+ minutes to first ON_AIR because
   `civiccast/egress/preparer.py`'s `_prepare_segment` conformed the WHOLE

@@ -32,9 +32,16 @@ because on a real CPU-only station they did not:
 - overload backs OFF (:mod:`civiccast.captions.tap_backoff`) -- a channel that
   cannot keep up is paused for an exponentially growing window instead of
   retrying, and re-logging, every scan;
-- ASR concurrency is BOUNDED (:func:`default_max_channel_workers`) -- one
-  transcribing channel per 8 CPUs, so three ON_AIR channels on an 8-core box
-  do not each claim the machine;
+- ASR concurrency is BOUNDED -- ONE channel's ASR call is in flight at a
+  time, station-wide, regardless of core count
+  (:func:`default_max_channel_workers`, item 79 tightened this from a
+  per-core-count formula, max 3, to a flat 1; see that function's docstring
+  for why this is knob hardening on top of the shared-runtime,
+  single-CT2-worker design, not a standalone fix for concurrent compute),
+  and the CTranslate2 model itself runs with 1-2 intra-op threads,
+  core-count-aware and capped
+  (:func:`civiccast.captions.runtime.default_live_tap_cpu_threads`), instead
+  of the batch/VOD default of "every core";
 - the playout workers are spawned at ``ABOVE_NORMAL`` priority class, and the
   Python ASR threads here drop to ``BELOW_NORMAL``. The first of those is the
   load-bearing one; see :func:`_lower_current_thread_priority` for what the
@@ -96,10 +103,6 @@ __all__ = [
     "default_max_channel_workers",
 ]
 
-#: How many CPUs one concurrently-transcribing channel is allowed to assume.
-#: See :func:`default_max_channel_workers`.
-_CPUS_PER_CAPTION_CHANNEL = 8
-
 #: Windows ``THREAD_PRIORITY_BELOW_NORMAL``, applied to the per-channel ASR
 #: threads. PARTIAL COVERAGE BY CONSTRUCTION -- read
 #: :func:`_lower_current_thread_priority` before relying on it.
@@ -124,26 +127,46 @@ _RETENTION_SWEEP_SECONDS = 60.0
 
 
 def default_max_channel_workers() -> int:
-    """How many channels may be transcribed CONCURRENTLY by default.
+    """How many channels' ASR calls may be IN FLIGHT at once by default.
 
-    MEASURED defect this replaces (tester DESKTOP-VBMA6O5, three channels
-    ON_AIR): the previous flat default of 3 let all three channels run ASR at
-    once, and each faster-whisper model was itself built with
-    ``cpu_threads=0`` -- CTranslate2's "use every core". Three channels times
-    every core is how the control plane came to burn ~247% of a core while the
-    playout workers were starved into their own 10-second stall watchdog.
+    MEASURED defect this bound originally replaced (tester DESKTOP-VBMA6O5,
+    three channels ON_AIR): a prior flat default of 3, with each
+    faster-whisper model built with ``cpu_threads=0`` ("use every core"), was
+    part of a control plane burning ~247% of a core while the playout workers
+    were starved into their own 10-second stall watchdog.
 
-    One concurrent channel per 8 CPUs, never more than 3. On the 8-core field
-    station that is ONE, and paired with the runtime's new ``cpu_threads``
-    floor of 1 (:class:`civiccast.captions.runtime.FasterWhisperRuntime`) the
-    whole caption feature's steady-state budget is about one core. Channels
-    beyond the bound are not dropped -- they queue on the executor and are
-    transcribed in the same scan, just not simultaneously.
+    Item 79 (sandbox candidate 3b, 10 "Caption tap overload" events, the same
+    GStreamer-worker-stall cluster as the tester's beta.4 soak): this bound is
+    now a flat **1**, station-wide, regardless of core count -- tightened
+    from the ``one concurrent channel per 8 CPUs, max 3`` formula it replaced.
+    Read this as KNOB HARDENING, not as the mechanism that fixed the field
+    defect above by itself: every channel already shares ONE
+    :class:`~civiccast.captions.runtime.FasterWhisperRuntime` instance
+    (``CaptionTapWorker._runtime``, injected once, used by every per-channel
+    :class:`~civiccast.captions.worker.LiveCaptionWorker`), and that instance
+    is built with ``num_workers=1`` (CTranslate2's ``inter_threads``) --
+    so the previous default of 3 concurrent Python callers never actually
+    produced 3 concurrent CTranslate2 inferences; CT2's own single-worker
+    queue was already serializing them. On an 8-core box this change is a
+    no-op for concurrency (the old formula already resolved to 1 there) and
+    changes only the paired ``cpu_threads`` cap and the backoff's first pause
+    (see :mod:`civiccast.captions.tap_backoff`). On a much bigger box (the
+    old formula's own ceiling was 3) it removes headroom for **Python-level**
+    submission concurrency that the shared runtime was never going to turn
+    into 3x compute in the first place. A station with more ON_AIR channels
+    than this bound will, in practice, spend most of a scan cycle transcribing
+    one channel while the others' settled backlog grows -- see the module
+    docstring and :meth:`CaptionTapWorker.run_once` for what happens to a
+    channel whose backlog exceeds ``max_backlog_segments`` while it waits:
+    its stale audio is DISCARDED (not queued) and it is paused under
+    exponential backoff, the same as any other overload.
 
-    Overridable end-to-end via ``CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS``.
+    Overridable end-to-end via ``CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS``,
+    which still means what it always has: force a different concurrency for a
+    station the operator has personally sized.
     """
 
-    return max(1, min(3, (os.cpu_count() or 1) // _CPUS_PER_CAPTION_CHANNEL))
+    return 1
 
 
 def _lower_current_thread_priority() -> None:
@@ -159,9 +182,10 @@ def _lower_current_thread_priority() -> None:
     Python thread yields; the CT2 pool does not.
 
     The real, load-bearing protections for playout are the two that do not
-    depend on thread priorities at all: the ASR concurrency bound plus
-    ``cpu_threads=1`` (which limits how many CT2 threads exist in the first
-    place), and the overload backoff (which stops the work entirely). This
+    depend on thread priorities at all: the ASR concurrency bound plus a
+    capped ``cpu_threads`` of 1-2 (:func:`civiccast.captions.runtime.default_live_tap_cpu_threads`,
+    which limits how many CT2 threads exist in the first place), and the
+    overload backoff (which stops the work entirely). This
     call is a cheap extra nudge on top of those, not a mechanism to rely on.
     Lowering the CT2 pool itself would mean running the live ASR in its own
     process at ``BELOW_NORMAL_PRIORITY_CLASS``; that is a larger change than
@@ -445,6 +469,18 @@ class CaptionTapWorker:
         self._channel_publishers: dict[str, LiveWebVttPublisher] = {}
         self._previous_segments: dict[str, tuple[int, AudioChunk]] = {}
         reset_existing_live_sidecars(self._caption_work_dir)
+        # One line, logged once at tap start, so a field report or a sandbox
+        # run records what box it ran on and what the tap actually sized
+        # itself to -- without cross-referencing two separate log lines from
+        # two different modules. `cpu_threads` is read via `getattr` because
+        # `runtime` is a `CaptionRuntime` Protocol -- an injected test double
+        # or the whisper.cpp/Vulkan runtime has no such attribute.
+        _LOG.info(
+            "Caption tap starting: cpu_count=%s, max_channel_workers=%d, live_cpu_threads=%s",
+            os.cpu_count(),
+            self._max_channel_workers,
+            getattr(runtime, "cpu_threads", "n/a"),
+        )
 
     def run_forever(
         self,
@@ -1057,9 +1093,11 @@ def build_tap_worker(
             # Deliberately overridable: CIVICCAST_WHISPER_NUM_WORKERS.
             #
             # ``live=True``: this is the live captioner, sharing a box with
-            # playout, so the runtime sizes ITSELF conservatively -- one
-            # CTranslate2 intra-thread and greedy decoding once it resolves to
-            # CPU (civiccast.captions.runtime.LIVE_TAP_CPU_THREADS records the
+            # playout, so the runtime sizes ITSELF conservatively -- 1-2
+            # CTranslate2 intra-op threads (core-count-aware, capped -- see
+            # civiccast.captions.runtime.default_live_tap_cpu_threads) and
+            # greedy decoding once it resolves to CPU
+            # (civiccast.captions.runtime.LIVE_TAP_CPU_THREADS records the
             # measured field failure the batch sizing produced here).
             #
             # NOTE this branch runs only for the EXTERNAL entrypoint and for
