@@ -217,6 +217,73 @@ _PREROLL_TIMEOUT_ENV_VAR = "CIVICCAST_GST_PREROLL_TIMEOUT_S"
 # completely silent until it either succeeded or the worker died.
 _PREROLL_POLL_INTERVAL_S = 5.0
 
+# Item 84 (measured in sandbox run 15, soak-fcfcb81-20260906-183448Z, and in
+# three seamless-OFF runs): every fresh worker printed
+# ``CTRL preroll: reached PLAYING after 0.3s`` (a real, fast PLAYING
+# transition -- ``_await_playing`` above is not wrong) immediately followed by
+# ``CTRL stall: no output for 10s - quitting for daemon restart`` from
+# ``_check_stall`` below. ``_arm_stall_watchdog`` arms that 10s bound the
+# instant PLAYING is reached, but PLAYING (even NO_PREROLL) is not evidence a
+# single buffer has actually crossed the mux -- under start-up load (a
+# concurrent ``ffmpeg -threads 1 h264_mf + loudnorm`` conform, a ~10s
+# synchronous content-reload source preparation on the automation thread,
+# live caption-tap overload) the FIRST output buffer can legitimately take
+# much longer than 10s even though the worker is perfectly healthy and would
+# have produced output shortly after. There was no separate bound for
+# "time to first output" -- only the post-first-buffer stall bound, applied
+# from the moment PLAYING happened instead of from the moment output actually
+# started.
+#
+# This gives "never produced a single buffer" its own, much more generous
+# budget than "stopped producing buffers after already airing" -- the two are
+# different failure modes (a genuinely wedged/dead pipeline vs one merely
+# slow to warm up) and conflating them under one 10s bound killed healthy
+# workers. 45s default -- comfortably covers the measured start-up
+# contention above with margin; configurable via env var for ops tuning
+# without a code change; clamped to [10, 120]s (see the module-level
+# ``math.isfinite`` guard rationale on ``_resolve_preroll_timeout_s``, which
+# this function mirrors exactly).
+_DEFAULT_FIRST_OUTPUT_TIMEOUT_S = 45.0
+_MIN_FIRST_OUTPUT_TIMEOUT_S = 10.0
+_MAX_FIRST_OUTPUT_TIMEOUT_S = 120.0
+_FIRST_OUTPUT_TIMEOUT_ENV_VAR = "CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S"
+
+
+def _resolve_first_output_timeout_s(explicit: float | None) -> float:
+    """Resolve the time-to-FIRST-output bound: an explicit constructor value
+    wins, else the ``CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S`` env var, else the
+    45s default -- always clamped to ``[10, 120]``s. Mirrors
+    ``_resolve_preroll_timeout_s`` exactly, including the ``math.isfinite``
+    guard against a NaN/inf value silently defeating the clamp (Python's
+    ``min``/``max`` do not clamp NaN -- see that function's docstring for the
+    full reasoning, which applies unchanged here)."""
+    if explicit is not None:
+        if not math.isfinite(explicit):
+            print(
+                f"CTRL first-output: ignoring non-finite first_output_timeout_s="
+                f"{explicit!r}; using default {_DEFAULT_FIRST_OUTPUT_TIMEOUT_S}s",
+                file=sys.stderr,
+                flush=True,
+            )
+            return _DEFAULT_FIRST_OUTPUT_TIMEOUT_S
+        return min(max(explicit, _MIN_FIRST_OUTPUT_TIMEOUT_S), _MAX_FIRST_OUTPUT_TIMEOUT_S)
+    raw = os.environ.get(_FIRST_OUTPUT_TIMEOUT_ENV_VAR)
+    if raw:
+        try:
+            parsed = float(raw)
+        except ValueError:
+            parsed = math.nan  # falls through to the non-finite branch below
+        if not math.isfinite(parsed):
+            print(
+                f"CTRL first-output: ignoring non-finite {_FIRST_OUTPUT_TIMEOUT_ENV_VAR}="
+                f"{raw!r}; using default {_DEFAULT_FIRST_OUTPUT_TIMEOUT_S}s",
+                file=sys.stderr,
+                flush=True,
+            )
+            return _DEFAULT_FIRST_OUTPUT_TIMEOUT_S
+        return min(max(parsed, _MIN_FIRST_OUTPUT_TIMEOUT_S), _MAX_FIRST_OUTPUT_TIMEOUT_S)
+    return _DEFAULT_FIRST_OUTPUT_TIMEOUT_S
+
 
 def _resolve_preroll_timeout_s(explicit: float | None) -> float:
     """Resolve the PLAYING-preroll bound: an explicit constructor value wins,
@@ -327,6 +394,7 @@ class GstPlayoutEngine:
         stall_timeout_s: float = 10.0,
         defer_switch_timeout_s: float = 900.0,
         preroll_timeout_s: float | None = None,
+        first_output_timeout_s: float | None = None,
     ) -> None:
         prefer_cpu_decoders_by_default()
         Gst.init([])
@@ -356,6 +424,31 @@ class GstPlayoutEngine:
         # on-air, the pipeline has silently stalled — quit so the daemon restarts the
         # worker to a known state (a live source that freezes without posting an error).
         self.stall_timeout_s = stall_timeout_s
+        # Item 84: bounded wait for the FIRST output buffer past the mux,
+        # counted separately from ``stall_timeout_s`` above (see
+        # ``_arm_stall_watchdog``/``_check_stall`` and the module-level
+        # comment above ``_DEFAULT_FIRST_OUTPUT_TIMEOUT_S`` for the measured
+        # failure this closes -- PLAYING is not evidence of output, and
+        # applying the 10s post-first-buffer stall bound from PLAYING instead
+        # of from the first real buffer killed healthy workers under
+        # start-up load).
+        self.first_output_timeout_s = _resolve_first_output_timeout_s(first_output_timeout_s)
+        # Item 84: latched True the first time ``_check_stall`` observes
+        # ``_output_buffers`` advance -- selects which of the two budgets
+        # above ``_check_stall`` measures against.
+        self._first_output_seen = False
+        # Item 84 Round-2 review BLOCKER: the moment ``_await_playing`` last
+        # observed a real PLAYING transition (``time.monotonic()``, set only
+        # on the success path) -- the reference point the NEW
+        # ``CTRL first-output: first buffer after Ns pid=N`` marker's ``Ns``
+        # is measured from. ``None`` until PLAYING is actually reached.
+        self._playing_reached_at: float | None = None
+        # Item 84 Round-2 review BLOCKER: latched True the FIRST time the
+        # ``CTRL first-output: ...`` marker is printed (see
+        # ``_maybe_print_first_output_marker``) so it never prints twice for
+        # one run, independent of ``_first_output_seen``'s own re-arm-per-call
+        # semantics (see ``_arm_stall_watchdog``).
+        self._first_output_marker_printed = False
         # Item 82: bounded PLAYING-preroll wait (see ``_await_playing`` / the
         # module-level ``_resolve_preroll_timeout_s`` for the constructor-arg /
         # env-var / default resolution and clamp).
@@ -1246,22 +1339,127 @@ class GstPlayoutEngine:
         src.add_probe(Gst.PadProbeType.BUFFER | Gst.PadProbeType.BUFFER_LIST, _count)
 
     def _arm_stall_watchdog(self) -> None:
-        if self.stall_timeout_s <= 0:
+        # Item 84: arm unconditionally as long as EITHER budget is active --
+        # before this fix a ``stall_timeout_s <= 0`` (an operator disabling the
+        # post-first-buffer stall check entirely) also silently disabled the
+        # first-output bound, which is a genuinely different, always-useful
+        # check (a pipeline that never produces a single buffer at all).
+        if self.stall_timeout_s <= 0 and self.first_output_timeout_s <= 0:
             return
         self._stall_last_count = self._output_buffers
         self._stall_last_advance_t = time.monotonic()
+        # Item 84 Round-2 review item 4: a buffer can cross the mux DURING
+        # preroll/PLAYING, before ``run_forever`` gets around to calling this
+        # (``_install_output_counter`` is installed before ``set_state
+        # (PLAYING)``, well before this arm call) -- hardcoding
+        # ``_first_output_seen = False`` here would wrongly re-open the
+        # first-output budget for output that already happened, and could
+        # let a genuinely-producing pipeline that goes quiet right after arm
+        # get the wrong (more generous) budget applied to what is actually a
+        # post-first-buffer stall.
+        self._first_output_seen = self._output_buffers > 0
+        if self._first_output_seen:
+            self._maybe_print_first_output_marker()
         GLib.timeout_add_seconds(1, self._check_stall)
 
+    def _maybe_print_first_output_marker(self) -> None:
+        """Item 84 Round-2 review BLOCKER: print the pid-tagged
+        ``CTRL first-output: first buffer after Ns pid=N`` marker exactly
+        once, the moment the FIRST TS buffer/buffer-list is observed crossing
+        the mux -- distinct from, and more meaningful than, the ``CTRL
+        preroll: reached PLAYING`` marker.
+
+        Measured escalation-cliff BLOCKER this closes: PLAYING (even
+        NO_PREROLL) is not evidence output ever flowed, but
+        ``EgressDaemon._observed_on_air_evidence`` used to credit the
+        PLAYING marker alone as on-air evidence for the GStreamer strategy --
+        a worker that reaches PLAYING on every single relaunch but never
+        crosses ``first_output_timeout_s`` (at ANY configured value, 65s
+        through the 120s clamp ceiling) got its crash-loop streak reset on
+        every cycle by the ALIVE-poll path, and never escalated to fallback
+        slate (streak pinned at 1) even though it never once produced real
+        output. ``civiccast.egress.health.worker_produced_output`` greps for
+        this exact marker, anchored to the same spawn offset and pid check as
+        ``worker_reached_playing``, and the daemon's alive-poll evidence
+        check now requires THIS marker (not PLAYING) for a GStreamer-strategy
+        channel -- see ``EgressDaemon._observed_on_air_evidence``. No budget
+        value can defeat escalation now: PLAYING alone is never sufficient."""
+        if self._first_output_marker_printed:
+            return
+        self._first_output_marker_printed = True
+        elapsed = (
+            time.monotonic() - self._playing_reached_at
+            if self._playing_reached_at is not None
+            else 0.0
+        )
+        print(
+            # ASCII only, stable prefix -- a parsed contract like the PLAYING
+            # marker above, not just a human-readable log line (see
+            # ``civiccast.egress.health.worker_produced_output``).
+            f"CTRL first-output: first buffer after {elapsed:.1f}s pid={os.getpid()}",
+            file=sys.stderr,
+            flush=True,
+        )
+
     def _check_stall(self) -> bool:
-        """Quit the run loop if output hasn't advanced for ``stall_timeout_s`` — the
-        worker then exits non-zero and the daemon restarts it to a known state. A
-        no-op while output is flowing (it resets the timer on every advance)."""
+        """Quit the run loop on either of two DISTINCT budgets, measured from
+        PLAYING (see ``_arm_stall_watchdog``, called immediately after
+        ``_await_playing``):
+
+        * Item 84: while no output buffer has crossed the mux yet, bound the
+          wait against ``first_output_timeout_s`` (45s default, much more
+          generous -- see the module-level comment above
+          ``_DEFAULT_FIRST_OUTPUT_TIMEOUT_S``). PLAYING (even NO_PREROLL) is
+          NOT evidence a buffer actually crossed the mux, so this is a
+          separate, later piece of evidence than ``_await_playing`` ever had.
+        * Once the first buffer IS observed, fall back to the original S9-5
+          behavior unchanged: bound against ``stall_timeout_s`` (10s default)
+          from the last observed advance, for a pipeline that aired fine and
+          then silently stopped.
+
+        A no-op while output is flowing either way (it resets the timer on
+        every advance). The worker exits non-zero on either budget and the
+        daemon restarts it to a known state."""
         now = time.monotonic()
         if self._output_buffers != self._stall_last_count:
+            self._first_output_seen = True
+            self._maybe_print_first_output_marker()
             self._stall_last_count = self._output_buffers
             self._stall_last_advance_t = now
             return True  # output advancing — keep watching
-        if now - self._stall_last_advance_t >= self.stall_timeout_s:
+        elapsed = now - self._stall_last_advance_t
+        if not self._first_output_seen:
+            if self.first_output_timeout_s <= 0 or elapsed < self.first_output_timeout_s:
+                return True
+            # STDERR, not stdout (Gate A T4 visibility fix): the daemon reads the
+            # worker's stderr tail into ``last_error`` when the child exits non-zero,
+            # so the reason a channel bounced is on the operator's state row instead
+            # of only in an uncollected stdout log.
+            print(
+                # ASCII only -- same reasoning as the stall message below (the
+                # daemon folds this into the state row's last_error, written
+                # to Postgres via a client_encoding that may not be UTF-8).
+                f"CTRL first-output: no output within {int(self.first_output_timeout_s)}s "
+                "of PLAYING - quitting for daemon restart",
+                file=sys.stderr,
+                flush=True,
+            )
+            # Distinct reason from ("stall", ...) below -- worker.py maps this
+            # to its own exit code (GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE) so the
+            # daemon's relaunch path can rate-limit it the same way it already
+            # does GST_PREROLL_TIMEOUT_EXIT_CODE, instead of counting it as an
+            # ordinary crash toward the fallback-slate streak.
+            self._error = ("first-output-timeout", "no output buffers observed within bound")
+            if self._loop is not None:
+                self._loop.quit()
+            return False  # one-shot: stop the watchdog
+        if self.stall_timeout_s <= 0:
+            # Post-first-buffer stall check disabled (operator opt-out) --
+            # unchanged from the pre-item-84 semantics of ``stall_timeout_s <=
+            # 0`` skipping the watchdog entirely, now scoped to just this
+            # budget since the first-output budget above may still be active.
+            return True
+        if elapsed >= self.stall_timeout_s:
             # STDERR, not stdout (Gate A T4 visibility fix): the daemon reads the
             # worker's stderr tail into ``last_error`` when the child exits non-zero,
             # so the reason a channel bounced is on the operator's state row instead
@@ -1352,6 +1550,13 @@ class GstPlayoutEngine:
                     file=sys.stderr,
                     flush=True,
                 )
+                # Item 84 Round-2 review BLOCKER: the reference point the
+                # NEW ``CTRL first-output: ...`` marker's ``Ns`` measures
+                # from -- see ``_maybe_print_first_output_marker``. PLAYING
+                # itself is deliberately NOT treated as on-air evidence
+                # anywhere downstream; this timestamp only feeds that
+                # marker's elapsed-time text.
+                self._playing_reached_at = time.monotonic()
                 return
             if result == Gst.StateChangeReturn.FAILURE:
                 # Not a slow preroll -- the pipeline itself failed. Distinct from

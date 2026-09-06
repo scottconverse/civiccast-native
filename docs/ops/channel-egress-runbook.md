@@ -576,6 +576,62 @@ The OBS bridge is operationally outside CivicCast — its supervision is
 OBS's job, and the SDI readiness endpoint will not report it. It is the
 right answer when the station wants SDI today without building FFmpeg.
 
+## Diagnosing A Worker Exit: Never Produced Output vs Stopped Producing It
+
+A GStreamer worker's stderr distinguishes two DIFFERENT failure shapes that
+both end in a daemon-driven restart -- read the exact marker before assuming
+a bounced channel is the same failure mode as any other:
+
+- `CTRL first-output: no output within Ns of PLAYING - quitting for daemon
+  restart` (item 84) -- the pipeline reached `PLAYING` (see the preceding
+  `CTRL preroll: reached PLAYING after ...s` line) but never produced a
+  single output buffer within `first_output_timeout_s` (45s default,
+  `CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S` env override, clamped `[10, 120]`s).
+  This is a SLOW START under load (a concurrent conform, a synchronous
+  content-reload source preparation, live caption-tap overload), not a
+  stalled or dead pipeline -- the daemon relaunches it through the normal
+  back-off path but rate-limits how often it counts toward the crash-loop
+  streak that forces fallback slate, the same way it already does for
+  `CTRL preroll: worker exiting -- ...` (item 82, a preroll that never
+  reached `PLAYING` at all). If this line recurs steadily on a box, look at
+  what else is competing for CPU/IO at worker start (an `ffmpeg` conform, a
+  slow disk, another channel's caption tap) before assuming the source
+  itself is unreachable.
+- `CTRL stall: no output for 10s - quitting for daemon restart` (S9-5,
+  unchanged by item 84) -- the pipeline WAS producing output and then
+  stopped for `stall_timeout_s` (10s default). This is the pipeline going
+  silently dead after already airing (a frozen live source that never posts
+  an error) -- treat it as a genuine on-air interruption, not a slow start.
+
+A THIRD line, `CTRL first-output: first buffer after Ns pid=N` (item 84
+Round-2 review), is not a failure -- it is the positive-evidence marker a
+worker prints exactly once, the moment its first TS buffer actually crosses
+the mux. It is the daemon's own on-air evidence for the GStreamer strategy
+(`EgressDaemon._observed_on_air_evidence`): a worker that only ever prints
+`CTRL preroll: reached PLAYING` and never this marker is NOT credited as
+on-air, on purpose -- reaching `PLAYING` is not proof any output ever
+flowed, and treating it as such was the measured cause of a worker that
+kept reaching `PLAYING` on every relaunch, but never producing output,
+resetting its own crash-loop streak forever instead of ever escalating to
+fallback slate.
+
+Both failure lines land in the operator state row's `last_error` (folded
+from the worker's stderr tail); the exit code the daemon actually observed
+(`GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE` vs the ordinary crash code for a
+`("stall", ...)` exit vs `GST_PREROLL_TIMEOUT_EXIT_CODE`) is not itself
+operator-visible, so the stderr marker text is the fastest way to tell the
+three failure shapes apart when triaging a relaunch storm.
+
+**`CIVICCAST_STALL_TIMEOUT_S=0` no longer disables output supervision.**
+Before item 84, setting this env var to `0` (or any non-positive value) fully
+disabled the stall watchdog -- a worker that silently stopped producing
+output, OR one that never produced any at all, would run forever with no
+daemon-driven restart. That opt-out now only covers the POST-first-buffer
+stall check (`CTRL stall: ...`, unchanged S9-5 semantics); the first-output
+budget (`CTRL first-output: no output within Ns ...`) is separate, floors at
+10s regardless of this env var, and cannot be disabled entirely -- a worker
+that never produces a single output buffer is always eventually restarted.
+
 ## What To Do With Failures
 
 Use the exact blocker code in the report. Do not paraphrase it away.
