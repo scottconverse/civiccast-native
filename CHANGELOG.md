@@ -129,7 +129,8 @@ below.
   pipeline construction, and nothing on the reload path can touch it either
   way. Neither `civiccast/egress/gst/engine.py`'s
   `_build_audio_tap`/`_audio_tap_element_specs` nor
-  `civiccast/egress/gst/audio_tap.py` (PR #190, in review) were touched --
+  `civiccast/egress/gst/audio_tap.py` (PR #190, merged as `66e02c4` -- see the
+  items 88/84c entry above) were touched --
   the graph builder there already only builds the tee when
   `graph.audio_tap is not None`, which is exactly the signal this fix now
   controls correctly upstream. New coverage: `tests/native/test_station_runtime.py`
