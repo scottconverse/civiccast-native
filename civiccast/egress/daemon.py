@@ -417,8 +417,14 @@ class EgressDaemon:
         # last carried, kept ONLY so a late-arriving status write for that
         # dead attempt can be recognized and logged as ignored instead of
         # silently doing nothing -- see ``_discard_pending_reload_settlement``
-        # and ``_poll_reload_settlement``.
-        self._discarded_reload_ids: dict[str, str] = {}
+        # and ``_poll_reload_settlement``. Value is ``(reload_id, discarded_at)``
+        # (follow-up, second hostile-review pass): bounded by
+        # ``_PENDING_RELOAD_SETTLE_DEADLINE_S`` so this dict cannot grow
+        # unbounded across a long-running daemon's many restarts/reloads --
+        # an entry this old is definitely stale (any settlement for it would
+        # itself already be well past every timeout this module has) and is
+        # evicted the next time this channel is checked, not kept forever.
+        self._discarded_reload_ids: dict[str, tuple[str, float]] = {}
 
     def process_once(self, channel_id: str) -> int:
         """Process all currently queued commands for one channel.
@@ -786,130 +792,159 @@ class EgressDaemon:
             else:
                 self._last_loudness_lufs.pop(channel_id, None)
 
-            self._write_state(channel_id, "STARTING")
-            branding_plan = (
-                self._branding_plan_provider(channel_id)
-                if self._branding_plan_provider is not None
-                else None
-            )
-            caption_plan = (
-                self._caption_plan_provider(channel_id)
-                if self._caption_plan_provider is not None
-                else None
-            )
-            running_state: EgressState = "FALLBACK_SLATE" if using_fallback_slate else "ON_AIR"
-            if previous_state in {"ON_AIR", "FALLBACK_SLATE"}:
-                transition_event = self._build_proof_event(
-                    channel_id=channel_id,
-                    state="TRANSITIONING",
-                    source_plan=source_plan,
-                    previous_state=previous_state,
-                    previous_source_label=previous_source_label,
+            # Hostile-review follow-up (second pass), items 1 & 2: everything
+            # from here down to the tracking decision at the end of this
+            # block can either raise (a provider hook, EncoderStartRequest
+            # construction, the encoder itself) or can legitimately decide
+            # NOT to use the prepared plan after all (the encoder-unavailable
+            # retry falling back to slate, using_fallback_slate flips True
+            # AFTER prepare() already succeeded) -- in EITHER case, if the
+            # preparer minted a real prepared_plan_dir above, it must be
+            # released here: nothing else ever looks at this local variable
+            # again, so silently dropping the reference (the previous code)
+            # or letting an exception skip past it were both permanent leaks,
+            # recoverable only by age/budget GC, not this daemon's own faster
+            # release.
+            try:
+                self._write_state(channel_id, "STARTING")
+                branding_plan = (
+                    self._branding_plan_provider(channel_id)
+                    if self._branding_plan_provider is not None
+                    else None
                 )
-                self._store.append_proof_event(transition_event)
+                caption_plan = (
+                    self._caption_plan_provider(channel_id)
+                    if self._caption_plan_provider is not None
+                    else None
+                )
+                running_state: EgressState = "FALLBACK_SLATE" if using_fallback_slate else "ON_AIR"
+                if previous_state in {"ON_AIR", "FALLBACK_SLATE"}:
+                    transition_event = self._build_proof_event(
+                        channel_id=channel_id,
+                        state="TRANSITIONING",
+                        source_plan=source_plan,
+                        previous_state=previous_state,
+                        previous_source_label=previous_source_label,
+                    )
+                    self._store.append_proof_event(transition_event)
+                    self._write_state(
+                        channel_id,
+                        "TRANSITIONING",
+                        current_source_label=source_plan.segments[0].label,
+                        current_proof_event_id=transition_event.event_id,
+                        pid=None,
+                    )
                 self._write_state(
                     channel_id,
-                    "TRANSITIONING",
+                    running_state,
                     current_source_label=source_plan.segments[0].label,
-                    current_proof_event_id=transition_event.event_id,
                     pid=None,
-                )
-            self._write_state(
-                channel_id,
-                running_state,
-                current_source_label=source_plan.segments[0].label,
-                pid=None,
-                last_error=fallback_reason if using_fallback_slate else None,
-            )
-
-            def _encoder_request(plan: EgressSourcePlan) -> EncoderStartRequest:
-                return EncoderStartRequest(
-                    channel_id=channel_id,
-                    source_plan=plan,
-                    config=config,
-                    work_dir=self._work_dir,
-                    resolve_secret=self._resolve_secret,
-                    branding_plan=branding_plan,
-                    caption_plan=caption_plan,
-                    # Live caption tap (Beta B6, option A): env-configured
-                    # audio fork rides the same encoder process.
-                    audio_tap_plan=build_audio_tap_plan(channel_id),
-                    ffmpeg_starter=self._ffmpeg_starter,
-                    cg_overlay_image=(
-                        self._cg_overlay_provider(channel_id, config)
-                        if self._cg_overlay_provider is not None
-                        else None
-                    ),
+                    last_error=fallback_reason if using_fallback_slate else None,
                 )
 
-            try:
-                encoder_result = self._encoder_strategy.start(_encoder_request(source_plan))
-            except (EncoderUnavailableError, FfmpegNotFoundError) as exc:
-                # Degraded-mode tier 4 (owner ruling: dead air is the cardinal
-                # sin, NEVER acceptable). The encoder itself could not start --
-                # e.g. GStreamer already fell back to FFmpeg and FFmpeg egress
-                # ALSO failed (EncoderUnavailableError), OR the FFmpeg tier
-                # itself has no ffmpeg binary on PATH (FfmpegNotFoundError --
-                # audit K2-1: this used to escape straight past this seam to
-                # the outer ERROR handler below, skipping the slate tier
-                # entirely). Both are tier failures of the SAME ladder, so
-                # both land here. Rather than dropping the channel to
-                # ERROR/black, put up the existing fallback SLATE ("technical
-                # difficulties") as the absolute last resort: rebuild the
-                # request against the slate source plan and try the encoder
-                # once more. Only ERROR (dead air) if there is no fallback
-                # provider, we were ALREADY airing the slate (so the slate
-                # itself is what failed), or the slate encode also fails --
-                # e.g. ffmpeg is genuinely absent from the machine, so no
-                # tier (program OR slate) can be encoded. That is the true
-                # zero-ffmpeg floor: the outer handler below still catches
-                # FfmpegNotFoundError and lands the channel on ERROR with
-                # last_error set and health appended -- a no-crash state with
-                # operator alerting, never a crash and never a silent hang.
-                if self._fallback_source_provider is None or using_fallback_slate:
-                    raise
-                _LOG.error(
-                    "channel %s: egress encoder unavailable (%s); falling back to the "
-                    "technical-difficulties slate rather than dead air.",
-                    channel_id,
-                    exc,
-                )
-                fallback_reason = f"egress encoder unavailable; aired fallback slate: {exc}"
-                source_plan = self._fallback_source_provider(config)
-                using_fallback_slate = True
-                running_state = "FALLBACK_SLATE"
-                self._write_state(channel_id, running_state, last_error=fallback_reason)
-                # K2-1 follow-up (P1): FfmpegNotFoundError is a pure PATH lookup with
-                # no dependence on the source plan being encoded, so retrying THIS
-                # SAME strategy is guaranteed to fail identically again -- see
-                # _default_independent_slate_strategy's docstring. Route the slate
-                # retry through a genuinely separate, ffmpeg-independent encoder in
-                # that specific case. EncoderUnavailableError has no such guarantee
-                # (e.g. a hardware-encoder probe outcome can legitimately differ
-                # between the program and slate content), so it keeps retrying the
-                # original strategy unchanged.
-                retry_strategy = self._encoder_strategy
-                if isinstance(exc, FfmpegNotFoundError):
-                    independent_strategy = self._independent_slate_strategy_factory()
-                    if independent_strategy is not None:
-                        retry_strategy = independent_strategy
-                encoder_result = retry_strategy.start(_encoder_request(source_plan))
-            self._stderr_logs[channel_id] = encoder_result.stderr_path
-            process = encoder_result.process
-            self._processes[channel_id] = process
-            self._started_at[channel_id] = self._monotonic()
-            # Hostile-review follow-up, item 4: track the plan actually being
-            # aired so it gets released on the next exit/stop even when the
-            # seamless-reload flag is OFF (supports_content_reload=False, the
-            # shipped default) -- _try_content_reload/_commit_reload_
-            # settlement never run at all on that path, so without this the
-            # only cleanup for a _start()-launched plan was age/budget GC.
-            # Skipped when a fallback slate ended up airing instead (built by
-            # _fallback_source_provider, never by the preparer) -- tracking
-            # prepared_plan_dir there would point at a plan that was never
-            # actually dispatched to this encoder.
-            if not using_fallback_slate and prepared_plan_dir is not None:
-                self._active_prepared_plan_dir[channel_id] = prepared_plan_dir
+                def _encoder_request(plan: EgressSourcePlan) -> EncoderStartRequest:
+                    return EncoderStartRequest(
+                        channel_id=channel_id,
+                        source_plan=plan,
+                        config=config,
+                        work_dir=self._work_dir,
+                        resolve_secret=self._resolve_secret,
+                        branding_plan=branding_plan,
+                        caption_plan=caption_plan,
+                        # Live caption tap (Beta B6, option A): env-configured
+                        # audio fork rides the same encoder process.
+                        audio_tap_plan=build_audio_tap_plan(channel_id),
+                        ffmpeg_starter=self._ffmpeg_starter,
+                        cg_overlay_image=(
+                            self._cg_overlay_provider(channel_id, config)
+                            if self._cg_overlay_provider is not None
+                            else None
+                        ),
+                    )
+
+                try:
+                    encoder_result = self._encoder_strategy.start(_encoder_request(source_plan))
+                except (EncoderUnavailableError, FfmpegNotFoundError) as exc:
+                    # Degraded-mode tier 4 (owner ruling: dead air is the cardinal
+                    # sin, NEVER acceptable). The encoder itself could not start --
+                    # e.g. GStreamer already fell back to FFmpeg and FFmpeg egress
+                    # ALSO failed (EncoderUnavailableError), OR the FFmpeg tier
+                    # itself has no ffmpeg binary on PATH (FfmpegNotFoundError --
+                    # audit K2-1: this used to escape straight past this seam to
+                    # the outer ERROR handler below, skipping the slate tier
+                    # entirely). Both are tier failures of the SAME ladder, so
+                    # both land here. Rather than dropping the channel to
+                    # ERROR/black, put up the existing fallback SLATE ("technical
+                    # difficulties") as the absolute last resort: rebuild the
+                    # request against the slate source plan and try the encoder
+                    # once more. Only ERROR (dead air) if there is no fallback
+                    # provider, we were ALREADY airing the slate (so the slate
+                    # itself is what failed), or the slate encode also fails --
+                    # e.g. ffmpeg is genuinely absent from the machine, so no
+                    # tier (program OR slate) can be encoded. That is the true
+                    # zero-ffmpeg floor: the outer handler below still catches
+                    # FfmpegNotFoundError and lands the channel on ERROR with
+                    # last_error set and health appended -- a no-crash state with
+                    # operator alerting, never a crash and never a silent hang.
+                    if self._fallback_source_provider is None or using_fallback_slate:
+                        raise
+                    _LOG.error(
+                        "channel %s: egress encoder unavailable (%s); falling back to the "
+                        "technical-difficulties slate rather than dead air.",
+                        channel_id,
+                        exc,
+                    )
+                    fallback_reason = f"egress encoder unavailable; aired fallback slate: {exc}"
+                    source_plan = self._fallback_source_provider(config)
+                    using_fallback_slate = True
+                    running_state = "FALLBACK_SLATE"
+                    self._write_state(channel_id, running_state, last_error=fallback_reason)
+                    # K2-1 follow-up (P1): FfmpegNotFoundError is a pure PATH lookup with
+                    # no dependence on the source plan being encoded, so retrying THIS
+                    # SAME strategy is guaranteed to fail identically again -- see
+                    # _default_independent_slate_strategy's docstring. Route the slate
+                    # retry through a genuinely separate, ffmpeg-independent encoder in
+                    # that specific case. EncoderUnavailableError has no such guarantee
+                    # (e.g. a hardware-encoder probe outcome can legitimately differ
+                    # between the program and slate content), so it keeps retrying the
+                    # original strategy unchanged.
+                    retry_strategy = self._encoder_strategy
+                    if isinstance(exc, FfmpegNotFoundError):
+                        independent_strategy = self._independent_slate_strategy_factory()
+                        if independent_strategy is not None:
+                            retry_strategy = independent_strategy
+                    encoder_result = retry_strategy.start(_encoder_request(source_plan))
+                self._stderr_logs[channel_id] = encoder_result.stderr_path
+                process = encoder_result.process
+                self._processes[channel_id] = process
+                self._started_at[channel_id] = self._monotonic()
+                # Hostile-review follow-up, item 4: track the plan actually being
+                # aired so it gets released on the next exit/stop even when the
+                # seamless-reload flag is OFF (supports_content_reload=False, the
+                # shipped default) -- _try_content_reload/_commit_reload_
+                # settlement never run at all on that path, so without this the
+                # only cleanup for a _start()-launched plan was age/budget GC.
+                if using_fallback_slate:
+                    # Item 1 fix: using_fallback_slate can become True AFTER a
+                    # successful prepare() (the encoder-unavailable retry path
+                    # just above) -- the prepared plan was never actually
+                    # dispatched to this encoder (a fallback slate plan, built
+                    # by _fallback_source_provider, aired instead), so release
+                    # it now instead of silently dropping the reference the
+                    # way the pre-fix code did.
+                    self._release_prepared_plan_dir(prepared_plan_dir)
+                elif prepared_plan_dir is not None:
+                    self._active_prepared_plan_dir[channel_id] = prepared_plan_dir
+            except Exception:
+                # Item 2 fix: anything above that raises past this point --
+                # a provider hook, EncoderStartRequest construction, an
+                # encoder failure this method doesn't itself recover from --
+                # must not leak prepared_plan_dir. Release, then propagate
+                # unchanged (the existing outer except clauses below still
+                # decide how the channel's STATE responds to this failure;
+                # this inner handler only ever touches the plan directory).
+                self._release_prepared_plan_dir(prepared_plan_dir)
+                raise
             proof_event = self._build_proof_event(
                 channel_id=channel_id,
                 state=running_state,
@@ -1671,7 +1706,7 @@ class EgressDaemon:
             pending.reload_id,
             reason,
         )
-        self._discarded_reload_ids[channel_id] = pending.reload_id
+        self._discarded_reload_ids[channel_id] = (pending.reload_id, self._monotonic())
         self._release_prepared_plan_dir(pending.plan_dir)
 
     def _discard_active_prepared_plan_dir(self, channel_id: str) -> None:
@@ -2008,23 +2043,54 @@ class EgressDaemon:
         that left no evidence the late write was ever observed."""
         pending = self._pending_reload_settle.get(channel_id)
         if pending is None:
-            discarded_id = self._discarded_reload_ids.get(channel_id)
-            if discarded_id is not None:
-                status = self._read_reload_status(channel_id)
-                if status is not None and status.get("id") == discarded_id:
-                    _LOG.info(
-                        "Content-reload settlement for %s (reload_id=%s) arrived after "
-                        "that attempt was already discarded (worker exit/supersede/"
-                        "restart); ignoring.",
-                        channel_id,
-                        discarded_id,
-                    )
+            discarded = self._discarded_reload_ids.get(channel_id)
+            if discarded is not None:
+                discarded_id, discarded_at = discarded
+                if self._monotonic() - discarded_at >= _PENDING_RELOAD_SETTLE_DEADLINE_S:
+                    # Follow-up (second hostile-review pass): bounded expiry --
+                    # an entry this old is stale (any real settlement for it
+                    # would itself be well past every timeout this module has)
+                    # and would otherwise sit in this dict forever on a
+                    # long-running daemon that never happens to see a late
+                    # write arrive to trigger the pop below.
                     self._discarded_reload_ids.pop(channel_id, None)
+                else:
+                    status = self._read_reload_status(channel_id)
+                    if status is not None and status.get("id") == discarded_id:
+                        _LOG.info(
+                            "Content-reload settlement for %s (reload_id=%s) arrived after "
+                            "that attempt was already discarded (worker exit/supersede/"
+                            "restart); ignoring.",
+                            channel_id,
+                            discarded_id,
+                        )
+                        self._discarded_reload_ids.pop(channel_id, None)
             return
         status = self._read_reload_status(channel_id)
         if status is not None and status.get("id") == pending.reload_id:
             result = status.get("result")
             if result == "applied":
+                # Follow-up (second hostile-review pass): liveness re-check --
+                # the worker that armed this reload may have exited BETWEEN
+                # _poll_process observing it (which would have discarded this
+                # entry already) and this read, or in a process_once pass
+                # where _poll_process ran before this worker's exit actually
+                # happened. Stamping ON_AIR against a pid that is already dead
+                # would be a lie the state row then carries until the next
+                # tick catches it -- checked directly, not inferred.
+                if _process_poll(pending.process) is not None:
+                    _LOG.warning(
+                        'Seamless content-reload for %s reported "applied" but its '
+                        "worker had already exited (reload_id=%s); falling back to restart "
+                        "instead of stamping ON_AIR against a dead process.",
+                        channel_id,
+                        pending.reload_id,
+                    )
+                    self._discard_pending_reload_settlement(
+                        channel_id, reason="worker exited before settlement could be committed"
+                    )
+                    self._fall_back_to_restart_reload(channel_id)
+                    return
                 # NOTE: a plain pop here, not _discard_pending_reload_settlement --
                 # this attempt is COMMITTING, not being discarded; its plan_dir
                 # becomes the new active one inside _commit_reload_settlement,
@@ -2183,12 +2249,15 @@ class EgressDaemon:
         # F1/F3 fix: an armed-but-unsettled reload is moot once the channel is
         # stopped (nothing will ever read reload-status.json for it again), and
         # the channel's active prepared-plan directory is now retired -- release
-        # it immediately instead of waiting for GC.
-        self._pending_reload_settle.pop(channel_id, None)
-        stopped_plan_dir = self._active_prepared_plan_dir.pop(channel_id, None)
-        if self._prepared_plan_release is not None and stopped_plan_dir is not None:
-            with contextlib.suppress(Exception):
-                self._prepared_plan_release(stopped_plan_dir)
+        # both immediately instead of waiting for GC. Hostile-review follow-up
+        # (second pass), items 3 & 4: this used to plain-pop
+        # _pending_reload_settle (never releasing pending.plan_dir, never
+        # logging, never recording the discarded reload_id for late-arrival
+        # detection) and inline what _discard_active_prepared_plan_dir already
+        # does -- both routed through the shared helpers now, which is what
+        # that helper's own docstring already claimed this call site did.
+        self._discard_pending_reload_settlement(channel_id, reason="channel stopped")
+        self._discard_active_prepared_plan_dir(channel_id)
         self._stderr_logs.pop(channel_id, None)
         self._hls_relay_dead.pop(channel_id, None)
         self._clear_cg_overlay_proof(channel_id, "DRAINING" if draining else "STOPPING")

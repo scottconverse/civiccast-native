@@ -1253,6 +1253,63 @@ def test_pending_reload_settlement_deadline_falls_back_to_restart(tmp_path: Path
     assert state.current_source_label == "Mayor interview"
 
 
+def test_unrecognized_settlement_result_is_treated_as_aborted_immediately(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Hostile-review follow-up: a settlement result that is neither
+    "applied" nor "aborted:<reason>" (a malformed write, a future/older
+    worker version) must be treated as aborted IMMEDIATELY -- not silently
+    waited out for the full 960s deadline, since whatever wrote it clearly
+    ran and waiting longer buys nothing."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    fake_now = [1_000_000.0]
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+        monotonic=lambda: fake_now[0],
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # armed; no status file ever written
+
+    armed_reload_id = strategy.reload_ids[-1]
+    _write_fake_reload_status(tmp_path, "gov", armed_reload_id, "weird-unknown-value")
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.daemon"):
+        # Only ONE second later -- nowhere near the 960s deadline -- proving
+        # this is recognized and acted on immediately, not merely eventually.
+        fake_now[0] += 1.0
+        daemon.process_once("gov")
+
+    assert store.read_state("gov").state == "TRANSITIONING"  # fell back to restart already
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(
+        "gov" in message and "unrecognized" in message and armed_reload_id in message
+        for message in messages
+    ), messages
+
+    started[0].returncode = 0  # the drained encoder exits -> pending reload restarts
+    daemon.process_once("gov")
+    assert len(started) == 2
+    state = store.read_state("gov")
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Mayor interview"
+
+
 def test_worker_crash_during_the_armed_window_discards_pending_settlement(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -1299,28 +1356,32 @@ def test_worker_crash_during_the_armed_window_discards_pending_settlement(
     assert daemon._pending_reload_settle.get("gov") is None  # type: ignore[attr-defined]
     assert len(started) == 2  # the crash relaunch landed (pid 222)
 
+    # Shortly after (well within the discarded-id's own bounded-expiry
+    # window -- see _discarded_reload_ids), the dead attempt's worker
+    # finally writes its status file. Recognized and ignored, logged.
+    fake_now[0] += 50.0
+    with caplog.at_level(logging.INFO, logger="civiccast.egress.daemon"):
+        _write_fake_reload_status(tmp_path, "gov", armed_reload_id, "applied")
+        daemon.process_once("gov")
+
+    assert len(started) == 2  # the late write changes nothing
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(
+        "gov" in message and armed_reload_id in message and "ignoring" in message
+        for message in messages
+    ), messages
+
     # Advance well past the 960s settlement deadline -- with the pending entry
-    # already gone, no fallback-to-restart fires because of the dead attempt
-    # (a real bug here would show up as a SECOND, spurious TRANSITIONING/
-    # restart cycle beyond the one the crash itself already caused).
+    # already gone (and the late write already consumed above), no
+    # fallback-to-restart fires because of the dead attempt (a real bug here
+    # would show up as a SECOND, spurious TRANSITIONING/restart cycle beyond
+    # the one the crash itself already caused).
     fake_now[0] += 1000.0
     daemon.process_once("gov")
     assert len(started) == 2  # no additional restart triggered by the stale reload
     state = store.read_state("gov")
     assert state is not None
     assert state.state == "ON_AIR"
-
-    # The dead attempt's worker finally (late) writes its status file.
-    with caplog.at_level(logging.INFO, logger="civiccast.egress.daemon"):
-        _write_fake_reload_status(tmp_path, "gov", armed_reload_id, "applied")
-        daemon.process_once("gov")
-
-    assert len(started) == 2  # still no restart -- the late write changes nothing
-    messages = [r.getMessage() for r in caplog.records]
-    assert any(
-        "gov" in message and armed_reload_id in message and "ignoring" in message
-        for message in messages
-    ), messages
 
 
 def _prepare_with_tracked_plan_dirs(
@@ -2852,6 +2913,85 @@ def test_encoder_unavailable_airs_the_slate_instead_of_dead_air(tmp_path: Path) 
     assert "encoder unavailable" in (state.last_error or "")
     # Tried the program first, then the slate.
     assert strategy.start_labels == ["Council meeting", "Fallback slate"]
+
+
+def test_start_releases_the_prepared_plan_when_the_encoder_falls_back_to_slate(
+    tmp_path: Path,
+) -> None:
+    """Hostile-review follow-up (second pass), item 1: prepare() succeeds
+    (mints a real plan_dir for the PROGRAM plan) before the encoder-
+    unavailable retry decides to air the fallback slate instead --
+    using_fallback_slate flips True AFTER prepare() already ran, so the
+    pre-fix guard at the tracking site silently DROPPED the reference
+    without ever releasing it. Proves it is released instead."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    strategy = _EncoderUnavailableThenSlateStrategy()
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        encoder_strategy=strategy,  # type: ignore[arg-type]
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+    )
+
+    daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+    # The program plan's prepared directory (plan-1) was minted, then
+    # released once the slate aired instead -- never tracked as active
+    # (the slate was never built by the preparer), never left dangling.
+    assert released == [tmp_path / "plan-1"]
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset()
+
+
+def test_start_releases_the_prepared_plan_on_a_failure_after_prepare_succeeds(
+    tmp_path: Path,
+) -> None:
+    """Hostile-review follow-up (second pass), item 2: ANY raise between a
+    successful prepare() and the tracking decision (a provider hook here --
+    cg_overlay_provider) used to leak prepared_plan_dir; each retry (e.g. a
+    subsequent auto_start pass) would mint another one. Proves the directory
+    is released, and that the exception still propagates out of _start
+    unchanged (existing outer behavior for an exception this generic --
+    logged by process_once's command loop -- is untouched by this fix; the
+    fix is scoped to the plan_dir, not to changing what state the row is
+    left in)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111)]
+    started: list[_FakeProcess] = []
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    def _raising_cg_overlay_provider(_channel_id: str, _config: EgressConfig) -> Path | None:
+        raise RuntimeError("simulated board-overlay provider failure")
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        encoder_strategy=_FakeContentReloadStrategy(processes, started),
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+        cg_overlay_provider=_raising_cg_overlay_provider,
+    )
+
+    daemon.process_once("gov")
+
+    assert released == [tmp_path / "plan-1"]  # released, not leaked
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset()
+    assert len(started) == 0  # the encoder never even started
+    assert daemon._active_prepared_plan_dir.get("gov") is None  # never tracked as active
 
 
 def test_encoder_unavailable_with_no_fallback_provider_is_error_not_a_crash(

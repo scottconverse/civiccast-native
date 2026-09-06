@@ -314,6 +314,53 @@ def test_a_mid_build_failure_disposes_the_elements_already_added(engine_module) 
     assert "vconcat_program_1" not in engine.pipeline._names
 
 
+def test_dispose_elements_best_effort_suppresses_a_raise_and_still_disposes_the_rest(
+    engine_module,
+) -> None:
+    """Hostile-review follow-up (third pass), item 5a: direct unit coverage of
+    ``_dispose_elements_best_effort`` itself, exercising BOTH of its raise-suppression
+    seams independently -- an element whose ``set_state`` raises, and one whose
+    removal (``pipeline.remove``) raises -- proving each is swallowed (never replaces
+    the caller's context, never aborts the loop) AND that every OTHER element in the
+    batch still gets both its ``set_state(NULL)`` and its ``pipeline.remove`` call,
+    not just the ones before the raising element."""
+    engine = _bare_engine(engine_module)
+
+    class _RaisingSetStateElement(_FakeElement):
+        def set_state(self, state: Any) -> None:
+            self.states.append(state)
+            raise RuntimeError("simulated set_state failure")
+
+    class _RaisingRemovePipeline(_FakePipeline):
+        def remove(self, element: _FakeElement) -> None:
+            if element.get_name() == "ok-2":
+                raise RuntimeError("simulated pipeline.remove failure")
+            super().remove(element)
+
+    engine.pipeline = _RaisingRemovePipeline()
+    bad_set_state = _RaisingSetStateElement("videotestsrc", "bad-set-state")
+    ok_1 = _FakeElement("videotestsrc", "ok-1")
+    bad_remove = _FakeElement("videoconvert", "ok-2")  # its remove() raises
+    ok_3 = _FakeElement("videoconvert", "ok-3")
+    elements = [bad_set_state, ok_1, bad_remove, ok_3]
+    for element in elements:
+        engine.pipeline.add(element)
+
+    # Must not raise -- both failures are swallowed.
+    engine._dispose_elements_best_effort(elements)
+
+    # set_state(NULL) was attempted on every element, including the one whose
+    # call itself raised.
+    for element in elements:
+        assert element.states == [engine_module.Gst.State.NULL]
+    # pipeline.remove was attempted on every element too -- the one that raised
+    # did not stop "ok-3" (added after it in the list) from being removed.
+    assert sorted(engine.pipeline.removed) == ["bad-set-state", "ok-1", "ok-3"]
+    assert "ok-2" in engine.pipeline._names  # its own remove raised, so it's still "in" the bin
+    for name in ("bad-set-state", "ok-1", "ok-3"):
+        assert name not in engine.pipeline._names
+
+
 def test_link_failure_releases_the_video_pad_it_already_requested(engine_module) -> None:
     """``_link_leg_to_selectors``: when audio is enabled but the leg has no
     audio pad, the method already successfully requested (and linked) a VIDEO
