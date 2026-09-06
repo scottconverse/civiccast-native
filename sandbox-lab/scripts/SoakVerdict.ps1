@@ -190,9 +190,30 @@ function Get-SoakVerdict {
       Array of already-classified restart events, each:
         @{ channel_id; detected_utc; old_pid; new_pid
            classification = 'planned_restart' | 'unplanned_relaunch'
-           recovered = [bool]; recovery_gap_seconds = [double] or $null }
+           recovered = [bool]; recovery_gap_seconds = [double] or $null
+           incomplete = [bool] }
       Never excused by warm-up: a restart detected during the warm-up
       window is still classified and still counted.
+
+      .PARAMETER SeamlessReload
+      Round-11 finding 4 (MEDIUM): whether this run was launched with
+      -SeamlessReload. Under this flag the PASS contract is STRICTER than
+      the normal (flag-off) one: zero unplanned_relaunch, zero
+      reload_aborted (see -ReloadAbortEvents), planned_restart_count MUST
+      be zero (a classified planned_restart under this flag means the
+      seamless content-reload path did NOT run at all -- it fell back to
+      an actual worker restart, which is exactly the failure mode this
+      flag exists to prove absent), and tsp pass every cycle (already
+      enforced unconditionally by Test-SoakCycle, restated here as part of
+      the documented contract). Default $false (the normal contract).
+
+      .PARAMETER ReloadAbortEvents
+      Round-11 finding 4: array of @{ channel_id; reason } -- daemon.py
+      WARNING lines (main 250026b:1946/2132/2143/2156, all ending
+      "...falling back to restart.") indicating a seamless content-reload
+      attempt was aborted. These are never a FAIL under the normal
+      (flag-off) contract (a fallback-to-restart is exactly what flag-off
+      operation is), but ANY of them under -SeamlessReload is a FAIL.
 
       .OUTPUTS
       [pscustomobject] @{
@@ -204,6 +225,8 @@ function Get-SoakVerdict {
         cycles_evaluated         = int
         unplanned_relaunch_count = int
         planned_restart_count    = int
+        incomplete_restart_count = int
+        reload_aborted_count     = int
         max_restart_gap_seconds  = $null | double
       }
     #>
@@ -213,7 +236,10 @@ function Get-SoakVerdict {
         [Parameter(Mandatory = $true)] [datetime]$StartUtc,
         [int]$WarmupSeconds = 180,
         [AllowEmptyCollection()]
-        [array]$RestartEvents = @()
+        [array]$RestartEvents = @(),
+        [bool]$SeamlessReload = $false,
+        [AllowEmptyCollection()]
+        [array]$ReloadAbortEvents = @()
     )
 
     $restartEvents = @($RestartEvents)
@@ -221,6 +247,13 @@ function Get-SoakVerdict {
     $plannedEvents = @($restartEvents | Where-Object { $_.classification -eq 'planned_restart' })
     $unplannedCount = $unplannedEvents.Count
     $plannedCount = $plannedEvents.Count
+    # Round-11 finding 3: events flushed as `incomplete=$true` (detected in
+    # the final 60s of the soak window -- never had a fair chance to
+    # recover before this lane stopped watching) -- reported for
+    # visibility, excluded from the recovery-timeout FAIL rule below.
+    $incompleteCount = @($restartEvents | Where-Object { $_.incomplete -eq $true }).Count
+    $reloadAbortEvents = @($ReloadAbortEvents)
+    $reloadAbortedCount = $reloadAbortEvents.Count
     $gapValues = @($restartEvents | Where-Object { $null -ne $_.recovery_gap_seconds } | ForEach-Object { [double]$_.recovery_gap_seconds })
     $maxGap = $(if ($gapValues.Count -gt 0) { ($gapValues | Measure-Object -Maximum).Maximum } else { $null })
 
@@ -266,6 +299,8 @@ function Get-SoakVerdict {
                         cycles_evaluated = 0
                         unplanned_relaunch_count = $unplannedCount
                         planned_restart_count = $plannedCount
+                        incomplete_restart_count = $incompleteCount
+                        reload_aborted_count = $reloadAbortedCount
                         max_restart_gap_seconds = $maxGap
                     }
                 }
@@ -285,6 +320,8 @@ function Get-SoakVerdict {
                 cycles_evaluated = 0
                 unplanned_relaunch_count = $unplannedCount
                 planned_restart_count = $plannedCount
+                incomplete_restart_count = $incompleteCount
+                reload_aborted_count = $reloadAbortedCount
                 max_restart_gap_seconds = $maxGap
             }
         }
@@ -298,6 +335,33 @@ function Get-SoakVerdict {
             verdict = 'FAIL'
             reason = "unplanned relaunch on channel=$($first.channel_id) at $($first.detected_utc) (old_pid=$($first.old_pid) new_pid=$($first.new_pid)) -- no TRANSITIONING sample preceded the pid change"
             first_failing_cycle = "$($first.detected_utc)"
+        }
+    }
+
+    # Round-11 finding 4 (MEDIUM): under -SeamlessReload the contract is
+    # STRICTER -- zero reload_aborted (a seamless content-reload that fell
+    # back to a real restart) AND planned_restart_count MUST be zero (a
+    # classified planned_restart under this flag means the seamless path
+    # never ran at all, whether or not the daemon logged an explicit abort
+    # line for it). Checked before the normal recovery-timeout rule below
+    # since it can fail a run that would otherwise look like a clean PASS
+    # (fast, fully-recovered restarts are still restarts the flag promised
+    # would not happen).
+    if (-not $failResult -and $SeamlessReload) {
+        if ($reloadAbortedCount -gt 0) {
+            $firstAbort = $reloadAbortEvents | Select-Object -First 1
+            $failResult = [pscustomobject]@{
+                verdict = 'FAIL'
+                reason = "-SeamlessReload requested but a seamless content-reload aborted on channel=$($firstAbort.channel_id) ($($firstAbort.reason)) -- fell back to a restart"
+                first_failing_cycle = $null
+            }
+        } elseif ($plannedCount -gt 0) {
+            $firstPlanned = $plannedEvents | Sort-Object { [datetime]$_.detected_utc } | Select-Object -First 1
+            $failResult = [pscustomobject]@{
+                verdict = 'FAIL'
+                reason = "-SeamlessReload requested but channel=$($firstPlanned.channel_id) had a classified planned_restart at $($firstPlanned.detected_utc) -- the seamless content-reload path did not run"
+                first_failing_cycle = "$($firstPlanned.detected_utc)"
+            }
         }
     }
 
@@ -316,7 +380,7 @@ function Get-SoakVerdict {
         # in planned_restart_count/unplanned_relaunch_count above (via
         # $restartEvents, unfiltered) -- only excluded from THIS recovery
         # check.
-        $slowOrMissing = @($plannedEvents | Where-Object { -not ($_.superseded -eq $true) -and (-not $_.recovered -or $null -eq $_.recovery_gap_seconds -or [double]$_.recovery_gap_seconds -gt 60) })
+        $slowOrMissing = @($plannedEvents | Where-Object { -not ($_.superseded -eq $true) -and -not ($_.incomplete -eq $true) -and (-not $_.recovered -or $null -eq $_.recovery_gap_seconds -or [double]$_.recovery_gap_seconds -gt 60) })
         if ($slowOrMissing.Count -gt 0) {
             $first = $slowOrMissing | Sort-Object { [datetime]$_.detected_utc } | Select-Object -First 1
             $gapDesc = $(if ($null -ne $first.recovery_gap_seconds) { "$($first.recovery_gap_seconds)s" } else { 'never (not recovered within the tracking window)' })
@@ -379,6 +443,8 @@ function Get-SoakVerdict {
             cycles_evaluated = $evaluatedCountFinal
             unplanned_relaunch_count = $unplannedCount
             planned_restart_count = $plannedCount
+            incomplete_restart_count = $incompleteCount
+            reload_aborted_count = $reloadAbortedCount
             max_restart_gap_seconds = $maxGap
         }
     }
@@ -392,6 +458,8 @@ function Get-SoakVerdict {
         cycles_evaluated = $evaluatedCountFinal
         unplanned_relaunch_count = $unplannedCount
         planned_restart_count = $plannedCount
+        incomplete_restart_count = $incompleteCount
+        reload_aborted_count = $reloadAbortedCount
         max_restart_gap_seconds = $maxGap
     }
 }

@@ -94,27 +94,55 @@
 # (control_plane-app.log) is a strictly better signal because it is
 # written at EVERY state transition the daemon itself makes, not just
 # whichever instant this lane happens to poll -- civiccast/egress/
-# daemon.py:901-908 (`_write_state`) is the ONE choke point every
-# transition passes through, logged as:
+# daemon.py:1064-1071 (`_write_state`, main 250026b -- line citations in
+# this file are pinned to that revision, re-verify against HEAD before
+# trusting them blindly) is the ONE choke point every transition passes
+# through, logged as:
 #   "channel {id}: egress state -> {STATE} (source={label}, pid={pid}, last_error={err})"
-# `last_error` is the literal text "-" when there is none (daemon.py:900's
-# db_safe_text_or_none fold + line 907's `last_error or "-"`). A PLANNED
-# rollover (_poll_process's pending_reload branch, daemon.py:1232-1238)
+# `last_error` is the literal text "-" when there is none. A PLANNED
+# rollover (_poll_process's pending_reload branch, daemon.py:1394-1409)
 # writes its STARTING line with NO last_error at all -- literal "-". A
 # CRASH relaunch (_relaunch_after_crash -> _begin_relaunch, daemon.py:
-# 1374-1383) writes ITS STARTING line with last_error set from
-# _child_exit_error (daemon.py:1020-1025, always contains the literal
+# 1538-1552) writes ITS STARTING line with last_error set from
+# _child_exit_error (daemon.py:1183-1188, always contains the literal
 # substring "child exited non-zero") or, past the escalation streak
 # threshold, _begin_relaunch's own force-fallback text (contains
-# "crash-relaunches", daemon.py:1368-1370). Test-PlannedRestartFromLog
-# below reads this directly: log evidence is authoritative whenever it is
-# available (a clean TRANSITIONING-then-nothing-crash-shaped scan is
-# planned; any ERROR/FALLBACK_SLATE state or non-"-" last_error before
-# that is a crash) -- Register-ChannelSample only falls back to the
-# sample-ring signal when the log ring has no evidence at all for this
-# channel (log file missing/unreadable, or no TRANSITIONING line landed in
-# the retained window), and marks that pending restart's log_evidence
-# accordingly ('log' vs 'missing') for transparency in the final report.
+# "crash-relaunches", daemon.py:1540-1543).
+#
+# ROUND-11 finding 1 (BLOCKER, the round-10 version of this function was
+# STILL wrong): scanning the ring BACKWARD and stopping at the FIRST
+# TRANSITIONING line is not sufficient -- daemon.py's own crash path
+# ALSO produces a clean TRANSITIONING line, later in the same sequence,
+# because `_begin_relaunch` writes its crash-flavored STARTING line
+# (last_error containing "child exited non-zero") and THEN calls
+# `_start()` (daemon.py:1556-ish), which unconditionally writes its OWN
+# clean STARTING (daemon.py:832, no last_error), then a clean TRANSITIONING
+# (daemon.py:844-859, whenever the previous state was ON_AIR/FALLBACK_SLATE
+# -- true for a crash restarting from ON_AIR) BEFORE the real pid is even
+# bound, and finally the clean running-state write (ON_AIR/FALLBACK_SLATE).
+# Scanning backward from that final clean state and stopping at the first
+# TRANSITIONING therefore reads EVERY crash-then-successful-relaunch
+# exactly like a planned rollover -- the crash STARTING line is real but
+# sits BEFORE that TRANSITIONING, invisible to a scan that stops there.
+#
+# CORRECT RULE (measured against main 250026b's exact call chain, both
+# paths traced line by line): define the WINDOW as every log line for this
+# channel from just AFTER its last confirmed ON_AIR line (the OLD pid's
+# last known-good state -- the ring's SECOND-to-last ON_AIR occurrence,
+# since the very last ring entry may itself already be the NEW pid's own
+# ON_AIR) through the end of the retained ring (inclusive of the STARTING/
+# TRANSITIONING lines and whatever the ring currently ends at). UNPLANNED
+# if ANY line in that window carries a non-"-" last_error or an ERROR/
+# FALLBACK_SLATE state -- the crash-path STARTING line is ALWAYS somewhere
+# in this window even though later lines in the SAME window look clean.
+# PLANNED only if the window contains at least one STARTING line AND every
+# single line in it is clean. Test-PlannedRestartFromLog below implements
+# exactly this; Register-ChannelSample only falls back to the sample-ring
+# signal (Test-PlannedRestartSignal) when the log ring has no evidence at
+# all for this channel (log file missing/unreadable, or no ON_AIR baseline
+# and no STARTING line landed in the retained window), and marks that
+# pending restart's log_evidence accordingly ('log' vs 'missing') for
+# transparency in the final report.
 
 function New-RestartClassifierContext {
     <#
@@ -129,6 +157,10 @@ function New-RestartClassifierContext {
         PendingRestarts = @{}
         LastPidForChannel = @{}
         RestartEvents = New-Object System.Collections.ArrayList
+        # Round-11 finding 4: seamless content-reload aborts (a distinct
+        # WARNING-line event class, never a _write_state line -- see
+        # Add-ReloadAbortSample).
+        ReloadAbortEvents = New-Object System.Collections.ArrayList
         RestartTrackingMaxSeconds = $RestartTrackingMaxSeconds
     }
 }
@@ -149,52 +181,109 @@ function Add-LogRingSample {
       against the literal "-" sentinel (daemon.py's own "no error" marker),
       never against $null/empty (this is parsed log TEXT, not a
       PowerShell-native value).
+
+      .PARAMETER ObservedUtc
+      Round-11 finding 2 (HIGH): THIS SCRIPT's own clock at the moment the
+      line was read/parsed -- never the log's own %(asctime)s text (see
+      this file's header on Test-PlannedRestartFromLog for why that is
+      deliberately never parsed: local-time, would need a timezone
+      reconciliation against this script's UTC clock not worth risking).
+      Used ONLY to age-expire ring entries (10 minutes) so a channel that
+      goes quiet for a long stretch does not carry an ancient, no-longer-
+      relevant TRANSITIONING/ON_AIR line forward into a much later
+      classification. Defaults to "now" so existing callers/tests that
+      never pass it keep working unchanged.
     #>
-    param($Context, [string]$ChannelId, [string]$State, [string]$LastError)
+    param($Context, [string]$ChannelId, [string]$State, [string]$LastError, [datetime]$ObservedUtc = (Get-Date).ToUniversalTime())
     if (-not $Context.LogRing.ContainsKey($ChannelId)) { $Context.LogRing[$ChannelId] = New-Object System.Collections.ArrayList }
-    $null = $Context.LogRing[$ChannelId].Add([ordered]@{ state = $State; last_error = $LastError })
+    $null = $Context.LogRing[$ChannelId].Add([ordered]@{ state = $State; last_error = $LastError; observed_utc = $ObservedUtc })
     while ($Context.LogRing[$ChannelId].Count -gt 30) { $Context.LogRing[$ChannelId].RemoveAt(0) }
+    # Age expiry: drop entries older than 10 minutes relative to THIS
+    # sample's own observation time (monotonic with the ring's append
+    # order, since entries are always added in real-time order).
+    $cutoff = $ObservedUtc.AddMinutes(-10)
+    while ($Context.LogRing[$ChannelId].Count -gt 0 -and $Context.LogRing[$ChannelId][0].observed_utc -lt $cutoff) {
+        $Context.LogRing[$ChannelId].RemoveAt(0)
+    }
+}
+
+function Add-ReloadAbortSample {
+    <#
+      .SYNOPSIS
+      Round-11 finding 4 (MEDIUM): a seamless content-reload abort is
+      invisible to everything above -- it is NOT a `_write_state` line at
+      all, it is one of four distinct daemon.py WARNING lines (main
+      250026b:1946 "declined", :2132 "did not land", :2143 "unrecognized
+      settlement result", :2156 "no settlement within") that all end
+      "...falling back to restart." A channel that hits any of these
+      DID fall back to a real worker restart -- exactly what -SeamlessReload
+      exists to prove never happens -- so this needs its own event class,
+      never silently folded into (or missed by) the planned/unplanned
+      restart classification above.
+    #>
+    param($Context, [string]$ChannelId, [string]$Reason)
+    $null = $Context.ReloadAbortEvents.Add([ordered]@{ channel_id = $ChannelId; reason = $Reason })
 }
 
 function Test-PlannedRestartFromLog {
     <#
       .SYNOPSIS
-      Round-10 finding 5 (MEDIUM, "the important one"): classify a pid
-      change from the daemon's OWN log lines for this channel, when any
-      are available, instead of (or in addition to) inferring it from
+      Round-10 finding 5 (MEDIUM, "the important one") / round-11 finding 1
+      (BLOCKER, this function's round-10 form was STILL wrong): classify a
+      pid change from the daemon's OWN log lines for this channel, when
+      any are available, instead of (or in addition to) inferring it from
       polled state -- see this file's header for the full citation of why
       this catches a crash-and-recover that happened entirely inside one
-      poll gap, which polling alone cannot.
+      poll gap, which polling alone cannot, and for the exact reason the
+      round-10 "scan backward, stop at first TRANSITIONING" rule
+      misclassified a real crash-relaunch as planned (its OWN clean
+      TRANSITIONING line, written by `_start` AFTER the crash-flavored
+      STARTING line, sits closer to the end of the ring and gets found
+      first).
 
-      Scans the retained log ring BACKWARD (most recent first, log lines
-      arrive in the file's own append order so no timestamp comparison is
-      needed or attempted -- this deliberately does NOT parse/compare the
-      log's own %(asctime)s text, which is local-time and would need a
-      timezone reconciliation against this script's UTC clock that is not
-      worth the risk of getting subtly wrong): the first TRANSITIONING
-      line encountered going backward, with nothing crash-shaped seen
-      before it, is a clean planned-rollover marker. Anything crash-shaped
-      encountered FIRST (before any TRANSITIONING line) is crash evidence.
+      WINDOW definition: everything for this channel from just after its
+      SECOND-to-last ON_AIR occurrence (the OLD pid's last known-good
+      state -- deliberately not the LAST ON_AIR, since the final ring
+      entry may already be the classification target's own resolved
+      ON_AIR) through the end of the ring, inclusive. No timestamp
+      comparison is used or needed -- log lines arrive in the file's own
+      append order, and this deliberately does NOT parse/compare the
+      log's own %(asctime)s text (local-time, would need a timezone
+      reconciliation against this script's UTC clock not worth risking).
 
       .OUTPUTS
-      $null   -- no evidence either way (empty ring, or nothing but
-                 unrelated/ON_AIR-ish lines with no TRANSITIONING marker
-                 found at all) -- caller should fall back to the
+      $null   -- no evidence either way (empty ring, or a window with no
+                 STARTING line in it at all -- not enough has happened yet
+                 to conclude anything) -- caller should fall back to the
                  sample-ring signal (Test-PlannedRestartSignal) and record
                  log_evidence='missing'.
-      $true   -- log evidence supports a planned rollover.
-      $false  -- log evidence shows a crash.
+      $true   -- log evidence supports a planned rollover (the window
+                 contains a STARTING line and every line in it is clean).
+      $false  -- log evidence shows a crash (ANY line in the window is
+                 ERROR/FALLBACK_SLATE or carries a non-"-" last_error).
     #>
     param($Context, [string]$ChannelId)
     if (-not $Context.LogRing.ContainsKey($ChannelId)) { return $null }
     $lines = @($Context.LogRing[$ChannelId])
-    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
-        $l = $lines[$i]
+    if ($lines.Count -eq 0) { return $null }
+
+    # Find the last ON_AIR occurrence STRICTLY BEFORE the final ring entry
+    # (skip the final entry itself even if it is ON_AIR -- that would be
+    # the very thing being classified, not the OLD pid's baseline).
+    $lastOnAirIdx = -1
+    for ($i = $lines.Count - 2; $i -ge 0; $i--) {
+        if ($lines[$i].state -eq 'ON_AIR') { $lastOnAirIdx = $i; break }
+    }
+    $window = @($lines[($lastOnAirIdx + 1)..($lines.Count - 1)])
+
+    $sawStarting = $false
+    foreach ($l in $window) {
         if ($l.state -eq 'ERROR' -or $l.state -eq 'FALLBACK_SLATE') { return $false }
         $err = "$($l.last_error)"
         if ($err -ne '-' -and -not [string]::IsNullOrWhiteSpace($err)) { return $false }
-        if ($l.state -eq 'TRANSITIONING') { return $true }
+        if ($l.state -eq 'STARTING') { $sawStarting = $true }
     }
+    if ($sawStarting) { return $true }
     return $null
 }
 
@@ -255,12 +344,11 @@ function Test-PlannedRestartSignal {
            last_error (defense-in-depth -- with the tightened window there
            should be no room for anything to occur between two adjacent
            samples, but this is checked rather than assumed).
-      Worker exit code (mentioned in the review as a third, "if available"
-      signal from parsing the daemon's own log lines) is NOT implemented
-      here -- no confirmed log line format for it was found in this repo's
-      current checkout (grepped, no match), so this does not invent a
-      pattern with no evidence behind it; the signals above are both
-      directly available from the state API this lane already polls.
+      Round-11 finding 6 (LOW): the daemon's own log line format DOES exist
+      and IS implemented -- see Test-PlannedRestartFromLog below, which is
+      the PRIMARY signal (Register-ChannelSample tries it first); this
+      function is the FALLBACK used only when the log ring has no evidence
+      for this channel at all.
     #>
     param($Context, [string]$ChannelId, [datetime]$BeforeUtc, [int]$MaxGapSeconds = 30)
     if (-not $Context.Ring.ContainsKey($ChannelId)) { return $false }
@@ -358,7 +446,7 @@ function Register-ChannelSample {
             channel_id = $ChannelId; detected_utc = $superseded.detected_utc.ToUniversalTime().ToString('o')
             old_pid = $superseded.old_pid; new_pid = $superseded.new_pid
             classification = $superseded.classification
-            recovered = $false; recovery_gap_seconds = $null; superseded = $true
+            recovered = $false; recovery_gap_seconds = $null; superseded = $true; incomplete = $false
             log_evidence = $(if ($superseded.log_evidence) { $superseded.log_evidence } else { 'missing' })
         })
         $Context.PendingRestarts.Remove($ChannelId)
@@ -374,7 +462,7 @@ function Register-ChannelSample {
                 channel_id = $ChannelId; detected_utc = $pending.detected_utc.ToUniversalTime().ToString('o')
                 old_pid = $pending.old_pid; new_pid = $pending.new_pid
                 classification = $pending.classification
-                recovered = $true; recovery_gap_seconds = [math]::Round($gap, 1); superseded = $false
+                recovered = $true; recovery_gap_seconds = [math]::Round($gap, 1); superseded = $false; incomplete = $false
                 log_evidence = $(if ($pending.log_evidence) { $pending.log_evidence } else { 'missing' })
             })
             $Context.PendingRestarts.Remove($ChannelId)
@@ -383,7 +471,7 @@ function Register-ChannelSample {
                 channel_id = $ChannelId; detected_utc = $pending.detected_utc.ToUniversalTime().ToString('o')
                 old_pid = $pending.old_pid; new_pid = $pending.new_pid
                 classification = $pending.classification
-                recovered = $false; recovery_gap_seconds = $null; superseded = $false
+                recovered = $false; recovery_gap_seconds = $null; superseded = $false; incomplete = $false
                 log_evidence = $(if ($pending.log_evidence) { $pending.log_evidence } else { 'missing' })
             })
             $Context.PendingRestarts.Remove($ChannelId)
@@ -480,15 +568,46 @@ function Get-FlushedRestartEvents {
       REQUIRED), but makes the function's declared output shape explicit
       for a future reader/reviewer rather than implicit in the `@(...)`
       call alone.
+
+      .PARAMETER SoakEndUtc
+      Round-11 finding 3 (HIGH): flushing an unresolved restart as
+      recovered=$false unconditionally penalized a restart that was
+      detected in the FINAL seconds of the soak window -- it never had a
+      fair chance to reach ON_AIR before this lane simply stopped
+      watching, yet the flush read exactly like a restart that had a full
+      60s+ and still failed. An event whose detected_utc is within 60s of
+      $SoakEndUtc (the actual soak end -- the driver's real deadline/last-
+      observed instant, not just "whenever this function happens to run")
+      is flushed as `incomplete=$true` instead: still recorded, still
+      visible in the report, but EXCLUDED from SoakVerdict.ps1's
+      60s-recovery FAIL rule (see that file's Get-SoakVerdict). An event
+      older than 60s at $SoakEndUtc had every chance the PASS contract
+      promises and simply never recovered -- that stays a real,
+      unqualified FAIL. Defaults to "now" (this function's own call time)
+      so existing callers/tests that never pass it keep their previous
+      behavior for a truly at-the-boundary flush.
     #>
-    param($Context)
+    # Deliberately UNTYPED (not [Nullable[datetime]]): binding a real
+    # [datetime] argument to a [Nullable[datetime]] parameter does not
+    # reliably produce a boxed Nullable with a working .Value accessor
+    # under PowerShell's own binder (confirmed directly: calling .Value on
+    # it returns $null, and .ToUniversalTime() on THAT throws) -- see
+    # HostLiveness.ps1 for a DIFFERENT, narrower case where
+    # [AllowNull()][Nullable[datetime]] was the right fix (an explicit
+    # -X $null argument); this is the opposite shape (a real value must
+    # always come through intact), so untyped-with-a-$null-default is used
+    # instead and the value is cast explicitly where read.
+    param($Context, $SoakEndUtc = $null)
+    $endUtc = $(if ($SoakEndUtc) { ([datetime]$SoakEndUtc).ToUniversalTime() } else { (Get-Date).ToUniversalTime() })
     foreach ($channelId in @($Context.PendingRestarts.Keys)) {
         $pending = $Context.PendingRestarts[$channelId]
+        $ageAtEndSeconds = ($endUtc - $pending.detected_utc.ToUniversalTime()).TotalSeconds
+        $incomplete = ($ageAtEndSeconds -le 60)
         $null = $Context.RestartEvents.Add([ordered]@{
             channel_id = $channelId; detected_utc = $pending.detected_utc.ToUniversalTime().ToString('o')
             old_pid = $pending.old_pid; new_pid = $pending.new_pid
             classification = $pending.classification
-            recovered = $false; recovery_gap_seconds = $null; superseded = $false
+            recovered = $false; recovery_gap_seconds = $null; superseded = $false; incomplete = $incomplete
             log_evidence = $(if ($pending.log_evidence) { $pending.log_evidence } else { 'missing' })
         })
         $Context.PendingRestarts.Remove($channelId)

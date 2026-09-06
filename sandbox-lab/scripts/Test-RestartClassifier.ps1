@@ -280,12 +280,24 @@ Add-LogRingSample -Context $ctx17a -ChannelId 'public' -State 'TRANSITIONING' -L
 Add-LogRingSample -Context $ctx17a -ChannelId 'public' -State 'STARTING' -LastError '-'
 Assert-Equal 'scenario17a (clean TRANSITIONING -> STARTING, last_error=-) -> planned ($true)' 'True' "$(Test-PlannedRestartFromLog -Context $ctx17a -ChannelId 'public')"
 
+# Round-11 finding 1 (BLOCKER): the round-10 version of this scenario
+# stopped at the crash-flavored STARTING line -- but daemon.py never stops
+# there. _begin_relaunch (main 250026b:1538-1552) writes that crash
+# STARTING line, then IMMEDIATELY calls _start() itself, which unconditionally
+# writes its OWN clean STARTING (:832), a clean TRANSITIONING (:844-859,
+# since the previous state was ON_AIR), and finally the clean running-state
+# ON_AIR -- the FULL 5-line sequence a real crash-then-relaunch produces.
+# Test-PlannedRestartFromLog must still classify this crash even though
+# the window ends on lines that individually look clean.
 $ctx17b = New-RestartClassifierContext
 Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'ON_AIR' -LastError '-'
-Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'TRANSITIONING' -LastError '-'
-# daemon.py:1022's exact _child_exit_error text shape.
+# daemon.py:1183-1188's exact _child_exit_error text shape, written by
+# _begin_relaunch's own STARTING write.
 Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'STARTING' -LastError 'GStreamer child exited non-zero; relaunching encoder.'
-Assert-Equal 'scenario17b (STARTING line carries child-exited-non-zero last_error) -> crash ($false)' 'False' "$(Test-PlannedRestartFromLog -Context $ctx17b -ChannelId 'public')"
+Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'STARTING' -LastError '-'
+Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'TRANSITIONING' -LastError '-'
+Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'ON_AIR' -LastError '-'
+Assert-Equal 'scenario17b (full 5-line daemon crash sequence, ends clean) -> crash ($false)' 'False' "$(Test-PlannedRestartFromLog -Context $ctx17b -ChannelId 'public')"
 
 $ctx17c = New-RestartClassifierContext
 Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'ON_AIR' -LastError '-'
@@ -308,11 +320,18 @@ Assert-Equal 'scenario17e (no log ring at all for this channel) -> inconclusive 
 # reverse -- sample ring has NO TRANSITIONING at all (sample-only would
 # say unplanned) but the log shows the clean planned path -- log wins,
 # planned, log_evidence='log'.
+# Round-11 finding 1: extended to the daemon's FULL 5-line crash sequence
+# (see scenario17b) -- proves the end-to-end Register-ChannelSample path
+# still classifies unplanned even though the log window's LAST lines
+# (the STARTING/TRANSITIONING/ON_AIR _start() writes) look individually
+# clean; only the earlier crash-flavored STARTING line makes it a crash.
 $ctx18a = New-RestartClassifierContext
 Register-ChannelSample -Context $ctx18a -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
 Register-ChannelSample -Context $ctx18a -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(20) -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
-Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'TRANSITIONING' -LastError '-'
+Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'ON_AIR' -LastError '-'
 Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'STARTING' -LastError 'GStreamer child exited non-zero; relaunching encoder.'
+Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'STARTING' -LastError '-'
+Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'TRANSITIONING' -LastError '-'
 Register-ChannelSample -Context $ctx18a -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(35) -State 'STARTING' -NewPid 1002 -UpdatedAt $null -Engine $null
 Assert-Equal 'scenario18a (log shows crash despite clean sample ring) -> unplanned_relaunch' 'unplanned_relaunch' $ctx18a.PendingRestarts['public'].classification
 Assert-Equal 'scenario18a log_evidence=log' 'log' $ctx18a.PendingRestarts['public'].log_evidence
@@ -337,6 +356,50 @@ Register-ChannelSample -Context $ctx19 -ChannelId 'public' -NowUtc $baseUtc.AddS
 Register-ChannelSample -Context $ctx19 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(40) -State 'TRANSITIONING' -NewPid 1002 -UpdatedAt $null -Engine $null
 Assert-Equal 'scenario19 (no log ring evidence) -> falls back to sample signal, planned_restart' 'planned_restart' $ctx19.PendingRestarts['public'].classification
 Assert-Equal 'scenario19 log_evidence=missing' 'missing' $ctx19.PendingRestarts['public'].log_evidence
+
+# -------------------------------------------------------------- scenario 20
+# Round-11 finding 2 (HIGH): Add-LogRingSample age-expires entries older
+# than 10 minutes relative to THIS SAMPLE's own -ObservedUtc (never the
+# log's own local-time %(asctime)s -- see this file's header). An entry
+# observed 15 minutes before the current one must be pruned; one observed
+# 5 minutes before must survive.
+$ctx20 = New-RestartClassifierContext
+$obsBase = [datetime]::Parse('2026-09-06T12:00:00Z').ToUniversalTime()
+Add-LogRingSample -Context $ctx20 -ChannelId 'public' -State 'ON_AIR' -LastError '-' -ObservedUtc $obsBase.AddMinutes(-15)
+Add-LogRingSample -Context $ctx20 -ChannelId 'public' -State 'TRANSITIONING' -LastError '-' -ObservedUtc $obsBase.AddMinutes(-5)
+Add-LogRingSample -Context $ctx20 -ChannelId 'public' -State 'STARTING' -LastError '-' -ObservedUtc $obsBase
+Assert-Equal 'scenario20 (entry observed 15m before current is pruned, 5m-before survives)' 2 $ctx20.LogRing['public'].Count
+Assert-Equal 'scenario20 (oldest surviving entry is the 5m-before TRANSITIONING, not the 15m-before ON_AIR)' 'TRANSITIONING' $ctx20.LogRing['public'][0].state
+
+# -------------------------------------------------------------- scenario 21
+# Round-11 finding 3 (HIGH): Get-FlushedRestartEvents -SoakEndUtc marks an
+# event detected within the final 60s of the soak window as
+# incomplete=$true (excluded from SoakVerdict.ps1's recovery-timeout FAIL
+# rule); an event detected earlier than that at soak end is a real,
+# unqualified never-recovered failure (incomplete=$false).
+$ctx21 = New-RestartClassifierContext -RestartTrackingMaxSeconds 3000
+$soakEnd21 = [datetime]::Parse('2026-09-06T13:00:00Z').ToUniversalTime()
+Register-ChannelSample -Context $ctx21 -ChannelId 'public' -NowUtc $soakEnd21.AddSeconds(-50) -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
+Register-ChannelSample -Context $ctx21 -ChannelId 'public' -NowUtc $soakEnd21.AddSeconds(-30) -State 'TRANSITIONING' -NewPid 1002 -UpdatedAt $null -Engine $null
+Register-ChannelSample -Context $ctx21 -ChannelId 'education' -NowUtc $soakEnd21.AddSeconds(-500) -State 'TRANSITIONING' -NewPid 2001 -UpdatedAt $null -Engine $null
+Register-ChannelSample -Context $ctx21 -ChannelId 'education' -NowUtc $soakEnd21.AddSeconds(-480) -State 'TRANSITIONING' -NewPid 2002 -UpdatedAt $null -Engine $null
+$flushed21 = @(Get-FlushedRestartEvents -Context $ctx21 -SoakEndUtc $soakEnd21)
+$publicEvent21 = @($flushed21 | Where-Object { $_.channel_id -eq 'public' })[0]
+$educationEvent21 = @($flushed21 | Where-Object { $_.channel_id -eq 'education' })[0]
+Assert-Equal 'scenario21a (restart detected 30s before soak end) -> incomplete=True' 'True' "$($publicEvent21.incomplete)"
+Assert-Equal 'scenario21b (restart detected 480s before soak end) -> incomplete=False (real FAIL)' 'False' "$($educationEvent21.incomplete)"
+
+# -------------------------------------------------------------- scenario 22
+# Round-11 finding 4 (MEDIUM): Add-ReloadAbortSample appends into the
+# context's own ReloadAbortEvents list (a distinct event class from
+# RestartEvents -- a seamless content-reload abort is not a _write_state
+# line at all).
+$ctx22 = New-RestartClassifierContext
+Add-ReloadAbortSample -Context $ctx22 -ChannelId 'public' -Reason 'did not land (aborted: build failed)'
+Add-ReloadAbortSample -Context $ctx22 -ChannelId 'education' -Reason 'reported no settlement within 45s (reload_id=abc123)'
+Assert-Equal 'scenario22a (two reload-abort events recorded)' 2 $ctx22.ReloadAbortEvents.Count
+Assert-Equal 'scenario22b (first event channel_id)' 'public' $ctx22.ReloadAbortEvents[0].channel_id
+Assert-Equal 'scenario22c (second event reason text carried through)' 'reported no settlement within 45s (reload_id=abc123)' $ctx22.ReloadAbortEvents[1].reason
 
 Write-Host ""
 Write-Host "RestartClassifier unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })

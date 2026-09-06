@@ -81,14 +81,18 @@ function New-RestartEvent {
         # exactly as RestartClassifier.ps1's Register-ChannelSample flushes
         # one (round-9 N1) -- recovered=$false, recovery_gap_seconds=$null,
         # superseded=$true.
-        [bool]$Superseded = $false
+        [bool]$Superseded = $false,
+        # Round-11 finding 3: lets a scenario build an event flushed within
+        # the final 60s of the soak window (Get-FlushedRestartEvents
+        # -SoakEndUtc) -- excluded from the recovery-timeout FAIL rule.
+        [bool]$Incomplete = $false
     )
     return [ordered]@{
         channel_id = $ChannelId; detected_utc = $DetectedUtc
         old_pid = $OldPid; new_pid = $NewPid
         classification = $Classification
         recovered = $Recovered; recovery_gap_seconds = $RecoveryGapSeconds
-        superseded = $Superseded
+        superseded = $Superseded; incomplete = $Incomplete
     }
 }
 
@@ -421,6 +425,60 @@ $restartEvents15 = @(
 $v15 = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents15
 Assert-Equal 'scenario15 (superseded planned restart, recovered=false/gap=null) -> PASS (excluded from recovery rule)' 'PASS' $v15.verdict
 Assert-Equal 'scenario15 planned_restart_count still counts the superseded event' 1 $v15.planned_restart_count
+
+# --------------------------------------------------------------- scenario 16
+# Round-11 finding 3 (HIGH): an INCOMPLETE planned-restart event (detected
+# within the final 60s of the soak window, recovered=$false,
+# recovery_gap_seconds=$null -- Get-FlushedRestartEvents -SoakEndUtc's own
+# flush shape) must NOT count against the 60s recovery-timeout FAIL rule,
+# exactly like a superseded event. The non-incomplete NEGATIVE control
+# (identical shape but incomplete=$false) must still FAIL -- proving the
+# exclusion is scoped to incomplete events only, never a blanket pass for
+# "never recovered".
+$restartEvents16 = @(
+    (New-RestartEvent -ChannelId 'public' -DetectedUtc '2026-09-05T18:04:30Z' -Classification 'planned_restart' -Recovered $false -RecoveryGapSeconds $null -Incomplete $true)
+)
+$v16 = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents16
+Assert-Equal 'scenario16a (incomplete planned restart, recovered=false/gap=null) -> PASS (excluded from recovery rule)' 'PASS' $v16.verdict
+Assert-Equal 'scenario16a incomplete_restart_count' 1 $v16.incomplete_restart_count
+
+$restartEvents16b = @(
+    (New-RestartEvent -ChannelId 'public' -DetectedUtc '2026-09-05T18:04:30Z' -Classification 'planned_restart' -Recovered $false -RecoveryGapSeconds $null -Incomplete $false)
+)
+$v16b = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents16b
+Assert-Equal 'scenario16b (NOT incomplete, never recovered) -> FAIL' 'FAIL' $v16b.verdict
+Assert-Equal 'scenario16b incomplete_restart_count' 0 $v16b.incomplete_restart_count
+
+# --------------------------------------------------------------- scenario 17
+# Round-11 finding 4 (MEDIUM): under the NORMAL (flag-off) contract, a
+# classified planned_restart is perfectly normal and must still PASS
+# (scenario8 already proves this) -- the STRICTER contract only applies
+# when -SeamlessReload is explicitly passed. Re-run scenario8's exact
+# clean-planned-restart fixture with -SeamlessReload $true and confirm it
+# now FAILS (a planned_restart under this flag means the seamless path
+# did not run), then confirm the SAME fixture still PASSES with the flag
+# left at its default ($false).
+$vSeamlessOff = Get-SoakVerdict -Cycles $cycles8 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents8
+Assert-Equal 'scenario17a (planned restart, -SeamlessReload NOT passed) -> PASS' 'PASS' $vSeamlessOff.verdict
+$vSeamlessOn = Get-SoakVerdict -Cycles $cycles8 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents8 -SeamlessReload $true
+Assert-Equal 'scenario17b (identical fixture, -SeamlessReload $true) -> FAIL (planned_restart_count must be 0 under the flag)' 'FAIL' $vSeamlessOn.verdict
+
+# A reload_aborted event under -SeamlessReload is ALSO a FAIL, even with
+# zero restart events at all (no unplanned, no planned) -- the abort
+# itself is the failure, a fallback-to-restart the flag promised would
+# never happen.
+$reloadAborts17 = @(@{ channel_id = 'public'; reason = 'did not land (aborted: build failed)' })
+$vSeamlessAbort = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -SeamlessReload $true -ReloadAbortEvents $reloadAborts17
+Assert-Equal 'scenario17c (reload_aborted event, -SeamlessReload $true, no restart events at all) -> FAIL' 'FAIL' $vSeamlessAbort.verdict
+Assert-Equal 'scenario17c reload_aborted_count' 1 $vSeamlessAbort.reload_aborted_count
+
+# The SAME reload-abort event under the NORMAL (flag-off) contract is NOT
+# a failure -- a fallback-to-restart is exactly what flag-off operation
+# is; reload_aborted only fails the run when the flag is actually claiming
+# the seamless path should have been used.
+$vNoSeamlessAbort = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -ReloadAbortEvents $reloadAborts17
+Assert-Equal 'scenario17d (same reload_aborted event, flag NOT passed) -> PASS (not a failure off-flag)' 'PASS' $vNoSeamlessAbort.verdict
+Assert-Equal 'scenario17d reload_aborted_count still reported' 1 $vNoSeamlessAbort.reload_aborted_count
 
 # The NON-superseded negative control: the identical recovered=false/gap=null
 # shape, but superseded=$false, must still FAIL exactly as scenario9 proves

@@ -745,12 +745,54 @@ if ($SeamlessReload) {
     }
 }
 
+# Round-11 finding 5 (MEDIUM): Start-Service THROWING is not always a
+# harness/setup problem -- if the SCM actually launched the service binary
+# and it exited/crashed immediately, that is a real product defect (FAIL),
+# never something this harness caused. Only a throw where the SCM itself
+# refused to even attempt the launch (access denied, the service marked
+# for deletion, a missing/failed dependency) is a genuine harness/setup
+# condition (HARNESS_ERROR).
+function Test-ServiceStartFailureIsProductCrash {
+    <#
+      .SYNOPSIS
+      Evidence checked, in order: (1) the System event log for a Service
+      Control Manager EventID 7034 (terminated unexpectedly) or 7031
+      (crashed, scheduled for restart) naming CivicCastSupervisor within
+      the last 5 minutes -- either one means the SCM DID launch the
+      process and it died: a real product crash, FAIL. (2) the exception
+      text itself for the SCM's own refusal phrasing ("access is denied",
+      "marked for deletion", "dependency"). Neither a positive crash-event
+      match NOR a clear SCM-refusal phrase found defaults to HARNESS_ERROR
+      (the conservative default when evidence is ambiguous -- never guess
+      FAIL without a positive product-crash signal).
+    #>
+    param([string]$ExceptionText)
+    try {
+        $since = (Get-Date).AddMinutes(-5)
+        $crashEvents = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; Id = 7034, 7031; StartTime = $since } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match 'CivicCastSupervisor' })
+        if ($crashEvents.Count -gt 0) {
+            return [pscustomobject]@{ IsProductCrash = $true; Reason = "System event log: Service Control Manager logged event ID $($crashEvents[0].Id) for CivicCastSupervisor within the last 5 minutes -- '$($crashEvents[0].Message)'" }
+        }
+    } catch {
+        # Get-WinEvent itself can fail (channel not present, permissions) --
+        # that is NOT evidence of anything; fall through to the exception-
+        # text check below.
+    }
+    if ("$ExceptionText" -match 'access is denied|marked for deletion|dependen') {
+        return [pscustomobject]@{ IsProductCrash = $false; Reason = "Start-Service exception text indicates the SCM itself refused the launch: $ExceptionText" }
+    }
+    return [pscustomobject]@{ IsProductCrash = $false; Reason = "no SCM crash event (7034/7031) found for CivicCastSupervisor in the last 5 minutes, and the exception text does not match a known SCM-refusal phrase -- defaulting to HARNESS_ERROR (ambiguous evidence, not a confirmed product crash): $ExceptionText" }
+}
+
 $startServiceOk = $false
+$startServiceExceptionText = $null
 try {
     Start-Service -Name 'CivicCastSupervisor' -ErrorAction Stop
     Write-SoakLog "Start-Service CivicCastSupervisor: requested"
     $startServiceOk = $true
 } catch {
+    $startServiceExceptionText = "$_"
     Write-SoakLog "Start-Service CivicCastSupervisor: $_ (may not have been running yet -- proceeding to Start-Service regardless, which will still launch fresh with the registry value in place)"
 }
 
@@ -778,7 +820,15 @@ while ((Get-Date) -lt $svcPollDeadline) {
 }
 Write-SoakLog "CivicCastSupervisor service status after Start-Service: $(if ($svc) { $svc.Status } else { '<Get-Service failed>' }) (serviceRunning=$serviceRunning)"
 if (-not $startServiceOk -or -not $serviceRunning) {
-    Write-HarnessErrorVerdictAndExit -Reason "Start-Service CivicCastSupervisor $(if (-not $startServiceOk) { 'threw' } else { "left the service in state '$(if ($svc) { $svc.Status } else { '<unknown>' })', never reached Running within 30s" }) -- the station process itself never came up, so no health poll result can be judged as a product finding"
+    if (-not $startServiceOk) {
+        $crashCheck = Test-ServiceStartFailureIsProductCrash -ExceptionText $startServiceExceptionText
+        Write-SoakLog "Start-Service threw -- product-crash-vs-harness check: IsProductCrash=$($crashCheck.IsProductCrash) ($($crashCheck.Reason))"
+        if ($crashCheck.IsProductCrash) {
+            Write-FailVerdictAndExit -Reason "Start-Service CivicCastSupervisor threw, but evidence shows the service process actually started and then crashed: $($crashCheck.Reason)"
+        }
+        Write-HarnessErrorVerdictAndExit -Reason "Start-Service CivicCastSupervisor threw and no evidence the process itself ever started/crashed ($($crashCheck.Reason)) -- the SCM itself never launched the station process, so no health poll result can be judged as a product finding"
+    }
+    Write-HarnessErrorVerdictAndExit -Reason "Start-Service CivicCastSupervisor left the service in state '$(if ($svc) { $svc.Status } else { '<unknown>' })', never reached Running within 30s -- the station process itself never came up, so no health poll result can be judged as a product finding"
 }
 
 Write-SoakLog "polling for station health (bounded to ${HealthBoundMinutes}m): require status=='healthy' AND schema=='current'"
@@ -1574,24 +1624,93 @@ $restartCtx = New-RestartClassifierContext -RestartTrackingMaxSeconds 300
 # (no evidence) for every channel in that case, so Register-ChannelSample
 # falls back to the sample-ring signal with log_evidence='missing'.
 $script:daemonLogPath = 'C:\ProgramData\CivicCast\logs\control_plane-app.log'
-$script:daemonLogLineCount = 0
-# civiccast/egress/daemon.py:901-902's exact format string:
+# Round-11 finding 2 (HIGH): a LINE-COUNT-based offset (the round-10
+# version) freezes forever the moment the log rotates -- service.py:221's
+# _DurableRotatingFileHandler at service.py:296-298 is configured 10 MiB x
+# 10, so any soak long/chatty enough to fill 10 MiB starts a FRESH file at
+# the SAME path; a line count that only ever grows never notices the
+# fresh file is smaller than what was already "consumed", so every new
+# line the fresh file writes is silently skipped forever after. Tracked
+# instead as a BYTE offset into the file, reset to 0 whenever rotation is
+# detected (the file's length shrank, OR its first line changed -- length
+# alone is not quite enough evidence if a fresh file happens to grow past
+# the old offset again before the next read; the first line changing is
+# unambiguous, since rotation always starts a brand-new file). Reads ONLY
+# the new bytes via a seek, never the whole file.
+$script:daemonLogOffsetBytes = 0
+$script:daemonLogFirstLineText = $null
+# civiccast/egress/daemon.py:1064-1071's exact format string (main
+# 250026b -- re-verify against HEAD before trusting this citation blindly):
 #   "channel %s: egress state -> %s (source=%s, pid=%s, last_error=%s)"
 $script:daemonLogLineRegex = [regex]'channel (?<ch>\S+): egress state -> (?<state>\S+) \(source=.*?, pid=\S+, last_error=(?<err>.*)\)\s*$'
+# Round-11 finding 4 (MEDIUM): a seamless content-reload abort is NOT a
+# _write_state line -- it is one of four daemon.py WARNING lines (main
+# 250026b:1946/2132/2143/2156) that all embed the channel id as plain text
+# ("...for <channel_id> ...") and all end "; falling back to restart." --
+# one regex covers all four variants by capturing everything between
+# "for <ch>" and the trailing "; falling back to restart." as the reason.
+$script:daemonReloadAbortRegex = [regex]'Seamless content-reload (?:declined )?for (?<ch>\S+) (?<reason>.+?); falling back to restart\.'
 
 function Update-DaemonLogRing {
     param($Context)
     if (-not (Test-Path $script:daemonLogPath)) { return }
+
     try {
-        $allLines = @(Get-Content -Path $script:daemonLogPath -ErrorAction Stop)
+        $length = (Get-Item -Path $script:daemonLogPath -ErrorAction Stop).Length
     } catch { return }
-    if ($allLines.Count -le $script:daemonLogLineCount) { return }
-    $newLines = $allLines[$script:daemonLogLineCount..($allLines.Count - 1)]
-    $script:daemonLogLineCount = $allLines.Count
-    foreach ($line in $newLines) {
-        $m = $script:daemonLogLineRegex.Match("$line")
-        if (-not $m.Success) { continue }
-        Add-LogRingSample -Context $Context -ChannelId $m.Groups['ch'].Value -State $m.Groups['state'].Value -LastError $m.Groups['err'].Value
+
+    $firstLineNow = $null
+    try {
+        $fsProbe = [System.IO.File]::Open($script:daemonLogPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $srProbe = New-Object System.IO.StreamReader($fsProbe)
+            $firstLineNow = $srProbe.ReadLine()
+        } finally { $fsProbe.Close() }
+    } catch { }
+
+    $rotated = ($length -lt $script:daemonLogOffsetBytes) -or
+        ($null -ne $script:daemonLogFirstLineText -and $null -ne $firstLineNow -and $firstLineNow -ne $script:daemonLogFirstLineText)
+    if ($rotated) {
+        Write-SoakLog "daemon log rotation detected (service.py's 10 MiB x 10 rotating handler) -- resetting read offset to 0"
+        $script:daemonLogOffsetBytes = 0
+    }
+    $script:daemonLogFirstLineText = $firstLineNow
+
+    if ($script:daemonLogOffsetBytes -ge $length) { return }
+
+    try {
+        $fs = [System.IO.File]::Open($script:daemonLogPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $fs.Seek($script:daemonLogOffsetBytes, [System.IO.SeekOrigin]::Begin) | Out-Null
+            $bytesToRead = $length - $script:daemonLogOffsetBytes
+            $buffer = New-Object byte[] $bytesToRead
+            $readCount = $fs.Read($buffer, 0, $bytesToRead)
+            $text = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $readCount)
+        } finally { $fs.Close() }
+    } catch { return }
+
+    # A torn final line (no trailing newline -- the writer had not
+    # finished it yet) must NOT be consumed: leave it for the next pass
+    # once it is complete, rather than misparsing a half-written line or
+    # missing a genuine match that wasn't fully on disk yet.
+    $lastNewlineIdx = $text.LastIndexOf("`n")
+    if ($lastNewlineIdx -lt 0) { return }
+    $completeText = $text.Substring(0, $lastNewlineIdx + 1)
+    $script:daemonLogOffsetBytes += [System.Text.Encoding]::UTF8.GetByteCount($completeText)
+
+    $nowUtc = (Get-Date).ToUniversalTime()
+    foreach ($line in ($completeText -split "`r?`n")) {
+        if (-not $line) { continue }
+        $m = $script:daemonLogLineRegex.Match($line)
+        if ($m.Success) {
+            Add-LogRingSample -Context $Context -ChannelId $m.Groups['ch'].Value -State $m.Groups['state'].Value -LastError $m.Groups['err'].Value -ObservedUtc $nowUtc
+            continue
+        }
+        $ra = $script:daemonReloadAbortRegex.Match($line)
+        if ($ra.Success) {
+            Add-ReloadAbortSample -Context $Context -ChannelId $ra.Groups['ch'].Value -Reason $ra.Groups['reason'].Value
+            Write-SoakLog "reload_aborted channel=$($ra.Groups['ch'].Value) reason=$($ra.Groups['reason'].Value)"
+        }
     }
 }
 
@@ -1761,6 +1880,7 @@ while ((Get-Date) -lt $deadline) {
             elapsed_minutes = [math]::Round(((Get-Date).ToUniversalTime() - $SoakStartUtc).TotalMinutes, 2)
             latest_cycle = $cycle
             restart_events_so_far = @($restartCtx.RestartEvents)
+            reload_abort_events_so_far = @($restartCtx.ReloadAbortEvents)
         }
         Save-Json -Obj $rollup -Path (Join-Path $LocalDir "rollups\rollup-$('{0:d4}' -f $cycleN).json")
         Copy-StationLogs -Label "checkpoint-cycle$cycleN"
@@ -1771,10 +1891,18 @@ while ((Get-Date) -lt $deadline) {
 }
 
 $eventsBeforeFinalFlush = $restartCtx.RestartEvents.Count
-$restartEventsArray = @(Get-FlushedRestartEvents -Context $restartCtx)
+# Round-11 finding 3 (HIGH): pass the REAL soak-end instant explicitly
+# (this script's own "now", right after the poll loop exits) rather than
+# relying on Get-FlushedRestartEvents' own default -- an event detected
+# within the last 60s of THIS instant is flushed as incomplete=$true (see
+# RestartClassifier.ps1's Get-FlushedRestartEvents header), excluded from
+# SoakVerdict.ps1's 60s-recovery FAIL rule.
+$soakEndUtc = (Get-Date).ToUniversalTime()
+$restartEventsArray = @(Get-FlushedRestartEvents -Context $restartCtx -SoakEndUtc $soakEndUtc)
 foreach ($ev in ($restartEventsArray | Select-Object -Skip $eventsBeforeFinalFlush)) {
-    Write-SoakLog "restart still pending at soak end, flushed as not-recovered: channel=$($ev.channel_id) classification=$($ev.classification)"
+    Write-SoakLog "restart still pending at soak end, flushed as not-recovered (incomplete=$($ev.incomplete)): channel=$($ev.channel_id) classification=$($ev.classification)"
 }
+$reloadAbortEventsArray = @($restartCtx.ReloadAbortEvents)
 # Round-10 finding 6 (MEDIUM): Save-Json's `$Obj | ConvertTo-Json` pipes a
 # top-level ARRAY object-by-object into ConvertTo-Json under PS 5.1;
 # ConvertTo-Json has no way to tell "one object piped through" from "an
@@ -1795,7 +1923,7 @@ Write-SoakLog "poll loop complete: $cycleN cycles recorded, $($restartEventsArra
 #    exercises against synthetic data also judges this real run).
 # --------------------------------------------------------------------------
 . (Join-Path 'C:\CivicCastSoakScripts' 'SoakVerdict.ps1')
-$verdictResult = Get-SoakVerdict -Cycles $allCycles -StartUtc $SoakStartUtc -WarmupSeconds 180 -RestartEvents $restartEventsArray
+$verdictResult = Get-SoakVerdict -Cycles $allCycles -StartUtc $SoakStartUtc -WarmupSeconds 180 -RestartEvents $restartEventsArray -SeamlessReload ([bool]$SeamlessReload) -ReloadAbortEvents $reloadAbortEventsArray
 
 $verdict = [ordered]@{
     schema_version       = 1
@@ -1810,6 +1938,14 @@ $verdict = [ordered]@{
     # contract these feed into.
     unplanned_relaunch_count = $verdictResult.unplanned_relaunch_count
     planned_restart_count    = $verdictResult.planned_restart_count
+    # Round-11 findings 3/4: restarts still pending in the final 60s of
+    # the soak window (never had a fair chance to recover -- excluded from
+    # the recovery-timeout FAIL rule, still visible here) and seamless
+    # content-reload aborts (a distinct daemon.py WARNING-line event class
+    # -- FAILs the run only under -SeamlessReload).
+    incomplete_restart_count = $verdictResult.incomplete_restart_count
+    reload_aborted_count     = $verdictResult.reload_aborted_count
+    reload_abort_events      = $reloadAbortEventsArray
     max_restart_gap_seconds  = $verdictResult.max_restart_gap_seconds
     restart_events           = $restartEventsArray
     soak_start_utc       = $SoakStartUtc.ToString('o')
