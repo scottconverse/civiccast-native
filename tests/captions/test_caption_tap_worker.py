@@ -389,6 +389,38 @@ class TestCaptionTapWorker:
 
         assert settings.max_channel_workers == 3
 
+    def test_startup_logs_cpu_count_and_the_chosen_sizing_in_one_line(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Item 79: one line at tap start records what box a run happened on.
+
+        `getattr(runtime, "cpu_threads", "n/a")` reads the live sizing off
+        whatever runtime was injected -- a real `FasterWhisperRuntime` has the
+        attribute, the `_ScriptedRuntime` test double used elsewhere in this
+        module does not, so this test uses a small stand-in that does.
+        """
+
+        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 8)
+
+        class _RuntimeWithCpuThreads(_ScriptedRuntime):
+            cpu_threads = 1
+
+        with caplog.at_level("INFO", logger="civiccast.captions.tap_worker"):
+            _worker(
+                tmp_path / "tap",
+                _RuntimeWithCpuThreads(),
+                InMemoryCaptionReviewStore(),
+                max_channel_workers=1,
+            )
+
+        assert "Caption tap starting" in caplog.text
+        assert "cpu_count=8" in caplog.text
+        assert "max_channel_workers=1" in caplog.text
+        assert "live_cpu_threads=1" in caplog.text
+
     def test_backlog_fails_closed_instead_of_publishing_stale_captions(
         self,
         tmp_path: Path,

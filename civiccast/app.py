@@ -1354,7 +1354,9 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         # adapter) — T3/M4: translation is now wired, not just captions/summary.
         ai_model_service = _build_ai_model_service(session_factory)
         # live=True: this runtime is the LIVE tap's, sharing the box with
-        # playout, so it is sized conservatively (one CTranslate2 intra-thread,
+        # playout, so it is sized conservatively (1-2 CTranslate2 intra-op
+        # threads, core-count-aware and capped -- see
+        # civiccast.captions.runtime.default_live_tap_cpu_threads -- and
         # greedy decoding on CPU). The offline caption job below deliberately
         # keeps the batch sizing -- it runs against a published file, not
         # against the air signal.

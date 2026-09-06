@@ -597,7 +597,18 @@ def _overload_negative_control(
         review_store=InMemoryCaptionReviewStore(),
         segment_seconds=segment_seconds,
         overlap_seconds=overlap_seconds,
-        max_channel_workers=3,
+        # Deliberately NOT hardcoding max_channel_workers: the same doctrine
+        # as `build_caption_runtime`'s num_workers above (this file, ~line
+        # 358) -- civiccast/captions/tap_worker.py's production callers
+        # construct CaptionTapWorker bare, so a capacity proof that hardcodes
+        # a different value here would measure a station nobody ships and
+        # could pass without proving the deployed default. Omitting the
+        # argument tracks whatever `default_max_channel_workers()` production
+        # actually uses (item 79: a flat 1), including a future default
+        # change or an operator override, with zero risk of the two drifting
+        # apart again -- the same failure this PR's coordinator review found
+        # when this argument was still hardcoded to the pre-item-79 value of
+        # 3.
         max_backlog_segments=2,
     )
     result = worker.run_once()
@@ -733,7 +744,10 @@ def main() -> int:
         review_store=store,
         segment_seconds=segment_seconds,
         overlap_seconds=float(tuning["overlap_seconds"]),
-        max_channel_workers=3,
+        # See the sibling `CaptionTapWorker(...)` call above (~line 593) for
+        # why `max_channel_workers` is deliberately omitted rather than
+        # hardcoded: track the shipped `default_max_channel_workers()`, not a
+        # stale literal.
         max_backlog_segments=2,
     )
 

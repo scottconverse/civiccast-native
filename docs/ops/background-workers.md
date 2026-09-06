@@ -133,7 +133,7 @@ kill the scan.
 | `CIVICCAST_CAPTION_TAP_DIR` | unset | Tap root shared by the egress fork and the worker. Required when the mode is not `off`; setting it also enables the egress fork. |
 | `CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS` | `5` | Segment length — the floor of the caption latency budget (tap → transcribe → stabilize → review queue). |
 | `CIVICCAST_CAPTION_TAP_POLL_SECONDS` | `2` | Worker scan interval. |
-| `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | `1`, station-wide | How many channels may be transcribed **at the same time**. Item 79 (2026-09): flat `1` regardless of core count — a per-core-count formula still let a big enough box run more than one channel's ASR at once. |
+| `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | `1`, station-wide | How many channels' ASR calls may be in flight **at the same time**. Item 79 (2026-09): tightened from a per-core-count formula (max 3) to a flat `1`, regardless of core count. See "Captions are best effort; playout wins" below for why this is knob hardening, not a standalone fix -- the tap already shares one model instance across channels. |
 | `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` | `2` | Settled segments a channel may be behind before it counts as overloaded. |
 | `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS` | `120` | First pause after an overload; each consecutive overload doubles it. Item 79 (2026-09): doubled from `60` — a struggling station needs real recovery room before ASR is attempted again. |
 | `CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS` | `900` | Ceiling on that doubling. |
@@ -175,9 +175,21 @@ CivicCast therefore enforces an explicit ordering, and none of it is
 negotiable at runtime by the caption feature itself:
 
 - **ASR is bounded.** By default only **one** channel, station-wide, is
-  transcribed at a time — regardless of core count (item 79, 2026-09) — with
+  transcribed at a time — regardless of core count (item 79, 2026-09
+  tightened this from a per-core-count formula, max 3, to a flat 1) — with
   1-2 CTranslate2 threads (core-count-aware, capped) and greedy decoding.
-  Extra channels are queued, not dropped.
+  This is knob hardening on top of a design that already shares ONE speech
+  recognition model instance across every channel with CTranslate2's
+  `inter_threads=1`, so the old default of 3 never actually ran 3 concurrent
+  transcriptions — the model's own queue was already serializing them.
+  Within a single scan, channels beyond the concurrency bound queue on the
+  worker pool rather than being dropped outright — but a station with more
+  channels ON_AIR than the bound will still spend most of a scan
+  transcribing one channel while the others' backlog grows, and once a
+  channel's settled backlog exceeds `..._MAX_BACKLOG_SEGMENTS` its audio IS
+  dropped by the overload path below, not queued indefinitely. In practice, a
+  3-channel station has live captions paused on most channels most of the
+  time.
 - **Overload backs off.** When a channel falls further behind than
   `..._MAX_BACKLOG_SEGMENTS`, its live captions are **paused** for an
   exponentially growing window (120s, 240s, 480s … capped at 15 minutes), its

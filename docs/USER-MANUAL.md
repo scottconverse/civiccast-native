@@ -828,10 +828,12 @@ station needs.
 - **`CIVICCAST_CAPTION_TAP_DIR`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_POLL_SECONDS`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`** — Live caption tap configuration.
-- **`CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`** — How many channels may be
-  transcribed at the same time. Default: `1`, station-wide, regardless of core
-  count (item 79, 2026-09; a per-core-count formula still let a big enough
-  station run more than one channel's ASR at once).
+- **`CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`** — How many channels' ASR
+  calls may be in flight at the same time. Default: `1`, station-wide,
+  regardless of core count (item 79, 2026-09, tightened from a per-core-count
+  formula, max 3). A station with more channels ON_AIR than this bound will
+  have live captions paused on the others most of the time — see
+  `docs/ops/background-workers.md`.
 - **`CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS`** — First pause after a
   channel falls behind (default 120, doubled from 60 as of item 79, 2026-09);
   each further overload doubles it.
