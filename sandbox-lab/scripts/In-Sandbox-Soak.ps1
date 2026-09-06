@@ -937,14 +937,30 @@ if ($stagedAssets.Count -eq 0) {
     Write-FailVerdictAndExit -Reason "no assets uploaded successfully -- cannot schedule or start channels"
 }
 
-# Schedule + Commit-to-Air: a FIXED item count per channel, (Minutes+10)*2 @
-# 30s each = (Minutes+10) minutes of scheduled coverage per channel -- this
+# Round-5 item 1: single source of truth for the ON_AIR poll bound, needed
+# HERE (to size the schedule for the worst case) and again below (as the
+# actual poll deadline) -- run 5 proved the worst case is real: state was
+# null for ~8 minutes before any channel reported ON_AIR (poll #34, ~8.5
+# min in), and the OLD (Minutes+10)*2 sizing left only a few minutes of
+# margin past $SoakStartUtc + Minutes + 3m once that 8.5 minutes was spent.
+$OnAirBoundMinutes = 10
+
+# Schedule + Commit-to-Air: a FIXED item count per channel, sized for the
+# WORST CASE where the ON_AIR poll takes its full $OnAirBoundMinutes bound --
+# ceil((Minutes + OnAirBoundMinutes + 13) * 60 / 30) items @ 30s each. This
 # is the rollover instrument itself (see file header), not a wall-clock loop
-# probing real durations. Runs for ALL channels BEFORE any channel is
-# configured/started (AUTORUN-9m.ps1 header, item B-B).
-$itemsPerChannel = ($Minutes + 10) * 2
+# probing real durations. Coverage must span from schedulingStart-60s through
+# soak_start_utc + Minutes + 3m even in that worst case; the +13 minutes is
+# the fixed safety margin on top of the ON_AIR bound itself (covers the
+# config+start loop and general clock slack, which are cheap relative to a
+# HARNESS_ERROR abort). The N9 coverage check below still runs and still
+# fails closed as HARNESS_ERROR if this sizing is ever wrong for some other
+# reason -- this is a bigger default, not a replacement for that check.
+# Runs for ALL channels BEFORE any channel is configured/started
+# (AUTORUN-9m.ps1 header, item B-B).
+$itemsPerChannel = [Math]::Ceiling((($Minutes + $OnAirBoundMinutes + 13) * 60) / 30)
 $schedulingStart = (Get-Date)
-Write-SoakLog "scheduling $itemsPerChannel items/channel @ 30s each (~$($Minutes + 10) minutes coverage)"
+Write-SoakLog "scheduling $itemsPerChannel items/channel @ 30s each (sized for the ON_AIR bound's worst case: ceil((Minutes=$Minutes + OnAirBoundMinutes=$OnAirBoundMinutes + 13) * 60 / 30))"
 foreach ($c in $channelSpecs) {
     $cursor = $schedulingStart.AddSeconds(-60)
     $scheduled = 0
@@ -1009,25 +1025,51 @@ foreach ($c in $channelSpecs) {
 }
 Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 
-# Round-4 item 3 (item 59): raised from 6 to 10 minutes -- a fresh station
-# measured >3 minutes to bring channels ON_AIR on REAL hardware per item 59,
-# and Windows Sandbox's virtualized storage/CPU is slower still; run 4's own
+# Round-5 item 2: the moment the start commands were sent -- the origin
+# point for both time_to_on_air_s and first_state_row_s below (product
+# metrics per item 59, not lane diagnostics: how long the shipped engine
+# itself actually takes to bring a channel up, measured the same way on
+# every run).
+$channelsStartedUtc = (Get-Date).ToUniversalTime()
+
+# Round-4 item 3 (item 59): raised from 6 to 10 minutes ($OnAirBoundMinutes,
+# defined earlier alongside the schedule sizing) -- a fresh station measured
+# >3 minutes to bring channels ON_AIR on REAL hardware per item 59, and
+# Windows Sandbox's virtualized storage/CPU is slower still; run 4's own
 # evidence shows config+start all succeeded (200/202) but the 6-minute bound
 # expired before any channel reported ON_AIR, so this lane's own bound was
-# the failure, not necessarily the product. Poll cadence stays 15s.
+# the failure, not necessarily the product. Run 5 then measured state=null
+# for ~8 of those minutes before all three channels went ON_AIR at poll #34
+# (~8.5m) -- comfortably inside the new 10-minute bound, but not before
+# proving the OLD 6-minute one wrong twice. Poll cadence stays 15s.
 #
 # Round-4 item 1: log the FULL per-channel state on every poll (state, pid,
 # current_source_label, last_error) -- run 4 left no record of what state
-# each channel actually reported during the 6-minute wait, which is exactly
-# what would have shown whether channels were STARTING/dark/erroring vs.
-# genuinely never told to start. Also log the raw response body on the
-# FIRST poll and every time it changes, so the evidence has at least one
-# verbatim example of the API's actual shape without spamming an identical
-# line every 15s for 10 minutes.
-$onAirBoundMinutes = 10
-$onAirDeadline = (Get-Date).AddMinutes($onAirBoundMinutes)
+# each channel actually reported during the 6-minute wait. Also log the raw
+# response body on the FIRST poll and every time it changes, so the
+# evidence has at least one verbatim example of the API's actual shape
+# without spamming an identical line every 15s for 10 minutes.
+#
+# Round-5 item 3: while a channel's state field is null, ALSO poll its
+# .../health?limit=1 and log it -- run 5 could not tell "the daemon simply
+# hasn't initialized this channel's state row yet" (expected, transient)
+# apart from "the daemon is dead and nothing will ever update this row"
+# (a real product failure) purely from a null state field. Health gives an
+# independent signal for the same channel during exactly that ambiguous
+# window.
+#
+# Round-5 item 2: track, per channel, the first poll where state is
+# non-null (first_state_row_s) and the first poll where state is ON_AIR
+# (time_to_on_air_s), both measured from $channelsStartedUtc. These are
+# PRODUCT metrics (item 59) recorded from every run, not just this one --
+# the existing per-poll foreach already visits every channel each cycle
+# (even the cycle that trips $anyOnAir, since the break happens AFTER the
+# foreach), so no extra polling is needed to capture them.
+$onAirDeadline = (Get-Date).AddMinutes($OnAirBoundMinutes)
 $anyOnAir = $false
 $lastStateRawByChannel = @{}
+$firstStateRowUtcByChannel = @{}
+$firstOnAirUtcByChannel = @{}
 $pollN = 0
 do {
     $pollN++
@@ -1043,7 +1085,26 @@ do {
                     Write-SoakLog "ON_AIR poll #$pollN channel=$($c.id) raw state body (first-seen or changed): $rawNow"
                     $lastStateRawByChannel[$c.id] = $rawNow
                 }
-                if ($st.state -eq 'ON_AIR') { $anyOnAir = $true }
+
+                if ($null -eq $st.state) {
+                    try {
+                        $hlR = Invoke-CivicCastApi -Method 'Get' -Url "$Base/api/staff/egress/channels/$($c.id)/health?limit=1" -BearerToken $token -TimeoutSec 20
+                        Write-SoakLog "ON_AIR poll #$pollN channel=$($c.id): state is null -- health?limit=1 status=$($hlR.status) body=$($hlR.body_raw) error=$($hlR.error) (distinguishes an uninitialized state row from a dead daemon)"
+                    } catch {
+                        Write-SoakLog "ON_AIR poll #$pollN channel=$($c.id): state is null -- health?limit=1 THREW $_"
+                    }
+                } else {
+                    if (-not $firstStateRowUtcByChannel.ContainsKey($c.id)) {
+                        $firstStateRowUtcByChannel[$c.id] = (Get-Date).ToUniversalTime()
+                    }
+                }
+
+                if ($st.state -eq 'ON_AIR') {
+                    $anyOnAir = $true
+                    if (-not $firstOnAirUtcByChannel.ContainsKey($c.id)) {
+                        $firstOnAirUtcByChannel[$c.id] = (Get-Date).ToUniversalTime()
+                    }
+                }
             } else {
                 Write-SoakLog "ON_AIR poll #$pollN channel=$($c.id): state read FAILED status=$($stR.status) body=$($stR.body_raw) error=$($stR.error)"
             }
@@ -1055,9 +1116,24 @@ do {
     Start-Sleep -Seconds 15
 } while ((Get-Date) -lt $onAirDeadline)
 
+# Round-5 item 2: compute the per-channel product metrics regardless of
+# whether every channel (or even any channel) reached ON_AIR -- a channel
+# that never got a state row at all, or got a state row but never ON_AIR,
+# is itself the finding; record $null rather than omit it.
+$timeToOnAirSByChannel = [ordered]@{}
+$firstStateRowSByChannel = [ordered]@{}
+foreach ($c in $channelSpecs) {
+    $firstStateRowSByChannel[$c.id] = $(if ($firstStateRowUtcByChannel.ContainsKey($c.id)) { [math]::Round(($firstStateRowUtcByChannel[$c.id] - $channelsStartedUtc).TotalSeconds, 1) } else { $null })
+    $timeToOnAirSByChannel[$c.id] = $(if ($firstOnAirUtcByChannel.ContainsKey($c.id)) { [math]::Round(($firstOnAirUtcByChannel[$c.id] - $channelsStartedUtc).TotalSeconds, 1) } else { $null })
+    Write-SoakLog "channel=$($c.id) product metrics: first_state_row_s=$($firstStateRowSByChannel[$c.id]) time_to_on_air_s=$($timeToOnAirSByChannel[$c.id])"
+}
+$summary.first_state_row_s = $firstStateRowSByChannel
+$summary.time_to_on_air_s = $timeToOnAirSByChannel
+Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
+
 if (-not $anyOnAir) {
     Copy-StationLogs -Label 'onair-poll-timeout'
-    Write-FailVerdictAndExit -Reason "no channel reached ON_AIR within ${onAirBoundMinutes} minutes of the start command -- soak clock not started (see the ON_AIR poll #N lines in soak-log.txt for every channel's state/pid/src/err each cycle, and logs\onair-poll-timeout\ for station/egress logs at the moment of failure)"
+    Write-FailVerdictAndExit -Reason "no channel reached ON_AIR within ${OnAirBoundMinutes} minutes of the start command -- soak clock not started (see the ON_AIR poll #N lines in soak-log.txt for every channel's state/pid/src/err each cycle, and logs\onair-poll-timeout\ for station/egress logs at the moment of failure)"
 }
 
 # --------------------------------------------------------------------------
@@ -1089,7 +1165,12 @@ if ($coverageEndUtc -le $requiredCoverageUtc) {
 }
 
 Write-SoakLog "SOAK CLOCK STARTED (UTC): $($SoakStartUtc.ToString('o')) -- at least one channel confirmed ON_AIR"
-Write-PhaseMarker -Name 'SOAK-START.json' -Obj ([ordered]@{ soak_start_utc = $SoakStartUtc.ToString('o') })
+Write-PhaseMarker -Name 'SOAK-START.json' -Obj ([ordered]@{
+    soak_start_utc = $SoakStartUtc.ToString('o')
+    channels_started_utc = $channelsStartedUtc.ToString('o')
+    first_state_row_s = $firstStateRowSByChannel
+    time_to_on_air_s = $timeToOnAirSByChannel
+})
 Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 
 # --------------------------------------------------------------------------
@@ -1262,6 +1343,12 @@ $verdict = [ordered]@{
     station_healthy      = $summary.station_healthy
     samples_found        = $summary.samples_found
     assets_uploaded      = $summary.assets_uploaded
+    # Round-5 item 2: product metrics (item 59), carried from SOAK-START.json
+    # into the final verdict too so a single file has both the pass/fail
+    # judgment and the timing evidence behind the soak-clock start.
+    channels_started_utc = $channelsStartedUtc.ToString('o')
+    first_state_row_s    = $firstStateRowSByChannel
+    time_to_on_air_s     = $timeToOnAirSByChannel
 }
 # N8: copy station logs BEFORE writing the verdict, not after -- the fail
 # path (Write-FailVerdictAndExit) already had this order right; the success
