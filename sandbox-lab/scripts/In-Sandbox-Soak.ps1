@@ -303,6 +303,12 @@ function Write-FailVerdictAndExit {
     $verdict = [ordered]@{
         schema_version = 1; verdict = 'FAIL'; reason = $Reason; first_failing_cycle = $null
         cycles_total = 0; cycles_warmup = 0; cycles_evaluated = 0; soak_start_utc = $null
+        # Round-7: carry whatever per-channel timing was captured before the
+        # fail, if this fail path ran after the ON_AIR poll (e.g. the
+        # not-all-ON_AIR timeout) -- $null (never an error) if the fail
+        # happened earlier and these variables don't exist yet.
+        first_state_row_s = $firstStateRowSByChannel
+        time_to_on_air_s  = $timeToOnAirSByChannel
     }
     Save-Json -Obj $verdict -Path (Join-Path $LocalDir 'VERDICT.json')
     "verdict=FAIL reason=$Reason" | Set-Content -Path (Join-Path $LocalDir 'VERDICT.txt') -Encoding UTF8
@@ -1129,15 +1135,24 @@ $channelsStartedUtc = (Get-Date).ToUniversalTime()
 # independent signal for the same channel during exactly that ambiguous
 # window.
 #
-# Round-5 item 2: track, per channel, the first poll where state is
-# non-null (first_state_row_s) and the first poll where state is ON_AIR
-# (time_to_on_air_s), both measured from $channelsStartedUtc. These are
-# PRODUCT metrics (item 59) recorded from every run, not just this one --
-# the existing per-poll foreach already visits every channel each cycle
-# (even the cycle that trips $anyOnAir, since the break happens AFTER the
-# foreach), so no extra polling is needed to capture them.
+# Round-7 fix: the soak clock must start only once ALL THREE channels are
+# ON_AIR (still bounded by $OnAirBoundMinutes from the start commands) --
+# run 7 showed soak_start_utc getting set the instant the FIRST channel
+# (education) went ON_AIR (~488.8s), while public and government had not
+# yet reported anything, so their time_to_on_air_s were frozen at $null
+# forever (the loop broke before they ever got a chance). $allOnAir (not
+# $anyOnAir) now gates the break condition; $anyOnAir is kept only as a
+# diagnostic (logged, never a gate).
+#
+# Round-5 item 2 / round-7 fix: track, per channel, the first poll where
+# state is non-null (first_state_row_s) and the first poll where state is
+# ON_AIR (time_to_on_air_s), both measured from $channelsStartedUtc. Now
+# that the loop runs until EVERY channel has reached ON_AIR (or the bound
+# expires), every channel's dictionary entry gets a real chance to be set
+# as it actually happens, never frozen by an early break.
 $onAirDeadline = (Get-Date).AddMinutes($OnAirBoundMinutes)
 $anyOnAir = $false
+$allOnAir = $false
 $lastStateRawByChannel = @{}
 $firstStateRowUtcByChannel = @{}
 $firstOnAirUtcByChannel = @{}
@@ -1183,7 +1198,8 @@ do {
             Write-SoakLog "ON_AIR poll #$pollN channel=$($c.id): state read THREW $_"
         }
     }
-    if ($anyOnAir) { break }
+    $allOnAir = (@($channelSpecs | Where-Object { -not $firstOnAirUtcByChannel.ContainsKey($_.id) }).Count -eq 0)
+    if ($allOnAir) { break }
     Start-Sleep -Seconds 15
 } while ((Get-Date) -lt $onAirDeadline)
 
@@ -1202,14 +1218,17 @@ $summary.first_state_row_s = $firstStateRowSByChannel
 $summary.time_to_on_air_s = $timeToOnAirSByChannel
 Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 
-if (-not $anyOnAir) {
+if (-not $allOnAir) {
+    $notOnAirIds = @($channelSpecs | Where-Object { -not $firstOnAirUtcByChannel.ContainsKey($_.id) } | ForEach-Object { $_.id })
     Copy-StationLogs -Label 'onair-poll-timeout'
-    Write-FailVerdictAndExit -Reason "no channel reached ON_AIR within ${OnAirBoundMinutes} minutes of the start command -- soak clock not started (see the ON_AIR poll #N lines in soak-log.txt for every channel's state/pid/src/err each cycle, and logs\onair-poll-timeout\ for station/egress logs at the moment of failure)"
+    Write-FailVerdictAndExit -Reason "not all channels reached ON_AIR within ${OnAirBoundMinutes} minutes of the start command -- soak clock not started; channel(s) never ON_AIR: $($notOnAirIds -join ', ') (see the ON_AIR poll #N lines in soak-log.txt for every channel's state/pid/src/err each cycle, and logs\onair-poll-timeout\ for station/egress logs at the moment of failure)"
 }
 
 # --------------------------------------------------------------------------
 # THE SOAK CLOCK STARTS HERE -- health OK AND channels configured/started
-# AND at least one confirmed ON_AIR. -Minutes means SOAK minutes measured
+# AND ALL THREE confirmed ON_AIR (round-7 fix: was "at least one", which let
+# the clock start with two channels still dark and their time_to_on_air_s
+# frozen at $null forever). -Minutes means SOAK minutes measured
 # from this instant, never wall-clock minutes from process launch (the
 # install alone can take most of $InstallBoundMinutes). Recorded as
 # soak_start_utc in every rollup and in VERDICT.json, and the ONLY thing the
@@ -1235,7 +1254,7 @@ if ($coverageEndUtc -le $requiredCoverageUtc) {
     Write-HarnessErrorVerdictAndExit -Reason "schedule coverage_end_utc ($($coverageEndUtc.ToString('o'))) does not clear soak_start_utc+Minutes+3m ($($requiredCoverageUtc.ToString('o'))) -- the ON_AIR poll (schedulingStart=$($schedulingStart.ToUniversalTime().ToString('o'))) ate into the scheduled-content margin; this is a harness sizing defect, not a product failure"
 }
 
-Write-SoakLog "SOAK CLOCK STARTED (UTC): $($SoakStartUtc.ToString('o')) -- at least one channel confirmed ON_AIR"
+Write-SoakLog "SOAK CLOCK STARTED (UTC): $($SoakStartUtc.ToString('o')) -- ALL THREE channels confirmed ON_AIR"
 Write-PhaseMarker -Name 'SOAK-START.json' -Obj ([ordered]@{
     soak_start_utc = $SoakStartUtc.ToString('o')
     channels_started_utc = $channelsStartedUtc.ToString('o')
