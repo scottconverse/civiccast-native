@@ -781,10 +781,15 @@ function Copy-StationLogs {
     # (every checkpoint-cycleN AND 'final'), same as the rest of this
     # function, so a mid-soak GStreamer debug log is visible in the
     # evidence trail even if the run never reaches 'final'. Bounded: a
-    # single file over 200 MB is SKIPPED with a note rather than copied --
-    # GST_DEBUG at level 4 across four elements for a whole soak can grow
-    # large fast, and this evidence capture must never itself become the
-    # thing that stalls a checkpoint.
+    # single file over 200 MB has its LAST 200 MB (the most recent debug
+    # output, not the earliest) copied instead of the whole file -- GST_DEBUG
+    # at level 4 across four elements for a whole soak can grow large fast,
+    # and this evidence capture must never itself become the thing that
+    # stalls a checkpoint. Round-2 review finding (optional item): an
+    # earlier version SKIPPED the whole file with a note instead -- the
+    # tail is what a human actually wants when a GStreamer worker is
+    # investigated (the failure is almost always at the END of the log,
+    # not the start), so truncating-and-keeping beats dropping entirely.
     $gstDebugDst = Join-Path $dst 'gst-debug'
     $gstDebugNote = Join-Path $dst 'gst-debug-note.txt'
     if (-not $script:GstDebugFilePath) {
@@ -797,12 +802,21 @@ function Copy-StationLogs {
         if (-not (Test-Path $gstDebugDir)) {
             $gstDebugNoteLines += "directory does not exist (yet): $gstDebugDir"
         } else {
-            # The primary file plus GStreamer's own rotation convention
-            # (a numeric/backup suffix appended to the base name) and any
-            # *.gstdebug sibling -- candidates are matched by PREFIX
-            # against the requested base name, never a blind directory-wide
-            # sweep, so an unrelated file dropped in the same folder is
-            # not accidentally hoovered up.
+            # Candidates come from TWO independent, deliberately separate
+            # rules, never a blind directory-wide sweep: (1) the primary
+            # file plus GStreamer's own rotation convention (a numeric/
+            # backup suffix appended to the base name), matched by PREFIX
+            # against the requested base name; and (2) any file with a
+            # `.gstdebug` extension in this same directory, matched by
+            # EXTENSION ALONE -- NOT gated on the base-name prefix at all.
+            # Rule (2) is a deliberately wider net (the accepted risk: a
+            # stray, unrelated `.gstdebug` file some other tool dropped in
+            # this exact directory would also be swept), because this is a
+            # directory THIS RUN itself created for its own GST_DEBUG_FILE
+            # (see the New-Item -Force call at this run's own registry-
+            # write step) -- something else writing into it is already
+            # unexpected enough that surfacing it as evidence is more
+            # useful than silently excluding it.
             $gstCandidates = @(
                 Get-ChildItem -LiteralPath $gstDebugDir -File -ErrorAction SilentlyContinue |
                     Where-Object { $_.Name -eq $gstDebugBaseName -or $_.Name -like "$gstDebugBaseName*" -or $_.Extension -eq '.gstdebug' }
@@ -812,12 +826,30 @@ function Copy-StationLogs {
             } else {
                 New-Item -ItemType Directory -Force -Path $gstDebugDst | Out-Null
                 foreach ($f in $gstCandidates) {
+                    $destPath = Join-Path $gstDebugDst $f.Name
                     if ($f.Length -gt $gstDebugMaxBytes) {
-                        $gstDebugNoteLines += "SKIPPED $($f.Name) ($([math]::Round($f.Length / 1MB, 1)) MB > 200 MB bound)"
+                        # Round-2 review finding (optional item): keep the
+                        # LAST 200 MB (the most recent debug output --
+                        # where a real failure almost always is) instead
+                        # of skipping the file outright. Streamed, not
+                        # loaded into memory: Seek to (length - 200 MB),
+                        # CopyTo the rest.
+                        try {
+                            $srcStream = [System.IO.File]::OpenRead($f.FullName)
+                            try {
+                                $skipBytes = [int64]($f.Length - $gstDebugMaxBytes)
+                                $null = $srcStream.Seek($skipBytes, [System.IO.SeekOrigin]::Begin)
+                                $destStream = [System.IO.File]::Create($destPath)
+                                try { $srcStream.CopyTo($destStream) } finally { $destStream.Dispose() }
+                            } finally { $srcStream.Dispose() }
+                            $gstDebugNoteLines += "TRUNCATED $($f.Name): kept the LAST 200 MB of $([math]::Round($f.Length / 1MB, 1)) MB total (earlier content dropped, not the whole file)"
+                        } catch {
+                            $gstDebugNoteLines += "FAILED to truncate-copy $($f.Name): $_"
+                        }
                         continue
                     }
                     try {
-                        Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $gstDebugDst $f.Name) -Force -ErrorAction Stop
+                        Copy-Item -LiteralPath $f.FullName -Destination $destPath -Force -ErrorAction Stop
                         $gstDebugNoteLines += "copied $($f.Name) ($([math]::Round($f.Length / 1MB, 2)) MB)"
                     } catch {
                         $gstDebugNoteLines += "FAILED to copy $($f.Name): $_"
@@ -1021,11 +1053,18 @@ if ($anyEnvInjectionRequested) {
         Set-ItemProperty -Path $seamlessRegPath -Name 'Environment' -Value $newEnv -Type MultiString -ErrorAction Stop
         $readBackEnv = @((Get-ItemProperty -Path $seamlessRegPath -Name 'Environment' -ErrorAction Stop).Environment)
         $envRegOk = $true
+        # Round-2 review finding (optional item): -ccontains/-cmatch, not
+        # the case-INSENSITIVE default -- these compare against the exact
+        # "NAME=VALUE" strings THIS RUN just wrote via Set-ItemProperty,
+        # so the correct semantic is byte-for-byte string equality, not a
+        # case-folded one (dedupe-by-name, elsewhere, is deliberately
+        # still case-insensitive -- that is a different question, "is
+        # this logically the same variable").
         foreach ($e in ($envEntriesToWrite | Where-Object { -not $_.IsUnset })) {
-            if (-not ($readBackEnv -contains "$($e.Name)=$($e.Value)")) { $envRegOk = $false }
+            if (-not ($readBackEnv -ccontains "$($e.Name)=$($e.Value)")) { $envRegOk = $false }
         }
         foreach ($e in ($envEntriesToWrite | Where-Object { $_.IsUnset })) {
-            if (@($readBackEnv | Where-Object { $_ -match "^$([regex]::Escape($e.Name))=" }).Count -gt 0) { $envRegOk = $false }
+            if (@($readBackEnv | Where-Object { $_ -cmatch "^$([regex]::Escape($e.Name))=" }).Count -gt 0) { $envRegOk = $false }
         }
         Write-SoakLog "worker_env: wrote $seamlessRegPath\Environment (REG_MULTI_SZ, $($newEnv.Count) entries; seamless_reload=$([bool]$SeamlessReload), worker_env_entries=$($workerEnvDeduped.Count)); read-back matches every requested entry: $envRegOk"
     } catch {
@@ -1184,7 +1223,7 @@ if ($anyEnvInjectionRequested) {
     }
 
     if ($SeamlessReload) {
-        $seamlessRegOkAfterRestart = ($readBackEnv2 -contains 'CIVICCAST_EGRESS_SEAMLESS_RELOAD=1')
+        $seamlessRegOkAfterRestart = ($readBackEnv2 -ccontains 'CIVICCAST_EGRESS_SEAMLESS_RELOAD=1')
         Write-SoakLog "seamless_reload verification: $seamlessRegPath\Environment still contains the flag: $seamlessRegOkAfterRestart"
 
         if (-not $seamlessRegOkAfterRestart -or -not $cpProc) {
@@ -1232,8 +1271,10 @@ if ($anyEnvInjectionRequested) {
     $workerEnvAllOk = $true
     foreach ($e in $workerEnvDeduped) {
         $expectPresent = -not $e.IsUnset
-        $isPresentWithValue = ($readBackEnv2 -contains "$($e.Name)=$($e.Value)")
-        $isAbsent = (@($readBackEnv2 | Where-Object { $_ -match "^$([regex]::Escape($e.Name))=" }).Count -eq 0)
+        # Round-2 review finding (optional item): case-sensitive -- see
+        # the matching comment at this run's own registry-write step above.
+        $isPresentWithValue = ($readBackEnv2 -ccontains "$($e.Name)=$($e.Value)")
+        $isAbsent = (@($readBackEnv2 | Where-Object { $_ -cmatch "^$([regex]::Escape($e.Name))=" }).Count -eq 0)
         $entryOk = [bool]$cpProc -and $(if ($expectPresent) { $isPresentWithValue } else { $isAbsent })
         if (-not $entryOk) { $workerEnvAllOk = $false }
         $workerEnvVerifiedList += [ordered]@{

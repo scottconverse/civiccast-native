@@ -73,16 +73,38 @@ Assert-Equal 'p4 entry count' 1 $p4.entries.Count
 Assert-Equal 'p4 IsUnset' $true $p4.entries[0].IsUnset
 Assert-Equal 'p4 value is empty string' '' $p4.entries[0].Value
 
-# scenario 5: the exact experiment string from the coordinator's brief --
-# five entries, one of them empty-value (unset), one with ':' and ',' in
-# its value (GST_DEBUG), one with a Windows path (GST_DEBUG_FILE).
+# scenario 5: a synthetic multi-feature string exercising every parse
+# shape at once -- five entries, one of them empty-value (unset), one
+# with ':' and ',' in its value (GST_DEBUG), one with a Windows path
+# (GST_DEBUG_FILE). Round-2 review NOTE: this is no longer the literal
+# README-recommended experiment command (CIVICCAST_CAPTION_TAP_DIR=
+# cannot actually disable the caption-tap leg -- see
+# $recommendedExperiment below and README.md for why); it stays here
+# purely as a rich PARSING exercise (unset form + multiple value shapes
+# in one string), independent of what the product actually does with it.
 $experiment = 'CIVICCAST_STALL_TIMEOUT_S=60;CIVICCAST_CAPTION_TAP_DIR=;CIVICCAST_EGRESS_EMBED_CAPTIONS=1;GST_DEBUG=concat:4,tee:4,appsink:4,mpegtsmux:4;GST_DEBUG_FILE=C:\CivicCastSoak\gst-debug.log'
 $p5 = ConvertTo-WorkerEnvEntries -WorkerEnv @($experiment)
-Assert-Equal 'p5 (coordinator experiment string) error count' 0 $p5.errors.Count
+Assert-Equal 'p5 (synthetic multi-feature string) error count' 0 $p5.errors.Count
 Assert-Equal 'p5 entry count' 5 $p5.entries.Count
 Assert-Equal 'p5 GST_DEBUG value' 'concat:4,tee:4,appsink:4,mpegtsmux:4' ($p5.entries | Where-Object { $_.Name -eq 'GST_DEBUG' }).Value
 Assert-Equal 'p5 GST_DEBUG_FILE value' 'C:\CivicCastSoak\gst-debug.log' ($p5.entries | Where-Object { $_.Name -eq 'GST_DEBUG_FILE' }).Value
 Assert-Equal 'p5 CIVICCAST_CAPTION_TAP_DIR is unset' $true ($p5.entries | Where-Object { $_.Name -eq 'CIVICCAST_CAPTION_TAP_DIR' }).IsUnset
+
+# scenario 5b: the ACTUAL README-recommended experiment as of round 2 --
+# only the three entries that really propagate all the way to the
+# GStreamer worker (CIVICCAST_STALL_TIMEOUT_S, GST_DEBUG, GST_DEBUG_FILE).
+# CIVICCAST_CAPTION_TAP_DIR/CIVICCAST_EGRESS_EMBED_CAPTIONS are
+# deliberately absent: civiccast/native/station_runtime.py:1362/1376
+# hardcodes both unconditionally into the per-launch `spec.env`, and
+# civiccast/native/supervisor/service.py's child-launch merge is
+# `{**os.environ, **spec.env}` -- spec.env applied LAST always wins, so a
+# registry-level removal/override of either is inert by the time a child
+# process (including the GStreamer worker, several launches downstream)
+# actually sees its environment.
+$recommendedExperiment = 'CIVICCAST_STALL_TIMEOUT_S=60;GST_DEBUG=concat:4,tee:4,appsink:4,mpegtsmux:4;GST_DEBUG_FILE=C:\CivicCastSoak\gst-debug.log'
+$p5b = ConvertTo-WorkerEnvEntries -WorkerEnv @($recommendedExperiment)
+Assert-Equal 'p5b (README-recommended experiment) error count' 0 $p5b.errors.Count
+Assert-Equal 'p5b entry count' 3 $p5b.entries.Count
 
 # scenario 6: malformed entry (no '=' at all) -- a parse error, not a
 # silently dropped/guessed entry.
@@ -95,12 +117,35 @@ $p7 = ConvertTo-WorkerEnvEntries -WorkerEnv @('1BAD=x')
 Assert-Equal 'p7 error count' 1 $p7.errors.Count
 Assert-True 'p7 error mentions invalid name' ($p7.errors[0] -match 'invalid environment variable name')
 
-# scenario 8: unsupported characters ('<', '>', '&', '|', '^', '"') are
-# REJECTED, never silently escaped -- one representative case each.
-foreach ($bad in @('A=1<2', 'A=1>2', 'A=1&2', 'A=1|2', 'A=1^2', 'A=1"2')) {
+# scenario 8: unsupported characters ('<', '>', '&', '|', '^', '%', '"')
+# are REJECTED, never silently escaped -- one representative case each.
+# '%' added in round-2 review: cmd.exe expands %NAME% tokens inside a
+# double-quoted argument regardless of quoting (measured directly:
+# 'C:\%USERNAME%\d.log' is delivered as 'C:\scott\d.log' -- see the
+# real-execution round-trip scenarios below).
+foreach ($bad in @('A=1<2', 'A=1>2', 'A=1&2', 'A=1|2', 'A=1^2', 'A=1%2', 'A=1"2')) {
     $pr = ConvertTo-WorkerEnvEntries -WorkerEnv @($bad)
     Assert-Equal "p8 rejects '$bad'" 1 $pr.errors.Count
 }
+
+# scenario 8b: round-2 review finding -- a value ending in a single
+# trailing backslash is REJECTED (collides with this lane's own closing
+# quote under the Win32 argv-tokenizer's backslash-then-quote escaping
+# rule; measured directly: 'C:\CivicCastSoak\' is delivered as
+# 'C:\CivicCastSoak"', swallowing everything after it into the same
+# argument -- see the real-execution round-trip scenarios below). A
+# value NOT ending in '\' (even one with backslashes elsewhere, or an
+# EVEN number of trailing backslashes) is unaffected.
+$p8b1 = ConvertTo-WorkerEnvEntries -WorkerEnv @('GST_DEBUG_FILE=C:\CivicCastSoak\')
+Assert-Equal 'p8b1 rejects a single trailing backslash' 1 $p8b1.errors.Count
+$p8b2 = ConvertTo-WorkerEnvEntries -WorkerEnv @('GST_DEBUG_FILE=C:\CivicCastSoak\gst-debug.log')
+Assert-Equal 'p8b2 accepts a normal file path (no trailing backslash)' 0 $p8b2.errors.Count
+$p8b3 = ConvertTo-WorkerEnvEntries -WorkerEnv @('A=1')
+Assert-Equal 'p8b3 (sanity: a value with no backslash at all is unaffected)' 0 $p8b3.errors.Count
+# an EMPTY value (the unset form) never ends in '\' -- must not be
+# mistakenly caught by this rule.
+$p8b4 = ConvertTo-WorkerEnvEntries -WorkerEnv @('CIVICCAST_CAPTION_TAP_DIR=')
+Assert-Equal 'p8b4 (empty/unset value is unaffected by the trailing-backslash rule)' 0 $p8b4.errors.Count
 
 # scenario 9: empty/whitespace/absent input -> no entries, no errors.
 Assert-Equal 'p9a ($null) entry count' 0 (ConvertTo-WorkerEnvEntries -WorkerEnv $null).entries.Count
@@ -208,30 +253,82 @@ Assert-Equal 'q1b $null canonical arg renders to empty string' '' (Get-QuotedWor
 $q2 = Get-QuotedWorkerEnvArgToken -CanonicalArg 'A=1;B=2'
 Assert-Equal 'q2 rendered token' '-WorkerEnv "A=1;B=2"' $q2
 
+# Round-2 review REPLACED the regex-only Test-RenderedWorkerEnvRoundTrip
+# with one that actually EXECUTES the rendered command through a real
+# cmd.exe -> powershell.exe -File parse (see that function's own header
+# for why -- a regex reports what text was WRITTEN, never what a real
+# parse actually DELIVERS, and two real quoting bugs slipped past the old
+# regex version undetected: %NAME% expansion and a trailing-backslash/
+# closing-quote collision). Scenarios 20-23 below now spawn a real
+# short-lived child process each; scenarios 20b/20c are the adversarial
+# proof that this real-execution version actually catches what the old
+# regex version measurably did not.
+
 # scenario 20: the rendered token, embedded in a full LogonCommand string
-# (the actual shape Run-SandboxSoak.ps1 builds), round-trips through
-# Test-RenderedWorkerEnvRoundTrip.
+# (the actual shape Run-SandboxSoak.ps1 builds), round-trips through a
+# REAL cmd.exe/powershell.exe execution.
 $fakeCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes 15 -OnAirBoundMinutes 12  $q2"
 $rt1 = Test-RenderedWorkerEnvRoundTrip -RenderedCommand $fakeCommand -ExpectedCanonicalArg 'A=1;B=2'
 Assert-True 'rt1 round trip ok' $rt1.ok "(reason: $($rt1.reason))"
 Assert-Equal 'rt1 found matches expected' 'A=1;B=2' $rt1.found
 
-# scenario 21: the coordinator's own experiment string, rendered and
-# round-tripped end to end -- this is exactly what Run-SandboxSoak.ps1's
-# own -DryRun performs.
+# scenario 20b (round-2 review, adversarial/defense-in-depth): a value
+# containing '%USERNAME%' can never reach this point through
+# ConvertTo-WorkerEnvEntries -> Get-QuotedWorkerEnvArgToken any more (both
+# now reject '%' outright) -- this proves the round-trip check ITSELF
+# would still catch it even if it somehow did, by hand-building the
+# rendered command the same way a caller that skipped validation would.
+# MEASURED directly against this real executor: '%USERNAME%' is expanded
+# by cmd.exe to the real logged-on user name before powershell.exe ever
+# sees the argument -- the expected value can never match what a real
+# parse delivers, so this MUST report ok=$false. (The old regex-only
+# version reported this exact case as a PASS, since it only ever compared
+# rendered TEXT, never an actual parse.)
+$badPercentCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes 15 -OnAirBoundMinutes 12  -WorkerEnv "GST_DEBUG_FILE=C:\%USERNAME%\d.log"'
+$rt1b = Test-RenderedWorkerEnvRoundTrip -RenderedCommand $badPercentCommand -ExpectedCanonicalArg 'GST_DEBUG_FILE=C:\%USERNAME%\d.log'
+Assert-True 'rt1b (%USERNAME%-expansion bug) is CAUGHT, not passed' (-not $rt1b.ok) "(found: '$($rt1b.found)')"
+Assert-True 'rt1b found value no longer contains a literal %' ($null -eq $rt1b.found -or $rt1b.found -notmatch '%')
+
+# scenario 20c (round-2 review, adversarial/defense-in-depth): same
+# principle for a value ending in a single trailing backslash --
+# ConvertTo-WorkerEnvEntries/Get-QuotedWorkerEnvArgToken both reject this
+# now too, so this hand-builds the rendered command to prove the
+# round-trip check independently catches the Win32 argv-tokenizer's
+# backslash-then-quote collision even if a future caller bypassed the
+# upstream guards. MEASURED directly: the trailing '\' immediately before
+# the closing '"' does not close the argument -- the quote survives as a
+# LITERAL character in the delivered value instead.
+$badBackslashCommand = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes 15 -OnAirBoundMinutes 12  -WorkerEnv "GST_DEBUG_FILE=C:\CivicCastSoak\"'
+$rt1c = Test-RenderedWorkerEnvRoundTrip -RenderedCommand $badBackslashCommand -ExpectedCanonicalArg 'GST_DEBUG_FILE=C:\CivicCastSoak\'
+Assert-True 'rt1c (trailing-backslash/quote collision) is CAUGHT, not passed' (-not $rt1c.ok) "(found: '$($rt1c.found)')"
+
+# scenario 21: the full synthetic multi-feature string ($experiment),
+# rendered and round-tripped end to end through a real execution.
 $expQuoted = Get-QuotedWorkerEnvArgToken -CanonicalArg $experiment
 $expCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes 15 -OnAirBoundMinutes 12  $expQuoted"
 $rt2 = Test-RenderedWorkerEnvRoundTrip -RenderedCommand $expCommand -ExpectedCanonicalArg $experiment
-Assert-True 'rt2 (coordinator experiment) round trip ok' $rt2.ok "(reason: $($rt2.reason))"
+Assert-True 'rt2 (synthetic multi-feature string) round trip ok' $rt2.ok "(reason: $($rt2.reason))"
+
+# scenario 21b: the ACTUAL README-recommended experiment ($recommendedExperiment),
+# rendered and round-tripped end to end -- this is exactly what
+# Run-SandboxSoak.ps1's own -DryRun performs for the command README.md
+# documents.
+$recQuoted = Get-QuotedWorkerEnvArgToken -CanonicalArg $recommendedExperiment
+$recCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes 15 -OnAirBoundMinutes 12  $recQuoted"
+$rt2b = Test-RenderedWorkerEnvRoundTrip -RenderedCommand $recCommand -ExpectedCanonicalArg $recommendedExperiment
+Assert-True 'rt2b (README-recommended experiment) round trip ok' $rt2b.ok "(reason: $($rt2b.reason))"
 
 # scenario 22: no -WorkerEnv requested at all -- rendered command has no
-# token, and the round-trip check with an empty expected arg reports ok.
+# token, and the round-trip check with an empty expected arg reports ok
+# WITHOUT spawning anything (short-circuits before any child process).
 $noWorkerEnvCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes 15 -OnAirBoundMinutes 12  "
 $rt3 = Test-RenderedWorkerEnvRoundTrip -RenderedCommand $noWorkerEnvCommand -ExpectedCanonicalArg ''
 Assert-True 'rt3 (no -WorkerEnv) round trip ok' $rt3.ok "(reason: $($rt3.reason))"
 
-# scenario 23: a mismatch is DETECTED, not silently accepted (a quoting
-# regression must fail -DryRun, not pass it).
+# scenario 23: a mismatch against a value that DID actually round-trip
+# correctly is still DETECTED (proves this isn't just "any real
+# execution reports ok" -- it genuinely compares the delivered value
+# against what the caller expected).
 $rt4 = Test-RenderedWorkerEnvRoundTrip -RenderedCommand $fakeCommand -ExpectedCanonicalArg 'A=1;B=999'
 Assert-True 'rt4 (deliberate mismatch) is caught' (-not $rt4.ok)
 
@@ -246,7 +343,7 @@ Assert-True 'q3 throws on an unsafe character reaching render (defense in depth)
 # ========================================================= GST_DEBUG_FILE
 # scenario 25: GST_DEBUG_FILE present among entries.
 $g1 = Get-GstDebugFilePath -Entries $rtDeduped
-Assert-Equal 'g1 (from coordinator experiment) GST_DEBUG_FILE path' 'C:\CivicCastSoak\gst-debug.log' $g1
+Assert-Equal 'g1 (from the synthetic multi-feature string) GST_DEBUG_FILE path' 'C:\CivicCastSoak\gst-debug.log' $g1
 
 # scenario 26: absent -- returns $null, not an empty string or a throw.
 $g2 = Get-GstDebugFilePath -Entries @([pscustomobject]@{ Name = 'A'; Value = '1'; IsUnset = $false })

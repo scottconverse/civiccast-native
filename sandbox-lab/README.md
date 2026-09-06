@@ -84,17 +84,35 @@ same way for every variable that could be worth injecting —
 `CIVICCAST_CAPTION_TAP_DIR=""` the same as unset (`.strip()` then `if not
 root: return None`), but this lane does not assume every future experiment
 variable shares that fallback, so `NAME=` is defined once, uniformly, as a
-real removal. `<`, `>`, `&`, `|`, `^`, and a literal `"` are rejected
+real removal. `<`, `>`, `&`, `|`, `^`, `%`, and a literal `"` are rejected
 outright in any name or value (a parse error, not a best-effort escape):
 the `.wsb` `<LogonCommand>` runs through `cmd.exe`, whose
 redirection/pipe/escape-metacharacter scan runs before (and independently
 of) the quote-aware argv tokenizing `powershell.exe` performs on its own
 `-File` arguments — `<`/`>` are real redirection operators to `cmd.exe`
-even inside a double-quoted token. `-DryRun` renders the `.wsb` and the
-LogonCommand exactly as a real run would and round-trips the rendered
-`-WorkerEnv "..."` token back through the same parser
-(`Test-RenderedWorkerEnvRoundTrip`) to catch a quoting regression before it
-ever reaches a live sandbox.
+even inside a double-quoted token, and `cmd.exe` expands `%NAME%` tokens
+inside a quoted argument too (measured directly: a value of
+`C:\%USERNAME%\d.log` is delivered to the guest as `C:\scott\d.log`, not
+the literal text). A value ending in a single trailing backslash (`\`) is
+also rejected: it collides with the closing quote this lane appends,
+under the Win32 argv-tokenizer's backslash-then-quote escaping rule
+(measured: `C:\CivicCastSoak\` is delivered as `C:\CivicCastSoak"`,
+silently swallowing everything after it into the same argument) — name a
+file inside a directory rather than the bare directory path.
+
+`-DryRun` renders the `.wsb` and the LogonCommand exactly as a real run
+would and round-trips the rendered `-WorkerEnv "..."` token by actually
+**executing** it through a real `cmd.exe` → `powershell.exe -File` parse
+(`Test-RenderedWorkerEnvRoundTrip`, substituting a tiny throwaway capture
+script for the real `-File` target so nothing else about the command is
+touched) — not a regex over the rendered text. A regex only ever proves
+what was *written*; the two bugs above (`%NAME%` expansion, the trailing-
+backslash/quote collision) both round-tripped as false PASSes under an
+earlier regex-only version of this check, because the regex had no way to
+observe what a real parse actually *delivers*. This function catches
+either bug — or any future cmd.exe/PowerShell quoting quirk this lane
+hasn't thought of yet — before a quoting regression ever reaches a live
+sandbox.
 
 Verified the same way `-SeamlessReload` already is — reading another
 process's real environment block from outside it is not something this
@@ -116,16 +134,42 @@ create intermediate directories for a log-file path itself), and
 matching the same base name or a `*.gstdebug` extension in the same
 directory — into `logs\checkpoint-cycleN\gst-debug\` and `logs\final\
 gst-debug\` on every checkpoint, alongside the rest of that checkpoint's
-evidence. A single matching file over 200 MB is **skipped with a note**
-rather than copied, so a heavy `GST_DEBUG` level across a long soak can
-never itself stall a checkpoint.
+evidence. A single matching file over 200 MB has its **last 200 MB kept**
+(streamed, not skipped) rather than the whole file copied — the most
+recent debug output is where a real failure almost always is — so a heavy
+`GST_DEBUG` level across a long soak can never itself stall a checkpoint.
 
-**The experiment this follow-up exists to run** (stall-timeout override,
-caption tap explicitly disabled via the removal form, captions forced
-embedded, and a targeted `GST_DEBUG` scope with its own debug-log file):
+**What `-WorkerEnv` can and cannot change today.** Not every environment
+variable that reaches the CivicCastSupervisor service's own registry
+Environment survives all the way to the GStreamer worker unmodified.
+`civiccast/native/station_runtime.py` (the per-launch environment builder,
+lines 1362/1376) hardcodes `CIVICCAST_CAPTION_TAP_DIR` and
+`CIVICCAST_EGRESS_EMBED_CAPTIONS: "1"` **unconditionally** into `spec.env`
+on every launch, and `civiccast/native/supervisor/service.py`'s child-
+launch merge is `env = {**os.environ, **spec.env}` — `spec.env` applied
+**last** always wins over whatever the service's own inherited
+environment (including a `-WorkerEnv`-written registry entry) says. So
+today, **a `-WorkerEnv` removal of `CIVICCAST_CAPTION_TAP_DIR` (or any
+override of `CIVICCAST_EGRESS_EMBED_CAPTIONS`) is inert** by the time a
+downstream child (including the GStreamer worker, several process launches
+below the service) actually sees its environment — this harness's own
+`worker_env_verified` would still honestly report the *registry* write as
+verified (the service's own per-process environment really did change),
+but that is not the same claim as "the caption-tap leg is disabled",
+and this lane cannot currently make that stronger claim. Disabling the
+caption tap for real needs a product-level switch (tracked as item 91,
+in progress) — not an environment variable at the service-restart layer.
+`CIVICCAST_STALL_TIMEOUT_S`, `GST_DEBUG`, and `GST_DEBUG_FILE` are **not**
+in that hardcoded `spec.env` dict, so all three propagate through
+unmodified — they are safe to use today.
+
+**The experiment this follow-up exists to run** (stall-timeout override
+and a targeted `GST_DEBUG` scope with its own debug-log file — the two
+caption/embed entries from an earlier draft of this experiment are
+deliberately absent; see the caveat immediately above for why):
 
 ```powershell
-pwsh -File sandbox-lab/Run-SandboxSoak.ps1 -Sha <full sha> -WorkerEnv "CIVICCAST_STALL_TIMEOUT_S=60;CIVICCAST_CAPTION_TAP_DIR=;CIVICCAST_EGRESS_EMBED_CAPTIONS=1;GST_DEBUG=concat:4,tee:4,appsink:4,mpegtsmux:4;GST_DEBUG_FILE=C:\CivicCastSoak\gst-debug.log"
+pwsh -File sandbox-lab/Run-SandboxSoak.ps1 -Sha <full sha> -WorkerEnv "CIVICCAST_STALL_TIMEOUT_S=60;GST_DEBUG=concat:4,tee:4,appsink:4,mpegtsmux:4;GST_DEBUG_FILE=C:\CivicCastSoak\gst-debug.log"
 ```
 
 `-Minutes` is **SOAK minutes**, not wall-clock minutes from launch: the

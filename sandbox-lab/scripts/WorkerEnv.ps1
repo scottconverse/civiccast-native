@@ -95,8 +95,26 @@ function ConvertTo-WorkerEnvEntries {
             $errors += "invalid environment variable name '$name' in entry '$item' (must match ^[A-Za-z_][A-Za-z0-9_]*`$)"
             continue
         }
-        if ($name -match '[<>&|^"]' -or $value -match '[<>&|^"]') {
-            $errors += "entry '$item' contains a character (one of < > & | ^ or a literal quote) that cannot survive the .wsb LogonCommand's cmd.exe quoting -- rejected, not best-effort escaped"
+        if ($name -match '[<>&|^%"]' -or $value -match '[<>&|^%"]') {
+            $errors += "entry '$item' contains a character (one of < > & | ^ % or a literal quote) that cannot survive the .wsb LogonCommand's cmd.exe quoting -- rejected, not best-effort escaped"
+            continue
+        }
+        # Round-2 review finding (item 3): a value ending in a single
+        # trailing backslash collides with the closing quote this lane
+        # itself appends in Get-QuotedWorkerEnvArgToken -- the Win32
+        # argv-tokenizer rule for a quoted argument is that N backslashes
+        # immediately before a '"' collapse to floor(N/2) literal
+        # backslashes, and an ODD N additionally makes that '"' a literal
+        # character rather than the string terminator. Measured directly:
+        # a value of 'C:\CivicCastSoak\' rendered as ...\CivicCastSoak\"
+        # parses back as ...\CivicCastSoak" (the quote does not close,
+        # and the rest of the command line is swallowed into the same
+        # argument). Rejected universally (not just for whichever entry
+        # happens to land last in the joined string) because dedupe/merge
+        # ordering is not something a caller should have to reason about
+        # to know whether a given value is safe.
+        if ($value -match '\\$') {
+            $errors += "entry '$item' has a value ending in a single trailing backslash ('\'), which collides with the closing quote this lane appends around the rendered -WorkerEnv arg (Win32 argv-tokenizer backslash-then-quote escaping) -- rejected, not best-effort escaped; if this is a directory path, name the file inside it instead of the bare directory"
             continue
         }
         $entries += [pscustomobject]@{ Name = $name; Value = $value; IsUnset = ($value.Length -eq 0) }
@@ -181,8 +199,24 @@ function Get-QuotedWorkerEnvArgToken {
     #>
     param([string]$CanonicalArg)
     if ([string]::IsNullOrEmpty($CanonicalArg)) { return '' }
-    if ($CanonicalArg -match '["<>&|^]') {
-        throw "canonical -WorkerEnv arg contains a character unsafe to embed in the .wsb LogonCommand (a literal quote, or one of < > & | ^): '$CanonicalArg'"
+    if ($CanonicalArg -match '["<>&|^%]') {
+        throw "canonical -WorkerEnv arg contains a character unsafe to embed in the .wsb LogonCommand (a literal quote, or one of < > & | ^ %): '$CanonicalArg'"
+    }
+    # Round-2 review finding (item 3): the canonical arg is the string this
+    # function wraps in a closing '"' -- if IT ends in an odd number of
+    # backslashes (in practice: one, since ConvertTo-WorkerEnvEntries
+    # already rejects any single entry's value ending in '\', so this can
+    # only still happen for an unset entry's trailing 'NAME=' -- which
+    # never ends in '\' either -- kept here purely as defense in depth for
+    # a future caller that builds a CanonicalArg some other way), the
+    # closing quote would not actually close the argument. See
+    # ConvertTo-WorkerEnvEntries's own matching comment for the exact
+    # Win32 argv-tokenizer rule and the measured repro.
+    if ($CanonicalArg -match '\\+$') {
+        $trailing = [regex]::Match($CanonicalArg, '\\+$').Value
+        if (($trailing.Length % 2) -eq 1) {
+            throw "canonical -WorkerEnv arg ends in an odd number of trailing backslashes, which would collide with this function's own closing quote: '$CanonicalArg'"
+        }
     }
     return '-WorkerEnv "' + $CanonicalArg + '"'
 }
@@ -190,31 +224,123 @@ function Get-QuotedWorkerEnvArgToken {
 function Test-RenderedWorkerEnvRoundTrip {
     <#
       .SYNOPSIS
-      Round-trip check for -DryRun (and Test-WorkerEnv.ps1): re-parse the
-      rendered LogonCommand text the same shape a Win32 argv tokenizer
-      would (a `-WorkerEnv "..."` token, contents up to the next
-      unescaped double quote) and confirm it reproduces the exact
-      canonical arg that was rendered in. Catches a quoting regression at
-      render time instead of discovering it only once a sandbox run's
-      guest script receives a truncated/mangled value.
+      Round-trip check for -DryRun (and Test-WorkerEnv.ps1): actually
+      EXECUTE the rendered LogonCommand text through cmd.exe (the real
+      transport a .wsb LogonCommand uses) and powershell.exe's own -File
+      argv delivery, substituting a tiny throwaway capture script in
+      place of whatever -File target the command names -- every other
+      token, including the -WorkerEnv "..." token under test, is left
+      completely untouched. Confirms it reproduces the exact canonical
+      arg that was rendered in.
+
+      Round-2 review REPLACED an earlier regex-only version after it was
+      shown to pass two real quoting bugs a static regex has no way to
+      catch: cmd.exe expands %NAME% tokens inside a double-quoted
+      argument regardless of quoting (measured: a value of
+      `C:\%USERNAME%\d.log` is delivered to the guest as `C:\scott\d.log`
+      -- the OLD regex-only round trip reported this as a PASS, since it
+      only ever compared the rendered TEXT, never what a real parse of
+      that text actually produces), and a value ending in a single
+      trailing backslash collides with the closing quote under the Win32
+      argv-tokenizer's backslash-then-quote escaping rule (measured:
+      `C:\CivicCastSoak\` is delivered as `C:\CivicCastSoak"`, silently
+      swallowing everything after it into the same argument). Both are
+      now also rejected outright at parse time (ConvertTo-
+      WorkerEnvEntries) as defense in depth -- but this function no
+      longer TRUSTS that rejection; it proves the ACTUAL delivered value
+      by running the real two-layer parse, so a future cmd.exe/
+      PowerShell quoting quirk this lane has not thought of yet still
+      gets CAUGHT here instead of silently passing a regex that only
+      checks its own assumptions.
 
       .OUTPUTS
       [pscustomobject] @{ ok; found; reason }
     #>
     param([string]$RenderedCommand, [string]$ExpectedCanonicalArg)
-    $m = [regex]::Match($RenderedCommand, '-WorkerEnv\s+"([^"]*)"')
-    if (-not $m.Success) {
+
+    if ($RenderedCommand -notmatch '-WorkerEnv\s') {
         if ([string]::IsNullOrEmpty($ExpectedCanonicalArg)) {
             return [pscustomobject]@{ ok = $true; found = $null; reason = 'no -WorkerEnv token present in the rendered command, and none was expected (empty/absent -WorkerEnv)' }
         }
-        return [pscustomobject]@{ ok = $false; found = $null; reason = "-WorkerEnv `"...`" token not found in the rendered command, but a non-empty arg ('$ExpectedCanonicalArg') was expected" }
+        return [pscustomobject]@{ ok = $false; found = $null; reason = "no '-WorkerEnv ' token found in the rendered command, but a non-empty arg ('$ExpectedCanonicalArg') was expected" }
     }
-    $found = $m.Groups[1].Value
     if ([string]::IsNullOrEmpty($ExpectedCanonicalArg)) {
-        return [pscustomobject]@{ ok = $false; found = $found; reason = "a -WorkerEnv token ('$found') is present in the rendered command, but none was expected" }
+        return [pscustomobject]@{ ok = $false; found = $null; reason = 'a -WorkerEnv token is present in the rendered command, but none was expected' }
     }
-    $ok = ($found -ceq $ExpectedCanonicalArg)
-    return [pscustomobject]@{ ok = $ok; found = $found; reason = $(if ($ok) { 'match' } else { "expected '$ExpectedCanonicalArg', found '$found'" }) }
+
+    $tempDir = [System.IO.Path]::GetTempPath()
+    $token = [guid]::NewGuid().ToString('N')
+    $captureScriptPath = Join-Path $tempDir "workerenv-rt-capture-$token.ps1"
+    $outPath = [System.IO.Path]::ChangeExtension($captureScriptPath, '.out.txt')
+    $batchPath = Join-Path $tempDir "workerenv-rt-$token.cmd"
+
+    # This capture script declares NO parameters at all -- every token the
+    # real cmd.exe -> powershell.exe -File parse hands it lands, verbatim,
+    # in $args (PowerShell's automatic unbound-argument variable), so this
+    # observes exactly what that real two-layer parse delivers rather than
+    # a guess at it. Entirely single-quoted (@'...'@): nothing here is
+    # interpolated by THIS scope, so there is zero risk of this test
+    # harness repeating the exact `\"`-inside-a-double-quoted-string
+    # authoring mistake that broke WorkerEnv.ps1's own error message
+    # earlier in this lane's history. It computes its own output path from
+    # its own script path at RUN time via ``$PSCommandPath``.
+    $captureScript = @'
+$idx = -1
+for ($i = 0; $i -lt $args.Count; $i++) { if ($args[$i] -eq '-WorkerEnv') { $idx = $i; break } }
+$outPath = [System.IO.Path]::ChangeExtension($PSCommandPath, '.out.txt')
+if ($idx -ge 0 -and ($idx + 1) -lt $args.Count) {
+    Set-Content -Path $outPath -Value "WORKERENV_RT_RESULT=$($args[$idx + 1])" -Encoding UTF8
+} else {
+    Set-Content -Path $outPath -Value 'WORKERENV_RT_RESULT=<absent>' -Encoding UTF8
+}
+'@
+    Set-Content -Path $captureScriptPath -Value $captureScript -Encoding UTF8
+
+    # Substitute ONLY the -File target -- every other token in the
+    # rendered command, including the -WorkerEnv "..." token under test,
+    # is byte-for-byte untouched, so this proves exactly how THAT text
+    # survives the real parse. Written to a .cmd file and executed
+    # directly (rather than passed as a -ArgumentList to cmd.exe from
+    # here) so there is no SECOND layer of PowerShell-side argument
+    # re-quoting between this test harness and the cmd.exe parse under
+    # test -- the .cmd file's bytes are exactly what cmd.exe reads.
+    $testCommand = $RenderedCommand -replace '-File\s+\S+', "-File `"$captureScriptPath`""
+    Set-Content -Path $batchPath -Value $testCommand -Encoding ASCII
+
+    $result = [pscustomobject]@{ ok = $false; found = $null; reason = 'unset' }
+    try {
+        if (Test-Path $outPath) { Remove-Item -Path $outPath -Force -ErrorAction SilentlyContinue }
+        $p = Start-Process -FilePath $batchPath -PassThru -WindowStyle Hidden -ErrorAction Stop
+        $null = $p.Handle
+        $exited = $p.WaitForExit(15000)
+        if (-not $exited) {
+            try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch { }
+            $result = [pscustomobject]@{ ok = $false; found = $null; reason = 'the real cmd.exe/powershell.exe round-trip child did not exit within 15s' }
+        } elseif (-not (Test-Path $outPath)) {
+            $result = [pscustomobject]@{ ok = $false; found = $null; reason = "the round-trip child exited but never wrote its output file -- see $batchPath" }
+        } else {
+            $rawOut = Get-Content -Path $outPath -Raw -ErrorAction SilentlyContinue
+            $m = [regex]::Match($rawOut, '^WORKERENV_RT_RESULT=(.*?)\r?\n?$', [System.Text.RegularExpressions.RegexOptions]::Singleline)
+            if (-not $m.Success) {
+                $result = [pscustomobject]@{ ok = $false; found = $null; reason = "unparsable round-trip output: '$rawOut'" }
+            } else {
+                $found = $m.Groups[1].Value
+                if ($found -eq '<absent>') {
+                    $result = [pscustomobject]@{ ok = $false; found = $null; reason = 'the real parser never found a -WorkerEnv token followed by a value at all' }
+                } else {
+                    $ok = ($found -ceq $ExpectedCanonicalArg)
+                    $result = [pscustomobject]@{ ok = $ok; found = $found; reason = $(if ($ok) { 'match (proven by an actual cmd.exe/powershell.exe argv round trip, not a regex)' } else { "expected '$ExpectedCanonicalArg', the REAL parser actually delivered '$found'" }) }
+                }
+            }
+        }
+    } catch {
+        $result = [pscustomobject]@{ ok = $false; found = $null; reason = "round-trip execution failed: $_" }
+    } finally {
+        foreach ($f in @($captureScriptPath, $outPath, $batchPath)) {
+            try { if (Test-Path $f) { Remove-Item -Path $f -Force -ErrorAction SilentlyContinue } } catch { }
+        }
+    }
+    return $result
 }
 
 function Get-GstDebugFilePath {
