@@ -89,6 +89,10 @@ def _bare_engine(
     engine._stall_last_advance_t = 0.0
     engine._error = None
     engine._loop = None
+    # Item 84 Round-2 review BLOCKER additions -- ``_check_stall`` /
+    # ``_arm_stall_watchdog`` now also touch these.
+    engine._playing_reached_at = None
+    engine._first_output_marker_printed = False
     return engine
 
 
@@ -157,7 +161,12 @@ def test_check_stall_still_applies_the_ordinary_stall_bound_after_first_output(
 ) -> None:
     """Once the first buffer IS observed, the original S9-5 behavior applies
     completely unchanged: a 10s gap with no further advance trips the
-    ordinary ``("stall", ...)`` reason, never the first-output one."""
+    ordinary ``("stall", ...)`` reason, never the first-output-TIMEOUT one.
+    The positive-evidence ``CTRL first-output: first buffer after ...``
+    marker (item 84 Round-2) DOES print once, at the moment the first
+    buffer is observed -- that is expected and desired (it is the daemon's
+    on-air evidence for this exact scenario), distinct from the
+    first-output-timeout FAILURE line this test proves never fires here."""
     clock = {"t": 0.0}
     monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
     engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
@@ -179,21 +188,8 @@ def test_check_stall_still_applies_the_ordinary_stall_bound_after_first_output(
     assert engine._loop.quit_calls == 1
     err = capsys.readouterr().err
     assert "CTRL stall: no output for 10s" in err
-    assert "first-output" not in err
-
-
-def test_check_stall_first_output_timeout_disabled_at_zero(
-    engine_module, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    clock = {"t": 0.0}
-    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
-    engine = _bare_engine(engine_module, first_output_timeout_s=0.0, stall_timeout_s=10.0)
-    engine._loop = _FakeLoop()
-
-    clock["t"] = 1000.0
-    assert engine._check_stall() is True
-    assert engine._error is None
-    assert engine._loop.quit_calls == 0
+    assert "CTRL first-output: no output within" not in err  # the TIMEOUT line, never printed
+    assert "CTRL first-output: first buffer after" in err  # the SUCCESS marker, printed once
 
 
 def test_check_stall_ordinary_stall_disabled_at_zero_after_first_output(
@@ -218,21 +214,115 @@ def test_check_stall_ordinary_stall_disabled_at_zero_after_first_output(
     assert engine._loop.quit_calls == 0
 
 
-# --- _arm_stall_watchdog: arms unless BOTH budgets are disabled ----------------------
+# --- _maybe_print_first_output_marker: the positive on-air evidence marker ----------
+#
+# Item 84 Round-2 review BLOCKER: ``EgressDaemon._observed_on_air_evidence``
+# crediting the ``CTRL preroll: reached PLAYING`` marker alone as GStreamer
+# on-air evidence let a worker that reaches PLAYING on every relaunch, but
+# never actually produces output, get its crash-loop streak reset every
+# alive-poll cycle -- measured: streak pinned at 1, never escalating to
+# fallback slate, at EVERY tested ``first_output_timeout_s`` from 65s through
+# the 120s clamp ceiling. The fix is this NEW, separate, positive-evidence
+# marker, printed exactly once the moment a real buffer crosses the mux --
+# these tests prove the marker itself (the daemon-side escalation tests in
+# ``test_daemon_first_output_timeout_relaunch.py`` prove the consuming half).
 
 
-def test_arm_stall_watchdog_skips_scheduling_when_both_budgets_disabled(
-    engine_module, monkeypatch: pytest.MonkeyPatch
+def test_first_output_marker_prints_once_when_output_first_advances(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    calls: list[Any] = []
-    monkeypatch.setattr(
-        engine_module.GLib, "timeout_add_seconds", lambda *a, **k: calls.append((a, k))
-    )
-    engine = _bare_engine(engine_module, first_output_timeout_s=0.0, stall_timeout_s=0.0)
+    clock = {"t": 5.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(engine_module.os, "getpid", lambda: 4242)
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine._loop = _FakeLoop()
+    engine._playing_reached_at = 5.0  # PLAYING was reached at this same instant
+
+    engine._output_buffers = 1
+    clock["t"] = 8.5
+    assert engine._check_stall() is True
+
+    err = capsys.readouterr().err
+    assert "CTRL first-output: first buffer after 3.5s pid=4242" in err
+    assert engine._first_output_marker_printed is True
+
+
+def test_first_output_marker_never_prints_twice(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clock = {"t": 0.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine._loop = _FakeLoop()
+    engine._playing_reached_at = 0.0
+
+    for i in range(1, 4):
+        engine._output_buffers = i
+        clock["t"] += 1.0
+        assert engine._check_stall() is True
+
+    err = capsys.readouterr().err
+    assert err.count("CTRL first-output: first buffer after") == 1
+
+
+def test_first_output_marker_prints_at_arm_time_when_output_already_flowed(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Round-2 review item 4's own scenario: a buffer can cross the mux
+    DURING preroll, before ``_arm_stall_watchdog`` is ever called (the
+    output-counter probe is installed before ``set_state(PLAYING)``, and
+    ``_await_playing`` can return well after buffers start flowing). The
+    marker must still print -- the daemon's evidence check must never miss
+    real output just because it happened to arrive before arming."""
+    clock = {"t": 10.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(engine_module.GLib, "timeout_add_seconds", lambda *a, **k: None)
+    monkeypatch.setattr(engine_module.os, "getpid", lambda: 777)
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine._playing_reached_at = 7.0  # PLAYING reached 3s before this arm call
+    engine._output_buffers = 5  # already flowing before arm
 
     engine._arm_stall_watchdog()
 
-    assert calls == []
+    assert engine._first_output_seen is True  # item 4's own fix
+    err = capsys.readouterr().err
+    assert "CTRL first-output: first buffer after 3.0s pid=777" in err
+
+
+def test_first_output_marker_falls_back_to_zero_elapsed_when_playing_never_recorded(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Defensive fallback: ``_playing_reached_at`` stays ``None`` if
+    ``_maybe_print_first_output_marker`` is ever reached without
+    ``_await_playing`` having run (should not happen in production, but must
+    never raise) -- the elapsed text degrades to 0.0s rather than crashing."""
+    clock = {"t": 42.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine._loop = _FakeLoop()
+    assert engine._playing_reached_at is None
+
+    engine._output_buffers = 1
+    engine._check_stall()
+
+    err = capsys.readouterr().err
+    assert "CTRL first-output: first buffer after 0.0s" in err
+
+
+# --- _arm_stall_watchdog: arms unless BOTH budgets are disabled ----------------------
+#
+# Coordinator review round 2: ``first_output_timeout_s=0.0`` is an UNREACHABLE
+# configuration through the real constructor -- ``_resolve_first_output_
+# timeout_s`` always clamps to ``[10, 120]``, so no real ``GstPlayoutEngine``
+# can ever have this attribute at 0. Two tests here used to construct a bare
+# engine and set that attribute directly (bypassing the resolver entirely) to
+# exercise the ``_arm_stall_watchdog``/``_check_stall`` "both budgets
+# disabled" branch -- removed rather than kept, since a passing test against
+# a state the product can never reach is misleading, not coverage.
+# ``test_arm_stall_watchdog_still_arms_when_only_stall_timeout_is_disabled``
+# below already covers the one REACHABLE disabled-budget state
+# (``stall_timeout_s <= 0`` alone, which IS a real, unclamped, operator-
+# settable value via ``CIVICCAST_STALL_TIMEOUT_S``).
 
 
 def test_arm_stall_watchdog_still_arms_when_only_stall_timeout_is_disabled(

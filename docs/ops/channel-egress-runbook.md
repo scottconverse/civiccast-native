@@ -603,12 +603,34 @@ a bounced channel is the same failure mode as any other:
   silently dead after already airing (a frozen live source that never posts
   an error) -- treat it as a genuine on-air interruption, not a slow start.
 
-Both lines land in the operator state row's `last_error` (folded from the
-worker's stderr tail); the exit code the daemon actually observed
+A THIRD line, `CTRL first-output: first buffer after Ns pid=N` (item 84
+Round-2 review), is not a failure -- it is the positive-evidence marker a
+worker prints exactly once, the moment its first TS buffer actually crosses
+the mux. It is the daemon's own on-air evidence for the GStreamer strategy
+(`EgressDaemon._observed_on_air_evidence`): a worker that only ever prints
+`CTRL preroll: reached PLAYING` and never this marker is NOT credited as
+on-air, on purpose -- reaching `PLAYING` is not proof any output ever
+flowed, and treating it as such was the measured cause of a worker that
+kept reaching `PLAYING` on every relaunch, but never producing output,
+resetting its own crash-loop streak forever instead of ever escalating to
+fallback slate.
+
+Both failure lines land in the operator state row's `last_error` (folded
+from the worker's stderr tail); the exit code the daemon actually observed
 (`GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE` vs the ordinary crash code for a
 `("stall", ...)` exit vs `GST_PREROLL_TIMEOUT_EXIT_CODE`) is not itself
 operator-visible, so the stderr marker text is the fastest way to tell the
-three apart when triaging a relaunch storm.
+three failure shapes apart when triaging a relaunch storm.
+
+**`CIVICCAST_STALL_TIMEOUT_S=0` no longer disables output supervision.**
+Before item 84, setting this env var to `0` (or any non-positive value) fully
+disabled the stall watchdog -- a worker that silently stopped producing
+output, OR one that never produced any at all, would run forever with no
+daemon-driven restart. That opt-out now only covers the POST-first-buffer
+stall check (`CTRL stall: ...`, unchanged S9-5 semantics); the first-output
+budget (`CTRL first-output: no output within Ns ...`) is separate, floors at
+10s regardless of this env var, and cannot be disabled entirely -- a worker
+that never produces a single output buffer is always eventually restarted.
 
 ## What To Do With Failures
 

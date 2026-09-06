@@ -437,6 +437,18 @@ class GstPlayoutEngine:
         # ``_output_buffers`` advance -- selects which of the two budgets
         # above ``_check_stall`` measures against.
         self._first_output_seen = False
+        # Item 84 Round-2 review BLOCKER: the moment ``_await_playing`` last
+        # observed a real PLAYING transition (``time.monotonic()``, set only
+        # on the success path) -- the reference point the NEW
+        # ``CTRL first-output: first buffer after Ns pid=N`` marker's ``Ns``
+        # is measured from. ``None`` until PLAYING is actually reached.
+        self._playing_reached_at: float | None = None
+        # Item 84 Round-2 review BLOCKER: latched True the FIRST time the
+        # ``CTRL first-output: ...`` marker is printed (see
+        # ``_maybe_print_first_output_marker``) so it never prints twice for
+        # one run, independent of ``_first_output_seen``'s own re-arm-per-call
+        # semantics (see ``_arm_stall_watchdog``).
+        self._first_output_marker_printed = False
         # Item 82: bounded PLAYING-preroll wait (see ``_await_playing`` / the
         # module-level ``_resolve_preroll_timeout_s`` for the constructor-arg /
         # env-var / default resolution and clamp).
@@ -1336,8 +1348,58 @@ class GstPlayoutEngine:
             return
         self._stall_last_count = self._output_buffers
         self._stall_last_advance_t = time.monotonic()
-        self._first_output_seen = False
+        # Item 84 Round-2 review item 4: a buffer can cross the mux DURING
+        # preroll/PLAYING, before ``run_forever`` gets around to calling this
+        # (``_install_output_counter`` is installed before ``set_state
+        # (PLAYING)``, well before this arm call) -- hardcoding
+        # ``_first_output_seen = False`` here would wrongly re-open the
+        # first-output budget for output that already happened, and could
+        # let a genuinely-producing pipeline that goes quiet right after arm
+        # get the wrong (more generous) budget applied to what is actually a
+        # post-first-buffer stall.
+        self._first_output_seen = self._output_buffers > 0
+        if self._first_output_seen:
+            self._maybe_print_first_output_marker()
         GLib.timeout_add_seconds(1, self._check_stall)
+
+    def _maybe_print_first_output_marker(self) -> None:
+        """Item 84 Round-2 review BLOCKER: print the pid-tagged
+        ``CTRL first-output: first buffer after Ns pid=N`` marker exactly
+        once, the moment the FIRST TS buffer/buffer-list is observed crossing
+        the mux -- distinct from, and more meaningful than, the ``CTRL
+        preroll: reached PLAYING`` marker.
+
+        Measured escalation-cliff BLOCKER this closes: PLAYING (even
+        NO_PREROLL) is not evidence output ever flowed, but
+        ``EgressDaemon._observed_on_air_evidence`` used to credit the
+        PLAYING marker alone as on-air evidence for the GStreamer strategy --
+        a worker that reaches PLAYING on every single relaunch but never
+        crosses ``first_output_timeout_s`` (at ANY configured value, 65s
+        through the 120s clamp ceiling) got its crash-loop streak reset on
+        every cycle by the ALIVE-poll path, and never escalated to fallback
+        slate (streak pinned at 1) even though it never once produced real
+        output. ``civiccast.egress.health.worker_produced_output`` greps for
+        this exact marker, anchored to the same spawn offset and pid check as
+        ``worker_reached_playing``, and the daemon's alive-poll evidence
+        check now requires THIS marker (not PLAYING) for a GStreamer-strategy
+        channel -- see ``EgressDaemon._observed_on_air_evidence``. No budget
+        value can defeat escalation now: PLAYING alone is never sufficient."""
+        if self._first_output_marker_printed:
+            return
+        self._first_output_marker_printed = True
+        elapsed = (
+            time.monotonic() - self._playing_reached_at
+            if self._playing_reached_at is not None
+            else 0.0
+        )
+        print(
+            # ASCII only, stable prefix -- a parsed contract like the PLAYING
+            # marker above, not just a human-readable log line (see
+            # ``civiccast.egress.health.worker_produced_output``).
+            f"CTRL first-output: first buffer after {elapsed:.1f}s pid={os.getpid()}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     def _check_stall(self) -> bool:
         """Quit the run loop on either of two DISTINCT budgets, measured from
@@ -1361,6 +1423,7 @@ class GstPlayoutEngine:
         now = time.monotonic()
         if self._output_buffers != self._stall_last_count:
             self._first_output_seen = True
+            self._maybe_print_first_output_marker()
             self._stall_last_count = self._output_buffers
             self._stall_last_advance_t = now
             return True  # output advancing — keep watching
@@ -1487,6 +1550,13 @@ class GstPlayoutEngine:
                     file=sys.stderr,
                     flush=True,
                 )
+                # Item 84 Round-2 review BLOCKER: the reference point the
+                # NEW ``CTRL first-output: ...`` marker's ``Ns`` measures
+                # from -- see ``_maybe_print_first_output_marker``. PLAYING
+                # itself is deliberately NOT treated as on-air evidence
+                # anywhere downstream; this timestamp only feeds that
+                # marker's elapsed-time text.
+                self._playing_reached_at = time.monotonic()
                 return
             if result == Gst.StateChangeReturn.FAILURE:
                 # Not a slow preroll -- the pipeline itself failed. Distinct from

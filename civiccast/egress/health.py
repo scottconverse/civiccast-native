@@ -58,6 +58,25 @@ _PLAYING_REACHED_RE = re.compile(
     r"^CTRL preroll: reached PLAYING after [0-9]+(?:\.[0-9]+)?s(?: pid=(?P<pid>[0-9]+))?"
 )
 
+#: Item 84 Round-2 review BLOCKER: the ONLY genuine evidence that a GStreamer
+#: worker's pipeline has actually pushed a TS buffer past the mux -- printed
+#: by ``civiccast.egress.gst.engine.GstPlayoutEngine.
+#: _maybe_print_first_output_marker`` exactly once, the moment the first
+#: buffer/buffer-list is observed. Deliberately a SEPARATE, later piece of
+#: evidence than ``_PLAYING_REACHED_RE`` above: the reviewer measured that
+#: crediting the PLAYING marker alone as on-air evidence let a worker that
+#: reaches PLAYING on every relaunch but never produces a buffer (at ANY
+#: ``first_output_timeout_s`` from 65s through the 120s clamp ceiling) get
+#: its crash-loop streak reset every alive-poll cycle -- the streak never
+#: escalated to fallback slate (pinned at 1) no matter how the budget was
+#: configured. ``worker_produced_output`` below is what
+#: ``EgressDaemon._observed_on_air_evidence`` now requires for the GStreamer
+#: strategy instead of ``worker_reached_playing`` -- PLAYING is kept as a log
+#: signal only, never again as on-air evidence.
+_FIRST_OUTPUT_RE = re.compile(
+    r"^CTRL first-output: first buffer after [0-9]+(?:\.[0-9]+)?s(?: pid=(?P<pid>[0-9]+))?"
+)
+
 #: Round-4 (PR #183 review, BLOCKER reproduced): bound on how many bytes past
 #: a worker's spawn offset ``worker_reached_playing`` /
 #: ``read_ffmpeg_encoder_metrics_since`` will scan. Round-3's fix greped the
@@ -154,6 +173,57 @@ def worker_reached_playing(path: Path, *, offset: int = 0, expected_pid: int | N
         return False
     for line in text.splitlines():
         match = _PLAYING_REACHED_RE.match(line)
+        if match is None:
+            continue
+        pid_group = match.group("pid")
+        if expected_pid is not None and pid_group is not None and int(pid_group) != expected_pid:
+            continue
+        return True
+    return False
+
+
+def worker_produced_output(path: Path, *, offset: int = 0, expected_pid: int | None = None) -> bool:
+    """Return whether the CURRENT worker's stderr log shows real evidence it
+    pushed at least one output buffer past the mux (see ``_FIRST_OUTPUT_RE``)
+    -- the GStreamer-strategy on-air evidence ``EgressDaemon.
+    _observed_on_air_evidence`` requires instead of ``worker_reached_playing``
+    (item 84 Round-2 review BLOCKER).
+
+    ``worker_reached_playing`` alone was NOT sufficient evidence of on-air
+    output: reaching PLAYING (even ``NO_PREROLL``) is not proof a single
+    buffer ever crossed the mux, and item 84 measured the exact consequence
+    of treating it as such -- a worker that reaches PLAYING on every single
+    relaunch but never actually produces output (at ANY
+    ``first_output_timeout_s`` value, 65s through the 120s clamp ceiling)
+    got its crash-loop streak reset by the alive-poll path on every cycle,
+    and never escalated to fallback slate (streak pinned at 1) no matter how
+    long the budget ran. This function requires the LATER, stronger
+    ``CTRL first-output: ...`` marker instead -- printed by
+    ``GstPlayoutEngine._maybe_print_first_output_marker`` exactly once, the
+    moment the mux's pad probe actually observes a buffer.
+
+    Same anchoring contract as ``worker_reached_playing`` (see that
+    function's docstring for the full round-4 append-log rationale this
+    mirrors exactly): ``offset`` anchors the read to the CURRENT worker's own
+    spawn point so a PREVIOUS worker's marker (which always sits before that
+    offset in the shared, append-mode, never-truncated-per-spawn log) is
+    never read at all; ``expected_pid``, when given, is compared against the
+    marker's own ``pid=`` group as a second, independent check that holds
+    even if the byte offset were ever wrong. Unlike the legacy PLAYING
+    marker's optional pid group (kept for older-binary/hand-written-fixture
+    tolerance), this NEW marker always carries a pid -- every current
+    printer of it supplies one -- but the regex still tolerates a fixture
+    that omits it, matching on offset evidence alone in that case, same
+    fail-open-on-missing-pid posture as the PLAYING check.
+
+    Missing/unreadable log -> False, same fail-closed default as
+    ``worker_reached_playing``."""
+
+    text = _read_from_offset(path, offset)
+    if text is None:
+        return False
+    for line in text.splitlines():
+        match = _FIRST_OUTPUT_RE.match(line)
         if match is None:
             continue
         pid_group = match.group("pid")

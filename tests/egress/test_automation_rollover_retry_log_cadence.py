@@ -14,6 +14,14 @@ once per 60s while the retry stays gated (DEBUG for every other gated tick), and
 separate WARNING fires when the retry actually dispatches. The gating logic itself
 (the two floor checks) is unchanged -- only the log cadence changes.
 
+Coordinator review round 2 (item 3): the "worker pid has only been alive Ns" WARNING
+(a DIFFERENT log line than "did not land", gated on the worker-pid-age floor
+specifically) had the exact same defect and was still firing on every gated tick
+after round 1's fix landed -- measured 150 WARNINGs per 300s. It now has its own,
+separately-bookkept cadence limit (``_rollover_pid_age_warned_at``), same rule.
+``test_pid_age_deferred_warning_cadence_is_rate_limited`` below covers it in
+isolation.
+
 This test drives ``ChannelAutomationService`` directly (mirrors
 ``tests/egress/test_automation.py``'s own fixtures/helpers) and asserts on log record
 levels via ``caplog``, decoupling the MONOTONIC clock (which gates retries/pid-age)
@@ -242,3 +250,87 @@ def test_rollover_retry_dispatch_clears_the_warn_cadence_for_a_future_window(cap
     service.run_once(now=later)
     assert _pending_actions(store, "public") == ["reload"]
     assert "public" not in service._rollover_retry_warned_at
+
+
+def test_pid_age_deferred_warning_cadence_is_rate_limited(caplog) -> None:
+    """Coordinator review round 2, item 3: the "worker pid has only been
+    alive Ns" WARNING is a SEPARATE log line from "did not land" (gated on
+    the worker-pid-age floor specifically, not the issued-timeout crossing)
+    and had the identical defect -- still fired on every single gated tick
+    even after round 1's "did not land" cadence fix landed, measured at 150
+    WARNINGs per 300s. Proves it independently: first gated tick -> WARNING,
+    a later tick still under the 60s repeat interval -> DEBUG only, and a
+    tick 60s past the first WARNING (while STILL gated by pid age) ->
+    WARNING again."""
+    caplog.set_level(logging.DEBUG, logger="civiccast.egress.automation")
+    clock = {"t": 0.0}
+    store = InMemoryEgressStore()
+    store.upsert_config(_config("public"))
+    _write_on_air_state(store, "public", proof_event_id="ev-1", pid=100)
+    daemon = _FakeDaemon(live_channels={"public"})
+    calls = {"n": 0}
+
+    def provider(_cid: str) -> EgressSourcePlan:
+        calls["n"] += 1
+        return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+
+    service = ChannelAutomationService(
+        store,
+        daemon,
+        provider,
+        settings=ChannelAutomationSettings(),
+        monotonic=lambda: clock["t"],
+    )
+
+    service.run_once(now=_NOW)
+    later = _NOW + timedelta(seconds=35)
+    service.run_once(now=later)
+    assert _pending_actions(store, "public") == ["reload"]
+
+    def _pid_age_warnings() -> list[str]:
+        return [
+            r.message
+            for r in caplog.records
+            if r.levelname == "WARNING" and "worker pid has only been alive" in r.message
+        ]
+
+    def _pid_age_debugs() -> list[str]:
+        return [
+            r.message
+            for r in caplog.records
+            if r.levelname == "DEBUG" and "still deferred" in r.message
+        ]
+
+    # t=46: past the 45s issued-timeout, pid age 46s < the 60s worker-age
+    # floor -- gated, and the FIRST tick to hit this specific gate: exactly
+    # one pid-age WARNING.
+    clock["t"] = 46.0
+    caplog.clear()
+    service.run_once(now=later)
+    assert _pending_actions(store, "public") == []
+    assert len(_pid_age_warnings()) == 1
+
+    # t=50: still gated (pid age 50s), still well under the 60s repeat
+    # interval since the pid-age WARNING's own last log (t=46) -- DEBUG only.
+    clock["t"] = 50.0
+    caplog.clear()
+    service.run_once(now=later)
+    assert _pending_actions(store, "public") == []
+    assert _pid_age_warnings() == []
+    assert len(_pid_age_debugs()) >= 1
+
+    # t=106: 60s past the pid-age WARNING's own last log (t=46), and STILL
+    # gated (pid age 106s -- wait, that would be past the 60s floor and
+    # dispatch; use a relaunched, still-young pid instead, exactly like the
+    # "did not land" cadence test's own approach, to hold this gate open).
+    clock["t"] = 55.0
+    _write_on_air_state(store, "public", proof_event_id="ev-1", pid=200)
+    caplog.clear()
+    service.run_once(now=later)
+    assert _pending_actions(store, "public") == []  # gated again by the fresh pid's age
+
+    clock["t"] = 106.0  # 60s after the pid-age WARNING's own last log at t=46
+    caplog.clear()
+    service.run_once(now=later)
+    assert _pending_actions(store, "public") == []  # pid 200's age is 51s -- still gated
+    assert len(_pid_age_warnings()) == 1

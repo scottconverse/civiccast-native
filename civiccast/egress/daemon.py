@@ -53,7 +53,7 @@ from civiccast.egress.health import (
     encoder_has_progress,
     read_ffmpeg_encoder_metrics_since,
     read_latest_ffmpeg_encoder_metrics,
-    worker_reached_playing,
+    worker_produced_output,
 )
 from civiccast.egress.models import (
     CaptionStatus,
@@ -1449,34 +1449,48 @@ class EgressDaemon:
         Two encoder families, two evidence sources, either is sufficient:
 
         * GStreamer (``civiccast.egress.gst.engine.GstPlayoutEngine``): the
-          ``CTRL preroll: reached PLAYING`` stderr marker
-          ``_await_playing`` prints ONLY on the success path (see
-          ``civiccast.egress.health.worker_reached_playing``). This is the
-          exact evidence the reviewer asked for -- it means the pipeline
-          actually reached PLAYING, not just that spawn-to-now hasn't hit an
-          arbitrary wall-clock threshold. Belt-and-braces on top of the
-          offset anchor: the marker also carries the printing worker's own
-          pid, and ``worker_reached_playing`` is given the CURRENT worker's
-          pid (from ``self._processes[channel_id]``) to require against it,
-          so even a marker that somehow lands at or after the offset (e.g. a
-          test fixture, or a log-rotation edge case) cannot be credited to
-          the wrong worker.
+          ``CTRL first-output: ...`` stderr marker
+          ``_maybe_print_first_output_marker`` prints ONLY once a real TS
+          buffer has crossed the mux (see
+          ``civiccast.egress.health.worker_produced_output``).
+
+          Item 84 Round-2 review BLOCKER, CORRECTING this function's own
+          prior text directly above (which cited the ``CTRL preroll:
+          reached PLAYING`` marker / ``worker_reached_playing`` as
+          sufficient evidence here): PLAYING (even ``NO_PREROLL``) is NOT
+          evidence a single buffer ever crossed the mux. The reviewer
+          measured the exact consequence of treating it as such -- a worker
+          that reaches PLAYING on every single relaunch but never produces
+          real output (at ANY ``first_output_timeout_s`` from 65s through
+          the 120s clamp ceiling) got its crash-loop streak reset by THIS
+          alive-poll path on every cycle, and never escalated to fallback
+          slate (streak pinned at 1) no matter how long the budget ran.
+          ``worker_reached_playing``/the PLAYING marker are UNCHANGED and
+          still printed (useful for operator logs and for
+          ``EgressDaemon._poll_process``'s own on-air-evidence-latch
+          docstring elsewhere), but this evidence gate now requires the
+          LATER, stronger ``worker_produced_output`` instead -- same
+          spawn-offset anchor and pid check as ``worker_reached_playing``
+          (see that function's own docstring for the full round-4
+          append-log rationale, which applies unchanged here), so even a
+          marker that somehow lands at or after the offset cannot be
+          credited to the wrong worker.
         * FFmpeg (the other encoder strategy this daemon can launch): no
-          PLAYING marker exists, but ``read_ffmpeg_encoder_metrics_since``
+          output marker exists, but ``read_ffmpeg_encoder_metrics_since``
           parses live fps=/bitrate= progress out of the same stderr log,
           anchored the same way -- reused here via ``encoder_has_progress``
           as the FFmpeg-side equivalent: real encoding progress is at least
-          as strong a signal as a GStreamer PLAYING transition, and without
-          this branch an FFmpeg-encoded channel would NEVER get its
-          healthy-uptime reset at all (the PLAYING marker only ever appears
-          in a GStreamer worker's log).
+          as strong a signal as a GStreamer worker's first output buffer,
+          and without this branch an FFmpeg-encoded channel would NEVER get
+          its healthy-uptime reset at all (the GStreamer markers only ever
+          appear in a GStreamer worker's log).
         """
         log_path = self._stderr_logs.get(channel_id)
         if log_path is None:
             return False
         offset = self._stderr_spawn_offset.get(channel_id, 0)
         expected_pid = _process_pid(self._processes.get(channel_id))
-        if worker_reached_playing(log_path, offset=offset, expected_pid=expected_pid):
+        if worker_produced_output(log_path, offset=offset, expected_pid=expected_pid):
             return True
         return encoder_has_progress(read_ffmpeg_encoder_metrics_since(log_path, offset=offset))
 

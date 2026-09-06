@@ -13,6 +13,7 @@ from civiccast.egress.health import (
     parse_ffmpeg_encoder_metrics_line,
     read_ffmpeg_encoder_metrics_since,
     read_latest_ffmpeg_encoder_metrics,
+    worker_produced_output,
     worker_reached_playing,
 )
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
@@ -238,6 +239,88 @@ class TestWorkerReachedPlaying:
         log_path.write_text("CTRL preroll: reached PLAYING after 1.0s\n", encoding="utf-8")
 
         assert worker_reached_playing(log_path, offset=10_000) is True
+
+
+class TestWorkerProducedOutput:
+    """Item 84 Round-2 review BLOCKER: the daemon's on-air evidence gate for
+    the GStreamer strategy now requires THIS marker, not
+    ``worker_reached_playing``'s PLAYING marker -- reaching PLAYING is not
+    proof any output ever crossed the mux, and crediting it as such let a
+    worker that reaches PLAYING on every relaunch but never produces output
+    reset its own crash-loop streak forever (measured: pinned at 1, never
+    escalating to fallback slate, at every tested budget from 65s through the
+    120s clamp ceiling). Mirrors ``TestWorkerReachedPlaying`` above exactly --
+    same anchoring/pid contract, different marker text."""
+
+    def test_true_when_the_marker_is_present(self, tmp_path: Path) -> None:
+        log_path = tmp_path / "gst-worker.stderr.log"
+        log_path.write_text(
+            "CTRL preroll: reached PLAYING after 0.3s pid=42\n"
+            "CTRL first-output: first buffer after 3.1s pid=42\n",
+            encoding="utf-8",
+        )
+
+        assert worker_produced_output(log_path) is True
+
+    def test_false_when_only_the_playing_marker_is_present(self, tmp_path: Path) -> None:
+        """The exact escalation-cliff scenario: PLAYING reached, but no
+        output ever produced -- this must read False, unlike the old
+        ``worker_reached_playing``-based gate which would have read True."""
+        log_path = tmp_path / "gst-worker.stderr.log"
+        log_path.write_text("CTRL preroll: reached PLAYING after 0.3s pid=42\n", encoding="utf-8")
+
+        assert worker_produced_output(log_path) is False
+        assert worker_reached_playing(log_path) is True  # contrast: PLAYING evidence alone
+
+    def test_false_on_a_missing_log(self, tmp_path: Path) -> None:
+        assert worker_produced_output(tmp_path / "nope.log") is False
+
+    def test_false_on_an_empty_log(self, tmp_path: Path) -> None:
+        log_path = tmp_path / "gst-worker.stderr.log"
+        log_path.write_text("", encoding="utf-8")
+
+        assert worker_produced_output(log_path) is False
+
+    def test_a_marker_before_the_spawn_offset_does_not_count(self, tmp_path: Path) -> None:
+        """Same append-mode-log anchoring contract as
+        ``TestWorkerReachedPlaying.test_a_marker_before_the_spawn_offset_does_not_count``."""
+        log_path = tmp_path / "gst-worker.stderr.log"
+        previous_worker_marker = "CTRL first-output: first buffer after 2.0s pid=111\n"
+        log_path.write_text(previous_worker_marker, encoding="utf-8")
+        spawn_offset = log_path.stat().st_size
+        log_path.write_text(
+            previous_worker_marker + "CTRL preroll: reached PLAYING after 1.0s pid=222\n",
+            encoding="utf-8",
+        )
+
+        assert worker_produced_output(log_path, offset=spawn_offset) is False
+        assert worker_produced_output(log_path, offset=0) is True
+
+    def test_pid_mismatch_refuses_a_marker_even_inside_the_scan_window(
+        self, tmp_path: Path
+    ) -> None:
+        log_path = tmp_path / "gst-worker.stderr.log"
+        log_path.write_text(
+            "CTRL first-output: first buffer after 2.0s pid=4242\n", encoding="utf-8"
+        )
+
+        assert worker_produced_output(log_path, expected_pid=4242) is True
+        assert worker_produced_output(log_path, expected_pid=9999) is False
+        assert worker_produced_output(log_path, expected_pid=None) is True
+
+    def test_a_marker_with_no_pid_group_is_accepted_on_offset_evidence_alone(
+        self, tmp_path: Path
+    ) -> None:
+        log_path = tmp_path / "gst-worker.stderr.log"
+        log_path.write_text("CTRL first-output: first buffer after 2.0s\n", encoding="utf-8")
+
+        assert worker_produced_output(log_path, expected_pid=4242) is True
+
+    def test_a_file_shrunk_below_the_offset_is_treated_as_rotated(self, tmp_path: Path) -> None:
+        log_path = tmp_path / "gst-worker.stderr.log"
+        log_path.write_text("CTRL first-output: first buffer after 1.0s\n", encoding="utf-8")
+
+        assert worker_produced_output(log_path, offset=10_000) is True
 
 
 class TestReadFfmpegEncoderMetricsSince:

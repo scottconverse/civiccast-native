@@ -64,17 +64,36 @@ class _WorkerStrategy:
     supports_live_swap = True
     supports_content_reload = True
 
-    def __init__(self, processes: list[_FakeProcess], stderr_text: str = "") -> None:
+    def __init__(
+        self,
+        processes: list[_FakeProcess],
+        stderr_text: str = "",
+        *,
+        stderr_template: str | None = None,
+    ) -> None:
         self._processes = list(processes)
         self._stderr_text = stderr_text
+        # Item 84 Round-2 review BLOCKER coverage: some tests need the
+        # PLAYING/first-output markers to carry the ACTUAL fake process's own
+        # pid (the daemon's evidence check requires a pid match) -- a plain
+        # ``stderr_text`` string can't do that across multiple different
+        # relaunched workers with different pids, so ``stderr_template`` is
+        # formatted with ``pid=<this start's process.pid>`` instead, when
+        # given (wins over ``stderr_text``).
+        self._stderr_template = stderr_template
 
     def start(self, request: EncoderStartRequest) -> EncoderStartResult:
         process = self._processes.pop(0)
         log_dir = request.work_dir / request.channel_id / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         stderr_path = log_dir / "gst-worker.stderr.log"
+        text = (
+            self._stderr_template.format(pid=process.pid)
+            if self._stderr_template is not None
+            else self._stderr_text
+        )
         with stderr_path.open("a", encoding="utf-8") as handle:
-            handle.write(self._stderr_text)
+            handle.write(text)
         return EncoderStartResult(
             process=process,
             concat_plan_path=request.work_dir / "playout-graph.json",
@@ -133,6 +152,7 @@ def _daemon_with_fake_clock(
     processes: list[_FakeProcess],
     clock: dict[str, float],
     with_fallback: bool = False,
+    stderr_template: str | None = None,
 ) -> EgressDaemon:
     store = InMemoryEgressStore()
     store.upsert_config(_config())
@@ -142,6 +162,7 @@ def _daemon_with_fake_clock(
         stderr_text=(
             "CTRL first-output: no output within 45s of PLAYING - quitting for daemon restart\n"
         ),
+        stderr_template=stderr_template,
     )
     return EgressDaemon(
         store,
@@ -157,6 +178,33 @@ def _daemon_with_fake_clock(
         # so only _restart_streak's own logic is under test.
         restart_cooldown_seconds=0.0,
     )
+
+
+def _run_alive_then_exit_cycle(
+    daemon: EgressDaemon,
+    clock: dict[str, float],
+    *,
+    lifetime_s: float,
+    exit_code: int,
+    tick_s: float = 2.0,
+) -> None:
+    """Mirrors ``test_daemon_preroll_timeout_relaunch.py``'s own helper of the
+    same name: advances the fake clock in ``tick_s`` slices while 'gov's
+    tracked worker process reports still-alive (driving the REAL
+    ``_poll_process`` alive-poll branch, and with it
+    ``_observed_on_air_evidence``, through ``daemon.process_once``) for
+    ``lifetime_s``, then exits that same process with ``exit_code``."""
+    elapsed = 0.0
+    while elapsed < lifetime_s:
+        clock["t"] += tick_s
+        elapsed += tick_s
+        process = daemon._processes.get("gov")
+        assert process is not None, "expected the worker still tracked as alive"
+        daemon.process_once("gov")
+    process = daemon._processes.get("gov")
+    assert process is not None, "expected the worker still tracked as alive at exit"
+    process.returncode = exit_code
+    daemon.process_once("gov")
 
 
 def test_first_output_timeout_exit_is_rate_limited_to_once_per_minute(tmp_path: Path) -> None:
@@ -371,3 +419,139 @@ def test_sustained_first_output_timeouts_at_45s_still_reach_fallback_slate(
     assert daemon._store.read_state("gov").state == "FALLBACK_SLATE"
     assert daemon._restart_streak["gov"] >= 5
     assert reached_at == 405.0
+
+
+# --- Coordinator review round 2, BLOCKER: the escalation cliff ----------------------
+#
+# ``_MAX_FIRST_OUTPUT_TIMEOUT_S`` (120) exceeds ``_RESTART_STREAK_RESET_UPTIME_S``
+# (60, the ALIVE-poll healthy-uptime reset threshold), and item 84's own failure
+# mode prints ``CTRL preroll: reached PLAYING after 0.3s pid=N`` on every single
+# relaunch -- which ``_observed_on_air_evidence`` used to accept as sufficient
+# on-air evidence for the GStreamer strategy. Measured with the PLAYING marker
+# present in the fixture and NO first-output marker (the worker never actually
+# produces output): at budgets 65s/90s/120s the streak reset on every alive-poll
+# cycle and NEVER escalated (pinned at 1); at 45s-60s it did escalate, because the
+# worker's "alive" window (< the reset threshold) never gave the reset a chance to
+# fire. This is now fixed -- ``_observed_on_air_evidence`` requires the NEW,
+# separate ``CTRL first-output: ...`` marker (``worker_produced_output``), which
+# these workers never print -- so escalation must now happen at BOTH bounds below,
+# not only the ones that happened to dodge the reset by dying fast enough.
+
+
+def _run_sustained_first_output_timeout_cycles_with_alive_ticks(
+    daemon: EgressDaemon,
+    clock: dict[str, float],
+    *,
+    lifetime_s: float,
+    max_cycles: int,
+) -> float:
+    """The alive-poll-path twin of ``_run_sustained_first_output_timeout_cycles``
+    above: each cycle keeps 'gov's worker reporting alive for ``lifetime_s`` of
+    real 2s-tick polls (the fixture's stderr carries the PLAYING marker but NEVER
+    the first-output one) before it actually exits with
+    ``GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE``. Returns the clock time the channel
+    first reads FALLBACK_SLATE; raises if it never does within ``max_cycles``."""
+    assert daemon.process_once("gov") == 1
+    for _ in range(max_cycles):
+        _run_alive_then_exit_cycle(
+            daemon, clock, lifetime_s=lifetime_s, exit_code=GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE
+        )
+        if daemon._store.read_state("gov").state == "FALLBACK_SLATE":
+            return clock["t"]
+    raise AssertionError(f"channel never reached FALLBACK_SLATE within {max_cycles} cycles")
+
+
+def test_playing_marker_alone_does_not_block_escalation_at_the_45s_budget(
+    tmp_path: Path,
+) -> None:
+    """Requirement: at the engine's DEFAULT 45s first-output budget, a source
+    that reaches PLAYING every single relaunch but NEVER produces output must
+    still escalate to fallback slate -- the PLAYING marker alone is not
+    on-air evidence."""
+    clock = {"t": 0.0}
+    processes = [_FakeProcess(pid=2900 + i) for i in range(20)]
+    daemon = _daemon_with_fake_clock(
+        tmp_path,
+        processes=processes,
+        clock=clock,
+        with_fallback=True,
+        stderr_template="CTRL preroll: reached PLAYING after 0.3s pid={pid}\n",
+    )
+
+    reached_at = _run_sustained_first_output_timeout_cycles_with_alive_ticks(
+        daemon, clock, lifetime_s=45.0, max_cycles=20
+    )
+
+    assert daemon._store.read_state("gov").state == "FALLBACK_SLATE"
+    assert daemon._restart_streak["gov"] >= 5
+    assert reached_at > 0.0
+
+
+def test_playing_marker_alone_does_not_block_escalation_at_the_120s_clamp_ceiling(
+    tmp_path: Path,
+) -> None:
+    """The exact BLOCKER reproduction: at the MAXIMUM configurable
+    ``first_output_timeout_s`` (120s, past ``_RESTART_STREAK_RESET_UPTIME_S``
+    of 60s), a worker that reaches PLAYING every relaunch but never produces
+    output must STILL escalate to fallback slate. Before this fix, the
+    PLAYING-marker-as-evidence gate reset the streak every alive-poll cycle
+    once uptime crossed 60s, and the channel never escalated (streak pinned
+    at 1) no matter how many cycles ran."""
+    clock = {"t": 0.0}
+    processes = [_FakeProcess(pid=3000 + i) for i in range(20)]
+    daemon = _daemon_with_fake_clock(
+        tmp_path,
+        processes=processes,
+        clock=clock,
+        with_fallback=True,
+        stderr_template="CTRL preroll: reached PLAYING after 0.3s pid={pid}\n",
+    )
+
+    reached_at = _run_sustained_first_output_timeout_cycles_with_alive_ticks(
+        daemon, clock, lifetime_s=120.0, max_cycles=20
+    )
+
+    assert daemon._store.read_state("gov").state == "FALLBACK_SLATE"
+    assert daemon._restart_streak["gov"] >= 5
+    assert reached_at > 0.0
+
+
+def test_a_worker_that_produces_output_and_lives_60s_does_reset_the_streak(
+    tmp_path: Path,
+) -> None:
+    """The positive contrast case: a worker that prints the REAL
+    ``CTRL first-output: ...`` marker (genuine on-air evidence), then keeps
+    running for a full 60s past that, DOES get its crash-loop streak reset --
+    proving the fix does not just refuse the PLAYING-only case, it still
+    resets for the RIGHT reason (real output, held for the healthy-uptime
+    window)."""
+    clock = {"t": 0.0}
+    processes = [_FakeProcess(pid=3100 + i) for i in range(2)]
+    daemon = _daemon_with_fake_clock(
+        tmp_path,
+        processes=processes,
+        clock=clock,
+        stderr_template=(
+            "CTRL preroll: reached PLAYING after 0.3s pid={pid}\n"
+            "CTRL first-output: first buffer after 0.6s pid={pid}\n"
+        ),
+    )
+    assert daemon.process_once("gov") == 1
+    daemon._restart_streak["gov"] = 3  # a live streak from earlier, unrelated trouble
+
+    # First alive poll tick: evidence is observed and latched, but 0s have
+    # elapsed since -- must NOT reset yet.
+    clock["t"] += 2.0
+    daemon.process_once("gov")
+    assert daemon._restart_streak["gov"] == 3
+    assert "gov" in daemon._on_air_confirmed_at
+
+    # Short of the 60s healthy-uptime window since evidence was first seen.
+    clock["t"] += 55.0
+    daemon.process_once("gov")
+    assert daemon._restart_streak["gov"] == 3
+
+    # Past the 60s window since evidence was first observed: now it resets.
+    clock["t"] += 10.0
+    daemon.process_once("gov")
+    assert "gov" not in daemon._restart_streak

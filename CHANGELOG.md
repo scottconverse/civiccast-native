@@ -1316,6 +1316,71 @@ below.
     output after airing" (`CTRL stall: ...`, S9-5/unchanged) -- read the
     exact marker before assuming a channel bounce is the same failure mode
     as any other stall.
+  - **Round-2 review BLOCKER (2026-09-06), fixed same day: an escalation
+    cliff in the fix directly above.** `_MAX_FIRST_OUTPUT_TIMEOUT_S` (120)
+    exceeds the daemon's ALIVE-poll healthy-uptime reset threshold
+    (`_RESTART_STREAK_RESET_UPTIME_S`, 60s), and item 84's own failure mode
+    prints `CTRL preroll: reached PLAYING after 0.3s pid=N` on every single
+    relaunch -- which `EgressDaemon._observed_on_air_evidence` accepted as
+    sufficient GStreamer on-air evidence (unchanged from before item 84,
+    predating this fix). Measured with that marker present and the worker
+    never actually producing output: at `first_output_timeout_s`
+    65s/90s/120s the crash-loop streak reset on every alive-poll cycle and
+    NEVER escalated to fallback slate (streak pinned at 1); at 45s-60s
+    escalation still worked, purely because the worker's alive window never
+    crossed the 60s reset threshold before it exited. PLAYING is not
+    evidence output ever flowed -- fixed properly rather than by re-tuning
+    the clamp: `GstPlayoutEngine` now prints a SEPARATE, new, pid-tagged
+    marker exactly once, the moment the first real mux buffer is observed
+    (`CTRL first-output: first buffer after Ns pid=N`,
+    `_maybe_print_first_output_marker`); `civiccast.egress.health` gained
+    `worker_produced_output`, the parsing counterpart to
+    `worker_reached_playing` for this new marker (same spawn-offset/pid
+    anchoring contract); and `EgressDaemon._observed_on_air_evidence` now
+    requires `worker_produced_output` instead of `worker_reached_playing`
+    for the GStreamer strategy -- the PLAYING marker is kept (still
+    printed, still a genuine "reached PLAYING" log signal) but is no longer
+    sufficient on-air evidence on its own. No configured budget value can
+    defeat escalation now. Also this round: `_arm_stall_watchdog` used to
+    hardcode `_first_output_seen = False` on every arm, which could wrongly
+    re-open the first-output budget for a buffer that already crossed the
+    mux DURING preroll, before arming -- now
+    `self._first_output_seen = self._output_buffers > 0`.
+  - **Round-2 also fixed automation.py's own sibling defect the round-1
+    entry missed:** the "worker pid has only been alive Ns" deferred-WARNING
+    (gated on the worker-pid-age floor, a different condition than the "did
+    not land" WARNING above) still fired on every single gated tick after
+    round 1's fix landed (measured: 150 WARNINGs per 300s) -- now
+    rate-limited the same way, with its own bookkeeping
+    (`_rollover_pid_age_warned_at`) since the two WARNINGs gate on
+    different, independently-timed conditions.
+  - **Round-2 also corrected `docs/claims/claims.yaml`'s engine.py blob**,
+    which the round-1 entry recorded WRONG (a post-hash comment typo-fix
+    edit was never re-hashed before that entry was written; the recorded
+    value did not correspond to any object this repository had ever
+    produced) -- re-hashed via `git hash-object --path
+    civiccast/egress/gst/engine.py civiccast/egress/gst/engine.py` against
+    the file as it stands after every round-1 AND round-2 edit.
+  - **Round-2 additional tests:** `tests/egress/test_gst_engine_first_output_timeout.py`
+    gained `_maybe_print_first_output_marker` coverage (prints once, prints
+    at arm-time when output already flowed before arm -- round-2 item 4's
+    own scenario -- and the zero-elapsed fallback);
+    `tests/egress/test_health.py` gained `TestWorkerProducedOutput`
+    (mirrors `TestWorkerReachedPlaying`, including the
+    PLAYING-marker-alone-is-insufficient contrast case);
+    `tests/egress/test_daemon_first_output_timeout_relaunch.py` gained the
+    escalation-cliff reproduction itself (sustained cycles at the 45s
+    default AND the 120s clamp ceiling with the PLAYING marker present but
+    the output marker absent -- both must reach `FALLBACK_SLATE` -- and the
+    positive case: a worker printing the real output marker and holding it
+    60s DOES reset the streak); and
+    `tests/egress/test_automation_rollover_retry_log_cadence.py` gained a
+    dedicated test isolating the pid-age WARNING's own cadence. Two
+    engine-side tests that assigned `first_output_timeout_s = 0.0` directly
+    (an unreachable configuration -- the constructor always clamps to
+    `[10, 120]`) were removed rather than converted, since a passing test
+    against a state the product can never reach is misleading, not
+    coverage.
 
 ### Changed
 

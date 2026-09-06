@@ -370,6 +370,15 @@ class ChannelAutomationService:
         # rollover, or the retry actually dispatching) so a FUTURE undelivered
         # window logs its own fresh first-crossing WARNING.
         self._rollover_retry_warned_at: dict[str, float] = {}
+        # Item 84 fix, coordinator review round 2: mirrors
+        # ``_rollover_retry_warned_at`` above for the SEPARATE "worker pid has
+        # only been alive Ns" deferred-WARNING below (the pid-age floor can
+        # gate the retry for many consecutive ~2s ticks in its own right,
+        # independent of the "did not land" cadence -- measured 150 WARNINGs
+        # per 300s before this fix). Same rate-limit rule, own bookkeeping
+        # since the two WARNINGs gate on different conditions and can be
+        # active at different times.
+        self._rollover_pid_age_warned_at: dict[str, float] = {}
         # Hostile-review B2 fix: mirrors _replan_retry_at (see
         # _check_slate_replan) -- backs off re-querying the schedule after a
         # SourcePrepareError or an empty/None plan, instead of hammering the
@@ -426,11 +435,14 @@ class ChannelAutomationService:
     # for many ~2s poll ticks in a row (the retry-min-interval floor or the
     # worker-pid-age guard, both below) before it actually dispatches. Logging
     # a fresh WARNING every gated tick spammed the log 1:1 with "deferred:
-    # worker pid has only been alive Ns" (measured). This bounds how often the
-    # "did not land; retrying" WARNING repeats for the SAME still-gated
-    # channel; every other gated tick logs at DEBUG instead. See
-    # ``_check_plan_rollover``'s ``retrying_undelivered`` branch and
-    # ``_rollover_retry_warned_at``.
+    # worker pid has only been alive Ns" (measured: 150 WARNINGs per 300s).
+    # This shared interval bounds how often BOTH gated-tick WARNINGs repeat
+    # for the SAME still-gated channel -- the "did not land; retrying" one
+    # (``_rollover_retry_warned_at``) and the "worker pid has only been alive
+    # Ns" one (``_rollover_pid_age_warned_at``), each with its own
+    # bookkeeping since they gate on different conditions; every other gated
+    # tick logs at DEBUG instead. See ``_check_plan_rollover``'s
+    # ``retrying_undelivered`` branch.
     _ROLLOVER_RETRY_WARN_INTERVAL_SECONDS = 60.0
     # Hostile-review B2 fix: mirrors _RELOAD_RETRY_COOLDOWN_SECONDS -- how long
     # to back off re-querying the schedule after the provider raises
@@ -943,6 +955,7 @@ class ChannelAutomationService:
             self._rollover_dispatched_at.pop(channel_id, None)
             self._rollover_retry_dispatched_at.pop(channel_id, None)
             self._rollover_retry_warned_at.pop(channel_id, None)
+            self._rollover_pid_age_warned_at.pop(channel_id, None)
             return
         if self._daemon_has_manual_override(channel_id):
             # B1 fix: an operator override is live -- never fight it. Leave any
@@ -967,6 +980,7 @@ class ChannelAutomationService:
             # here too, everywhere _rollover_issued itself is discarded.
             self._rollover_retry_dispatched_at.pop(channel_id, None)
             self._rollover_retry_warned_at.pop(channel_id, None)
+            self._rollover_pid_age_warned_at.pop(channel_id, None)
             previous_end_at = tracked[1] if tracked is not None else None
             self._reestablish_plan_horizon(
                 channel_id,
@@ -1005,6 +1019,7 @@ class ChannelAutomationService:
             # rollover the re-established horizon triggers next.
             self._rollover_retry_dispatched_at.pop(channel_id, None)
             self._rollover_retry_warned_at.pop(channel_id, None)
+            self._rollover_pid_age_warned_at.pop(channel_id, None)
             self._reestablish_plan_horizon(
                 channel_id,
                 now=now,
@@ -1119,14 +1134,37 @@ class ChannelAutomationService:
                 return
             pid_age = self._worker_pid_age_seconds(channel_id)
             if pid_age is not None and pid_age < self._ROLLOVER_RETRY_MIN_WORKER_AGE_SECONDS:
-                _LOG.warning(
-                    "Channel automation rollover retry for %s deferred: the current "
-                    "worker pid has only been alive %.0fs (< %.0fs floor); waiting "
-                    "for it to settle before dispatching another synchronous prepare.",
-                    channel_id,
-                    pid_age,
-                    self._ROLLOVER_RETRY_MIN_WORKER_AGE_SECONDS,
-                )
+                # Item 84 fix, coordinator review round 2: this branch is
+                # re-entered on EVERY ~2s poll tick for as long as the pid
+                # stays too young (a worker that keeps crashing/relaunching
+                # right after every reload never gets a chance to settle) --
+                # logging a fresh WARNING every single tick measured 150
+                # WARNINGs per 300s. Same cadence rule as the "did not land"
+                # WARNING above: once on first deferral, at most once more
+                # per _ROLLOVER_RETRY_WARN_INTERVAL_SECONDS while still
+                # gated, DEBUG for every other gated tick.
+                last_warned_at = self._rollover_pid_age_warned_at.get(channel_id)
+                if last_warned_at is None or (
+                    self._monotonic() - last_warned_at >= self._ROLLOVER_RETRY_WARN_INTERVAL_SECONDS
+                ):
+                    _LOG.warning(
+                        "Channel automation rollover retry for %s deferred: the current "
+                        "worker pid has only been alive %.0fs (< %.0fs floor); waiting "
+                        "for it to settle before dispatching another synchronous prepare.",
+                        channel_id,
+                        pid_age,
+                        self._ROLLOVER_RETRY_MIN_WORKER_AGE_SECONDS,
+                    )
+                    self._rollover_pid_age_warned_at[channel_id] = self._monotonic()
+                else:
+                    _LOG.debug(
+                        "Channel automation rollover retry for %s still deferred: "
+                        "worker pid age %.0fs (< %.0fs floor; last warned %.0fs ago).",
+                        channel_id,
+                        pid_age,
+                        self._ROLLOVER_RETRY_MIN_WORKER_AGE_SECONDS,
+                        self._monotonic() - last_warned_at,
+                    )
                 return
 
         retry_at = self._rollover_retry_at.get(channel_id)
@@ -1203,6 +1241,7 @@ class ChannelAutomationService:
                 channel_id,
             )
             self._rollover_retry_warned_at.pop(channel_id, None)
+            self._rollover_pid_age_warned_at.pop(channel_id, None)
         _LOG.info(
             "Channel automation issued a seamless plan rollover for %s: the live plan "
             "ends in %.0fs and the schedule continues %.0fs further; extending in place "
