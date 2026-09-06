@@ -1615,6 +1615,22 @@ class EgressDaemon:
             _LOG.exception("Content-reload dispatch failed for %s; restarting encoder.", channel_id)
             return False
         if not applied:
+            # Diagnosability fix (coordinator follow-up, 2026-09-06): this used to
+            # return False with NO log line at all -- an operator/on-call reading
+            # the control-plane log for "why did this channel restart instead of
+            # reloading in place" found nothing. ``last_send_command_failure_reason``
+            # is an OPTIONAL strategy capability (only GstPlayoutStrategy's D2
+            # worker-pipe path tracks a reason; the ffmpeg concat strategy has none
+            # to report), resolved via ``getattr`` -- mirroring the
+            # ``supports_content_reload``/``send_command`` probes elsewhere in
+            # this file.
+            reason_fn = getattr(self._encoder_strategy, "last_send_command_failure_reason", None)
+            reason = reason_fn(channel_id) if callable(reason_fn) else None
+            _LOG.warning(
+                "Seamless content-reload declined for %s (%s); falling back to restart.",
+                channel_id,
+                reason or "no reason reported by the encoder strategy",
+            )
             return False
         previous_state = state.state if state else None
         previous_source_label = state.current_source_label if state else None

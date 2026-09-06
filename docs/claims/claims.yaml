@@ -520,11 +520,40 @@ entries:
       # bytes is this PR's own coverage asserting the stall message is
       # cp1252-encodable. Blob re-hashed with
       # `git hash-object --path <file> <file>` per D2.
+      # Re-provisioned again (fix/gst-reload-concat-collision, 2026-09-06):
+      # worker.py and engine.py drifted again -- the H1 fix (measured on real
+      # hardware: a seamless plan rollover collided its rebuilt
+      # vconcat_program/aconcat_program aggregators with the still-live
+      # outgoing leg's same-named aggregators, GStreamer's Gst.Bin.add()
+      # silently refused the duplicate, and the reload never actually joined
+      # the pipeline while the worker acked "applied" anyway). engine.py:
+      # _make now checks pipeline.add()'s return value and raises instead of
+      # silently proceeding; _build_playlist names each build's concat
+      # aggregators with a new monotonic self._source_leg_seq
+      # (vconcat_<label>_<seq>/aconcat_<label>_<seq>) so a reload's rebuilt
+      # aggregators never collide with the leg they replace; reload_program
+      # gained an optional on_settled callback invoked once the reload
+      # actually commits or aborts. worker.py: _dispatch_control_with_ack's
+      # "reload" verb now defers its ack to that on_settled callback instead
+      # of acking "applied" the instant reload_program returns. Neither
+      # change touches decode_policy.py, graph.py, control.py, or
+      # audio_tap.py, which keep their recorded blobs. Current-source proof
+      # for these bytes is this PR's own unit coverage:
+      # tests/egress/test_gst_engine_reload_concat_naming.py (a fake-Gst
+      # harness proving pipeline.add()'s refusal now raises, and that the new
+      # per-build sequence number makes two builds of the same-labeled leg
+      # never collide) and tests/egress/test_gst_worker_reload_ack.py (the
+      # ack is deferred until on_settled fires, "applied" vs
+      # "aborted:<reason>"). The seamless reload path itself is gated off by
+      # default for beta.5 pending a fresh hardware soak
+      # (GstPlayoutStrategy.supports_content_reload, strategy.py -- not part
+      # of this claim's bound module set). Blob IDs re-hashed with
+      # `git hash-object --path <file> <file>` per D2.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: fb4e2902f0a6e14f61508c48f93a9465889c2943
+          blob: 8abacefc90a63d159ba2f97db62e254b8fd962fa
         - path: civiccast/egress/gst/engine.py
-          blob: 6ce0bb8befd2e59b0b80b59457682514d1f1223b
+          blob: b0d8270bdd2fe0bedca52c509933938b9fa212bb
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -737,11 +766,40 @@ entries:
       # bytes is this PR's own coverage asserting the stall message is
       # cp1252-encodable. Blob re-hashed with
       # `git hash-object --path <file> <file>` per D2.
+      # Re-provisioned again (fix/gst-reload-concat-collision, 2026-09-06):
+      # worker.py and engine.py drifted again -- the H1 fix (measured on real
+      # hardware: a seamless plan rollover collided its rebuilt
+      # vconcat_program/aconcat_program aggregators with the still-live
+      # outgoing leg's same-named aggregators, GStreamer's Gst.Bin.add()
+      # silently refused the duplicate, and the reload never actually joined
+      # the pipeline while the worker acked "applied" anyway). engine.py:
+      # _make now checks pipeline.add()'s return value and raises instead of
+      # silently proceeding; _build_playlist names each build's concat
+      # aggregators with a new monotonic self._source_leg_seq
+      # (vconcat_<label>_<seq>/aconcat_<label>_<seq>) so a reload's rebuilt
+      # aggregators never collide with the leg they replace; reload_program
+      # gained an optional on_settled callback invoked once the reload
+      # actually commits or aborts. worker.py: _dispatch_control_with_ack's
+      # "reload" verb now defers its ack to that on_settled callback instead
+      # of acking "applied" the instant reload_program returns. Neither
+      # change touches decode_policy.py, graph.py, control.py, or
+      # audio_tap.py, which keep their recorded blobs. Current-source proof
+      # for these bytes is this PR's own unit coverage:
+      # tests/egress/test_gst_engine_reload_concat_naming.py (a fake-Gst
+      # harness proving pipeline.add()'s refusal now raises, and that the new
+      # per-build sequence number makes two builds of the same-labeled leg
+      # never collide) and tests/egress/test_gst_worker_reload_ack.py (the
+      # ack is deferred until on_settled fires, "applied" vs
+      # "aborted:<reason>"). The seamless reload path itself is gated off by
+      # default for beta.5 pending a fresh hardware soak
+      # (GstPlayoutStrategy.supports_content_reload, strategy.py -- not part
+      # of this claim's bound module set). Blob IDs re-hashed with
+      # `git hash-object --path <file> <file>` per D2.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: fb4e2902f0a6e14f61508c48f93a9465889c2943
+          blob: 8abacefc90a63d159ba2f97db62e254b8fd962fa
         - path: civiccast/egress/gst/engine.py
-          blob: 6ce0bb8befd2e59b0b80b59457682514d1f1223b
+          blob: b0d8270bdd2fe0bedca52c509933938b9fa212bb
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py

@@ -20,6 +20,7 @@ import re
 import signal
 import sys
 import time
+from collections.abc import Callable
 from itertools import pairwise
 from pathlib import Path
 from typing import Any, ClassVar
@@ -227,6 +228,17 @@ class GstPlayoutEngine:
         # reload (None = none settling) so it can be committed, aborted, or superseded.
         self._source_leg_elements: list[list[Gst.Element]] = []
         self._collecting: list[Gst.Element] | None = None
+        # H1 fix (measured 2026-09-06 hardware soak): monotonic sequence number so
+        # a ``PlaylistLeg``'s ``concat`` aggregators (``vconcat_<label>``/
+        # ``aconcat_<label>``) get a fresh, unique element name on EVERY build --
+        # the initial ``_build()`` call AND every later ``reload_program`` rebuild
+        # of that same-labeled leg (typically "program"). Before this fix every
+        # build reused the bare ``f"vconcat_{leg.label}"`` name, so a reload's
+        # rebuilt aggregator collided with the still-live outgoing leg's aggregator
+        # of the same name -- see ``_make``'s fail-loud ``pipeline.add`` check
+        # above, and ``_build_playlist``'s naming below. Mirrors
+        # ``_overlay_layer_seq`` immediately below, same rationale.
+        self._source_leg_seq = 0
         self._pending_reload: dict[str, Any] | None = None
         # S15 graphics-overlay reload state (BLOCKER fix, 2026-08-30 audit): the
         # compositor + per-layer-name pad/elements built by ``_build_graphics_overlay``
@@ -283,7 +295,24 @@ class GstPlayoutEngine:
                     "not present in this station's credential store"
                 )
             element.set_property(key, secret)
-        self.pipeline.add(element)
+        # H1 fix (measured 2026-09-06 hardware soak, three-channel seamless-rollover
+        # stall): ``Gst.Bin.add()`` returns a bool and silently REFUSES a duplicate
+        # element name in the same bin ("Name '<name>' is not unique in bin ... not
+        # adding") instead of raising -- the discarded return value here used to let
+        # a reload's rebuilt concat aggregator (see ``_build_playlist``'s
+        # ``_source_leg_seq`` naming below) dangle unlinked in the pipeline: its
+        # elements existed but were never actually part of the bin, so the new
+        # leg's probes never fired and every reload timed out and was silently
+        # retried by automation forever (worker.py's stall watchdog then bounced
+        # the channel every ~30s). Fail loud instead: the caller
+        # (``reload_program``'s try/except ENG-008 path) aborts the in-flight
+        # reload cleanly and the current program keeps playing.
+        if not self.pipeline.add(element):
+            raise RuntimeError(
+                f"GStreamer refused to add element {spec.factory!r} "
+                f"(name={element.get_name()!r}) to the pipeline -- a duplicate "
+                "element name already exists in this bin"
+            )
         if self._collecting is not None:
             # Building a source leg — record the element so the leg can be torn down
             # as a unit on a later content-reload.
@@ -357,10 +386,21 @@ class GstPlayoutEngine:
     def _build_playlist(self, leg: PlaylistLeg) -> tuple[Gst.Element, Gst.Element | None]:
         """Gapless playlist leg: a video ``concat`` (and, when ``audio_tail`` is set,
         a parallel audio ``concat`` fed by each clip's decodebin audio pad) sequence
-        the sub-chains. Returns ``(video_concat, audio_concat | None)``."""
-        vconcat = self._make(ElementSpec("concat", f"vconcat_{leg.label}"))
+        the sub-chains. Returns ``(video_concat, audio_concat | None)``.
+
+        H1 fix: the aggregators' element names carry ``self._source_leg_seq`` (bumped
+        once per call) so a content-reload's rebuilt aggregator for the SAME leg label
+        (``reload_program`` always reloads the "program" role) never collides with the
+        still-live outgoing leg's aggregator of the same name -- see ``_make``'s
+        fail-loud ``pipeline.add`` check and this class's ``_source_leg_seq`` docstring
+        for the measured defect this closes."""
+        self._source_leg_seq += 1
+        seq = self._source_leg_seq
+        vconcat = self._make(ElementSpec("concat", f"vconcat_{leg.label}_{seq}"))
         aconcat = (
-            self._make(ElementSpec("concat", f"aconcat_{leg.label}")) if leg.audio_tail else None
+            self._make(ElementSpec("concat", f"aconcat_{leg.label}_{seq}"))
+            if leg.audio_tail
+            else None
         )
         for subchain in leg.subchains:
             elements = [self._make(spec) for spec in subchain]
@@ -1147,7 +1187,11 @@ class GstPlayoutEngine:
     # -- content-reload (D-S1-6): rebuild the program leg while output stays PLAYING --
 
     def reload_program(
-        self, new_leg: SourceLeg | PlaylistLeg, *, switch_at_end_of_current: bool = False
+        self,
+        new_leg: SourceLeg | PlaylistLeg,
+        *,
+        switch_at_end_of_current: bool = False,
+        on_settled: Callable[[bool, str | None], None] | None = None,
     ) -> None:
         """Replace the program leg (source index 0) with ``new_leg`` seamlessly.
 
@@ -1240,7 +1284,23 @@ class GstPlayoutEngine:
         long, or a leg that never naturally EOSes) — the reload always eventually
         commits, it never holds two legs open forever. A newer reload arriving while
         one is still settling SUPERSEDES it (the old in-flight leg is aborted) — a
-        due program is never silently dropped."""
+        due program is never silently dropped.
+
+        ``on_settled`` (item 4, honest ack): an optional ``(committed: bool,
+        reason: str | None) -> None`` callback invoked EXACTLY ONCE for this
+        specific call's reload -- with ``(True, None)`` from ``_commit_reload``, or
+        ``(False, <reason>)`` from ``_abort_pending_reload`` (``reason`` is one of
+        "error"/"timeout"/"superseded"/"build-error"/"selector-missing"). This is
+        the whole point of the fix: this method itself only ARMS the reload (builds
+        + prerolls the new leg and returns) -- the actual commit/abort happens later,
+        asynchronously, on the main loop. The D2 Windows worker-pipe dispatch
+        (``worker.py``'s ``_dispatch_control_with_ack``) used to ack a ``reload``
+        command "applied" the instant this method RETURNED, which is not the same
+        thing as the reload having landed -- a channel could be told "applied" for a
+        reload that then silently timed out or errored. Passing ``on_settled`` lets
+        that dispatch path defer its ack until the reload genuinely lands one way or
+        the other. A caller that does not pass it (the POSIX FIFO dispatch path,
+        ``_dispatch_control``, which was always fire-and-forget) is unaffected."""
         if self.selector is None or not self.selector_sink_pads:
             raise RuntimeError("engine not built; cannot reload")
         if self._pending_reload is not None:
@@ -1268,6 +1328,9 @@ class GstPlayoutEngine:
             "new_elements": new_elements,
             "probe_id": None,
             "timeout_id": None,
+            # Item 4 (honest ack): the caller's completion callback, if any --
+            # invoked exactly once by ``_commit_reload`` or ``_abort_pending_reload``.
+            "on_settled": on_settled,
             # B3 fix: deferred-switch bookkeeping. "ready"/"eos" both default to
             # True for an immediate switch (switch_at_end_of_current=False), so
             # the `ready and eos` gate reduces to "ready" alone -- committing the
@@ -1607,6 +1670,14 @@ class GstPlayoutEngine:
         # Element count proves disposal reclaimed (the POSIX leak test asserts it is flat
         # across many reloads — a dispose leak would grow it).
         print(f"CTRL reload committed (elements={self._element_count()})", flush=True)
+        # Item 4 (honest ack): tell the caller the reload actually landed. Fired
+        # last, after every other commit side-effect, and guarded so a callback
+        # failure (e.g. the worker's pipe write) can never re-wedge a reload that
+        # has, in every other respect, already committed cleanly.
+        on_settled = pending["on_settled"]
+        if on_settled is not None:
+            with contextlib.suppress(Exception):
+                on_settled(True, None)
         return False
 
     def _on_reload_timeout(self) -> bool:
@@ -1652,6 +1723,13 @@ class GstPlayoutEngine:
         self._dispose_source_leg(
             pending["new_video_pad"], pending["new_audio_pad"], pending["new_elements"]
         )
+        # Item 4 (honest ack): tell the caller this reload did NOT land, and why --
+        # ``reason`` is one of "error"/"timeout"/"superseded"/"build-error"/
+        # "selector-missing" (the strings each call site above passes).
+        on_settled = pending["on_settled"]
+        if on_settled is not None:
+            with contextlib.suppress(Exception):
+                on_settled(False, reason)
 
     @staticmethod
     def _release_hold_probes(pending: dict[str, Any]) -> None:

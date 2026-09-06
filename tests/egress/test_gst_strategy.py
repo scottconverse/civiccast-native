@@ -393,8 +393,25 @@ def _reload_request(tmp_path, *, path: str = "/m/c2.ts", label: str = "c2"):
     return EncoderStartRequest(channel_id="ch1", source_plan=plan, config=config, work_dir=tmp_path)
 
 
-def test_supports_content_reload_flag() -> None:
+def test_supports_content_reload_defaults_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Item 3 (beta.5 gate): the seamless in-place content-reload defaults OFF
+    pending a fresh hardware soak (H1, measured 2026-09-06) -- a channel with it
+    off falls back to the daemon's terminate+restart reload path."""
+    monkeypatch.delenv("CIVICCAST_EGRESS_SEAMLESS_RELOAD", raising=False)
+    assert GstPlayoutStrategy(worker_launcher=lambda *a: None).supports_content_reload is False
+
+
+def test_supports_content_reload_env_var_opts_back_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CIVICCAST_EGRESS_SEAMLESS_RELOAD", "1")
     assert GstPlayoutStrategy(worker_launcher=lambda *a: None).supports_content_reload is True
+
+
+def test_supports_content_reload_explicit_constructor_arg_wins_over_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CIVICCAST_EGRESS_SEAMLESS_RELOAD", "1")
+    strategy = GstPlayoutStrategy(worker_launcher=lambda *a: None, supports_content_reload=False)
+    assert strategy.supports_content_reload is False
 
 
 @_POSIX_FIFO_ONLY
@@ -422,6 +439,72 @@ def test_reload_content_drops_when_worker_not_ready(tmp_path) -> None:
     (tmp_path / "ch1").mkdir()
     # no FIFO (worker not started) → returns False so the daemon falls back to restart
     assert strategy.reload_content("ch1", tmp_path, _reload_request(tmp_path)) is False
+
+
+# --- coordinator follow-up: daemon._try_content_reload's silent False (diagnosability) --
+
+
+def test_last_send_command_failure_reason_none_before_any_call() -> None:
+    strategy = GstPlayoutStrategy(worker_launcher=lambda *a: None)
+    assert strategy.last_send_command_failure_reason("ch1") is None
+
+
+def test_last_send_command_failure_reason_reports_worker_not_started(tmp_path) -> None:
+    strategy = GstPlayoutStrategy(worker_launcher=lambda *a: None)
+    # No pipe channel ever registered for "ch1" (start() was never called).
+    applied = strategy.send_command(tmp_path, "ch1", "swap 1")
+
+    assert applied is False
+    reason = strategy.last_send_command_failure_reason("ch1")
+    assert reason is not None and "not started" in reason
+
+
+def test_last_send_command_failure_reason_reports_the_workers_ack(tmp_path) -> None:
+    """A channel whose worker connected but explicitly declined the command
+    (e.g. a reload that aborted -- item 4's "aborted:<reason>" ack) surfaces
+    THAT text, not just a bare False."""
+
+    class _DecliningPipeChannel:
+        def __init__(self, channel_id: str) -> None:
+            self.channel_id = channel_id
+            self.last_failure_reason: str | None = None
+
+        def start(self) -> None:
+            pass
+
+        def send_and_wait(self, verb, line, *, command_id=None) -> bool:
+            self.last_failure_reason = "worker acked 'aborted:timeout'"
+            return False
+
+        def close(self) -> None:
+            pass
+
+    strategy = GstPlayoutStrategy(
+        worker_launcher=lambda *a: None,
+        pipe_channel_factory=lambda channel_id: cast(
+            _WindowsPipeChannel, _DecliningPipeChannel(channel_id)
+        ),
+    )
+    strategy.start(_start_request(tmp_path))
+
+    applied = strategy.send_command(tmp_path, "ch1", "reload /w/g.json")
+
+    assert applied is False
+    assert strategy.last_send_command_failure_reason("ch1") == "worker acked 'aborted:timeout'"
+
+
+def test_last_send_command_failure_reason_clears_on_a_later_success(tmp_path) -> None:
+    strategy = GstPlayoutStrategy(
+        worker_launcher=lambda *a: None,
+        pipe_channel_factory=_fake_pipe_channel_factory,  # always succeeds
+    )
+    strategy.start(_start_request(tmp_path))
+    strategy._last_send_command_failure["ch1"] = "stale reason from a prior failure"
+
+    applied = strategy.send_command(tmp_path, "ch1", "swap 1")
+
+    assert applied is True
+    assert strategy.last_send_command_failure_reason("ch1") is None
 
 
 # --- S11a: CEA-708 caption embed toggle + cue feed ------------------------------

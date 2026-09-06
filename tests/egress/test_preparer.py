@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -89,12 +91,21 @@ def test_build_conform_source_args_uses_canonical_profile_and_trim(tmp_path: Pat
     assert args[-3:] == ["-f", "mpegts", str(output)]
 
 
+def _write_fake_output(args: list[str]) -> None:
+    """H5 fix: prepared-segment writes are now atomic (tmp + rename), so a fake
+    ffmpeg runner must actually create the file ``args[-1]`` names (its
+    ``.tmp`` sibling of the final prepared path) for the rename to succeed --
+    mirrors what a real ffmpeg process does."""
+    Path(args[-1]).write_text("prepared", encoding="utf-8")
+
+
 def test_source_preparer_conforms_inside_loudness_tolerance(tmp_path: Path) -> None:
     captured: dict[str, object] = {}
     preparer = SourcePreparer(
         work_dir=tmp_path / "work",
         ffmpeg_runner=lambda args: (
-            captured.setdefault("args", args) and FfmpegResult(returncode=0, stdout="", stderr="")
+            (captured.setdefault("args", args) and _write_fake_output(args))
+            or FfmpegResult(returncode=0, stdout="", stderr="")
         ),
         loudness_checker=lambda **kwargs: captured.setdefault("loudness", kwargs) and _loudness(),
         warm_scheduler=lambda job: None,  # keep the at-air behavior deterministic
@@ -104,8 +115,12 @@ def test_source_preparer_conforms_inside_loudness_tolerance(tmp_path: Path) -> N
 
     assert report.source_plan.channel_id == "gov"
     prepared = report.source_plan.segments[0]
-    assert prepared.path.endswith("gov\\prepared\\segment-0001.ts") or prepared.path.endswith(
-        "gov/prepared/segment-0001.ts"
+    # H5 fix: every prepare() call now writes into its own uniquely-named
+    # subdirectory under <channel>/prepared/ (a 12-hex-char uuid segment)
+    # instead of a fixed, collision-prone path -- match that shape rather
+    # than a single hardcoded path.
+    assert re.search(r"gov[\\/]prepared[\\/][0-9a-f]{12}[\\/]segment-0001\.ts$", prepared.path), (
+        prepared.path
     )
     assert prepared.inpoint_seconds is None
     assert prepared.outpoint_seconds is None
@@ -149,7 +164,8 @@ def test_source_preparer_normalizes_when_loudness_is_out_of_tolerance(tmp_path: 
     preparer = SourcePreparer(
         work_dir=tmp_path / "work",
         ffmpeg_runner=lambda args: (
-            captured.setdefault("args", args) and FfmpegResult(returncode=0, stdout="", stderr="")
+            (captured.setdefault("args", args) and _write_fake_output(args))
+            or FfmpegResult(returncode=0, stdout="", stderr="")
         ),
         loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
         warm_scheduler=lambda job: None,  # keep the at-air behavior deterministic
@@ -236,6 +252,162 @@ def test_same_path_with_different_trims_prepares_separately(tmp_path: Path) -> N
 
     assert len(ffmpeg_calls) == 2  # two distinct conforms
     assert len({seg.path for seg in report.source_plan.segments}) == 2
+
+
+def test_reloading_a_plan_never_touches_the_previous_plans_prepared_files(
+    tmp_path: Path,
+) -> None:
+    """H5 (measured on tester hardware): for the GStreamer engine
+    (``playout_trim_supported=False``, the default), a content-reload's
+    ``prepare()`` call used to write its trimmed-miss conform output to the SAME
+    fixed path (``<channel>/prepared/segment-0001.ts``, keyed only by segment
+    index within its own call) that the FIRST prepare() call had already written
+    -- while the worker airing the first plan's segment could still be reading
+    that exact file. Every ``prepare()`` call now gets its own uniquely-named
+    subdirectory, so a second call for a DIFFERENT plan (even one whose segment
+    lands at the same index, 1, as the first) can never share an output path
+    with -- let alone overwrite -- the first call's still-possibly-live file."""
+
+    def _segment(path: Path, label: str) -> EgressSourceSegment:
+        path.write_text("fake media", encoding="utf-8")
+        return EgressSourceSegment(
+            label=label,
+            path=str(path),
+            duration_seconds=10,
+            inpoint_seconds=1,  # forces the trimmed-miss (non-cached) write path
+            outpoint_seconds=11,
+        )
+
+    def runner(args: list[str]) -> FfmpegResult:
+        Path(args[-1]).write_text("prepared", encoding="utf-8")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path,
+        ffmpeg_runner=runner,
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+
+    plan_a = EgressSourcePlan(
+        channel_id="gov", segments=[_segment(tmp_path / "a.ts", "Plan A segment 1")]
+    )
+    report_a = preparer.prepare(plan_a, _config())
+    prepared_a = Path(report_a.source_plan.segments[0].path)
+    assert prepared_a.is_file()
+    bytes_before = prepared_a.read_bytes()
+    mtime_before = prepared_a.stat().st_mtime_ns
+
+    # A second, DIFFERENT plan -- e.g. a content-reload's newly-due program --
+    # for the SAME channel. Its one segment also lands at index 1.
+    plan_b = EgressSourcePlan(
+        channel_id="gov", segments=[_segment(tmp_path / "b.ts", "Plan B segment 1")]
+    )
+    report_b = preparer.prepare(plan_b, _config())
+    prepared_b = Path(report_b.source_plan.segments[0].path)
+
+    assert prepared_b != prepared_a  # never the same path
+    assert prepared_b.parent != prepared_a.parent  # never even the same plan directory
+    # Plan A's already-prepared file is completely untouched by preparing plan B.
+    assert prepared_a.is_file()
+    assert prepared_a.read_bytes() == bytes_before
+    assert prepared_a.stat().st_mtime_ns == mtime_before
+
+
+def test_trimmed_miss_conform_write_is_atomic(tmp_path: Path) -> None:
+    """H5 (atomic write): a failed conform must leave no ``.tmp`` sibling behind
+    at the prepared segment's final path, and a successful one must leave ONLY
+    the final path (never the ``.tmp`` alongside it)."""
+    source = tmp_path / "council.ts"
+    source.write_text("fake media", encoding="utf-8")
+    segment = EgressSourceSegment(
+        label="Council meeting",
+        path=str(source),
+        duration_seconds=10,
+        inpoint_seconds=1,
+        outpoint_seconds=11,
+    )
+    plan = EgressSourcePlan(channel_id="gov", segments=[segment])
+
+    # Failure case: the runner never creates the .tmp output file at all (the
+    # real ffmpeg failure mode this simulates), and returns nonzero.
+    failing_preparer = SourcePreparer(
+        work_dir=tmp_path / "fail-work",
+        ffmpeg_runner=lambda _args: FfmpegResult(returncode=1, stdout="", stderr="boom"),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    with pytest.raises(SourcePrepareError, match="could not be conformed"):
+        failing_preparer.prepare(plan, _config())
+    fail_prepared_root = tmp_path / "fail-work" / "gov" / "prepared"
+    leftover_files = (
+        [p for p in fail_prepared_root.rglob("*") if p.is_file()]
+        if fail_prepared_root.exists()
+        else []
+    )
+    assert leftover_files == []  # no partial/.tmp file survives a failed conform
+
+    # Success case: only the final path exists afterward, never a lingering .tmp.
+    def runner(args: list[str]) -> FfmpegResult:
+        assert args[-1].endswith(".ts.tmp")  # the atomic-write staging name
+        Path(args[-1]).write_text("prepared", encoding="utf-8")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    ok_preparer = SourcePreparer(
+        work_dir=tmp_path / "ok-work",
+        ffmpeg_runner=runner,
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    report = ok_preparer.prepare(plan, _config())
+    prepared_path = Path(report.source_plan.segments[0].path)
+    plan_dir = prepared_path.parent
+    assert sorted(p.name for p in plan_dir.iterdir()) == [prepared_path.name]
+
+
+def test_stale_prepared_plan_directories_are_garbage_collected(tmp_path: Path) -> None:
+    """H5 (GC backstop): a per-plan directory older than the generous age floor
+    is reclaimed on the NEXT ``prepare()`` call for that channel; one younger
+    than the floor is left alone (it might still be airing)."""
+    source = tmp_path / "council.ts"
+    source.write_text("fake media", encoding="utf-8")
+    segment = EgressSourceSegment(
+        label="Council meeting",
+        path=str(source),
+        duration_seconds=10,
+        inpoint_seconds=1,
+        outpoint_seconds=11,
+    )
+    plan = EgressSourcePlan(channel_id="gov", segments=[segment])
+
+    def runner(args: list[str]) -> FfmpegResult:
+        Path(args[-1]).write_text("prepared", encoding="utf-8")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=runner,
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+
+    prepared_root = tmp_path / "work" / "gov" / "prepared"
+    stale_dir = prepared_root / ("0" * 12)
+    stale_dir.mkdir(parents=True)
+    (stale_dir / "segment-0001.ts").write_text("old", encoding="utf-8")
+    old_time = time.time() - (7 * 3600)  # older than the 6h floor
+    os.utime(stale_dir, (old_time, old_time))
+
+    fresh_dir = prepared_root / ("1" * 12)
+    fresh_dir.mkdir(parents=True)
+    (fresh_dir / "segment-0001.ts").write_text("fresh", encoding="utf-8")
+    # left at the current mtime -- younger than the floor, must survive
+
+    preparer.prepare(plan, _config())
+
+    remaining = {p.name for p in prepared_root.iterdir() if p.is_dir()}
+    assert stale_dir.name not in remaining  # reclaimed: older than the floor
+    assert fresh_dir.name in remaining  # untouched: younger than the floor
 
 
 def test_repeated_identical_segments_prepare_once(tmp_path: Path) -> None:

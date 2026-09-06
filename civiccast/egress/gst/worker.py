@@ -44,6 +44,7 @@ import sys
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -148,15 +149,46 @@ class _AppliedIdCache:
             self._ids.popitem(last=False)
 
 
-def _dispatch_control_with_ack(engine_instance: Any, line: str) -> tuple[str, str | None]:
+#: ``_dispatch_control_with_ack``'s ``reload``-verb result when the reload was
+#: successfully ARMED (built + prerolled, watchdog started) but has not yet
+#: COMMITTED or ABORTED. See the function's docstring, item 4.
+_DEFERRED_RESULT = "deferred"
+
+
+def _dispatch_control_with_ack(
+    engine_instance: Any,
+    line: str,
+    *,
+    on_reload_settled: Callable[[str, str | None], None] | None = None,
+) -> tuple[str, str | None]:
     """The D2 pipe-seam dispatch: applies ``line`` and returns an ack result
-    (``"applied"``|``"error"``, detail) instead of only printing, so the pipe seam
-    can write back ``{"result": ...}`` (design.md sec4's 'ack-point reading').
-    Calls the SAME public engine effects ``engine._dispatch_control`` uses
+    (``"applied"``|``"error"``|``"deferred"``, detail) instead of only printing, so
+    the pipe seam can write back ``{"result": ...}`` (design.md sec4's 'ack-point
+    reading'). Calls the SAME public engine effects ``engine._dispatch_control`` uses
     (``swap.swap_to``, ``reload_program``, ``push_caption_cue``, ``_loop.quit()``)
     -- it does not reimplement engine internals, only observes their outcome,
     since ``_dispatch_control`` itself is fire-and-forget (engine.py, out of this
-    unit's file ownership) and has no return value to relay."""
+    unit's file ownership) and has no return value to relay.
+
+    Item 4 (honest ack, measured 2026-09-06 hardware soak): ``reload_program`` only
+    ARMS a reload -- it builds and preroll the new leg and returns immediately; the
+    actual commit (first buffer / boundary reached) or abort (build error, async
+    bus error, timeout, supersession) happens LATER, on the main loop. The pre-fix
+    code here returned ``"applied"`` the instant ``reload_program`` returned, which
+    is not the same claim -- a caller told "applied" for a reload that then quietly
+    timed out (the H1 concat-name collision this same change fixes in engine.py) had
+    no way to know the reload never actually landed, and kept believing the worker
+    was already playing the new program.
+
+    For the ``reload`` verb this function therefore does NOT return a final result:
+    it registers ``on_reload_settled`` as the engine's ``reload_program(...,
+    on_settled=...)`` callback (invoked exactly once, from ``_commit_reload`` or
+    ``_abort_pending_reload``, on the SAME GLib main loop this dispatch itself runs
+    on) and returns ``(_DEFERRED_RESULT, None)`` so the caller (``_dispatch_and_ack``
+    below) knows not to write an ack now. ``on_reload_settled`` receives
+    ``"applied"`` or ``"aborted:<reason>"`` -- the caller writes THAT as the ack
+    once it actually fires. Every other verb is unchanged: dispatch and ack are
+    still the same synchronous step they always were."""
     command = controlmod.parse_control_line(line)
     if command is None:
         return "error", f"unparseable control line: {line!r}"
@@ -172,15 +204,36 @@ def _dispatch_control_with_ack(engine_instance: Any, line: str) -> tuple[str, st
             switch_at_end_of_current = reload_policy_mod.reload_switch_is_deferred(command[1])
             with contextlib.suppress(OSError):
                 reload_path.unlink()  # one-shot graph file: consumed after read
+
+            def _on_settled(committed: bool, reason: str | None) -> None:
+                if on_reload_settled is None:
+                    return
+                result = "applied" if committed else f"aborted:{reason or 'unknown'}"
+                on_reload_settled(result, None)
+
             engine_instance.reload_program(
-                new_graph.sources[0], switch_at_end_of_current=switch_at_end_of_current
+                new_graph.sources[0],
+                switch_at_end_of_current=switch_at_end_of_current,
+                on_settled=_on_settled,
             )
             # BLOCKER fix: re-apply the graphics-overlay leg too (mirrors the FIFO
             # dispatch path, engine._dispatch_control) -- otherwise a content-reload
             # delivered over the D2 Windows pipe seam would silently drop a lower-third
-            # text update just like the FIFO path used to.
-            engine_instance.reload_graphics_overlay(new_graph.graphics_overlay)
-            return "applied", None
+            # text update just like the FIFO path used to. Its own failure must NOT
+            # affect the program reload's ack above (that reload already armed
+            # successfully and will settle on its own via ``_on_settled``) -- an
+            # overlay re-apply failure never disturbs the already-on-air overlay
+            # (see ``reload_graphics_overlay``'s own docstring) and must not be
+            # conflated with the program reload's outcome.
+            try:
+                engine_instance.reload_graphics_overlay(new_graph.graphics_overlay)
+            except Exception as exc:
+                print(
+                    f"CTRL reload: graphics-overlay re-apply failed "
+                    f"(program reload still in flight): {exc!r}",
+                    flush=True,
+                )
+            return _DEFERRED_RESULT, None
         if verb == "caption":
             text = base64.b64decode(command[3]).decode("utf-8", "replace")
             pushed = engine_instance.push_caption_cue(
@@ -328,23 +381,33 @@ def _windows_pipe_reader_loop(
             line_text: str = command_line,
             completed: threading.Event = ack_written,
         ) -> bool:
-            try:
-                result, detail = _dispatch_control_with_ack(engine_instance, line_text)
+            def _write_ack(result: str, detail: str | None) -> None:
                 if result == "applied":
                     applied.mark_applied(cid)
                 _windows_pipe_write_line(
                     h,
                     write_lock,
-                    json.dumps(
-                        {
-                            "v": 1,
-                            "id": cid,
-                            "result": result,
-                            "detail": detail,
-                        }
-                    ),
+                    json.dumps({"v": 1, "id": cid, "result": result, "detail": detail}),
                 )
+
+            try:
+                result, detail = _dispatch_control_with_ack(
+                    engine_instance, line_text, on_reload_settled=_write_ack
+                )
+                if result != _DEFERRED_RESULT:
+                    _write_ack(result, detail)
+                # else (item 4, honest ack): a "reload" was successfully ARMED but
+                # has not committed or aborted yet -- ``_write_ack`` above is now
+                # wired as the engine's ``on_settled`` callback and will be invoked
+                # exactly once, later, from ``_commit_reload``/``_abort_pending_
+                # reload`` (still on this same GLib main loop). Do NOT ack here;
+                # writing "applied" at this point is exactly the premature-ack
+                # defect this change fixes.
             finally:
+                # Dispatch (arming the command) is complete either way -- this
+                # unblocks the reader thread to process the NEXT line (e.g. a
+                # superseding reload, or "stop") while a deferred reload settles
+                # in the background. It does NOT mean the ack has been written.
                 completed.set()
             return False  # one-shot GLib idle source
 

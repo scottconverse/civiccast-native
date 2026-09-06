@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -1006,6 +1007,86 @@ def test_content_reload_falls_back_to_restart_when_worker_not_ready(tmp_path: Pa
     state = store.read_state("gov")
     assert state.state == "ON_AIR"
     assert state.current_source_label == "Mayor interview"
+
+
+def test_content_reload_declined_logs_the_reason(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Coordinator follow-up (2026-09-06): a declined seamless reload
+    (``reload_content`` returns False) used to fall back to restart with NO log
+    line at all -- an operator/on-call reading the control-plane log for "why
+    did this channel restart instead of reloading in place" found nothing.
+    ``_try_content_reload`` now logs a WARNING naming the channel and, when the
+    strategy can report one (``last_send_command_failure_reason``, an OPTIONAL
+    capability probed via ``getattr`` like ``supports_content_reload``), why."""
+
+    class _ReasonReportingStrategy(_FakeContentReloadStrategy):
+        def last_send_command_failure_reason(self, channel_id: str) -> str | None:
+            return "worker acked 'aborted:timeout'"
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _ReasonReportingStrategy(processes, started, reload_ok=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.daemon"):
+        daemon.process_once("gov")
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "gov" in message and "declined" in message and "worker acked 'aborted:timeout'" in message
+        for message in warnings
+    ), warnings
+
+
+def test_content_reload_declined_with_no_reason_reported_still_logs(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A strategy with no ``last_send_command_failure_reason`` capability at all
+    (the plain ``_FakeContentReloadStrategy``, matching every existing strategy
+    test double in this file) still gets a WARNING -- just without a reason."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, reload_ok=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.daemon"):
+        daemon.process_once("gov")
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("gov" in message and "declined" in message for message in warnings), warnings
 
 
 def test_content_reload_strategy_exception_falls_back_to_restart(tmp_path: Path) -> None:

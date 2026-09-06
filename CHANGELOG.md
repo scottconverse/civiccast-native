@@ -37,6 +37,78 @@ below.
 
 ### Fixed
 
+- **A seamless plan rollover collided its own concat aggregators, silently
+  failed to join the pipeline, and was acked "applied" anyway -- so
+  automation kept re-triggering it forever while the channel bounced.**
+  MEASURED on real hardware (2026-09-06, clean install of `609273d`, three
+  GStreamer channels): the first seamless plan rollover
+  (`daemon._try_content_reload` -> `strategy.reload_content` -> the D2
+  worker-pipe seam -> `engine.reload_program`) was followed by
+  `CTRL stall: no output for 10s` worker relaunches every ~30s on every
+  channel. Root cause (H1): `bridge.graph_from_config`/`reload_content`
+  always build the program leg as a `PlaylistLeg` labeled `"program"`, and
+  `engine._build_playlist` named its `concat` aggregators with the bare
+  label (`vconcat_program`/`aconcat_program`) on every build -- a reload's
+  rebuilt aggregators therefore collided with the still-live outgoing leg's
+  same-named aggregators while both were in the pipeline. GStreamer's
+  `Gst.Bin.add()` silently REFUSED the duplicate name
+  (`"Name 'vconcat_program' is not unique in bin ... not adding"`) and the
+  discarded return value let the new leg's elements dangle unlinked: its
+  readiness probes never fired, `_on_reload_timeout` aborted the reload
+  every time (`reload_timeout_s=10.0`), and `worker.py`'s D2 pipe dispatch
+  acked the `reload` command `"applied"` the instant `reload_program`
+  *returned* -- before the reload had committed or even had a chance to --
+  so the daemon believed every rollover had landed and automation
+  re-issued it every cadence tick, forever. A second measured root cause
+  (H5) also contributed on the tester: `preparer.prepare()` wrote every
+  content-reload's non-cache-hit prepared segment to a FIXED path keyed
+  only by the segment's index within its own call
+  (`<channel>/prepared/segment-NNNN.ts`), never by which plan the call was
+  preparing -- for the GStreamer engine (`playout_trim_supported=False`) a
+  reload's prepare wrote directly over the exact file the CURRENTLY LIVE
+  worker's `filesrc` was still reading, with no GStreamer warning, only a
+  downstream stall. Four independent fixes, all in this change:
+  - `engine.py`'s `_make` now checks `pipeline.add()`'s return value and
+    raises `RuntimeError` naming the refused element instead of silently
+    proceeding; `reload_program`'s existing build-error handling aborts the
+    in-flight reload cleanly on that raise (the current program keeps
+    playing).
+  - `_build_playlist` now names each build's aggregators with a monotonic
+    `self._source_leg_seq` (`vconcat_<label>_<seq>`/`aconcat_<label>_<seq>`,
+    mirroring the existing `_overlay_layer_seq` pattern) so a reload's
+    rebuilt aggregators never collide with the leg they are replacing.
+  - `reload_program` gained an optional `on_settled` callback, invoked
+    exactly once when the reload actually commits or aborts;
+    `worker.py`'s D2 pipe dispatch now defers its ack until that callback
+    fires (`"applied"` from the commit path, `"aborted:<reason>"` from the
+    abort path) instead of acking the instant `reload_program` returns.
+    The strategy's ack wait for a `reload` command alone is now bounded by
+    the worker's own `reload_timeout_s` plus a margin
+    (`GstPlayoutStrategy._reload_ack_timeout_s`), not the default 5s. The
+    daemon also now logs a WARNING naming the channel and the reason
+    whenever a seamless reload is declined
+    (`GstPlayoutStrategy.last_send_command_failure_reason`), where before
+    `if not applied: return False` had no log line at all.
+  - `preparer.py`'s `prepare()` now writes every call's prepared segments
+    into their own uniquely-named subdirectory
+    (`<channel>/prepared/<uuid>/segment-NNNN.ts`) so two `prepare()` calls
+    can never share an output path; the two direct-ffmpeg write sites
+    (cache-hit stream-copy, trimmed-miss conform) now write to a `.tmp`
+    sibling and rename into place atomically, matching the existing
+    full-asset-cache write's pattern; and a generous, age-based backstop
+    (`_gc_stale_prepared_plan_dirs`) reclaims old per-plan directories a
+    long-running channel would otherwise accumulate forever.
+  - **Known issue: the seamless in-place rollover is disabled by default in
+    beta.5, pending a fresh hardware soak.** All fixes above are
+    unit-tested, but the seamless path itself has not yet been RE-PROVEN on
+    real hardware since they landed. `GstPlayoutStrategy.supports_content_reload`
+    now defaults to `False` (env `CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` to opt
+    back in); a channel with it off falls back to the daemon's existing
+    terminate+restart reload path at every plan rollover instead of the
+    in-place swap. Cost of the fallback: one encoder restart per plan
+    rollover -- a rounding error for a normal 10-40 minute program item, but
+    roughly one restart every ~30 seconds for a rapid 30-second-item
+    test/demo schedule.
 - **Install-over could leave the PREVIOUS kit's application payload silently
   running.** MEASURED on a real tester (2026-09-05): installing kit B `/S`
   (install-over) on a station kit A had already installed, where both kits
