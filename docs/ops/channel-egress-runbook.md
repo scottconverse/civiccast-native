@@ -242,10 +242,40 @@ itself — no CLI worker needed. Posture for a three-channel station:
   GStreamer engine's bounded conform for an untrimmed MISS never seeks (the
   whole asset is wanted from the start, so no `-ss`), and that already-
   finished per-plan file is what airs directly — the persistent cache entry
-  is populated afterward from a hard link (or a plain file copy, if the cache
-  lives on a different volume) of that SAME file, never a second encode or a
-  copy-out. A cache HIT for an untrimmed asset is therefore byte-identical to
-  its first airing.
+  is populated afterward from a hard link of that SAME file (round-4
+  correction: **if the cache and the per-plan directory live on different
+  volumes, the link fails and the cache entry populates in the BACKGROUND
+  instead** — a queued byte-for-byte copy, same one-worker warm queue as an
+  ordinary warm — never a second encode, and never blocking that airing).
+  A cache HIT for an untrimmed asset is therefore byte-identical to its
+  first airing, whether it arrived by link or by background copy.
+- **Cache promotion never waits behind an in-progress warm (item 66
+  round-4):** if a background warm for the identical asset is already
+  running when a foreground airing tries to populate (or link/copy into)
+  the same cache entry, that foreground promotion is skipped outright
+  rather than waiting for the warm to finish — a warm's own single-threaded
+  conform can take tens of minutes for a long asset, and item 66 exists
+  precisely to keep the synchronous start path from waiting on work like
+  that. Skipping costs nothing beyond that one airing's copy being (for
+  now) absent from the persistent cache: the segment already aired from its
+  own file regardless, and the in-progress warm (or a later airing) still
+  populates the cache normally.
+- **The loudness probe samples the asset, it does not measure the whole
+  file (item 66, revised round-4):** a TRIMMED (join-in-progress) segment's
+  probe is bounded to its own wanted window. An UNTRIMMED segment's probe
+  samples 120 seconds starting 40% into the asset's duration — NOT the
+  head — because a head sample can land on cold-open silence or room tone
+  and measure the silence floor instead of the program's real loudness (a
+  real field failure: -70 LUFS measured at the head of a 39-minute meeting
+  recording, which would have driven normalization completely wrong and
+  been reused for every other segment/airing of that asset via the
+  per-asset memo above). If the sampled window itself measures at or below
+  -60 LUFS integrated (still silence, e.g. a long pause that happens to
+  land in the sample), the preparer falls back to exactly ONE whole-file
+  probe and uses that reading instead — a floor sample is never cached or
+  acted on. Either way this remains a sample rather than a full-file
+  measurement for material whose loudness varies significantly across its
+  length.
 
 - Never run the inline automation driver AND a `civiccast egress run` CLI
   worker for the same channels: two daemons would race the same durable

@@ -49,6 +49,7 @@ def check_loudness(
     standard_label: str = DEFAULT_LOUDNESS_STANDARD,
     probe_start_seconds: float | None = None,
     probe_duration_seconds: float | None = None,
+    threads: int | None = None,
 ) -> LoudnessGateResult:
     """Measure a media asset's integrated loudness and gate it against a target.
 
@@ -69,6 +70,13 @@ def check_loudness(
     loudness, and it can differ for material that varies significantly
     across its length -- callers that need the whole-file measurement must
     leave both ``None``.
+
+    ``threads`` (item 66 round-4, Opus review): caps the decode at that
+    many threads (``-threads <N>``), same convention as
+    ``build_conform_source_args``. Used by the source preparer's
+    whole-file fallback probe (triggered when a bounded sample lands at
+    the silence floor) so that synchronous fallback never runs fully
+    unthrottled on the box.
     """
 
     if not media_path.exists():
@@ -101,6 +109,8 @@ def check_loudness(
     args.append("-vn")
     if probe_duration_seconds is not None:
         args.extend(["-t", f"{probe_duration_seconds:g}"])
+    if threads is not None:
+        args.extend(["-threads", str(threads)])
     args.extend(["-filter_complex", "ebur128=peak=true", "-f", "null", "-"])
     result = run_ffmpeg(args)
     if result.returncode != 0:
@@ -136,15 +146,17 @@ def check_streaming_loudness(
     tolerance_lufs: float,
     probe_start_seconds: float | None = None,
     probe_duration_seconds: float | None = None,
+    threads: int | None = None,
 ) -> LoudnessGateResult:
     """Back-compat wrapper: gate streaming audio against its -16 LUFS target.
 
     Retained so existing callers (the source preparer, the FileSink/SRT
     continuity proofs, the CLI) and their test monkeypatches keep working while
     new per-sink callers use :func:`check_loudness` with a destination label.
-    ``probe_start_seconds``/``probe_duration_seconds`` forward to
+    ``probe_start_seconds``/``probe_duration_seconds``/``threads`` forward to
     :func:`check_loudness` -- see its docstring (item 66 round-3: the source
-    preparer bounds every probe to a window instead of the whole file).
+    preparer bounds every probe to a window instead of the whole file;
+    round-4: the whole-file fallback probe is thread-capped).
     """
 
     return check_loudness(
@@ -153,6 +165,7 @@ def check_streaming_loudness(
         tolerance_lufs=tolerance_lufs,
         probe_start_seconds=probe_start_seconds,
         probe_duration_seconds=probe_duration_seconds,
+        threads=threads,
     )
 
 

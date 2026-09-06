@@ -89,34 +89,74 @@ below.
     file is now finished FIRST, unconditionally (`tmp_output_path.replace
     (output_path)`), and airs from itself; the cache is populated
     afterward via `_promote_finished_conform_into_cache` — a hard link
-    (`os.link`, falling back to `shutil.copy2` across volumes) of that
-    SAME already-airing file into `conform-cache/{key}.ts.tmp`, then the
-    existing atomic rename. Any failure in that promotion (including the
-    over-budget case above) is logged and swallowed, never raised: the
-    segment is already safely on air regardless, and only the NEXT airing
-    of that asset misses the cache and re-conforms. TRIMMED misses are
-    unchanged: bounded conform straight to air, full-asset warm scheduled
-    behind it.
+    (`os.link`) of that SAME already-airing file into
+    `conform-cache/{key}.ts.tmp`, then the existing atomic rename.
+  - **The link/lock design in the paragraph above went through TWO more
+    measured rounds of Opus review after it first shipped:**
+    - **Round 4, BLOCKER:** the lock guarding that promotion (and the
+      matching lock in `_conform_full_asset_into_cache`, used on the
+      `playout_trim_supported=True` engine) was still acquired BLOCKING. A
+      background warm holds the identical lock for its ENTIRE
+      single-threaded conform — tens of minutes for a long asset — so a
+      synchronous `prepare()` landing behind an in-progress warm for the
+      SAME asset stalled for just as long (measured: 3.01s against a
+      3-second fake warm in the regression test). Both lock sites now
+      acquire NON-BLOCKING: on contention, the promotion is skipped
+      (logged) and the untrimmed-miss path falls through to the bounded
+      per-segment conform instead of waiting — the segment already airs
+      from its own file either way. `_schedule_warm`'s queued job also
+      re-checks `{key}.ts` (and a fresh meta) right before doing any work,
+      so a job that sat in the single-worker warm queue while a foreground
+      promotion already populated the same entry skips its now-redundant
+      re-conform instead of racing it.
+    - **Round 4, point 3:** the `shutil.copy2` fallback (when `os.link`
+      fails, e.g. the cache and per-plan directories live on different
+      volumes) was still a full synchronous byte-for-byte copy on the
+      start path — the same class of blocking work item 66 exists to
+      close. It is now handed to the warm scheduler
+      (`_schedule_cache_copy_promotion`) as a queued background job on the
+      same single-worker queue as an ordinary warm; a cross-volume layout
+      now populates its cache entries in the background instead of on the
+      synchronous path.
+    Any failure in cache promotion (including the over-budget case) is
+    still logged and swallowed, never raised: the segment is already
+    safely on air regardless, and only the NEXT airing of that asset
+    misses the cache and re-conforms. TRIMMED misses are unchanged: bounded
+    conform straight to air, full-asset warm scheduled behind it.
   - **The warm scheduler is a single-worker FIFO queue, not one thread per
     job.** `_default_warm_scheduler` used to spawn an unbounded daemon
     thread per warm job; it now queues onto one long-lived background
-    worker, so at most one warm conform runs at a time regardless of how
-    many distinct assets are warming. The existing per-key dedupe
-    (`self._warming`) is unchanged.
-  - **The loudness probe is now bounded to a window, not the whole file.**
-    A trimmed segment probes exactly its own wanted window (`-ss <inpoint>`
+    worker, so at most one warm conform (or cache-copy promotion, above)
+    runs at a time regardless of how many distinct assets are warming. The
+    existing per-key dedupe (`self._warming`) is unchanged, and now shared
+    between the two job kinds.
+  - **The loudness probe is now bounded to a window, not the whole file --
+    and, since round 4, not the HEAD of an untrimmed asset either.** A
+    trimmed segment probes exactly its own wanted window (`-ss <inpoint>`
     before `-i`, `-t <duration>` after it — the same convention
-    `build_conform_source_args` uses); an untrimmed segment (the full
-    asset) is capped to its first 120 seconds instead of its whole
-    duration. `check_loudness`/`check_streaming_loudness` gained optional
-    `probe_start_seconds`/`probe_duration_seconds` parameters for this
-    (`None`/`None`, the default for every OTHER caller, still measures the
-    whole file unchanged). This is a documented sample, not a full-file
-    measurement, for material whose loudness varies significantly across
-    its length — the persisted-meta memo above still means one asset gets
-    one measured value shared across every segment/airing of it, which was
-    already this codebase's model before item 66 (the cache key never
-    depended on trim).
+    `build_conform_source_args` uses). An untrimmed segment (the full
+    asset) samples 120 seconds starting 40% into the asset's duration
+    instead of its whole duration -- the initial round-3 shape sampled the
+    HEAD instead, and an Opus review found a real failure mode: a cold-open
+    with silence or room tone measures the silence floor instead of the
+    program's real loudness, which then drives `loudnorm`'s normalization
+    target completely wrong and gets memoized for every other
+    segment/airing of that asset. If the mid-file sample itself measures at
+    or below -60 LUFS integrated (still silence -- e.g. a pause that
+    happens to land in the sampled window), the preparer falls back to
+    exactly ONE whole-file probe (bounded by the same foreground thread
+    cap as a foreground conform, via a new optional `threads` parameter on
+    `check_loudness`/`check_streaming_loudness`) and uses THAT reading
+    instead -- the floor sample itself is never cached or acted on.
+    `check_loudness`/`check_streaming_loudness` gained optional
+    `probe_start_seconds`/`probe_duration_seconds`/`threads` parameters for
+    this (`None` for every OTHER caller, still measuring the whole file,
+    unthrottled, unchanged). This remains a documented sample, not a
+    full-file measurement, for material whose loudness varies
+    significantly across its length — the persisted-meta memo above still
+    means one asset gets one measured value shared across every
+    segment/airing of it, which was already this codebase's model before
+    item 66 (the cache key never depended on trim).
   - **`_evict_cache_over_budget` now reaps orphaned cache-dir files** that
     no other path here ever cleaned up: an abandoned `{key}.ts.tmp` (a
     conform or promotion interrupted mid-write) older than 1 hour is
@@ -138,10 +178,12 @@ below.
     the CLI path now imports the same `gstreamer_engine_selected` helper
     and mirrors it.
   See `docs/ops/channel-egress-runbook.md`'s corrected "Cache HIT accuracy vs
-  MISS accuracy" note: the accuracy differential only ever applied to
-  TRIMMED (join-in-progress) requests; an untrimmed asset's cache entry is
-  now a link/copy of the exact file that already aired, so it is
-  byte-identical to the first airing, not a separately-produced copy.
+  MISS accuracy" note (an untrimmed asset's cache entry is a link -- or, on
+  a cross-volume layout, a background copy -- of the exact file that
+  already aired, so it is byte-identical, not a separately-produced copy),
+  its new "Cache promotion never waits behind an in-progress warm" note,
+  and its corrected "loudness probe" note describing the sampling window
+  and silence-floor fallback.
 - **A seamless plan rollover collided its own concat aggregators, silently
   failed to join the pipeline, and was acked "applied" anyway -- so
   automation kept re-triggering it forever while the channel bounced.**

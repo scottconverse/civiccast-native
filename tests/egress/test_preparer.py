@@ -779,20 +779,31 @@ def test_cache_eviction_respects_budget(tmp_path: Path, monkeypatch) -> None:
     assert list(cache_dir.glob("*.ts")) == []  # over budget -> evicted immediately
 
 
-def test_foreground_conform_does_not_race_a_concurrent_conform_for_same_key(
+def test_conform_full_asset_into_cache_skips_instead_of_blocking_on_contention(
     tmp_path: Path,
 ) -> None:
     """automation.py shares one SourcePreparer across channels: a background
     warm and a foreground untrimmed-miss conform for the SAME asset (same
     cache key) can both reach _conform_full_asset_into_cache at once with no
-    lock guarding it, both writing the identical {key}.ts.tmp. Concurrent
-    calls for the same key must be serialized."""
+    lock guarding it, both writing the identical {key}.ts.tmp -- concurrent
+    calls for the same key must never collide.
+
+    Item 66 round-4 (Opus review, point 1) changed HOW that's guaranteed:
+    the per-key lock used to be acquired BLOCKING, so a contended second
+    call would wait for the first to finish (serialized, but the FIRST
+    version of this test's docstring called that the fix -- it was itself
+    the bug: a synchronous caller blocking behind a background warm's
+    entire single-threaded conform, tens of minutes for a long asset).
+    The lock is now acquired NON-BLOCKING: a contended call returns
+    ``None`` immediately instead of waiting, and never touches the ffmpeg
+    runner at all."""
     source = tmp_path / "long-recording.mp4"
     source.write_text("fake long media", encoding="utf-8")
 
     active = 0
     max_active = 0
     guard = threading.Lock()
+    holder_started = threading.Event()
     proceed = threading.Event()
 
     def runner(args: list[str]) -> FfmpegResult:
@@ -800,6 +811,7 @@ def test_foreground_conform_does_not_race_a_concurrent_conform_for_same_key(
         with guard:
             active += 1
             max_active = max(max_active, active)
+        holder_started.set()
         proceed.wait(timeout=5)
         Path(args[-1]).parent.mkdir(parents=True, exist_ok=True)
         Path(args[-1]).write_text("prepared", encoding="utf-8")
@@ -818,19 +830,143 @@ def test_foreground_conform_does_not_race_a_concurrent_conform_for_same_key(
     assert key is not None
     loudness = _loudness()
 
-    def conform() -> None:
-        preparer._conform_full_asset_into_cache(key, source, config, loudness, False)
+    results: dict[int, Path | None] = {}
 
-    t1 = threading.Thread(target=conform)
-    t2 = threading.Thread(target=conform)
+    def conform(index: int) -> None:
+        results[index] = preparer._conform_full_asset_into_cache(
+            key, source, config, loudness, False
+        )
+
+    t1 = threading.Thread(target=conform, args=(0,))
     t1.start()
-    time.sleep(0.05)  # give t1 a head start so t2 has to contend for the key
-    t2.start()
+    assert holder_started.wait(timeout=5)  # t1 genuinely holds the lock and is running
+
+    # t2's call, made while t1 still holds the lock, must return None
+    # immediately -- not wait, not run the ffmpeg runner.
+    contended_result = preparer._conform_full_asset_into_cache(key, source, config, loudness, False)
+    assert contended_result is None
+    assert max_active == 1  # t2 never entered the runner -- never ran concurrently with t1
+
     proceed.set()
     t1.join(timeout=5)
-    t2.join(timeout=5)
+    assert results[0] is not None  # t1 completed normally and populated the cache
 
-    assert max_active == 1  # the two conforms for the same key never overlap
+
+def test_prepare_does_not_block_behind_a_warm_holding_the_cache_lock(tmp_path: Path) -> None:
+    """Item 66 round-4 BLOCKER acceptance test (Opus review, point 1):
+    reproduces the exact measured regression -- a synchronous prepare()
+    took 3.01s behind a 3-second fake warm holding this asset's per-key
+    lock -- and proves it is fixed. GStreamer engine (the constructor
+    default): the untrimmed-miss path's cache promotion
+    (_promote_finished_conform_into_cache) must not wait for the warm at
+    all; the segment still airs from its own per-plan file regardless."""
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    key = preparer._cache_key(source, _config())
+    assert key is not None
+    lock = preparer._conform_lock(key)
+
+    def fake_three_second_warm() -> None:
+        with lock:
+            time.sleep(3.0)
+
+    warm_thread = threading.Thread(target=fake_three_second_warm, daemon=True)
+    warm_thread.start()
+    time.sleep(0.1)  # give the fake warm time to actually acquire the lock first
+
+    started = time.monotonic()
+    report = preparer.prepare(_untrimmed_plan(tmp_path), _config())
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.5  # measured regression: 3.01s; must not block behind the 3s warm
+    seg = report.source_plan.segments[0]
+    assert Path(seg.path).is_file()  # the segment still airs from its own per-plan file
+
+
+def test_prepare_does_not_block_behind_a_warm_when_engine_can_trim(tmp_path: Path) -> None:
+    """Companion (item 66 round-4, point 1's "Same at :995-998"): the
+    playout_trim_supported=True call site (_conform_full_asset_into_cache
+    invoked directly from _prepare_segment, not via the promotion helper)
+    gets the same non-blocking treatment. Contention there falls through
+    to the bounded per-segment conform instead of blocking on the lock
+    too."""
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+        playout_trim_supported=True,
+    )
+    key = preparer._cache_key(source, _config())
+    assert key is not None
+    lock = preparer._conform_lock(key)
+
+    def fake_three_second_warm() -> None:
+        with lock:
+            time.sleep(3.0)
+
+    warm_thread = threading.Thread(target=fake_three_second_warm, daemon=True)
+    warm_thread.start()
+    time.sleep(0.1)
+
+    started = time.monotonic()
+    report = preparer.prepare(_untrimmed_plan(tmp_path), _config())
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 0.5
+    seg = report.source_plan.segments[0]
+    # Fallback shape: a plain per-plan file, NOT a pointer into the (contended)
+    # cache object -- this one airing gets its own bounded conform instead.
+    assert "conform-cache" not in seg.path
+    assert Path(seg.path).is_file()
+
+
+def test_schedule_warm_job_skips_when_cache_already_populated_before_it_runs(
+    tmp_path: Path,
+) -> None:
+    """Item 66 round-4 (Opus review, point 1): a queued warm job may sit in
+    the single-worker warm queue for a while (round-3, point 4) -- by the
+    time it is about to run, the identical asset may already be cached
+    (e.g. a foreground untrimmed-miss conform promoted its own
+    already-finished file straight in). The job must re-check {key}.ts
+    existence (and a fresh meta) right before doing any work and skip the
+    redundant re-conform if it's already there."""
+    calls: list[list[str]] = []
+    warm_jobs: list = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=warm_jobs.append,
+    )
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    config = _config()
+    key = preparer._cache_key(source, config)
+    assert key is not None
+    loudness = _loudness()
+
+    preparer._schedule_warm(key, source, config, loudness, False)
+    assert len(warm_jobs) == 1
+
+    # Simulate the cache being populated by a concurrent caller WHILE this
+    # job was still sitting in the queue.
+    preparer._write_cache_meta(key, loudness, False)
+    cache_dir = tmp_path / "work" / "conform-cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / f"{key}.ts").write_text("already cached", encoding="utf-8")
+
+    warm_jobs[0]()  # run the queued job now
+
+    assert calls == []  # skipped the redundant re-conform
 
 
 def test_cache_disabled_by_nonpositive_budget(tmp_path: Path, monkeypatch) -> None:
@@ -1079,17 +1215,22 @@ def test_promote_finished_conform_links_without_moving_the_per_plan_file(
     assert finished.read_text(encoding="utf-8") == "prepared bytes"
 
 
-def test_promote_finished_conform_falls_back_to_copy_when_link_fails(
+def test_promote_finished_conform_queues_a_copy_job_when_link_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``os.link`` can fail (e.g. the cache lives on a different volume than
-    the per-plan directory) -- must fall back to a real copy rather than
-    propagating the error."""
+    """Item 66 round-4 (Opus review, point 3): ``os.link`` can fail (e.g.
+    the cache lives on a different volume than the per-plan directory) --
+    the fallback is no longer an inline ``shutil.copy2`` on the
+    synchronous start path (a full byte-for-byte copy of a long asset is
+    exactly the kind of blocking work item 66 exists to close). It must
+    instead be QUEUED onto the warm scheduler and return immediately
+    without having copied anything yet."""
+    warm_jobs: list = []
     preparer = SourcePreparer(
         work_dir=tmp_path / "work",
         ffmpeg_runner=_counting_runner([]),
         loudness_checker=lambda **_kwargs: _loudness(),
-        warm_scheduler=lambda job: None,
+        warm_scheduler=warm_jobs.append,
     )
     source = tmp_path / "long-recording.mp4"
     source.write_text("fake long media", encoding="utf-8")
@@ -1107,7 +1248,12 @@ def test_promote_finished_conform_falls_back_to_copy_when_link_fails(
     preparer._promote_finished_conform_into_cache(key, finished, source, _loudness(), False)
 
     cache_ts = tmp_path / "work" / "conform-cache" / f"{key}.ts"
-    assert cache_ts.is_file()  # populated via shutil.copy2 fallback
+    assert not cache_ts.exists()  # not populated yet -- the copy is only queued
+    assert len(warm_jobs) == 1
+
+    warm_jobs[0]()  # run the queued copy job
+
+    assert cache_ts.is_file()  # now populated via the background shutil.copy2
     assert cache_ts.read_text(encoding="utf-8") == "prepared bytes"
     assert finished.is_file()
 
@@ -1223,9 +1369,13 @@ def test_loudness_probe_is_bounded_to_the_segment_window_when_trimmed(tmp_path: 
     assert probes[0]["probe_duration_seconds"] == 12.5
 
 
-def test_loudness_probe_is_capped_at_120s_when_untrimmed(tmp_path: Path) -> None:
-    """Companion: an untrimmed segment (the full 3600s asset) is capped to
-    the documented 120s head sample, never the whole duration."""
+def test_untrimmed_probe_samples_mid_file_not_the_head(tmp_path: Path) -> None:
+    """Item 66 round-4 (Opus review, point 2): an untrimmed probe samples
+    40% into the asset's duration for 120s, NOT the head. A round-3 HEAD
+    sample can land on cold-open silence/room tone and measure the silence
+    floor instead of the program's real loudness -- a real field failure
+    (-70 LUFS at the head of a 39-minute meeting recording) that would then
+    drive loudnorm's normalization target completely wrong."""
     probes: list[dict] = []
     preparer = SourcePreparer(
         work_dir=tmp_path / "work",
@@ -1234,11 +1384,67 @@ def test_loudness_probe_is_capped_at_120s_when_untrimmed(tmp_path: Path) -> None
         warm_scheduler=lambda job: None,
     )
 
-    preparer.prepare(_untrimmed_plan(tmp_path), _config())
+    preparer.prepare(_untrimmed_plan(tmp_path), _config())  # 3600s asset
 
     assert len(probes) == 1
-    assert probes[0]["probe_start_seconds"] is None
+    assert probes[0]["probe_start_seconds"] == 1440.0  # 40% of 3600s, not 0
     assert probes[0]["probe_duration_seconds"] == 120.0
+
+
+def test_untrimmed_probe_falls_back_to_whole_file_once_on_silence_floor(
+    tmp_path: Path,
+) -> None:
+    """Companion: when the mid-file sample measures at/below the silence
+    floor (-60 LUFS), fall back to exactly ONE whole-file probe (bounded by
+    the foreground thread cap) and use ITS result -- the floor sample is
+    never used or cached."""
+    probes: list[dict] = []
+
+    def loudness_checker(**kwargs: object) -> LoudnessGateResult:
+        probes.append(kwargs)
+        if kwargs.get("probe_start_seconds") is not None:
+            return _loudness(measured_lufs=-70.0)  # the bounded mid-file sample: silence
+        return _loudness(measured_lufs=-16.0)  # the whole-file fallback: a real reading
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=loudness_checker,
+        warm_scheduler=lambda job: None,
+    )
+
+    preparer.prepare(_untrimmed_plan(tmp_path), _config())
+
+    assert len(probes) == 2  # the bounded sample, then exactly one fallback -- never a loop
+    assert probes[0]["probe_start_seconds"] == 1440.0
+    assert probes[0]["probe_duration_seconds"] == 120.0
+    assert probes[1]["probe_start_seconds"] is None  # whole file
+    assert probes[1]["probe_duration_seconds"] is None
+    assert probes[1]["threads"] == preparer_module._foreground_thread_cap()
+
+    key = preparer._cache_key(tmp_path / "long-recording.mp4", _config())
+    assert key is not None
+    meta = preparer._read_cache_meta(key)
+    assert meta is not None
+    assert meta["measured_lufs"] == -16.0  # the fallback's reading, never the floor sample
+
+
+def test_untrimmed_probe_does_not_fall_back_when_sample_is_above_the_floor(
+    tmp_path: Path,
+) -> None:
+    """Companion: a normal (non-floor) mid-file sample is used as-is -- no
+    fallback probe runs at all."""
+    probes: list[dict] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **kwargs: probes.append(kwargs) or _loudness(measured_lufs=-24.1),
+        warm_scheduler=lambda job: None,
+    )
+
+    preparer.prepare(_untrimmed_plan(tmp_path), _config())
+
+    assert len(probes) == 1  # no fallback triggered
 
 
 def test_cache_hit_utime_race_falls_through_to_a_miss(

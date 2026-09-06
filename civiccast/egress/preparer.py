@@ -87,10 +87,26 @@ _ORPHAN_CACHE_TMP_MAX_AGE_S = 3600.0
 _ORPHAN_CACHE_META_MAX_AGE_S = 24.0 * 3600.0
 
 #: Item 66 round-3 (Opus review, point 7): an untrimmed loudness probe no
-#: longer decodes the whole asset -- it samples the first two minutes. This
-#: is the one place that head-sample assumption is encoded; see
+#: longer decodes the whole asset -- it samples a window instead. This is
+#: the one place that sampling-window assumption is encoded; see
 #: ``_prepare_segment``'s loudness-probe comment.
 _UNTRIMMED_LOUDNESS_PROBE_CAP_S = 120.0
+
+#: Item 66 round-4 (Opus review, point 2): a HEAD sample (the round-3
+#: shape) can land on cold open silence/room tone and measure the silence
+#: floor instead of the program's real loudness -- a real field failure
+#: (-70 LUFS at the head of a 39-minute meeting recording), which would
+#: then drive loudnorm's normalization target completely wrong and get
+#: memoized for every other segment/airing of that asset. The sample
+#: window now starts partway into the asset instead of at the very head.
+_UNTRIMMED_LOUDNESS_PROBE_FRACTION = 0.4
+
+#: A measurement at or below this integrated LUFS is indistinguishable from
+#: silence/room tone for any of CivicCast's target loudness standards (the
+#: least aggressive, ATSC A/85, still targets -24 LKFS +/- tolerance) --
+#: treat it as an unusable sample rather than a real reading of the asset's
+#: program loudness.
+_LOUDNESS_SILENCE_FLOOR_LUFS = -60.0
 
 
 def _prepared_plan_dir_budget_bytes() -> float:
@@ -342,7 +358,7 @@ class SourcePreparer:
         normalized: bool,
         *,
         threads: int = 1,
-    ) -> Path:
+    ) -> Path | None:
         """Conform the WHOLE asset (no trim) into the cache, atomically.
 
         ``threads`` (item 66, revised): the warm-behind path
@@ -357,8 +373,34 @@ class SourcePreparer:
         ``_try_content_reload``, which runs this call ON the automation
         thread while other channels may be on air) -- a bounded cap keeps
         the synchronous path fast without letting it claim every core.
+
+        Returns ``None`` instead of conforming (item 66 round-4 BLOCKER fix,
+        Opus review) when this key's per-key lock is already held --
+        virtually always ``_schedule_warm``'s background job already
+        conforming the identical asset. This lock used to be acquired with a
+        BLOCKING ``with`` statement: a background warm holds it for its
+        entire single-threaded conform (tens of minutes for a long asset),
+        so a synchronous caller landing here while that warm is running
+        would stall behind it for just as long -- exactly the kind of delay
+        item 66 exists to close, just via lock contention instead of a
+        direct synchronous conform. Callers on the synchronous path
+        (``_prepare_segment``'s untrimmed/``playout_trim_supported`` branch)
+        must treat ``None`` as "fall back to the bounded per-segment conform
+        instead of waiting"; ``_schedule_warm``'s own background job ignores
+        the return value entirely (a warm colliding with another warm for
+        the same key can't happen -- see its own dedupe -- so ``None`` there
+        would only mean an unrelated caller is already populating this exact
+        entry, which is fine to leave to that caller).
         """
-        with self._conform_lock(key):
+        lock = self._conform_lock(key)
+        if not lock.acquire(blocking=False):
+            _LOG.info(
+                "Full-asset conform skipped for %r: another conform/warm already holds "
+                "this asset's cache lock.",
+                source_path.name,
+            )
+            return None
+        try:
             cache_dir = self._cache_dir()
             cache_dir.mkdir(parents=True, exist_ok=True)
             tmp = cache_dir / f"{key}.ts.tmp"
@@ -377,6 +419,8 @@ class SourcePreparer:
                     f"Full-asset conform for cache failed for {source_path.name!r}."
                 )
             return self._promote_conform_into_cache(key, tmp, source_path, loudness, normalized)
+        finally:
+            lock.release()
 
     def _promote_conform_into_cache(
         self,
@@ -391,18 +435,19 @@ class SourcePreparer:
         place, write the sidecar meta, run eviction, and fail cleanly if the
         just-written entry alone exceeds budget.
 
-        Shared tail of two call sites, both of which hold ``self._conform_
-        lock(key)`` around the call: ``_conform_full_asset_into_cache``
-        (holds it across the ffmpeg run too, since ``tmp`` there already
-        lives at the SHARED ``{key}.ts.tmp`` cache path) and (item 66)
-        ``_promote_finished_conform_into_cache``, whose ``tmp`` is a
-        hard-link/copy of an already-finished per-plan file it made at that
-        same shared path just before calling this.
+        Shared tail of every call site that already holds ``self._conform_
+        lock(key)`` around the call (item 66 round-4: NON-BLOCKING
+        acquisition at every one of them, so this method itself never
+        blocks -- see ``_conform_full_asset_into_cache``,
+        ``_promote_finished_conform_into_cache``, and
+        ``_schedule_cache_copy_promotion``'s docstrings for what "already
+        holds it" means at each).
 
         Raises ``SourcePrepareError`` if the just-written entry alone
         exceeds the configured budget -- callers that must never let a
         cache-promotion failure interrupt something already safely airing
-        (``_promote_finished_conform_into_cache``) catch this themselves.
+        (``_promote_finished_conform_into_cache``,
+        ``_schedule_cache_copy_promotion``) catch this themselves.
         """
         cache_dir = self._cache_dir()
         final = cache_dir / f"{key}.ts"
@@ -431,33 +476,64 @@ class SourcePreparer:
     ) -> None:
         """Item 66 round-3 BLOCKER fix (Opus review): populate the
         persistent conform cache from an ALREADY-FINISHED, already-airing
-        per-plan file via a hard link (``os.link``), falling back to a real
-        copy (``shutil.copy2``) if linking fails (e.g. the cache lives on a
-        different volume than the per-plan directory) -- never by moving
+        per-plan file via a hard link (``os.link``) -- never by moving
         ``finished_output_path`` itself. The segment is airing from that
         exact path; this method must never make it disappear.
 
-        Any failure here -- a failed link AND a failed copy, or
-        ``_promote_conform_into_cache``'s own over-budget
-        ``SourcePrepareError`` when this single entry alone exceeds
-        ``CIVICCAST_CONFORM_CACHE_GB`` -- is logged and swallowed, never
+        Round-4 (Opus review):
+        - point 1: the per-key lock is now acquired NON-BLOCKING. A
+          background warm holds this SAME lock for its entire
+          single-threaded conform (tens of minutes for a long asset); the
+          previous blocking ``with`` here meant a synchronous caller could
+          stall behind an in-progress warm for just as long. If the lock is
+          already held, the promotion is skipped entirely (logged) -- the
+          segment already airs from ``finished_output_path`` regardless, so
+          skipping costs nothing except that this one airing's copy is (for
+          now) absent from the persistent cache; the in-progress warm (or
+          the next airing) populates it instead.
+        - point 3: linking is a metadata-only filesystem operation (fast) and
+          still runs inline; but when it FAILS (e.g. the cache lives on a
+          different volume than the per-plan directory), the full
+          byte-for-byte ``shutil.copy2`` fallback is handed to the warm
+          scheduler (``_schedule_cache_copy_promotion``) instead of running
+          inline here -- a synchronous copy of a long asset is exactly the
+          kind of full-length blocking work item 66 exists to keep off the
+          start path.
+
+        Any OTHER failure here (a failed link that also raises inside the
+        scheduled copy job, or ``_promote_conform_into_cache``'s own
+        over-budget ``SourcePrepareError``) is logged and swallowed, never
         raised: the segment is already safely on air from
-        ``finished_output_path`` regardless of whether this succeeds. The
-        only cost of a promotion failure is that the NEXT airing of this
-        asset misses the cache and re-conforms, exactly like a failed
-        background warm already does (see ``_schedule_warm``).
+        ``finished_output_path`` regardless. The only cost of a promotion
+        failure is that the NEXT airing of this asset misses the cache and
+        re-conforms, exactly like a failed background warm already does
+        (see ``_schedule_warm``).
         """
+        lock = self._conform_lock(key)
+        if not lock.acquire(blocking=False):
+            _LOG.info(
+                "Cache promotion skipped for %r: another conform/warm already holds "
+                "this asset's cache lock; the segment already aired from its own file.",
+                source_path.name,
+            )
+            return
         cache_dir = self._cache_dir()
         tmp = cache_dir / f"{key}.ts.tmp"
         try:
-            with self._conform_lock(key):
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                tmp.unlink(missing_ok=True)
-                try:
-                    os.link(finished_output_path, tmp)
-                except OSError:
-                    shutil.copy2(finished_output_path, tmp)
-                self._promote_conform_into_cache(key, tmp, source_path, loudness, normalized)
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            tmp.unlink(missing_ok=True)
+            try:
+                os.link(finished_output_path, tmp)
+            except OSError:
+                # Cross-volume (or otherwise unlinkable) -- queue the full
+                # copy + promotion in the background instead of blocking
+                # the start path on it. Release our lock first (the "with"
+                # is scoped below) so the queued job can acquire it fresh.
+                self._schedule_cache_copy_promotion(
+                    key, finished_output_path, source_path, loudness, normalized
+                )
+                return
+            self._promote_conform_into_cache(key, tmp, source_path, loudness, normalized)
         except Exception:
             _LOG.exception(
                 "Promoting the finished conform for %r into the persistent conform cache "
@@ -467,6 +543,57 @@ class SourcePreparer:
             )
             with contextlib.suppress(OSError):
                 tmp.unlink()
+        finally:
+            lock.release()
+
+    def _schedule_cache_copy_promotion(
+        self,
+        key: str,
+        finished_output_path: Path,
+        source_path: Path,
+        loudness: LoudnessGateResult,
+        normalized: bool,
+    ) -> None:
+        """Item 66 round-4 (Opus review, point 3): queue a full
+        byte-for-byte copy of an already-finished, already-airing per-plan
+        file into the persistent cache, for the case where
+        ``_promote_finished_conform_into_cache`` could not hard-link it
+        (typically a cross-volume cache/work-dir layout). Runs on the same
+        single-worker warm queue as ``_schedule_warm`` (see
+        ``_default_warm_scheduler``), so a slow cross-volume copy never
+        contends with a foreground conform, and shares its dedupe
+        (``self._warming``) so a burst of airings of the same asset never
+        queues more than one populate job for it -- a warm and a
+        copy-promotion for the same key are mutually exclusive the same way
+        two warms for the same key already are."""
+        with self._warming_guard:
+            if key in self._warming:
+                return
+            self._warming.add(key)
+
+        def _job() -> None:
+            try:
+                cached_ts = self._cache_dir() / f"{key}.ts"
+                if cached_ts.is_file() and self._read_cache_meta(key) is not None:
+                    return  # already populated by the time this job ran
+                with self._conform_lock(key):
+                    cache_dir = self._cache_dir()
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    tmp = cache_dir / f"{key}.ts.tmp"
+                    tmp.unlink(missing_ok=True)
+                    shutil.copy2(finished_output_path, tmp)
+                    self._promote_conform_into_cache(key, tmp, source_path, loudness, normalized)
+            except Exception:
+                _LOG.exception(
+                    "Background cache-copy promotion failed for %r; the next airing "
+                    "re-populates the cache.",
+                    source_path.name,
+                )
+            finally:
+                with self._warming_guard:
+                    self._warming.discard(key)
+
+        self._warm_scheduler(_job)
 
     def _emit_prepared_from_cache(
         self,
@@ -572,6 +699,17 @@ class SourcePreparer:
 
         def _job() -> None:
             try:
+                # Item 66 round-4 (Opus review, point 1): this job may have
+                # sat in the single-worker warm queue for a while (round-3,
+                # point 4) -- by the time it is finally about to run, the
+                # identical asset may already be cached (e.g. an untrimmed
+                # airing of it promoted its own already-finished conform
+                # straight in -- see _promote_finished_conform_into_cache).
+                # Re-check right before doing any work and skip the
+                # redundant re-conform if it's already there.
+                cached_ts = self._cache_dir() / f"{key}.ts"
+                if cached_ts.is_file() and self._read_cache_meta(key) is not None:
+                    return
                 self._conform_full_asset_into_cache(key, source_path, config, loudness, normalized)
             except Exception:
                 # A failed warm must never surface at air; the next airing
@@ -941,21 +1079,34 @@ class SourcePreparer:
             # instead of decoding/analyzing the whole file. A trimmed
             # segment probes exactly its own wanted window (``-ss
             # <inpoint>`` before ``-i`` for the seek, ``-t <duration>`` after
-            # it -- the same convention ``build_conform_source_args`` uses);
-            # an untrimmed segment (the full asset) is capped to the first
-            # ``_UNTRIMMED_LOUDNESS_PROBE_CAP_S`` (120s) instead of its whole
-            # duration. This is a SAMPLE, not a full-file measurement -- the
-            # memo above still means one asset gets exactly one loudness
-            # value shared across every segment/airing of it (the model this
+            # it -- the same convention ``build_conform_source_args`` uses).
+            # An untrimmed segment (the full asset) samples
+            # ``_UNTRIMMED_LOUDNESS_PROBE_CAP_S`` (120s) of the middle of the
+            # asset instead -- round-4 (Opus review, point 2): a HEAD sample
+            # (round-3's original shape) can land on cold-open silence/room
+            # tone and measure the silence floor, a real field failure that
+            # would drive loudnorm's target completely wrong and get
+            # memoized for every other segment/airing of the asset. The
+            # sample starts at 40% into the asset (``segment.duration_seconds``
+            # IS the full asset's duration for an untrimmed segment -- see
+            # source_plan.py's untrimmed-segment contract) when that duration
+            # is known and positive, else 120s in as a fallback. Either way
+            # this remains a SAMPLE, not a full-file measurement -- the memo
+            # above still means one asset gets exactly one loudness value
+            # shared across every segment/airing of it (the model this
             # codebase already used before item 66: the cache key never
             # depended on trim, so a MISS's measurement was always reused
-            # across different join-in-progress offsets too), so document
-            # the sampling rather than pretend nothing changed.
+            # across different join-in-progress offsets too).
             if trimmed:
                 probe_start_seconds = segment.inpoint_seconds
                 probe_duration_seconds = segment.duration_seconds
             else:
-                probe_start_seconds = None
+                asset_duration = segment.duration_seconds
+                probe_start_seconds = (
+                    asset_duration * _UNTRIMMED_LOUDNESS_PROBE_FRACTION
+                    if asset_duration and asset_duration > 0
+                    else _UNTRIMMED_LOUDNESS_PROBE_CAP_S
+                )
                 probe_duration_seconds = _UNTRIMMED_LOUDNESS_PROBE_CAP_S
             loudness = self._loudness_checker(
                 media_path=source_path,
@@ -964,6 +1115,34 @@ class SourcePreparer:
                 probe_start_seconds=probe_start_seconds,
                 probe_duration_seconds=probe_duration_seconds,
             )
+            if (
+                not trimmed
+                and loudness.measured_lufs is not None
+                and loudness.measured_lufs <= _LOUDNESS_SILENCE_FLOOR_LUFS
+            ):
+                # Round-4 (Opus review, point 2): the sampled window measured
+                # at the silence floor -- unusable as the asset's program
+                # loudness. Fall back to a single whole-file probe (bounded
+                # by the foreground thread cap, since this is a synchronous,
+                # CPU-heavy full decode just like a foreground conform) and
+                # use WHATEVER it reports, even if that too is at the floor
+                # (a genuinely silent asset is a legitimate reading) --
+                # exactly one retry, never a loop. The floor SAMPLE itself is
+                # never persisted or used; only this fallback result is.
+                _LOG.info(
+                    "Loudness sample for %r measured at the silence floor "
+                    "(%.1f LUFS); falling back to a whole-file probe once.",
+                    source_path.name,
+                    loudness.measured_lufs,
+                )
+                loudness = self._loudness_checker(
+                    media_path=source_path,
+                    target_lufs=config.loudness_target_lufs,
+                    tolerance_lufs=config.loudness_tolerance_lufs,
+                    probe_start_seconds=None,
+                    probe_duration_seconds=None,
+                    threads=_foreground_thread_cap(),
+                )
             if loudness.status != "ok" and loudness.measured_lufs is None:
                 raise SourcePrepareError(
                     f"Egress source {segment.label!r} could not be measured for loudness: "
@@ -993,23 +1172,33 @@ class SourcePreparer:
         # same conform straight into the cache instead of scheduling a
         # redundant warm.
         if key is not None and not trimmed and self._playout_trim_supported:
-            cached_ts = self._conform_full_asset_into_cache(
+            full_asset_cached_ts = self._conform_full_asset_into_cache(
                 key, source_path, config, loudness, normalized, threads=_foreground_thread_cap()
             )
-            return self._emit_prepared_from_cache(
-                cached_ts,
-                segment,
-                source_path=source_path,
-                output_path=output_path,
-                loudness_status=loudness.status,
-                measured_lufs=loudness.measured_lufs,
-                normalized=normalized,
-            )
+            if full_asset_cached_ts is not None:
+                return self._emit_prepared_from_cache(
+                    full_asset_cached_ts,
+                    segment,
+                    source_path=source_path,
+                    output_path=output_path,
+                    loudness_status=loudness.status,
+                    measured_lufs=loudness.measured_lufs,
+                    normalized=normalized,
+                )
+            # Item 66 round-4 BLOCKER fix (Opus review, point 1): ``None``
+            # means a background warm already holds this exact asset's
+            # cache lock -- rather than block behind it (potentially tens
+            # of minutes, see _conform_full_asset_into_cache's docstring),
+            # fall through to the SAME bounded per-segment conform path the
+            # GStreamer engine always takes. That path's own tail (below)
+            # attempts a best-effort, non-blocking promotion afterward too.
 
-        # Trimmed MISS (first-ever join-in-progress start), OR (item 66) an
-        # untrimmed miss on an engine that cannot trim at playout
-        # (self._playout_trim_supported is False, e.g. GStreamer): either way
-        # conform only the wanted window straight to air -- bounded by
+        # Trimmed MISS (first-ever join-in-progress start), an untrimmed
+        # miss on an engine that cannot trim at playout
+        # (self._playout_trim_supported is False, e.g. GStreamer), OR (round-4)
+        # an untrimmed miss on an engine that CAN trim at playout but whose
+        # full-asset conform lock was already held by a concurrent warm:
+        # either way conform only the wanted window straight to air -- bounded by
         # ``-t segment.duration_seconds`` in build_conform_source_args below,
         # never a whole-clip re-encode. Foreground (synchronous) conforms are
         # thread-capped rather than single-threaded or unbounded (point 2,
@@ -1057,11 +1246,13 @@ class SourcePreparer:
             # conform's output already IS the full-asset conform the
             # persistent cache wants. Populate the cache from the
             # ALREADY-FINISHED, already-airing ``output_path`` via a hard
-            # link (falling back to a real copy) instead of moving it -- see
-            # ``_promote_finished_conform_into_cache``'s docstring for why
-            # this is a link/copy, not a move, and why any failure here is
-            # logged and swallowed rather than raised: the segment is
-            # already safely on air regardless of whether this succeeds.
+            # link (queuing a background copy instead if linking fails --
+            # e.g. a cross-volume layout) instead of moving it -- see
+            # ``_promote_finished_conform_into_cache``'s docstring for the
+            # full round-4 shape: non-blocking on lock contention (skipped
+            # rather than waited on), and any failure here is logged and
+            # swallowed rather than raised -- the segment is already safely
+            # on air regardless of whether this succeeds.
             self._promote_finished_conform_into_cache(
                 key, output_path, source_path, loudness, normalized
             )
