@@ -1976,6 +1976,81 @@ class TestStaleRolloverHorizonIsReestablishedNotDispatchedAgainst:
         assert _pending_actions(store, "public") == []
 
 
+class TestRolloverRetryDispatchTimestampIsClearedWithTheIssuedLatch:
+    """Coordinator review, round 4, item 2(a): ``_rollover_retry_dispatched_at``
+    must be cleared everywhere ``_rollover_issued`` itself is discarded (a
+    landed rollover, or a discarded stale horizon) -- not only when the
+    channel leaves the air. Without this, a stale retry timestamp left over
+    from an earlier, already-resolved rollover sequence could incorrectly
+    suppress the very FIRST retry of whatever rollover comes next, even
+    though nothing about that next sequence has actually violated the 60s
+    floor. These tests assert directly on the cleared state (white-box,
+    deterministic) rather than threading a full establish/dispatch/retry/
+    land timing chain through black-box behavior -- see
+    ``TestRolloverRetryFloorMeasuredFromTheLastRetryNotTheOriginalDispatch``'s
+    churn test for a black-box demonstration of the same clearing in a
+    realistic relaunch scenario."""
+
+    def _on_air(self, store: InMemoryEgressStore, channel_id: str, *, proof_event_id: str) -> None:
+        store.write_state(
+            EgressStateRow(
+                channel_id=channel_id,
+                state="ON_AIR",
+                current_source_label="Council Meeting",
+                current_proof_event_id=proof_event_id,
+                updated_at=_NOW,
+            )
+        )
+
+    def test_cleared_when_a_fresh_plan_takes_air(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", proof_event_id="ev-1")
+        service = ChannelAutomationService(
+            store,
+            _FakeDaemon(live_channels={"public"}),
+            lambda cid: _plan_with_duration(cid, 1800.0),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once(now=_NOW)  # establish: ends far in the future
+        assert _pending_actions(store, "public") == []
+
+        # Simulate an earlier, already-resolved rollover retry sequence for
+        # THIS channel having left a timestamp behind.
+        service._rollover_retry_dispatched_at["public"] = service._monotonic()
+
+        # A fresh proof event lands -- "a fresh plan just took air".
+        self._on_air(store, "public", proof_event_id="ev-2")
+        service.run_once(now=_NOW)
+
+        assert service._rollover_retry_dispatched_at.get("public") is None
+
+    def test_cleared_when_the_tracked_horizon_is_discarded_as_stale(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", proof_event_id="ev-1")
+        service = ChannelAutomationService(
+            store,
+            _FakeDaemon(live_channels={"public"}),
+            lambda cid: _plan_with_duration(cid, 100.0),
+            settings=ChannelAutomationSettings(),
+        )
+
+        service.run_once(now=_NOW)  # establish: ends at _NOW+100
+        assert _pending_actions(store, "public") == []
+
+        service._rollover_retry_dispatched_at["public"] = service._monotonic()
+
+        # The wall clock jumps far past the tracked plan's own end -- the
+        # horizon is stale and must be discarded/re-established (see
+        # TestStaleRolloverHorizonIsReestablishedNotDispatchedAgainst above).
+        far_future = _NOW + timedelta(seconds=5000)
+        service.run_once(now=far_future)
+
+        assert service._rollover_retry_dispatched_at.get("public") is None
+
+
 class TestRolloverRetryRespectsAFloorAndAYoungWorkerGuard:
     """Item 78 fix 2 (second half): the B2 "reload never landed" retry path
     used to be fully exempt from any dispatch-cadence floor at all
@@ -2100,33 +2175,45 @@ class TestRolloverRetryFloorMeasuredFromTheLastRetryNotTheOriginalDispatch:
     def test_a_worker_relaunching_faster_than_its_own_trigger_delay_gets_no_rollover_during_the_churn(
         self,
     ) -> None:
-        """Coordinator review, round 3, item F: models a REAL worker relaunch
-        -- a non-ON_AIR tick (``STARTING``) followed by ON_AIR again with a
-        FRESH proof event and a new pid -- not merely a changed pid on an
-        otherwise-unbroken ON_AIR/proof-event stream (the round-2 shape,
-        which really only exercised the worker-pid-age guard in isolation
-        and never the "not ON_AIR" / "fresh plan took air" cleanup branches
-        item E's fix touches).
+        """Coordinator review, round 3, item F (round-4 doc correction, item
+        2(c)): models a REAL worker relaunch -- a non-ON_AIR tick
+        (``STARTING``) followed by ON_AIR again with a FRESH proof event and
+        a new pid -- not merely a changed pid on an otherwise-unbroken
+        ON_AIR/proof-event stream (the round-2 shape, which really only
+        exercised the worker-pid-age guard in isolation and never any of
+        the horizon-reset cleanup branches at all).
+
+        What this test actually demonstrates: the "not ON_AIR" branch's
+        horizon reset (``_plan_horizon``/``_rollover_issued``/
+        ``_rollover_dispatched_at``/``_rollover_retry_dispatched_at`` all
+        cleared, present since round 2 -- the ``STARTING`` tick on every
+        relaunch cycle) -- NOT round 3 item E's specific addition (clearing
+        ``_rollover_retry_dispatched_at`` on the "fresh plan just took air"
+        and "stale horizon" branches). Because the ``STARTING`` tick always
+        runs immediately before the landing tick in this exact sequence,
+        the "fresh plan took air" branch's own clearing is REDUNDANT here --
+        the value is already ``None`` by the time it runs. Item E's two
+        clearings are covered directly (and non-redundantly) by
+        ``TestRolloverRetryDispatchTimestampIsClearedWithTheIssuedLatch``
+        above instead.
 
         The plan here is two segments (40s, 200s): its boundary-aligned
         trigger is 40s after establishment (the last segment's own start),
         deliberately longer than the ~25s a horizon gets to live between one
         relaunch's landing and the next relaunch's ``STARTING`` tick (30s
-        apart). Every relaunch therefore wipes ``_plan_horizon``/
-        ``_rollover_issued``/``_rollover_retry_dispatched_at`` (item E) via
-        the "not ON_AIR" branch and then re-establishes fresh via "a fresh
-        plan just took air" -- neither branch ever gets far enough to reach
-        its own trigger before the next relaunch resets it again. This is
-        the exact degrade mode named in the CHANGELOG: a worker that
-        relaunches faster than it can ever reach a rollover trigger gets NO
-        rollover at all while it keeps doing that -- not a hang, just a
-        reversion to the pre-item-78 shape (the channel reaches its own
-        EOS/crash cycle and the daemon's own crash back-off, untouched by
-        this fix, owns the restart). Once the worker stabilizes (stops
-        relaunching), the rollover mechanism gets a real chance to run: one
-        dispatch at the trigger and, since it never lands here either,
-        retries capped to the 60s floor -- the same steady-state behavior
-        the round-2 version of this test proved."""
+        apart). Every relaunch therefore wipes the tracked horizon via the
+        "not ON_AIR" branch before it ever gets far enough to reach its own
+        trigger. This is the exact degrade mode named in the CHANGELOG: a
+        worker that relaunches faster than a rollover's own trigger delay
+        never keeps a horizon tracked long enough to fire one at all while
+        it keeps doing that -- not a hang, just a reversion to the pre-
+        item-78 shape (the channel reaches its own EOS/crash cycle and the
+        daemon's own crash back-off, untouched by this fix, owns the
+        restart). Once the worker stabilizes (stops relaunching), the
+        rollover mechanism gets a real chance to run: one dispatch at the
+        trigger and, since it never lands here either, retries capped to
+        the 60s floor -- the same steady-state behavior the round-2 version
+        of this test proved."""
         clock = {"now": 1000.0}
         store = InMemoryEgressStore()
         store.upsert_config(_config("public"))

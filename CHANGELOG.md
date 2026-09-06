@@ -204,11 +204,16 @@ below.
     actually bind instead of always being satisfied already by the 45-
     second timeout that gates entry to the retry path in the first place).
     Degrade mode, unchanged by this fix: a worker that keeps relaunching
-    faster than it can ever satisfy the 60-second worker-age floor gets NO
-    rollover at all for as long as that keeps happening -- not a hang, just
-    a reversion to the pre-item-78 shape, where the channel reaches its own
-    end-of-schedule/crash cycle and the daemon's own crash back-off (this
-    fix does not touch it) owns the restart.
+    faster than a rollover's own boundary-aligned trigger delay never keeps
+    a horizon tracked long enough to fire one at all (every relaunch resets
+    it -- see the "not ON_AIR"/"fresh plan took air" clearing above); one
+    that relaunches slower than that but still faster than the 60-second
+    worker-age floor gets no rollover RETRY (the floor applies only to the
+    retry branch, never to a plan's first, original dispatch) for as long
+    as that keeps happening. Neither is a hang -- just a reversion to the
+    pre-item-78 shape, where the channel reaches its own end-of-schedule/
+    crash cycle and the daemon's own crash back-off (this fix does not
+    touch it) owns the restart.
   - The daemon also now refuses to defer a seamless reload's on-air switch
     to the outgoing program's own end if that boundary has already passed
     by the time the reload actually runs -- it cuts over immediately
@@ -220,11 +225,16 @@ below.
     run (the worker is missing/dead, there is no state row, or the strategy
     doesn't support content-reload all used to skip straight past the point
     that consumed it and leave it sitting there), and passes the value down
-    explicitly to `_try_content_reload`; `_start`/`_stop` clear it too. A
-    value recorded for one rollover attempt can therefore never leak forward
-    and silently force a later, unrelated reload for the same channel -- an
-    ordinary operator-issued one included -- to cut immediately when it
-    should defer normally.
+    explicitly to `_try_content_reload`; `_stop` clears it too. Plainly: the
+    recorded value binds to whatever "reload" command for that channel
+    `_request_reload` processes NEXT, not necessarily the one automation
+    dispatched it for -- MEASURED, an operator reload queued before
+    automation's own rollover reload drains consumes it instead, and cuts
+    immediately when it should have deferred normally. Automation's own
+    45-second retry-timeout/settlement bookkeeping still recovers from
+    that (the never-landed reload it was actually tracking gets retried on
+    schedule), but the mixup itself is real and this fix does not close it
+    -- only the indefinite leak.
 - **Install-over could leave the PREVIOUS kit's application payload silently
   running.** MEASURED on a real tester (2026-09-05): installing kit B `/S`
   (install-over) on a station kit A had already installed, where both kits

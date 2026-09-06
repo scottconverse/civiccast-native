@@ -367,12 +367,29 @@ class EgressDaemon:
         # method but missed _request_reload's own three earlier exits that
         # never call it at all (worker missing/dead -> _start; no state row;
         # strategy lacks supports_content_reload), each of which measurably
-        # left a stale value sitting here forever. Also cleared defensively
-        # in _start (its other callers -- initial start, auto_start, crash-
-        # relaunch -- never go through _request_reload either) and in _stop
-        # (the channel going dark makes any in-flight rollover moot). See
-        # reload_policy.should_defer_switch's plan_end_at/now parameters,
-        # which this feeds.
+        # left a stale value sitting here forever.
+        #
+        # Round 4 (coordinator review): a round-3 revision ALSO popped this in
+        # _start, on the theory that _start's other callers (initial start,
+        # auto_start, crash-relaunch) never go through _request_reload either
+        # and could otherwise leave a stale value sitting here. That was
+        # itself a regression, MEASURED: item 78's own diagnosed scenario is
+        # a worker crash whose relaunch (_poll_process -> _relaunch_after_
+        # crash -> _begin_relaunch -> _start) runs BEFORE that same tick's
+        # queued "reload" command is drained -- _start's pop ran first and
+        # ate the value _request_reload's own pop needed moments later,
+        # silently turning a should-cut-immediately rollover reload back into
+        # a deferred one (a 900s held leg). _start must never pop this; only
+        # _request_reload (every reader) and _stop (the channel going dark
+        # makes any in-flight rollover moot) do. Also left UNcleared by
+        # _drain and stop_all_channels' "process already gone" branch (an
+        # off-air channel with no tracked process at all) -- benign, not an
+        # oversight: every route back to a seamless content reload for this
+        # channel goes through _request_reload's own unconditional pop
+        # first, so a value sitting here from before the channel went dark
+        # can never reach should_defer_switch stale. See reload_policy.
+        # should_defer_switch's plan_end_at/now parameters, which this
+        # feeds.
         self._rollover_plan_end_at: dict[str, datetime] = {}
         # S9-5 crash-relaunch back-off: a latch paces rapid repeat relaunches, a
         # per-channel streak counts consecutive rapid crashes (for escalation +
@@ -677,17 +694,6 @@ class EgressDaemon:
         force_fallback_slate: bool = False,
         force_fallback_reason: str | None = None,
     ) -> None:
-        # Item 78 fix 3 (coordinator review, round 3): a terminate+restart
-        # start ALWAYS supersedes whatever seamless content-reload attempt
-        # (if any) automation had in flight for this channel -- discard any
-        # recorded rollover plan_end here too, defense-in-depth alongside
-        # ``_request_reload``'s own pop. ``_request_reload``'s "worker
-        # missing/dead" branch already routes here, so this is redundant for
-        # THAT specific caller, but ``_start`` has other callers (initial
-        # start, auto_start, crash-relaunch) that never go through
-        # ``_request_reload`` at all and could otherwise leave a stale value
-        # sitting in ``self._rollover_plan_end_at`` indefinitely.
-        self._rollover_plan_end_at.pop(channel_id, None)
         try:
             config = self._store.get_config(channel_id)
             if config is None:

@@ -1288,6 +1288,152 @@ def test_request_reload_strategy_without_support_pops_the_recorded_plan_end(
     assert daemon._rollover_plan_end_at == {}
 
 
+def test_request_reload_after_a_same_tick_crash_relaunch_still_sees_the_recorded_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 4, item 1 -- REGRESSION in b4508ef (round 3).
+
+    Item 78's own diagnosed scenario is a worker crash whose relaunch
+    (``_poll_process`` -> ``_relaunch_after_crash`` -> ``_begin_relaunch`` ->
+    ``_start``) runs BEFORE that same ``process_once`` tick's queued
+    "reload" command is drained (``process_once`` runs its poll tuple,
+    ``_poll_process`` included, before ``pop_pending_commands``). A round-3
+    revision popped ``self._rollover_plan_end_at`` inside ``_start`` too
+    (defense-in-depth, or so it seemed) -- but ``_start``'s pop ran FIRST,
+    during the poll phase, and ate the value ``_request_reload``'s own pop
+    needed moments later during command draining: MEASURED, ff5cdfb (round
+    2) cut immediately here as it should; b4508ef (round 3) silently
+    deferred instead (an up-to-900s held leg on a switch that should have
+    cut immediately). Only ``_request_reload`` and ``_stop`` may ever pop
+    this dict now; ``_start`` must not."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR (process 111)
+
+    # Automation recorded a rollover plan_end that has already passed by the
+    # time this reload actually dispatches -- should_defer_switch must cut
+    # immediately for it, never defer.
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
+    current_label = "Mayor interview"
+    started[0].returncode = 1  # the worker crashes
+    store.enqueue_command(_command("reload"))
+    # ONE process_once tick: _poll_process observes the crash and relaunches
+    # (a fresh process 222, via _start) BEFORE the queued "reload" command
+    # drains and reaches _request_reload / _try_content_reload.
+    daemon.process_once("gov")
+
+    assert len(started) == 2  # the crash-relaunch really did happen first
+    assert strategy.reload_calls == ["Mayor interview"]  # the seamless path still ran
+    assert strategy.switch_at_end_of_current_calls == [False]  # cut immediately, not deferred
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_stop_clears_the_recorded_rollover_plan_end(tmp_path: Path) -> None:
+    """Coordinator review, round 4, item 2(b): ``_stop`` must clear
+    ``_rollover_plan_end_at`` too (the channel going dark makes any in-
+    flight rollover moot) -- a test that FAILS if that pop is reverted,
+    unlike the suite as a whole (nothing else exercises this path)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111)]
+    started: list[_FakeProcess] = []
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Council meeting"),
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
+    assert daemon._rollover_plan_end_at == {"gov": datetime(2020, 1, 1, tzinfo=UTC)}
+
+    store.enqueue_command(_command("stop"))
+    daemon.process_once("gov")
+
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_the_recorded_plan_end_binds_to_whichever_reload_drains_first_not_automations_own(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 4, item 4: the recorded value is NOT scoped
+    to the reload automation dispatched it for -- it binds to whatever
+    "reload" command for that channel ``_request_reload`` processes NEXT.
+    ``pop_pending_commands`` drains a channel's queued commands sorted by
+    ``issued_at`` (not enqueue order), so an operator reload issued EARLIER
+    than automation's own rollover reload -- even if both are enqueued in
+    the same tick, in either order -- drains first and consumes the value
+    instead; automation's own reload, draining second, sees nothing
+    recorded and defers normally. This is a real mixup this fix does not
+    close (only the indefinite leak the earlier rounds fixed) -- automation's
+    own 45-second retry-timeout/settlement bookkeeping is what recovers the
+    never-landed reload it was actually tracking."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    # Automation records a rollover plan_end (already stale, so the reload it
+    # is FOR must cut immediately) for a reload it is about to enqueue.
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
+    # An operator reload command, issued_at EARLIER than automation's own,
+    # is enqueued in the SAME tick -- pop_pending_commands sorts by
+    # issued_at, so this one drains FIRST regardless of enqueue order.
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 11, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-operator-reload",
+        )
+    )
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+            issued_by="channel-automation",
+            command_id="cmd-automation-reload",
+        )
+    )
+    current_label = "Mayor interview"
+    daemon.process_once("gov")
+
+    # The OPERATOR reload (drained first) wrongly cuts immediately -- it
+    # consumed automation's recorded value. Automation's OWN reload (drained
+    # second) sees nothing recorded and defers normally, the ordinary ON_AIR/
+    # no-override shape.
+    assert strategy.switch_at_end_of_current_calls == [False, True]
+    assert daemon._rollover_plan_end_at == {}
+
+
 def test_content_reload_never_defers_switch_off_of_fallback_slate(tmp_path: Path) -> None:
     """Issue #157: filler must be interrupted the moment a due program is
     ready -- a reload issued from FALLBACK_SLATE must never defer (wait out
