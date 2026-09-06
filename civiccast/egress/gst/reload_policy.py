@@ -113,7 +113,13 @@ def reload_id_from_sidecar_path(reload_path: str) -> str:
     return remainder
 
 
-def should_defer_switch(*, previous_state: str | None, manual_override_active: bool) -> bool:
+def should_defer_switch(
+    *,
+    previous_state: str | None,
+    manual_override_active: bool,
+    plan_end_at: datetime | None = None,
+    now: datetime | None = None,
+) -> bool:
     """True when a content-reload should defer its selector switch to the
     outgoing leg's own EOS rather than cutting the instant the new leg is ready.
 
@@ -121,8 +127,23 @@ def should_defer_switch(*, previous_state: str | None, manual_override_active: b
     a FALLBACK_SLATE gap-replan (``previous_state != "ON_AIR"``) and any reload
     issued while an operator override is active (live takeover / forced slate --
     ``manual_override_active``) must always cut in immediately.
+
+    Item 78 fix: ``plan_end_at``/``now`` are an optional pair (both default
+    ``None`` and are ignored unless both are given, so every pre-existing
+    caller/test that only passes ``previous_state``/``manual_override_active``
+    keeps its exact prior behavior). When both are given and the tracked
+    plan's projected end is already at or before ``now``, deferring is never
+    safe: the "outgoing leg's own EOS" this mode waits for is a boundary that
+    has *already passed* (a channel-automation pass stalled long enough --
+    e.g. ``SourcePreparer`` blocking for ~915s inside ``daemon._start`` -- that
+    the horizon it computed the reload against is now stale), so waiting for
+    that EOS is waiting for something that may never arrive within any
+    reasonable window. Cutting immediately is always correct here regardless
+    of ``previous_state``/``manual_override_active``.
     """
 
+    if plan_end_at is not None and now is not None and plan_end_at <= now:
+        return False
     return previous_state == "ON_AIR" and not manual_override_active
 
 

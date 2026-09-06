@@ -945,6 +945,96 @@ def test_content_reload_defers_switch_for_an_on_air_reload_with_no_override(
     assert strategy.switch_at_end_of_current_calls == [True]
 
 
+def test_content_reload_cuts_immediately_when_the_recorded_rollover_horizon_has_already_passed(
+    tmp_path: Path,
+) -> None:
+    """Item 78 fix 3: ``ChannelAutomationService`` records the ``plan_end_at`` it
+    computed for a rollover reload (``record_rollover_plan_end``) before
+    enqueuing it. If that horizon has already passed by the time the reload
+    actually dispatches (e.g. the automation pass itself blocked for a long
+    time before reaching this channel), deferring the switch to the outgoing
+    leg's own EOS is deferring to a boundary that already happened and will
+    never arrive -- the switch must cut in immediately instead, even though
+    this is otherwise the exact B3 "ON_AIR, no override" shape that would
+    normally defer (see the test above)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))  # already long past
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.switch_at_end_of_current_calls == [False]
+
+
+def test_record_rollover_plan_end_is_consumed_once_and_never_leaks_to_a_later_reload(
+    tmp_path: Path,
+) -> None:
+    """Item 78 fix 3: the recorded horizon is popped (not merely read) by
+    ``_try_content_reload`` -- a stale value from an earlier, already-settled
+    rollover must never silently apply to a LATER, unrelated reload of the
+    same channel (e.g. a second automation-driven ON_AIR extension with no
+    override, which should defer normally)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222), _FakeProcess(pid=333)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))  # already long past
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+    assert strategy.switch_at_end_of_current_calls == [False]
+    # F1 redesign: the first reload is ARMED, not yet settled -- one more
+    # tick lets _poll_reload_settlement observe reload-status.json and
+    # finish the ON_AIR bookkeeping before a second reload is requested
+    # (mirrors test_content_reload_swaps_program_in_place_without_restart
+    # above).
+    daemon.process_once("gov")
+
+    current_label = "Second Program"
+    # A distinct command_id -- `_command("reload")` always returns the SAME
+    # id, and the store treats re-enqueuing an already-consumed id as a
+    # no-op (see the identical pattern elsewhere in this file).
+    store.enqueue_command(_command("reload").model_copy(update={"command_id": "cmd-reload-2"}))
+    daemon.process_once("gov")
+
+    # The stale plan_end_at from the FIRST reload must not still apply here --
+    # this second reload, with nothing recorded for it, defers normally.
+    assert strategy.switch_at_end_of_current_calls == [False, True]
+
+
 def test_content_reload_never_defers_switch_off_of_fallback_slate(tmp_path: Path) -> None:
     """Issue #157: filler must be interrupted the moment a due program is
     ready -- a reload issued from FALLBACK_SLATE must never defer (wait out

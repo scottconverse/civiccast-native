@@ -166,6 +166,33 @@ below.
     bounded by the ~5-second "armed" ack instead of up to 900 seconds (F5 --
     documented, not eliminated; a dedicated dispatch thread per channel would
     remove even that bound but is a separate change).
+- **A channel-automation pass that blocked for a long time (e.g. a cold
+  content prepare inside a channel's own start) could freeze a channel's
+  plan-rollover horizon in the past and make it roll over forever, and a
+  worker that kept crashing right after a rollover could get hit with an
+  unthrottled re-arm every second (item 78).** Three related fixes in
+  `ChannelAutomationService`/`reload_policy`:
+  - Wall-clock "now" is now read fresh for EACH channel in a poll pass
+    instead of once for the whole pass, so one channel's synchronous block
+    can no longer leave every other channel (or that same channel's own
+    next check) computing against an already-stale timestamp.
+  - If a channel's tracked plan horizon has already ended by wall clock
+    (`plan_end_at` at or before "now") by the time it is checked, it is now
+    discarded and re-established from the channel's current plan instead of
+    being used to justify another dispatch -- this is what stopped rollovers
+    firing indefinitely against a horizon stuck in the past.
+  - The 45-second "did the last rollover reload actually land" retry path
+    used to be completely unthrottled; it now respects its own 30-second
+    minimum gap between attempts and refuses to dispatch to a worker whose
+    process has been alive less than 60 seconds, giving a freshly relaunched
+    worker room to settle before another synchronous prepare is thrown at
+    it.
+  - The daemon also now refuses to defer a seamless reload's on-air switch
+    to the outgoing program's own end if that boundary has already passed
+    by the time the reload actually runs -- it cuts over immediately
+    instead, since waiting for an end-of-program event that is already
+    behind the clock would otherwise mean waiting for something that will
+    never arrive.
 - **Install-over could leave the PREVIOUS kit's application payload silently
   running.** MEASURED on a real tester (2026-09-05): installing kit B `/S`
   (install-over) on a station kit A had already installed, where both kits

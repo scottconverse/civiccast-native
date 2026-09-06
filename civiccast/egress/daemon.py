@@ -352,6 +352,18 @@ class EgressDaemon:
         # Per channel: the horizon of the source plan actually DISPATCHED to the
         # encoder (see dispatched_plan_horizon / _record_dispatched_plan).
         self._dispatched_plan_horizon: dict[str, tuple[str | None, tuple[float, ...], bool]] = {}
+        # Item 78 fix 3: the automation-known projected end of the LIVE plan a
+        # rollover reload is extending, recorded by ChannelAutomationService
+        # (record_rollover_plan_end) immediately before it enqueues the reload
+        # command. The durable EgressCommand queue is a fixed webapp<->daemon
+        # schema shared by every issuer (operator actions included), not the
+        # place to carry ephemeral per-dispatch automation bookkeeping, so this
+        # rides an in-memory side channel instead -- consumed (popped) the
+        # moment _try_content_reload builds the reload request, so a stale
+        # value can never leak into an unrelated later reload for the same
+        # channel. See reload_policy.should_defer_switch's plan_end_at/now
+        # parameters, which this feeds.
+        self._rollover_plan_end_at: dict[str, datetime] = {}
         # S9-5 crash-relaunch back-off: a latch paces rapid repeat relaunches, a
         # per-channel streak counts consecutive rapid crashes (for escalation +
         # reset on healthy uptime), and _backoff_relaunch holds a deferred relaunch
@@ -1779,6 +1791,18 @@ class EgressDaemon:
             if plan_dir is not None
         )
 
+    def record_rollover_plan_end(self, channel_id: str, plan_end_at: datetime) -> None:
+        """Public capability ``ChannelAutomationService`` calls (mirrors the
+        ``dispatched_plan_horizon``/``has_manual_override`` getattr-probed
+        shape) immediately before it enqueues a plan-rollover reload command,
+        so ``_try_content_reload`` can tell -- against wall-clock ``now`` at
+        the moment it actually dispatches -- whether the switch may still
+        defer to the outgoing leg's own EOS, or must cut immediately because
+        the horizon it was computed against has already passed (item 78 fix
+        3). See ``_rollover_plan_end_at``'s docstring for why this rides an
+        in-memory side channel rather than the durable command queue."""
+        self._rollover_plan_end_at[channel_id] = plan_end_at
+
     def has_pending_reload_settlement(self, channel_id: str) -> bool:
         """Public capability ``ChannelAutomationService`` probes (via
         ``getattr``, like ``has_manual_override``/``dispatched_plan_horizon``)
@@ -1898,9 +1922,18 @@ class EgressDaemon:
             # (never a FALLBACK_SLATE gap-replan, never while an operator override
             # is active) may defer the selector switch to the outgoing leg's own
             # EOS -- see reload_policy.should_defer_switch's docstring.
+            #
+            # Item 78 fix 3: pop() (not get()) -- this is the one and only
+            # dispatch this recorded value can ever apply to, and popping
+            # guarantees a stale plan_end_at from an earlier, already-settled
+            # rollover can never be read again for a later, unrelated reload
+            # of this same channel (e.g. a plain operator-issued reload with
+            # no rollover behind it at all).
             switch_at_end_of_current=should_defer_switch(
                 previous_state=state.state if state else None,
                 manual_override_active=self.has_manual_override(channel_id),
+                plan_end_at=self._rollover_plan_end_at.pop(channel_id, None),
+                now=datetime.now(UTC),
             ),
         )
         # F1 redesign: a daemon-generated id (not the strategy's own internal
