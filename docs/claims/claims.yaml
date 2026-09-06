@@ -614,13 +614,40 @@ entries:
       # coverage for _dispose_elements_best_effort and _release_selector_
       # pad_best_effort on the build/link failure paths -- the PRIOR
       # re-provisioning note above claimed this coverage before it existed;
-      # it exists now). Blob IDs re-hashed with
+      # it exists now).
+      #
+      # engine.py drifted a FIFTH time (candidate-3 build 34022552208, real-
+      # GStreamer smoke on the installed product closure, 2026-09-06): the H1
+      # fix's own fail-loud _make check assumed ``Gst.Bin.add()`` returns a
+      # raw bool (True/False, never raising) -- true for the C API, but NOT
+      # for gst-python's ``overrides/Gst.py`` wrapper, confirmed directly
+      # against the installed runtime's real GStreamer 1.28.5: that override
+      # returns ``None`` on a SUCCESSFUL add (never a bare ``True``) and
+      # RAISES ``Gst.AddError`` on a genuine duplicate (never a bare
+      # ``False``). ``if not self.pipeline.add(element):`` treated that
+      # ``None`` success as a failure, so the very FIRST element ever added
+      # to a real pipeline (the video selector, name "sel") always raised --
+      # every initial build against this installed closure, unconditionally,
+      # not a real name collision at all. Fixed with a new ``_bin_add``
+      # helper that normalizes both contracts to a plain bool; no other
+      # engine.py behavior changed. Neither worker.py, decode_policy.py,
+      # graph.py, control.py, nor audio_tap.py changed. Current-source proof:
+      # the real installed-closure smoke
+      # (civiccast.native.installed_gstreamer_smoke) re-run locally against
+      # this fix now PASSes (previously failed exactly as candidate-3's CI
+      # run did), plus new direct unit coverage in
+      # tests/egress/test_gst_engine_reload_concat_naming.py
+      # (_FakeOverrideStylePipeline models the None-on-success/raises-on-
+      # failure contract; proves _make succeeds on a first-ever add under it,
+      # still fails loud on a genuine duplicate under it, and that selector +
+      # source-leg names stay unique across an initial build and three
+      # simulated reloads). Blob IDs re-hashed with
       # `git hash-object --path <file> <file>` per D2.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: 30a9b5231b0d06f82622015264da9727a30da52d
         - path: civiccast/egress/gst/engine.py
-          blob: 3bf9f45f355cd8ca3914adca6f0d8015f4da8ce2
+          blob: f062bb505e75fab8e94d357b19b5ca75c6e63a7b
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -927,13 +954,40 @@ entries:
       # coverage for _dispose_elements_best_effort and _release_selector_
       # pad_best_effort on the build/link failure paths -- the PRIOR
       # re-provisioning note above claimed this coverage before it existed;
-      # it exists now). Blob IDs re-hashed with
+      # it exists now).
+      #
+      # engine.py drifted a FIFTH time (candidate-3 build 34022552208, real-
+      # GStreamer smoke on the installed product closure, 2026-09-06): the H1
+      # fix's own fail-loud _make check assumed ``Gst.Bin.add()`` returns a
+      # raw bool (True/False, never raising) -- true for the C API, but NOT
+      # for gst-python's ``overrides/Gst.py`` wrapper, confirmed directly
+      # against the installed runtime's real GStreamer 1.28.5: that override
+      # returns ``None`` on a SUCCESSFUL add (never a bare ``True``) and
+      # RAISES ``Gst.AddError`` on a genuine duplicate (never a bare
+      # ``False``). ``if not self.pipeline.add(element):`` treated that
+      # ``None`` success as a failure, so the very FIRST element ever added
+      # to a real pipeline (the video selector, name "sel") always raised --
+      # every initial build against this installed closure, unconditionally,
+      # not a real name collision at all. Fixed with a new ``_bin_add``
+      # helper that normalizes both contracts to a plain bool; no other
+      # engine.py behavior changed. Neither worker.py, decode_policy.py,
+      # graph.py, control.py, nor audio_tap.py changed. Current-source proof:
+      # the real installed-closure smoke
+      # (civiccast.native.installed_gstreamer_smoke) re-run locally against
+      # this fix now PASSes (previously failed exactly as candidate-3's CI
+      # run did), plus new direct unit coverage in
+      # tests/egress/test_gst_engine_reload_concat_naming.py
+      # (_FakeOverrideStylePipeline models the None-on-success/raises-on-
+      # failure contract; proves _make succeeds on a first-ever add under it,
+      # still fails loud on a genuine duplicate under it, and that selector +
+      # source-leg names stay unique across an initial build and three
+      # simulated reloads). Blob IDs re-hashed with
       # `git hash-object --path <file> <file>` per D2.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: 30a9b5231b0d06f82622015264da9727a30da52d
         - path: civiccast/egress/gst/engine.py
-          blob: 3bf9f45f355cd8ca3914adca6f0d8015f4da8ce2
+          blob: f062bb505e75fab8e94d357b19b5ca75c6e63a7b
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
