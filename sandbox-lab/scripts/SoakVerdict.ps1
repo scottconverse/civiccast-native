@@ -215,6 +215,20 @@ function Get-SoakVerdict {
       (flag-off) contract (a fallback-to-restart is exactly what flag-off
       operation is), but ANY of them under -SeamlessReload is a FAIL.
 
+      .PARAMETER ReloadArmedNeverCommittedChannels
+      Round-16 finding (item 2, worker-stdout cross-check): channel ids for
+      which the daemon log confirmed "Seamless content-reload armed" at
+      least once during this soak (In-Sandbox-Soak.ps1's
+      $script:reloadArmedChannels, sourced via DaemonLogPatterns.ps1's
+      $DaemonReloadArmedRegex) but whose own gst-worker.stdout.log never
+      logged a single "CTRL reload committed" for the whole soak
+      (WorkerStdoutParser.ps1's reload_committed_count stayed 0). Only
+      meaningful -- and only checked -- under -SeamlessReload: a reload
+      that was armed but never committed is exactly the silent
+      fallback-to-restart failure mode that flag exists to prove absent,
+      a PRODUCT finding, never a harness note. Default empty (no channels
+      flagged).
+
       .OUTPUTS
       [pscustomobject] @{
         verdict                  = 'PASS' | 'FAIL' | 'HARNESS_ERROR'
@@ -239,7 +253,9 @@ function Get-SoakVerdict {
         [array]$RestartEvents = @(),
         [bool]$SeamlessReload = $false,
         [AllowEmptyCollection()]
-        [array]$ReloadAbortEvents = @()
+        [array]$ReloadAbortEvents = @(),
+        [AllowEmptyCollection()]
+        [array]$ReloadArmedNeverCommittedChannels = @()
     )
 
     $restartEvents = @($RestartEvents)
@@ -356,6 +372,16 @@ function Get-SoakVerdict {
             $restartFailResult = [pscustomobject]@{
                 reason = "-SeamlessReload requested but channel=$($firstPlanned.channel_id) had a classified planned_restart at $($firstPlanned.detected_utc) -- the seamless content-reload path did not run"
                 cycle_utc = "$($firstPlanned.detected_utc)"
+            }
+        } elseif (@($ReloadArmedNeverCommittedChannels).Count -gt 0) {
+            # Round-16 finding (item 2): a channel the daemon log confirmed
+            # ARMED a seamless content-reload for, but whose own
+            # gst-worker.stdout.log never logged "CTRL reload committed"
+            # for the whole soak -- the reload silently never landed. A
+            # PRODUCT finding under -SeamlessReload, not a harness note.
+            $restartFailResult = [pscustomobject]@{
+                reason = "seamless reload never committed on channel(s): $(( @($ReloadArmedNeverCommittedChannels) | Sort-Object) -join ', ') (daemon log confirmed 'Seamless content-reload armed' but reload_committed_count stayed 0 for the whole soak)"
+                cycle_utc = $null
             }
         }
     }

@@ -61,6 +61,21 @@ $script:DaemonReloadAbortRegex = [regex]'civiccast\.egress\S*:\s*(?<reason>.*?\b
 # happens to contain the word "discarded").
 $script:DaemonReloadDiscardEchoRegex = [regex]'Content-reload for \S+ \(reload_id=\S+\) discarded:'
 
+# Round-16 finding (worker-stdout/-SeamlessReload cross-check): daemon.py's
+# own confirmation that a seamless content-reload was ARMED for a channel
+# (main bcb3ebe:1973-1979, `_LOG.info("Seamless content-reload armed for
+# %s (reload_id=%s, switch_at_end_of_current=%s); awaiting settlement.",
+# channel_id, reload_id, ...)`). Matched as a substring, not an anchored
+# full-line pattern (same convention as $DaemonReloadAbortRegex above) --
+# this must survive whatever timestamp/logger-name prefix the actual log
+# line carries, which this lane does not control or need to know.
+# In-Sandbox-Soak.ps1 records every channel this ever fires for
+# ($script:reloadArmedChannels) and, under -SeamlessReload, FAILs the run
+# if that channel's own worker-stdout reload_committed_count stayed 0 for
+# the whole soak -- an armed-but-never-committed reload is exactly the
+# fallback-to-restart failure mode -SeamlessReload exists to prove absent.
+$script:DaemonReloadArmedRegex = [regex]'Seamless content-reload armed for (?<ch>\S+) \(reload_id=(?<reload_id>[^,]+),'
+
 function New-StateReadFailureLastError {
     <#
       .SYNOPSIS

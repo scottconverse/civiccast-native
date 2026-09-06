@@ -27,7 +27,7 @@ header for exactly which lines came from where) at a much shorter default
 duration.
 
 ```powershell
-pwsh -File sandbox-lab/Run-SandboxSoak.ps1 -Sha <full sha> [-Minutes 15] [-KitRoot C:\CivicCastTester\kit-safe] [-SeamlessReload]
+pwsh -File sandbox-lab/Run-SandboxSoak.ps1 -Sha <full sha> [-Minutes 15] [-KitRoot C:\CivicCastTester\kit-safe] [-SeamlessReload] [-CaptionsOff]
 ```
 
 Add `-DryRun` to verify the kit, render the `.wsb`, run the
@@ -45,6 +45,18 @@ not independently verified against this checkout). Recorded as
 log line" or honestly "unverified" — neither `Get-Process` nor
 `Win32_Process` can read another process's real environment block from
 outside it.
+
+`-CaptionsOff` PUTs `{"live_captions_enabled": false}` to
+`/api/staff/station/profile` right after first-admin succeeds, using the
+operator's own first-admin token, then GETs the profile back to confirm
+the read-back value is really `false` -- it never touches the
+`CIVICCAST_CAPTION_TAP` env var (the caption-tap machinery itself stays
+untouched; this only flips the operator-facing switch). A failed PUT or a
+read-back that is not `false` is `HARNESS_ERROR` (see
+`scripts/CaptionsOffCheck.ps1`'s `Get-CaptionsOffVerification`, the same
+never-an-unconfirmed-premise principle as `-SeamlessReload`'s own
+verification). Recorded as `captions_off_requested`/`captions_enabled`/
+`captions_off_verified` in `SOAK-START.json` and `VERDICT.json`.
 
 `-Minutes` is **SOAK minutes**, not wall-clock minutes from launch: the
 clock starts only once the station reports healthy AND all three channels
@@ -137,13 +149,25 @@ separate per-run root from Gate A's own `output/` above (which
 sharing it would risk a soak run's evidence being deleted mid-run by a
 concurrent Gate A run). Every run writes `summary.json`, per-cycle JSON
 under `cycles/` (each channel row carries its own up-to-12-sample
-`sample_ring` and the cycle's `measured_cycle_period_seconds`),
-`restart-events.json`, a rollup every 3 minutes under `rollups/`,
-per-channel egress worker logs (`logs/<label>/egress-per-channel/
+`sample_ring`, the cycle's `measured_cycle_period_seconds`, and now the
+per-channel `reload_committed_count`/`reload_aborted_count_worker`/
+`reload_aborted_reasons_worker`/`worker_stall_count` parsed from that
+channel's own `gst-worker.stdout.log`, plus a cycle-wide `processes` array
+(per-pid `cpu_seconds_delta`/`working_set_mb` for every python.exe/
+ffmpeg.exe process, gst-worker workers included) and `cpu_total_percent`;
+`SOAK-START.json` additionally records the guest's `cpu_count` once),
+`restart-events.json`, a rollup every 3 minutes under `rollups/` (each
+carrying a `worker_stdout_cumulative_by_channel` snapshot), per-channel
+egress worker logs (`logs/<label>/egress-per-channel/
 <channel>/`, plus a `prepared/` directory LISTING, never a copy) alongside
 the daemon-level logs at each checkpoint and on every FAIL, and a final
 `VERDICT.json` / `VERDICT.txt` (verdict one of `PASS`, `FAIL`,
-`HARNESS_ERROR`).
+`HARNESS_ERROR`) — under `-SeamlessReload`, a channel the daemon log
+confirmed armed a seamless content-reload for but whose worker stdout
+never logged a commit for the whole soak is reported `FAIL` ("seamless
+reload never committed"), a product finding, not a harness note (see
+`scripts/WorkerStdoutParser.ps1` and `scripts/DaemonLogPatterns.ps1`'s
+`$DaemonReloadArmedRegex`).
 
 The verify/verdict logic lives in `scripts/SoakVerdict.ps1` (the per-cycle
 PASS/FAIL/HARNESS_ERROR judgment), `scripts/RestartClassifier.ps1` (planned-
@@ -157,4 +181,14 @@ unit tests with:
 pwsh -File sandbox-lab/scripts/Test-SoakVerdict.ps1
 pwsh -File sandbox-lab/scripts/Test-RestartClassifier.ps1
 pwsh -File sandbox-lab/scripts/Test-HostLiveness.ps1
+pwsh -File sandbox-lab/scripts/Test-ServiceStartFailure.ps1
+pwsh -File sandbox-lab/scripts/Test-CaptionsOffCheck.ps1
+pwsh -File sandbox-lab/scripts/Test-WorkerStdoutParser.ps1
+pwsh -File sandbox-lab/scripts/Test-CpuSampler.ps1
 ```
+
+`scripts/CaptionsOffCheck.ps1` (item 1's -CaptionsOff PUT/GET verification
+judgment), `scripts/WorkerStdoutParser.ps1` (item 2's per-line matcher for
+each channel's `gst-worker.stdout.log`), and `scripts/CpuSampler.ps1`
+(item 3's per-pid CPU-delta/working-set math) follow the same
+dot-sourced-and-unit-tested extraction pattern.

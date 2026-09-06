@@ -93,7 +93,22 @@ param(
     # contract are taken as given from the coordinator). Recorded as
     # seamless_reload=<bool> in the header log line, SOAK-START.json, and
     # VERDICT.json regardless of whether verification below succeeds.
-    [switch]$SeamlessReload
+    [switch]$SeamlessReload,
+
+    # sandbox-soak lane follow-up A, item 1: when set, right after
+    # first-admin succeeds this PUTs {"live_captions_enabled": false} to
+    # /api/staff/station/profile (civiccast/platform/station_router.py's
+    # `put_station_profile`) using the operator's own first-admin token,
+    # then GETs the profile back to confirm the read-back value is really
+    # the boolean $false -- never the machine-scope caption-tap env var
+    # (CIVICCAST_CAPTION_TAP), which this switch deliberately does not
+    # touch. A failed PUT or a read-back that is not false is a
+    # HARNESS_ERROR (the operator explicitly asked to test this flag; see
+    # CaptionsOffCheck.ps1's Get-CaptionsOffVerification, same principle as
+    # -SeamlessReload's own verification above). Recorded as
+    # captions_enabled/captions_off_verified in SOAK-START.json and
+    # VERDICT.json regardless.
+    [switch]$CaptionsOff
 )
 
 $ErrorActionPreference = 'Continue'
@@ -727,6 +742,9 @@ $summary = [ordered]@{
     installer_elapsed_seconds = $null
     station_healthy = $false
     first_admin_ok = $null
+    captions_off_requested = [bool]$CaptionsOff
+    captions_enabled = $true
+    captions_off_verified = $false
     samples_found = 0
     assets_uploaded = 0
     channels_started = @()
@@ -822,6 +840,19 @@ if ($SeamlessReload) {
 # See that file's own header/doc comment for the full round-11 through
 # round-14 finding history.
 . (Join-Path 'C:\CivicCastSoakScripts' 'ServiceStartFailureCheck.ps1')
+
+# sandbox-lab lane follow-up A: three more dot-sourceable, unit-tested
+# extractions, same pattern as ServiceStartFailureCheck.ps1 just above --
+# CaptionsOffCheck.ps1 (item 1's PUT/GET verification judgment),
+# WorkerStdoutParser.ps1 (item 2's per-line matcher, used by
+# Update-WorkerStdoutCounters below), CpuSampler.ps1 (item 3's pure
+# delta/conversion math, used by Get-CycleProcessCpuSamples below). Loaded
+# here (well before first use in every case) rather than scattered next to
+# each call site, so this is the one place that answers "what does this
+# deployment ship" alongside the other three dot-sources on this page.
+. (Join-Path 'C:\CivicCastSoakScripts' 'CaptionsOffCheck.ps1')
+. (Join-Path 'C:\CivicCastSoakScripts' 'WorkerStdoutParser.ps1')
+. (Join-Path 'C:\CivicCastSoakScripts' 'CpuSampler.ps1')
 
 $startServiceOk = $false
 $startServiceExceptionText = $null
@@ -1146,6 +1177,39 @@ Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 
 if (-not $token) {
     Write-FailVerdictAndExit -Reason "first-admin setup did not return an operator_console_token -- cannot configure or start channels"
+}
+
+# --------------------------------------------------------------------------
+# 3b. sandbox-lab lane follow-up A, item 1: -CaptionsOff. PUT
+#     /api/staff/station/profile {"live_captions_enabled": false} using the
+#     operator's own first-admin token, then GET it back to confirm. Never
+#     touches the CIVICCAST_CAPTION_TAP env var. Judgment logic lives in
+#     CaptionsOffCheck.ps1's Get-CaptionsOffVerification (unit-tested by
+#     Test-CaptionsOffCheck.ps1) so it is exercised by the same code a real
+#     run uses, not a hand-rolled inline condition.
+# --------------------------------------------------------------------------
+if ($CaptionsOff) {
+    Write-SoakLog "captions_off: requesting live_captions_enabled=false via PUT $Base/api/staff/station/profile"
+    $captionsPutR = Invoke-CivicCastApi -Method 'Put' -Url "$Base/api/staff/station/profile" -BodyObj ([ordered]@{ live_captions_enabled = $false }) -BearerToken $token
+    Write-SoakLog "captions_off: PUT status=$($captionsPutR.status) body=$($captionsPutR.body_raw) error=$($captionsPutR.error)"
+    $captionsPutOk = ($captionsPutR.status -eq 200)
+
+    $captionsGetR = Invoke-CivicCastApi -Method 'Get' -Url "$Base/api/staff/station/profile" -BearerToken $token
+    Write-SoakLog "captions_off: GET status=$($captionsGetR.status) body=$($captionsGetR.body_raw) error=$($captionsGetR.error)"
+    $captionsGetOk = ($captionsGetR.status -eq 200 -and $null -ne $captionsGetR.body_json)
+    $captionsReadBackValue = $(if ($captionsGetOk) { $captionsGetR.body_json.live_captions_enabled } else { $null })
+
+    $captionsVerification = Get-CaptionsOffVerification -PutOk $captionsPutOk -GetOk $captionsGetOk -ReadBackValue $captionsReadBackValue
+    $summary.captions_enabled = $captionsVerification.captions_enabled
+    $summary.captions_off_verified = $captionsVerification.verified
+    Write-SoakLog "captions_off: verified=$($captionsVerification.verified) captions_enabled=$($captionsVerification.captions_enabled) read_back_value=$captionsReadBackValue"
+    Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
+
+    if ($captionsVerification.should_harness_error) {
+        Write-HarnessErrorVerdictAndExit -Reason "-CaptionsOff was requested but could not be confirmed (PUT ok=$captionsPutOk, GET ok=$captionsGetOk, live_captions_enabled read back as '$captionsReadBackValue', expected false) -- never an unconfirmed premise for a flag the operator explicitly asked to test"
+    }
+} else {
+    Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 }
 
 # --------------------------------------------------------------------------
@@ -1502,6 +1566,12 @@ Write-PhaseMarker -Name 'SOAK-START.json' -Obj ([ordered]@{
     on_air_bound_minutes = $OnAirBoundMinutes
     seamless_reload = [bool]$SeamlessReload
     seamless_reload_verified = $summary.seamless_reload_verified
+    # sandbox-lab lane follow-up A, item 1.
+    captions_off_requested = [bool]$CaptionsOff
+    captions_enabled = $summary.captions_enabled
+    captions_off_verified = $summary.captions_off_verified
+    # sandbox-lab lane follow-up A, item 3: guest-level, recorded once.
+    cpu_count = [Environment]::ProcessorCount
 })
 Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 
@@ -1700,6 +1770,14 @@ try {
     $script:daemonLogOffsetBytes = 0
 }
 $script:daemonLogFirstLineText = $null
+# sandbox-lab lane follow-up A, item 2's -SeamlessReload cross-check:
+# channel ids the daemon log confirmed "Seamless content-reload armed" for
+# at least once (populated in Update-DaemonLogRing below via
+# DaemonLogPatterns.ps1's $DaemonReloadArmedRegex). Only ever read at the
+# very end of the run (see the final-verdict section) to decide whether
+# any armed channel's worker-stdout reload_committed_count stayed 0 for
+# the whole soak.
+$script:reloadArmedChannels = @{}
 # Round-14 finding 6 (MEDIUM): the log-line regex, the reload-abort regex,
 # the discard-echo exclusion regex, and the "state read failed: ..."
 # string formula all now live in DaemonLogPatterns.ps1, dot-sourced here
@@ -1789,6 +1867,167 @@ function Update-DaemonLogRing {
                 Write-SoakLog "reload_aborted channel=$($ra.Groups['ch'].Value) reason=$($ra.Groups['reason'].Value)"
             }
         }
+        # sandbox-lab lane follow-up A, item 2's -SeamlessReload cross-check
+        # (see $script:reloadArmedChannels' own init comment above).
+        $armed = $script:DaemonReloadArmedRegex.Match($line)
+        if ($armed.Success) {
+            $script:reloadArmedChannels[$armed.Groups['ch'].Value] = $true
+            Write-SoakLog "reload_armed channel=$($armed.Groups['ch'].Value) reload_id=$($armed.Groups['reload_id'].Value)"
+        }
+    }
+}
+
+# --------------------------------------------------------------------------
+# sandbox-lab lane follow-up A, item 2: per-channel worker-stdout parsing.
+# Same incremental-byte-offset, rotation-safe read pattern as
+# Update-DaemonLogRing above, one instance PER CHANNEL (each channel has
+# its own gst-worker.stdout.log, unlike the single shared daemon app log).
+# ConvertFrom-WorkerStdoutLines (WorkerStdoutParser.ps1, dot-sourced near
+# the top of this file) does the actual line-matching; this function does
+# only the file I/O and cumulative bookkeeping around it.
+# --------------------------------------------------------------------------
+$script:EgressWorkDirRoot = 'C:\ProgramData\CivicCast\data\egress'
+$script:workerStdoutOffsetByChannel = @{}
+$script:workerStdoutFirstLineByChannel = @{}
+$script:workerStdoutCountsByChannel = @{}
+foreach ($c0 in $channelSpecs) {
+    $script:workerStdoutCountsByChannel[$c0.id] = [ordered]@{
+        reload_committed_count = 0
+        reload_aborted_count   = 0
+        reload_aborted_reasons = @()
+        worker_stall_count     = 0
+    }
+}
+
+function Update-WorkerStdoutCounters {
+    param([string]$ChannelId)
+    $path = Join-Path $script:EgressWorkDirRoot "$ChannelId\logs\gst-worker.stdout.log"
+    if (-not (Test-Path $path)) { return }
+    try { $length = (Get-Item -Path $path -ErrorAction Stop).Length } catch { return }
+
+    $firstLineNow = $null
+    try {
+        $fsProbe = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $srProbe = New-Object System.IO.StreamReader($fsProbe)
+            $firstLineNow = $srProbe.ReadLine()
+        } finally { $fsProbe.Close() }
+    } catch { }
+
+    $prevOffset = $(if ($script:workerStdoutOffsetByChannel.ContainsKey($ChannelId)) { $script:workerStdoutOffsetByChannel[$ChannelId] } else { 0 })
+    $prevFirstLine = $(if ($script:workerStdoutFirstLineByChannel.ContainsKey($ChannelId)) { $script:workerStdoutFirstLineByChannel[$ChannelId] } else { $null })
+    # Same rotation heuristic as Update-DaemonLogRing: length shrank, or the
+    # first line changed while a previous first-line was already known.
+    $rotated = ($length -lt $prevOffset) -or
+        ($null -ne $prevFirstLine -and $null -ne $firstLineNow -and $firstLineNow -ne $prevFirstLine)
+    if ($rotated) {
+        Write-SoakLog "worker stdout log rotation detected for channel=$ChannelId -- resetting read offset to 0"
+        $prevOffset = 0
+    }
+    $script:workerStdoutFirstLineByChannel[$ChannelId] = $firstLineNow
+
+    if ($prevOffset -ge $length) {
+        $script:workerStdoutOffsetByChannel[$ChannelId] = $prevOffset
+        return
+    }
+
+    try {
+        $fs = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        try {
+            $fs.Seek($prevOffset, [System.IO.SeekOrigin]::Begin) | Out-Null
+            $bytesToRead = $length - $prevOffset
+            $buffer = New-Object byte[] $bytesToRead
+            $readCount = $fs.Read($buffer, 0, $bytesToRead)
+            $text = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $readCount)
+        } finally { $fs.Close() }
+    } catch { return }
+
+    # A torn final line (writer hasn't finished it yet) is left for the
+    # next pass -- same discipline as Update-DaemonLogRing.
+    $lastNewlineIdx = $text.LastIndexOf("`n")
+    if ($lastNewlineIdx -lt 0) {
+        $script:workerStdoutOffsetByChannel[$ChannelId] = $prevOffset
+        return
+    }
+    $completeText = $text.Substring(0, $lastNewlineIdx + 1)
+    $script:workerStdoutOffsetByChannel[$ChannelId] = $prevOffset + [System.Text.Encoding]::UTF8.GetByteCount($completeText)
+
+    $newLines = @($completeText -split "`r?`n" | Where-Object { $_ })
+    if ($newLines.Count -eq 0) { return }
+    $parsed = ConvertFrom-WorkerStdoutLines -Lines $newLines
+
+    $counts = $script:workerStdoutCountsByChannel[$ChannelId]
+    $counts.reload_committed_count += $parsed.reload_committed_count
+    $counts.reload_aborted_count += $parsed.reload_aborted_count
+    $counts.reload_aborted_reasons = @($counts.reload_aborted_reasons + $parsed.reload_aborted_reasons)
+    $counts.worker_stall_count += $parsed.worker_stall_count
+
+    if ($parsed.reload_committed_count -gt 0) {
+        Write-SoakLog "worker stdout channel=${ChannelId}: reload committed x$($parsed.reload_committed_count) (cumulative=$($counts.reload_committed_count))"
+    }
+    foreach ($reason in $parsed.reload_aborted_reasons) {
+        Write-SoakLog "worker stdout channel=${ChannelId}: reload aborted: $reason"
+    }
+    if ($parsed.worker_stall_count -gt 0) {
+        Write-SoakLog "worker stdout channel=${ChannelId}: stall x$($parsed.worker_stall_count) (cumulative=$($counts.worker_stall_count))"
+    }
+}
+
+# --------------------------------------------------------------------------
+# sandbox-lab lane follow-up A, item 3: per-process CPU instrumentation.
+# Get-Process's own `.CPU` property is CUMULATIVE processor time since the
+# process started, not a rate -- CpuSampler.ps1's Get-CpuDeltaSample turns
+# two cumulative samples into a per-interval delta ($null on first sighting
+# of a pid, or if a reused pid would otherwise produce a nonsensical
+# negative delta). $script:prevCpuSecondsByPid is pruned each cycle to pids
+# actually seen that cycle so it cannot grow unbounded across a long soak.
+# --------------------------------------------------------------------------
+$script:prevCpuSecondsByPid = @{}
+
+function Get-CycleProcessCpuSamples {
+    <#
+      .SYNOPSIS
+      One sample per python.exe/ffmpeg.exe process currently running in the
+      guest (gst-worker processes ARE python.exe processes running
+      egress/gst/worker.py, per Get-GstWorkerPidMap's own CommandLine
+      match -- already covered here, not queried separately).
+    #>
+    $seenPids = @{}
+    $samples = @()
+    $procs = @()
+    try { $procs = @(Get-Process -Name 'python', 'ffmpeg' -ErrorAction SilentlyContinue) } catch { $procs = @() }
+    foreach ($p in $procs) {
+        $seenPids[$p.Id] = $true
+        $cpuNow = $(try { $p.CPU } catch { $null })
+        $wsNow = $(try { $p.WorkingSet64 } catch { $null })
+        $prev = $(if ($script:prevCpuSecondsByPid.ContainsKey($p.Id)) { $script:prevCpuSecondsByPid[$p.Id] } else { $null })
+        $delta = Get-CpuDeltaSample -CpuSecondsNow $cpuNow -CpuSecondsPrev $prev
+        if ($null -ne $cpuNow) { $script:prevCpuSecondsByPid[$p.Id] = $cpuNow }
+        $samples += [ordered]@{
+            pid = $p.Id
+            process_name = $p.ProcessName
+            cpu_seconds_delta = $delta
+            working_set_mb = (ConvertTo-WorkingSetMb -WorkingSetBytes $wsNow)
+        }
+    }
+    $stalePids = @($script:prevCpuSecondsByPid.Keys | Where-Object { -not $seenPids.ContainsKey($_) })
+    foreach ($sp in $stalePids) { $script:prevCpuSecondsByPid.Remove($sp) }
+    return $samples
+}
+
+function Get-CpuTotalPercent {
+    <#
+      .SYNOPSIS
+      Guest-wide `\Processor(_Total)\% Processor Time`, best-effort ($null
+      on any failure -- performance counters can be disabled/unavailable on
+      some images, and this must never fail the run over a diagnostic-only
+      reading).
+    #>
+    try {
+        $c = Get-Counter -Counter '\Processor(_Total)\% Processor Time' -ErrorAction Stop
+        return [math]::Round($c.CounterSamples[0].CookedValue, 1)
+    } catch {
+        return $null
     }
 }
 
@@ -1946,6 +2185,13 @@ while ((Get-Date) -lt $deadline) {
         }
         $sample = $samplesThisPass[$c.id]
 
+        # sandbox-lab lane follow-up A, item 2: once per channel per cycle
+        # (same cadence as the tsp probe just below), not once per
+        # interleaved pass -- reading the file 3x/cycle for the same data
+        # would be pure overhead.
+        Update-WorkerStdoutCounters -ChannelId $c.id
+        $workerStdoutCounts = $script:workerStdoutCountsByChannel[$c.id]
+
         $row = [ordered]@{
             channel_id = $c.id; engine_state = $sample.state
             # Round-9 finding N4: reuse the engine ALREADY resolved during
@@ -1986,11 +2232,31 @@ while ((Get-Date) -lt $deadline) {
         # $null on a 'pass' verdict (nothing to explain).
         $row.tsp_output_tail = $ts.tsp_output_tail
         $row.sample_ring = @($restartCtx.Ring[$c.id])
+        # sandbox-lab lane follow-up A, item 2: CUMULATIVE since soak start
+        # (not a per-cycle delta) -- monotonic counters are simpler to read
+        # across a rollup/VERDICT.json than reconciling per-cycle deltas,
+        # and match the same cumulative-count convention this file already
+        # uses for restart/reload-abort events.
+        $row.reload_committed_count = $workerStdoutCounts.reload_committed_count
+        $row.reload_aborted_count_worker = $workerStdoutCounts.reload_aborted_count
+        $row.reload_aborted_reasons_worker = @($workerStdoutCounts.reload_aborted_reasons)
+        $row.worker_stall_count = $workerStdoutCounts.worker_stall_count
         $rows += $row
     }
 
+    # sandbox-lab lane follow-up A, item 3: once per cycle (not per
+    # channel) -- CPU/memory belong to guest-wide OS processes, not to any
+    # one channel.
+    $processSamples = Get-CycleProcessCpuSamples
+    $cpuTotalPercent = Get-CpuTotalPercent
+
     $globalCensus = Get-GlobalEngineCensus -GstWorkerPidMap $gstWorkerPidMap
-    $cycle = [ordered]@{ cycle_utc = $cycleUtc.ToString('o'); channels = $rows; global_engine_observed = $globalCensus; measured_cycle_period_seconds = [math]::Round($measuredCyclePeriodSeconds, 1) }
+    $cycle = [ordered]@{
+        cycle_utc = $cycleUtc.ToString('o'); channels = $rows; global_engine_observed = $globalCensus
+        measured_cycle_period_seconds = [math]::Round($measuredCyclePeriodSeconds, 1)
+        processes = $processSamples
+        cpu_total_percent = $cpuTotalPercent
+    }
     $allCycles += $cycle
     Save-Json -Obj $cycle -Path (Join-Path $LocalDir "cycles\cycle-$('{0:d4}' -f $cycleN).json")
     Write-SoakLog "cycle $cycleN @ $($cycleUtc.ToString('o')) (period=$([math]::Round($measuredCyclePeriodSeconds, 1))s): $(($rows | ForEach-Object { "$($_.channel_id)=$($_.engine_state)/$($_.engine)/tsp=$($_.tsduck_verdict)/restart_window=$($_.in_planned_restart_window)" }) -join ' ') global: ffmpeg=$($globalCensus.ffmpeg_processes) gst_workers=$($globalCensus.gst_worker_processes)"
@@ -2007,6 +2273,21 @@ while ((Get-Date) -lt $deadline) {
             restart_events_so_far = @($restartCtx.RestartEvents)
             reload_abort_events_so_far = @($restartCtx.ReloadAbortEvents)
             harness_notes = @($harnessNotes)
+            # sandbox-lab lane follow-up A, item 2: cumulative-since-soak-start
+            # snapshot per channel, for a rollup reader who does not want to
+            # dig into latest_cycle.channels[*] for the same numbers.
+            worker_stdout_cumulative_by_channel = $(
+                $snap = [ordered]@{}
+                foreach ($cid in $script:workerStdoutCountsByChannel.Keys) {
+                    $wc = $script:workerStdoutCountsByChannel[$cid]
+                    $snap[$cid] = [ordered]@{
+                        reload_committed_count = $wc.reload_committed_count
+                        reload_aborted_count_worker = $wc.reload_aborted_count
+                        worker_stall_count = $wc.worker_stall_count
+                    }
+                }
+                $snap
+            )
         }
         Save-Json -Obj $rollup -Path (Join-Path $LocalDir "rollups\rollup-$('{0:d4}' -f $cycleN).json")
         Copy-StationLogs -Label "checkpoint-cycle$cycleN"
@@ -2055,7 +2336,24 @@ Write-SoakLog "poll loop complete: $cycleN cycles recorded, $($restartEventsArra
 #    exercises against synthetic data also judges this real run).
 # --------------------------------------------------------------------------
 . (Join-Path 'C:\CivicCastSoakScripts' 'SoakVerdict.ps1')
-$verdictResult = Get-SoakVerdict -Cycles $allCycles -StartUtc $SoakStartUtc -WarmupSeconds 180 -RestartEvents $restartEventsArray -SeamlessReload ([bool]$SeamlessReload) -ReloadAbortEvents $reloadAbortEventsArray
+
+# sandbox-lab lane follow-up A, item 2's -SeamlessReload cross-check:
+# any channel the daemon log confirmed "Seamless content-reload armed"
+# for, whose own worker-stdout reload_committed_count stayed 0 for the
+# whole soak. Computed regardless of -SeamlessReload (cheap, and visible
+# in VERDICT.json either way); Get-SoakVerdict itself only acts on this
+# list under -SeamlessReload (see SoakVerdict.ps1's own header).
+$reloadArmedNeverCommittedChannels = @(
+    $script:reloadArmedChannels.Keys | Where-Object {
+        $wc = $script:workerStdoutCountsByChannel[$_]
+        (-not $wc) -or ($wc.reload_committed_count -eq 0)
+    }
+)
+if ($reloadArmedNeverCommittedChannels.Count -gt 0) {
+    Write-SoakLog "reload_armed_never_committed: $($reloadArmedNeverCommittedChannels -join ', ') (daemon log confirmed armed, worker stdout never logged a commit)"
+}
+
+$verdictResult = Get-SoakVerdict -Cycles $allCycles -StartUtc $SoakStartUtc -WarmupSeconds 180 -RestartEvents $restartEventsArray -SeamlessReload ([bool]$SeamlessReload) -ReloadAbortEvents $reloadAbortEventsArray -ReloadArmedNeverCommittedChannels $reloadArmedNeverCommittedChannels
 
 $verdict = [ordered]@{
     schema_version       = 1
@@ -2105,6 +2403,28 @@ $verdict = [ordered]@{
     channels_started_utc = $channelsStartedUtc.ToString('o')
     first_state_row_s    = $firstStateRowSByChannel
     time_to_on_air_s     = $timeToOnAirSByChannel
+    # sandbox-lab lane follow-up A, item 1.
+    captions_off_requested = [bool]$CaptionsOff
+    captions_enabled       = $summary.captions_enabled
+    captions_off_verified  = $summary.captions_off_verified
+    # sandbox-lab lane follow-up A, item 2: final cumulative-since-soak-start
+    # per-channel worker-stdout counts, plus which armed channels (if any)
+    # never logged a commit -- see the computation just above this block.
+    worker_stdout_by_channel = $(
+        $wsnap = [ordered]@{}
+        foreach ($cid in $script:workerStdoutCountsByChannel.Keys) {
+            $wc = $script:workerStdoutCountsByChannel[$cid]
+            $wsnap[$cid] = [ordered]@{
+                reload_committed_count      = $wc.reload_committed_count
+                reload_aborted_count_worker = $wc.reload_aborted_count
+                reload_aborted_reasons_worker = @($wc.reload_aborted_reasons)
+                worker_stall_count          = $wc.worker_stall_count
+            }
+        }
+        $wsnap
+    )
+    reload_armed_channels               = @($script:reloadArmedChannels.Keys)
+    reload_armed_never_committed_channels = $reloadArmedNeverCommittedChannels
 }
 # N8: copy station logs BEFORE writing the verdict, not after -- the fail
 # path (Write-FailVerdictAndExit) already had this order right; the success
