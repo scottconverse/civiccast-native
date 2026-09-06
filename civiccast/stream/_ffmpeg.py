@@ -33,6 +33,7 @@ __all__ = [
     "H264EncoderUnavailableError",
     "check_ffmpeg",
     "probe_ffmpeg_encoders",
+    "probe_media_duration_seconds",
     "probe_video_dimensions",
     "resolve_h264_encoder",
     "run_ffmpeg",
@@ -218,6 +219,56 @@ def probe_video_dimensions(path: Path) -> tuple[int, int] | None:
     if width <= 0 or height <= 0:
         return None
     return width, height
+
+
+def probe_media_duration_seconds(path: Path) -> float | None:
+    """Return ``path``'s container duration in seconds, or ``None``.
+
+    Item 66 round-5 (Opus review, point 2): the source preparer's
+    untrimmed loudness-probe window needs the asset's REAL media duration
+    to place a mid-file sample without seeking past EOF -- a ``-format``
+    query only, not a full decode, so this is cheap even on a long asset
+    (unlike the ebur128 pass it exists to bound). Deliberately total, same
+    convention as :func:`probe_video_dimensions`: every failure mode
+    (ffprobe absent, non-zero exit, unparseable output, a container with
+    no reported duration) answers ``None`` rather than raising -- the
+    caller falls back to a fixed-offset sample when duration is unknown.
+    """
+
+    if shutil.which(_FFPROBE_EXECUTABLE) is None:
+        return None
+    try:
+        completed = subprocess.run(  # noqa: S603
+            [
+                _FFPROBE_EXECUTABLE,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if completed.returncode != 0:
+        return None
+    raw = completed.stdout.strip().splitlines()[:1]
+    if not raw:
+        return None
+    try:
+        duration = float(raw[0])
+    except ValueError:
+        return None
+    if duration <= 0:
+        return None
+    return duration
 
 
 EncoderProbe = Callable[[str], Collection[str]]

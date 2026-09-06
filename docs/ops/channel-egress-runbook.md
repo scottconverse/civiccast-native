@@ -250,32 +250,50 @@ itself — no CLI worker needed. Posture for a three-channel station:
   A cache HIT for an untrimmed asset is therefore byte-identical to its
   first airing, whether it arrived by link or by background copy.
 - **Cache promotion never waits behind an in-progress warm (item 66
-  round-4):** if a background warm for the identical asset is already
-  running when a foreground airing tries to populate (or link/copy into)
-  the same cache entry, that foreground promotion is skipped outright
-  rather than waiting for the warm to finish — a warm's own single-threaded
-  conform can take tens of minutes for a long asset, and item 66 exists
-  precisely to keep the synchronous start path from waiting on work like
-  that. Skipping costs nothing beyond that one airing's copy being (for
-  now) absent from the persistent cache: the segment already aired from its
-  own file regardless, and the in-progress warm (or a later airing) still
-  populates the cache normally.
+  round-4, non-blocking acquire; round-5 fixed a self-deadlock in the
+  cross-volume path — see below):** if a background warm for the identical
+  asset is already running when a foreground airing tries to populate (or
+  link/copy into) the same cache entry, that foreground promotion is
+  skipped outright rather than waiting for the warm to finish — a warm's
+  own single-threaded conform can take tens of minutes for a long asset,
+  and item 66 exists precisely to keep the synchronous start path from
+  waiting on work like that. Skipping costs nothing beyond that one
+  airing's copy being (for now) absent from the persistent cache: the
+  segment already aired from its own file regardless, and the in-progress
+  warm (or a later airing) still populates the cache normally. On a
+  cross-volume cache/work-dir layout (the hard-link fallback), the
+  background copy job itself also acquires non-blocking and skips on
+  contention rather than waiting or busy-looping — round 4 shipped this
+  scheduling from INSIDE the still-held lock, which self-deadlocked with a
+  synchronous scheduler and head-of-line-blocked the real one; round 5
+  schedules it only after the lock is released.
 - **The loudness probe samples the asset, it does not measure the whole
-  file (item 66, revised round-4):** a TRIMMED (join-in-progress) segment's
+  file (item 66, revised round-5):** a TRIMMED (join-in-progress) segment's
   probe is bounded to its own wanted window. An UNTRIMMED segment's probe
-  samples 120 seconds starting 40% into the asset's duration — NOT the
-  head — because a head sample can land on cold-open silence or room tone
-  and measure the silence floor instead of the program's real loudness (a
-  real field failure: -70 LUFS measured at the head of a 39-minute meeting
-  recording, which would have driven normalization completely wrong and
-  been reused for every other segment/airing of that asset via the
-  per-asset memo above). If the sampled window itself measures at or below
-  -60 LUFS integrated (still silence, e.g. a long pause that happens to
-  land in the sample), the preparer falls back to exactly ONE whole-file
-  probe and uses that reading instead — a floor sample is never cached or
-  acted on. Either way this remains a sample rather than a full-file
-  measurement for material whose loudness varies significantly across its
-  length.
+  samples 120 seconds starting 40% into the asset's REAL MEDIA DURATION —
+  NOT the head, and NOT the schedule slot's duration — because a head
+  sample can land on cold-open silence or room tone and measure the
+  silence floor instead of the program's real loudness (a real field
+  failure: -70 LUFS measured at the head of a 39-minute meeting recording,
+  which would have driven normalization completely wrong and been reused
+  for every other segment/airing of that asset via the per-asset memo
+  above). The media duration used for that 40% offset is the asset's own
+  probed length (a cheap ffprobe query, cached alongside the loudness
+  result) — NOT the prepared segment's `duration_seconds`, which is capped
+  by the schedule slot and can be shorter than the asset itself; using the
+  slot duration for the offset could seek past the asset's actual end
+  (measured: a past-EOF seek reads as silence, triggering an unnecessary
+  floor fallback). The 40% offset is clamped so it can never land past the
+  asset's real end even for a short asset. If the sampled window itself
+  measures at or below -60 LUFS integrated (still silence, e.g. a long
+  pause that happens to land in the sample), the preparer resamples ONCE
+  more at a DIFFERENT offset (70% into the media duration, same clamping,
+  still a bounded 120-second sample — never a whole-file decode) and uses
+  that reading instead. Only if BOTH independent samples land at the floor
+  is the asset treated as genuinely silent (normalization is skipped
+  outright rather than trusting either floor reading as a real target).
+  Either way this remains a sample rather than a full-file measurement for
+  material whose loudness varies significantly across its length.
 
 - Never run the inline automation driver AND a `civiccast egress run` CLI
   worker for the same channels: two daemons would race the same durable

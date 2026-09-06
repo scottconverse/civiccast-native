@@ -71,12 +71,18 @@ def check_loudness(
     across its length -- callers that need the whole-file measurement must
     leave both ``None``.
 
-    ``threads`` (item 66 round-4, Opus review): caps the decode at that
-    many threads (``-threads <N>``), same convention as
-    ``build_conform_source_args``. Used by the source preparer's
-    whole-file fallback probe (triggered when a bounded sample lands at
-    the silence floor) so that synchronous fallback never runs fully
-    unthrottled on the box.
+    ``threads`` (item 66 round-4, Opus review; position fixed round-5):
+    caps ffmpeg's decode AND filter-graph threading at that many threads
+    (``-threads <N>`` before ``-i`` -- an input/decoder option, not an
+    output one -- plus ``-filter_complex_threads <N>`` for the
+    ``ebur128`` filter graph itself). A round-4 version of this placed
+    ``-threads`` after ``-i``/``-t``, which ffmpeg parses as an OUTPUT
+    option applying only to the ``-f null`` output -- it never actually
+    capped the decode or filter-graph threads it was meant to bound. Not
+    currently exercised by any caller in this codebase (the source
+    preparer's silence-floor handling takes a second bounded sample
+    instead of a whole-file fallback -- see item 66 round-5, point 3) but
+    kept and correctly wired as a general capability of this function.
     """
 
     if not media_path.exists():
@@ -98,6 +104,16 @@ def check_loudness(
             ),
         )
     args = ["-hide_banner", "-nostats"]
+    if threads is not None:
+        # Item 66 round-5 (Opus review, point 4): ``-threads`` is an
+        # INPUT/decoder option in ffmpeg's arg grammar -- it must come
+        # before ``-i`` to cap the decode. Placed after ``-i``/``-t`` (the
+        # round-4 shape) it is parsed as an OUTPUT option and caps only the
+        # ``-f null`` output, which does no decoding of its own -- the
+        # decode itself ran fully unthrottled regardless.
+        # ``-filter_complex_threads`` caps the ``ebur128`` filter graph's
+        # own threading separately; ``-threads`` alone does not bound it.
+        args.extend(["-threads", str(threads), "-filter_complex_threads", str(threads)])
     if probe_start_seconds is not None:
         args.extend(["-ss", f"{probe_start_seconds:g}"])
     args.extend(["-i", str(media_path)])
@@ -109,8 +125,6 @@ def check_loudness(
     args.append("-vn")
     if probe_duration_seconds is not None:
         args.extend(["-t", f"{probe_duration_seconds:g}"])
-    if threads is not None:
-        args.extend(["-threads", str(threads)])
     args.extend(["-filter_complex", "ebur128=peak=true", "-f", "null", "-"])
     result = run_ffmpeg(args)
     if result.returncode != 0:
@@ -156,7 +170,9 @@ def check_streaming_loudness(
     ``probe_start_seconds``/``probe_duration_seconds``/``threads`` forward to
     :func:`check_loudness` -- see its docstring (item 66 round-3: the source
     preparer bounds every probe to a window instead of the whole file;
-    round-4: the whole-file fallback probe is thread-capped).
+    round-5: ``threads`` caps decode + filter-graph threading, positioned
+    correctly as an input option -- see that docstring for why the
+    original round-4 placement never actually capped anything).
     """
 
     return check_loudness(

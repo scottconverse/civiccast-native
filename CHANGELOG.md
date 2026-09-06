@@ -91,7 +91,7 @@ below.
     afterward via `_promote_finished_conform_into_cache` — a hard link
     (`os.link`) of that SAME already-airing file into
     `conform-cache/{key}.ts.tmp`, then the existing atomic rename.
-  - **The link/lock design in the paragraph above went through TWO more
+  - **The link/lock design in the paragraph above went through THREE more
     measured rounds of Opus review after it first shipped:**
     - **Round 4, BLOCKER:** the lock guarding that promotion (and the
       matching lock in `_conform_full_asset_into_cache`, used on the
@@ -113,11 +113,21 @@ below.
       fails, e.g. the cache and per-plan directories live on different
       volumes) was still a full synchronous byte-for-byte copy on the
       start path — the same class of blocking work item 66 exists to
-      close. It is now handed to the warm scheduler
-      (`_schedule_cache_copy_promotion`) as a queued background job on the
-      same single-worker queue as an ordinary warm; a cross-volume layout
-      now populates its cache entries in the background instead of on the
-      synchronous path.
+      close. It was handed to the warm scheduler
+      (`_schedule_cache_copy_promotion`) as a queued background job.
+    - **Round 5, BLOCKER:** round 4's fix for the point above scheduled
+      that background job from INSIDE the still-held per-key lock, and the
+      queued job itself blocking-acquired the SAME lock — with a
+      SYNCHRONOUS `warm_scheduler` (a test double, or any future
+      non-threaded integration) the job ran inline, before the caller's
+      own `finally: lock.release()` could ever execute: a reproducible
+      self-deadlock. With the real threaded scheduler it was head-of-line
+      blocking of the single warm worker on a lock its own caller still
+      held. Fixed: `_promote_finished_conform_into_cache` now releases its
+      lock FIRST (in `finally`) and only schedules the copy job
+      AFTERWARD; the queued job's own lock acquisition is now also
+      non-blocking (skip on contention rather than wait or busy-loop
+      re-queuing itself).
     Any failure in cache promotion (including the over-budget case) is
     still logged and swallowed, never raised: the segment is already
     safely on air regardless, and only the NEXT airing of that asset
@@ -131,32 +141,54 @@ below.
     existing per-key dedupe (`self._warming`) is unchanged, and now shared
     between the two job kinds.
   - **The loudness probe is now bounded to a window, not the whole file --
-    and, since round 4, not the HEAD of an untrimmed asset either.** A
-    trimmed segment probes exactly its own wanted window (`-ss <inpoint>`
-    before `-i`, `-t <duration>` after it — the same convention
-    `build_conform_source_args` uses). An untrimmed segment (the full
-    asset) samples 120 seconds starting 40% into the asset's duration
-    instead of its whole duration -- the initial round-3 shape sampled the
-    HEAD instead, and an Opus review found a real failure mode: a cold-open
-    with silence or room tone measures the silence floor instead of the
-    program's real loudness, which then drives `loudnorm`'s normalization
-    target completely wrong and gets memoized for every other
-    segment/airing of that asset. If the mid-file sample itself measures at
-    or below -60 LUFS integrated (still silence -- e.g. a pause that
-    happens to land in the sampled window), the preparer falls back to
-    exactly ONE whole-file probe (bounded by the same foreground thread
-    cap as a foreground conform, via a new optional `threads` parameter on
-    `check_loudness`/`check_streaming_loudness`) and uses THAT reading
-    instead -- the floor sample itself is never cached or acted on.
+    and, since round 4 (corrected round 5), not the HEAD of an untrimmed
+    asset either.** A trimmed segment probes exactly its own wanted window
+    (`-ss <inpoint>` before `-i`, `-t <duration>` after it — the same
+    convention `build_conform_source_args` uses). An untrimmed segment (the
+    full asset) samples 120 seconds starting 40% into the asset's REAL
+    MEDIA DURATION instead of its whole duration -- the initial round-3
+    shape sampled the HEAD instead, and an Opus review found a real failure
+    mode: a cold-open with silence or room tone measures the silence floor
+    instead of the program's real loudness, which then drives `loudnorm`'s
+    normalization target completely wrong and gets memoized for every
+    other segment/airing of that asset. A round-4 version of the 40%
+    offset used `segment.duration_seconds` for "the asset's duration" --
+    wrong: `source_plan.py`'s `_segment_duration` returns
+    `min(slot, playable)` (or the bare schedule SLOT for an un-probed
+    asset), so a slot shorter than the asset placed the sample past the
+    asset's actual EOF (measured: a past-EOF `-ss` reads as silence -> -70
+    LUFS -> an unnecessary floor fallback). Round 5 uses the asset's REAL
+    media duration instead -- a cheap ffprobe `-format` query (never a
+    decode), cached in the same meta as the loudness result -- and clamps
+    the 40% offset so it can never land past EOF even for a short asset.
+    If the mid-file sample itself measures at or below -60 LUFS integrated
+    (still silence -- e.g. a pause that happens to land in the sampled
+    window), a round-4 version fell back to a synchronous WHOLE-FILE probe
+    (measured 46.7s on a 39-minute clip) -- exactly the kind of
+    start-path-blocking work item 66 exists to close. Round 5 replaces that
+    with a SECOND bounded sample at a different offset (70% into the real
+    media duration, still 120 seconds, same EOF clamping); only if BOTH
+    independent samples land at the floor is the asset treated as
+    genuinely silent (`normalize=False`, cached as such -- never trusting
+    either floor reading as a real loudnorm target).
     `check_loudness`/`check_streaming_loudness` gained optional
     `probe_start_seconds`/`probe_duration_seconds`/`threads` parameters for
     this (`None` for every OTHER caller, still measuring the whole file,
-    unthrottled, unchanged). This remains a documented sample, not a
-    full-file measurement, for material whose loudness varies
-    significantly across its length — the persisted-meta memo above still
-    means one asset gets one measured value shared across every
-    segment/airing of it, which was already this codebase's model before
-    item 66 (the cache key never depended on trim).
+    unthrottled, unchanged); `threads` is not currently exercised by any
+    caller now that the whole-file fallback is gone, but is kept as a
+    correctly-wired general capability (see the arg-order fix below). This
+    remains a documented sample, not a full-file measurement, for material
+    whose loudness varies significantly across its length — the
+    persisted-meta memo above still means one asset gets one measured value
+    shared across every segment/airing of it, which was already this
+    codebase's model before item 66 (the cache key never depended on trim).
+  - **`-threads`'s position in `check_loudness` was an OUTPUT option, not
+    an input one (round 5).** Round 4 placed `-threads <N>` after `-i`/
+    `-t`, which ffmpeg parses as applying to the `-f null` output --
+    capping nothing about the actual decode or filter graph. It now comes
+    BEFORE `-i` (an input/decoder option), paired with
+    `-filter_complex_threads <N>` to also cap the `ebur128` filter graph's
+    own threading, which `-threads` alone never bounded.
   - **`_evict_cache_over_budget` now reaps orphaned cache-dir files** that
     no other path here ever cleaned up: an abandoned `{key}.ts.tmp` (a
     conform or promotion interrupted mid-write) older than 1 hour is
@@ -169,7 +201,9 @@ below.
     module. `os.utime(cached_ts)` on a cache HIT is now guarded against
     `FileNotFoundError` (a concurrent eviction pass removing the entry
     between the existence check and the utime call) and falls through to a
-    MISS instead of crashing.
+    MISS instead of crashing. A failed/partial background copy (in the
+    cross-volume job above) now unlinks its own partial `.ts.tmp` instead
+    of leaving it for the orphan reap to find later.
   - **`cli.py`'s CLI-driven worker now passes `playout_trim_supported`
     too.** Its `SourcePreparer(work_dir=work_dir)` construction was missing
     the argument entirely (silently defaulting to `False`, the
@@ -183,7 +217,8 @@ below.
   already aired, so it is byte-identical, not a separately-produced copy),
   its new "Cache promotion never waits behind an in-progress warm" note,
   and its corrected "loudness probe" note describing the sampling window
-  and silence-floor fallback.
+  (40%/70% of the asset's REAL media duration, not its schedule-slot
+  duration) and the two-sample silence-floor fallback.
 - **A seamless plan rollover collided its own concat aggregators, silently
   failed to join the pipeline, and was acked "applied" anyway -- so
   automation kept re-triggering it forever while the channel bounced.**

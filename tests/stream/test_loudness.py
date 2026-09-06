@@ -187,6 +187,96 @@ class TestLoudnessComplianceRealFfmpeg:
         assert "-ss" not in args
         assert "-t" not in args
 
+    def test_threads_is_an_input_option_not_an_output_option(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        """Item 66 round-5 (Opus review, point 4): ``-threads`` must come
+        BEFORE ``-i`` -- ffmpeg parses an option's position as which
+        stream/context it applies to, and an option placed after ``-i``
+        (and after ``-t``, in the round-4 shape this replaces) is parsed as
+        an OUTPUT option, applying only to the ``-f null`` output rather
+        than capping the actual decode. ``-filter_complex_threads`` must
+        also be present to cap the ``ebur128`` filter graph's own
+        threading, which ``-threads`` alone does not bound."""
+        loudness_module = import_module("civiccast.stream.loudness")
+        media = tmp_path / "meeting.wav"
+        media.write_bytes(b"RIFFplaceholder")
+
+        captured: dict[str, list[str]] = {}
+
+        def _fake_run_ffmpeg(args: list[str]):
+            captured["args"] = args
+            return type(
+                "Result",
+                (),
+                {
+                    "returncode": 0,
+                    "stdout": "",
+                    "stderr": "Integrated loudness:\n    I:         -16.2 LUFS\n",
+                },
+            )()
+
+        monkeypatch.setattr(loudness_module, "check_ffmpeg", lambda: ("7.0", True))
+        monkeypatch.setattr(loudness_module, "run_ffmpeg", _fake_run_ffmpeg)
+
+        loudness_module.check_streaming_loudness(
+            media_path=media,
+            target_lufs=-16.0,
+            tolerance_lufs=1.0,
+            probe_start_seconds=5.0,
+            probe_duration_seconds=30.0,
+            threads=3,
+        )
+
+        args = captured["args"]
+        assert args[args.index("-threads") : args.index("-threads") + 2] == ["-threads", "3"]
+        assert args.index("-threads") < args.index("-i")  # input/decoder option, not output
+        assert args[
+            args.index("-filter_complex_threads") : args.index("-filter_complex_threads") + 2
+        ] == ["-filter_complex_threads", "3"]
+        assert args.index("-filter_complex_threads") < args.index("-i")
+
+    def test_no_threads_omits_both_thread_flags(
+        self,
+        monkeypatch,
+        tmp_path: Path,
+    ) -> None:
+        """Companion: the default (``threads=None``, every current caller)
+        must not add either flag -- ffmpeg's own default threading is
+        unchanged."""
+        loudness_module = import_module("civiccast.stream.loudness")
+        media = tmp_path / "meeting.wav"
+        media.write_bytes(b"RIFFplaceholder")
+
+        captured: dict[str, list[str]] = {}
+
+        def _fake_run_ffmpeg(args: list[str]):
+            captured["args"] = args
+            return type(
+                "Result",
+                (),
+                {
+                    "returncode": 0,
+                    "stdout": "",
+                    "stderr": "Integrated loudness:\n    I:         -16.2 LUFS\n",
+                },
+            )()
+
+        monkeypatch.setattr(loudness_module, "check_ffmpeg", lambda: ("7.0", True))
+        monkeypatch.setattr(loudness_module, "run_ffmpeg", _fake_run_ffmpeg)
+
+        loudness_module.check_streaming_loudness(
+            media_path=media,
+            target_lufs=-16.0,
+            tolerance_lufs=1.0,
+        )
+
+        args = captured["args"]
+        assert "-threads" not in args
+        assert "-filter_complex_threads" not in args
+
 
 class TestCheckLoudnessGeneralized:
     """S11b: check_loudness parameterises the standard label + target so cable

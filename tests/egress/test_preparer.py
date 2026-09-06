@@ -8,6 +8,7 @@ import os
 import re
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -1258,6 +1259,52 @@ def test_promote_finished_conform_queues_a_copy_job_when_link_fails(
     assert finished.is_file()
 
 
+def test_promote_finished_conform_does_not_deadlock_with_synchronous_scheduler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 66 round-5 BLOCKER fix (Opus review, point 1): round-4 scheduled
+    the cross-volume copy job from INSIDE the still-held per-key lock, and
+    the job itself blocking-acquired that SAME lock -- with a SYNCHRONOUS
+    warm_scheduler (``lambda job: job()``, the exact shape
+    ``test_aired_before_asset_prepares_with_zero_ffmpeg_work`` at line 622
+    uses), the job runs inline, before this frame's own ``finally:
+    lock.release()`` could ever execute -- a guaranteed self-deadlock. This
+    call must simply RETURN."""
+    warm_jobs: list = []
+
+    def synchronous_scheduler(job: Callable[[], None]) -> None:
+        warm_jobs.append(job)
+        job()  # run it inline, immediately -- the exact shape that self-deadlocked in round 4
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=synchronous_scheduler,
+    )
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    config = _config()
+    key = preparer._cache_key(source, config)
+    assert key is not None
+    finished = tmp_path / "already-airing.ts"
+    finished.write_text("prepared bytes", encoding="utf-8")
+
+    def _raising_link(_src: object, _dst: object) -> None:
+        raise OSError("simulated cross-volume link failure")
+
+    monkeypatch.setattr(preparer_module.os, "link", _raising_link)
+
+    # Must return promptly -- pytest's own timeout is the real backstop,
+    # but the point of this test is that this call does not hang at all.
+    preparer._promote_finished_conform_into_cache(key, finished, source, _loudness(), False)
+
+    assert len(warm_jobs) == 1  # the copy job ran synchronously, inline, without deadlocking
+    cache_ts = tmp_path / "work" / "conform-cache" / f"{key}.ts"
+    assert cache_ts.is_file()  # and it actually completed the copy + promotion
+    assert cache_ts.read_text(encoding="utf-8") == "prepared bytes"
+
+
 def test_promote_finished_conform_swallows_over_budget_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1369,13 +1416,22 @@ def test_loudness_probe_is_bounded_to_the_segment_window_when_trimmed(tmp_path: 
     assert probes[0]["probe_duration_seconds"] == 12.5
 
 
-def test_untrimmed_probe_samples_mid_file_not_the_head(tmp_path: Path) -> None:
+def test_untrimmed_probe_samples_mid_file_not_the_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Item 66 round-4 (Opus review, point 2): an untrimmed probe samples
-    40% into the asset's duration for 120s, NOT the head. A round-3 HEAD
-    sample can land on cold-open silence/room tone and measure the silence
-    floor instead of the program's real loudness -- a real field failure
-    (-70 LUFS at the head of a 39-minute meeting recording) that would then
-    drive loudnorm's normalization target completely wrong."""
+    40% into the asset's REAL MEDIA DURATION for 120s, NOT the head. A
+    round-3 HEAD sample can land on cold-open silence/room tone and
+    measure the silence floor instead of the program's real loudness -- a
+    real field failure (-70 LUFS at the head of a 39-minute meeting
+    recording) that would then drive loudnorm's normalization target
+    completely wrong. Round-5 (Opus review, point 2) corrected WHICH
+    duration is sampled from: ``segment.duration_seconds`` is the
+    schedule-slot-capped duration (source_plan.py's ``_segment_duration``),
+    not the asset's own media duration, so this test monkeypatches
+    ``probe_media_duration_seconds`` to a known value rather than relying
+    on the segment's duration field."""
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 3600.0)
     probes: list[dict] = []
     preparer = SourcePreparer(
         work_dir=tmp_path / "work",
@@ -1387,24 +1443,56 @@ def test_untrimmed_probe_samples_mid_file_not_the_head(tmp_path: Path) -> None:
     preparer.prepare(_untrimmed_plan(tmp_path), _config())  # 3600s asset
 
     assert len(probes) == 1
-    assert probes[0]["probe_start_seconds"] == 1440.0  # 40% of 3600s, not 0
+    assert probes[0]["probe_start_seconds"] == 1440.0  # 40% of the 3600s media duration
     assert probes[0]["probe_duration_seconds"] == 120.0
 
+    key = preparer._cache_key(tmp_path / "long-recording.mp4", _config())
+    assert key is not None
+    meta = preparer._read_cache_meta(key)
+    assert meta is not None
+    assert meta["media_duration_seconds"] == 3600.0  # cached for a later prepare() call
 
-def test_untrimmed_probe_falls_back_to_whole_file_once_on_silence_floor(
-    tmp_path: Path,
+
+def test_untrimmed_probe_clamps_start_for_a_short_asset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Companion: when the mid-file sample measures at/below the silence
-    floor (-60 LUFS), fall back to exactly ONE whole-file probe (bounded by
-    the foreground thread cap) and use ITS result -- the floor sample is
-    never used or cached."""
+    """Companion: a real media duration short enough that 40% of it plus
+    the 120s sample window would read past EOF must clamp the start
+    instead -- never seek past the asset's own end."""
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 150.0)
+    probes: list[dict] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **kwargs: probes.append(kwargs) or _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+
+    preparer.prepare(_untrimmed_plan(tmp_path), _config())
+
+    assert len(probes) == 1
+    # 40% of 150s = 60s, but 60s + 120s sample = 180s > 150s media duration --
+    # clamp to media_duration - probe_len = 30s instead.
+    assert probes[0]["probe_start_seconds"] == 30.0
+
+
+def test_untrimmed_probe_falls_back_to_a_second_bounded_sample_on_silence_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 66 round-5 (Opus review, point 3): when the mid-file sample
+    measures at/below the silence floor (-60 LUFS), resample at a
+    DIFFERENT bounded offset (70% into the media, still 120s -- never a
+    whole-file decode, which measured 46.7s on a 39-minute clip) and use
+    that reading -- the floor sample itself is never used or cached."""
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 3600.0)
     probes: list[dict] = []
 
     def loudness_checker(**kwargs: object) -> LoudnessGateResult:
         probes.append(kwargs)
-        if kwargs.get("probe_start_seconds") is not None:
-            return _loudness(measured_lufs=-70.0)  # the bounded mid-file sample: silence
-        return _loudness(measured_lufs=-16.0)  # the whole-file fallback: a real reading
+        if kwargs.get("probe_start_seconds") == 1440.0:
+            return _loudness(measured_lufs=-70.0)  # the 40%-in sample: silence
+        # the 70%-in resample: a real reading, outside tolerance -- needs normalizing
+        return _loudness(status="failed", measured_lufs=-16.0)
 
     preparer = SourcePreparer(
         work_dir=tmp_path / "work",
@@ -1415,18 +1503,45 @@ def test_untrimmed_probe_falls_back_to_whole_file_once_on_silence_floor(
 
     preparer.prepare(_untrimmed_plan(tmp_path), _config())
 
-    assert len(probes) == 2  # the bounded sample, then exactly one fallback -- never a loop
-    assert probes[0]["probe_start_seconds"] == 1440.0
+    assert len(probes) == 2  # the first bounded sample, then exactly one resample -- never a loop
+    assert probes[0]["probe_start_seconds"] == 1440.0  # 40% of 3600s
     assert probes[0]["probe_duration_seconds"] == 120.0
-    assert probes[1]["probe_start_seconds"] is None  # whole file
-    assert probes[1]["probe_duration_seconds"] is None
-    assert probes[1]["threads"] == preparer_module._foreground_thread_cap()
+    assert probes[1]["probe_start_seconds"] == 2520.0  # 70% of 3600s -- a DIFFERENT offset
+    assert probes[1]["probe_duration_seconds"] == 120.0  # still bounded, never None (whole file)
 
     key = preparer._cache_key(tmp_path / "long-recording.mp4", _config())
     assert key is not None
     meta = preparer._read_cache_meta(key)
     assert meta is not None
-    assert meta["measured_lufs"] == -16.0  # the fallback's reading, never the floor sample
+    assert meta["measured_lufs"] == -16.0  # the resample's reading, never the floor sample
+    assert (
+        meta["normalized"] is True
+    )  # -16.0 is outside -24.0 +/- 1.0 tolerance -- still normalizes
+
+
+def test_untrimmed_probe_treats_asset_as_silent_when_both_samples_hit_the_floor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Companion: TWO independent samples (different offsets) both at the
+    silence floor means the asset really is silent -- normalize=False is
+    cached rather than trusting either floor reading as a real loudnorm
+    target."""
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 3600.0)
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(measured_lufs=-70.0),
+        warm_scheduler=lambda job: None,
+    )
+
+    preparer.prepare(_untrimmed_plan(tmp_path), _config())
+
+    key = preparer._cache_key(tmp_path / "long-recording.mp4", _config())
+    assert key is not None
+    meta = preparer._read_cache_meta(key)
+    assert meta is not None
+    assert meta["measured_lufs"] == -70.0
+    assert meta["normalized"] is False  # never normalize toward a target that isn't there
 
 
 def test_untrimmed_probe_does_not_fall_back_when_sample_is_above_the_floor(
