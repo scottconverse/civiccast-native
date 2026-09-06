@@ -77,10 +77,10 @@ is a real defect in the same code path but was not the trigger measured
 on hardware. Present in beta.4 as well; it simply fired far less often
 there. Fix `fix/gst-reload-concat-collision` (per-plan prepared
 directories with atomic writes and cleanup, a logged failure, unique
-element names, an honest reload acknowledgement, and the seamless
-in-place rollover disabled by default for the GStreamer engine in
-beta.5, `CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` re-enables it) will cut
-**candidate 3**.
+element names, an honest reload acknowledgement, and, per the owner's
+explicit requirement, seamless in-place rollover ON by default for the
+GStreamer engine in beta.5 (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` opts
+out) will cut **candidate 3**.
 Candidate 2's facts below (SHA `609273d`, build `33997406150`, Gate A
 `33998901590`) are preserved as history: **candidate 2 -- Gate A clean
 PASS / cross-version invalidated by harness gap (item 58) / download-only
@@ -91,6 +91,95 @@ hardware soak, whose identity is still pending: source SHA
 `<BETA5_FINAL_SHA>`, build run `<BETA5_FINAL_BUILD_RUN>`, Gate A run
 `<GATE_A_FINAL_RUN_ID>`, hardware soak clock `<SOAK6_START_UTC>`, verdict
 `<SOAK6_VERDICT>`, relaunches `<SOAK6_RELAUNCHES>`.
+
+**Update 2026-09-06 (process change): beta.5 now proves itself in a sandbox
+loop before it ever goes back to the tester.** After candidate 2's hardware
+soak failed on item 60, the owner set a new standing process (recorded
+below in "How this release was proven") so the next real-hardware soak
+only runs once a candidate has already passed a fast, repeatable sandbox
+soak every time. `fix/gst-reload-concat-collision` (item 60's fix) is
+being finished under that process now, alongside a companion change the
+owner made a beta.5 requirement: seamless plan rollover ships **on** by
+default rather than off (see "Seamless plan rollover ON by default" below).
+Candidate 3 and candidate 4's build/Gate A/soak identities remain the
+`<BETA5_FINAL_SHA>` / `<BETA5_FINAL_BUILD_RUN>` / `<GATE_A_FINAL_RUN_ID>` /
+`<SOAK6_*>` placeholders above until that chain completes.
+
+### How this release was proven
+
+Every prior beta shipped after a build passed Gate A and then one
+real-hardware soak on the tester. Candidate 2's hardware soak (soak #5)
+failed on a bug (item 60) that a Gate A run cannot see and that took 2.5
+hours to surface on the tester -- too slow and too far downstream to
+iterate against. Beta.5 adds a step in front of the tester: a fast,
+disposable Windows Sandbox soak that can reproduce the same class of bug
+in minutes instead of hours, run over and over on HALO until a candidate
+passes every time, before the tester's time is spent on it at all.
+
+1. **Sandbox soak, repeated until green.** `sandbox-lab/Run-SandboxSoak.ps1`
+   (new, PR #177) installs a candidate kit into a disposable Windows
+   Sandbox VM, brings up three channels on the GStreamer engine with the
+   project's own real sample clips, and runs a short soak (15 minutes) --
+   short enough to run many times in one session, long enough to cross at
+   least one plan-rollover boundary. Only a candidate that passes this soak
+   every time it's run moves on.
+2. **Tester soak (2 hours), on a sandbox-proven candidate only.** The
+   real-hardware soak on the tester (`DESKTOP-VBMA6O5`) now only runs once
+   the sandbox lane is green.
+3. **Publish**, once the tester soak passes.
+4. **A further 24-hour soak** follows publish, as an additional real-world
+   confirmation on top of the 2-hour tester soak.
+
+**What the sandbox lane measures, each cycle of the soak:** whether each of
+the three channels is `ON_AIR` on the GStreamer engine; a TSDuck (`tsp`)
+packet-level proof of the egress stream; each worker restart, classified
+**planned** or **unplanned** by reading the daemon's own state-log lines
+(not by guessing from a pid change, which candidate 2's own hardware soak
+showed is unreliable); and any seamless-reload abort (a rollover the
+engine attempted and gave up on rather than completed). **Verdict
+contract:** every run resolves to exactly one of `PASS`, `FAIL`, or
+`HARNESS_ERROR` -- the last one reserved for a failure in the lane itself
+(a stale share, a busy sandbox, a harness bug) rather than a real product
+finding, so a harness problem is never counted against the product and a
+real product problem can never hide behind "harness error" either.
+
+**Measured facts from the lane's own runs (kit `609273d`, candidate 2, used
+to prove the lane itself works before being asked to judge a fix):**
+install completes in roughly 11-13.5 minutes inside the sandbox VM; the
+station reports healthy within about 1 second of that; the first channel
+reaches `ON_AIR` roughly 490-530 seconds after the start command is issued
+(the delay is item 66, below -- a cold full-asset conform running on the
+single automation thread). Once channels are on air, kit `609273d`
+reproduces item 60 in about 4 minutes (versus 2.5 hours to see the same
+failure on the tester), with 20-35 restart events counted across a single
+15-minute run.
+
+### Seamless plan rollover ON by default (owner requirement)
+
+**Seamless plan rollover ships ON by default in beta.5, at the owner's
+explicit requirement.** With it on, a channel that reaches the end of its
+currently-airing plan and has more schedule ahead of it extends onto the
+next plan in place -- no worker restart, no gap. The env var
+`CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` opts out.
+
+**With the flag off, every plan end becomes a planned worker restart.**
+The gap the operator sees at that restart depends on whether the next
+clip is already warm in the segment cache: a few seconds if it is, or
+multiple minutes the first time a given clip airs and has to be conformed
+from scratch (see item 66, below, measured at roughly 490-530 seconds).
+Seamless rollover is what removes that restart-and-gap entirely for a
+channel with continuous scheduled content.
+
+Two changes land this: `fix/gst-reload-concat-collision` (PR #176) fixes
+the mechanism itself -- each rollover now prepares its segments into its
+own directory instead of overwriting the ones the live worker is still
+reading, writes them atomically, fails loudly instead of silently when
+GStreamer refuses a duplicately-named element, and gives the worker's
+reload acknowledgement an honest success/failure signal instead of always
+reporting success. PR #178 is the one that flips the default itself, from
+off (candidate 2's stopgap, while the mechanism above was still being
+proven) to on, once the sandbox lane showed the fixed mechanism holding
+across repeated runs.
 
 ### Added
 
@@ -579,14 +668,14 @@ hardware soak, whose identity is still pending: source SHA
   silently falling through to drain, fails loud when GStreamer refuses
   to add a duplicately-named element instead of silently timing out,
   gives each rollover's new concat elements unique names, makes the
-  worker's reload acknowledgement honest, and, until this is proven
-  stable on hardware, disables the seamless in-place rollover by default
-  for the GStreamer engine in beta.5
-  (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` re-enables it) so a plan's
-  natural end becomes one ordinary encoder restart instead of an
-  attempted in-place splice -- rare with real 10-40 minute schedule
-  items, but roughly every 4 minutes with 30-second items. Not part of
-  candidate 2; will be part of candidate 3.
+  worker's reload acknowledgement honest, and, per the owner's explicit
+  requirement, ships seamless in-place rollover ON by default for the
+  GStreamer engine in beta.5 (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` opts
+  out, falling back to one ordinary encoder restart at every plan's
+  natural end instead of an attempted in-place splice -- rare with real
+  10-40 minute schedule items, but roughly every 4 minutes with
+  30-second items). See "Seamless plan rollover ON by default" above.
+  Not part of candidate 2; will be part of candidate 3.
 - **Gate A `33998901590`'s cross-version-upgrade lane failed at its own
   phase 1 on a harness/sandbox gap, not a product defect (item 58).** The
   pinned `v1.0.0-beta.4` baseline installer crashed inside the sandbox
@@ -769,10 +858,11 @@ hardware soak, whose identity is still pending: source SHA
     directory with atomic writes and cleanup, logs a failed reload
     instead of silently falling through to drain, fails loud on a
     refused element add, gives each rollover's concat elements unique
-    names, makes the reload acknowledgement honest, and disables the
-    seamless in-place rollover by default for the GStreamer engine in
-    beta.5 (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` re-enables it). Not part
-    of candidate 2; will be part of candidate 3.
+    names, makes the reload acknowledgement honest, and, per the owner's
+    explicit requirement, ships seamless in-place rollover ON by default
+    for the GStreamer engine in beta.5
+    (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` opts out). Not part of
+    candidate 2; will be part of candidate 3.
 12. **(item 61, targeted for beta.6) A worker's reload acknowledgement
     reports success before the reload actually commits.** The same defect
     underlying item 60's masking: the control-pipe reload ack is sent once
@@ -803,6 +893,66 @@ hardware soak, whose identity is still pending: source SHA
     reached the worker is indistinguishable, from the logs, from one
     that was never attempted. Fix: `fix/gst-reload-concat-collision`
     (logged, honest reload failure).
+
+### Known issues carried to beta.6
+
+Found by the sandbox-lab soak lane while proving candidate 2 and while
+proving the item-60 fix itself. One line each; items the batch-fix list
+already records as fixed/merged (items 48 and 51, and item 60's own
+sub-items 61/64/65 -- fixed by `fix/gst-reload-concat-collision` in this
+release) are not repeated here.
+
+- **(item 66, CRITICAL)** A cold full-asset conform runs synchronously on
+  the single automation thread and blocks every channel's start -- the
+  measured 490-530 second delay to first `ON_AIR` above.
+- **(item 67)** A channel reports a bare `null` state for minutes after
+  start, before the first prepare step writes any row at all.
+- **(item 68)** `ON_AIR` is persisted before the playout worker process
+  actually exists.
+- **(item 69)** Starting a channel can write dozens of redundant state
+  rows in a couple of seconds, and one of those write paths nulls out the
+  channel's current proof-event id.
+- **(item 71)** Under `gst-python`, a failed pad link raises instead of
+  returning a boolean, so eight `!= OK` error-handling branches across the
+  engine never run, which can leak a request pad on a failed reload.
+- **(item 72)** The Gate A harness scripts crash under plain Windows
+  PowerShell 5.1 (only `pwsh` is exercised in CI) because of an empty
+  default `$PSScriptRoot` parameter.
+- **(item 46)** The (non-required, "always informational") mutation-report
+  CI lane fails its own baseline on every code PR.
+- **(item 47)** A channel an operator started by hand, without "Start
+  automatically," stays dark after an upgrade install or service restart
+  until the operator presses Start again.
+- **(item 49)** Gate A has no lane that would catch a same-version,
+  different-content install-over regression like item 48's (fixed here) --
+  only a Rust-level unit/e2e test covers that case today.
+- **(item 50)** One claims-evidence test writes the operator's real
+  `installer-state.json` instead of a temp path, tripping the hermetic
+  test-isolation guard.
+- **(item 52)** The harness could not find `ffprobe` on the tester, so
+  every schedule item defaulted to a 30-second duration instead of the
+  asset's real length.
+- **(item 53)** `avdec_h264` decoder threads are not bounded per
+  sub-chain, so a plan with several segments still costs more CPU than it
+  should even under the 8-segment cap.
+- **(items 54/57)** After a channel falls back to slate, rollover
+  accounting can compute a negative plan-end and dispatch a zero-advance
+  rollover, leaving the channel stuck in `TRANSITIONING`; a rework (PR
+  #175) is in progress for beta.6.
+- **(item 55)** A content reload that never gets acknowledged has no
+  timeout, no watchdog, and no operator-visible recovery path -- the
+  channel just sits in `TRANSITIONING`.
+- **(item 56)** Slate/fill plans are truncated to 12 sub-chains, so a
+  station sitting on slate restarts its slate encoder roughly every 6
+  minutes.
+- **(item 58)** Gate A's cross-version lane collects no forensics and does
+  not retry when the baseline install itself crashes in phase 1, before
+  any upgrade step runs.
+- **(item 62)** The decoder-chain cap is enforced per plan, not per
+  pipeline, so a rollover can briefly run more decoder chains than the cap
+  intends.
+- **(item 63)** Evidence bundles don't reliably capture the playout
+  worker's stdout log, where reload-progress lines are written.
 
 ## [1.0.0-beta.4] - 2026-09-04
 
