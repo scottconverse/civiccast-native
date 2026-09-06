@@ -22,6 +22,6 @@
     </MappedFolder>
   </MappedFolders>
   <LogonCommand>
-    <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes {{MINUTES}}</Command>
+    <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes {{MINUTES}} {{SEAMLESS_RELOAD_ARG}}</Command>
   </LogonCommand>
 </Configuration>

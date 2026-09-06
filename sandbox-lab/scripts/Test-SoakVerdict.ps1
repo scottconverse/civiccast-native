@@ -40,19 +40,41 @@ function New-Channel {
         # Get-EngineForWorkerPid, which returns $null, never '').
         $Engine = 'gstreamer',
         [string]$Tsduck = 'pass',
-        [bool]$Relaunched = $false
+        [bool]$InPlannedRestartWindow = $false
     )
     return [ordered]@{
         channel_id = $Id; engine_state = $State; engine = $Engine
-        tsduck_verdict = $Tsduck; relaunched_this_cycle = $Relaunched
-        relaunches_total = $(if ($Relaunched) { 1 } else { 0 })
-        last_error = $null
+        tsduck_verdict = $Tsduck; last_error = $null
+        in_planned_restart_window = $InPlannedRestartWindow
     }
 }
 
 function New-Cycle {
     param([string]$Utc, [array]$Channels)
     return [ordered]@{ cycle_utc = $Utc; channels = $Channels }
+}
+
+# Round-6: restart events are now pre-classified by the guest (In-Sandbox-
+# Soak.ps1's ring-buffer classification) and handed to Get-SoakVerdict as a
+# flat list -- SoakVerdict.ps1 itself never re-derives classification, so
+# these unit checks build already-classified events directly, exactly the
+# shape the real driver produces.
+function New-RestartEvent {
+    param(
+        [string]$ChannelId,
+        [string]$DetectedUtc,
+        [string]$Classification,
+        [int]$OldPid = 1000,
+        [int]$NewPid = 1001,
+        [bool]$Recovered = $true,
+        $RecoveryGapSeconds = 20
+    )
+    return [ordered]@{
+        channel_id = $ChannelId; detected_utc = $DetectedUtc
+        old_pid = $OldPid; new_pid = $NewPid
+        classification = $Classification
+        recovered = $Recovered; recovery_gap_seconds = $RecoveryGapSeconds
+    }
 }
 
 $startUtc = [datetime]::Parse('2026-09-05T18:00:00Z').ToUniversalTime()
@@ -62,7 +84,8 @@ $threeChannelsGood = @(
 
 # ---------------------------------------------------------------- scenario 1
 # All good: warm-up cycle at T+60s (fine even if not ON_AIR, but here IS
-# ON_AIR), then 5 post-warmup cycles every 60s all clean. Expect PASS.
+# ON_AIR), then 5 post-warmup cycles every 60s all clean, no restart events
+# at all. Expect PASS.
 $cycles1 = @(
     (New-Cycle -Utc '2026-09-05T18:01:00Z' -Channels $threeChannelsGood)
     (New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $threeChannelsGood)
@@ -71,25 +94,31 @@ $cycles1 = @(
     (New-Cycle -Utc '2026-09-05T18:07:00Z' -Channels $threeChannelsGood)
 )
 $v1 = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180
-Assert-Equal 'scenario1 (all good) -> PASS' 'PASS' $v1.verdict
+Assert-Equal 'scenario1 (all good, no restarts) -> PASS' 'PASS' $v1.verdict
+Assert-Equal 'scenario1 unplanned_relaunch_count' 0 $v1.unplanned_relaunch_count
+Assert-Equal 'scenario1 planned_restart_count' 0 $v1.planned_restart_count
 
 # ---------------------------------------------------------------- scenario 2
-# One relaunch in a post-warmup cycle. Expect FAIL.
-$channelsWithRelaunch = @(
-    (New-Channel -Id 'public' -Relaunched $true), (New-Channel -Id 'education'), (New-Channel -Id 'government')
-)
+# ONE unplanned relaunch event (no TRANSITIONING preceded it -- a crash).
+# Expect FAIL regardless of how clean every cycle otherwise looks.
 $cycles2 = @(
     (New-Cycle -Utc '2026-09-05T18:01:00Z' -Channels $threeChannelsGood)
     (New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $threeChannelsGood)
-    (New-Cycle -Utc '2026-09-05T18:05:00Z' -Channels $channelsWithRelaunch)
+    (New-Cycle -Utc '2026-09-05T18:05:00Z' -Channels $threeChannelsGood)
     (New-Cycle -Utc '2026-09-05T18:06:00Z' -Channels $threeChannelsGood)
 )
-$v2 = Get-SoakVerdict -Cycles $cycles2 -StartUtc $startUtc -WarmupSeconds 180
-Assert-Equal 'scenario2 (one relaunch) -> FAIL' 'FAIL' $v2.verdict
-Assert-Equal 'scenario2 first_failing_cycle' '2026-09-05T18:05:00Z' $v2.first_failing_cycle
+$restartEvents2 = @(
+    (New-RestartEvent -ChannelId 'public' -DetectedUtc '2026-09-05T18:04:30Z' -Classification 'unplanned_relaunch' -Recovered $true -RecoveryGapSeconds 10)
+)
+$v2 = Get-SoakVerdict -Cycles $cycles2 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents2
+Assert-Equal 'scenario2 (one unplanned relaunch) -> FAIL' 'FAIL' $v2.verdict
+Assert-Equal 'scenario2 unplanned_relaunch_count' 1 $v2.unplanned_relaunch_count
 
 # ---------------------------------------------------------------- scenario 3
-# ON_AIR missing AFTER warm-up. Expect FAIL.
+# ON_AIR missing AFTER warm-up, with NO restart classification covering it
+# (in_planned_restart_window=$false) -- must still FAIL exactly as before
+# round 6 (the exemption is narrow: only a channel the guest explicitly
+# marked as inside a classified planned-restart window is excused).
 $channelsNotOnAir = @(
     (New-Channel -Id 'public' -State 'STARTING'), (New-Channel -Id 'education'), (New-Channel -Id 'government')
 )
@@ -99,7 +128,7 @@ $cycles3 = @(
     (New-Cycle -Utc '2026-09-05T18:05:00Z' -Channels $channelsNotOnAir)
 )
 $v3 = Get-SoakVerdict -Cycles $cycles3 -StartUtc $startUtc -WarmupSeconds 180
-Assert-Equal 'scenario3 (ON_AIR missing post-warmup) -> FAIL' 'FAIL' $v3.verdict
+Assert-Equal 'scenario3 (ON_AIR missing post-warmup, no restart window) -> FAIL' 'FAIL' $v3.verdict
 Assert-Equal 'scenario3 first_failing_cycle' '2026-09-05T18:05:00Z' $v3.first_failing_cycle
 
 # ---------------------------------------------------------------- scenario 4
@@ -169,6 +198,51 @@ Assert-Equal 'scenario6 (all cycles inside warm-up) -> FAIL' 'FAIL' $v6.verdict
 # No cycles at all -> FAIL, never a false PASS.
 $v7 = Get-SoakVerdict -Cycles @() -StartUtc $startUtc -WarmupSeconds 180
 Assert-Equal 'scenario7 (no cycles) -> FAIL' 'FAIL' $v7.verdict
+
+# ---------------------------------------------------------------- scenario 8
+# Round 6, item 2: a PLANNED restart (TRANSITIONING preceded the pid
+# change) that returned to ON_AIR on gstreamer in 20s. The channel's cycle
+# row during the restart window is marked in_planned_restart_window so the
+# per-cycle ON_AIR check does not separately flag it. Expect PASS.
+$channelsPublicInRestartWindow = @(
+    (New-Channel -Id 'public' -State 'TRANSITIONING' -Engine $null -InPlannedRestartWindow $true)
+    (New-Channel -Id 'education'), (New-Channel -Id 'government')
+)
+$cycles8 = @(
+    (New-Cycle -Utc '2026-09-05T18:01:00Z' -Channels $threeChannelsGood)
+    (New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $threeChannelsGood)
+    (New-Cycle -Utc '2026-09-05T18:05:00Z' -Channels $channelsPublicInRestartWindow)   # restart in progress
+    (New-Cycle -Utc '2026-09-05T18:06:00Z' -Channels $threeChannelsGood)               # recovered
+)
+$restartEvents8 = @(
+    (New-RestartEvent -ChannelId 'public' -DetectedUtc '2026-09-05T18:05:00Z' -Classification 'planned_restart' -Recovered $true -RecoveryGapSeconds 20)
+)
+$v8 = Get-SoakVerdict -Cycles $cycles8 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents8
+Assert-Equal 'scenario8 (planned restart, 20s recovery) -> PASS' 'PASS' $v8.verdict
+Assert-Equal 'scenario8 planned_restart_count' 1 $v8.planned_restart_count
+Assert-Equal 'scenario8 max_restart_gap_seconds' 20 $v8.max_restart_gap_seconds
+
+# ---------------------------------------------------------------- scenario 9
+# A PLANNED restart that took 90s to recover -- exceeds the 60s bound.
+# Expect FAIL even though the classification itself was correct (planned,
+# not a crash) -- "planned" only excuses the OUTAGE, not a slow recovery.
+$restartEvents9 = @(
+    (New-RestartEvent -ChannelId 'public' -DetectedUtc '2026-09-05T18:05:00Z' -Classification 'planned_restart' -Recovered $true -RecoveryGapSeconds 90)
+)
+$v9 = Get-SoakVerdict -Cycles $cycles8 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents9
+Assert-Equal 'scenario9 (planned restart, 90s recovery) -> FAIL' 'FAIL' $v9.verdict
+
+# --------------------------------------------------------------- scenario 10
+# A pid change classified unplanned_relaunch because NO TRANSITIONING
+# sample preceded it (the guest's own classification, handed in
+# pre-computed) -- must FAIL even if it "recovered" quickly, since a
+# crash-and-restart is still a crash.
+$restartEvents10 = @(
+    (New-RestartEvent -ChannelId 'education' -DetectedUtc '2026-09-05T18:05:10Z' -Classification 'unplanned_relaunch' -Recovered $true -RecoveryGapSeconds 15)
+)
+$v10 = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents10
+Assert-Equal 'scenario10 (pid change w/o TRANSITIONING, classified unplanned) -> FAIL' 'FAIL' $v10.verdict
+Assert-Equal 'scenario10 unplanned_relaunch_count' 1 $v10.unplanned_relaunch_count
 
 Write-Host ""
 Write-Host "SoakVerdict unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })

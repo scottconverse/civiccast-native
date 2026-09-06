@@ -87,6 +87,14 @@ param(
     # as staleness from t=0, firing ~40s after launch).
     [int]$BootBoundMinutes = 5,
 
+    # Round-6 item 1: passed through to In-Sandbox-Soak.ps1's own
+    # -SeamlessReload switch, which exports
+    # CIVICCAST_EGRESS_SEAMLESS_RELOAD=1 at machine scope before starting
+    # the station service (PR #176, head 20f316f -- unmerged as of this
+    # writing; the env var name/contract is taken as given from the
+    # coordinator, not independently verified against this checkout).
+    [switch]$SeamlessReload,
+
     [switch]$DryRun
 )
 
@@ -116,7 +124,7 @@ function Exit-HarnessError {
 }
 
 if (-not $Root) { $Root = (Get-Location).Path }
-Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), KitRoot: $KitRoot, DryRun: $($DryRun.IsPresent)"
+Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), KitRoot: $KitRoot, SeamlessReload: $($SeamlessReload.IsPresent), DryRun: $($DryRun.IsPresent)"
 
 $hostLivenessPath = Join-Path $Root 'scripts\HostLiveness.ps1'
 if (-not (Test-Path $hostLivenessPath)) {
@@ -138,20 +146,29 @@ if (-not (Test-Path $hostLivenessPath)) {
 # --------------------------------------------------------------------------
 $SandboxProcessNames = @('WindowsSandboxClient', 'WindowsSandboxRemoteSession', 'WindowsSandboxServer', 'vmmemWindowsSandbox')
 
-$existing = @(Get-Process -Name $SandboxProcessNames -ErrorAction SilentlyContinue)
-if ($existing.Count -gt 0) {
-    Write-Host "[Run-SandboxSoak] Windows Sandbox is already running -- refusing to start (Gate A / another agent may own it):" -ForegroundColor Yellow
-    foreach ($p in $existing) {
-        $cmdLine = $null
-        try {
-            $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)" -ErrorAction SilentlyContinue
-            if ($cim) { $cmdLine = $cim.CommandLine }
-        } catch { }
-        Write-Host ("  pid={0} name={1} owner_cmdline={2}" -f $p.Id, $p.ProcessName, $(if ($cmdLine) { $cmdLine } else { '<unavailable>' }))
+# -DryRun never launches a sandbox, so it has nothing to be busy-guarded
+# against -- exempting it lets a dry run validate config (kit hash, .wsb
+# render, script parse-checks, the HttpClientHandler self-check) while a
+# real run is in progress on this shared box, instead of refusing outright
+# with no way to tell "config is broken" from "something else is busy".
+if (-not $DryRun) {
+    $existing = @(Get-Process -Name $SandboxProcessNames -ErrorAction SilentlyContinue)
+    if ($existing.Count -gt 0) {
+        Write-Host "[Run-SandboxSoak] Windows Sandbox is already running -- refusing to start (Gate A / another agent may own it):" -ForegroundColor Yellow
+        foreach ($p in $existing) {
+            $cmdLine = $null
+            try {
+                $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)" -ErrorAction SilentlyContinue
+                if ($cim) { $cmdLine = $cim.CommandLine }
+            } catch { }
+            Write-Host ("  pid={0} name={1} owner_cmdline={2}" -f $p.Id, $p.ProcessName, $(if ($cmdLine) { $cmdLine } else { '<unavailable>' }))
+        }
+        exit 3
     }
-    exit 3
+    Write-Step "Windows Sandbox is not currently running -- proceeding."
+} else {
+    Write-Step "DryRun: skipping the busy guard (a dry run never launches a sandbox, so there is nothing to guard)."
 }
-Write-Step "Windows Sandbox is not currently running -- proceeding."
 
 # --------------------------------------------------------------------------
 # 1b. Verify the kit: $KitRoot\$Sha must exist, carry SHA256SUMS.txt, and
@@ -231,18 +248,20 @@ $templatePath = Join-Path $Root 'CivicCastSandboxSoak.wsb.template'
 if (-not (Test-Path $templatePath)) {
     Exit-HarnessError "template not found: $templatePath"
 }
+$seamlessReloadArg = $(if ($SeamlessReload) { '-SeamlessReload' } else { '' })
 $template = Get-Content -Path $templatePath -Raw -Encoding UTF8
 $rendered = $template `
     -replace [regex]::Escape('{{KIT_ROOT}}'), $kitDir `
     -replace [regex]::Escape('{{OUTPUT_DIR}}'), $outputDir `
     -replace [regex]::Escape('{{SCRIPTS_DIR}}'), $scriptsDir `
-    -replace [regex]::Escape('{{MINUTES}}'), "$Minutes"
+    -replace [regex]::Escape('{{MINUTES}}'), "$Minutes" `
+    -replace [regex]::Escape('{{SEAMLESS_RELOAD_ARG}}'), $seamlessReloadArg
 
 $wsbPath = Join-Path $Root "CivicCastSandboxSoak-$runName.wsb"
 Set-Content -Path $wsbPath -Value $rendered -Encoding UTF8
 Write-Step "Rendered $wsbPath"
 
-$logonCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes $Minutes"
+$logonCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes $Minutes $seamlessReloadArg"
 Write-Step "LogonCommand: $logonCommand"
 
 # --------------------------------------------------------------------------
