@@ -172,6 +172,39 @@ class TestChannelRuntimeStatus:
             )
             assert c.color == "yellow", state
 
+    def test_transitioning_escalates_to_red_past_the_stuck_bound(self) -> None:
+        """BLOCKER A fix (2026-09-05 tester finding): a channel's TRANSITIONING
+        latch could previously stay open indefinitely (daemon.py's pending-
+        reload latch), reporting yellow ("coming up / switching") forever
+        instead of surfacing the stuck condition. Escalate past
+        ``_TRANSITIONING_ESCALATION_SECONDS`` -- this is deliberately
+        independent of the daemon's own self-heal bound, so an operator is
+        alerted even if that self-heal has a bug."""
+        just_under = compute_channel_runtime_status(
+            _config(),
+            _state("public", "TRANSITIONING", age_s=59),
+            _sample("public", "TRANSITIONING"),
+            now=_NOW,
+        )
+        assert just_under.color == "yellow"
+
+        at_bound = compute_channel_runtime_status(
+            _config(),
+            _state("public", "TRANSITIONING", age_s=60),
+            _sample("public", "TRANSITIONING"),
+            now=_NOW,
+        )
+        assert at_bound.color == "red"
+
+        # STARTING is unaffected -- only a stuck TRANSITIONING escalates.
+        starting = compute_channel_runtime_status(
+            _config(),
+            _state("public", "STARTING", age_s=600),
+            _sample("public", "STARTING"),
+            now=_NOW,
+        )
+        assert starting.color == "yellow"
+
     def test_missing_state_treated_as_dark_red(self) -> None:
         c = compute_channel_runtime_status(_config(), None, None, now=_NOW)
         assert c.color == "red"

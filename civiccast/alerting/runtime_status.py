@@ -39,6 +39,13 @@ _LOUDNESS_TOLERANCE_LU = 2.0
 _DARK_STATES = {"STOPPED", "ERROR", "DRAINING", "STOPPING"}
 # Transient states: on the way up / switching — not steady-green, not dark.
 _TRANSIENT_STATES = {"STARTING", "TRANSITIONING"}
+# BLOCKER A fix (2026-09-05 tester finding): a channel's TRANSITIONING latch
+# could previously get stuck open indefinitely (daemon.py's pending-reload
+# latch, now self-healed after ``_PENDING_RELOAD_STUCK_BOUND_S``). Escalate
+# the runtime color past that self-heal bound so an operator is alerted even
+# if the daemon-side recovery itself has a bug, rather than staying yellow
+# ("coming up / switching") forever.
+_TRANSITIONING_ESCALATION_SECONDS = 60
 
 _COLOR_RANK: dict[SafeToAirColor, int] = {"green": 0, "yellow": 1, "red": 2}
 
@@ -91,13 +98,19 @@ def compute_channel_runtime_status(
     loudness = latest_sample.last_loudness_lufs if latest_sample is not None else None
 
     degraded = a_sink_down or _loudness_out_of_tolerance(loudness)
+    seconds_in_state = _seconds_in_state(state_row, now)
 
     color: SafeToAirColor
     if state in _DARK_STATES:
         color = "red"
     elif state in _TRANSIENT_STATES:
-        # Coming up / switching — not steady, not off-air.
-        color = "yellow"
+        # Coming up / switching — not steady, not off-air. BLOCKER A fix: a
+        # TRANSITIONING channel that has sat that way past the escalation
+        # bound is stuck, not merely mid-switch — escalate to red.
+        if state == "TRANSITIONING" and seconds_in_state >= _TRANSITIONING_ESCALATION_SECONDS:
+            color = "red"
+        else:
+            color = "yellow"
     elif state == "ON_AIR":
         color = "yellow" if degraded else "green"
     elif state == "FALLBACK_SLATE":
@@ -121,7 +134,7 @@ def compute_channel_runtime_status(
         encoder_fps=fps,
         encoder_bitrate_kbps=bitrate,
         last_loudness_lufs=loudness,
-        seconds_in_state=_seconds_in_state(state_row, now),
+        seconds_in_state=seconds_in_state,
         last_proof_event_id=(state_row.current_proof_event_id if state_row is not None else None),
         color=color,
     )

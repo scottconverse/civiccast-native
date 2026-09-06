@@ -444,6 +444,14 @@ def test_slate_plan_spans_the_fill_target_with_one_rendered_file(tmp_path: Path)
     # reset the TS session) every 30s during slate periods. The plan now
     # repeats the one rendered slate file to span the fill target; the
     # automation reload still interrupts it the moment a program is due.
+    #
+    # BLOCKER B fix (2026-09-05 regression from #174): the fixed 30s
+    # duration_seconds used to mean 120 repeats for a 3600s target --
+    # gst/bridge.graph_from_config truncates a plan past MAX_PLAYLIST_
+    # SUBCHAINS (12) segments, so the slate worker actually hit a real EOS
+    # (and restarted) after only ~360s of a 3600s target. The generator now
+    # holds the rendered card longer instead, so the plan never NEEDS more
+    # than MAX_PLAYLIST_SUBCHAINS segments to cover the target.
     calls: list[list[str]] = []
 
     def runner(args: list[str]) -> FfmpegResult:
@@ -457,10 +465,28 @@ def test_slate_plan_spans_the_fill_target_with_one_rendered_file(tmp_path: Path)
     plan = generator(_config())
 
     assert len(calls) == 1  # one render, many repeats
-    assert len(plan.segments) == 120  # 3600 / 30
+    assert len(plan.segments) <= MAX_PLAYLIST_SUBCHAINS
+    assert len(plan.segments) == 12  # 3600 / 300 (the per-segment hold this fix computes)
     assert len({segment.path for segment in plan.segments}) == 1
     total = sum(segment.duration_seconds for segment in plan.segments)
     assert total >= 3600
+
+
+def test_slate_plan_still_repeats_short_segments_when_under_the_playlist_cap(
+    tmp_path: Path,
+) -> None:
+    """A target the default 30s duration already covers within the cap is
+    unaffected -- no need to lengthen the card just because the fix exists."""
+    generator = SlateSourceGenerator(
+        work_dir=tmp_path,
+        ffmpeg_runner=lambda _args: FfmpegResult(returncode=0, stdout="", stderr=""),
+        target_fill_seconds=200,
+    )
+
+    plan = generator(_config())
+
+    assert len(plan.segments) == 7  # ceil(200 / 30), well under the cap
+    assert all(segment.duration_seconds == 30 for segment in plan.segments)
 
 
 def _asset_of(

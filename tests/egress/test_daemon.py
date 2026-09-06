@@ -179,6 +179,49 @@ def test_daemon_processes_start_command_and_records_success_health(tmp_path: Pat
     assert store.recent_health("gov", 1)[0].sink_connected == {"Proof": True}
 
 
+def test_write_state_does_not_advance_updated_at_when_nothing_but_the_clock_changed(
+    tmp_path: Path,
+) -> None:
+    """BLOCKER A fix: ``_poll_process`` calls ``_write_state`` every ~2s poll
+    tick even when NOTHING about the row changed (a healthy, untouched
+    ON_AIR worker) -- an unconditional ``now()`` there made
+    ``alerting/runtime_status.py``'s ``_seconds_in_state`` perpetually ~0,
+    exactly the blind spot that let a stuck TRANSITIONING latch go
+    undetected. ``updated_at`` must only advance when the state, source
+    label, proof event, pid, or last_error actually changed."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    process = _FakeProcess()
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: process,
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    first = store.read_state("gov")
+    assert first is not None and first.state == "ON_AIR"
+
+    # Repeated poll ticks with nothing changed (same pid, same state, same
+    # everything) must not advance updated_at -- it should be identical
+    # across ticks, not just "close in time".
+    daemon._poll_process("gov")  # type: ignore[attr-defined]
+    daemon._poll_process("gov")  # type: ignore[attr-defined]
+    second = store.read_state("gov")
+    assert second is not None
+    assert second.updated_at == first.updated_at
+
+    # A real change (the worker exits) DOES advance it.
+    process.returncode = 0
+    daemon._poll_process("gov")  # type: ignore[attr-defined]
+    third = store.read_state("gov")
+    assert third is not None
+    assert third.state == "STOPPED"
+    assert third.updated_at >= second.updated_at
+
+
 def test_daemon_routes_storage_refusal_to_configured_fallback_slate_before_encoder_start(
     tmp_path: Path,
 ) -> None:
@@ -1006,6 +1049,74 @@ def test_content_reload_falls_back_to_restart_when_worker_not_ready(tmp_path: Pa
     state = store.read_state("gov")
     assert state.state == "ON_AIR"
     assert state.current_source_label == "Mayor interview"
+
+
+def test_stuck_pending_reload_latch_self_heals_to_on_air(tmp_path: Path) -> None:
+    """BLOCKER A fix (2026-09-05 tester finding): for an ON_AIR channel, the
+    terminate+restart reload path this test's sibling above exercises never
+    gets a natural EOS to progress on if the worker is genuinely healthy and
+    simply keeps streaming (no crash, no drain-to-completion, no operator
+    stop). Before this fix, ``_poll_process`` rewrote TRANSITIONING with the
+    unchanged pid every tick forever -- the tester observed three channels
+    stuck this way for 20+ minutes. Past ``_PENDING_RELOAD_STUCK_BOUND_S``,
+    ``_poll_process`` now self-heals the row back to the pre-reload state
+    (ON_AIR here) and clears the latch, so automation's next tick sees an
+    ordinary ON_AIR channel again instead of a permanently wedged one."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+    clock = {"now": 1000.0}
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, reload_ok=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+        monotonic=lambda: clock["now"],
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # seamless reload fails -> terminate+restart latches
+
+    state = store.read_state("gov")
+    assert state.state == "TRANSITIONING"
+    assert state.current_source_label == "Council meeting"  # unchanged -- reload never applied
+    assert state.current_proof_event_id is not None
+    pending_proof_event_id = state.current_proof_event_id
+
+    # The worker never exits (no crash, no drain) -- poll() keeps returning
+    # None every tick, exactly like a genuinely healthy ON_AIR encoder that
+    # has nothing to naturally EOS on.
+    assert started[0].returncode is None
+
+    # Short of the self-heal bound: still latched.
+    clock["now"] += 5.0
+    daemon.process_once("gov")
+    state = store.read_state("gov")
+    assert state.state == "TRANSITIONING"
+    assert "gov" in daemon._pending_reloads  # type: ignore[attr-defined]
+
+    # Past the self-heal bound: recovers to the pre-reload state, keeping the
+    # previous source label and proof event, with the latch cleared.
+    clock["now"] += 15.0
+    daemon.process_once("gov")
+    state = store.read_state("gov")
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Council meeting"
+    assert state.current_proof_event_id == pending_proof_event_id
+    assert "gov" not in daemon._pending_reloads  # type: ignore[attr-defined]
+    assert "gov" not in daemon._pending_reload_at  # type: ignore[attr-defined]
+    # No second encoder was ever started -- the recovery only rewrites state.
+    assert len(started) == 1
 
 
 def test_content_reload_strategy_exception_falls_back_to_restart(tmp_path: Path) -> None:

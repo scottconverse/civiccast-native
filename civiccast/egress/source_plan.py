@@ -83,17 +83,35 @@ class SlateSourceGenerator:
     def __call__(self, config: EgressConfig) -> EgressSourcePlan:
         output_path = self._work_dir / config.channel_id / "slate.ts"
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        # BLOCKER B fix (2026-09-05 regression from #174): this fill plan must
+        # never NEED more than MAX_PLAYLIST_SUBCHAINS segments.
+        # gst/bridge.graph_from_config builds one decoder sub-chain per
+        # segment and truncates a "slate"/"cg"-kind plan to that cap (with a
+        # WARNING) as a fail-safe -- but the fixed 30s ``duration_seconds``
+        # repeated to ``target_fill_seconds`` (120 x 30s for the 3600s
+        # default) relied on that fail-safe every time, so the slate worker
+        # hit a real EOS (and restarted, resetting the TS session -- the
+        # exact CA-8 symptom this generator exists to avoid) after only
+        # ~360s of a 3600s target. Cover the target with AT MOST
+        # MAX_PLAYLIST_SUBCHAINS repeats of a LONGER-held still/text card
+        # instead: the lavfi ``color``+``drawtext`` source this renders can
+        # hold a still for arbitrarily long, so lengthening the card is the
+        # natural fit (as opposed to teaching the GStreamer engine to loop a
+        # short one, which it does not support today).
+        duration_seconds = self._duration_seconds
+        if self._target_fill_seconds > duration_seconds * MAX_PLAYLIST_SUBCHAINS:
+            duration_seconds = -(-self._target_fill_seconds // MAX_PLAYLIST_SUBCHAINS)
         args = build_slate_source_args(
             output_path=output_path,
             config=config,
-            duration_seconds=self._duration_seconds,
+            duration_seconds=duration_seconds,
         )
         result = self._ffmpeg_runner(args)
         if result.returncode != 0:
             args = build_slate_source_args(
                 output_path=output_path,
                 config=config,
-                duration_seconds=self._duration_seconds,
+                duration_seconds=duration_seconds,
                 include_text=False,
             )
             result = self._ffmpeg_runner(args)
@@ -101,11 +119,14 @@ class SlateSourceGenerator:
             raise SourcePrepareError(
                 "Could not generate the egress slate source; inspect FFmpeg output before retrying."
             )
-        repeats = max(1, -(-self._target_fill_seconds // self._duration_seconds))
+        repeats = min(
+            MAX_PLAYLIST_SUBCHAINS,
+            max(1, -(-self._target_fill_seconds // duration_seconds)),
+        )
         segment = EgressSourceSegment(
             label="CivicCast slate",
             path=str(output_path),
-            duration_seconds=self._duration_seconds,
+            duration_seconds=duration_seconds,
             kind="slate",
             source_ref="civiccast-slate",
         )

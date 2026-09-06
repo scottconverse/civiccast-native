@@ -243,6 +243,77 @@ below.
   changed files (`source_plan.py`, `automation.py`, `bridge.py`) are D2
   blob-drift-bound in `docs/claims/claims.yaml`; `models.py` is not bound
   either.
+- **A channel that failed to seamlessly reload its program could get stuck
+  showing TRANSITIONING forever, even while its worker was streaming fine.**
+  MEASURED by a real tester (2026-09-05): three channels sat in
+  `TRANSITIONING` for 20+ minutes although their encoders were healthy the
+  whole time. When the seamless content-reload can't apply (the worker's
+  control channel doesn't ack within 5s, or acks something other than
+  "applied"), the daemon falls back to a terminate-and-restart reload -- but
+  for an already-ON_AIR channel that reload only progresses on the worker's
+  own natural exit, and a healthy worker with nothing wrong just never exits
+  on its own. The daemon kept rewriting the same `TRANSITIONING` row every
+  poll tick with the unchanged pid, and an operator "start" on the live
+  channel was a no-op (the very next poll tick reasserted `TRANSITIONING`).
+  Automation's own retry for an undelivered rollover reload could not help
+  either -- that logic only runs for a channel it still believes is
+  `ON_AIR`. `EgressDaemon._poll_process` now bounds how long a pending-reload
+  latch is trusted before self-healing: past three times the seamless
+  reload's own 5-second ack timeout, it restores the channel to its
+  pre-reload state (keeping the same source label and proof event so the
+  proof trail is unbroken), clears the latch, and logs a WARNING so an
+  operator can see it happened. `EgressDaemon._write_state` no longer
+  advances a state row's timestamp on a tick where nothing besides the clock
+  changed, so `alerting/runtime_status.py`'s "how long has this channel been
+  in its current state" reading is now real instead of perpetually reading
+  as fresh; a channel stuck in `TRANSITIONING` past 60 seconds now escalates
+  the runtime safe-to-air color straight to red instead of sitting at yellow
+  ("coming up / switching") indefinitely. New tests in `test_daemon.py`
+  (the stuck-latch self-heal, and that repeated identical writes don't
+  advance `updated_at`), `test_automation.py` (the rollover retry becomes
+  reachable again once the daemon restores `ON_AIR`), and
+  `test_runtime_status.py` (the red escalation). `daemon.py` is not
+  claims.yaml-bound; `alerting/runtime_status.py` is not either.
+- **A slate or bulletin fill period made the encoder restart every few
+  minutes instead of running for its full target duration.** Regression
+  from the #174 fix above: `SlateSourceGenerator` built a hard-coded 30-
+  second segment repeated enough times to cover an hour (120 segments), and
+  `BulletinFillerSourceGenerator` cycled its whole bulletin/board rotation
+  the same way -- both relied on `gst/bridge.graph_from_config`'s
+  `MAX_PLAYLIST_SUBCHAINS` (12) truncation to survive, which is a fail-safe
+  for an unexpectedly large plan, not a routine occurrence. Truncated to 12
+  segments, a 3600-second slate target actually played for only ~360
+  seconds before the worker hit a real EOS and restarted (resetting the TS
+  session) -- the exact CA-8 symptom these generators exist to prevent, now
+  happening every slate/bulletin period instead of never. Both generators
+  now hold each rendered card/slide longer instead of repeating a short one
+  past the cap, so a fill plan never NEEDS more than
+  `MAX_PLAYLIST_SUBCHAINS` segments to cover its target: a 3600-second slate
+  target now builds 12 segments of 300 seconds each instead of 120 of 30;
+  a 2-slide, 10-second bulletin rotation cycled to 600 seconds now builds
+  12 segments of 50 seconds each instead of 60 of 10. A target already
+  small enough to fit under the cap at the configured duration is
+  unaffected. New tests in `test_source_plan.py` and `test_bulletin_
+  filler.py` pin the segment count and total coverage for both generators.
+  `source_plan.py` and `bulletin_filler.py` are not claims.yaml-bound.
+- **A channel automation rollover could dispatch off an already-stale
+  projection, or pay for a synchronous prepare for a near-zero schedule
+  advance.** MEASURED by a real tester (2026-09-05): `_check_plan_rollover`
+  logged "the live plan ends in -1208s" and still dispatched, and separately
+  dispatched off a "schedule continues 0s further" advance -- the
+  `fresh_end <= plan_end_at` check it used had no epsilon, so even a
+  trivial or negative advance passed. `ChannelAutomationService.
+  _check_plan_rollover` now logs a WARNING and skips the dispatch outright
+  once the tracked horizon's projected end has already passed (leaving the
+  channel to the slate-replan/EOS path instead of extending a projection
+  that is already wrong), and requires the fresh schedule query to reach at
+  least a full rollover lead (`_rollover_min_lead_seconds`) further than the
+  plan already on air before dispatching, replacing the epsilon-less
+  comparison. New table-driven tests in `test_automation.py` cover a
+  stale-horizon tick (no dispatch, no re-query), a near-zero advance (no
+  dispatch), and a full-lead advance (dispatch); three pre-existing cadence
+  tests that hard-coded the old epsilon-less timing were updated to the
+  corrected numbers. `automation.py` is not claims.yaml-bound.
 
 ### Changed
 

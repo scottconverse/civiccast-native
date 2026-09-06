@@ -938,6 +938,24 @@ class ChannelAutomationService:
         if now < trigger_at:
             return  # not yet at the boundary-aligned trigger point
 
+        # Rollover horizon guard (tester finding, 2026-09-05): a negative
+        # ``plan_end_at - now`` means the tracked horizon is already stale
+        # (observed logged as "the live plan ends in -1208s") -- the plan this
+        # method thinks is airing has already run past its projected end, so
+        # dispatching a rollover here would extend a projection that is
+        # already wrong. Leave it to the slate-replan/EOS path instead of
+        # paying for a synchronous prepare on a bad number.
+        remaining_seconds = (plan_end_at - now).total_seconds()
+        if remaining_seconds <= 0:
+            _LOG.warning(
+                "Channel automation rollover horizon for %s is already in the past "
+                "(the live plan ends %.0fs ago); skipping this rollover dispatch and "
+                "leaving the channel to the slate-replan/EOS path.",
+                channel_id,
+                -remaining_seconds,
+            )
+            return
+
         if not retrying_undelivered:
             # D43 cadence floor, D45 fix: never dispatch rollovers for one
             # channel faster than _rollover_min_interval_seconds(planned_seconds)
@@ -975,9 +993,17 @@ class ChannelAutomationService:
         fresh_end = now + timedelta(
             seconds=sum(segment.duration_seconds for segment in fresh_plan.segments)
         )
-        if fresh_end <= plan_end_at:
-            # No more published schedule content beyond what is already
-            # loaded (the window did not advance) -- nothing to roll onto.
+        # Rollover horizon guard: require a real advance, not an epsilon-less
+        # ``fresh_end <= plan_end_at`` comparison that let a 0-second (or a
+        # few-second) advance through -- "the schedule continues 0s further"
+        # still paid for a full synchronous prepare (``daemon._try_content_
+        # reload``) for no actual extension. Require at least this plan's own
+        # rollover lead time of genuine advance before it's worth dispatching.
+        if fresh_end - plan_end_at < timedelta(
+            seconds=self._rollover_min_lead_seconds(planned_seconds)
+        ):
+            # No meaningful published schedule content beyond what is already
+            # loaded -- nothing worth rolling onto yet.
             self._rollover_retry_at[channel_id] = (
                 self._monotonic() + self._ROLLOVER_RETRY_COOLDOWN_SECONDS
             )
