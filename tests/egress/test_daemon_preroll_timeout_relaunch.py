@@ -664,7 +664,16 @@ def test_alive_poll_path_resets_the_streak_once_on_air_evidence_is_held_for_60s(
     store.enqueue_command(_start_command())
     strategy = _WorkerStrategy(
         processes,
-        stderr_text="CTRL preroll: reached PLAYING after 3.1s\n",
+        # Item 84 Round-2 review BLOCKER: the daemon's on-air evidence gate
+        # now requires the ``CTRL first-output: ...`` marker, not the
+        # PLAYING marker alone (see ``EgressDaemon._observed_on_air_evidence``
+        # and ``tests/egress/test_daemon_first_output_timeout_relaunch.py``'s
+        # own escalation-cliff tests for why) -- both markers present here,
+        # matching the real worker's own pid (1300, the first process).
+        stderr_text=(
+            "CTRL preroll: reached PLAYING after 3.1s pid=1300\n"
+            "CTRL first-output: first buffer after 3.4s pid=1300\n"
+        ),
     )
     daemon = EgressDaemon(
         store,

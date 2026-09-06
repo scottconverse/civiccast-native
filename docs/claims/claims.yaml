@@ -746,6 +746,131 @@ entries:
       # ever wrong. Only engine.py's re-hash reflects this round; worker.py
       # is unchanged and its blob is unchanged from the round-3 value.
       #
+      # engine.py and worker.py drifted a SEVENTH time (item 84, measured in
+      # sandbox run 15, soak-fcfcb81-20260906-183448Z, and in three
+      # seamless-OFF runs, 2026-09-06): every fresh worker reached PLAYING
+      # quickly (``CTRL preroll: reached PLAYING after 0.3s``) then
+      # immediately hit ``CTRL stall: no output for 10s - quitting for daemon
+      # restart`` -- ``_arm_stall_watchdog`` armed the 10s post-first-buffer
+      # stall bound the instant PLAYING was reached, but PLAYING (even
+      # NO_PREROLL) is not evidence a single buffer crossed the mux, and
+      # under start-up load (a concurrent ffmpeg conform, a ~10s synchronous
+      # content-reload source preparation, live caption-tap overload) the
+      # first buffer legitimately took longer than 10s, killing healthy
+      # workers. Fixed: ``_check_stall`` now measures two DISTINCT budgets --
+      # while no output has been observed yet, a new, separate, configurable
+      # ``first_output_timeout_s`` (45s default,
+      # ``CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S`` env override, clamped to
+      # ``[10, 120]``s, ``math.isfinite``-guarded exactly like
+      # ``_resolve_preroll_timeout_s``); only once the first buffer IS
+      # observed does the original 10s ``stall_timeout_s`` apply, unchanged.
+      # A distinct stderr marker (``CTRL first-output: no output within Ns of
+      # PLAYING``) and a distinct ``("first-output-timeout", ...)``
+      # ``WORKER_RESULT`` error reason let ``worker.py`` exit with a new,
+      # distinct ``civiccast.egress.gst.exit_codes.
+      # GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE`` (the same gi-free sibling module
+      # as ``GST_PREROLL_TIMEOUT_EXIT_CODE``, NOT itself bound here) instead
+      # of the generic crash code 1 every other engine failure uses.
+      # ``EgressDaemon._relaunch_after_crash`` (``civiccast/egress/
+      # daemon.py``, not itself a code input of this claim, same as every
+      # other daemon-side file noted above) now rate-limits this new exit
+      # code the same way it already does ``GST_PREROLL_TIMEOUT_EXIT_CODE``
+      # (``_SLOW_START_EXIT_CODES``, shared cooldown bookkeeping) -- exempt
+      # from the healthy-uptime streak reset, capped to one streak increment
+      # per 60s -- so a train of legitimate slow starts never trips the
+      # crash-loop escalation to fallback slate for a source that is
+      # actually fine. Neither graph.py, control.py, decode_policy.py, nor
+      # audio_tap.py changed.
+      #
+      # Round-2 review BLOCKER (2026-09-06), fixed same round: two defects
+      # found in the round-1 (item 84) entry above.
+      #
+      # (1) The recorded engine.py blob from round-1 was WRONG -- a
+      # transcription/staleness error (a post-hash typo-fix edit to a code
+      # comment was never re-hashed before this file was written), not an
+      # actual content difference the reviewer needed to resolve; it did not
+      # correspond to any object this repository had ever produced. Re-hashed
+      # via `git hash-object --path civiccast/egress/gst/engine.py
+      # civiccast/egress/gst/engine.py` against the file as it stands after
+      # BOTH this round's own further edits below AND the round-1 ones.
+      # worker.py's blob is unchanged from round-1 (untouched this round too).
+      #
+      # (2) Escalation-cliff BLOCKER: ``_MAX_FIRST_OUTPUT_TIMEOUT_S`` (120)
+      # exceeds ``_RESTART_STREAK_RESET_UPTIME_S`` (60, the daemon's
+      # ALIVE-poll healthy-uptime reset threshold, ``civiccast/egress/
+      # daemon.py``), and item 84's own failure mode prints
+      # ``CTRL preroll: reached PLAYING after 0.3s pid=N`` on every single
+      # relaunch, which ``EgressDaemon._observed_on_air_evidence`` accepted as
+      # sufficient GStreamer on-air evidence (unchanged from before item 84).
+      # Measured with that marker present in a worker that never actually
+      # produces output: at ``first_output_timeout_s`` 65s/90s/120s the
+      # streak reset every alive-poll cycle and NEVER escalated to fallback
+      # slate (streak pinned at 1); at 45s-60s escalation still worked
+      # (the worker's alive window never crossed the 60s reset threshold
+      # before exiting). PLAYING is not evidence output ever flowed -- fixed
+      # properly, not by re-tuning the clamp: ``GstPlayoutEngine`` now prints
+      # a SEPARATE, new, pid-tagged marker (``_maybe_print_first_output_
+      # marker``) exactly once, the moment the first real mux buffer is
+      # observed (``CTRL first-output: first buffer after Ns pid=N``, engine.py
+      # only -- worker.py unchanged this round); ``civiccast.egress.health``
+      # (not itself bound here, same as every other health.py note above)
+      # gained ``worker_produced_output``, the parsing counterpart to
+      # ``worker_reached_playing`` for this new marker, same spawn-offset/pid
+      # anchoring contract; and ``EgressDaemon._observed_on_air_evidence``
+      # (daemon.py, not itself bound here) now requires ``worker_produced_
+      # output`` instead of ``worker_reached_playing`` for the GStreamer
+      # strategy -- the PLAYING marker is kept (still printed, still used by
+      # ``worker_reached_playing`` for whatever else reads it) but is no
+      # longer sufficient on-air evidence on its own. No configured budget
+      # value can defeat escalation now.
+      #
+      # Also this round: ``_arm_stall_watchdog`` used to hardcode
+      # ``_first_output_seen = False`` on every arm, which could wrongly
+      # re-open the first-output budget for a buffer that already crossed the
+      # mux DURING preroll, before arming -- now
+      # ``self._first_output_seen = self._output_buffers > 0``. And
+      # automation.py's OWN separate item-84 fix (the "did not land; retrying"
+      # WARNING cadence) had a sibling defect the round-1 entry missed: the
+      # "worker pid has only been alive Ns" deferred-WARNING (a DIFFERENT log
+      # line, gated on the worker-pid-age floor rather than the issued-timeout
+      # threshold) still fired on every single gated tick (measured: 150
+      # WARNINGs per 300s) -- now rate-limited the same way, with its own
+      # bookkeeping (``_rollover_pid_age_warned_at``) since the two WARNINGs
+      # gate on different, independently-timed conditions. automation.py is
+      # not itself bound in this claim (unchanged from round-1).
+      #
+      # Current-source proof (item 84):
+      # tests/egress/test_gst_engine_first_output_timeout.py (the
+      # ``_check_stall``/``_arm_stall_watchdog`` split: the first-output
+      # budget firing before any buffer is seen, the stall budget still
+      # applying unchanged once the first buffer IS seen, and
+      # ``_resolve_first_output_timeout_s``'s default/clamp/env/NaN-guard
+      # coverage mirroring ``_resolve_preroll_timeout_s``'s own),
+      # tests/egress/test_gst_worker_first_output_timeout_exit.py (the
+      # worker's exit code and WORKER_RESULT receipt on this new reason),
+      # tests/egress/test_daemon_first_output_timeout_relaunch.py (the
+      # daemon's shared rate-limited streak across both slow-start exit
+      # reasons, and that an ordinary crash remains unaffected). Round-2
+      # additions: tests/egress/test_gst_engine_first_output_timeout.py
+      # gained the ``_maybe_print_first_output_marker`` coverage (prints
+      # once, prints at arm-time when output already flowed before arm --
+      # round-2 item 4's own scenario -- and the zero-elapsed fallback),
+      # tests/egress/test_health.py gained ``TestWorkerProducedOutput``
+      # (mirrors ``TestWorkerReachedPlaying`` exactly, including the
+      # PLAYING-marker-alone-is-insufficient contrast case), and
+      # tests/egress/test_daemon_first_output_timeout_relaunch.py gained the
+      # escalation-cliff reproduction itself: sustained cycles at the 45s
+      # default AND the 120s clamp ceiling with the PLAYING marker present
+      # but the output marker absent (both must reach FALLBACK_SLATE), and
+      # the positive case (a worker printing the real output marker and
+      # holding it 60s DOES reset the streak).
+      # tests/egress/test_automation_rollover_retry_log_cadence.py's own
+      # coverage did not need a round-2 addition (the pid-age WARNING's
+      # cadence fix reuses the same rate-limit pattern already under test
+      # there for the "did not land" WARNING; both are exercised together
+      # in ``test_rollover_retry_warning_cadence_while_gated_by_worker_pid_age``).
+      # Blob IDs re-hashed with `git hash-object --path <file> <file>` per D2.
+      #
       # Current-source proof: tests/egress/test_gst_engine_preroll_timeout.py
       # (engine side, including the 45s clamp, the current+pending log line,
       # the new ``reached PLAYING`` success marker now carrying a pid, and
@@ -771,62 +896,87 @@ entries:
       # the fix).
       # Blob IDs re-hashed with `git hash-object --path <file> <file>`.
       #
-      # engine.py and worker.py drifted a SEVENTH time (item 85, sandbox runs
+      # engine.py and worker.py drifted an EIGHTH time (item 85, sandbox runs
       # 12/14/15, 2026-09-06): a wedged reload commit -- the last line either
       # of two soaked workers ever printed was "CTRL reload: boundary switch
       # rebased...", never "CTRL reload committed", and the process then sat
-      # alive but unresponsive forever. Root cause, engine.py's
-      # ``_commit_reload``: it switched the input-selector's ``active-pad``
-      # onto the new leg, THEN released that leg's hold probes, THEN disposed
-      # the old leg -- the opposite of the invariant ``_abort_pending_reload``
-      # already documented ("a held pad has a GStreamer streaming thread
-      # parked inside the blocking probe... releasing first lets those
-      # threads unwind normally"), so the old leg's streaming thread could end
-      # up parked inside input-selector's own ``sync-streams`` wait at the
-      # exact moment ``_dispose_source_leg`` called that leg's elements'
-      # synchronous ``set_state(NULL)`` -- blocking the GLib main-loop thread
-      # forever. Fixed: ``_commit_reload`` now releases the new leg's hold
-      # probes BEFORE the selector switch (staged stderr prints -- "switching
-      # selector"/"holds released"/"old leg disposed"/"committed" -- prove the
-      # new order ran); ``_dispose_source_leg`` now flushes
-      # (FLUSH_START/FLUSH_STOP) + unlinks + releases the retiring leg's
-      # selector pad BEFORE NULLing its elements, not after. A second,
-      # independent escape hatch: ``_commit_reload`` is now wrapped by
-      # ``_arm_commit_watchdog``, a real OS ``threading.Timer`` (NOT a GLib
-      # timeout source, which could never fire if the wedge is the SAME
-      # thread that would run it) that force-exits the worker with a new,
-      # distinct ``civiccast.egress.gst.exit_codes.
-      # GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE`` (gi-free sibling, not itself
-      # bound here -- same posture as ``GST_PREROLL_TIMEOUT_EXIT_CODE`` above)
-      # if the commit does not finish within ``commit_timeout_s`` (worker.py:
-      # new ``CIVICCAST_RELOAD_COMMIT_TIMEOUT_S`` env override, default 15s).
-      # daemon.py also changed (a reload ack timeout on a still-alive pid now
-      # terminates the wedged worker instead of leaving it running while
-      # pinning TRANSITIONING forever) but is not itself a code input of this
-      # claim, unchanged from before this entry existed. Neither
-      # decode_policy.py, graph.py, control.py, nor audio_tap.py changed.
-      # Current-source proof for these bytes: new gi-free ordering coverage in
-      # tests/egress/test_gst_engine_reload_commit_ordering.py (proves every
-      # hold pad's ``remove_probe`` fires before ``active-pad`` is touched,
-      # and unlink/release_request_pad fire before ``set_state(NULL)``; proves
-      # the commit watchdog thread force-exits with the distinct code when a
-      # commit never returns, and is a no-op when it finishes in time), an
-      # extended real-GStreamer test in tests/egress/test_gst_engine_wsl.py
-      # (a deferred rollover whose payload is a real multi-segment concat
+      # alive but unresponsive forever. THE WEDGE ITSELF IS NOT LOCALIZED BY
+      # THIS ENTRY. Round 1 hypothesized a root cause in engine.py's
+      # ``_commit_reload``/``_dispose_source_leg`` (switching the selector's
+      # ``active-pad`` before releasing the new leg's hold probes; NULLing a
+      # retiring leg's elements before unlinking its selector pad) and shipped
+      # a REORDERING as the fix. Hostile review (10 real-GStreamer runs of the
+      # extended test against that reordering: 4 failures, 0 on main, every
+      # one ``gst_base_src_loop ... streaming stopped, reason not-linked``
+      # right after "CTRL reload committed") found the reorder introduced a
+      # NEW, deterministic defect of its own -- releasing a hold before the
+      # active-pad switch drops the new leg's first buffer at the default
+      # (``cache-buffers=False``) input-selector sink pad, and
+      # unlinking/releasing a retiring leg's selector pad before that leg's
+      # own elements reach NULL races its still-live streaming thread into
+      # ``GST_FLOW_NOT_LINKED`` (fatal, not a benign no-op) -- and REVERTED
+      # it: ``_commit_reload``/``_dispose_source_leg`` keep main's ORIGINAL
+      # ordering, unchanged by this item. What ships instead: (1) four staged
+      # stdout lines in ``_commit_reload`` ("switching selector"/"holds
+      # released"/"old leg disposed"/"committed (elements=N)"), repositioned
+      # to main's ordering, so the next soak that reproduces the wedge shows
+      # which of the four steps it stalled inside; (2) ``_commit_reload`` is
+      # wrapped by ``_arm_commit_watchdog``, a real OS ``threading.Timer``
+      # (NOT a GLib timeout source, which could never fire if the wedge is
+      # the SAME thread that would run it) that, on expiry, dumps every live
+      # thread's Python stack (``faulthandler.dump_traceback(all_threads=
+      # True)``) FIRST -- the actual localization tool for a future
+      # reproduction -- then force-exits IMMEDIATELY (no pipeline teardown
+      # attempt: a downward ``set_state`` transition takes the same
+      # STREAM_LOCK a wedged thread already holds) with a new, distinct
+      # ``civiccast.egress.gst.exit_codes.GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE``
+      # (``5`` -- ``4`` is item 84's ``GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE``,
+      # gi-free sibling, not itself bound here) if the commit does not finish
+      # within ``commit_timeout_s`` (worker.py:
+      # ``CIVICCAST_RELOAD_COMMIT_TIMEOUT_S`` env override, default 15s,
+      # validated/clamped to [3, 120]s with a stderr warning -- never
+      # silently floored). This exit path emits NO ``WORKER_RESULT`` receipt,
+      # by design. daemon.py also changed (a reload ack timeout on a
+      # still-alive pid now terminates the wedged worker -- bounded
+      # terminate -> wait -> kill, escalating to kill() if terminate() is
+      # never observed -- setting the ``_pending_reloads`` fallback entry
+      # BEFORE terminating rather than after; the exit code is classified as
+      # "reload-commit-timeout" in the relaunch log line and deliberately NOT
+      # exempted from the crash-loop streak, unlike a genuine slow-start exit
+      # code) but is not itself a code input of this claim, unchanged from
+      # before this entry existed. Neither decode_policy.py, graph.py,
+      # control.py, nor audio_tap.py changed. Current-source proof for these
+      # bytes: new gi-free coverage in tests/egress/
+      # test_gst_engine_reload_commit_ordering.py (main's ordering is
+      # unchanged -- active-pad switch before hold-probe release, NULL before
+      # unlink/release_request_pad, no FLUSH_START/FLUSH_STOP events sent at
+      # all; the four staged log lines print in order; the commit-watchdog
+      # thread dumps all-threads then force-exits with no pipeline teardown
+      # when a commit never returns, and is a no-op when it finishes in time;
+      # ``commit_timeout_s`` clamps with a warning), an extended
+      # real-GStreamer test in tests/egress/test_gst_engine_wsl.py (a
+      # deferred rollover whose payload is a real multi-segment concat
       # PlaylistLeg of 4 short real A/V clips -- decoded via
       # ``filesrc ! decodebin`` each, the production shape a real schedule-
-      # derived program leg takes -- committing within bound and printing all
-      # four staged commit log lines in order; run directly against this
-      # box's bundled native GStreamer runtime, not skipped), and
-      # tests/egress/test_daemon.py (a reload ack timeout on a live pid
-      # terminates the wedged worker and the next poll tick restarts
-      # cleanly instead of pinning TRANSITIONING). Blob IDs re-hashed with
-      # `git hash-object --path <file> <file>`.
+      # derived program leg takes -- committing within bound; run 10x
+      # directly against this box's bundled native GStreamer runtime, not
+      # skipped: 0 "not-linked" errors across all 10 runs), and
+      # tests/egress/test_daemon.py plus tests/egress/
+      # test_daemon_reload_commit_timeout_relaunch.py (the ack-timeout-on-a-
+      # live-pid termination including a kill() escalation case, that a
+      # decline for any other reason does not terminate a healthy worker, the
+      # relaunch log line's classification, and that this exit code counts
+      # toward the crash-loop streak on every occurrence). Blob IDs re-hashed
+      # with `git hash-object --path <file> <file>` -- worker.py/engine.py
+      # ALSO carry item 84's own (PR #187, merged as a6d7871) drift into
+      # these same bytes; that item's own current-source proof (its
+      # dedicated test files, named earlier in this claim's history) covers
+      # its half of what these blobs now bind.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 9ae2ca011724b0232619d081cc2d2c0e9c2fb81b
+          blob: 8b4696f803df606acaa4e6754e87a82d19afed44
         - path: civiccast/egress/gst/engine.py
-          blob: ae378afa69c0303f85069efa46c21ba9dd45d921
+          blob: 54a5cfb4e2696398108dd05140a49017357f771e
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -1265,6 +1415,131 @@ entries:
       # ever wrong. Only engine.py's re-hash reflects this round; worker.py
       # is unchanged and its blob is unchanged from the round-3 value.
       #
+      # engine.py and worker.py drifted a SEVENTH time (item 84, measured in
+      # sandbox run 15, soak-fcfcb81-20260906-183448Z, and in three
+      # seamless-OFF runs, 2026-09-06): every fresh worker reached PLAYING
+      # quickly (``CTRL preroll: reached PLAYING after 0.3s``) then
+      # immediately hit ``CTRL stall: no output for 10s - quitting for daemon
+      # restart`` -- ``_arm_stall_watchdog`` armed the 10s post-first-buffer
+      # stall bound the instant PLAYING was reached, but PLAYING (even
+      # NO_PREROLL) is not evidence a single buffer crossed the mux, and
+      # under start-up load (a concurrent ffmpeg conform, a ~10s synchronous
+      # content-reload source preparation, live caption-tap overload) the
+      # first buffer legitimately took longer than 10s, killing healthy
+      # workers. Fixed: ``_check_stall`` now measures two DISTINCT budgets --
+      # while no output has been observed yet, a new, separate, configurable
+      # ``first_output_timeout_s`` (45s default,
+      # ``CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S`` env override, clamped to
+      # ``[10, 120]``s, ``math.isfinite``-guarded exactly like
+      # ``_resolve_preroll_timeout_s``); only once the first buffer IS
+      # observed does the original 10s ``stall_timeout_s`` apply, unchanged.
+      # A distinct stderr marker (``CTRL first-output: no output within Ns of
+      # PLAYING``) and a distinct ``("first-output-timeout", ...)``
+      # ``WORKER_RESULT`` error reason let ``worker.py`` exit with a new,
+      # distinct ``civiccast.egress.gst.exit_codes.
+      # GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE`` (the same gi-free sibling module
+      # as ``GST_PREROLL_TIMEOUT_EXIT_CODE``, NOT itself bound here) instead
+      # of the generic crash code 1 every other engine failure uses.
+      # ``EgressDaemon._relaunch_after_crash`` (``civiccast/egress/
+      # daemon.py``, not itself a code input of this claim, same as every
+      # other daemon-side file noted above) now rate-limits this new exit
+      # code the same way it already does ``GST_PREROLL_TIMEOUT_EXIT_CODE``
+      # (``_SLOW_START_EXIT_CODES``, shared cooldown bookkeeping) -- exempt
+      # from the healthy-uptime streak reset, capped to one streak increment
+      # per 60s -- so a train of legitimate slow starts never trips the
+      # crash-loop escalation to fallback slate for a source that is
+      # actually fine. Neither graph.py, control.py, decode_policy.py, nor
+      # audio_tap.py changed.
+      #
+      # Round-2 review BLOCKER (2026-09-06), fixed same round: two defects
+      # found in the round-1 (item 84) entry above.
+      #
+      # (1) The recorded engine.py blob from round-1 was WRONG -- a
+      # transcription/staleness error (a post-hash typo-fix edit to a code
+      # comment was never re-hashed before this file was written), not an
+      # actual content difference the reviewer needed to resolve; it did not
+      # correspond to any object this repository had ever produced. Re-hashed
+      # via `git hash-object --path civiccast/egress/gst/engine.py
+      # civiccast/egress/gst/engine.py` against the file as it stands after
+      # BOTH this round's own further edits below AND the round-1 ones.
+      # worker.py's blob is unchanged from round-1 (untouched this round too).
+      #
+      # (2) Escalation-cliff BLOCKER: ``_MAX_FIRST_OUTPUT_TIMEOUT_S`` (120)
+      # exceeds ``_RESTART_STREAK_RESET_UPTIME_S`` (60, the daemon's
+      # ALIVE-poll healthy-uptime reset threshold, ``civiccast/egress/
+      # daemon.py``), and item 84's own failure mode prints
+      # ``CTRL preroll: reached PLAYING after 0.3s pid=N`` on every single
+      # relaunch, which ``EgressDaemon._observed_on_air_evidence`` accepted as
+      # sufficient GStreamer on-air evidence (unchanged from before item 84).
+      # Measured with that marker present in a worker that never actually
+      # produces output: at ``first_output_timeout_s`` 65s/90s/120s the
+      # streak reset every alive-poll cycle and NEVER escalated to fallback
+      # slate (streak pinned at 1); at 45s-60s escalation still worked
+      # (the worker's alive window never crossed the 60s reset threshold
+      # before exiting). PLAYING is not evidence output ever flowed -- fixed
+      # properly, not by re-tuning the clamp: ``GstPlayoutEngine`` now prints
+      # a SEPARATE, new, pid-tagged marker (``_maybe_print_first_output_
+      # marker``) exactly once, the moment the first real mux buffer is
+      # observed (``CTRL first-output: first buffer after Ns pid=N``, engine.py
+      # only -- worker.py unchanged this round); ``civiccast.egress.health``
+      # (not itself bound here, same as every other health.py note above)
+      # gained ``worker_produced_output``, the parsing counterpart to
+      # ``worker_reached_playing`` for this new marker, same spawn-offset/pid
+      # anchoring contract; and ``EgressDaemon._observed_on_air_evidence``
+      # (daemon.py, not itself bound here) now requires ``worker_produced_
+      # output`` instead of ``worker_reached_playing`` for the GStreamer
+      # strategy -- the PLAYING marker is kept (still printed, still used by
+      # ``worker_reached_playing`` for whatever else reads it) but is no
+      # longer sufficient on-air evidence on its own. No configured budget
+      # value can defeat escalation now.
+      #
+      # Also this round: ``_arm_stall_watchdog`` used to hardcode
+      # ``_first_output_seen = False`` on every arm, which could wrongly
+      # re-open the first-output budget for a buffer that already crossed the
+      # mux DURING preroll, before arming -- now
+      # ``self._first_output_seen = self._output_buffers > 0``. And
+      # automation.py's OWN separate item-84 fix (the "did not land; retrying"
+      # WARNING cadence) had a sibling defect the round-1 entry missed: the
+      # "worker pid has only been alive Ns" deferred-WARNING (a DIFFERENT log
+      # line, gated on the worker-pid-age floor rather than the issued-timeout
+      # threshold) still fired on every single gated tick (measured: 150
+      # WARNINGs per 300s) -- now rate-limited the same way, with its own
+      # bookkeeping (``_rollover_pid_age_warned_at``) since the two WARNINGs
+      # gate on different, independently-timed conditions. automation.py is
+      # not itself bound in this claim (unchanged from round-1).
+      #
+      # Current-source proof (item 84):
+      # tests/egress/test_gst_engine_first_output_timeout.py (the
+      # ``_check_stall``/``_arm_stall_watchdog`` split: the first-output
+      # budget firing before any buffer is seen, the stall budget still
+      # applying unchanged once the first buffer IS seen, and
+      # ``_resolve_first_output_timeout_s``'s default/clamp/env/NaN-guard
+      # coverage mirroring ``_resolve_preroll_timeout_s``'s own),
+      # tests/egress/test_gst_worker_first_output_timeout_exit.py (the
+      # worker's exit code and WORKER_RESULT receipt on this new reason),
+      # tests/egress/test_daemon_first_output_timeout_relaunch.py (the
+      # daemon's shared rate-limited streak across both slow-start exit
+      # reasons, and that an ordinary crash remains unaffected). Round-2
+      # additions: tests/egress/test_gst_engine_first_output_timeout.py
+      # gained the ``_maybe_print_first_output_marker`` coverage (prints
+      # once, prints at arm-time when output already flowed before arm --
+      # round-2 item 4's own scenario -- and the zero-elapsed fallback),
+      # tests/egress/test_health.py gained ``TestWorkerProducedOutput``
+      # (mirrors ``TestWorkerReachedPlaying`` exactly, including the
+      # PLAYING-marker-alone-is-insufficient contrast case), and
+      # tests/egress/test_daemon_first_output_timeout_relaunch.py gained the
+      # escalation-cliff reproduction itself: sustained cycles at the 45s
+      # default AND the 120s clamp ceiling with the PLAYING marker present
+      # but the output marker absent (both must reach FALLBACK_SLATE), and
+      # the positive case (a worker printing the real output marker and
+      # holding it 60s DOES reset the streak).
+      # tests/egress/test_automation_rollover_retry_log_cadence.py's own
+      # coverage did not need a round-2 addition (the pid-age WARNING's
+      # cadence fix reuses the same rate-limit pattern already under test
+      # there for the "did not land" WARNING; both are exercised together
+      # in ``test_rollover_retry_warning_cadence_while_gated_by_worker_pid_age``).
+      # Blob IDs re-hashed with `git hash-object --path <file> <file>` per D2.
+      #
       # Current-source proof: tests/egress/test_gst_engine_preroll_timeout.py
       # (engine side, including the 45s clamp, the current+pending log line,
       # the new ``reached PLAYING`` success marker now carrying a pid, and
@@ -1290,62 +1565,87 @@ entries:
       # the fix).
       # Blob IDs re-hashed with `git hash-object --path <file> <file>`.
       #
-      # engine.py and worker.py drifted a SEVENTH time (item 85, sandbox runs
+      # engine.py and worker.py drifted an EIGHTH time (item 85, sandbox runs
       # 12/14/15, 2026-09-06): a wedged reload commit -- the last line either
       # of two soaked workers ever printed was "CTRL reload: boundary switch
       # rebased...", never "CTRL reload committed", and the process then sat
-      # alive but unresponsive forever. Root cause, engine.py's
-      # ``_commit_reload``: it switched the input-selector's ``active-pad``
-      # onto the new leg, THEN released that leg's hold probes, THEN disposed
-      # the old leg -- the opposite of the invariant ``_abort_pending_reload``
-      # already documented ("a held pad has a GStreamer streaming thread
-      # parked inside the blocking probe... releasing first lets those
-      # threads unwind normally"), so the old leg's streaming thread could end
-      # up parked inside input-selector's own ``sync-streams`` wait at the
-      # exact moment ``_dispose_source_leg`` called that leg's elements'
-      # synchronous ``set_state(NULL)`` -- blocking the GLib main-loop thread
-      # forever. Fixed: ``_commit_reload`` now releases the new leg's hold
-      # probes BEFORE the selector switch (staged stderr prints -- "switching
-      # selector"/"holds released"/"old leg disposed"/"committed" -- prove the
-      # new order ran); ``_dispose_source_leg`` now flushes
-      # (FLUSH_START/FLUSH_STOP) + unlinks + releases the retiring leg's
-      # selector pad BEFORE NULLing its elements, not after. A second,
-      # independent escape hatch: ``_commit_reload`` is now wrapped by
-      # ``_arm_commit_watchdog``, a real OS ``threading.Timer`` (NOT a GLib
-      # timeout source, which could never fire if the wedge is the SAME
-      # thread that would run it) that force-exits the worker with a new,
-      # distinct ``civiccast.egress.gst.exit_codes.
-      # GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE`` (gi-free sibling, not itself
-      # bound here -- same posture as ``GST_PREROLL_TIMEOUT_EXIT_CODE`` above)
-      # if the commit does not finish within ``commit_timeout_s`` (worker.py:
-      # new ``CIVICCAST_RELOAD_COMMIT_TIMEOUT_S`` env override, default 15s).
-      # daemon.py also changed (a reload ack timeout on a still-alive pid now
-      # terminates the wedged worker instead of leaving it running while
-      # pinning TRANSITIONING forever) but is not itself a code input of this
-      # claim, unchanged from before this entry existed. Neither
-      # decode_policy.py, graph.py, control.py, nor audio_tap.py changed.
-      # Current-source proof for these bytes: new gi-free ordering coverage in
-      # tests/egress/test_gst_engine_reload_commit_ordering.py (proves every
-      # hold pad's ``remove_probe`` fires before ``active-pad`` is touched,
-      # and unlink/release_request_pad fire before ``set_state(NULL)``; proves
-      # the commit watchdog thread force-exits with the distinct code when a
-      # commit never returns, and is a no-op when it finishes in time), an
-      # extended real-GStreamer test in tests/egress/test_gst_engine_wsl.py
-      # (a deferred rollover whose payload is a real multi-segment concat
+      # alive but unresponsive forever. THE WEDGE ITSELF IS NOT LOCALIZED BY
+      # THIS ENTRY. Round 1 hypothesized a root cause in engine.py's
+      # ``_commit_reload``/``_dispose_source_leg`` (switching the selector's
+      # ``active-pad`` before releasing the new leg's hold probes; NULLing a
+      # retiring leg's elements before unlinking its selector pad) and shipped
+      # a REORDERING as the fix. Hostile review (10 real-GStreamer runs of the
+      # extended test against that reordering: 4 failures, 0 on main, every
+      # one ``gst_base_src_loop ... streaming stopped, reason not-linked``
+      # right after "CTRL reload committed") found the reorder introduced a
+      # NEW, deterministic defect of its own -- releasing a hold before the
+      # active-pad switch drops the new leg's first buffer at the default
+      # (``cache-buffers=False``) input-selector sink pad, and
+      # unlinking/releasing a retiring leg's selector pad before that leg's
+      # own elements reach NULL races its still-live streaming thread into
+      # ``GST_FLOW_NOT_LINKED`` (fatal, not a benign no-op) -- and REVERTED
+      # it: ``_commit_reload``/``_dispose_source_leg`` keep main's ORIGINAL
+      # ordering, unchanged by this item. What ships instead: (1) four staged
+      # stdout lines in ``_commit_reload`` ("switching selector"/"holds
+      # released"/"old leg disposed"/"committed (elements=N)"), repositioned
+      # to main's ordering, so the next soak that reproduces the wedge shows
+      # which of the four steps it stalled inside; (2) ``_commit_reload`` is
+      # wrapped by ``_arm_commit_watchdog``, a real OS ``threading.Timer``
+      # (NOT a GLib timeout source, which could never fire if the wedge is
+      # the SAME thread that would run it) that, on expiry, dumps every live
+      # thread's Python stack (``faulthandler.dump_traceback(all_threads=
+      # True)``) FIRST -- the actual localization tool for a future
+      # reproduction -- then force-exits IMMEDIATELY (no pipeline teardown
+      # attempt: a downward ``set_state`` transition takes the same
+      # STREAM_LOCK a wedged thread already holds) with a new, distinct
+      # ``civiccast.egress.gst.exit_codes.GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE``
+      # (``5`` -- ``4`` is item 84's ``GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE``,
+      # gi-free sibling, not itself bound here) if the commit does not finish
+      # within ``commit_timeout_s`` (worker.py:
+      # ``CIVICCAST_RELOAD_COMMIT_TIMEOUT_S`` env override, default 15s,
+      # validated/clamped to [3, 120]s with a stderr warning -- never
+      # silently floored). This exit path emits NO ``WORKER_RESULT`` receipt,
+      # by design. daemon.py also changed (a reload ack timeout on a
+      # still-alive pid now terminates the wedged worker -- bounded
+      # terminate -> wait -> kill, escalating to kill() if terminate() is
+      # never observed -- setting the ``_pending_reloads`` fallback entry
+      # BEFORE terminating rather than after; the exit code is classified as
+      # "reload-commit-timeout" in the relaunch log line and deliberately NOT
+      # exempted from the crash-loop streak, unlike a genuine slow-start exit
+      # code) but is not itself a code input of this claim, unchanged from
+      # before this entry existed. Neither decode_policy.py, graph.py,
+      # control.py, nor audio_tap.py changed. Current-source proof for these
+      # bytes: new gi-free coverage in tests/egress/
+      # test_gst_engine_reload_commit_ordering.py (main's ordering is
+      # unchanged -- active-pad switch before hold-probe release, NULL before
+      # unlink/release_request_pad, no FLUSH_START/FLUSH_STOP events sent at
+      # all; the four staged log lines print in order; the commit-watchdog
+      # thread dumps all-threads then force-exits with no pipeline teardown
+      # when a commit never returns, and is a no-op when it finishes in time;
+      # ``commit_timeout_s`` clamps with a warning), an extended
+      # real-GStreamer test in tests/egress/test_gst_engine_wsl.py (a
+      # deferred rollover whose payload is a real multi-segment concat
       # PlaylistLeg of 4 short real A/V clips -- decoded via
       # ``filesrc ! decodebin`` each, the production shape a real schedule-
-      # derived program leg takes -- committing within bound and printing all
-      # four staged commit log lines in order; run directly against this
-      # box's bundled native GStreamer runtime, not skipped), and
-      # tests/egress/test_daemon.py (a reload ack timeout on a live pid
-      # terminates the wedged worker and the next poll tick restarts
-      # cleanly instead of pinning TRANSITIONING). Blob IDs re-hashed with
-      # `git hash-object --path <file> <file>`.
+      # derived program leg takes -- committing within bound; run 10x
+      # directly against this box's bundled native GStreamer runtime, not
+      # skipped: 0 "not-linked" errors across all 10 runs), and
+      # tests/egress/test_daemon.py plus tests/egress/
+      # test_daemon_reload_commit_timeout_relaunch.py (the ack-timeout-on-a-
+      # live-pid termination including a kill() escalation case, that a
+      # decline for any other reason does not terminate a healthy worker, the
+      # relaunch log line's classification, and that this exit code counts
+      # toward the crash-loop streak on every occurrence). Blob IDs re-hashed
+      # with `git hash-object --path <file> <file>` -- worker.py/engine.py
+      # ALSO carry item 84's own (PR #187, merged as a6d7871) drift into
+      # these same bytes; that item's own current-source proof (its
+      # dedicated test files, named earlier in this claim's history) covers
+      # its half of what these blobs now bind.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 9ae2ca011724b0232619d081cc2d2c0e9c2fb81b
+          blob: 8b4696f803df606acaa4e6754e87a82d19afed44
         - path: civiccast/egress/gst/engine.py
-          blob: ae378afa69c0303f85069efa46c21ba9dd45d921
+          blob: 54a5cfb4e2696398108dd05140a49017357f771e
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py

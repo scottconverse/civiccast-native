@@ -195,29 +195,13 @@ def test_reload_commit_timeout_relaunch_log_line_is_classified(tmp_path: Path) -
 
 
 def test_reload_commit_timeout_is_not_in_slow_start_exit_codes() -> None:
-    """PR #187 (item 84, first-output watchdog) introduces
-    ``civiccast.egress.daemon._SLOW_START_EXIT_CODES`` -- the set of exit
-    codes daemon.py treats as "slow start, not a crash" (rate-limited streak
-    exemption). ``GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE`` must never be a member:
-    a reload-commit wedge is a genuine failure of an already-running channel,
-    not a slow start.
+    """PR #187 (item 84, first-output watchdog, merged to main as a6d7871)
+    introduced ``civiccast.egress.daemon._SLOW_START_EXIT_CODES`` -- the set
+    of exit codes daemon.py treats as "slow start, not a crash" (rate-limited
+    streak exemption, currently ``{GST_PREROLL_TIMEOUT_EXIT_CODE,
+    GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE}``). ``GST_RELOAD_COMMIT_TIMEOUT_
+    EXIT_CODE`` must never be a member: a reload-commit wedge is a genuine
+    failure of an already-running channel, not a slow start."""
+    from civiccast.egress.daemon import _SLOW_START_EXIT_CODES
 
-    NOTE: at the time this test was written, PR #187 had not yet merged to
-    main, so ``_SLOW_START_EXIT_CODES`` does not exist in this branch yet.
-    This test is written against the constant NAME so it activates the moment
-    a future ``git merge origin/main`` (after #187 lands) brings the set in --
-    until then it skips with an explicit reason rather than silently passing
-    on an AttributeError it never actually checked."""
-    import pytest
-
-    from civiccast.egress import daemon as daemon_module
-
-    slow_start_exit_codes = getattr(daemon_module, "_SLOW_START_EXIT_CODES", None)
-    if slow_start_exit_codes is None:
-        pytest.skip(
-            "civiccast.egress.daemon._SLOW_START_EXIT_CODES does not exist yet -- "
-            "PR #187 (item 84, first-output watchdog) had not merged to main as of "
-            "this branch; re-run after `git fetch origin && git merge origin/main` "
-            "post-#187 to activate this assertion."
-        )
-    assert GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE not in slow_start_exit_codes
+    assert GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE not in _SLOW_START_EXIT_CODES
