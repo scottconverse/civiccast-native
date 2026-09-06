@@ -800,6 +800,114 @@ def test_schedule_cache_copy_promotion_discards_key_when_scheduler_itself_fails(
     assert key not in preparer._warming
 
 
+def test_schedule_warm_job_reconforms_a_flagless_legacy_cache_entry(tmp_path: Path) -> None:
+    """Item 66 round-9 (tests-only follow-up to the round-8 MEDIUM fix).
+    ``_schedule_warm``'s queued ``_job`` must treat a flagless legacy meta
+    (a pre-round-7 entry, or a probe-only write that never got a conform)
+    as a MISS, not an already-populated hit -- see the round-8 comment right
+    above the skip check in ``preparer.py`` for the self-heal failure this
+    guards against. Plant exactly that shape (a short ``.ts`` alongside a
+    meta with no ``full_asset_conform`` key at all) and prove the job
+    actually re-conforms instead of returning early: reverting the skip
+    predicate back to ``cached_meta is not None`` makes this fail, because
+    that predicate alone is satisfied by the flagless meta and the job would
+    return before ever calling the ffmpeg runner."""
+    calls: list[list[str]] = []
+    warm_jobs: list[Callable[[], None]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=warm_jobs.append,
+    )
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    config = _config()
+    key = preparer._cache_key(source, config)
+    assert key is not None
+
+    preparer._schedule_warm(key, source, config, _loudness(), False)
+    assert len(warm_jobs) == 1
+
+    # Plant a flagless legacy entry -- exactly the pre-round-7 on-disk shape --
+    # as if some earlier, now-stale run had left it there.
+    cache_dir = tmp_path / "work" / "conform-cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / f"{key}.ts").write_text("stale short fragment", encoding="utf-8")
+    (cache_dir / f"{key}.json").write_text(
+        json.dumps(
+            {
+                "loudness_status": "ok",
+                "measured_lufs": -24.1,
+                "normalized": False,
+                "media_duration_seconds": None,
+                # no "full_asset_conform" key at all -- the pre-round-7 shape
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    warm_jobs[0]()  # run the queued job now
+
+    assert len(calls) == 1  # re-conformed -- the flagless entry was never trusted as a HIT
+    meta = preparer._read_cache_meta(key)
+    assert meta is not None
+    assert meta["full_asset_conform"] is True  # the fresh conform's own promotion set it
+
+
+def test_schedule_cache_copy_promotion_job_reconforms_a_flagless_legacy_cache_entry(
+    tmp_path: Path,
+) -> None:
+    """Companion to the test above for ``_schedule_cache_copy_promotion``'s
+    own queued ``_job`` -- the exact same round-8 MEDIUM fix, the exact same
+    self-heal failure mode, a different job body (a byte-for-byte copy of an
+    already-finished per-plan file rather than a fresh ffmpeg conform)."""
+    warm_jobs: list[Callable[[], None]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=warm_jobs.append,
+    )
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    config = _config()
+    key = preparer._cache_key(source, config)
+    assert key is not None
+    finished = tmp_path / "already-airing.ts"
+    finished.write_text("the real, complete finished asset", encoding="utf-8")
+
+    preparer._schedule_cache_copy_promotion(key, finished, source, _loudness(), False)
+    assert len(warm_jobs) == 1
+
+    # Plant a flagless legacy entry with SHORT, stale content -- if the job
+    # wrongly treats this as already-populated, the copy never happens and
+    # the stale bytes below survive unchanged.
+    cache_dir = tmp_path / "work" / "conform-cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / f"{key}.ts").write_text("stale short fragment", encoding="utf-8")
+    (cache_dir / f"{key}.json").write_text(
+        json.dumps(
+            {
+                "loudness_status": "ok",
+                "measured_lufs": -24.1,
+                "normalized": False,
+                "media_duration_seconds": None,
+                # no "full_asset_conform" key at all -- the pre-round-7 shape
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    warm_jobs[0]()  # run the queued job now
+
+    cached_ts = cache_dir / f"{key}.ts"
+    assert cached_ts.read_text(encoding="utf-8") == "the real, complete finished asset"
+    meta = preparer._read_cache_meta(key)
+    assert meta is not None
+    assert meta["full_asset_conform"] is True
+
+
 def test_corrupt_cache_sidecar_is_treated_as_miss(tmp_path: Path) -> None:
     calls: list[list[str]] = []
     preparer = SourcePreparer(
@@ -2211,6 +2319,56 @@ def test_slot_capped_untrimmed_conform_warms_the_true_full_asset(tmp_path: Path)
     meta = preparer._read_cache_meta(key)
     assert meta is not None
     assert meta["full_asset_conform"] is True
+
+
+def test_unknown_media_duration_on_untrimmed_slot_capped_segment_never_promotes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 66 round-8 (HIGH fix), mock-level (no real ffmpeg needed):
+    reproduces the round-7-vs-round-8 gap without depending on
+    ffmpeg/ffprobe being on PATH (the real-ffmpeg suite in
+    ``test_preparer_conform_cache_real_ffmpeg.py`` covers the same scenario
+    end to end, but skips entirely when ffmpeg is missing, which is exactly
+    why this fix had zero coverage on a runner without it).
+
+    ``probe_media_duration_seconds`` is monkeypatched to return ``None`` --
+    a genuinely unknown media duration, e.g. ffprobe unavailable/failing for
+    this call -- for an untrimmed segment whose own ``duration_seconds`` is
+    shorter than a real asset would be (D42's slot-cap shape). ``is_full_
+    asset_conform`` must read False here: the bounded conform must fall
+    through to ``_schedule_warm`` instead of being hard-linked into the
+    cache as if it were the whole asset. Reverting the fix's ``media_
+    duration is not None`` clause back to round-7's ``media_duration is
+    None or ...`` shape makes this fail: with that clause removed, ``not
+    trimmed`` alone is enough and the fragment gets promoted."""
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: None)
+    source = tmp_path / "raw-source.mp4"
+    source.write_text("fake media", encoding="utf-8")
+    warm_jobs: list[Callable[[], None]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=warm_jobs.append,  # never runs -- inspect state before any warm executes
+    )
+
+    report = preparer.prepare(_slot_capped_untrimmed_plan(source, duration_seconds=30.0), _config())
+
+    # The segment still airs fine from its own per-plan file...
+    seg = report.source_plan.segments[0]
+    assert Path(seg.path).is_file()
+    # ...but with the real duration unknown, nothing may be promoted as "the
+    # full asset" from this unverified fragment.
+    key = preparer._cache_key(source, _config())
+    assert key is not None
+    cached_ts = preparer._cache_dir() / f"{key}.ts"
+    assert not cached_ts.is_file()  # no fragment ever gets promoted
+    meta = preparer._read_cache_meta(key)
+    assert meta is not None
+    assert meta.get("full_asset_conform") is not True  # never marked as a genuine full conform
+    # A real full-asset warm was scheduled behind it instead -- fail closed,
+    # never trust the unverified fragment.
+    assert len(warm_jobs) == 1
 
 
 def test_full_asset_cache_hit_requires_the_explicit_flag(

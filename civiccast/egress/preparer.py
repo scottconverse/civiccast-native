@@ -1768,11 +1768,20 @@ class SourcePreparer:
             # ``media_duration is None`` now NEVER promotes here, regardless
             # of ``trimmed`` -- it always falls through to ``_schedule_warm``,
             # which conforms the WHOLE asset (not this bounded fragment) on a
-            # background thread and, once that conform finishes, sets
-            # ``full_asset_conform=True`` from its own measured length via
-            # ``_promote_conform_into_cache`` -- never from this unverified
-            # fragment. Follow-up (not done this round, listed rather than
-            # silently deferred): thread the plan's own known asset duration
+            # background thread. That job builds its conform with
+            # ``build_conform_source_args(segment=None, ...)`` -- no
+            # ``-ss``/``-t`` at all (see that function's docstring) -- so
+            # unlike this bounded fragment, its output genuinely IS the whole
+            # file regardless of what ``media_duration`` measured. Once it
+            # finishes, ``_promote_conform_into_cache`` marks the cache entry
+            # ``full_asset_conform=True`` -- unconditionally, from the mere
+            # fact of having been called (it does not itself measure
+            # anything; see its own docstring) -- which is safe here only
+            # because the caller reaching it (the warm job) is the one that
+            # already guaranteed a trim-free, whole-file conform, never from
+            # this unverified fragment. Follow-up (not done this round, listed
+            # rather than silently deferred): thread the plan's own known
+            # asset duration
             # (the DB row `source_plan.py` already read) through to the
             # segment/``PreparedSegment`` spec so this method stops
             # re-deriving it via a second, independently-fallible ffprobe at

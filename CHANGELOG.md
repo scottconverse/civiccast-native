@@ -338,11 +338,16 @@ below.
     slot-capped to 6 of 8 seconds) reads that cached `null` back and
     promotes its own fragment as the whole asset. `media_duration is None`
     now **never** promotes — it always falls through to `_schedule_warm`,
-    which conforms the whole asset in the background and sets
-    `full_asset_conform` from its own measured length instead. Threading
-    the plan's already-known (DB) asset duration through to the segment
-    spec so the preparer stops re-deriving it via a second, independently
-    fallible ffprobe is a listed follow-up, not done this round.
+    whose background job conforms with `build_conform_source_args(segment=
+    None, ...)` — no `-ss`/`-t` at all — so its output genuinely is the
+    whole file regardless of what `media_duration` measured, unlike this
+    unverified fragment. `_promote_conform_into_cache` then marks the entry
+    `full_asset_conform=True` unconditionally (it measures nothing itself);
+    that is safe here only because the caller reaching it already
+    guaranteed a trim-free, whole-file conform. Threading the plan's
+    already-known (DB) asset duration through to the segment spec so the
+    preparer stops re-deriving it via a second, independently fallible
+    ffprobe is a listed follow-up, not done this round.
   - **MEDIUM: the warm/copy-job skip checks didn't require the
     `full_asset_conform` flag.** `_schedule_warm`'s and
     `_schedule_cache_copy_promotion`'s own re-check-before-running guards
@@ -363,6 +368,46 @@ below.
     (skip the resample, keep the single reading), only the documented
     boundary was wrong. Corrected in this file, the runbook, and the
     in-code comments; no behavior change.
+  **Round 9 was tests/wording only — both round-8 functional fixes (the
+  warm/copy skip-predicate MEDIUM and the fail-closed HIGH gate) were
+  already correct, just uncovered:**
+  - **MEDIUM: added a mock-level test per job** (`_schedule_warm`'s and
+    `_schedule_cache_copy_promotion`'s own queued `_job`) that plants a
+    flagless legacy meta plus a short `.ts`, runs the job, and asserts it
+    re-conforms (does not return early) with the resulting cache entry
+    carrying `full_asset_conform=True` — reverting either skip predicate
+    back to `cached_meta is not None` now fails the suite instead of
+    passing silently.
+  - **MEDIUM: added a mock-level (no-ffmpeg) test of the HIGH fail-closed
+    gate** — an untrimmed, slot-capped segment with an unknown media
+    duration now asserts `_schedule_warm` is called and nothing is
+    promoted, catching a revert of `is_full_asset_conform`'s
+    `media_duration is not None` clause without needing real ffmpeg on the
+    runner. Also wired `tests/egress/test_preparer_conform_cache_real_ffmpeg.py`'s
+    four tests into `ci-test.yml`'s junit-floor guard pattern (matching the
+    existing `tests/live/test_finalization_worker` and live-HLS guards), so
+    CI fails if they were skipped (no ffmpeg/ffprobe on the runner) rather
+    than silently passing.
+  - **LOW: corrected a false invariant in a code comment and this file.**
+    Both claimed the warm job "sets `full_asset_conform=True` from its own
+    measured length via `_promote_conform_into_cache`" — that method sets
+    the flag unconditionally and measures nothing. The real invariant is
+    that the warm job's conform always builds with
+    `build_conform_source_args(segment=None, ...)`, emitting no `-ss`/`-t`,
+    so its output is genuinely the whole file regardless of what
+    `media_duration` measured; `_promote_conform_into_cache`'s unconditional
+    flag write is safe only because of that guarantee, not because it
+    verified anything itself.
+  - **LOW: `docs/ops/channel-egress-runbook.md`'s "for a 120-400 second
+    asset that room may not exist" line now says plainly that below 400s a
+    second sample never fits at all**, plus two new operational notes: a
+    broken ffprobe queues a single-threaded background whole-asset conform
+    for every slot-capped untrimmed airing until it heals (bounded by the
+    warm dedupe; can mean a long first-run queue on a GStreamer station with
+    many assets), and upgrading past this fix invalidates every
+    pre-existing conform-cache entry (flagless reads as a miss), so each
+    asset pays one re-conform after upgrade — synchronous on the start path
+    when `playout_trim_supported=True`.
 - **A seamless plan rollover collided its own concat aggregators, silently
   failed to join the pipeline, and was acked "applied" anyway -- so
   automation kept re-triggering it forever while the channel bounced.**

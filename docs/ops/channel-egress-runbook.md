@@ -267,6 +267,28 @@ itself — no CLI worker needed. Posture for a three-channel station:
   scheduling from INSIDE the still-held lock, which self-deadlocked with a
   synchronous scheduler and head-of-line-blocked the real one; round 5
   schedules it only after the lock is released.
+- **A broken ffprobe on a station means every slot-capped untrimmed airing
+  queues a background whole-asset conform (item 66 round-8, HIGH fix):**
+  when this call's own live ffprobe can't determine an asset's real media
+  duration, an untrimmed segment whose schedule slot is shorter than the
+  asset (D42) is never promoted straight from its own bounded conform — it
+  always falls through to a background warm that conforms the whole asset
+  fresh instead. That warm is single-threaded and bounded by the existing
+  warm dedupe (one queued conform per asset, not one per airing), so the
+  station self-heals after one pass per asset rather than piling up
+  duplicate work — but on a GStreamer station with many assets and a
+  genuinely broken ffprobe, expect a long queue of first-run background
+  conforms until ffprobe is fixed or every asset has been warmed once.
+- **Upgrading past item 66 round-7/8 invalidates every pre-existing
+  conform-cache entry:** a `.json` sidecar written by older code has no
+  `full_asset_conform` key at all, which now reads as `False` rather than
+  a trusted HIT (see the flag's own docstring in `preparer.py`). Each asset
+  therefore pays exactly one re-conform after the upgrade the first time it
+  airs again — synchronous, on the start path, when
+  `playout_trim_supported=True` (the ffmpeg-concat engine); scheduled as a
+  background warm otherwise (GStreamer). This is a one-time cost per asset,
+  not a permanent regression — once re-conformed, the entry carries the
+  flag and hits normally again.
 - **The loudness probe samples the asset, it does not measure the whole
   file (item 66, revised round-6):** a TRIMMED (join-in-progress) segment's
   probe is bounded to its own wanted window. An UNTRIMMED segment's probe
@@ -286,12 +308,13 @@ itself — no CLI worker needed. Posture for a three-channel station:
     the window), the preparer resamples ONCE more at 70% in — but only if
     a genuinely non-overlapping second window actually fits (the second
     must start at least 120 seconds after the first AND stay inside the
-    file); for a 120-400 second asset that room may not exist at all — item
-    66 round-8 corrected this from a previously-documented "120-240
-    seconds": working the two clamped windows through by hand (not just
-    describing them) shows the non-overlap requirement only starts holding
-    at exactly 400 seconds, not 240 — in which case no resample is
-    attempted and the single (floor) reading is used as measured. When a
+    file); below 400 seconds that room never exists — item 66 round-8
+    corrected this from a previously-documented "120-240 seconds": working
+    the two clamped windows through by hand (not just describing them)
+    shows the non-overlap requirement only starts holding at exactly 400
+    seconds, not 240 — so for any asset shorter than 400 seconds no
+    resample is ever attempted, and the single (floor) reading is used as
+    measured. When a
     non-overlapping resample IS possible and
     both independent samples land at the floor, the asset is treated as
     genuinely silent (normalization is skipped outright rather than
