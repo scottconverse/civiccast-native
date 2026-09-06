@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import json
+import math
 import os
 import re
 import signal
@@ -126,6 +127,151 @@ except ImportError:
     )
 
 
+class PrerollTimeoutError(RuntimeError):
+    """The pipeline did not reach PLAYING within the configured preroll bound.
+
+    Distinct from a bare ``RuntimeError`` (item 82, sandbox run 13 evidence) so
+    ``worker.py`` can exit with ``GST_PREROLL_TIMEOUT_EXIT_CODE`` — a distinct
+    code the daemon's relaunch path (``EgressDaemon._relaunch_after_crash`` /
+    ``_begin_relaunch``) reads to treat a slow-but-progressing preroll under
+    CPU load as a slow start, not a crash, instead of counting every such exit
+    toward the crash-loop force-fallback-slate streak like an ordinary crash.
+    """
+
+
+# Item 82: how long ``_await_playing`` waits for the PLAYING transition before
+# giving up. 30s default — generous enough to ride out ordinary CPU-load
+# preroll jitter (the measured failure was a 5.0s bound tripping under load),
+# never so long that a genuinely wedged pipeline hangs the worker
+# indefinitely (the time-bounded-teardown audit finding M1 this method
+# already exists for). Configurable per-instance and via env var for ops
+# tuning without a code change; clamped to [5, 45]s.
+#
+# Round-2 review BLOCKER (Opus, PR #183): the upper bound is load-bearing, not
+# cosmetic. ``EgressDaemon._relaunch_after_crash`` treats a worker that stayed
+# up >= ``_RESTART_STREAK_RESET_UPTIME_S`` (60s) as having had a "healthy run"
+# and resets the crash-loop streak to 0 — an unclamped
+# ``CIVICCAST_GST_PREROLL_TIMEOUT_S >= 60`` would make a worker that ALWAYS
+# preroll-times-out still measure >= 60s of "uptime" on every single exit
+# (it dies right at its own configured bound), so the streak would reset on
+# every crash and NEVER reach ``_LIVE_SOURCE_FAILURE_FALLBACK_STREAK`` — a
+# genuinely dead source would relaunch forever instead of ever landing on
+# fallback slate (measured: 40 relaunches, streak stuck at 0). 45s keeps the
+# preroll bound comfortably below the 60s reset threshold with margin for
+# poll/scheduling jitter, AND the daemon's crash-path exempts a
+# ``GST_PREROLL_TIMEOUT_EXIT_CODE`` exit from that healthy-uptime reset
+# outright (see ``_relaunch_after_crash``'s own docstring).
+#
+# Round-3 correction: this clamp and the crash-path exemption above are NOT
+# sufficient on their own -- the daemon's SEPARATE alive-poll reset
+# (``EgressDaemon._poll_process``) used to fire on wall-clock seconds since
+# the worker was SPAWNED, which also counts interpreter start + ``import
+# gi``/``Gst.init`` + graph build + this preroll wait itself, none of which is
+# air. That overhead is NOT bounded by ``preroll_timeout_s`` and can push a
+# worker's total spawn-to-exit lifetime past 60s even while it never once
+# reaches PLAYING (measured: alive for 60-62s of poll ticks then a
+# preroll-timeout exit, streak stuck at 1, never escalates in 40 cycles) --
+# so the 45s clamp and the crash-path exemption alone did NOT close the hole
+# either one, individually or together. The real fix is
+# ``_await_playing`` emitting a stderr marker only on an ACTUAL PLAYING
+# transition (see the ``CTRL preroll: reached PLAYING`` print below), which
+# ``EgressDaemon._poll_process`` looks for via
+# ``civiccast.egress.health.worker_reached_playing`` and only starts the 60s
+# healthy-uptime clock from the moment that evidence is first observed —
+# never from spawn time.
+#
+# Round-4 correction (PR #183 review, BLOCKER REPRODUCED): round-3's fix was
+# ITSELF not sufficient -- the marker text above is real, but the daemon's
+# per-channel stderr log is a single FIXED PATH opened in APPEND mode and
+# never truncated per spawn (``_default_worker_launcher`` in ``strategy.py``,
+# ``start_ffmpeg`` in ``_ffmpeg.py`` on the FFmpeg side). Once ANY worker on a
+# channel ever printed this marker, it sat in the log forever, and
+# ``worker_reached_playing``'s old fixed tail-window read had no way to tell
+# "this worker's own marker" apart from "a previous worker's marker still in
+# the tail window" -- every later worker was "confirmed on air" on its very
+# first poll tick, so the 60s healthy-uptime clock became a spawn clock again
+# (measured: 40 relaunches, streak pinned at 1 -- the exact round-2 symptom
+# this whole fix chain exists to close, reproduced through the round-3 fix
+# unchanged). Closed with two independent anchors, belt and braces:
+# ``EgressDaemon._stderr_spawn_offset`` records the log's byte SIZE at this
+# worker's own spawn, and ``worker_reached_playing`` /
+# ``read_ffmpeg_encoder_metrics_since`` (``civiccast.egress.health``) scan
+# ONLY bytes at or after that offset -- a previous worker's marker, which
+# always sits before it, is never read at all, not merely filtered out after
+# the fact; AND the marker line now carries THIS worker's own pid (see the
+# ``os.getpid()`` print below), which the daemon requires to match its
+# currently-tracked process before crediting the marker, independent of
+# whether the byte offset happens to be right. The fixed 64 KiB tail window
+# is gone from this check entirely -- the marker is the OLDEST line a worker
+# ever prints, so a small tail window was never actually safe against a
+# worker whose own startup chatter grew past it before the first observing
+# poll tick, append-log bug aside.
+_DEFAULT_PREROLL_TIMEOUT_S = 30.0
+_MIN_PREROLL_TIMEOUT_S = 5.0
+_MAX_PREROLL_TIMEOUT_S = 45.0
+_PREROLL_TIMEOUT_ENV_VAR = "CIVICCAST_GST_PREROLL_TIMEOUT_S"
+# How often _await_playing logs the pipeline's still-waiting state while a
+# preroll is in flight, so a SLOW preroll is visible on stderr (and in the
+# daemon's stderr-tail last_error) well before it either finishes or times
+# out — before this fix a preroll wedged anywhere under the bound was
+# completely silent until it either succeeded or the worker died.
+_PREROLL_POLL_INTERVAL_S = 5.0
+
+
+def _resolve_preroll_timeout_s(explicit: float | None) -> float:
+    """Resolve the PLAYING-preroll bound: an explicit constructor value wins,
+    else the ``CIVICCAST_GST_PREROLL_TIMEOUT_S`` env var, else the 30s
+    default — always clamped to ``[5, 45]``s. The floor guards against
+    false-positiving on ordinary CPU-load preroll jitter (the exact item 82
+    failure mode); the ceiling keeps the bound safely under the daemon's 60s
+    healthy-uptime streak-reset threshold (see the module-level comment above
+    ``_DEFAULT_PREROLL_TIMEOUT_S`` for why an unclamped value there silently
+    defeats the crash-loop escalation to fallback slate).
+
+    Round-2 review item 4 (Opus, PR #183): ``min(max(x, lo), hi)`` does NOT
+    clamp a NaN -- Python's ``max``/``min`` keep their FIRST argument on any
+    comparison against NaN (every comparison with NaN is False), so
+    ``min(max(nan, 5.0), 45.0)`` evaluates to ``nan``, not ``5.0``. A NaN
+    bound then reaches ``_await_playing``'s ``deadline = time.monotonic() +
+    self.preroll_timeout_s`` as NaN, every ``remaining`` comparison against it
+    is False, and the loop falls through to the generic pipeline-construction
+    ``ValueError`` path instead of ever raising the distinct
+    ``PrerollTimeoutError`` -- silently defeating the whole point of this
+    fix (a slow start dies as an ORDINARY crash again, indistinguishable from
+    a real pipeline failure). ``CIVICCAST_GST_PREROLL_TIMEOUT_S=nan`` parses
+    cleanly as a float (Python's ``float("nan")`` succeeds), so it was never
+    caught by the existing ``except ValueError`` either. Guarded with
+    ``math.isfinite`` before the clamp on both the explicit-arg and env-var
+    paths: a non-finite value (NaN or +/-inf) falls back to the 30s default
+    with a warning, exactly like any other unusable input."""
+    if explicit is not None:
+        if not math.isfinite(explicit):
+            print(
+                f"CTRL preroll: ignoring non-finite preroll_timeout_s={explicit!r}; "
+                f"using default {_DEFAULT_PREROLL_TIMEOUT_S}s",
+                file=sys.stderr,
+                flush=True,
+            )
+            return _DEFAULT_PREROLL_TIMEOUT_S
+        return min(max(explicit, _MIN_PREROLL_TIMEOUT_S), _MAX_PREROLL_TIMEOUT_S)
+    raw = os.environ.get(_PREROLL_TIMEOUT_ENV_VAR)
+    if raw:
+        try:
+            parsed = float(raw)
+        except ValueError:
+            parsed = math.nan  # falls through to the non-finite branch below
+        if not math.isfinite(parsed):
+            print(
+                f"CTRL preroll: ignoring non-finite {_PREROLL_TIMEOUT_ENV_VAR}={raw!r}; "
+                f"using default {_DEFAULT_PREROLL_TIMEOUT_S}s",
+                file=sys.stderr,
+                flush=True,
+            )
+            return _DEFAULT_PREROLL_TIMEOUT_S
+        return min(max(parsed, _MIN_PREROLL_TIMEOUT_S), _MAX_PREROLL_TIMEOUT_S)
+    return _DEFAULT_PREROLL_TIMEOUT_S
+
+
 class SwapController:
     """Pluggable hot-swap mechanism. Lets GstInterpipe drop in later (S15 §9)."""
 
@@ -180,6 +326,7 @@ class GstPlayoutEngine:
         reload_timeout_s: float = 10.0,
         stall_timeout_s: float = 10.0,
         defer_switch_timeout_s: float = 900.0,
+        preroll_timeout_s: float | None = None,
     ) -> None:
         prefer_cpu_decoders_by_default()
         Gst.init([])
@@ -209,6 +356,10 @@ class GstPlayoutEngine:
         # on-air, the pipeline has silently stalled — quit so the daemon restarts the
         # worker to a known state (a live source that freezes without posting an error).
         self.stall_timeout_s = stall_timeout_s
+        # Item 82: bounded PLAYING-preroll wait (see ``_await_playing`` / the
+        # module-level ``_resolve_preroll_timeout_s`` for the constructor-arg /
+        # env-var / default resolution and clamp).
+        self.preroll_timeout_s = _resolve_preroll_timeout_s(preroll_timeout_s)
         self.pipeline = Gst.Pipeline.new("civiccast-playout")
         self.mux: Gst.Element | None = None
         self.selector: Gst.Element | None = None
@@ -1134,14 +1285,99 @@ class GstPlayoutEngine:
 
     def _await_playing(self) -> None:
         """Bounded wait for the PLAYING transition so a wedged preroll can't hang the
-        run loop before the time-bounded teardown could ever run (audit M1)."""
-        result, _current, _pending = self.pipeline.get_state(
-            int(self.teardown_timeout_s * Gst.SECOND)
-        )
-        if result not in (Gst.StateChangeReturn.SUCCESS, Gst.StateChangeReturn.NO_PREROLL):
-            raise RuntimeError(
-                f"pipeline did not reach PLAYING within {self.teardown_timeout_s}s "
-                f"(get_state={result.value_nick})"
+        run loop before the time-bounded teardown could ever run (audit M1).
+
+        Item 82 (sandbox run 13 evidence): a fresh worker under CPU load took
+        longer than the old hard-coded 5.0s bound (``teardown_timeout_s``, which
+        was never meant to double as a preroll bound) to reach PLAYING, and the
+        daemon treated the resulting crash as an ordinary one — a relaunch storm
+        against a source that was never actually broken. This now:
+
+        * waits up to ``self.preroll_timeout_s`` (30s default, configurable —
+          see ``_resolve_preroll_timeout_s``), polling in
+          ``_PREROLL_POLL_INTERVAL_S``-second slices rather than blocking on one
+          ``get_state`` call for the whole bound, so a slow-but-progressing
+          preroll is VISIBLE on stderr instead of silent until it either
+          finishes or the bound is hit;
+        * raises the distinct ``PrerollTimeoutError`` (not a bare
+          ``RuntimeError``) only once the bound is actually exceeded, so
+          ``worker.py`` can exit with a distinct code and the daemon's relaunch
+          path can tell a slow start apart from a genuine crash.
+        """
+        started = time.monotonic()
+        deadline = started + self.preroll_timeout_s
+        while True:
+            remaining = deadline - time.monotonic()
+            slice_s = (
+                remaining if remaining < _PREROLL_POLL_INTERVAL_S else _PREROLL_POLL_INTERVAL_S
+            )
+            result, current, pending = self.pipeline.get_state(int(max(slice_s, 0.0) * Gst.SECOND))
+            if result in (Gst.StateChangeReturn.SUCCESS, Gst.StateChangeReturn.NO_PREROLL):
+                # Round-2 review BLOCKER (Opus, PR #183, item 1): this line is the
+                # ONLY genuine evidence that the pipeline actually reached PLAYING
+                # (real output, not merely "the process hasn't exited yet"). The
+                # daemon's alive-poll path (``EgressDaemon._poll_process``) used to
+                # reset the crash-loop streak on wall-clock seconds since SPAWN,
+                # which also counts interpreter start + ``import gi``/``Gst.init``
+                # + graph build + this very preroll wait -- none of which is air.
+                # Under load that non-air overhead alone can exceed the daemon's
+                # 60s healthy-uptime reset threshold, so a worker that has NEVER
+                # once reached PLAYING could still get its crash streak reset
+                # every cycle (measured: streak stuck at 1, never escalates to
+                # fallback slate in 40 cycles). The daemon now greps this exact
+                # marker out of the worker's stderr log
+                # (``civiccast.egress.health.worker_reached_playing``) and only
+                # starts the 60s healthy-uptime clock from the moment it is
+                # first observed -- see ``EgressDaemon._poll_process``. ASCII
+                # only + a stable prefix: this text is a parsed contract, not
+                # just a log line -- changing it silently breaks the daemon's
+                # match.
+                # Round-4 (PR #183 review, BLOCKER reproduced): the marker
+                # now also carries THIS worker's own pid. The daemon's
+                # per-channel stderr log is opened in APPEND mode and never
+                # truncated per spawn (see ``_default_worker_launcher`` /
+                # ``start_ffmpeg``), so a fixed marker string alone let a
+                # PREVIOUS worker's own "reached PLAYING" line satisfy a
+                # brand-new worker's on-air-evidence check the moment it was
+                # spawned. The daemon's primary defense is now anchoring the
+                # scan to bytes at or after ITS OWN spawn point
+                # (``EgressDaemon._stderr_spawn_offset``); this pid is a
+                # second, independent check
+                # (``civiccast.egress.health.worker_reached_playing``'s
+                # ``expected_pid``) that holds even if the byte offset is
+                # ever wrong.
+                print(
+                    f"CTRL preroll: reached PLAYING after {time.monotonic() - started:.1f}s "
+                    f"pid={os.getpid()}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return
+            if result == Gst.StateChangeReturn.FAILURE:
+                # Not a slow preroll -- the pipeline itself failed. Distinct from
+                # the timeout case: this is a real construction/link problem, not
+                # something a slow-start retry would ever recover from.
+                raise RuntimeError(
+                    f"pipeline failed while waiting for PLAYING (get_state={result.value_nick})"
+                )
+            now = time.monotonic()
+            if now >= deadline:
+                raise PrerollTimeoutError(
+                    f"pipeline did not reach PLAYING within {self.preroll_timeout_s}s "
+                    f"(get_state={result.value_nick})"
+                )
+            # Round-2 review, item 3: log the CURRENT state too, not just the
+            # get_state result and the pending state -- ``current`` is what
+            # actually tells an operator whether the pipeline is stuck in
+            # NULL/READY (never really started) vs PAUSED (genuinely
+            # prerolling, just slowly) while it waits.
+            print(
+                f"CTRL preroll: still waiting for PLAYING after "
+                f"{self.preroll_timeout_s - (deadline - now):.1f}s of "
+                f"{self.preroll_timeout_s:.1f}s (get_state={result.value_nick}, "
+                f"current={current.value_nick}, pending={pending.value_nick})",
+                file=sys.stderr,
+                flush=True,
             )
 
     def run(self, *, swaps: int, interval_s: int) -> dict[str, Any]:

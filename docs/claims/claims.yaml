@@ -643,11 +643,138 @@ entries:
       # source-leg names stay unique across an initial build and three
       # simulated reloads). Blob IDs re-hashed with
       # `git hash-object --path <file> <file>` per D2.
+      #
+      # engine.py and worker.py drifted a SIXTH time (item 82, sandbox run 13
+      # evidence, 2026-09-06): a fresh worker under CPU load hit
+      # ``pipeline did not reach PLAYING within 5.0s`` -- the old bound reused
+      # ``teardown_timeout_s`` (5.0s), never meant to double as a preroll
+      # bound -- and the daemon relaunched it as an ordinary crash. Fixed:
+      # ``_await_playing`` now waits up to a dedicated, configurable
+      # ``preroll_timeout_s`` (30s default, ``CIVICCAST_GST_PREROLL_TIMEOUT_S``
+      # env override, clamped to ``[5, 45]``s), polling every 5s and logging
+      # the ``get_state`` result, the CURRENT pipeline state, AND the pending
+      # state on every slice instead of blocking silently, and raises the
+      # distinct ``PrerollTimeoutError`` once the bound is exceeded.
+      # ``worker.py`` catches that and exits with the distinct
+      # ``civiccast.egress.gst.exit_codes.GST_PREROLL_TIMEOUT_EXIT_CODE`` (a
+      # new, gi-free sibling module, NOT itself bound here -- the daemon's own
+      # ``civiccast/egress/daemon.py`` reads it and is not a code input of
+      # this native-Windows-line spike claim) and, on that path, still emits
+      # its ``WORKER_RESULT`` receipt (``{"error": ("preroll-timeout", ...),
+      # "teardown_clean": False}``) so
+      # ``civiccast.native.installed_gstreamer_smoke.require_clean_worker_result``
+      # can name the reason instead of reporting a missing receipt. Neither
+      # graph.py, control.py, decode_policy.py, nor audio_tap.py changed.
+      #
+      # Round-2 review BLOCKER (Opus, PR #183, same day): the 45s upper clamp
+      # above is load-bearing, not cosmetic -- an unclamped bound
+      # >= ``_RESTART_STREAK_RESET_UPTIME_S`` (60s, ``civiccast/egress/
+      # daemon.py``) made a worker that ALWAYS preroll-times-out still measure
+      # >= 60s of "uptime" on every single exit, which reset the daemon's
+      # crash-loop streak on every crash and silently defeated escalation to
+      # fallback slate forever (measured: 40 relaunches, streak stuck at 0).
+      # Fixed on BOTH sides: engine.py's clamp keeps the configured bound
+      # under that threshold with margin, AND ``EgressDaemon.
+      # _relaunch_after_crash`` now exempts a
+      # ``GST_PREROLL_TIMEOUT_EXIT_CODE`` exit from the healthy-uptime streak
+      # reset outright (a preroll that never reached PLAYING is not "healthy
+      # uptime" regardless of how long it took) -- daemon.py is not itself a
+      # `code` input of this native-Windows-line spike claim (unchanged from
+      # before this entry existed), so only engine.py's re-hash reflects this
+      # round.
+      #
+      # Round-3 review BLOCKER (Opus, PR #183): Round-2's fix (the 45s clamp
+      # + the crash-path exemption) turned out to be INCOMPLETE, not merely
+      # cosmetic-plus-one-more-belt -- ``EgressDaemon._poll_process`` has a
+      # SEPARATE healthy-uptime reset on the ALIVE-poll path (no returncode
+      # to exempt there) that reset the crash streak on wall-clock seconds
+      # since the worker was SPAWNED, which also counts interpreter start +
+      # ``import gi``/``Gst.init`` + graph build + the preroll wait itself --
+      # none of which is air. Measured against the real ``process_once``
+      # loop: a worker "alive" per poll for 60-62s before its preroll-timeout
+      # exit got its streak reset every tick past the 60s mark, BEFORE it
+      # ever exited -- streak stuck at 1, never escalating to fallback slate
+      # in 40 cycles. Also fixed the same round: CHANGELOG.md's "either fix
+      # alone would have closed the hole" claim (false, per the above) and
+      # this module's own "regardless of how this bound is configured"
+      # claim (same falseness, corrected in engine.py's module comment); and
+      # ``CIVICCAST_GST_PREROLL_TIMEOUT_S=nan`` escaping the ``[5, 45]``
+      # clamp entirely (``min(max(nan, 5), 45)`` is ``nan``, not ``5.0`` --
+      # Python's min/max keep their first argument across any NaN
+      # comparison), which reached ``_await_playing`` as the deadline
+      # arithmetic's operand and fell through to the generic pipeline-
+      # construction ``ValueError`` path instead of the distinct
+      # ``PrerollTimeoutError``. Fixed: ``_await_playing`` now prints a
+      # stable ``CTRL preroll: reached PLAYING`` marker ONLY on the actual
+      # success path (engine.py), the daemon greps for it via the new
+      # ``civiccast.egress.health.worker_reached_playing`` (health.py, not
+      # itself bound here -- see the daemon.py note above for why daemon-
+      # side files are out of scope for this claim) and only starts its 60s
+      # healthy-uptime clock from the moment that evidence is first
+      # observed, and ``_resolve_preroll_timeout_s`` now guards both the
+      # explicit-arg and env-var paths with ``math.isfinite`` before
+      # clamping. worker.py also changed this round (item 5, a carry-over
+      # follow-up, not a blocker): ``PrerollTimeoutError`` used to propagate
+      # out of ``run_forever`` without ``engine_instance.stop()`` ever
+      # running, so the only teardown was the unconditional ``os._exit()``
+      # at the bottom of the file; ``main()``'s except branch now attempts
+      # ``stop(force_exit_on_hang=False)`` (already time-bounded via
+      # ``teardown_timeout_s``; deliberately NOT ``force_exit_on_hang=True``,
+      # which would swap the distinct exit code for a generic forced-kill
+      # one on a stuck teardown) and reports the real ``teardown_clean``
+      # outcome instead of a hardcoded False. Neither graph.py, control.py,
+      # decode_policy.py, nor audio_tap.py changed.
+      #
+      # Round-4 review BLOCKER (Opus, PR #183), REPRODUCED: round-3's fix
+      # above (``worker_reached_playing``) was itself not sufficient --
+      # ``strategy.py`` / ``_ffmpeg.py`` (neither a code input of this claim)
+      # open the channel's per-worker stderr log in APPEND mode and never
+      # truncate it per spawn, so ONE worker ever reaching PLAYING left the
+      # marker in the log forever, and every LATER worker on the same
+      # channel read as "confirmed on air" on its own very first poll tick
+      # (measured: 40 relaunches, streak pinned at 1 -- the round-2 symptom,
+      # reproduced through the round-3 fix unchanged). Fixed with two
+      # independent anchors: the daemon (``civiccast/egress/daemon.py``, not
+      # itself a code input here) now snapshots the log's byte size at each
+      # worker's own spawn (``_stderr_spawn_offset``) and scans only bytes at
+      # or after it (``civiccast.egress.health.worker_reached_playing`` /
+      # the new ``read_ffmpeg_encoder_metrics_since``, health.py likewise not
+      # bound here); AND engine.py's marker now also prints the worker's own
+      # pid (``... pid=1234``, ``os.getpid()``), which the daemon requires to
+      # match its currently-tracked process before crediting the marker --
+      # a second, independent check that holds even if the byte offset were
+      # ever wrong. Only engine.py's re-hash reflects this round; worker.py
+      # is unchanged and its blob is unchanged from the round-3 value.
+      #
+      # Current-source proof: tests/egress/test_gst_engine_preroll_timeout.py
+      # (engine side, including the 45s clamp, the current+pending log line,
+      # the new ``reached PLAYING`` success marker now carrying a pid, and
+      # the NaN-clamp-escape regression tests),
+      # tests/egress/test_gst_worker_preroll_timeout_exit.py
+      # (the worker's exit code, WORKER_RESULT receipt, and the new
+      # bounded-teardown-attempt coverage including a teardown that itself
+      # raises), tests/egress/test_health.py (``worker_reached_playing``'s
+      # spawn-offset anchor and pid check, and the new
+      # ``read_ffmpeg_encoder_metrics_since`` FFmpeg-side equivalent), and
+      # tests/egress/test_daemon_preroll_timeout_relaunch.py (the
+      # daemon's rate-limited streak wired through a REAL ``_poll_process``
+      # returncode, the healthy-uptime exemption, sustained-crash escalation
+      # to fallback slate at both the 30s default and the 45s clamp ceiling,
+      # the round-3 alive-poll-path regression: sustained preroll timeouts
+      # at worker lifetimes of 45/59/60/62/90s under both bounds, AND the
+      # round-4 append-mode fixture + the reviewer's own stale-marker
+      # reproduction (worker 1 emits the marker and exits cleanly, workers
+      # 2-5 each append only the timeout line to the SAME append-mode log
+      # and must still escalate to fallback slate rather than latching on
+      # worker 1's marker) -- all reproduce the reviewer's exact measured
+      # bug shape against the PRE-fix gating logic before being restored to
+      # the fix).
+      # Blob IDs re-hashed with `git hash-object --path <file> <file>`.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 30a9b5231b0d06f82622015264da9727a30da52d
+          blob: 06cdff1b94409a5f1c15afd7b063630fd162e60e
         - path: civiccast/egress/gst/engine.py
-          blob: f062bb505e75fab8e94d357b19b5ca75c6e63a7b
+          blob: 59ba6fddbd87ae500fb6a336aa3594cd70e8fab6
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -983,11 +1110,138 @@ entries:
       # source-leg names stay unique across an initial build and three
       # simulated reloads). Blob IDs re-hashed with
       # `git hash-object --path <file> <file>` per D2.
+      #
+      # engine.py and worker.py drifted a SIXTH time (item 82, sandbox run 13
+      # evidence, 2026-09-06): a fresh worker under CPU load hit
+      # ``pipeline did not reach PLAYING within 5.0s`` -- the old bound reused
+      # ``teardown_timeout_s`` (5.0s), never meant to double as a preroll
+      # bound -- and the daemon relaunched it as an ordinary crash. Fixed:
+      # ``_await_playing`` now waits up to a dedicated, configurable
+      # ``preroll_timeout_s`` (30s default, ``CIVICCAST_GST_PREROLL_TIMEOUT_S``
+      # env override, clamped to ``[5, 45]``s), polling every 5s and logging
+      # the ``get_state`` result, the CURRENT pipeline state, AND the pending
+      # state on every slice instead of blocking silently, and raises the
+      # distinct ``PrerollTimeoutError`` once the bound is exceeded.
+      # ``worker.py`` catches that and exits with the distinct
+      # ``civiccast.egress.gst.exit_codes.GST_PREROLL_TIMEOUT_EXIT_CODE`` (a
+      # new, gi-free sibling module, NOT itself bound here -- the daemon's own
+      # ``civiccast/egress/daemon.py`` reads it and is not a code input of
+      # this native-Windows-line spike claim) and, on that path, still emits
+      # its ``WORKER_RESULT`` receipt (``{"error": ("preroll-timeout", ...),
+      # "teardown_clean": False}``) so
+      # ``civiccast.native.installed_gstreamer_smoke.require_clean_worker_result``
+      # can name the reason instead of reporting a missing receipt. Neither
+      # graph.py, control.py, decode_policy.py, nor audio_tap.py changed.
+      #
+      # Round-2 review BLOCKER (Opus, PR #183, same day): the 45s upper clamp
+      # above is load-bearing, not cosmetic -- an unclamped bound
+      # >= ``_RESTART_STREAK_RESET_UPTIME_S`` (60s, ``civiccast/egress/
+      # daemon.py``) made a worker that ALWAYS preroll-times-out still measure
+      # >= 60s of "uptime" on every single exit, which reset the daemon's
+      # crash-loop streak on every crash and silently defeated escalation to
+      # fallback slate forever (measured: 40 relaunches, streak stuck at 0).
+      # Fixed on BOTH sides: engine.py's clamp keeps the configured bound
+      # under that threshold with margin, AND ``EgressDaemon.
+      # _relaunch_after_crash`` now exempts a
+      # ``GST_PREROLL_TIMEOUT_EXIT_CODE`` exit from the healthy-uptime streak
+      # reset outright (a preroll that never reached PLAYING is not "healthy
+      # uptime" regardless of how long it took) -- daemon.py is not itself a
+      # `code` input of this native-Windows-line spike claim (unchanged from
+      # before this entry existed), so only engine.py's re-hash reflects this
+      # round.
+      #
+      # Round-3 review BLOCKER (Opus, PR #183): Round-2's fix (the 45s clamp
+      # + the crash-path exemption) turned out to be INCOMPLETE, not merely
+      # cosmetic-plus-one-more-belt -- ``EgressDaemon._poll_process`` has a
+      # SEPARATE healthy-uptime reset on the ALIVE-poll path (no returncode
+      # to exempt there) that reset the crash streak on wall-clock seconds
+      # since the worker was SPAWNED, which also counts interpreter start +
+      # ``import gi``/``Gst.init`` + graph build + the preroll wait itself --
+      # none of which is air. Measured against the real ``process_once``
+      # loop: a worker "alive" per poll for 60-62s before its preroll-timeout
+      # exit got its streak reset every tick past the 60s mark, BEFORE it
+      # ever exited -- streak stuck at 1, never escalating to fallback slate
+      # in 40 cycles. Also fixed the same round: CHANGELOG.md's "either fix
+      # alone would have closed the hole" claim (false, per the above) and
+      # this module's own "regardless of how this bound is configured"
+      # claim (same falseness, corrected in engine.py's module comment); and
+      # ``CIVICCAST_GST_PREROLL_TIMEOUT_S=nan`` escaping the ``[5, 45]``
+      # clamp entirely (``min(max(nan, 5), 45)`` is ``nan``, not ``5.0`` --
+      # Python's min/max keep their first argument across any NaN
+      # comparison), which reached ``_await_playing`` as the deadline
+      # arithmetic's operand and fell through to the generic pipeline-
+      # construction ``ValueError`` path instead of the distinct
+      # ``PrerollTimeoutError``. Fixed: ``_await_playing`` now prints a
+      # stable ``CTRL preroll: reached PLAYING`` marker ONLY on the actual
+      # success path (engine.py), the daemon greps for it via the new
+      # ``civiccast.egress.health.worker_reached_playing`` (health.py, not
+      # itself bound here -- see the daemon.py note above for why daemon-
+      # side files are out of scope for this claim) and only starts its 60s
+      # healthy-uptime clock from the moment that evidence is first
+      # observed, and ``_resolve_preroll_timeout_s`` now guards both the
+      # explicit-arg and env-var paths with ``math.isfinite`` before
+      # clamping. worker.py also changed this round (item 5, a carry-over
+      # follow-up, not a blocker): ``PrerollTimeoutError`` used to propagate
+      # out of ``run_forever`` without ``engine_instance.stop()`` ever
+      # running, so the only teardown was the unconditional ``os._exit()``
+      # at the bottom of the file; ``main()``'s except branch now attempts
+      # ``stop(force_exit_on_hang=False)`` (already time-bounded via
+      # ``teardown_timeout_s``; deliberately NOT ``force_exit_on_hang=True``,
+      # which would swap the distinct exit code for a generic forced-kill
+      # one on a stuck teardown) and reports the real ``teardown_clean``
+      # outcome instead of a hardcoded False. Neither graph.py, control.py,
+      # decode_policy.py, nor audio_tap.py changed.
+      #
+      # Round-4 review BLOCKER (Opus, PR #183), REPRODUCED: round-3's fix
+      # above (``worker_reached_playing``) was itself not sufficient --
+      # ``strategy.py`` / ``_ffmpeg.py`` (neither a code input of this claim)
+      # open the channel's per-worker stderr log in APPEND mode and never
+      # truncate it per spawn, so ONE worker ever reaching PLAYING left the
+      # marker in the log forever, and every LATER worker on the same
+      # channel read as "confirmed on air" on its own very first poll tick
+      # (measured: 40 relaunches, streak pinned at 1 -- the round-2 symptom,
+      # reproduced through the round-3 fix unchanged). Fixed with two
+      # independent anchors: the daemon (``civiccast/egress/daemon.py``, not
+      # itself a code input here) now snapshots the log's byte size at each
+      # worker's own spawn (``_stderr_spawn_offset``) and scans only bytes at
+      # or after it (``civiccast.egress.health.worker_reached_playing`` /
+      # the new ``read_ffmpeg_encoder_metrics_since``, health.py likewise not
+      # bound here); AND engine.py's marker now also prints the worker's own
+      # pid (``... pid=1234``, ``os.getpid()``), which the daemon requires to
+      # match its currently-tracked process before crediting the marker --
+      # a second, independent check that holds even if the byte offset were
+      # ever wrong. Only engine.py's re-hash reflects this round; worker.py
+      # is unchanged and its blob is unchanged from the round-3 value.
+      #
+      # Current-source proof: tests/egress/test_gst_engine_preroll_timeout.py
+      # (engine side, including the 45s clamp, the current+pending log line,
+      # the new ``reached PLAYING`` success marker now carrying a pid, and
+      # the NaN-clamp-escape regression tests),
+      # tests/egress/test_gst_worker_preroll_timeout_exit.py
+      # (the worker's exit code, WORKER_RESULT receipt, and the new
+      # bounded-teardown-attempt coverage including a teardown that itself
+      # raises), tests/egress/test_health.py (``worker_reached_playing``'s
+      # spawn-offset anchor and pid check, and the new
+      # ``read_ffmpeg_encoder_metrics_since`` FFmpeg-side equivalent), and
+      # tests/egress/test_daemon_preroll_timeout_relaunch.py (the
+      # daemon's rate-limited streak wired through a REAL ``_poll_process``
+      # returncode, the healthy-uptime exemption, sustained-crash escalation
+      # to fallback slate at both the 30s default and the 45s clamp ceiling,
+      # the round-3 alive-poll-path regression: sustained preroll timeouts
+      # at worker lifetimes of 45/59/60/62/90s under both bounds, AND the
+      # round-4 append-mode fixture + the reviewer's own stale-marker
+      # reproduction (worker 1 emits the marker and exits cleanly, workers
+      # 2-5 each append only the timeout line to the SAME append-mode log
+      # and must still escalate to fallback slate rather than latching on
+      # worker 1's marker) -- all reproduce the reviewer's exact measured
+      # bug shape against the PRE-fix gating logic before being restored to
+      # the fix).
+      # Blob IDs re-hashed with `git hash-object --path <file> <file>`.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 30a9b5231b0d06f82622015264da9727a30da52d
+          blob: 06cdff1b94409a5f1c15afd7b063630fd162e60e
         - path: civiccast/egress/gst/engine.py
-          blob: f062bb505e75fab8e94d357b19b5ca75c6e63a7b
+          blob: 59ba6fddbd87ae500fb6a336aa3594cd70e8fab6
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py

@@ -109,6 +109,10 @@ _sibling_module("decode_policy")
 # B3 fix: engine.py also imports the gi-free reload-switch-mode decoder from this
 # sibling at module scope -- same reasoning as decode_policy above.
 reload_policy_mod = _sibling_module("reload_policy")
+# Item 82: gi-free exit-code contract with the daemon (civiccast.egress.daemon
+# reads this same module -- see exit_codes.py's own docstring for why it must
+# stay side-effect-free rather than living in engine.py).
+exit_codes_mod = _sibling_module("exit_codes")
 enginemod = _sibling_module("engine")
 
 # -- D2 Windows worker-pipe seam (spec-supervisor D2, design.md sec4) --------------
@@ -512,12 +516,63 @@ def main() -> int:
         playout, reload_timeout_s=reload_timeout, stall_timeout_s=stall_timeout
     )
     swaps = int(os.environ.get("SWAPS", "0"))
-    if swaps > 0:
-        result = engine_instance.run(swaps=swaps, interval_s=int(os.environ.get("INTERVAL", "2")))
-    elif os.name == "nt" and control_fifo:
-        result = _run_forever_windows_pipe(engine_instance, control_fifo)
-    else:
-        result = engine_instance.run_forever(control_fifo=control_fifo)
+    try:
+        if swaps > 0:
+            result = engine_instance.run(
+                swaps=swaps, interval_s=int(os.environ.get("INTERVAL", "2"))
+            )
+        elif os.name == "nt" and control_fifo:
+            result = _run_forever_windows_pipe(engine_instance, control_fifo)
+        else:
+            result = engine_instance.run_forever(control_fifo=control_fifo)
+    except enginemod.PrerollTimeoutError as exc:
+        # Item 82: a slow-but-progressing preroll under CPU load is a slow
+        # start, not a crash. Exit with a DISTINCT code (never 1, the generic
+        # crash code every other engine failure below still uses) so the
+        # daemon's relaunch path (civiccast.egress.daemon._relaunch_after_crash
+        # / _begin_relaunch) can retry with the existing backoff WITHOUT
+        # counting this toward the crash-loop force-fallback-slate streak the
+        # same way an ordinary crash does. A distinct stderr message too, so an
+        # operator reading the worker's own log (folded into the daemon's
+        # last_error) sees "slow preroll", not a generic crash.
+        print(f"CTRL preroll: worker exiting -- {exc}", file=sys.stderr, flush=True)
+        # Round-3 review (Opus, PR #183), item 5: ``PrerollTimeoutError`` is
+        # raised INSIDE ``_await_playing`` -- before this fix it propagated
+        # straight here without ``engine_instance.stop()`` ever running, so
+        # the pipeline was never given a chance at a clean ``->NULL``
+        # teardown; only the hard ``os._exit()`` at the bottom of this file
+        # (__main__) ever tore it down, unconditionally, with no attempt at
+        # a graceful release. Call ``stop()`` here too, but deliberately
+        # ``force_exit_on_hang=False``: ``stop()`` is ALREADY time-bounded
+        # (blocks at most ``teardown_timeout_s``, ~5s default, via its own
+        # bounded ``get_state`` call) so this can never hang the worker, and
+        # ``force_exit_on_hang=True`` would call ``os._exit(70)`` on a stuck
+        # teardown -- silently swapping the distinct
+        # ``GST_PREROLL_TIMEOUT_EXIT_CODE`` this whole except block exists to
+        # preserve for a generic forced-kill code, defeating item 82 itself.
+        # A teardown that itself raises (or simply doesn't complete) must
+        # never block reaching the ``return`` below.
+        teardown_clean = False
+        try:
+            teardown_clean = engine_instance.stop(force_exit_on_hang=False)
+        except Exception as teardown_exc:  # never let teardown mask the real exit code
+            print(
+                f"CTRL preroll: teardown after preroll timeout failed: {teardown_exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+        # Round-2 review, item 5: emit the WORKER_RESULT receipt here too --
+        # civiccast.native.installed_gstreamer_smoke.require_clean_worker_result
+        # requires ONE (its own error is an unhelpful "product worker emitted
+        # no WORKER_RESULT receipt" otherwise) and, with it, its failure
+        # message NAMES the actual reason (this dict's ``error`` tuple)
+        # instead of just an exit code. ``teardown_clean`` now reflects the
+        # ``stop()`` attempt above, not a hardcoded False -- a preroll that
+        # never reached PLAYING can still tear its (partially built)
+        # pipeline down to NULL cleanly within the bound.
+        preroll_result = {"error": ("preroll-timeout", str(exc)), "teardown_clean": teardown_clean}
+        print(f"WORKER_RESULT {preroll_result}", flush=True)
+        return int(exit_codes_mod.GST_PREROLL_TIMEOUT_EXIT_CODE)
     print(f"WORKER_RESULT {result}", flush=True)
     return 0 if result.get("error") is None else 1
 
