@@ -137,8 +137,8 @@ kill the scan.
 | `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` | `2` | Settled segments a channel may be behind before it counts as overloaded. |
 | `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS` | `120` | First pause after an overload; each consecutive overload doubles it. Item 79 (2026-09): doubled from `60` — a struggling station needs real recovery room before ASR is attempted again. |
 | `CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS` | `900` | Ceiling on that doubling. |
-| `CIVICCAST_CAPTION_TAP_CPU_THREADS` | one per 8 CPUs, max 2 | CTranslate2 intra-op threads for the **live tap only** (item 79, 2026-09). Recorded-meeting transcription is unaffected. |
-| `CIVICCAST_WHISPER_CPU_THREADS` | (unset) | CTranslate2 threads per transcription; overrides `..._TAP_CPU_THREADS` above when set. For batch/VOD, `0` means "every core" and is honoured as before. For the **live tap**, `0` is refused (item 79, 2026-09): it falls back to the live default instead, with a warning logged, so this variable can no longer hand the live tap "every core" even by mistake. |
+| `CIVICCAST_CAPTION_TAP_CPU_THREADS` | one per 8 CPUs, max 2 | CTranslate2 intra-op threads for the **live tap only** (item 79, 2026-09). "One per 8 CPUs, max 2" is the *default* — an operator override is honoured up to `2` (`LIVE_TAP_CPU_THREADS_CEILING`); asking for more is refused, not silently clamped: the value is capped at `2` and a WARNING is logged naming the rejected value. Recorded-meeting transcription is unaffected. |
+| `CIVICCAST_WHISPER_CPU_THREADS` | (unset) | CTranslate2 threads per transcription; overrides `..._TAP_CPU_THREADS` above when set. For batch/VOD, `0` means "every core" and is honoured as before, with no ceiling. For the **live tap**, `0` is refused (item 79, 2026-09): it falls back to the live default instead, with a warning logged, so this variable can no longer hand the live tap "every core" even by mistake — and, same as the tap-only variable above, any live value above `2` (`LIVE_TAP_CPU_THREADS_CEILING`) is capped at `2` rather than honoured, also with a WARNING. The live tap's `cpu_threads` is therefore never more than `2`, however either variable is set. |
 | `CIVICCAST_WHISPER_BEAM_SIZE` | `1` on CPU, `5` on CUDA | Decoder beam width. Wider is slightly more accurate and roughly linearly more expensive. |
 
 ### Turning live captions off
@@ -235,8 +235,14 @@ same channel mean the station cannot transcribe that channel in real time.
 **If a station is permanently paused,** the fix is to reduce the caption work,
 not to raise the CPU limits: move to a lower caption tier, caption fewer
 channels at once, or put a supported GPU in the box. Raising
-`CIVICCAST_WHISPER_CPU_THREADS` on a CPU-only station that is on air trades
-broadcast reliability for captions that the backoff is going to discard anyway.
+`CIVICCAST_WHISPER_CPU_THREADS` (or `CIVICCAST_CAPTION_TAP_CPU_THREADS`) on a
+CPU-only station that is on air is no longer a lever that trades broadcast
+reliability for more captions (item 79, 2026-09): the live tap caps both
+variables at `LIVE_TAP_CPU_THREADS_CEILING` (`2`) and logs a WARNING when an
+operator asks for more, precisely so this trade can no longer be made by
+raising a number — the tap shares its box with playout and must never
+approach "every core" again, which is what produced the original field
+failure this whole knob-hardening effort exists to prevent.
 
 **Why off by default:** live transcription needs the local faster-whisper
 model runtime. Enabling `inline` without the model installed fails fast at

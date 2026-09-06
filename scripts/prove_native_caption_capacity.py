@@ -382,13 +382,22 @@ def build_caption_runtime(
             # module docstring: "the production CaptionTapWorker ... under a
             # real-time deadline"), so it must ask for the live sizing the
             # same way civiccast.ai_models.runtime.build_caption_runtime does
-            # for the real product. `cpu_threads`/`beam_size` are still
-            # passed explicitly above (from --cpu-threads/--beam-size,
-            # both now defaulting to the live values -- see argparse below),
-            # so `live=True` here does not silently override an operator's
-            # deliberate hardware-exploration trial; it only makes the
-            # runtime's OWN `_live`-gated behavior (the startup log line,
-            # the CUDA-fallback beam-width drop) match what production does.
+            # for the real product. `cpu_threads`/`beam_size` are still passed
+            # explicitly above (from --cpu-threads/--beam-size, both now
+            # defaulting to the live values -- see argparse below), but
+            # `live=True` here DOES let the runtime override those explicit
+            # trial values: FasterWhisperRuntime.__init__ resolves
+            # CIVICCAST_WHISPER_CPU_THREADS/CIVICCAST_WHISPER_BEAM_SIZE (and,
+            # for cpu_threads, CIVICCAST_CAPTION_TAP_CPU_THREADS and the
+            # LIVE_TAP_CPU_THREADS_CEILING cap) AFTER the constructor
+            # argument, when `live=True` (round 4 review, measured: env beam
+            # 7 + --beam-size 1 -> runtime.beam_size becomes 7; env threads 8
+            # + --cpu-threads 1 -> runtime.cpu_threads becomes 2). So the
+            # identity dict below records `runtime.beam_size`/
+            # `runtime.cpu_threads` POST-CONSTRUCTION, the same standard
+            # `num_workers` already uses, rather than the pre-construction
+            # args, which can silently differ from what was actually
+            # measured whenever those env vars are set.
             live=True,
         )
     finally:
@@ -399,9 +408,21 @@ def build_caption_runtime(
                 os.environ[name] = previous_value
     return runtime, {
         "backend": backend,
-        "beam_size": beam_size,
+        # Recorded post-construction (reflects CIVICCAST_WHISPER_BEAM_SIZE if
+        # the operator set one, and live=True's CUDA-fallback beam-width
+        # drop) so every capacity report states, in the durable artifact,
+        # exactly which beam width was actually measured -- not the
+        # pre-construction --beam-size trial value, which
+        # FasterWhisperRuntime.__init__ can override for the live tap (see
+        # the comment above this call).
+        "beam_size": runtime.beam_size,
         "compute_type": CAPTION_COMPUTE_TYPE,
-        "cpu_threads": cpu_threads,
+        # Recorded post-construction (reflects CIVICCAST_WHISPER_CPU_THREADS,
+        # CIVICCAST_CAPTION_TAP_CPU_THREADS, and the
+        # LIVE_TAP_CPU_THREADS_CEILING cap) for the same reason: the
+        # pre-construction --cpu-threads trial value can differ from what
+        # the live tap actually ran with.
+        "cpu_threads": runtime.cpu_threads,
         "device": CAPTION_DEVICE,
         "local_files_only": True,
         "model": str(model_dir),

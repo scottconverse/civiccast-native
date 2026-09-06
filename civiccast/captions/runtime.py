@@ -113,9 +113,15 @@ CAPTION_TIER_ENV_VAR = "CIVICCAST_CAPTION_TIER"
 #: This is the FLOOR the live tap's ``cpu_threads`` never goes below; the
 #: actual default a live runtime is built with is
 #: :func:`default_live_tap_cpu_threads`, which now scales (capped) with core
-#: count instead of always being exactly this value. ``CIVICCAST_WHISPER_CPU_THREADS``
-#: still overrides either one on a station the operator has personally sized
-#: (``0`` restores "every core").
+#: count instead of always being exactly this value.
+#: ``CIVICCAST_WHISPER_CPU_THREADS`` still overrides either one on a station
+#: the operator has personally sized, but NOT to "every core": for the LIVE
+#: tap this variable is CLAMPED, not honoured verbatim -- ``0`` falls back
+#: to the default (:func:`_resolved_whisper_cpu_threads_env`) and anything
+#: above :data:`LIVE_TAP_CPU_THREADS_CEILING` is capped at the ceiling, both
+#: logged at WARNING. ``0`` ("every core") is restored only for the
+#: batch/VOD runtime (``live=False``), which keeps the original fail-fast,
+#: no-ceiling behavior.
 LIVE_TAP_CPU_THREADS = 1
 
 #: Ceiling on :func:`default_live_tap_cpu_threads` -- item 79 (sandbox

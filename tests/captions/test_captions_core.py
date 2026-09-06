@@ -241,6 +241,96 @@ class TestRuntimeBoundary:
         assert runtime.device == "auto"
         assert runtime.compute_type == "int8"
 
+    def test_batch_cpu_threads_raises_on_unparseable_env_value(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Round 4: ``live=False`` keeps the pre-existing fail-fast behavior
+        for ``CIVICCAST_WHISPER_CPU_THREADS`` -- a batch/VOD pass is never
+        constructed unguarded at control-plane startup, so a mistyped value
+        should raise loudly rather than being clamped like the live tap.
+        Fails if ``_resolved_whisper_cpu_threads_env`` starts clamping batch
+        the same way it clamps live."""
+
+        monkeypatch.setenv("CIVICCAST_WHISPER_CPU_THREADS", "not-a-number")
+
+        with pytest.raises(ValueError, match="CIVICCAST_WHISPER_CPU_THREADS must be an integer"):
+            FasterWhisperRuntime(live=False)
+
+    def test_batch_cpu_threads_raises_on_negative_env_value(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("CIVICCAST_WHISPER_CPU_THREADS", "-1")
+
+        with pytest.raises(ValueError, match="CIVICCAST_WHISPER_CPU_THREADS must be at least 0"):
+            FasterWhisperRuntime(live=False)
+
+    def test_batch_cpu_threads_honors_zero_as_every_core(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``0`` ("every core") stays HONOURED for the batch/VOD runtime -- a
+        finalization pass is allowed to use the whole machine. Only the LIVE
+        tap refuses ``0``. Fails if batch starts refusing/clamping ``0`` the
+        way the live tap does."""
+
+        monkeypatch.setenv("CIVICCAST_WHISPER_CPU_THREADS", "0")
+
+        runtime = FasterWhisperRuntime(live=False)
+
+        assert runtime.cpu_threads == 0
+
+    def test_live_caps_whisper_cpu_threads_above_ceiling_with_warning(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Round 4: the LIVE tap must never approach 'every core' again, so a
+        generic ``CIVICCAST_WHISPER_CPU_THREADS`` above
+        ``LIVE_TAP_CPU_THREADS_CEILING`` (2) is capped at the ceiling rather
+        than honored, and the cap is visible (a WARNING), not silent. Fails
+        if the live tap starts passing an oversized value straight through."""
+
+        monkeypatch.setenv("CIVICCAST_WHISPER_CPU_THREADS", "8")
+        monkeypatch.delenv("CIVICCAST_CAPTION_TAP_CPU_THREADS", raising=False)
+
+        with caplog.at_level("WARNING", logger="civiccast.captions.runtime"):
+            runtime = FasterWhisperRuntime(live=True)
+
+        assert runtime.cpu_threads == runtime_module.LIVE_TAP_CPU_THREADS_CEILING
+        assert runtime_module.LIVE_TAP_CPU_THREADS_CEILING == 2
+        assert any(
+            "CIVICCAST_WHISPER_CPU_THREADS" in record.message and "capping" in record.message
+            for record in caplog.records
+        )
+
+    def test_live_caps_caption_tap_cpu_threads_above_ceiling_with_warning(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Same ceiling, but through the live-only
+        ``CIVICCAST_CAPTION_TAP_CPU_THREADS`` variable that feeds
+        ``default_live_tap_cpu_threads()`` rather than the generic
+        ``CIVICCAST_WHISPER_CPU_THREADS`` override. Uses 8 (not 2) so the
+        test still fails if the ceiling stops being enforced -- asserting
+        against the ceiling's own value would pass even with the cap
+        deleted."""
+
+        monkeypatch.delenv("CIVICCAST_WHISPER_CPU_THREADS", raising=False)
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_CPU_THREADS", "8")
+
+        with caplog.at_level("WARNING", logger="civiccast.captions.runtime"):
+            runtime = FasterWhisperRuntime(live=True)
+
+        assert runtime.cpu_threads == runtime_module.LIVE_TAP_CPU_THREADS_CEILING
+        assert runtime_module.LIVE_TAP_CPU_THREADS_CEILING == 2
+        assert any(
+            "CIVICCAST_CAPTION_TAP_CPU_THREADS" in record.message and "capping" in record.message
+            for record in caplog.records
+        )
+
     def test_faster_whisper_model_initializes_once_under_concurrent_channels(
         self,
         monkeypatch: pytest.MonkeyPatch,

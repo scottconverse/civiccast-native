@@ -1140,7 +1140,23 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # argparse.ArgumentParser and a monkeypatched constructor), so both lanes
     # advance by three. Re-derived by an actual `--collect-only` run on this
     # tree, not by arithmetic: (1794, 1995) -> (1797, 1998).
-    assert (collect("not windows_only"), collect()) == (1797, 1998)
+    # fix/caption-tap-caps-item79 review round 5: one new platform-independent
+    # case in tests/native/test_caption_capacity_proof.py,
+    # test_capacity_proof_identity_records_post_construction_beam_and_threads,
+    # added after review caught build_caption_runtime's identity dict
+    # recording the PRE-construction --beam-size/--cpu-threads args instead
+    # of the runtime's own post-construction values, which
+    # FasterWhisperRuntime(live=True) can override via
+    # CIVICCAST_WHISPER_BEAM_SIZE/CIVICCAST_WHISPER_CPU_THREADS and the live
+    # ceiling cap (measured: env beam 7 + --beam-size 1 -> runtime.beam_size
+    # 7; env threads 8 + --cpu-threads 1 -> runtime.cpu_threads 2). The new
+    # case fakes a runtime whose resolved attributes differ from the
+    # constructor arguments and asserts the identity dict follows the
+    # runtime. No windows_only marker and no OS dependency (a monkeypatched
+    # constructor and a SimpleNamespace fake), so both lanes advance by one.
+    # Re-derived by an actual `--collect-only` run on this tree, not by
+    # arithmetic: (1797, 1998) -> (1798, 1999).
+    assert (collect("not windows_only"), collect()) == (1798, 1999)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

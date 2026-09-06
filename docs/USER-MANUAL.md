@@ -846,13 +846,18 @@ station needs.
   with a warning if misconfigured, rather than stopping the station.
 - **`CIVICCAST_CAPTION_TAP_CPU_THREADS`** — Processor threads for the **live
   tap only** (item 79, 2026-09). Default: one per 8 CPUs, never more than 2.
-  Recorded-meeting transcription is unaffected.
+  That "never more than 2" is not just the default's own shape — it is a
+  ceiling on any operator override too: a value above 2 is refused and
+  capped at 2, with a warning logged, rather than honoured. Recorded-meeting
+  transcription is unaffected.
 - **`CIVICCAST_WHISPER_CPU_THREADS`** — Processor threads per transcription;
   overrides `..._TAP_CPU_THREADS` above when set. For batch, `0` means "every
-  core" and is honoured as before. For the **live tap**, `0` is refused
-  (item 79, 2026-09): it falls back to the live default instead, with a
-  warning logged, so this variable can no longer hand the live tap "every
-  core" — on air or otherwise.
+  core" and is honoured as before, with no ceiling. For the **live tap**, `0`
+  is refused (item 79, 2026-09): it falls back to the live default instead,
+  with a warning logged, so this variable can no longer hand the live tap
+  "every core" — on air or otherwise. The same live ceiling as
+  `..._TAP_CPU_THREADS` also applies here: a live value above 2 is capped at
+  2, with a warning, instead of being honoured.
 - **`CIVICCAST_WHISPER_BEAM_SIZE`** — Live-tap decoder beam width (default 1 on
   CPU, 5 on a GPU). Does not affect recorded-file captioning.
 - **`CIVICCAST_CAPTION_FEED_POLL_SECONDS`** — Caption feed and decode-back proof cadence.

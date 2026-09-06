@@ -297,7 +297,7 @@ def test_capacity_proof_builds_exact_faster_whisper_runtime(
 ) -> None:
     captured: dict[str, object] = {}
     captured_environment: dict[str, str | None] = {}
-    expected_runtime = SimpleNamespace(num_workers=1)
+    expected_runtime = SimpleNamespace(num_workers=1, beam_size=5, cpu_threads=0)
 
     def runtime_factory(**kwargs: object) -> object:
         captured.update(kwargs)
@@ -401,6 +401,42 @@ def test_capacity_proof_builds_exact_faster_whisper_runtime(
     }
 
 
+def test_capacity_proof_identity_records_post_construction_beam_and_threads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round 4 review finding: under ``live=True``, FasterWhisperRuntime can
+    override the ``beam_size``/``cpu_threads`` the proof asked for at
+    construction time (``CIVICCAST_WHISPER_BEAM_SIZE``/
+    ``CIVICCAST_WHISPER_CPU_THREADS``, plus the live ceiling cap -- see
+    ``civiccast/captions/runtime.py``'s ``_resolved_whisper_cpu_threads_env``
+    and the ``self.beam_size`` assignment in ``FasterWhisperRuntime.__init__``).
+    A report that recorded the pre-construction args would silently disagree
+    with what the runtime actually ran with, exactly as it did for
+    ``num_workers`` before that field was fixed to read post-construction
+    (PR #427). This test fakes a runtime whose resolved attributes differ
+    from the constructor's own beam_size/cpu_threads arguments and asserts
+    the identity dict follows the runtime, not the arguments -- it fails if
+    the ``"beam_size": beam_size`` / ``"cpu_threads": cpu_threads`` literals
+    return."""
+
+    expected_runtime = SimpleNamespace(num_workers=1, beam_size=7, cpu_threads=2)
+    monkeypatch.setattr(proof, "FasterWhisperRuntime", lambda **_kwargs: expected_runtime)
+    monkeypatch.setattr(proof, "verify_packaged_model", lambda _path: {})
+    monkeypatch.setattr(proof, "runtime_distribution_versions", lambda: {})
+
+    _runtime, identity = proof.build_caption_runtime(
+        backend="faster-whisper",
+        model_dir=tmp_path / "faster-whisper-large-v3",
+        beam_size=1,
+        cpu_threads=1,
+        vad_filter=True,
+    )
+
+    assert identity["beam_size"] == 7
+    assert identity["cpu_threads"] == 2
+
+
 def test_capacity_runtime_constructs_production_adapter_in_local_only_mode(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -445,7 +481,9 @@ def test_capacity_runtime_restores_process_environment_after_construction(
     monkeypatch.setattr(proof, "verify_packaged_model", lambda _path: {})
     monkeypatch.setattr(proof, "runtime_distribution_versions", lambda: {})
     monkeypatch.setattr(
-        proof, "FasterWhisperRuntime", lambda **_kwargs: SimpleNamespace(num_workers=1)
+        proof,
+        "FasterWhisperRuntime",
+        lambda **_kwargs: SimpleNamespace(num_workers=1, beam_size=5, cpu_threads=0),
     )
     monkeypatch.setenv("CIVICCAST_WHISPER_MODEL_PATH", "before-model")
     monkeypatch.setenv("CIVICCAST_WHISPER_DEVICE", "before-device")
@@ -471,7 +509,9 @@ def test_capacity_runtime_removes_initially_absent_environment_after_constructio
     monkeypatch.setattr(proof, "verify_packaged_model", lambda _path: {})
     monkeypatch.setattr(proof, "runtime_distribution_versions", lambda: {})
     monkeypatch.setattr(
-        proof, "FasterWhisperRuntime", lambda **_kwargs: SimpleNamespace(num_workers=1)
+        proof,
+        "FasterWhisperRuntime",
+        lambda **_kwargs: SimpleNamespace(num_workers=1, beam_size=5, cpu_threads=0),
     )
     for name in (
         "CIVICCAST_WHISPER_MODEL_PATH",
@@ -681,7 +721,7 @@ class TestArgParserDefaultsTrackTheLiveTap:
 
         def runtime_factory(**kwargs: object) -> object:
             captured.update(kwargs)
-            return SimpleNamespace(num_workers=1)
+            return SimpleNamespace(num_workers=1, beam_size=1, cpu_threads=1)
 
         monkeypatch.setattr(proof, "FasterWhisperRuntime", runtime_factory)
         monkeypatch.setattr(proof, "verify_packaged_model", lambda _path: {})
