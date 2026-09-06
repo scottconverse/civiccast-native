@@ -127,6 +127,72 @@ except ImportError:
     )
 
 
+# Item 88 (measured in sandbox run 17, soak-a6d7871-20260906-213332Z, Opus
+# diagnosis): the caption-audio-tap fork must NEVER be able to take the
+# channel off air. ``caption_audio_tap_queue`` used to be a plain (default,
+# NON-leaky) queue: once the appsink callback's own blocking I/O (fixed in
+# ``audio_tap.py`` -- see that module's docstring) fell behind, this queue
+# filled, backpressure propagated upstream through the tee it forks from,
+# and the mux's audio pad -- fed by the SAME tee -- starved, stopping real
+# TS output. ``leaky=2`` (``GST_QUEUE_LEAK_DOWNSTREAM``) makes the queue
+# drop its OLDEST buffered data instead of ever blocking the tee once it
+# fills, and the much deeper buffer cap below gives legitimate jitter (a
+# slow-but-recovering consumer) real headroom before any drop happens at
+# all -- a queue this generous should never actually leak in normal
+# operation; it exists as the backstop of last resort once the writer-side
+# fix (bounded, drop-oldest queue + off-streaming-thread I/O) is already in
+# place.
+_CAPTION_AUDIO_TAP_QUEUE_LEAK_DOWNSTREAM = 2
+_CAPTION_AUDIO_TAP_QUEUE_MAX_SIZE_BUFFERS = 200
+_CAPTION_AUDIO_TAP_QUEUE_MAX_SIZE_TIME = 0
+_CAPTION_AUDIO_TAP_QUEUE_MAX_SIZE_BYTES = 0
+_CAPTION_AUDIO_TAP_APPSINK_MAX_BUFFERS = 32
+
+
+def _audio_tap_element_specs() -> tuple[ElementSpec, ...]:
+    """The caption-audio-tap fork's element chain, source-tee to appsink.
+
+    Pulled out as a pure, gi-free function (no ``Gst`` element is actually
+    constructed here -- ``ElementSpec`` is a plain dataclass) so its element
+    ordering and leaky/drop properties are unit-testable without a real
+    GStreamer install. See the module-level comment above this function and
+    ``audio_tap.py``'s docstring for why every property here is load-bearing
+    for item 88."""
+    return (
+        ElementSpec(
+            "queue",
+            "caption_audio_tap_queue",
+            props={
+                "leaky": _CAPTION_AUDIO_TAP_QUEUE_LEAK_DOWNSTREAM,
+                "max-size-buffers": _CAPTION_AUDIO_TAP_QUEUE_MAX_SIZE_BUFFERS,
+                "max-size-time": _CAPTION_AUDIO_TAP_QUEUE_MAX_SIZE_TIME,
+                "max-size-bytes": _CAPTION_AUDIO_TAP_QUEUE_MAX_SIZE_BYTES,
+            },
+        ),
+        ElementSpec("audioconvert", "caption_audio_tap_convert"),
+        ElementSpec("audioresample", "caption_audio_tap_resample"),
+        ElementSpec(
+            "capsfilter",
+            "caption_audio_tap_caps",
+            props={"caps": ("audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved")},
+        ),
+        ElementSpec(
+            "appsink",
+            "caption_audio_tap_sink",
+            props={
+                "emit-signals": True,
+                "sync": False,
+                "max-buffers": _CAPTION_AUDIO_TAP_APPSINK_MAX_BUFFERS,
+                # Item 88: was ``False`` -- a non-dropping appsink is exactly
+                # as capable of backing up the tee as the non-leaky queue
+                # above was. ``drop=True`` bounds this sink's own contribution
+                # to the same failure mode the queue fix addresses.
+                "drop": True,
+            },
+        ),
+    )
+
+
 class PrerollTimeoutError(RuntimeError):
     """The pipeline did not reach PLAYING within the configured preroll bound.
 
@@ -247,6 +313,38 @@ _DEFAULT_FIRST_OUTPUT_TIMEOUT_S = 45.0
 _MIN_FIRST_OUTPUT_TIMEOUT_S = 10.0
 _MAX_FIRST_OUTPUT_TIMEOUT_S = 120.0
 _FIRST_OUTPUT_TIMEOUT_ENV_VAR = "CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S"
+
+# Item 84c (measured in sandbox run 17, soak-a6d7871-20260906-213332Z, Opus
+# diagnosis): the ``CTRL first-output: first buffer after 0.0s`` marker was a
+# TAUTOLOGY, not evidence. The persistent output half's ``queue -> udpsink``
+# sink chain is ASYNC (``sync=False``/async sink semantics on the UDP leg),
+# so the pipeline cannot reach PLAYING at all before at least one buffer --
+# typically PAT/PMT/SDT table buffers plus the very first media buffer --
+# has already prerolled through the mux. ``_arm_stall_watchdog`` used to
+# latch ``_first_output_seen = self._output_buffers > 0`` at arm time, which
+# is true for essentially every worker that ever reaches PLAYING, marker
+# text and all -- exactly the escalation-defeating symptom item 84c exists
+# to close (a worker whose REAL media output later stalls still printed
+# "first buffer after 0.0s" and looked like on-air evidence to the daemon).
+#
+# Fix: snapshot the counter at arm time (``_output_buffers_at_arm``) and
+# require the count to exceed that snapshot by at least this many buffers,
+# observed strictly AFTER arming, before crediting real first output. 2
+# rather than 1 -- a single post-arm buffer could still be a trailing
+# PAT/PMT/SDT table refresh (mpegtsmux re-emits them periodically,
+# independent of media content) rather than genuine media flow; requiring a
+# SECOND post-arm buffer is cheap insurance against exactly that coincidence
+# without meaningfully delaying real on-air detection (media buffers advance
+# far more often than table refreshes once a source is actually flowing).
+_FIRST_OUTPUT_MIN_BUFFERS_AFTER_ARM = 2
+
+# Item 84c addendum: how often ``_check_stall`` prints the
+# ``CTRL output: <N> buffers (+<delta>) since PLAYING`` progress line -- a
+# bounded, one-line-per-interval breadcrumb so the NEXT soak shows exactly
+# when output stopped (sandbox run 17 had no such signal; the only evidence
+# of the item 88 stall was TSDuck's after-the-fact silence and the eventual
+# watchdog kill 10s later).
+_OUTPUT_PROGRESS_INTERVAL_S = 5.0
 
 
 def _resolve_first_output_timeout_s(explicit: float | None) -> float:
@@ -471,6 +569,17 @@ class GstPlayoutEngine:
         self._output_buffers = 0
         self._stall_last_count = 0
         self._stall_last_advance_t = 0.0
+        # Item 84c (measured in sandbox run 17, soak-a6d7871-20260906-213332Z):
+        # the count of output buffers already observed AT ARM TIME -- see
+        # ``_arm_stall_watchdog``/``_check_stall`` for why "first output" must
+        # be measured against this snapshot, not against zero.
+        self._output_buffers_at_arm = 0
+        # Item 84c: last time ``_check_stall`` printed the
+        # ``CTRL output: ...`` progress line (see ``_maybe_print_output_progress``).
+        # 0.0 (never printed) rather than ``None`` so the first tick's
+        # ``now - self._last_output_progress_print_t`` comparison is a plain
+        # float subtraction with no None-guard needed.
+        self._last_output_progress_print_t = 0.0
         # Per-leg element lists (index-aligned with ``selector_sink_pads``) so a
         # content-reload can dispose the leg it replaces. ``_collecting`` captures the
         # elements built for the current leg; ``_pending_reload`` holds the in-flight
@@ -976,28 +1085,7 @@ class GstPlayoutEngine:
             leg.tap_dir,
             segment_seconds=leg.segment_seconds,
         )
-        specs = (
-            ElementSpec("queue", "caption_audio_tap_queue"),
-            ElementSpec("audioconvert", "caption_audio_tap_convert"),
-            ElementSpec("audioresample", "caption_audio_tap_resample"),
-            ElementSpec(
-                "capsfilter",
-                "caption_audio_tap_caps",
-                props={
-                    "caps": ("audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved")
-                },
-            ),
-            ElementSpec(
-                "appsink",
-                "caption_audio_tap_sink",
-                props={
-                    "emit-signals": True,
-                    "sync": False,
-                    "max-buffers": 32,
-                    "drop": False,
-                },
-            ),
-        )
+        specs = _audio_tap_element_specs()
         elements = [self._make(spec) for spec in specs]
         self._link(source, elements[0])
         for upstream, downstream in pairwise(elements):
@@ -1348,18 +1436,19 @@ class GstPlayoutEngine:
             return
         self._stall_last_count = self._output_buffers
         self._stall_last_advance_t = time.monotonic()
-        # Item 84 Round-2 review item 4: a buffer can cross the mux DURING
-        # preroll/PLAYING, before ``run_forever`` gets around to calling this
-        # (``_install_output_counter`` is installed before ``set_state
-        # (PLAYING)``, well before this arm call) -- hardcoding
-        # ``_first_output_seen = False`` here would wrongly re-open the
-        # first-output budget for output that already happened, and could
-        # let a genuinely-producing pipeline that goes quiet right after arm
-        # get the wrong (more generous) budget applied to what is actually a
-        # post-first-buffer stall.
-        self._first_output_seen = self._output_buffers > 0
-        if self._first_output_seen:
-            self._maybe_print_first_output_marker()
+        # Item 84c (measured in sandbox run 17): a buffer WILL already have
+        # crossed the mux by arm time on essentially every worker -- the
+        # persistent output half's async sink chain means the pipeline
+        # cannot even reach PLAYING before at least one buffer (PAT/PMT/SDT
+        # tables + preroll) has prerolled through it. Treating "buffers > 0
+        # at arm" as first-output evidence (the pre-84c behavior) was
+        # therefore a TAUTOLOGY, not a real signal -- see the module-level
+        # comment above ``_FIRST_OUTPUT_MIN_BUFFERS_AFTER_ARM``. Snapshot the
+        # count instead of latching evidence from it: real first output is
+        # measured strictly AFTER this point, in ``_check_stall``.
+        self._output_buffers_at_arm = self._output_buffers
+        self._first_output_seen = False
+        self._last_output_progress_print_t = self._stall_last_advance_t
         GLib.timeout_add_seconds(1, self._check_stall)
 
     def _maybe_print_first_output_marker(self) -> None:
@@ -1401,6 +1490,24 @@ class GstPlayoutEngine:
             flush=True,
         )
 
+    def _maybe_print_output_progress(self, now: float) -> None:
+        """Item 84c addendum: a bounded, at-most-one-line-per-5s progress
+        breadcrumb -- the total output-buffer count and the delta observed
+        since arm (PLAYING) time -- so the NEXT soak shows exactly when real
+        output stops, instead of only the eventual stall-kill line 10s (or
+        45s, before first output) later. Sandbox run 17 had no such signal:
+        the only evidence of the item 88 stall was TSDuck's after-the-fact
+        silence plus the watchdog kill."""
+        if now - self._last_output_progress_print_t < _OUTPUT_PROGRESS_INTERVAL_S:
+            return
+        self._last_output_progress_print_t = now
+        delta = self._output_buffers - self._output_buffers_at_arm
+        print(
+            f"CTRL output: {self._output_buffers} buffers (+{delta}) since PLAYING",
+            file=sys.stderr,
+            flush=True,
+        )
+
     def _check_stall(self) -> bool:
         """Quit the run loop on either of two DISTINCT budgets, measured from
         PLAYING (see ``_arm_stall_watchdog``, called immediately after
@@ -1412,21 +1519,37 @@ class GstPlayoutEngine:
           ``_DEFAULT_FIRST_OUTPUT_TIMEOUT_S``). PLAYING (even NO_PREROLL) is
           NOT evidence a buffer actually crossed the mux, so this is a
           separate, later piece of evidence than ``_await_playing`` ever had.
-        * Once the first buffer IS observed, fall back to the original S9-5
-          behavior unchanged: bound against ``stall_timeout_s`` (10s default)
-          from the last observed advance, for a pipeline that aired fine and
-          then silently stopped.
+        * Once the first REAL buffer IS observed, fall back to the original
+          S9-5 behavior unchanged: bound against ``stall_timeout_s`` (10s
+          default) from the last observed advance, for a pipeline that aired
+          fine and then silently stopped.
+
+        Item 84c: "the first buffer IS observed" is no longer "any buffer
+        past the arm-time snapshot" -- see ``_FIRST_OUTPUT_MIN_BUFFERS_AFTER_
+        ARM`` and ``_arm_stall_watchdog`` for why a raw ``> 0`` check there
+        was a tautology (the async output sink chain always prerolls at
+        least one buffer before PLAYING is even reached). Real first output
+        now requires the count to exceed the arm-time snapshot by at least
+        ``_FIRST_OUTPUT_MIN_BUFFERS_AFTER_ARM`` buffers, all observed AFTER
+        arming.
 
         A no-op while output is flowing either way (it resets the timer on
         every advance). The worker exits non-zero on either budget and the
         daemon restarts it to a known state."""
         now = time.monotonic()
         if self._output_buffers != self._stall_last_count:
-            self._first_output_seen = True
-            self._maybe_print_first_output_marker()
             self._stall_last_count = self._output_buffers
             self._stall_last_advance_t = now
+            if (
+                not self._first_output_seen
+                and self._output_buffers - self._output_buffers_at_arm
+                >= _FIRST_OUTPUT_MIN_BUFFERS_AFTER_ARM
+            ):
+                self._first_output_seen = True
+                self._maybe_print_first_output_marker()
+            self._maybe_print_output_progress(now)
             return True  # output advancing — keep watching
+        self._maybe_print_output_progress(now)
         elapsed = now - self._stall_last_advance_t
         if not self._first_output_seen:
             if self.first_output_timeout_s <= 0 or elapsed < self.first_output_timeout_s:
