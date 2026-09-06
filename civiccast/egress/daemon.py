@@ -777,9 +777,10 @@ class EgressDaemon:
             # actually reports a discrete per-plan directory for the plan
             # this worker ends up airing -- tracked into
             # _active_prepared_plan_dir below once the encoder actually
-            # starts, so the flag-OFF (shipped default) path releases it too
-            # instead of relying solely on _try_content_reload's tracking
-            # (which never runs at all while supports_content_reload is False).
+            # starts, so the path taken when a channel is opted out via
+            # CIVICCAST_EGRESS_SEAMLESS_RELOAD=0 releases it too, instead of
+            # relying solely on _try_content_reload's tracking (which never
+            # runs at all while supports_content_reload is False).
             prepared_plan_dir: Path | None = None
             if self._source_preparer is not None:
                 try:
@@ -943,10 +944,11 @@ class EgressDaemon:
                 self._started_at[channel_id] = self._monotonic()
                 # Hostile-review follow-up, item 4: track the plan actually being
                 # aired so it gets released on the next exit/stop even when the
-                # seamless-reload flag is OFF (supports_content_reload=False, the
-                # shipped default) -- _try_content_reload/_commit_reload_
-                # settlement never run at all on that path, so without this the
-                # only cleanup for a _start()-launched plan was age/budget GC.
+                # channel is opted out via CIVICCAST_EGRESS_SEAMLESS_RELOAD=0
+                # (supports_content_reload=False) -- _try_content_reload/
+                # _commit_reload_settlement never run at all on that path, so
+                # without this the only cleanup for a _start()-launched plan
+                # was age/budget GC.
                 if using_fallback_slate and not prepared_for_fallback:
                     # Item 1 fix, narrowed by the P0 fix above: only release
                     # when using_fallback_slate flipped True AFTER the

@@ -393,20 +393,42 @@ def _reload_request(tmp_path, *, path: str = "/m/c2.ts", label: str = "c2"):
     return EncoderStartRequest(channel_id="ch1", source_plan=plan, config=config, work_dir=tmp_path)
 
 
-def test_supports_content_reload_defaults_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Item 3 (beta.5 gate): the seamless in-place content-reload defaults OFF
-    pending a fresh hardware soak (H1, measured 2026-09-06) -- a channel with it
-    off falls back to the daemon's terminate+restart reload path."""
+def test_supports_content_reload_defaults_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Item 3 (beta.5 gate): owner decision 2026-09-06 -- the seamless in-place
+    content-reload defaults ON so a plan rollover is an in-place reload with no
+    worker restart. A channel that sets ``CIVICCAST_EGRESS_SEAMLESS_RELOAD=0``
+    opts out and falls back to the daemon's terminate+restart reload path."""
     monkeypatch.delenv("CIVICCAST_EGRESS_SEAMLESS_RELOAD", raising=False)
+    assert GstPlayoutStrategy(worker_launcher=lambda *a: None).supports_content_reload is True
+
+
+def test_supports_content_reload_env_var_opts_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CIVICCAST_EGRESS_SEAMLESS_RELOAD", "0")
     assert GstPlayoutStrategy(worker_launcher=lambda *a: None).supports_content_reload is False
 
 
-def test_supports_content_reload_env_var_opts_back_in(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("falsy_value", ["0", "false", "False", "no", "off", "OFF"])
+def test_supports_content_reload_env_var_opt_out_values(
+    monkeypatch: pytest.MonkeyPatch, falsy_value: str
+) -> None:
+    monkeypatch.setenv("CIVICCAST_EGRESS_SEAMLESS_RELOAD", falsy_value)
+    assert GstPlayoutStrategy(worker_launcher=lambda *a: None).supports_content_reload is False
+
+
+def test_supports_content_reload_env_var_truthy_value(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CIVICCAST_EGRESS_SEAMLESS_RELOAD", "1")
     assert GstPlayoutStrategy(worker_launcher=lambda *a: None).supports_content_reload is True
 
 
 def test_supports_content_reload_explicit_constructor_arg_wins_over_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CIVICCAST_EGRESS_SEAMLESS_RELOAD", "0")
+    strategy = GstPlayoutStrategy(worker_launcher=lambda *a: None, supports_content_reload=True)
+    assert strategy.supports_content_reload is True
+
+
+def test_supports_content_reload_explicit_constructor_false_wins_over_truthy_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CIVICCAST_EGRESS_SEAMLESS_RELOAD", "1")

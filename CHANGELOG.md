@@ -35,6 +35,22 @@ below.
   deliberately not true, so no environment value can re-enable captions
   against the operator's switch.
 
+### Changed
+
+- **Seamless plan rollover ON by default (owner decision, beta.5 requirement,
+  2026-09-06).** `GstPlayoutStrategy.supports_content_reload`
+  (`civiccast/egress/gst/strategy.py`) now defaults to `True`; the fixes
+  below it (concat-naming collision, silent `pipeline.add()` failure,
+  premature reload ack) are what make this default safe to flip. The env
+  var `CIVICCAST_EGRESS_SEAMLESS_RELOAD` changes from an opt-IN to an
+  opt-OUT: set it to `0` (or `false`/`no`/`off`) to disable the seamless
+  path and fall back to the daemon's terminate+restart reload; any other
+  value, or leaving it unset, keeps the seamless path on. With the flag ON,
+  a plan rollover is an in-place reload of the running pipeline -- no
+  worker restart and no output gap at plan boundaries. This candidate is
+  held pending a sandbox soak that proves the seamless path end-to-end on
+  real hardware before it ships.
+
 ### Fixed
 
 - **A seamless plan rollover collided its own concat aggregators, silently
@@ -109,8 +125,9 @@ below.
     consequence, not a bug**: while a reload is armed but genuinely still
     settling, the channel's state row stays at whatever it was before the
     reload (honest -- the physical output has not switched yet either); with
-    the seamless path OFF (the beta.5 default below), a plan rollover instead
-    shows `TRANSITIONING` from the moment automation triggers the rollover
+    the seamless path OFF (opted out via `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0`;
+    see the default flip above), a plan rollover instead shows
+    `TRANSITIONING` from the moment automation triggers the rollover
     check (well before the current item's natural end, by design -- see
     `reload_policy.rollover_trigger_at`) until the item actually ends and the
     restart lands, even though the channel is airing normally the whole time.
@@ -128,19 +145,25 @@ below.
     operator stop), and a plan whose every segment never triggers a local
     write (all-live, or every segment a `playout_trim_supported` cache hit)
     leaves no directory behind at all.
-  - **Known issue: the seamless in-place rollover is disabled by default in
-    beta.5, pending a fresh hardware soak.** All fixes above are
-    unit-tested, but the seamless path itself has not yet been RE-PROVEN on
-    real hardware since they landed. `GstPlayoutStrategy.supports_content_reload`
-    now defaults to `False` (env `CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` to opt
-    back in); a channel with it off falls back to the daemon's existing
-    terminate+restart reload path at every plan rollover instead of the
-    in-place swap. Cost of the fallback: one encoder restart per plan
-    rollover -- a rounding error for a normal 10-40 minute program item, but
-    roughly one restart every ~30 seconds for a rapid 30-second-item
-    test/demo schedule -- and, per the TRANSITIONING note above, the state
-    row reads `TRANSITIONING` for that whole rollover-trigger-to-natural-end
-    window even though playout itself never glitches.
+  - **Superseded above: this landed with the seamless in-place rollover
+    disabled by default, pending a fresh hardware soak; owner decision
+    2026-09-06 has since flipped that default ON for beta.5** (see the
+    "seamless plan rollover ON by default" entry above, under this same
+    date's "### Changed" section).
+    At the time this fix landed, all fixes above were unit-tested but the
+    seamless path itself had not yet been RE-PROVEN on real hardware since
+    they landed, so `GstPlayoutStrategy.supports_content_reload` defaulted
+    to `False` (env `CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` to opt in). As of
+    the default flip, the same env var is instead an OPT-OUT
+    (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` to disable); a channel with it
+    off falls back to the daemon's existing terminate+restart reload path
+    at every plan rollover instead of the in-place swap. Cost of the
+    fallback: one encoder restart per plan rollover -- a rounding error for
+    a normal 10-40 minute program item, but roughly one restart every ~30
+    seconds for a rapid 30-second-item test/demo schedule -- and, per the
+    TRANSITIONING note above, the state row reads `TRANSITIONING` for that
+    whole rollover-trigger-to-natural-end window even though playout itself
+    never glitches.
   - **Second-round hostile-review fixes (same branch):** an armed-but-not-
     yet-settled reload's tracking (and its prepared-plan directory) is now
     released on every worker-exit path (a crash mid-settle no longer fires a
@@ -157,8 +180,9 @@ below.
     healthy). `SourcePreparer`'s GC now also protects every directory the
     daemon reports as live (not just the keep-N-most-recent heuristic), and
     the `_start` path -- not just the seamless-reload path -- tracks and
-    releases its own prepared-plan directory, so the fallback-flag-off
-    (shipped) default gets the same cleanup. The POSIX FIFO control channel
+    releases its own prepared-plan directory, so a channel that opts out of
+    the seamless default (or ran before the flip) gets the same cleanup.
+    The POSIX FIFO control channel
     now reports reload settlement too (it previously never did, so a FIFO-
     dispatched reload always waited out the full 960s deadline and fell back
     to restart regardless of whether it actually landed). Automation's own

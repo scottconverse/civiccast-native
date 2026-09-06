@@ -544,8 +544,10 @@ entries:
       # per-build sequence number makes two builds of the same-labeled leg
       # never collide) and tests/egress/test_gst_worker_reload_ack.py (the
       # ack is deferred until on_settled fires, "applied" vs
-      # "aborted:<reason>"). The seamless reload path itself is gated off by
-      # default for beta.5 pending a fresh hardware soak
+      # "aborted:<reason>"). At the time this fix landed, the seamless reload
+      # path itself was gated off by default for beta.5 pending a fresh
+      # hardware soak; owner decision 2026-09-06 has since flipped that
+      # default ON for beta.5 (feat/seamless-reload-default-on)
       # (GstPlayoutStrategy.supports_content_reload, strategy.py -- not part
       # of this claim's bound module set). Blob IDs re-hashed with
       # `git hash-object --path <file> <file>` per D2.
@@ -884,8 +886,10 @@ entries:
       # per-build sequence number makes two builds of the same-labeled leg
       # never collide) and tests/egress/test_gst_worker_reload_ack.py (the
       # ack is deferred until on_settled fires, "applied" vs
-      # "aborted:<reason>"). The seamless reload path itself is gated off by
-      # default for beta.5 pending a fresh hardware soak
+      # "aborted:<reason>"). At the time this fix landed, the seamless reload
+      # path itself was gated off by default for beta.5 pending a fresh
+      # hardware soak; owner decision 2026-09-06 has since flipped that
+      # default ON for beta.5 (feat/seamless-reload-default-on)
       # (GstPlayoutStrategy.supports_content_reload, strategy.py -- not part
       # of this claim's bound module set). Blob IDs re-hashed with
       # `git hash-object --path <file> <file>` per D2.

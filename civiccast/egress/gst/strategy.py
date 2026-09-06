@@ -64,6 +64,9 @@ WorkerLauncher = Callable[[list[str], Path, Path], object]
 
 _WORKER_PATH = str(Path(__file__).resolve().parent / "worker.py")
 _TRUTHY = {"1", "true", "yes", "on"}
+# Opt-out semantics for the seamless-reload default (see _SEAMLESS_RELOAD_ENV_VAR
+# below): any of these values, set on that env var, disables the default-ON behavior.
+_FALSY = {"0", "false", "no", "off"}
 
 # -- D2 Windows worker-pipe seam (spec-supervisor D2, design.md sec4) --------------
 #
@@ -594,44 +597,54 @@ def _embed_captions_default() -> bool:
     return os.environ.get("CIVICCAST_EGRESS_EMBED_CAPTIONS", "").strip().lower() in _TRUTHY
 
 
-#: Item 3 (beta.5 gate): the env var that re-enables the GStreamer engine's
-#: seamless in-place program content-reload. Off by DEFAULT for beta.5.
+#: Item 3 (beta.5 gate): the env var that controls the GStreamer engine's
+#: seamless in-place program content-reload. ON by DEFAULT as of beta.5
+#: (owner decision, 2026-09-06): a plan rollover must be an in-place reload
+#: with no worker restart and no output gap, so the seamless path is now the
+#: shipping default rather than an opt-in.
 #:
-#: MEASURED on real hardware (2026-09-06, clean install of 609273d, three
-#: GStreamer channels): the first seamless plan rollover
-#: (``daemon._try_content_reload`` -> ``strategy.reload_content`` -> the D2
-#: worker-pipe seam -> ``engine.reload_program``) was followed by
-#: ``CTRL stall: no output for 10s`` worker relaunches every ~30s on every
-#: channel. Root cause (H1, see ``engine.py``'s ``_make``/``_build_playlist``/
-#: ``_source_leg_seq`` comments): every ``PlaylistLeg`` build named its ``concat``
-#: aggregators with the bare leg label (``vconcat_program``/``aconcat_program``),
-#: so a reload's rebuilt aggregators collided with the still-live outgoing leg's
+#: Background on why this was OFF before today: MEASURED on real hardware
+#: (2026-09-06, clean install of 609273d, three GStreamer channels), the
+#: first seamless plan rollover (``daemon._try_content_reload`` ->
+#: ``strategy.reload_content`` -> the D2 worker-pipe seam ->
+#: ``engine.reload_program``) was followed by ``CTRL stall: no output for
+#: 10s`` worker relaunches every ~30s on every channel. Root cause (H1, see
+#: ``engine.py``'s ``_make``/``_build_playlist``/``_source_leg_seq``
+#: comments): every ``PlaylistLeg`` build named its ``concat`` aggregators
+#: with the bare leg label (``vconcat_program``/``aconcat_program``), so a
+#: reload's rebuilt aggregators collided with the still-live outgoing leg's
 #: same-named aggregators -- GStreamer's ``bin.add()`` silently REFUSED the
 #: duplicate, the reload's new leg never actually joined the pipeline, its
-#: readiness probes never fired, and the worker's ``reload_program`` call ack'd
-#: "applied" before the reload had committed (worker.py's premature-ack defect,
-#: also fixed in this change) -- so automation believed every rollover had
-#: landed and kept re-triggering it every cadence tick while the channel bounced
-#: on the stall watchdog forever.
+#: readiness probes never fired, and the worker's ``reload_program`` call
+#: ack'd "applied" before the reload had committed (worker.py's
+#: premature-ack defect, also fixed in this change) -- so automation
+#: believed every rollover had landed and kept re-triggering it every
+#: cadence tick while the channel bounced on the stall watchdog forever.
 #:
-#: This same change fixes the concat-naming collision (``_source_leg_seq``), the
-#: silent ``pipeline.add()`` failure (``_make`` now raises), and the premature
-#: ack (``reload_program(..., on_settled=...)``) -- but the seamless path has not
-#: yet been RE-PROVEN on real hardware since those fixes, so it stays off by
-#: default for the beta.5 candidate. Set ``CIVICCAST_EGRESS_SEAMLESS_RELOAD=1``
-#: to opt back in once a fresh soak confirms the fix; a channel with it off
-#: falls back to the daemon's existing terminate+restart reload path at every
-#: plan rollover (one encoder restart per rollover -- a rounding error for
-#: 10-40 minute program items, roughly every ~30s for a rapid 30-second-item
-#: test/demo schedule).
+#: That same change fixed the concat-naming collision (``_source_leg_seq``),
+#: the silent ``pipeline.add()`` failure (``_make`` now raises), and the
+#: premature ack (``reload_program(..., on_settled=...)``). Those fixes are
+#: what let the owner flip this default ON for beta.5; the sandbox soak that
+#: proves the seamless path end-to-end on real hardware is what this
+#: candidate is held pending (see the PR that introduced this flip).
+#:
+#: Set ``CIVICCAST_EGRESS_SEAMLESS_RELOAD=0`` (or any other falsy value) to
+#: OPT OUT and fall back to the daemon's terminate+restart reload path at
+#: every plan rollover (one encoder restart per rollover -- a rounding error
+#: for 10-40 minute program items, roughly every ~30s for a rapid
+#: 30-second-item test/demo schedule, and a real output gap either way).
 _SEAMLESS_RELOAD_ENV_VAR = "CIVICCAST_EGRESS_SEAMLESS_RELOAD"
 
 
 def _seamless_content_reload_default() -> bool:
     """Whether ``GstPlayoutStrategy.supports_content_reload`` defaults on, from the
-    environment. See ``_SEAMLESS_RELOAD_ENV_VAR`` above for why this defaults OFF
-    for beta.5 and what opting back in costs when the seamless path is disabled."""
-    return os.environ.get(_SEAMLESS_RELOAD_ENV_VAR, "").strip().lower() in _TRUTHY
+    environment. Defaults ON as of beta.5 (owner decision, 2026-09-06) -- set
+    ``CIVICCAST_EGRESS_SEAMLESS_RELOAD=0`` to opt out. See ``_SEAMLESS_RELOAD_ENV_VAR``
+    above for the history and what opting out costs."""
+    raw = os.environ.get(_SEAMLESS_RELOAD_ENV_VAR, "").strip().lower()
+    if not raw:
+        return True
+    return raw not in _FALSY
 
 
 def _write_graph_file(path: Path, text: str) -> None:
@@ -724,8 +737,9 @@ class GstPlayoutStrategy:
     # the class rather than an instance. Every real instance overrides this in
     # __init__ with the environment-gated, DI-overridable value -- see
     # ``_SEAMLESS_RELOAD_ENV_VAR``/``_seamless_content_reload_default`` above for
-    # why this defaults False (beta.5 gate, unproven-since-fix seamless rollover).
-    supports_content_reload = False
+    # why this defaults True (owner decision, beta.5: seamless plan rollover ON
+    # by default). Set ``CIVICCAST_EGRESS_SEAMLESS_RELOAD=0`` to opt out.
+    supports_content_reload = True
     # selector index per source role — matches graph_from_config leg order
     # (program leg = pad 0, always-hot black slate = pad 1). There is deliberately
     # NO 'live' pad: CivicCast airs a single pre-switched live feed (S16 delegates
@@ -764,7 +778,8 @@ class GstPlayoutStrategy:
         # Item 3 (beta.5 gate): instance attribute so ``getattr(strategy,
         # "supports_content_reload", False)`` (``daemon._request_reload``) reads the
         # environment-gated default unless a caller (or a test) overrides it
-        # explicitly -- see ``_SEAMLESS_RELOAD_ENV_VAR`` above.
+        # explicitly -- see ``_SEAMLESS_RELOAD_ENV_VAR`` above. Defaults True (ON)
+        # as of beta.5; set ``CIVICCAST_EGRESS_SEAMLESS_RELOAD=0`` to opt out.
         self.supports_content_reload = (
             _seamless_content_reload_default()
             if supports_content_reload is None
