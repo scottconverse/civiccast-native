@@ -1,0 +1,27 @@
+<Configuration>
+  <VGpu>Disable</VGpu>
+  <Networking>Disable</Networking>
+  <!-- Same 16 GB rationale as CivicCastSandboxTest.wsb.template (K1 activation
+       self-test peak model ~9GB plus sandbox OS/services). -->
+  <MemoryInMB>16384</MemoryInMB>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>{{KIT_ROOT}}</HostFolder>
+      <SandboxFolder>C:\CivicCastKit</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>{{OUTPUT_DIR}}</HostFolder>
+      <SandboxFolder>C:\CivicCastSoakOutput</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>{{SCRIPTS_DIR}}</HostFolder>
+      <SandboxFolder>C:\CivicCastSoakScripts</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes {{MINUTES}} -OnAirBoundMinutes {{ON_AIR_BOUND_MINUTES}} {{SEAMLESS_RELOAD_ARG}}</Command>
+  </LogonCommand>
+</Configuration>
