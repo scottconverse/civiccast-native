@@ -37,8 +37,13 @@ function Assert-Equal {
 # (the file's full 6 lines, including its trailing blank line -- the real
 # file this lane reads). Contains one "CTRL reload aborted: ..." line, two
 # non-matching "CTRL reload: new leg stream held..." progress lines (a
-# real line this parser must NOT match), two "WORKER_RESULT {...}" lines
-# (also must not match), and a trailing blank line (must not throw/count).
+# real line this parser must NOT match), and two "WORKER_RESULT {...}"
+# lines that each carry a stall error tuple -- round-2 finding 1 (HIGH):
+# these two lines ARE two real worker-stall records (worker.py:521 always
+# prints WORKER_RESULT to stdout at process exit; engine.py:1129 sets
+# `self._error = ("stall", "output stalled")` on the stall path), so
+# worker_stall_count must come out 2, not 0. A trailing blank line must
+# not throw or count anything.
 $sample1Lines = @(
     "WORKER_RESULT {'error': ('stall', 'output stalled'), 'teardown_clean': True}"
     "CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)"
@@ -51,7 +56,7 @@ $r1 = ConvertFrom-WorkerStdoutLines -Lines $sample1Lines
 Assert-Equal 'scenario1 (real sample) reload_committed_count' 0 $r1.reload_committed_count
 Assert-Equal 'scenario1 (real sample) reload_aborted_count' 1 $r1.reload_aborted_count
 Assert-Equal 'scenario1 (real sample) reload_aborted_reasons[0]' 'new program errored before commit: gst-stream-error-quark: GStreamer encountered a general stream error. (1)' $r1.reload_aborted_reasons[0]
-Assert-Equal 'scenario1 (real sample) worker_stall_count' 0 $r1.worker_stall_count
+Assert-Equal 'scenario1 (real sample) worker_stall_count' 2 $r1.worker_stall_count
 
 # ---------------------------------------------------------------- scenario 2
 # Synthetic "CTRL reload committed (elements=N)" -- engine.py:1829's exact
@@ -99,6 +104,21 @@ Assert-Equal 'scenario5 (empty) reasons.Count' 0 $r5.reload_aborted_reasons.Coun
 # element-count group is optional; the bare line must still match.
 $r6 = ConvertFrom-WorkerStdoutLines -Lines @('CTRL reload committed')
 Assert-Equal 'scenario6 (bare committed, no elements=) reload_committed_count' 1 $r6.reload_committed_count
+
+# ---------------------------------------------------------------- scenario 7
+# Round-2 finding 1: a "WORKER_RESULT ..." line with error=None (the
+# clean-exit shape, engine.py:1177/1213's `"error": self._error` where
+# `self._error` was never set) must NOT be counted as a stall.
+$r7 = ConvertFrom-WorkerStdoutLines -Lines @("WORKER_RESULT {'swaps': 3, 'error': None, 'teardown_clean': True}")
+Assert-Equal 'scenario7 (WORKER_RESULT, error=None) worker_stall_count' 0 $r7.worker_stall_count
+
+# ---------------------------------------------------------------- scenario 8
+# Round-2 finding 1: a "WORKER_RESULT ..." line whose error tuple is a
+# DIFFERENT reason (engine.py:588's `("caption-gap", ...)`) must NOT be
+# counted as a stall either -- the regex is anchored on the 'stall' tuple
+# head specifically, never a bare "error" substring match.
+$r8 = ConvertFrom-WorkerStdoutLines -Lines @("WORKER_RESULT {'error': ('caption-gap', 'failed to advance live caption stream'), 'teardown_clean': False}")
+Assert-Equal 'scenario8 (WORKER_RESULT, non-stall error tuple) worker_stall_count' 0 $r8.worker_stall_count
 
 Write-Host ""
 Write-Host "WorkerStdoutParser unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })

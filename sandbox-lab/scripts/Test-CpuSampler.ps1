@@ -72,6 +72,43 @@ Assert-Equal 'scenario7 (null bytes) -> $null' '' $w2
 $w3 = ConvertTo-WorkingSetMb -WorkingSetBytes 15728640
 Assert-Equal 'scenario8 (15 MiB) -> 15' 15 $w3
 
+# ---------------------------------------------------------------- scenario 9
+# Round-2 finding 3: Get-ProcessRoleLabel -- a python.exe pid that IS in
+# GstWorkerPidMap and resolves to a channel via PidToChannelId.
+$gstMap9 = @{ 4001 = $true }
+$pidMap9 = @{ 4001 = 'government' }
+$r9 = Get-ProcessRoleLabel -ProcessName 'python' -ProcessId 4001 -GstWorkerPidMap $gstMap9 -PidToChannelId $pidMap9
+Assert-Equal 'scenario9 (gst-worker pid, resolved channel) -> gst-worker:government' 'gst-worker:government' $r9
+
+# --------------------------------------------------------------- scenario 10
+# Round-2 finding 3: a gst-worker pid (per GstWorkerPidMap) with NO channel
+# resolution this pass (same-pass relaunch race, mirrors Resolve-EngineForPid's
+# own documented race) -- must not silently mislabel as control-plane.
+$r10 = Get-ProcessRoleLabel -ProcessName 'python' -ProcessId 4002 -GstWorkerPidMap (@{ 4002 = $true }) -PidToChannelId @{}
+Assert-Equal 'scenario10 (gst-worker pid, unresolved channel) -> gst-worker:unknown' 'gst-worker:unknown' $r10
+
+# --------------------------------------------------------------- scenario 11
+# Round-2 finding 3: pythonservice.exe (ProcessName 'pythonservice') is
+# ALWAYS the supervisor -- station_runtime.py:369/civiccast/native/
+# supervisor/install_layout.py:6/25 -- never in GstWorkerPidMap.
+$r11 = Get-ProcessRoleLabel -ProcessName 'pythonservice' -ProcessId 5001 -GstWorkerPidMap @{} -PidToChannelId @{}
+Assert-Equal 'scenario11 (pythonservice.exe) -> supervisor' 'supervisor' $r11
+
+# --------------------------------------------------------------- scenario 12
+# Round-2 finding 3: any other python/pythonw pid not in GstWorkerPidMap is
+# the control-plane child (`python -I -u -m uvicorn civiccast.app:create_app`).
+$r12 = Get-ProcessRoleLabel -ProcessName 'python' -ProcessId 6001 -GstWorkerPidMap @{} -PidToChannelId @{}
+Assert-Equal 'scenario12 (python.exe, not a gst-worker pid) -> control-plane' 'control-plane' $r12
+$r12b = Get-ProcessRoleLabel -ProcessName 'pythonw' -ProcessId 6002 -GstWorkerPidMap @{} -PidToChannelId @{}
+Assert-Equal 'scenario12b (pythonw.exe, not a gst-worker pid) -> control-plane' 'control-plane' $r12b
+
+# --------------------------------------------------------------- scenario 13
+# Round-2 finding 3: an ffmpeg.exe process (not resolved to any channel via
+# PidToChannelId, and never in GstWorkerPidMap -- that map is python-only)
+# falls to "other".
+$r13 = Get-ProcessRoleLabel -ProcessName 'ffmpeg' -ProcessId 7001 -GstWorkerPidMap @{} -PidToChannelId @{}
+Assert-Equal 'scenario13 (ffmpeg.exe, unresolved) -> other' 'other' $r13
+
 Write-Host ""
 Write-Host "CpuSampler unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })
 if ($script:failures -gt 0) { exit 1 }

@@ -147,6 +147,15 @@ $InstallDir = 'C:\CivicCastSoakInstall'
 $Base       = 'http://127.0.0.1:8000'
 $RunStart   = Get-Date
 
+# Round-2 finding 6 (LOW): the ONE list of candidate egress work-dir paths.
+# Copy-StationLogs and Update-WorkerStdoutCounters (item 2's worker-stdout
+# reader) each used to hardcode their OWN separate copy of this same
+# literal path -- a future path change would need editing in two places
+# and could silently drift between them. Both now resolve
+# (Test-Path-first-match, at CALL time, never cached) against this one
+# array.
+$script:EgressWorkDirCandidates = @('C:\ProgramData\CivicCast\data\egress')
+
 # Bounds (minutes). The host's Run-SandboxSoak.ps1 uses the SAME defaults
 # for its own phase deadlines -- keep these two files in sync if either
 # changes; see that script's -InstallBoundMinutes/-HealthBoundMinutes.
@@ -313,6 +322,16 @@ function Write-PhaseMarker {
     Write-SoakLog "phase marker written: $Name"
 }
 
+# Round-2 finding 5 (LOW): set $true right after SOAK-START.json is
+# actually written (section 4, once all channels confirm ON_AIR) -- read by
+# Write-HarnessErrorVerdictAndExit below so a harness error that fires
+# BEFORE that point (every current call site does; kept as a real guard,
+# not a dead check, in case a future call site is ever added after it)
+# still leaves a SOAK-START.json on disk for any downstream tooling that
+# expects one on every run, not only on runs that got far enough to reach
+# the real one.
+$script:soakStartWritten = $false
+
 function Write-FailVerdictAndExit {
     <#
       Every early-exit path funnels through here: record the reason, copy
@@ -351,14 +370,48 @@ function Write-HarnessErrorVerdictAndExit {
       VERDICT.txt/.json, which Run-SandboxSoak.ps1 reports as exit 6, the
       same code its own quiet-share detector uses -- both mean "no product
       conclusion can be drawn from this run."
+
+      Round-2 finding 5 (LOW): two additions --
+      (1) the caption fields (captions_off_requested/captions_enabled/
+      captions_off_verified) now ride along in VERDICT.json here too, same
+      as the success-path VERDICT.json already carries -- $null when
+      $summary itself does not exist yet (this function is called before
+      $summary's own init, which no current call site does, but the guard
+      costs nothing and keeps this function correct if one ever is), never
+      guessed;
+      (2) if SOAK-START.json was never written (every current
+      harness-error call site fires before section 4's ON_AIR
+      confirmation, i.e. always, today), write a minimal one HERE so
+      downstream tooling that expects a SOAK-START.json on every run
+      finds one even on a run that failed before reaching the real one --
+      explicitly marked so it is never mistaken for the real,
+      clock-started one.
     #>
     param([string]$Reason, [int]$ExitCode = 1)
-    $summary.error = $Reason
-    Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
+    $capOffRequested = $(if ($summary) { $summary.captions_off_requested } else { $null })
+    $capEnabled      = $(if ($summary) { $summary.captions_enabled } else { $null })
+    $capOffVerified  = $(if ($summary) { $summary.captions_off_verified } else { $null })
+    if ($summary) {
+        $summary.error = $Reason
+        Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
+    }
     Copy-StationLogs -Label 'final'
+    if (-not $script:soakStartWritten) {
+        Write-PhaseMarker -Name 'SOAK-START.json' -Obj ([ordered]@{
+            soak_start_utc = $null
+            harness_error_before_soak_start = $true
+            captions_off_requested = $capOffRequested
+            captions_enabled       = $capEnabled
+            captions_off_verified  = $capOffVerified
+        })
+        $script:soakStartWritten = $true
+    }
     $verdict = [ordered]@{
         schema_version = 1; verdict = 'HARNESS_ERROR'; reason = $Reason; first_failing_cycle = $null
         cycles_total = 0; cycles_warmup = 0; cycles_evaluated = 0; soak_start_utc = $null
+        captions_off_requested = $capOffRequested
+        captions_enabled       = $capEnabled
+        captions_off_verified  = $capOffVerified
     }
     Save-Json -Obj $verdict -Path (Join-Path $LocalDir 'VERDICT.json')
     "verdict=HARNESS_ERROR reason=$Reason" | Set-Content -Path (Join-Path $LocalDir 'VERDICT.txt') -Encoding UTF8
@@ -576,9 +629,9 @@ function Copy-StationLogs {
         } catch { }
     }
 
-    $egressWorkDirCandidates = @(
-        'C:\ProgramData\CivicCast\data\egress'
-    )
+    # Round-2 finding 6: shared candidate list -- see its own declaration
+    # near the top of this file.
+    $egressWorkDirCandidates = $script:EgressWorkDirCandidates
     $egressSrc = $egressWorkDirCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
     $egressNote = Join-Path $dst 'egress-work-dir-note.txt'
     if (-not $egressSrc) {
@@ -1209,6 +1262,24 @@ if ($CaptionsOff) {
         Write-HarnessErrorVerdictAndExit -Reason "-CaptionsOff was requested but could not be confirmed (PUT ok=$captionsPutOk, GET ok=$captionsGetOk, live_captions_enabled read back as '$captionsReadBackValue', expected false) -- never an unconfirmed premise for a flag the operator explicitly asked to test"
     }
 } else {
+    # Round-2 finding 4 (MEDIUM): -CaptionsOff was NOT requested, but
+    # $summary.captions_enabled must still be a MEASURED value, not the
+    # hardcoded $true it was initialized to above -- one unconditional GET
+    # /api/staff/station/profile, same endpoint the -CaptionsOff branch
+    # above already reads, judged by the SAME conservative rule
+    # (Get-MeasuredCaptionsEnabled, CaptionsOffCheck.ps1, factored out of
+    # Get-CaptionsOffVerification for exactly this reuse). Never a
+    # HARNESS_ERROR here -- the operator did not ask this lane to verify
+    # anything about captions on this run, so a failed/unparsed GET simply
+    # falls back to the same conservative $true default the hardcoded
+    # value already was, just now via the same judged code path instead of
+    # a bare literal.
+    $captionsGetR = Invoke-CivicCastApi -Method 'Get' -Url "$Base/api/staff/station/profile" -BearerToken $token
+    Write-SoakLog "captions_check (no -CaptionsOff): GET status=$($captionsGetR.status) body=$($captionsGetR.body_raw) error=$($captionsGetR.error)"
+    $captionsGetOk = ($captionsGetR.status -eq 200 -and $null -ne $captionsGetR.body_json)
+    $captionsReadBackValue = $(if ($captionsGetOk) { $captionsGetR.body_json.live_captions_enabled } else { $null })
+    $summary.captions_enabled = Get-MeasuredCaptionsEnabled -GetOk $captionsGetOk -ReadBackValue $captionsReadBackValue
+    Write-SoakLog "captions_check: measured captions_enabled=$($summary.captions_enabled) (get_ok=$captionsGetOk read_back=$captionsReadBackValue)"
     Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 }
 
@@ -1573,6 +1644,7 @@ Write-PhaseMarker -Name 'SOAK-START.json' -Obj ([ordered]@{
     # sandbox-lab lane follow-up A, item 3: guest-level, recorded once.
     cpu_count = [Environment]::ProcessorCount
 })
+$script:soakStartWritten = $true
 Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 
 # --------------------------------------------------------------------------
@@ -1886,7 +1958,6 @@ function Update-DaemonLogRing {
 # the top of this file) does the actual line-matching; this function does
 # only the file I/O and cumulative bookkeeping around it.
 # --------------------------------------------------------------------------
-$script:EgressWorkDirRoot = 'C:\ProgramData\CivicCast\data\egress'
 $script:workerStdoutOffsetByChannel = @{}
 $script:workerStdoutFirstLineByChannel = @{}
 $script:workerStdoutCountsByChannel = @{}
@@ -1901,7 +1972,14 @@ foreach ($c0 in $channelSpecs) {
 
 function Update-WorkerStdoutCounters {
     param([string]$ChannelId)
-    $path = Join-Path $script:EgressWorkDirRoot "$ChannelId\logs\gst-worker.stdout.log"
+    # Round-2 finding 6: resolved against the SAME shared candidate list
+    # Copy-StationLogs uses (script-scope $EgressWorkDirCandidates, near
+    # the top of this file), at call time -- never cached from an
+    # earlier-run resolution, same robustness principle as Copy-StationLogs
+    # itself already had.
+    $egressRoot = $script:EgressWorkDirCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $egressRoot) { return }
+    $path = Join-Path $egressRoot "$ChannelId\logs\gst-worker.stdout.log"
     if (-not (Test-Path $path)) { return }
     try { $length = (Get-Item -Path $path -ErrorAction Stop).Length } catch { return }
 
@@ -1938,6 +2016,11 @@ function Update-WorkerStdoutCounters {
             $bytesToRead = $length - $prevOffset
             $buffer = New-Object byte[] $bytesToRead
             $readCount = $fs.Read($buffer, 0, $bytesToRead)
+            # Round-2 finding 7 (INFO, no change needed): .UTF8 here is
+            # correct without a BOM check -- strategy.py:688 opens
+            # gst-worker.stdout.log with `.open("a", encoding="utf-8")`,
+            # which never writes a BOM, and a mid-file read (any offset
+            # other than 0) would never see one anyway.
             $text = [System.Text.Encoding]::UTF8.GetString($buffer, 0, $readCount)
         } finally { $fs.Close() }
     } catch { return }
@@ -1987,15 +2070,47 @@ $script:prevCpuSecondsByPid = @{}
 function Get-CycleProcessCpuSamples {
     <#
       .SYNOPSIS
-      One sample per python.exe/ffmpeg.exe process currently running in the
-      guest (gst-worker processes ARE python.exe processes running
-      egress/gst/worker.py, per Get-GstWorkerPidMap's own CommandLine
-      match -- already covered here, not queried separately).
+      One sample per python.exe/pythonw.exe/pythonservice.exe/ffmpeg.exe
+      process currently running in the guest (gst-worker processes ARE
+      python.exe processes running egress/gst/worker.py, per
+      Get-GstWorkerPidMap's own CommandLine match -- already covered here,
+      not queried separately).
+
+      Round-2 finding 3 (MEDIUM): two fixes to the round-1 version --
+      (1) widened the Get-Process name filter from just 'python','ffmpeg'
+      to also include 'pythonw' and 'pythonservice' (station_runtime.py:369
+      permits all three as the native service's own Python host executable
+      -- the round-1 filter silently dropped rows for whichever of these
+      the install actually uses, most notably 'pythonservice' -- pywin32's
+      own service host, per civiccast/native/supervisor/install_layout.py:6/25
+      -- which is ALWAYS the process actually running CivicCastSupervisor);
+      (2) every row now also carries a `role` label (Get-ProcessRoleLabel,
+      CpuSampler.ps1) so a human reading VERDICT.json/a cycle JSON can tell
+      gst-worker:<channel_id> apart from the control-plane child and the
+      service supervisor without cross-referencing a separate pid list --
+      built from pid facts THIS pass already holds ($GstWorkerPidMap,
+      already-fetched by the caller; $PidToChannelId, built by the caller
+      from this SAME pass's own per-channel state-sample pids), never an
+      extra CIM query.
+
+      .PARAMETER GstWorkerPidMap
+      This pass's already-fetched Get-GstWorkerPidMap result -- reused,
+      never re-queried (same discipline as Resolve-EngineForPid's own
+      round-9 finding N4).
+
+      .PARAMETER PidToChannelId
+      Hashtable {[int]pid -> [string]channel_id} built by the caller from
+      this pass's own $samplesThisPass (each channel's sample.pid) -- see
+      the call site below.
     #>
+    param(
+        $GstWorkerPidMap = @{},
+        $PidToChannelId = @{}
+    )
     $seenPids = @{}
     $samples = @()
     $procs = @()
-    try { $procs = @(Get-Process -Name 'python', 'ffmpeg' -ErrorAction SilentlyContinue) } catch { $procs = @() }
+    try { $procs = @(Get-Process -Name 'python', 'pythonw', 'pythonservice', 'ffmpeg' -ErrorAction SilentlyContinue) } catch { $procs = @() }
     foreach ($p in $procs) {
         $seenPids[$p.Id] = $true
         $cpuNow = $(try { $p.CPU } catch { $null })
@@ -2006,6 +2121,7 @@ function Get-CycleProcessCpuSamples {
         $samples += [ordered]@{
             pid = $p.Id
             process_name = $p.ProcessName
+            role = (Get-ProcessRoleLabel -ProcessName $p.ProcessName -ProcessId $p.Id -GstWorkerPidMap $GstWorkerPidMap -PidToChannelId $PidToChannelId)
             cpu_seconds_delta = $delta
             working_set_mb = (ConvertTo-WorkingSetMb -WorkingSetBytes $wsNow)
         }
@@ -2246,8 +2362,17 @@ while ((Get-Date) -lt $deadline) {
 
     # sandbox-lab lane follow-up A, item 3: once per cycle (not per
     # channel) -- CPU/memory belong to guest-wide OS processes, not to any
-    # one channel.
-    $processSamples = Get-CycleProcessCpuSamples
+    # one channel. Round-2 finding 3: $pidToChannelId is built here from
+    # THIS pass's own $samplesThisPass (every channel's engine pid, already
+    # fetched by the interleaved sample loop above -- no new query) so
+    # Get-CycleProcessCpuSamples can label each row's role without ever
+    # issuing an extra CIM/process lookup.
+    $pidToChannelId = @{}
+    foreach ($cid in $samplesThisPass.Keys) {
+        $spid = $samplesThisPass[$cid].pid
+        if ($spid) { $pidToChannelId[[int]$spid] = $cid }
+    }
+    $processSamples = Get-CycleProcessCpuSamples -GstWorkerPidMap $gstWorkerPidMap -PidToChannelId $pidToChannelId
     $cpuTotalPercent = Get-CpuTotalPercent
 
     $globalCensus = Get-GlobalEngineCensus -GstWorkerPidMap $gstWorkerPidMap
@@ -2303,6 +2428,19 @@ while ((Get-Date) -lt $deadline) {
 # is finalized and events are flushed below, not silently missed.
 Update-DaemonLogRing -Context $restartCtx -MeasuredCyclePeriodSeconds $measuredCyclePeriodSeconds
 
+# Round-2 finding 2 (HIGH): same principle as the daemon-log final drain
+# immediately above -- the last IN-LOOP Update-WorkerStdoutCounters call
+# (inside the poll loop, before each cycle's tsp probe/rollup) is up to one
+# whole cycle period (~60-75s) stale by the time the loop actually exits. A
+# reload committed in that final gap left $script:workerStdoutCountsByChannel
+# stale for BOTH the armed-never-committed computation just below (a false
+# reload_armed_never_committed FAIL under -SeamlessReload) and VERDICT.json's
+# own worker_stdout_by_channel snapshot further down. Drained here, for
+# EVERY channel, before either of those readers runs.
+foreach ($c0 in $channelSpecs) {
+    Update-WorkerStdoutCounters -ChannelId $c0.id
+}
+
 $eventsBeforeFinalFlush = $restartCtx.RestartEvents.Count
 # Round-11 finding 3 (HIGH): pass the REAL soak-end instant explicitly
 # (this script's own "now", right after the poll loop exits) rather than
@@ -2342,12 +2480,12 @@ Write-SoakLog "poll loop complete: $cycleN cycles recorded, $($restartEventsArra
 # for, whose own worker-stdout reload_committed_count stayed 0 for the
 # whole soak. Computed regardless of -SeamlessReload (cheap, and visible
 # in VERDICT.json either way); Get-SoakVerdict itself only acts on this
-# list under -SeamlessReload (see SoakVerdict.ps1's own header).
+# list under -SeamlessReload (see SoakVerdict.ps1's own header). Round-2
+# finding 2: the filter itself now lives in Get-ReloadArmedNeverCommittedChannels
+# (DaemonLogPatterns.ps1) so it is directly unit-testable -- called here
+# AFTER the final per-channel worker-stdout drain just above, never before.
 $reloadArmedNeverCommittedChannels = @(
-    $script:reloadArmedChannels.Keys | Where-Object {
-        $wc = $script:workerStdoutCountsByChannel[$_]
-        (-not $wc) -or ($wc.reload_committed_count -eq 0)
-    }
+    Get-ReloadArmedNeverCommittedChannels -ArmedChannelIds @($script:reloadArmedChannels.Keys) -WorkerStdoutCountsByChannel $script:workerStdoutCountsByChannel
 )
 if ($reloadArmedNeverCommittedChannels.Count -gt 0) {
     Write-SoakLog "reload_armed_never_committed: $($reloadArmedNeverCommittedChannels -join ', ') (daemon log confirmed armed, worker stdout never logged a commit)"

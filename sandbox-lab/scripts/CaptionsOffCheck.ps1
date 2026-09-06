@@ -56,11 +56,49 @@ function Get-CaptionsOffVerification {
 
     $readBackIsFalse = ($GetOk -and ($ReadBackValue -is [bool]) -and ($ReadBackValue -eq $false))
     $verified = ($PutOk -and $readBackIsFalse)
-    $capturedBoolReadBack = ($GetOk -and ($ReadBackValue -is [bool]))
 
     return [pscustomobject]@{
-        captions_enabled     = $(if ($capturedBoolReadBack) { [bool]$ReadBackValue } else { $true })
+        captions_enabled     = Get-MeasuredCaptionsEnabled -GetOk $GetOk -ReadBackValue $ReadBackValue
         verified             = $verified
         should_harness_error = (-not $PutOk -or -not $readBackIsFalse)
     }
+}
+
+function Get-MeasuredCaptionsEnabled {
+    <#
+      .SYNOPSIS
+      Round-2 finding 4 (MEDIUM): the read-back judgment factored out of
+      Get-CaptionsOffVerification (which it now calls internally) so a
+      caller that only ever does a GET -- never a PUT -- can reuse the
+      SAME conservative rule. Before this fix, `-CaptionsOff`-less runs
+      never called either function at all: In-Sandbox-Soak.ps1 hardcoded
+      `captions_enabled = $true` at summary-init time and never touched it
+      again, so SOAK-START.json/VERDICT.json reported an ASSUMED value on
+      every run that did not pass -CaptionsOff, never a measured one. The
+      fix at the call site is one unconditional GET
+      /api/staff/station/profile right after first-admin on EVERY run
+      (station_router.py's `get_station_profile` returns
+      `resolve_live_captions_enabled()`, the resolved in-effect value, so
+      this is always what is actually live, not merely what was persisted);
+      this function is what turns that GET's result into the same
+      conservative bool Get-CaptionsOffVerification already used.
+
+      .PARAMETER GetOk
+      Whether GET /api/staff/station/profile returned HTTP 200 with a
+      parseable body.
+
+      .PARAMETER ReadBackValue
+      The GET response body's `live_captions_enabled` field (any type).
+
+      .OUTPUTS
+      [bool] -- the read-back value when it is a real bool, otherwise
+      conservatively $true (an unconfirmed read is never reported as
+      captions being off).
+    #>
+    param(
+        [bool]$GetOk,
+        $ReadBackValue
+    )
+    if ($GetOk -and ($ReadBackValue -is [bool])) { return [bool]$ReadBackValue }
+    return $true
 }

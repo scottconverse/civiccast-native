@@ -56,7 +56,13 @@ read-back that is not `false` is `HARNESS_ERROR` (see
 `scripts/CaptionsOffCheck.ps1`'s `Get-CaptionsOffVerification`, the same
 never-an-unconfirmed-premise principle as `-SeamlessReload`'s own
 verification). Recorded as `captions_off_requested`/`captions_enabled`/
-`captions_off_verified` in `SOAK-START.json` and `VERDICT.json`.
+`captions_off_verified` in `SOAK-START.json` and `VERDICT.json`. `captions_enabled`
+is a MEASURED value on every run, not only `-CaptionsOff` runs: right after
+first-admin, this lane always does one GET
+`/api/staff/station/profile` (the resolved, in-effect value —
+`civiccast/platform/station_router.py`'s `get_station_profile`) and records
+the real read-back (conservatively `true` only when the GET itself
+couldn't be confirmed) — never a hardcoded assumption.
 
 `-Minutes` is **SOAK minutes**, not wall-clock minutes from launch: the
 clock starts only once the station reports healthy AND all three channels
@@ -152,9 +158,17 @@ under `cycles/` (each channel row carries its own up-to-12-sample
 `sample_ring`, the cycle's `measured_cycle_period_seconds`, and now the
 per-channel `reload_committed_count`/`reload_aborted_count_worker`/
 `reload_aborted_reasons_worker`/`worker_stall_count` parsed from that
-channel's own `gst-worker.stdout.log`, plus a cycle-wide `processes` array
-(per-pid `cpu_seconds_delta`/`working_set_mb` for every python.exe/
-ffmpeg.exe process, gst-worker workers included) and `cpu_total_percent`;
+channel's own `gst-worker.stdout.log` (`worker_stall_count` counts the
+worker's own `WORKER_RESULT {'error': ('stall', ...` exit record, which is
+always on stdout regardless of where the underlying `CTRL stall:` line
+itself was printed — see `scripts/WorkerStdoutParser.ps1`'s header), plus a
+cycle-wide `processes` array (per-pid `cpu_seconds_delta`/`working_set_mb`/
+`role` for every python.exe/pythonw.exe/pythonservice.exe/ffmpeg.exe
+process — `role` is one of `gst-worker:<channel_id>`, `gst-worker:unknown`,
+`supervisor` (the `pythonservice.exe` Windows service host),
+`control-plane` (the control-plane child), or `other`, labeled from pid
+facts this lane already holds, never an extra process query — see
+`scripts/CpuSampler.ps1`'s `Get-ProcessRoleLabel`) and `cpu_total_percent`;
 `SOAK-START.json` additionally records the guest's `cpu_count` once),
 `restart-events.json`, a rollup every 3 minutes under `rollups/` (each
 carrying a `worker_stdout_cumulative_by_channel` snapshot), per-channel
@@ -167,7 +181,12 @@ confirmed armed a seamless content-reload for but whose worker stdout
 never logged a commit for the whole soak is reported `FAIL` ("seamless
 reload never committed"), a product finding, not a harness note (see
 `scripts/WorkerStdoutParser.ps1` and `scripts/DaemonLogPatterns.ps1`'s
-`$DaemonReloadArmedRegex`).
+`$DaemonReloadArmedRegex`/`Get-ReloadArmedNeverCommittedChannels`). This
+check (and `VERDICT.json`'s own `worker_stdout_by_channel` snapshot) reads
+from one FINAL per-channel drain of every worker's stdout counters, taken
+right after the poll loop exits — a reload committed in the last cycle's
+own write window is always counted before this check runs, never missed
+by up to one stale cycle.
 
 The verify/verdict logic lives in `scripts/SoakVerdict.ps1` (the per-cycle
 PASS/FAIL/HARNESS_ERROR judgment), `scripts/RestartClassifier.ps1` (planned-

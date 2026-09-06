@@ -74,6 +74,34 @@ $v6 = Get-CaptionsOffVerification -PutOk $false -GetOk $false -ReadBackValue $nu
 Assert-Equal 'scenario6 (both failed) -> verified' $false $v6.verified
 Assert-Equal 'scenario6 should_harness_error' $true $v6.should_harness_error
 
+# ---------------------------------------------------------------- scenario 7
+# Round-2 finding 4 (MEDIUM): Get-MeasuredCaptionsEnabled -- the GET-only
+# read used on every run (not just -CaptionsOff runs) to measure
+# captions_enabled instead of the previous hardcoded $true. Clean case:
+# GET ok, real bool read-back -> that value, verbatim.
+Assert-Equal 'scenario7a (GET ok, read-back $true) -> $true' $true (Get-MeasuredCaptionsEnabled -GetOk $true -ReadBackValue $true)
+Assert-Equal 'scenario7b (GET ok, read-back $false) -> $false' $false (Get-MeasuredCaptionsEnabled -GetOk $true -ReadBackValue $false)
+
+# ---------------------------------------------------------------- scenario 8
+# Round-2 finding 4: GET failed outright -- conservatively $true (an
+# unconfirmed read is never reported as captions being off), never $null
+# and never a throw.
+Assert-Equal 'scenario8 (GET failed) -> $true (conservative)' $true (Get-MeasuredCaptionsEnabled -GetOk $false -ReadBackValue $null)
+
+# ---------------------------------------------------------------- scenario 9
+# Round-2 finding 4: GET ok but the field is missing/non-boolean -- must
+# not be silently coerced; conservatively $true.
+Assert-Equal 'scenario9 (GET ok, non-boolean/$null read-back) -> $true (conservative)' $true (Get-MeasuredCaptionsEnabled -GetOk $true -ReadBackValue $null)
+
+# --------------------------------------------------------------- scenario 10
+# Round-2 finding 4: Get-CaptionsOffVerification's own captions_enabled
+# field now calls Get-MeasuredCaptionsEnabled internally -- prove the two
+# functions still agree after the refactor (no behavior drift), reusing
+# scenario 3's inputs (PUT ok, read-back $true -- the PUT silently did not
+# take effect).
+$v10 = Get-CaptionsOffVerification -PutOk $true -GetOk $true -ReadBackValue $true
+Assert-Equal 'scenario10 (Get-CaptionsOffVerification.captions_enabled matches Get-MeasuredCaptionsEnabled)' (Get-MeasuredCaptionsEnabled -GetOk $true -ReadBackValue $true) $v10.captions_enabled
+
 Write-Host ""
 Write-Host "CaptionsOffCheck unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })
 if ($script:failures -gt 0) { exit 1 }
