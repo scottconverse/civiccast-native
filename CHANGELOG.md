@@ -154,6 +154,26 @@ reproduces item 60 in about 4 minutes (versus 2.5 hours to see the same
 failure on the tester), with 20-35 restart events counted across a single
 15-minute run.
 
+**Candidate 3b, measured 2026-09-06: the crash loop is not the seamless
+rollover path.** Across runs 11-13 on candidate 3b, the seamless rollover
+mechanism itself armed 31 times and never once committed -- every arm was
+pre-empted by a worker crash-relaunch before it could complete, driven by
+two separate problems: CPU starvation from the live caption tap (item 79,
+below) and a rollover horizon that goes stale the moment a channel's slow
+start already leaves its plan in the past (item 78, below). Run 12
+(seamless flag ON) crash-looped roughly every 65 seconds on all three
+channels; run 13, the same candidate with the flag switched OFF,
+crash-looped too -- proof that turning the seamless path off does not, by
+itself, stop the crash, because the underlying CPU-starvation and
+stale-horizon defects fire either way. Every restart counted in these runs
+is attributed from the daemon's own state-log lines (never from a worker
+pid change, which candidate 2's own hardware soak already showed is
+unreliable), so a crash-relaunch and a genuine planned restart are never
+confused with each other in these numbers. **The beta.5 gate, unchanged by
+this finding:** a candidate must pass the 15-minute sandbox soak, with the
+seamless flag ON, every time it is run, before it goes back to the tester
+for its own real-hardware soak.
+
 ### Seamless plan rollover ON by default (owner requirement)
 
 **Seamless plan rollover ships ON by default in beta.5, at the owner's
@@ -893,6 +913,80 @@ across repeated runs.
     reached the worker is indistinguishable, from the logs, from one
     that was never attempted. Fix: `fix/gst-reload-concat-collision`
     (logged, honest reload failure).
+16. **(item 78, BETA.5 BLOCKER on candidate 3b, fix in review) A stale
+    rollover horizon crash-loops every channel once a slow start already
+    leaves the plan in the past.** Sandbox soak run 12 (candidate 3b,
+    seamless rollover ON) measured a first-`ON_AIR` of 915-930 seconds
+    (item 66's synchronous-conform delay, worse on 3b than the 527 seconds
+    measured on `609273d`) -- by the time each channel came up, its plan
+    had already ended roughly 11 minutes earlier. `ChannelAutomationService
+    .run_once` captures "now" once per pass, and that pass blocked for the
+    full 915 seconds inside `_start`, so the computed `plan_end_at` was
+    already stale (automation logged "the live plan ends in -698s") the
+    moment the channel went on air. Automation immediately armed a seamless
+    rollover onto that already-passed boundary; the worker hit `CTRL stall:
+    no output for 10s` and exited; the daemon relaunched it; automation
+    re-armed 1 second later, bypassing its own retry-cadence floor
+    entirely -- a crash loop roughly every 65 seconds on all three
+    channels (26 unplanned relaunches in 15 minutes). Diagnosis (Opus,
+    2026-09-06) found three compounding defects: (a) the rollover horizon
+    is captured once per automation pass and never refreshed against a
+    slow-starting channel's real clock; (b) a 45-second retry path
+    bypasses the cadence floor entirely; (c) `should_defer_switch` can
+    defer a switch onto a boundary that has already passed instead of
+    cutting immediately. **Fix in review:** `fix/rollover-horizon-item78`
+    (PR #181) -- a per-channel clock instead of one shared "now",
+    discard-and-re-establish on a stale horizon, a real retry floor plus a
+    worker-age guard, and an immediate cut when `plan_end_at <= now`. Not
+    yet merged: round 2 of review (2026-09-06) found the clock still has
+    to be read after, not before, the blocking `process_once` call, or a
+    slow-starting channel is measured stale regardless.
+17. **(item 79, BETA.5 BLOCKER on candidate 3b, fix in review, isolation
+    runs pending) The live caption tap still starves playout inside the
+    sandbox VM even with #172's backoff.** Run 12 (candidate 3b) logged 10
+    "Caption tap overload" events, and worker stalls clustered inside those
+    overload windows; the tap's own self-pause escalation
+    (60/120/240/480 seconds) engaged but too late to prevent the first
+    several stalls -- the same root cause the tester measured on beta.4
+    (2026-09-05), reproduced inside a more resource-constrained VM. **Fix
+    in review:** `fix/caption-tap-caps-item79` (PR #182) -- one caption
+    channel transcribing at a time station-wide, the live tap's
+    `cpu_threads` capped to `cpu//8` (max 2), and a shorter first pause
+    (120 seconds). Not conclusively the whole story: run 13 (candidate 3b,
+    seamless flag OFF) crash-looped too with 12 caption-overload events,
+    ruling out the seamless path as the driver but not settling whether
+    captions are the sole cause -- 14 of 30 relaunches in run 12 happened
+    while the ASR tap was idle inside its own backoff window, pointing at
+    a second contributor (most likely item 78's re-arm storm building a
+    second full decoder leg on every relaunch, or VM/disk contention).
+    **Isolation runs pending:** a captions-ON vs captions-OFF run on the
+    same candidate, decisive for whether captions are necessary or merely
+    contributing, is queued behind item 78's fix landing.
+18. **(item 80, harness, fix in progress) The sandbox lane's restart
+    classifier ignored the playout worker's own stdout, undercounting
+    aborted reloads.** The worker's `CTRL reload aborted`/`CTRL reload
+    committed` progress lines are written to stdout only; the classifier
+    read stderr and the daemon's state-log lines, so a run where the
+    worker itself logged an aborted reload still reported
+    `reload_aborted_count=0`. **Fix:** in the sandbox lane's follow-up
+    branch (after PR #177) -- not yet merged as of this writing; the same
+    follow-up also carries worker-stdout capture into evidence bundles and
+    a captions-off isolation switch for item 79's isolation runs.
+19. **(item 82, beta.5 candidate, PR pending) A 5-second preroll timeout
+    guarantees a relaunch storm on a CPU-starved box.** `engine.py`'s
+    `_await_playing` gives a worker 5 seconds to reach GStreamer's
+    `PLAYING` state; run 13's (candidate 3b, seamless OFF) first crash was
+    `government` failing exactly this bound (`pipeline did not reach
+    PLAYING within 5.0s (get_state=async)`) under load. On a box already
+    starved by items 78/79, 5 seconds is not enough for a cold pipeline to
+    preroll, and the daemon treats the timeout as an ordinary
+    crash-relaunch rather than a retry-with-backoff. Same family of
+    CPU-pressure symptom as items 79/81, a distinct code path. **Fix
+    pending:** raise the bound to roughly 30 seconds (or until the stall
+    watchdog would fire), log state-change progress while waiting, and
+    treat a preroll timeout as retry-with-backoff instead of
+    crash-relaunch; PR requested 2026-09-06, not yet opened as of this
+    writing.
 
 ### Known issues carried to beta.6
 
@@ -953,6 +1047,16 @@ release) are not repeated here.
   intends.
 - **(item 63)** Evidence bundles don't reliably capture the playout
   worker's stdout log, where reload-progress lines are written.
+- **(item 81)** The offline caption job worker transcribes
+  uploaded/published assets in-process with `cpu_threads=0` (all cores)
+  and `beam_size=5` while channels are on air; on a real station, a
+  publish that lands during heavy schedule activity could compete with
+  playout for CPU the same way the live caption tap does. Confirmed NOT a
+  factor in the sandbox soak lane -- the lane never calls
+  approve/publish, so this worker sits idle throughout every run measured
+  here (item 79's overload events are the live caption tap only). Fix
+  (throttle/pause offline captions while any channel is on air, or move
+  the job to a separate low-priority process) is targeted for beta.6.
 
 ## [1.0.0-beta.4] - 2026-09-04
 
