@@ -234,3 +234,8 @@ PUT, start, archive soak #4's probes to `soak/archive-609273d-prev-soak/`, reset
 `soak/final-verdict.json` at 2 h. PASS = ON_AIR on GStreamer every cycle, tsp pass every cycle, zero
 relaunches. Results: REINSTALL-RESULT-9za.md, STATE-RESET-RESULT-9zb.md, AUTORUN-9zc-RESULT-*.md,
 AUTORUN-9zd-RESULT-*.md / CHANNEL-SCHEDULE-9zd.md / SOAK-START-9zd.md / SETUP-BLOCKED-9zd.md.
+
+
+## Addendum -- AUTORUN-9ze (read-only)
+
+After the 9za..9zd chain, `AUTORUN-9ze.ps1` proves the installed code is kit 609273d: hashes of key civiccast files vs the kit's app-payload pack, plus markers `CaptionBackoffPolicy` (#172), `PLAN_MIN_SECONDS = 0.0` / `MAX_PLAYLIST_SUBCHAINS = 12` / `PlaylistCapBypassedError` (#174). Result `soak/DIAG-9ze-<stamp>.md`. A soak #5 verdict only counts with this proof.
