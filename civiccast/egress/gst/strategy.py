@@ -634,6 +634,65 @@ def _seamless_content_reload_default() -> bool:
     return os.environ.get(_SEAMLESS_RELOAD_ENV_VAR, "").strip().lower() in _TRUTHY
 
 
+#: Set once the first time ``_live_captions_enabled_or_default`` swallows an
+#: exception, so a station whose ``station-state.json`` is permanently
+#: corrupt/locked logs ONE WARNING instead of one per channel start/reload
+#: for as long as the station runs -- matching the "logged once" shape of
+#: every other best-effort degrade in this codebase
+#: (``CaptionTapWorker._disabled_announced`` is the sibling pattern on the
+#: caption-tap side).
+_live_captions_read_failure_announced = False
+
+
+def _live_captions_enabled_or_default(channel_id: str) -> bool:
+    """``resolve_live_captions_enabled()``, but never fatal to a channel start.
+
+    Item 91 follow-up review: ``resolve_live_captions_enabled``
+    (`civiccast.installer.station_state`) reads ``station-state.json`` via
+    ``_load_raw_state``, which only ever suppresses ``FileNotFoundError`` and
+    ``json.JSONDecodeError``. A byte that is not valid UTF-8 (``read_text``'s
+    strict decode) or a Windows sharing violation while another process holds
+    the file (``PermissionError``/``OSError``) both raise straight through --
+    and before this guard, that exception propagated out of
+    ``GstPlayoutStrategy.start()``/``reload_content()`` and stopped the
+    channel going to air over a corrupt or momentarily-locked STATUS file for
+    an entirely unrelated, best-effort, optional accessibility feature. That
+    is exactly backwards: whether live captions are enabled must never be
+    able to take playout down.
+
+    Defaults to the SAME "on" ``resolve_live_captions_enabled`` itself
+    defaults to when nothing is persisted -- live captions are an
+    accessibility feature, and a station that can run them should, so a
+    read failure is treated as "the switch could not be read" rather than
+    "the operator asked for it off." Imported lazily, matching the existing
+    lazy import in ``civiccast.app`` for the same function --
+    ``civiccast.installer`` is not otherwise a dependency of the egress
+    graph-building path and this keeps it that way for every caller that
+    never hits a read failure.
+    """
+
+    from civiccast.installer.station_state import resolve_live_captions_enabled
+
+    global _live_captions_read_failure_announced
+    try:
+        return resolve_live_captions_enabled()
+    except Exception:
+        if not _live_captions_read_failure_announced:
+            logger.warning(
+                "channel %s: could not read the live-captions station-profile "
+                "switch (station-state.json unreadable or locked); defaulting "
+                "to ENABLED rather than blocking playout on an unrelated "
+                "accessibility-feature switch. This channel and every other "
+                "channel will keep defaulting to enabled until the file "
+                "becomes readable again; this warning is logged once per "
+                "process, not once per channel.",
+                channel_id,
+                exc_info=True,
+            )
+            _live_captions_read_failure_announced = True
+        return True
+
+
 def _write_graph_file(path: Path, text: str) -> None:
     """Write a serialized graph, restricting it to 0600. The graph can embed a
     resolved SRT-sink passphrase (ENG-007), so it must not be world-readable in the
@@ -805,26 +864,32 @@ class GstPlayoutStrategy:
         # and deletes settled segments (``CaptionTapWorker._run_disabled``),
         # but the egress tee/appsink/WAV writer this graph builds kept
         # running regardless -- the audio tap LEG never stopped, only what
-        # consumed it. This is called only at channel start
-        # (``GstPlayoutStrategy.start``) and at a content reload
-        # (``reload_content``), never mid-pipeline, so "next worker start"
-        # is exactly the granularity this check runs at: a channel already
-        # streaming keeps its already-built graph until its next reload or
-        # restart, matching every other startup-time config resolution in
-        # this strategy (e.g. ``_resolve_encoder_override``).
+        # consumed it.
+        #
+        # This is consulted only when a NEW ``PlayoutGraph`` is being built,
+        # which is ``GstPlayoutStrategy.start()`` alone -- NOT a content
+        # reload. ``reload_content()`` writes a reload sidecar that
+        # ``engine.py``'s ``_dispatch_control``/``worker.py``'s reload branch
+        # both read back with ``graph_from_json`` and then apply by hand,
+        # consuming only ``new_graph.sources[0]`` (via ``reload_program``) and
+        # ``new_graph.graphics_overlay`` (via ``reload_graphics_overlay``);
+        # ``new_graph.audio_tap`` on that reloaded graph is read into memory
+        # and then discarded -- the tee/appsink is built exactly once, at
+        # initial pipeline construction, and a reload cannot touch it either
+        # way. So this switch takes effect at the channel's next START only
+        # (a fresh `.start()` after the channel goes off air and back on, or
+        # a supervisor restart) -- a content reload on an already-running
+        # channel does NOT pick up a profile change made in between.
         #
         # ``resolve_live_captions_enabled`` (`civiccast.installer.station_state`)
         # already folds in the ``CIVICCAST_CAPTION_TAP=off`` env switch too
         # (env override > persisted profile > default-on), so this one check
         # covers both item 91 switches: the ops/experiment env override and
-        # the operator-facing profile toggle. Imported lazily, matching the
-        # existing lazy import in ``civiccast.app`` for the same function --
-        # ``civiccast.installer`` is not otherwise a dependency of the egress
-        # graph-building path and this keeps it that way for every caller
-        # that never disables the tap.
-        from civiccast.installer.station_state import resolve_live_captions_enabled
-
-        if not resolve_live_captions_enabled():
+        # the operator-facing profile toggle. Read through
+        # ``_live_captions_enabled_or_default`` (module-level, below), which
+        # defaults to enabled and logs once rather than raising, if the
+        # underlying state-file read ever fails.
+        if not _live_captions_enabled_or_default(channel_id):
             return graph
         plan = build_audio_tap_plan(channel_id)
         if plan is None:

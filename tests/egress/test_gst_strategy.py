@@ -699,6 +699,90 @@ def test_strategy_omits_the_audio_tap_when_live_captions_are_disabled(
     assert graph.audio_tap is None
 
 
+def test_strategy_start_survives_a_corrupt_station_state_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Item 91 review round 2 (BLOCKER): ``resolve_live_captions_enabled``
+    reads ``station-state.json`` via ``_load_raw_state``, which only ever
+    suppresses ``FileNotFoundError``/``json.JSONDecodeError`` -- a state file
+    containing a byte that is not valid UTF-8 raises ``UnicodeDecodeError``
+    straight through ``read_text(encoding="utf-8")``'s strict decode.
+    MEASURED before this test's fix landed: that exception propagated out of
+    ``GstPlayoutStrategy.start()`` and stopped the channel going to air over
+    a corrupt status file for an entirely unrelated, best-effort,
+    accessibility feature. ``_live_captions_enabled_or_default`` must catch
+    this, log once, and default to the documented "on" instead."""
+
+    strategy_module._live_captions_read_failure_announced = False
+    state_path = tmp_path / "station-state.json"
+    # A byte that is not valid UTF-8 anywhere (0xFF is invalid in every UTF-8
+    # continuation/lead position) -- guarantees UnicodeDecodeError, not a
+    # JSONDecodeError, which is already handled.
+    state_path.write_bytes(b'{"station": {"live_captions_enabled": \xff}}')
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(state_path))
+    monkeypatch.delenv("CIVICCAST_CAPTION_TAP", raising=False)
+
+    strategy = GstPlayoutStrategy(
+        worker_launcher=lambda *_args: SimpleNamespace(
+            pid=1, poll=lambda: None, terminate=lambda **_kwargs: 0
+        ),
+        pipe_channel_factory=_fake_pipe_channel_factory,
+    )
+
+    with caplog.at_level("WARNING", logger="civiccast.egress.gst.strategy"):
+        result = strategy.start(_start_request(tmp_path))  # must not raise
+
+    assert "could not read the live-captions station-profile switch" in caplog.text
+    # Defaults to the documented "on" -- unaffected by the read failure, the
+    # graph still gets built normally (no CIVICCAST_CAPTION_TAP_DIR is set in
+    # this test, so there is simply no tap plan; the point is start() did not
+    # raise, not that a tap was built).
+    graph_from_json(result.concat_plan_path.read_text(encoding="utf-8"))
+
+
+def test_strategy_start_survives_a_locked_station_state_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Sibling of the corrupt-file case: a Windows sharing violation while
+    another process holds ``station-state.json`` open surfaces as
+    ``PermissionError`` (a subclass of ``OSError``), which
+    ``_load_raw_state`` also does not suppress. Stubbed directly against
+    ``resolve_live_captions_enabled`` (rather than a real file lock, which
+    is awkward to arrange portably in a unit test) to prove the SAME guard
+    catches an ``OSError`` family member, not just ``UnicodeDecodeError``."""
+
+    strategy_module._live_captions_read_failure_announced = False
+
+    def _raise_permission_error() -> bool:
+        raise PermissionError(
+            13, "The process cannot access the file because it is being used by another process"
+        )
+
+    monkeypatch.setattr(
+        "civiccast.installer.station_state.resolve_live_captions_enabled",
+        _raise_permission_error,
+    )
+    tap_root = tmp_path / "caption-tap"
+    monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tap_root))
+
+    strategy = GstPlayoutStrategy(
+        worker_launcher=lambda *_args: SimpleNamespace(
+            pid=1, poll=lambda: None, terminate=lambda **_kwargs: 0
+        ),
+        pipe_channel_factory=_fake_pipe_channel_factory,
+    )
+
+    with caplog.at_level("WARNING", logger="civiccast.egress.gst.strategy"):
+        result = strategy.start(_start_request(tmp_path))  # must not raise
+
+    assert "could not read the live-captions station-profile switch" in caplog.text
+    # Defaults to "on": the tap dir WAS configured, so the graph carries the
+    # tap leg exactly as it would if the read had actually succeeded and
+    # returned True.
+    graph = graph_from_json(result.concat_plan_path.read_text(encoding="utf-8"))
+    assert graph.audio_tap is not None
+
+
 def test_strategy_builds_the_audio_tap_when_live_captions_stay_enabled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -167,8 +167,21 @@ precedence (letting a persisted "on" win over an explicit env "off") would
 still make the switch unreachable on exactly the deployments that need it,
 and the asymmetric-safe rule above still governs when both are set.
 Either switch -- the env variable or the station-profile toggle -- now stops
-the egress audio-fork leg itself at the channel's next start or content
-reload, not only the transcription step downstream of it.
+the egress audio-fork leg itself, not only the transcription step downstream
+of it. Both take effect at a channel's next **start** only (going off air
+and back on, or a control-plane restart) -- NOT at a content reload: the
+reload path (`engine.py`'s `_dispatch_control`/`worker.py`'s D2 pipe reload
+branch) reads the reloaded graph back with `graph_from_json` and re-applies
+only its program source (`reload_program`) and its graphics-overlay leg
+(`reload_graphics_overlay`); the reloaded graph's `audio_tap` field is read
+into memory and discarded, because the tee/appsink is built exactly once, at
+initial pipeline construction (`GstPlayoutStrategy.start()`), and nothing on
+the reload path can touch it either way. The env variable additionally
+requires a control-plane restart to be READ at all (it is composed into the
+child's environment once, at station-runtime spawn time); the station-profile
+toggle does not require that restart, but still only reaches a channel that
+is starting fresh, same as the graphics-overlay lower-third's own "not a
+live, hot text update" limit documented in USER-MANUAL.md.
 
 ### Captions are best effort; playout wins
 

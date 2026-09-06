@@ -42,7 +42,7 @@ below.
   #189/#190: `civiccast.native.station_runtime.load_native_station_environment`
   unconditionally forced `CIVICCAST_CAPTION_TAP=inline` and injected
   `CIVICCAST_CAPTION_TAP_DIR` into every activated station's child
-  environment, and `installer/supervisor/service.py` applies that spec
+  environment, and `civiccast/native/supervisor/service.py` applies that spec
   environment LAST over the service's own `os.environ` -- so an operator (or
   a tester) who set `CIVICCAST_CAPTION_TAP=off` in the Windows service's
   registry `Environment` could never reach the child at all: the native
@@ -51,34 +51,86 @@ below.
   consulted the directory, not the mode. There was no shipped way to turn
   the tap off on a native station short of uninstalling the caption model.
   Fixed at three layers: (1) `load_native_station_environment` now passes
-  `CIVICCAST_CAPTION_TAP=off` THROUGH instead of overwriting it, and omits
-  `CIVICCAST_CAPTION_TAP_DIR` entirely (removing any stray leftover) when the
-  service environment already carries the literal `off`; any other value
-  (unset, `inline`, a typo) keeps prior behavior byte-for-byte; (2)
-  `build_audio_tap_plan` itself now checks the mode and returns `None` under
-  `off` even if a directory is still configured, so it stays the single
-  place deciding whether a channel's audio is forked regardless of caller;
-  (3) `GstPlayoutStrategy._with_audio_tap` (`civiccast/egress/gst/strategy.py`)
-  now also consults `resolve_live_captions_enabled()` before building the
-  tap, so the **operator-facing** `live_captions_enabled` station-profile
-  switch (added above) now stops the audio-fork leg itself at the channel's
-  next start or content reload -- previously it stopped only ASR
-  transcription (`CaptionTapWorker._run_disabled` discarded and deleted what
-  the still-running fork wrote); the tee/appsink/WAV writer kept running
-  regardless of the switch. Neither `civiccast/egress/gst/engine.py`'s
+  `CIVICCAST_CAPTION_TAP=off` THROUGH instead of overwriting it, and sets
+  `CIVICCAST_CAPTION_TAP_DIR` to the empty string (never merely omitted --
+  see the round-2 correction below) when the service environment already
+  carries the literal `off`; any other value (unset, `inline`, a typo) keeps
+  prior behavior byte-for-byte; (2) `build_audio_tap_plan` itself now checks
+  the mode and returns `None` under `off` even if a directory is still
+  configured, so it stays the single place deciding whether a channel's
+  audio is forked regardless of caller; (3) `GstPlayoutStrategy._with_audio_tap`
+  (`civiccast/egress/gst/strategy.py`) now also consults
+  `resolve_live_captions_enabled()` before building the tap, so the
+  **operator-facing** `live_captions_enabled` station-profile switch (added
+  above) now stops the audio-fork leg itself at the channel's next **start**
+  -- previously it stopped only ASR transcription (`CaptionTapWorker._run_disabled`
+  discarded and deleted what the still-running fork wrote); the
+  tee/appsink/WAV writer kept running regardless of the switch. A content
+  reload does NOT pick this up: `engine.py`'s `_dispatch_control` and
+  `worker.py`'s D2-pipe reload branch both read the reloaded graph back with
+  `graph_from_json` and re-apply only `new_graph.sources[0]`
+  (`reload_program`) and `new_graph.graphics_overlay`
+  (`reload_graphics_overlay`) -- `new_graph.audio_tap` is read into memory
+  and discarded, because the tee/appsink is built exactly once, at initial
+  pipeline construction, and nothing on the reload path can touch it either
+  way. Neither `civiccast/egress/gst/engine.py`'s
   `_build_audio_tap`/`_audio_tap_element_specs` nor
   `civiccast/egress/gst/audio_tap.py` (PR #190, in review) were touched --
   the graph builder there already only builds the tee when
   `graph.audio_tap is not None`, which is exactly the signal this fix now
   controls correctly upstream. New coverage: `tests/native/test_station_runtime.py`
-  (env composition: `off` passthrough + dir omission, every non-`off` value
-  unchanged), `tests/captions/test_audio_tap.py` (`build_audio_tap_plan`
+  (env composition: `off` passthrough + dir set to `""`, every non-`off`
+  value unchanged), `tests/captions/test_audio_tap.py` (`build_audio_tap_plan`
   returns `None` under `off` even with a dir configured),
   `tests/captions/test_caption_tap_worker.py` (`off` with no dir parses
   without raising; a scan against a not-yet-created tap directory idles
   cleanly rather than raising), and `tests/egress/test_gst_strategy.py`
   (the built graph carries no `audio_tap` when live captions are disabled,
   and still carries one when they are not).
+
+  **Review round 2 found two real defects in the round-1 fix, both corrected
+  here:**
+  - **BLOCKER, uncaught exception could stop a channel going to air.**
+    `GstPlayoutStrategy._with_audio_tap` calling `resolve_live_captions_enabled()`
+    means a corrupt or momentarily-locked `station-state.json` now raised
+    straight out of `GstPlayoutStrategy.start()`/`reload_content()`:
+    `_load_raw_state` (`civiccast/installer/station_state.py`) only ever
+    suppresses `FileNotFoundError`/`json.JSONDecodeError`, so a byte that is
+    not valid UTF-8 (measured: `UnicodeDecodeError`) or a Windows sharing
+    violation (`PermissionError`) propagated through and stopped an
+    unrelated, best-effort, optional accessibility feature from taking a
+    channel off air. Fixed by a new `_live_captions_enabled_or_default`
+    wrapper in `strategy.py` that catches any exception from the read,
+    logs one WARNING per process (not per channel/reload), and defaults to
+    the documented "on" -- exactly what `resolve_live_captions_enabled`
+    itself already defaults to when nothing is persisted. New coverage:
+    `tests/egress/test_gst_strategy.py::test_strategy_start_survives_a_corrupt_station_state_file`
+    (a real 0xFF byte written to a real file) and
+    `::test_strategy_start_survives_a_locked_station_state_file`
+    (a stubbed `PermissionError`).
+  - **The "or content reload" claim in the round-1 text was FALSE**, per the
+    reload-path trace above -- corrected throughout this entry,
+    `civiccast/egress/gst/strategy.py`'s `_with_audio_tap` docstring,
+    `docs/ops/background-workers.md`, and `docs/USER-MANUAL.md`: the profile
+    switch (and the env switch) take effect at the channel's next **start**
+    only.
+  - **The "removing any stray leftover" claim was also FALSE** against the
+    real child environment: `civiccast/native/supervisor/service.py` composes
+    `env = {**os.environ, **spec.env}`, so merely omitting
+    `CIVICCAST_CAPTION_TAP_DIR` from `spec.env` (this function's return
+    value) left an inherited stray value in `os.environ` free to win the
+    merge unopposed. Fixed by setting the key to the empty string in
+    `spec.env` instead of omitting it -- `build_audio_tap_plan`'s `.strip()`
+    check treats `""` exactly like unset, and `spec.env` is applied LAST, so
+    it always wins regardless of what `os.environ` inherited. New coverage:
+    `test_station_environment_caption_tap_off_switch_disables_the_tap_leg`
+    now drives the actual `{**os.environ, **spec.env}` merge (not just this
+    function's return value) and feeds the merged result through
+    `build_audio_tap_plan` to prove the tee is not built.
+  - A stale file citation (`installer/supervisor/service.py` instead of
+    `civiccast/native/supervisor/service.py`) was also corrected, and
+    `CAPABILITIES.md`'s caption-transcription-worker row (governed,
+    `enforced: false`) updated to match.
 
 - **Reload-commit wedge: diagnostic instrumentation, a commit watchdog with a
   stack-dump, and wedged-worker termination (item 85). The wedge itself is

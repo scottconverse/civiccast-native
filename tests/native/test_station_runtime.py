@@ -198,35 +198,69 @@ def test_station_environment_caption_tap_off_switch_disables_the_tap_leg(
 ) -> None:
     """Item 91: ``CIVICCAST_CAPTION_TAP=off`` in the service environment must
     survive into the child environment unmolested, and the tap directory must
-    never be injected alongside it -- otherwise ``build_audio_tap_plan``
-    (``civiccast.captions.tap``) sees a directory and builds the tee anyway,
-    since it only ever consults ``CIVICCAST_CAPTION_TAP_DIR``."""
+    be neutralized to the empty string alongside it -- otherwise
+    ``build_audio_tap_plan`` (``civiccast.captions.tap``) sees a directory and
+    builds the tee anyway, since it only ever consults
+    ``CIVICCAST_CAPTION_TAP_DIR``.
+
+    Review round 2: merely OMITTING the key from this function's return value
+    (which becomes ``spec.env``) is not enough, because
+    ``civiccast/native/supervisor/service.py`` composes the child's real
+    environment as ``env = {**os.environ, **spec.env}`` -- an inherited
+    ``CIVICCAST_CAPTION_TAP_DIR`` already present in the SAME ``os.environ``
+    this function itself reads (a stray leftover from a previous
+    configuration) would win the merge unopposed if ``spec.env`` merely
+    left the key out. The key must be explicitly set to ``""`` here so this
+    dict (as ``spec.env``, applied LAST) always overrides whatever
+    ``os.environ`` carries. This test drives the real merge, not just this
+    function's return value, so it would have caught the omission-only
+    version of the fix.
+    """
 
     from civiccast.native import station_runtime
 
     monkeypatch.setenv("PATH", "existing-control-plane-path")
     monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "off")
-    # A stray leftover from a previous configuration must not survive the
-    # merge either -- the off switch removes the dir entirely rather than
-    # trusting it to already be absent.
-    monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tmp_path / "stale-tap-dir"))
+    # A stray leftover from a previous configuration, in the SAME os.environ
+    # the merge in service.py will also read.
+    stale_dir = str(tmp_path / "stale-tap-dir")
+    monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", stale_dir)
     version_root, files = _write_station(tmp_path)
     monkeypatch.setattr(station_runtime, "WHISPER_MODEL_FILES", files)
     monkeypatch.setattr(station_runtime, "_probe_nvidia_vram_gb", lambda: None)
     monkeypatch.delenv("CIVICCAST_WHISPER_DEVICE", raising=False)
     monkeypatch.delenv("CIVICCAST_WHISPER_COMPUTE_TYPE", raising=False)
 
-    env = station_runtime.load_native_station_environment(
+    spec_env = station_runtime.load_native_station_environment(
         version_root,
         program_data_root=tmp_path / "ProgramData" / "CivicCast",
     )
 
-    assert env["CIVICCAST_CAPTION_TAP"] == "off"
-    assert "CIVICCAST_CAPTION_TAP_DIR" not in env
+    assert spec_env["CIVICCAST_CAPTION_TAP"] == "off"
+    assert spec_env["CIVICCAST_CAPTION_TAP_DIR"] == ""
     # Everything else the tap doesn't own is unaffected.
-    assert env["CIVICCAST_CAPTION_TAP_ATOMIC"] == "1"
-    assert env["CIVICCAST_CAPTION_RUNTIME"] == "faster-whisper"
-    assert env["CIVICCAST_EGRESS_EMBED_CAPTIONS"] == "1"
+    assert spec_env["CIVICCAST_CAPTION_TAP_ATOMIC"] == "1"
+    assert spec_env["CIVICCAST_CAPTION_RUNTIME"] == "faster-whisper"
+    assert spec_env["CIVICCAST_EGRESS_EMBED_CAPTIONS"] == "1"
+
+    # The real merge civiccast/native/supervisor/service.py performs when it
+    # spawns the child: env = {**os.environ, **spec.env}. os.environ here
+    # still carries the stale CIVICCAST_CAPTION_TAP_DIR set above (this
+    # function reads os.environ but never mutates it) -- prove spec.env's
+    # explicit "" wins that merge rather than the stray value surviving it.
+    merged_child_env = {**os.environ, **spec_env}
+    assert merged_child_env["CIVICCAST_CAPTION_TAP_DIR"] == ""
+    assert merged_child_env["CIVICCAST_CAPTION_TAP_DIR"] != stale_dir
+
+    # And build_audio_tap_plan (the actual consumer) treats that "" exactly
+    # like unset, so the tee is not built even though a dir was configured
+    # in the environment this child inherits from.
+    from civiccast.captions.tap import build_audio_tap_plan
+
+    with monkeypatch.context() as merged_patch:
+        for key, value in merged_child_env.items():
+            merged_patch.setenv(key, value)
+        assert build_audio_tap_plan("gov-ch12") is None
 
 
 @pytest.mark.parametrize("configured_value", ["", "inline", "ON", "  ", "unexpected-value"])

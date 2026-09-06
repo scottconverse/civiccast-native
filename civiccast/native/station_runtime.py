@@ -1338,16 +1338,17 @@ def load_native_station_environment(
     # Item 91: the ONE explicit off switch for the live caption audio tap
     # leg. Read from `os.environ` here -- this function runs inside the
     # supervisor process that is about to spawn the control-plane child
-    # (`installer/supervisor/service.py`'s `env = {**os.environ, **spec.env}`
-    # applies `spec.env` LAST, so `spec.env` is the only place an override
-    # can ever win) -- i.e. the SERVICE environment: whatever the operator
-    # set in the Windows service's registry `Environment` (REG_MULTI_SZ),
-    # inherited by this process at spawn. Before this fix the two lines this
-    # replaces were unconditional: `CIVICCAST_CAPTION_TAP` was always forced
-    # to `"inline"` and `CIVICCAST_CAPTION_TAP_DIR` was always injected, so an
-    # operator's `CIVICCAST_CAPTION_TAP=off` in the service environment could
-    # never reach the child -- `spec.env` always overwrote it back to
-    # "inline" with a real tap dir. `build_audio_tap_plan`
+    # (`civiccast/native/supervisor/service.py`'s
+    # `env = {**os.environ, **spec.env}` applies `spec.env` LAST, so
+    # `spec.env` is the only place an override can ever win) -- i.e. the
+    # SERVICE environment: whatever the operator set in the Windows
+    # service's registry `Environment` (REG_MULTI_SZ), inherited by this
+    # process at spawn. Before this fix the two lines this replaces were
+    # unconditional: `CIVICCAST_CAPTION_TAP` was always forced to `"inline"`
+    # and `CIVICCAST_CAPTION_TAP_DIR` was always injected, so an operator's
+    # `CIVICCAST_CAPTION_TAP=off` in the service environment could never
+    # reach the child -- `spec.env` always overwrote it back to "inline"
+    # with a real tap dir. `build_audio_tap_plan`
     # (`civiccast/captions/tap.py`) only ever consults
     # `CIVICCAST_CAPTION_TAP_DIR`, so as long as ANY dir was set the egress
     # tee was built regardless of the mode string.
@@ -1356,12 +1357,24 @@ def load_native_station_environment(
     # anything else) keeps today's behavior byte-for-byte: forced inline
     # mode, tap dir injected. Only `"off"` changes anything, and it changes
     # exactly two things: the mode string passed through as `"off"` instead
-    # of being overwritten, and the tap dir omitted entirely (never merely
-    # blanked to `""`, which `build_audio_tap_plan`'s `.strip()` check would
-    # treat the same as absent, but a stray leftover `CIVICCAST_CAPTION_TAP_DIR`
-    # from `os.environ` -- there should never be one, but a live station's
-    # own environment is exactly the thing this switch does not get to trust
-    # -- must not survive the merge either).
+    # of being overwritten, and the tap dir set to the EMPTY STRING rather
+    # than merely omitted from this dict.
+    #
+    # Review round 2 caught the omission-only version of this as a real
+    # defect: `env = {**os.environ, **spec.env}` in
+    # `civiccast/native/supervisor/service.py` means an inherited
+    # `CIVICCAST_CAPTION_TAP_DIR` already present in `os.environ` (a stray
+    # leftover from a previous configuration; there should never be one, but
+    # this switch does not get to trust that) is NOT removed merely because
+    # `spec.env` (this function's return value) omits the key -- omitting a
+    # key from `spec.env` only means `os.environ`'s own value for it wins the
+    # merge unopposed. The only way `spec.env` can neutralize an inherited
+    # value is to set the key itself, to something `build_audio_tap_plan`
+    # treats as absent: its `.strip()` check on
+    # `CIVICCAST_CAPTION_TAP_DIR` (`civiccast/captions/tap.py`) treats `""`
+    # exactly like unset, so setting it to `""` here always wins the merge
+    # (this dict is `spec.env`, applied last) and always leaves the plan
+    # builder with nothing to read, regardless of what `os.environ` inherited.
     #
     # `civiccast.app`'s app-factory only calls `build_tap_worker` when
     # `CaptionTapWorkerSettings.from_env().mode == "inline"` (`civiccast/app.py`
@@ -1370,13 +1383,14 @@ def load_native_station_environment(
     # to idle against a missing directory, because it is never constructed
     # in the first place. `CaptionTapWorkerSettings.from_env()`
     # (`civiccast/captions/tap_worker.py`) already treats `mode == "off"` with
-    # no `CIVICCAST_CAPTION_TAP_DIR` as fully valid (the fail-fast dir check
-    # is gated on `mode != TAP_MODE_OFF`), so the external-process entrypoint
-    # (`python -m civiccast.captions.tap_worker`) is likewise safe run against
-    # this same environment.
+    # an empty (or absent) `CIVICCAST_CAPTION_TAP_DIR` as fully valid (the
+    # fail-fast dir check is gated on `mode != TAP_MODE_OFF`, and its own
+    # `root_raw` read is `.strip()`ped the same way), so the external-process
+    # entrypoint (`python -m civiccast.captions.tap_worker`) is likewise safe
+    # run against this same environment.
     caption_tap_disabled = os.environ.get("CIVICCAST_CAPTION_TAP", "").strip().lower() == "off"
     caption_tap_environment: dict[str, str] = (
-        {"CIVICCAST_CAPTION_TAP": "off"}
+        {"CIVICCAST_CAPTION_TAP": "off", "CIVICCAST_CAPTION_TAP_DIR": ""}
         if caption_tap_disabled
         else {
             "CIVICCAST_CAPTION_TAP": "inline",
