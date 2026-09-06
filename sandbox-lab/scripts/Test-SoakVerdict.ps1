@@ -29,7 +29,16 @@ function New-Channel {
     param(
         [string]$Id,
         [string]$State = 'ON_AIR',
-        [string]$Engine = 'gstreamer',
+        # N10: deliberately UNTYPED (not [string]) -- a [string]-typed
+        # parameter coerces an explicit -Engine $null argument to '' during
+        # PowerShell's own parameter binding (confirmed directly: IsNull=False,
+        # IsEmpty=True), so scenario4b's "engine=$null" case was actually
+        # exercising engine='' this whole time, never a real null. Untyped
+        # binding passes $null through unchanged (confirmed: IsNull=True),
+        # which is what a real EgressStateRow-derived row with no engine
+        # census match looks like (see In-Sandbox-Soak.ps1's
+        # Get-EngineForWorkerPid, which returns $null, never '').
+        $Engine = 'gstreamer',
         [string]$Tsduck = 'pass',
         [bool]$Relaunched = $false
     )

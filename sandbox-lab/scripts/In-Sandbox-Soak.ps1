@@ -79,6 +79,21 @@ param(
 
 $ErrorActionPreference = 'Continue'
 
+# Round-2 run-2 finding: EVERY asset upload failed in 15ms with a bare
+# "status= body=" -- transcript line 44 showed the real cause, dropped by
+# the earlier catch block: TerminatingError(New-Object):
+# "Cannot find type [System.Net.Http.HttpClientHandler]: verify that the
+# assembly containing this type is loaded." Windows PowerShell 5.1 does NOT
+# auto-load System.Net.Http the way a .NET Framework app referencing it in
+# a project file would -- Add-Type must run first, at script scope, before
+# ANY New-Object System.Net.Http.* call (Invoke-AssetUpload's own
+# Add-Type call, previously placed just above its function definition, was
+# lost in an earlier rewrite of this file). Run-SandboxSoak.ps1's -DryRun
+# now also shells out to `powershell.exe` (the same engine as the guest) to
+# instantiate HttpClientHandler as a pre-launch self-check for exactly this
+# class of error.
+Add-Type -AssemblyName System.Net.Http
+
 # --------------------------------------------------------------------------
 # VSMB-SAFE OUTPUT ARCHITECTURE. $LocalDir is a real local disk the VM fully
 # owns -- every write this script makes (transcript, summary.json, cycles,
@@ -216,12 +231,46 @@ function Invoke-FinalFlush {
       directly -- a single bounded robocopy mirror, called right before
       every exit path (success or fail-fast). Bounded so it can never
       reproduce the exact wedge this architecture exists to avoid.
+
+      Round-3(d): robocopy's own exit-code contract is NOT the usual
+      0=success. Per `robocopy /?`: 0 = no files copied (nothing to do), 1
+      = files copied successfully, 2 = extra files/dirs detected, 3 = 1+2,
+      up through 7 (1+2+4) -- ALL OF 0-7 are success. Only >= 8 indicates a
+      real failure (8 = mismatches, 16 = fatal error). The previous log
+      line printed the raw exit_code with no interpretation, so a
+      completely healthy final flush that copied files (exit 1) read in
+      the log exactly like a real failure would.
     #>
     param([int]$TimeoutSeconds = 120)
     $r = Invoke-BoundedProcess -FilePath 'robocopy.exe' -ArgumentList @(
         $LocalDir, $ShipDir, '/E', '/R:1', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NP'
     ) -TimeoutSeconds $TimeoutSeconds
-    Write-SoakLog "final flush to $ShipDir : started=$($r.started) exited=$($r.exited) exit_code=$($r.exit_code) elapsed=$($r.elapsed_seconds)s error=$($r.error)"
+    $robocopyOk = $r.exited -and ($null -ne $r.exit_code) -and ([int]$r.exit_code -lt 8)
+    Write-SoakLog "final flush to $ShipDir : started=$($r.started) exited=$($r.exited) exit_code=$($r.exit_code) (robocopy: $(if ($robocopyOk) { 'SUCCESS, <8' } else { 'FAILURE, >=8 or never exited' })) elapsed=$($r.elapsed_seconds)s error=$($r.error)"
+    return $robocopyOk
+}
+
+function Invoke-GuestShutdown {
+    <#
+      Round-3(c): the sandbox VM does NOT tear itself down when the
+      LogonCommand script exits -- confirmed directly on run 2:
+      WindowsSandboxRemoteSession/WindowsSandboxServer/vmmemWindowsSandbox
+      were all still alive after VERDICT.txt was written, and
+      Run-SandboxSoak.ps1's own "still shutting down, not force-closing"
+      grace-window log line was papering over a VM that was never actually
+      shutting down at all. The guest must ask the GUEST OS itself to power
+      off -- `shutdown.exe /s /t 5` schedules a shutdown 5s out (enough
+      time for this process's own `exit` to complete first) rather than
+      blocking on it, so it can never turn into one more thing this script
+      hangs waiting for. Non-fatal: if it fails, Run-SandboxSoak.ps1's own
+      bounded wait-then-kill (by recorded PID only) is the backstop.
+    #>
+    try {
+        Write-SoakLog "requesting guest OS shutdown (shutdown.exe /s /t 5)"
+        & shutdown.exe /s /t 5 /c "CivicCast sandbox soak lane: run complete" 2>&1 | Out-Null
+    } catch {
+        Write-SoakLog "guest shutdown request failed (non-fatal -- Run-SandboxSoak.ps1's own PID-bounded kill is the backstop): $_"
+    }
 }
 
 function Write-PhaseMarker {
@@ -249,6 +298,34 @@ function Write-FailVerdictAndExit {
     Write-SoakLog "FAIL: $Reason"
     Invoke-FinalFlush
     Stop-Transcript | Out-Null
+    Invoke-GuestShutdown
+    exit $ExitCode
+}
+
+function Write-HarnessErrorVerdictAndExit {
+    <#
+      N9: distinct from Write-FailVerdictAndExit -- this is for a setup
+      problem THIS SCRIPT can positively diagnose as a harness/scheduling
+      defect (e.g. insufficient schedule coverage for the requested
+      -Minutes), never a product defect. verdict=HARNESS_ERROR in
+      VERDICT.txt/.json, which Run-SandboxSoak.ps1 reports as exit 6, the
+      same code its own quiet-share detector uses -- both mean "no product
+      conclusion can be drawn from this run."
+    #>
+    param([string]$Reason, [int]$ExitCode = 1)
+    $summary.error = $Reason
+    Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
+    Copy-StationLogs -Label 'final'
+    $verdict = [ordered]@{
+        schema_version = 1; verdict = 'HARNESS_ERROR'; reason = $Reason; first_failing_cycle = $null
+        cycles_total = 0; cycles_warmup = 0; cycles_evaluated = 0; soak_start_utc = $null
+    }
+    Save-Json -Obj $verdict -Path (Join-Path $LocalDir 'VERDICT.json')
+    "verdict=HARNESS_ERROR reason=$Reason" | Set-Content -Path (Join-Path $LocalDir 'VERDICT.txt') -Encoding UTF8
+    Write-SoakLog "HARNESS_ERROR: $Reason"
+    Invoke-FinalFlush
+    Stop-Transcript | Out-Null
+    Invoke-GuestShutdown
     exit $ExitCode
 }
 
@@ -264,21 +341,47 @@ try {
     $shipperScript = @'
 param([string]$LocalDir, [string]$ShipDir, [int]$IntervalSeconds = 15, [int]$TickTimeoutSeconds = 45)
 $stopMarker = Join-Path $LocalDir '_SHIP-STOP.marker'
+# N11: track the PID of any tick this loop force-killed for timing out.
+# Stop-Process is fire-and-forget -- it does not itself guarantee the
+# process is actually gone by the time it returns (a process wedged deep
+# enough on a stuck I/O syscall can be uninterruptible for a stretch). If a
+# "killed" child is confirmed still alive on the NEXT iteration, skip
+# spawning a new one entirely this tick rather than risk two robocopy
+# processes racing against the same $LocalDir/$ShipDir tree -- retry the
+# kill instead and let the following ticks keep trying.
+$pendingKillPid = $null
 while ($true) {
     if (Test-Path $stopMarker) { break }
     try {
         "shipper_tick_utc=$((Get-Date).ToUniversalTime().ToString('o'))" |
             Set-Content -Path (Join-Path $LocalDir '_SHIPPER-HEARTBEAT.txt') -Encoding UTF8
     } catch { }
-    try {
-        $p = Start-Process -FilePath 'robocopy.exe' -ArgumentList @(
-            $LocalDir, $ShipDir, '/E', '/R:0', '/W:0', '/NFL', '/NDL', '/NJH', '/NJS', '/NP'
-        ) -PassThru -WindowStyle Hidden -ErrorAction Stop
-        $null = $p.Handle
-        if (-not $p.WaitForExit($TickTimeoutSeconds * 1000)) {
-            try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch { }
+
+    $stillWedged = $false
+    if ($pendingKillPid) {
+        $still = $null
+        try { $still = Get-Process -Id $pendingKillPid -ErrorAction Stop } catch { $still = $null }
+        if ($still) {
+            $stillWedged = $true
+            try { Stop-Process -Id $pendingKillPid -Force -ErrorAction SilentlyContinue } catch { }
+        } else {
+            $pendingKillPid = $null
         }
-    } catch { }
+    }
+
+    if (-not $stillWedged) {
+        try {
+            $p = Start-Process -FilePath 'robocopy.exe' -ArgumentList @(
+                $LocalDir, $ShipDir, '/E', '/R:0', '/W:0', '/NFL', '/NDL', '/NJH', '/NJS', '/NP'
+            ) -PassThru -WindowStyle Hidden -ErrorAction Stop
+            $null = $p.Handle
+            if (-not $p.WaitForExit($TickTimeoutSeconds * 1000)) {
+                try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch { }
+                $pendingKillPid = $p.Id
+            }
+        } catch { }
+    }
+
     if (Test-Path $stopMarker) { break }
     Start-Sleep -Seconds $IntervalSeconds
 }
@@ -406,6 +509,49 @@ function Copy-StationLogs {
     }
 }
 
+# N2 (blocker): Windows Defender Firewall raises a modal "Do you want to
+# allow public and private networks to access this app?" prompt the FIRST
+# time tsp.exe opens a listening socket for `-I ip <port>` -- on the guest
+# desktop nobody is watching, with no automated way to dismiss it, so every
+# probe after it fails-zero-packets and the verdict wrongly blames the
+# product. Ported near-verbatim from In-Sandbox-Report.ps1:1968-1998's
+# Add-CivicCastFirewallAllowRule (Gate A's own fix for the identical
+# prompt, first documented at In-Sandbox-Report.ps1:1949-1966) and called
+# from Gate A at In-Sandbox-Report.ps1:3266-3268 for exactly tsp/ffmpeg/
+# ffprobe -- never python.exe: Gate A's own call sites never author a rule
+# for the GStreamer worker either, so this does not invent one Gate A
+# itself has no evidence for. This harness runs elevated in the sandbox, so
+# it can author the allow rules itself before the first bind -- called
+# right after PHASE-HEALTHY, before first-admin/asset-upload/schedule/
+# channel-start and before the first tsp probe.
+function Add-CivicCastFirewallAllowRule {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$ProgramPath
+    )
+    if ([string]::IsNullOrWhiteSpace($ProgramPath) -or -not (Test-Path -LiteralPath $ProgramPath)) {
+        Write-SoakLog "firewall_rule name=$Name program=$ProgramPath result=SKIPPED(program-not-found)"
+        return $false
+    }
+    $resolved = (Resolve-Path -LiteralPath $ProgramPath).ProviderPath
+    $ok = $true
+    try {
+        & netsh.exe advfirewall firewall delete rule name="$Name" 2>&1 | Out-Null
+        foreach ($direction in @('in', 'out')) {
+            $out = & netsh.exe advfirewall firewall add rule name="$Name" dir=$direction action=allow program="$resolved" enable=yes profile=any 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                $ok = $false
+                Write-SoakLog "firewall_rule name=$Name dir=$direction result=FAILED exit=$LASTEXITCODE detail=$($out -join ' ')"
+            }
+        }
+    } catch {
+        $ok = $false
+        Write-SoakLog "firewall_rule name=$Name result=THREW detail=$_"
+    }
+    if ($ok) { Write-SoakLog "firewall_rule name=$Name program=$resolved dir=in+out result=ALLOWED" }
+    return $ok
+}
+
 # --------------------------------------------------------------------------
 # 1. Locate and run the installer silently, bounded to $InstallBoundMinutes.
 # --------------------------------------------------------------------------
@@ -487,6 +633,40 @@ if (-not $healthy) {
 Write-PhaseMarker -Name 'PHASE-HEALTHY.json' -Obj ([ordered]@{ utc = (Get-Date).ToUniversalTime().ToString('o'); body_status = $lastHealthBody.status; body_schema = $lastHealthBody.schema })
 
 # --------------------------------------------------------------------------
+# Resolve tsp.exe/ffmpeg.exe/ffprobe.exe from the installed layout (bounded
+# candidate paths only -- see Copy-StationLogs's header for why no
+# full-tree recursive scan) and author the firewall allow rules BEFORE the
+# first tsp bind (N2) -- moved up from the poll-loop section so this can
+# run before first-admin/asset-upload/schedule/channel-start too, a
+# superset of "before the first probe".
+# --------------------------------------------------------------------------
+$tspCandidates = @(
+    (Join-Path $KitDir 'packs\native-server-binaries\payload\tsduck\bin\tsp.exe'),
+    (Join-Path $InstallDir 'packs\native-server-binaries\payload\tsduck\bin\tsp.exe'),
+    (Join-Path $InstallDir 'tsduck\bin\tsp.exe'),
+    'C:\Program Files\CivicCast (Native)\tsduck\bin\tsp.exe'
+)
+$tsp = $tspCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+Write-SoakLog "tsp.exe: $(if ($tsp) { $tsp } else { 'NOT FOUND in the bounded candidate list -- egress probes will report not-run (no full-tree recursive fallback scan; see file header)' })"
+
+$ffmpegCandidates = @(
+    (Join-Path $InstallDir 'dependencies\ffmpeg\bin\ffmpeg.exe'),
+    'C:\Program Files\CivicCast (Native)\dependencies\ffmpeg\bin\ffmpeg.exe'
+)
+$ffmpegExe = $ffmpegCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+$ffprobeCandidates = @(
+    (Join-Path $InstallDir 'dependencies\ffmpeg\bin\ffprobe.exe'),
+    'C:\Program Files\CivicCast (Native)\dependencies\ffmpeg\bin\ffprobe.exe'
+)
+$ffprobeExe = $ffprobeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+Write-SoakLog "ffmpeg.exe: $(if ($ffmpegExe) { $ffmpegExe } else { 'NOT FOUND' }); ffprobe.exe: $(if ($ffprobeExe) { $ffprobeExe } else { 'NOT FOUND' })"
+
+Add-CivicCastFirewallAllowRule -Name 'CivicCast Sandbox Soak - TSDuck tsp' -ProgramPath $tsp | Out-Null
+Add-CivicCastFirewallAllowRule -Name 'CivicCast Sandbox Soak - ffmpeg' -ProgramPath $ffmpegExe | Out-Null
+Add-CivicCastFirewallAllowRule -Name 'CivicCast Sandbox Soak - ffprobe' -ProgramPath $ffprobeExe | Out-Null
+Write-PhaseMarker -Name 'PHASE-FIREWALL-RULES.json' -Obj ([ordered]@{ utc = (Get-Date).ToUniversalTime().ToString('o'); tsp = $tsp; ffmpeg = $ffmpegExe; ffprobe = $ffprobeExe })
+
+# --------------------------------------------------------------------------
 # Generic JSON API helper -- ported from AUTORUN-9m.ps1's
 # Invoke-CivicCastApi, which itself ports In-Sandbox-Report.ps1's
 # Invoke-CivicCastApi: on non-2xx, read the actual response body so a 422's
@@ -528,15 +708,21 @@ function Invoke-CivicCastApi {
 
 # Multipart asset upload -- ported from AUTORUN-9m.ps1's Invoke-AssetUpload
 # (Windows PowerShell 5.1's Invoke-WebRequest has no -Form; build
-# multipart/form-data by hand via System.Net.Http.MultipartFormDataContent).
+# multipart/form-data by hand via System.Net.Http.MultipartFormDataContent;
+# System.Net.Http is Add-Type'd once at script scope, top of file).
 # STREAMED, not ReadAllBytes: the LPM sample clips run up to ~858MB, and
 # ReadAllBytes would materialize the whole file in managed memory before the
 # first byte goes over the wire. FileStream -> StreamContent reads lazily as
-# HttpClient sends, and the underlying FileStream is disposed only after
-# PostAsync().Result returns (blocking, so the stream must stay open until
-# then).
+# HttpClient sends.
+#
+# N5: PostAsync is one long blocking call for an 819MB clip with NOTHING
+# logged until it returns -- exactly the same silent-window problem the
+# installer's Invoke-BoundedProcessWithHeartbeat exists to fix, just for an
+# in-process Task instead of a child process. Same shape here: poll
+# Task.Wait($sliceMs) in a loop and log a heartbeat each slice instead of
+# one blocking .Result.
 function Invoke-AssetUpload {
-    param([string]$BaseUrl, [string]$Token, [string]$AssetId, [string]$Title, [string]$FilePath, [int]$TimeoutSec = 900)
+    param([string]$BaseUrl, [string]$Token, [string]$AssetId, [string]$Title, [string]$FilePath, [int]$TimeoutSec = 900, [int]$HeartbeatSeconds = 30)
     $url = "$BaseUrl/api/staff/assets/upload"
     $result = [ordered]@{ method = 'POST'; url = $url; status = $null; ok = $false; body_raw = $null; body_json = $null; error = $null }
     $fileStream = $null
@@ -553,12 +739,33 @@ function Invoke-AssetUpload {
         $fileContent = New-Object System.Net.Http.StreamContent($fileStream)
         try { $fileContent.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse('video/mp4') } catch { }
         $content.Add($fileContent, 'file', [System.IO.Path]::GetFileName($FilePath))
-        $resp = $client.PostAsync($url, $content).Result
+
+        $uploadStartedAt = Get-Date
+        $task = $client.PostAsync($url, $content)
+        $sliceMs = [Math]::Max(1000, $HeartbeatSeconds * 1000)
+        $deadline = $uploadStartedAt.AddSeconds($TimeoutSec)
+        while (-not $task.IsCompleted -and (Get-Date) -lt $deadline) {
+            $null = $task.Wait($sliceMs)
+            if (-not $task.IsCompleted) {
+                Write-SoakLog "asset upload still in flight for $AssetId ($([int](((Get-Date) - $uploadStartedAt).TotalSeconds))s elapsed)"
+            }
+        }
+        if (-not $task.IsCompleted) {
+            $result.error = "upload did not complete within ${TimeoutSec}s (asset_id=$AssetId)"
+            return $result
+        }
+        $resp = $task.Result
         $result.status = [int]$resp.StatusCode
         $result.body_raw = $resp.Content.ReadAsStringAsync().Result
         $result.ok = $resp.IsSuccessStatusCode
     } catch {
-        $result.error = "$_"
+        # N5/round-3(b): a bare "$_" can render as an empty string for some
+        # .NET exception shapes (exactly what happened here -- the earlier
+        # catch produced the "status= body=" log line with the real cause,
+        # a TerminatingError from a missing type, thrown away). Always name
+        # the exception type explicitly so the FAILED log line can never be
+        # silently empty again.
+        $result.error = "$($_.Exception.GetType().Name): $($_.Exception.Message)"
     } finally {
         try { if ($fileStream) { $fileStream.Dispose() } } catch { }
         try { if ($client) { $client.Dispose() } } catch { }
@@ -647,7 +854,7 @@ foreach ($s in ($samples | Select-Object -First 4)) {
         $stagedAssets += [ordered]@{ id = $assetId; duration_seconds = 30 }
         Write-SoakLog "asset uploaded: $assetId ($($s.Name), duration pinned to 30s)"
     } else {
-        Write-SoakLog "asset upload FAILED for $($s.Name) (id=$assetId): status=$($up.status) body=$($up.body_raw)"
+        Write-SoakLog "asset upload FAILED for $($s.Name) (id=$assetId): status=$($up.status) body=$($up.body_raw) error=$($up.error)"
     }
 }
 Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
@@ -686,9 +893,9 @@ foreach ($c in $channelSpecs) {
             }
             $commitR = Invoke-CivicCastApi -Method 'Post' -Url "$Base/api/staff/playout/commit" -BodyObj $commitBody -BearerToken $token
             if ($commitR.status -eq 201) { $committed++ }
-            else { Write-SoakLog "commit FAILED channel=$($c.id) item=$($itemR.body_json.id) status=$($commitR.status) body=$($commitR.body_raw)" }
+            else { Write-SoakLog "commit FAILED channel=$($c.id) item=$($itemR.body_json.id) status=$($commitR.status) body=$($commitR.body_raw) error=$($commitR.error)" }
         } else {
-            Write-SoakLog "schedule item FAILED channel=$($c.id) asset=$($asset.id) status=$($itemR.status) body=$($itemR.body_raw)"
+            Write-SoakLog "schedule item FAILED channel=$($c.id) asset=$($asset.id) status=$($itemR.status) body=$($itemR.body_raw) error=$($itemR.error)"
         }
         $cursor = $cursor.AddSeconds(30)
     }
@@ -708,12 +915,12 @@ foreach ($c in $channelSpecs) {
     }
     $cfgR = Invoke-CivicCastApi -Method 'Put' -Url "$Base/api/staff/egress/channels/$($c.id)/config" -BodyObj $cfg -BearerToken $token
     $configOk = ($cfgR.status -eq 200)
-    if (-not $configOk) { Write-SoakLog "PUT config $($c.id) FAILED: status=$($cfgR.status) body=$($cfgR.body_raw)" }
+    if (-not $configOk) { Write-SoakLog "PUT config $($c.id) FAILED: status=$($cfgR.status) body=$($cfgR.body_raw) error=$($cfgR.error)" }
     $startOk = $false
     if ($configOk) {
         $startR = Invoke-CivicCastApi -Method 'Post' -Url "$Base/api/staff/egress/channels/$($c.id)/commands" -BodyObj (@{ action = 'start' }) -BearerToken $token
         $startOk = ($startR.status -eq 202)
-        if (-not $startOk) { Write-SoakLog "start command $($c.id) FAILED: status=$($startR.status) body=$($startR.body_raw)" }
+        if (-not $startOk) { Write-SoakLog "start command $($c.id) FAILED: status=$($startR.status) body=$($startR.body_raw) error=$($startR.error)" }
     }
     $summary.channels_started += [ordered]@{ channel_id = $c.id; config_ok = $configOk; start_ok = $startOk }
 }
@@ -749,6 +956,24 @@ if (-not $anyOnAir) {
 # --------------------------------------------------------------------------
 $SoakStartUtc = (Get-Date).ToUniversalTime()
 $summary.soak_start_utc = $SoakStartUtc.ToString('o')
+
+# N9: the schedule was laid BEFORE the ON_AIR poll (deliberately -- see
+# section 4's header, AUTORUN-9m's B-B anti-reload-storm ordering), anchored
+# at $schedulingStart, not at $SoakStartUtc, which is only known now --
+# AFTER the (up to 6-minute) ON_AIR poll above. A slow poll eats directly
+# into the margin between "content is scheduled through" and "the soak
+# actually needs coverage through". Verify the schedule's own coverage_end
+# still clears soak_start_utc + Minutes + a 3-minute margin; if a slow
+# setup already ate that margin, this is a HARNESS problem (bad sizing),
+# never a product FAIL -- the engine cannot be blamed for running out of
+# scheduled content this script itself failed to lay down far enough out.
+$coverageEndUtc = $schedulingStart.ToUniversalTime().AddSeconds(-60 + ($itemsPerChannel * 30))
+$requiredCoverageUtc = $SoakStartUtc.AddSeconds(($Minutes * 60) + 180)
+Write-SoakLog "schedule coverage check: coverage_end_utc=$($coverageEndUtc.ToString('o')) required (soak_start+Minutes+3m)=$($requiredCoverageUtc.ToString('o'))"
+if ($coverageEndUtc -le $requiredCoverageUtc) {
+    Write-HarnessErrorVerdictAndExit -Reason "schedule coverage_end_utc ($($coverageEndUtc.ToString('o'))) does not clear soak_start_utc+Minutes+3m ($($requiredCoverageUtc.ToString('o'))) -- the ON_AIR poll (schedulingStart=$($schedulingStart.ToUniversalTime().ToString('o'))) ate into the scheduled-content margin; this is a harness sizing defect, not a product failure"
+}
+
 Write-SoakLog "SOAK CLOCK STARTED (UTC): $($SoakStartUtc.ToString('o')) -- at least one channel confirmed ON_AIR"
 Write-PhaseMarker -Name 'SOAK-START.json' -Obj ([ordered]@{ soak_start_utc = $SoakStartUtc.ToString('o') })
 Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
@@ -761,15 +986,6 @@ Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 #    civiccast/egress/models.py:506-518 shows EgressStateRow carries no
 #    `engine` field at all.
 # --------------------------------------------------------------------------
-$tspCandidates = @(
-    (Join-Path $KitDir 'packs\native-server-binaries\payload\tsduck\bin\tsp.exe'),
-    (Join-Path $InstallDir 'packs\native-server-binaries\payload\tsduck\bin\tsp.exe'),
-    (Join-Path $InstallDir 'tsduck\bin\tsp.exe'),
-    'C:\Program Files\CivicCast (Native)\tsduck\bin\tsp.exe'
-)
-$tsp = $tspCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-Write-SoakLog "tsp.exe: $(if ($tsp) { $tsp } else { 'NOT FOUND in the bounded candidate list -- egress probes will report not-run (no full-tree recursive fallback scan; see file header)' })"
-
 function Test-TsProof {
     param([string]$TspExe, [int]$Port, [int]$Seconds, [string]$OutDir, [string]$Label)
     $result = [ordered]@{ verdict = 'not-run'; packets_total = $null; invalid_syncs = $null; transport_errors = $null; discontinuities = $null }
@@ -822,6 +1038,23 @@ function Get-EngineForWorkerPid {
     }
 }
 
+# M8 leftover: a GLOBAL process census across all three channels, ported
+# from AUTORUN-3.ps1:244-251 ($gst/$ff/$gstWorkers). Diagnostic only -- it
+# never feeds the per-channel verdict (Get-EngineForWorkerPid above already
+# does that, keyed to each channel's own worker pid) -- but a global
+# ffmpeg.exe count that goes to 0 unexpectedly, or a gst-worker count that
+# doesn't match the number of ON_AIR channels, is exactly the kind of cross-
+# channel signal a per-channel-only view can miss.
+function Get-GlobalEngineCensus {
+    $gstWorkers = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match 'egress[\\/]gst[\\/]worker\.py' })
+    $ffmpegCount = @(Get-Process -Name 'ffmpeg' -ErrorAction SilentlyContinue).Count
+    return [ordered]@{
+        ffmpeg_processes = $ffmpegCount
+        gst_worker_processes = $gstWorkers.Count
+        gst_worker_pids = @($gstWorkers | ForEach-Object { $_.ProcessId })
+    }
+}
+
 $lastPid = @{}
 function Update-RelaunchState {
     param([string]$ChannelId, [Nullable[int]]$NewPid)
@@ -862,10 +1095,11 @@ while ((Get-Date) -lt $deadline) {
         $rows += $row
     }
 
-    $cycle = [ordered]@{ cycle_utc = $cycleUtc.ToString('o'); channels = $rows }
+    $globalCensus = Get-GlobalEngineCensus
+    $cycle = [ordered]@{ cycle_utc = $cycleUtc.ToString('o'); channels = $rows; global_engine_observed = $globalCensus }
     $allCycles += $cycle
     Save-Json -Obj $cycle -Path (Join-Path $LocalDir "cycles\cycle-$('{0:d4}' -f $cycleN).json")
-    Write-SoakLog "cycle $cycleN @ $($cycleUtc.ToString('o')): $(($rows | ForEach-Object { "$($_.channel_id)=$($_.engine_state)/$($_.engine)/tsp=$($_.tsduck_verdict)/relaunch=$($_.relaunched_this_cycle)" }) -join ' ')"
+    Write-SoakLog "cycle $cycleN @ $($cycleUtc.ToString('o')): $(($rows | ForEach-Object { "$($_.channel_id)=$($_.engine_state)/$($_.engine)/tsp=$($_.tsduck_verdict)/relaunch=$($_.relaunched_this_cycle)" }) -join ' ') global: ffmpeg=$($globalCensus.ffmpeg_processes) gst_workers=$($globalCensus.gst_worker_processes)"
 
     # Rollup + log copy every 3 minutes (every 3rd cycle at a 60s cadence).
     if (($cycleN - $lastRollupCycle) -ge 3) {
@@ -915,11 +1149,15 @@ $verdict = [ordered]@{
     samples_found        = $summary.samples_found
     assets_uploaded      = $summary.assets_uploaded
 }
+# N8: copy station logs BEFORE writing the verdict, not after -- the fail
+# path (Write-FailVerdictAndExit) already had this order right; the success
+# path had it backwards, so a run whose LAST action was the log copy could
+# still show VERDICT.txt on the host before that copy (and, in the worst
+# case, before a final flush) had actually landed.
+Copy-StationLogs -Label 'final'
 Save-Json -Obj $verdict -Path (Join-Path $LocalDir 'VERDICT.json')
 "verdict=$($verdictResult.verdict) reason=$($verdictResult.reason) cycles_total=$($verdictResult.cycles_total) cycles_evaluated=$($verdictResult.cycles_evaluated)" |
     Set-Content -Path (Join-Path $LocalDir 'VERDICT.txt') -Encoding UTF8
-
-Copy-StationLogs -Label 'final'
 Write-SoakLog "VERDICT: $($verdictResult.verdict) -- $($verdictResult.reason)"
 
 # Ask the shipper to stop, then do the one bounded direct flush this
@@ -928,3 +1166,4 @@ try { Set-Content -Path (Join-Path $LocalDir '_SHIP-STOP.marker') -Value 'stop' 
 Invoke-FinalFlush
 
 Stop-Transcript | Out-Null
+Invoke-GuestShutdown
