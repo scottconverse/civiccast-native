@@ -230,31 +230,50 @@ re-typing the literal.
 crash check now falls back to the well-known constant service display
 name (`CivicCast Native Supervisor`) instead of skipping the check
 entirely — a genuine crash should still be caught even when `Get-Service`
-happens to fail.
+happens to fail. That constant is a hand-duplicated copy of
+`civiccast/native/supervisor/config.py`'s own `DISPLAY_NAME` (no import
+path exists from PowerShell into that Python module); rather than leave a
+comment telling readers to re-verify it by hand, `Test-ServiceStartFailure.ps1`
+now reads `config.py`'s own `DISPLAY_NAME` line via regex and asserts it
+matches the PowerShell constant, so a rename in either file without the
+other fails the lane's unit tests instead of silently drifting.
 
 `Run-SandboxSoak.ps1`'s `awaiting-soak-start` phase no longer flips to
 `running` on `SOAK-START.json`'s mere existence: `In-Sandbox-Soak.ps1`'s
 own harness-error path writes a *backstop* `SOAK-START.json`
 (`harness_error_before_soak_start: true`, `soak_start_utc: null`) on a run
 that failed BEFORE the real soak clock ever started, so downstream tooling
-still finds a `SOAK-START.json` on every run. The host now parses the
+still finds a `SOAK-START.json` on every run. The host parses the
 marker's own content — a backstop marker (or a still-partial write) is
-reported as the harness error it actually is (`HOST-QUIET-SHARE.txt`, exit
-6) instead of arming a rollup-stall bound on a run that will never produce
-a rollup.
+reported as the harness error it actually is instead of arming a
+rollup-stall bound on a run that will never produce a rollup. Round-
+follow-up-C finding: the backstop marker and `VERDICT.txt`/`.json` ride the
+SAME ~15s in-sandbox shipper tick, and `SOAK-START.json` sorts before
+`VERDICT.txt` alphabetically in a robocopy tick — so a tick that lands
+mid-write-sequence could ship the marker without yet shipping the verdict,
+and killing the VM the instant the marker was seen could beat `VERDICT.txt`
+to the share by seconds, leaving the operator with only
+`HOST-QUIET-SHARE.txt` even though the real verdict had already been
+written in the guest. `scripts/BackstopMarkerGrace.ps1`'s
+`Wait-ForVerdictAfterBackstopMarker` now gives `VERDICT.txt` a bounded
+grace window (default 45s = 3 shipper ticks, polled every 5s) before
+falling back to the quiet-share exit; if the verdict arrives during the
+grace window, the run takes the normal verdict path instead.
 
 The verify/verdict logic lives in `scripts/SoakVerdict.ps1` (the per-cycle
 PASS/FAIL/HARNESS_ERROR judgment), `scripts/RestartClassifier.ps1` (planned-
-vs-unplanned restart classification and ring sampling), and
-`scripts/HostLiveness.ps1` (the host's stall/quiet-share classification) —
-each dot-sourced by both its real caller and its own unit-test file, so
-the same code judges a real run and a synthetic unit-test tuple. Run the
-unit tests with:
+vs-unplanned restart classification and ring sampling),
+`scripts/HostLiveness.ps1` (the host's stall/quiet-share classification),
+and `scripts/BackstopMarkerGrace.ps1` (the host's backstop-marker grace-wait
+decision) — each dot-sourced by both its real caller and its own
+unit-test file, so the same code judges a real run and a synthetic
+unit-test tuple. Run the unit tests with:
 
 ```powershell
 pwsh -File sandbox-lab/scripts/Test-SoakVerdict.ps1
 pwsh -File sandbox-lab/scripts/Test-RestartClassifier.ps1
 pwsh -File sandbox-lab/scripts/Test-HostLiveness.ps1
+pwsh -File sandbox-lab/scripts/Test-BackstopMarkerGrace.ps1
 pwsh -File sandbox-lab/scripts/Test-ServiceStartFailure.ps1
 pwsh -File sandbox-lab/scripts/Test-CaptionsOffCheck.ps1
 pwsh -File sandbox-lab/scripts/Test-WorkerStdoutParser.ps1
@@ -283,3 +302,15 @@ judgment), `scripts/WorkerStdoutParser.ps1` (item 2's per-line matcher for
 each channel's `gst-worker.stdout.log`/`gst-worker.stderr.log`), and
 `scripts/CpuSampler.ps1` (item 3's per-pid CPU-delta/working-set math)
 follow the same dot-sourced-and-unit-tested extraction pattern.
+
+`scripts/CpuSampler.ps1`'s `Get-ProcessRoleLabel` checked the generic
+python/pythonw catch-all (`'control-plane'`) BEFORE resolving the pid to a
+channel via `PidToChannelId` — so a python-named process that DID resolve
+to a channel (e.g. an ffmpeg-fallback engine launched via a python-named
+process) was mislabeled `control-plane`, contradicting the function's own
+docstring, which defines `control-plane` as a python process *not*
+resolved to a channel. Round-follow-up-C finding, fixed by checking
+channel resolution before the catch-all; `Test-CpuSampler.ps1` scenario
+13c is the exact regression guard (`-ProcessName python -ProcessId 9001
+-PidToChannelId @{9001='public'}` now returns `ffmpeg-fallback:public`
+instead of `control-plane`).

@@ -121,6 +121,11 @@ function Get-ProcessRoleLabel {
                                      uvicorn civiccast.app:create_app`
                                      child (civiccast/native/supervisor/
                                      service.py's control_plane_child_spec).
+                                     Channel resolution is checked BEFORE
+                                     this catch-all (see the branch order
+                                     below) so a python-named process that
+                                     DOES resolve to a channel is labeled
+                                     "ffmpeg-fallback:<channel_id>" instead.
         "other"                   -- everything else (e.g. an ffmpeg.exe
                                      not resolved to any channel this pass).
     #>
@@ -141,7 +146,18 @@ function Get-ProcessRoleLabel {
         return 'gst-worker:unknown'
     }
     if ($ProcessName -eq 'pythonservice') { return 'supervisor' }
-    if ($ProcessName -match '^python') { return 'control-plane' }
+    # Round-follow-up-C finding: channel resolution MUST be checked before
+    # the generic python catch-all below. The code previously returned
+    # 'control-plane' for ANY python/pythonw pid that reached this point,
+    # even one that PidToChannelId resolves to a channel (an
+    # ffmpeg-fallback engine launched via a python-named process) --
+    # contradicting this function's own docstring, which defines
+    # "control-plane" as a python process "not resolved to a channel".
+    # Confirmed: -ProcessName python -ProcessId 9001
+    # -PidToChannelId @{9001='public'} used to return 'control-plane'
+    # instead of 'ffmpeg-fallback:public'. See the matching regression
+    # scenario in Test-CpuSampler.ps1.
     if ($chId) { return "ffmpeg-fallback:$chId" }
+    if ($ProcessName -match '^python') { return 'control-plane' }
     return 'other'
 }
