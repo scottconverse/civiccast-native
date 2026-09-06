@@ -1840,6 +1840,19 @@ class EgressDaemon:
         ``"aborted:<reason>"``/a deadline lapse). Returns True as soon as the
         reload is armed -- this is what tells the CALLER (``_request_reload``) not
         to fall back to terminate+restart; it does not mean the switch landed."""
+        # Item 78 fix 3 (coordinator review, round 2): pop the recorded
+        # rollover plan_end_at HERE, before any early return below, not at
+        # the point ``EncoderStartRequest`` is actually built. Popping only
+        # at that later point left the value SET (never consumed) on every
+        # early-return path above it -- no/disabled config, no/foreign
+        # plan, a SourcePrepareError from either the provider or the
+        # preparer -- so it silently leaked forward and applied to the
+        # NEXT reload attempt for this channel instead, forcing an
+        # incorrect immediate cut on what might be a plain operator-issued
+        # reload with no rollover behind it at all. Every path through this
+        # method now consumes it exactly once, whether or not that path
+        # actually reaches the ``should_defer_switch`` call it feeds.
+        rollover_plan_end_at = self._rollover_plan_end_at.pop(channel_id, None)
         config = self._store.get_config(channel_id)
         if config is None or not config.enabled:
             return False
@@ -1923,16 +1936,18 @@ class EgressDaemon:
             # is active) may defer the selector switch to the outgoing leg's own
             # EOS -- see reload_policy.should_defer_switch's docstring.
             #
-            # Item 78 fix 3: pop() (not get()) -- this is the one and only
-            # dispatch this recorded value can ever apply to, and popping
-            # guarantees a stale plan_end_at from an earlier, already-settled
-            # rollover can never be read again for a later, unrelated reload
-            # of this same channel (e.g. a plain operator-issued reload with
-            # no rollover behind it at all).
+            # Item 78 fix 3: ``rollover_plan_end_at`` was already popped at
+            # the top of this method (before any early return) -- this is
+            # the one and only dispatch that recorded value can ever apply
+            # to, and popping unconditionally guarantees a stale value from
+            # an earlier, already-settled (or abandoned) rollover attempt
+            # can never be read again for a later, unrelated reload of this
+            # same channel (e.g. a plain operator-issued reload with no
+            # rollover behind it at all).
             switch_at_end_of_current=should_defer_switch(
                 previous_state=state.state if state else None,
                 manual_override_active=self.has_manual_override(channel_id),
-                plan_end_at=self._rollover_plan_end_at.pop(channel_id, None),
+                plan_end_at=rollover_plan_end_at,
                 now=datetime.now(UTC),
             ),
         )

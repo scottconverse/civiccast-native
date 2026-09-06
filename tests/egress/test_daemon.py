@@ -1035,6 +1035,151 @@ def test_record_rollover_plan_end_is_consumed_once_and_never_leaks_to_a_later_re
     assert strategy.switch_at_end_of_current_calls == [False, True]
 
 
+def test_content_reload_disabled_config_pops_the_recorded_plan_end_without_using_it(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 2, item 3: ``record_rollover_plan_end``'s value
+    used to be popped only at the point ``EncoderStartRequest`` was actually
+    built -- every early return ABOVE that point (disabled config, a
+    SourcePrepareError from the provider or the preparer, a foreign/None
+    plan) left it sitting in ``_rollover_plan_end_at``, where it would
+    silently apply to whatever reload for this channel came next, however
+    unrelated. It must now be consumed (popped) at the very top of
+    ``_try_content_reload``, before any of those early returns -- this test
+    covers the disabled-config path."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
+    store.upsert_config(_config().model_copy(update={"enabled": False}))
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == []  # never reached reload_content
+    assert daemon._rollover_plan_end_at == {}  # popped, not left leaking
+
+
+def test_content_reload_source_prepare_error_from_provider_pops_the_recorded_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 2, item 3 -- the provider-raises-
+    SourcePrepareError early-return path."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+    fail_next = False
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        if fail_next:
+            raise SourcePrepareError("Scheduled asset is missing.")
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
+    fail_next = True
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == []
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_content_reload_source_prepare_error_from_preparer_pops_the_recorded_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 2, item 3 -- the preparer-raises-
+    SourcePrepareError early-return path (a cold-conform failure, distinct
+    from the provider-level failure above)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+    fail_next = False
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    def source_preparer(source_plan: EgressSourcePlan, _config: EgressConfig) -> object:
+        if fail_next:
+            raise SourcePrepareError("Program asset could not be conformed.")
+        return SimpleNamespace(source_plan=source_plan, plan_dir=None, records=[])
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        source_preparer=source_preparer,
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
+    fail_next = True
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == []
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_content_reload_foreign_channel_plan_pops_the_recorded_plan_end(tmp_path: Path) -> None:
+    """Coordinator review, round 2, item 3 -- the foreign/mismatched-channel
+    plan early-return path (mirrors
+    test_content_reload_foreign_channel_plan_falls_back_to_restart below)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    foreign = False
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        plan = _source_plan_with_label(
+            tmp_path, "Mayor interview" if foreign else "Council meeting"
+        )
+        if foreign:
+            object.__setattr__(plan, "channel_id", "someone-else")
+        return plan
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
+    foreign = True
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == []  # foreign plan rejected before reload_content
+    assert daemon._rollover_plan_end_at == {}
+
+
 def test_content_reload_never_defers_switch_off_of_fallback_slate(tmp_path: Path) -> None:
     """Issue #157: filler must be interrupted the moment a due program is
     ready -- a reload issued from FALLBACK_SLATE must never defer (wait out

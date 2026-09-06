@@ -170,29 +170,43 @@ below.
   content prepare inside a channel's own start) could freeze a channel's
   plan-rollover horizon in the past and make it roll over forever, and a
   worker that kept crashing right after a rollover could get hit with an
-  unthrottled re-arm every second (item 78).** Three related fixes in
-  `ChannelAutomationService`/`reload_policy`:
-  - Wall-clock "now" is now read fresh for EACH channel in a poll pass
-    instead of once for the whole pass, so one channel's synchronous block
-    can no longer leave every other channel (or that same channel's own
-    next check) computing against an already-stale timestamp.
+  unthrottled re-arm every second (item 78).** Four related fixes in
+  `ChannelAutomationService`/`reload_policy`/the daemon:
+  - Wall-clock "now" is now read fresh for EACH channel's pass, AFTER that
+    channel's own poll work runs (not before it) -- reading it any earlier
+    left the channel that actually blocks still computing its own
+    rollover math against a timestamp captured before the block, which is
+    the exact scenario that was freezing the horizon in the past.
   - If a channel's tracked plan horizon has already ended by wall clock
     (`plan_end_at` at or before "now") by the time it is checked, it is now
     discarded and re-established from the channel's current plan instead of
-    being used to justify another dispatch -- this is what stopped rollovers
-    firing indefinitely against a horizon stuck in the past.
+    being used to justify another dispatch. This stops the runaway
+    rollover-forever failure, but it is not free: re-anchoring to "now"
+    also pushes the NEXT trigger point later than it would otherwise have
+    been (measured directly against the shipped, already-fixed cadence
+    floor: the reproduced worst case moved from a lead of -180s to -360s),
+    since the new plan is windowed from a later starting point. Safe, but a
+    real behavior change worth knowing about, not a free correction.
   - The 45-second "did the last rollover reload actually land" retry path
-    used to be completely unthrottled; it now respects its own 30-second
-    minimum gap between attempts and refuses to dispatch to a worker whose
-    process has been alive less than 60 seconds, giving a freshly relaunched
-    worker room to settle before another synchronous prepare is thrown at
-    it.
+    used to be completely unthrottled; it now refuses to dispatch to a
+    worker whose process has been alive less than 60 seconds (giving a
+    freshly relaunched worker room to settle before another synchronous
+    prepare is thrown at it), and separately enforces its own 60-second
+    minimum gap between CONSECUTIVE retries (measured from the last retry
+    dispatch, not the original one, which is what makes this floor
+    actually bind instead of always being satisfied already by the 45-
+    second timeout that gates entry to the retry path in the first place).
   - The daemon also now refuses to defer a seamless reload's on-air switch
     to the outgoing program's own end if that boundary has already passed
     by the time the reload actually runs -- it cuts over immediately
     instead, since waiting for an end-of-program event that is already
     behind the clock would otherwise mean waiting for something that will
-    never arrive.
+    never arrive. The plan_end_at a rollover reload was computed against is
+    now consumed exactly once per reload attempt (popped up front, before
+    any of the daemon's own early-return paths), so a value recorded for
+    one attempt can never leak forward and silently force an unrelated
+    later reload -- an ordinary operator-issued one included -- to cut
+    immediately when it should defer normally.
 - **Install-over could leave the PREVIOUS kit's application payload silently
   running.** MEASURED on a real tester (2026-09-05): installing kit B `/S`
   (install-over) on a station kit A had already installed, where both kits

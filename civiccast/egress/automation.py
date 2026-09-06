@@ -337,6 +337,21 @@ class ChannelAutomationService:
         # (daemon._try_content_reload), so the cadence has to be bounded
         # whatever the plan window turns out to be.
         self._rollover_dispatched_at: dict[str, float] = {}
+        # Item 78 fix 2 (coordinator review, round 2): the monotonic timestamp
+        # of the last RETRY dispatch specifically (the "reload never landed"
+        # path below, distinct from _rollover_dispatched_at's "any dispatch,
+        # first or retry" tracking) -- enforces
+        # _ROLLOVER_RETRY_MIN_INTERVAL_SECONDS between CONSECUTIVE retries.
+        # Measuring from the last retry (not the original, first dispatch)
+        # is what makes this floor meaningful: the retry branch is only
+        # entered after _ROLLOVER_ISSUED_TIMEOUT_SECONDS (45s) has already
+        # elapsed since the ORIGINAL dispatch, so a floor measured from that
+        # same origin can never bind (45s already exceeds any floor <= 45s).
+        # Measuring from the last retry instead means a channel stuck
+        # retrying over and over (each retry itself timing out again) is
+        # still capped to one retry per floor interval, not one every poll
+        # tick once the daemon clears its own latch each time.
+        self._rollover_retry_dispatched_at: dict[str, float] = {}
         # Hostile-review B2 fix: when the reload lands (a fresh
         # current_proof_event_id shows up), _rollover_issued is discarded by the
         # "tracked is None or tracked[0] != proof_event_id" branch below. This
@@ -442,11 +457,20 @@ class ChannelAutomationService:
     # crashing/relaunching right after every reload got an UNTHROTTLED re-arm
     # roughly one second after every relaunch (the 45s ISSUED_TIMEOUT fires
     # again almost immediately against a worker that never gets a chance to
-    # settle). This is a much smaller floor than the D45 cadence floor above
-    # (which stays fully exempt on the retry path) -- just enough to stop a
-    # tight crash-loop from being hammered with a synchronous prepare every
-    # single poll tick.
-    _ROLLOVER_RETRY_MIN_INTERVAL_SECONDS = 30.0
+    # settle).
+    #
+    # Coordinator review, round 2: an earlier version of this fix measured
+    # the floor from ``_rollover_dispatched_at`` -- the timestamp of the
+    # ORIGINAL dispatch -- which is dead code: the retry branch is only ever
+    # entered after ``_ROLLOVER_ISSUED_TIMEOUT_SECONDS`` (45s) has already
+    # elapsed since that same original dispatch, so a floor <= 45s measured
+    # from that origin can never bind (the gap is always >= 45s already).
+    # This is now measured from ``_rollover_retry_dispatched_at`` instead --
+    # the timestamp of the last RETRY specifically -- which is what actually
+    # limits a channel stuck retrying repeatedly to one retry per this many
+    # seconds, independent of (and a real storm limiter alongside)
+    # ``_ROLLOVER_RETRY_MIN_WORKER_AGE_SECONDS`` below.
+    _ROLLOVER_RETRY_MIN_INTERVAL_SECONDS = 60.0
     # Item 78 fix 2: never dispatch a rollover retry to a worker whose current
     # pid has been alive less than this long -- a pid this young is still
     # settling from its own relaunch, and throwing another synchronous
@@ -493,30 +517,20 @@ class ChannelAutomationService:
                 continue
             channel_id = config.channel_id
             seen.append(channel_id)
-            # Item 78 fix 1: read wall-clock "now" freshly PER CHANNEL rather
-            # than once for the whole pass. When ``now`` is given explicitly
-            # (every test in this suite, via ``run_once(now=...)``) this is a
-            # no-op -- the same value applies to every channel, exactly as
-            # before. In production (``run_forever`` calls ``run_once()`` with
-            # no ``now``) a single channel's synchronous ``_start``
-            # (``SourcePreparer``, daemon.py) can block for minutes; reading
-            # "now" once before the loop meant every OTHER channel's
-            # ``_check_plan_rollover`` that poll tick -- including the same
-            # channel's own next tick's horizon math -- computed against a
-            # timestamp that was already stale by however long the block
-            # lasted, freezing ``plan_end_at`` in the past and firing
-            # rollovers forever ("live plan ends in -698s"). Re-reading per
-            # channel means only the channel that actually blocked observes a
-            # late clock; every other channel still sees an accurate "now".
-            resolved_now = now or datetime.now(UTC)
             if self._alerts is not None:
                 self._alerts.begin_tick(channel_id)
             # Audit Critical (TEST-001): one channel's failure - a poisoned
             # relay config, a supervisor crash - must never starve the other
             # channels' supervision. Isolate per channel; the loop's outer
             # handler in run_forever still covers scan-level failures.
+            #
+            # Item 78 fix 1: ``now`` is passed through UNRESOLVED here (not
+            # pre-computed once for the whole pass, and not even resolved
+            # once per channel before ``_run_channel_pass`` runs) -- see that
+            # method's own comment for where wall-clock time actually gets
+            # read and why.
             try:
-                self._run_channel_pass(config, channel_id, resolved_now)
+                self._run_channel_pass(config, channel_id, now)
             except Exception as exc:
                 _LOG.exception(
                     "Channel automation pass failed for %s; other channels "
@@ -556,13 +570,13 @@ class ChannelAutomationService:
         except Exception:
             _LOG.exception("As-run outbox drain tick failed unexpectedly; retrying next poll.")
 
-    def _run_channel_pass(self, config: Any, channel_id: str, resolved_now: datetime) -> None:
+    def _run_channel_pass(self, config: Any, channel_id: str, now: datetime | None) -> None:
         if self._daemon.has_live_process(channel_id):
             self._start_retry_at.pop(channel_id, None)
         elif config.auto_start:
             retry_at = self._start_retry_at.get(channel_id)
             if retry_at is None or self._monotonic() >= retry_at:
-                self._enqueue(channel_id, "start", now=resolved_now)
+                self._enqueue(channel_id, "start", now=now or datetime.now(UTC))
                 self._start_retry_at[channel_id] = (
                     self._monotonic() + self._START_RETRY_COOLDOWN_SECONDS
                 )
@@ -573,8 +587,23 @@ class ChannelAutomationService:
                     self._START_RETRY_COOLDOWN_SECONDS,
                 )
         self._daemon.process_once(channel_id)
-        self._check_slate_replan(channel_id, now=resolved_now)
-        self._check_plan_rollover(channel_id, now=resolved_now)
+        # Item 78 fix 1 (round 2, coordinator review): read wall-clock "now"
+        # AFTER ``process_once`` returns, immediately before the checks that
+        # use it for rollover math -- NOT before ``process_once`` is called.
+        # ``process_once`` is exactly where a channel's own synchronous
+        # ``_start`` (``SourcePreparer.prepare``, daemon.py) can block for
+        # minutes. Round 1 of this fix moved the read from once-per-pass to
+        # once-per-channel, but still read it at the TOP of this method --
+        # before ``process_once`` -- so the channel that actually blocks
+        # still computed its own ``_check_plan_rollover`` against a
+        # pre-block timestamp (measured: plan_end_at -315s behind the
+        # post-block clock, the exact frozen-horizon bug this fix exists to
+        # close). When ``now`` is given explicitly (every test in this
+        # suite) this is a no-op -- the same value applies before and after,
+        # exactly as before.
+        post_process_now = now or datetime.now(UTC)
+        self._check_slate_replan(channel_id, now=post_process_now)
+        self._check_plan_rollover(channel_id, now=post_process_now)
         self._sync_ndi_relay(config)
         self._sync_sdi_relay(config)
 
@@ -892,6 +921,7 @@ class ChannelAutomationService:
             # that has left the air starts fresh (a restart or a slate replan
             # must never be throttled by an earlier rollover).
             self._rollover_dispatched_at.pop(channel_id, None)
+            self._rollover_retry_dispatched_at.pop(channel_id, None)
             return
         if self._daemon_has_manual_override(channel_id):
             # B1 fix: an operator override is live -- never fight it. Leave any
@@ -1015,13 +1045,18 @@ class ChannelAutomationService:
             # ISSUED_TIMEOUT fires again almost immediately against a worker
             # that never gets a chance to settle). Two floors, independent of
             # the D45 cadence floor above (which stays exempt-on-retry as
-            # before): a flat minimum gap between retries, and a guard against
-            # dispatching to a worker whose current pid hasn't been alive
-            # long enough to plausibly have settled from its own relaunch.
-            last_dispatch = self._rollover_dispatched_at.get(channel_id)
+            # before): a minimum gap between CONSECUTIVE retries (measured
+            # from the last retry, not the original dispatch -- see
+            # _rollover_retry_dispatched_at's docstring for why that
+            # distinction is what makes this floor actually bind), and a
+            # guard against dispatching to a worker whose current pid hasn't
+            # been alive long enough to plausibly have settled from its own
+            # relaunch.
+            last_retry_dispatch = self._rollover_retry_dispatched_at.get(channel_id)
             if (
-                last_dispatch is not None
-                and self._monotonic() - last_dispatch < self._ROLLOVER_RETRY_MIN_INTERVAL_SECONDS
+                last_retry_dispatch is not None
+                and self._monotonic() - last_retry_dispatch
+                < self._ROLLOVER_RETRY_MIN_INTERVAL_SECONDS
             ):
                 return
             pid_age = self._worker_pid_age_seconds(channel_id)
@@ -1080,6 +1115,14 @@ class ChannelAutomationService:
         self._rollover_issued.add(channel_id)
         self._rollover_issued_at[channel_id] = self._monotonic()
         self._rollover_dispatched_at[channel_id] = self._monotonic()
+        if retrying_undelivered:
+            # Item 78 fix 2: track this retry's own dispatch time separately
+            # from _rollover_dispatched_at (which _rollover_min_interval_
+            # seconds's D45 cadence floor -- the "not retrying_undelivered"
+            # branch above -- measures from instead) so the NEXT retry's
+            # floor check is measured from THIS retry, not from the original
+            # dispatch that started the whole retry sequence.
+            self._rollover_retry_dispatched_at[channel_id] = self._monotonic()
         _LOG.info(
             "Channel automation issued a seamless plan rollover for %s: the live plan "
             "ends in %.0fs and the schedule continues %.0fs further; extending in place "
@@ -1133,9 +1176,7 @@ class ChannelAutomationService:
         self._rollover_retry_at.pop(channel_id, None)
         planned_seconds = sum(segment.duration_seconds for segment in plan.segments)
         plan_end_at = now + timedelta(seconds=planned_seconds)
-        last_segment_start_at = plan_end_at - timedelta(
-            seconds=plan.segments[-1].duration_seconds
-        )
+        last_segment_start_at = plan_end_at - timedelta(seconds=plan.segments[-1].duration_seconds)
         self._plan_horizon[channel_id] = (
             proof_event_id,
             plan_end_at,
