@@ -113,6 +113,14 @@ param(
     # existing caller.
     [int]$OnAirBoundMinutes = 12,
 
+    # sandbox-lab lane follow-up A, item 1: threaded through to In-Sandbox-
+    # Soak.ps1's own -CaptionsOff switch via the .wsb template's
+    # {{CAPTIONS_OFF_ARG}} placeholder (same pattern as -SeamlessReload's
+    # own {{SEAMLESS_RELOAD_ARG}} just above). Recorded as
+    # captions_off_requested/captions_enabled/captions_off_verified in
+    # SOAK-START.json/VERDICT.json regardless of whether this is passed.
+    [switch]$CaptionsOff,
+
     [switch]$DryRun
 )
 
@@ -143,7 +151,7 @@ function Exit-HarnessError {
 
 if (-not $Root) { $Root = $PSScriptRoot }
 if (-not $Root) { $Root = (Get-Location).Path }
-Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), OnAirBoundMinutes: $OnAirBoundMinutes, KitRoot: $KitRoot, SeamlessReload: $($SeamlessReload.IsPresent), DryRun: $($DryRun.IsPresent)"
+Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), OnAirBoundMinutes: $OnAirBoundMinutes, KitRoot: $KitRoot, SeamlessReload: $($SeamlessReload.IsPresent), CaptionsOff: $($CaptionsOff.IsPresent), DryRun: $($DryRun.IsPresent)"
 
 $hostLivenessPath = Join-Path $Root 'scripts\HostLiveness.ps1'
 if (-not (Test-Path $hostLivenessPath)) {
@@ -268,6 +276,7 @@ if (-not (Test-Path $templatePath)) {
     Exit-HarnessError "template not found: $templatePath"
 }
 $seamlessReloadArg = $(if ($SeamlessReload) { '-SeamlessReload' } else { '' })
+$captionsOffArg = $(if ($CaptionsOff) { '-CaptionsOff' } else { '' })
 $template = Get-Content -Path $templatePath -Raw -Encoding UTF8
 $rendered = $template `
     -replace [regex]::Escape('{{KIT_ROOT}}'), $kitDir `
@@ -275,13 +284,14 @@ $rendered = $template `
     -replace [regex]::Escape('{{SCRIPTS_DIR}}'), $scriptsDir `
     -replace [regex]::Escape('{{MINUTES}}'), "$Minutes" `
     -replace [regex]::Escape('{{ON_AIR_BOUND_MINUTES}}'), "$OnAirBoundMinutes" `
-    -replace [regex]::Escape('{{SEAMLESS_RELOAD_ARG}}'), $seamlessReloadArg
+    -replace [regex]::Escape('{{SEAMLESS_RELOAD_ARG}}'), $seamlessReloadArg `
+    -replace [regex]::Escape('{{CAPTIONS_OFF_ARG}}'), $captionsOffArg
 
 $wsbPath = Join-Path $Root "CivicCastSandboxSoak-$runName.wsb"
 Set-Content -Path $wsbPath -Value $rendered -Encoding UTF8
 Write-Step "Rendered $wsbPath"
 
-$logonCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes $Minutes -OnAirBoundMinutes $OnAirBoundMinutes $seamlessReloadArg"
+$logonCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes $Minutes -OnAirBoundMinutes $OnAirBoundMinutes $seamlessReloadArg $captionsOffArg"
 Write-Step "LogonCommand: $logonCommand"
 
 # --------------------------------------------------------------------------
@@ -323,7 +333,15 @@ $scriptsToCheck = @(
     # Round-14 finding 8: ServiceStartFailureCheck.ps1 -- extracted so
     # Test-ServiceStartFailure.ps1 can unit-test it with synthetic
     # Get-Service/Get-WinEvent results.
-    (Join-Path $scriptsDir 'ServiceStartFailureCheck.ps1')
+    (Join-Path $scriptsDir 'ServiceStartFailureCheck.ps1'),
+    # sandbox-lab lane follow-up A: same extraction pattern for the three
+    # new items (-CaptionsOff verification judgment, worker-stdout line
+    # parsing, per-process CPU delta math) -- each dot-sourced by
+    # In-Sandbox-Soak.ps1 from this same mapped scripts folder, each with
+    # its own Test-*.ps1.
+    (Join-Path $scriptsDir 'CaptionsOffCheck.ps1'),
+    (Join-Path $scriptsDir 'WorkerStdoutParser.ps1'),
+    (Join-Path $scriptsDir 'CpuSampler.ps1')
 )
 $parseResults = @($scriptsToCheck | ForEach-Object { Test-ScriptParses -Path $_ })
 $parseOk = -not @($parseResults | Where-Object { -not $_.ok }).Count
@@ -365,7 +383,7 @@ if ($httpCheckOutStr -match '^OK') {
 }
 
 if ($DryRun) {
-    Write-Step "DRY RUN complete. Kit verified ($verifiedCount files), .wsb rendered at $wsbPath, both in-sandbox scripts parse cleanly, HttpClientHandler self-check OK."
+    Write-Step "DRY RUN complete. Kit verified ($verifiedCount files), .wsb rendered at $wsbPath, all in-sandbox scripts parse cleanly, HttpClientHandler self-check OK. SeamlessReload=$($SeamlessReload.IsPresent) CaptionsOff=$($CaptionsOff.IsPresent) (LogonCommand: $logonCommand)"
     Write-Step "Would launch: Start-Process -FilePath 'C:\Windows\System32\WindowsSandbox.exe' -ArgumentList `"$wsbPath`""
     Write-Step "Would poll for: $outputDir\VERDICT.txt (phase bounds: install=${InstallBoundMinutes}m, health=${HealthBoundMinutes}m after install, rollup-stall=${RollupStallMinutes}m once soak_start_utc is set, generic quiet-bound=${QuietMinutes}m throughout)"
     Write-Step "Output directory prepared at: $outputDir (empty -- no sandbox launched)"

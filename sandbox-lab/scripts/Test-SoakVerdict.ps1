@@ -549,6 +549,32 @@ $cycles18d = @(
 $v18d = Get-SoakVerdict -Cycles $cycles18d -StartUtc $startUtc -WarmupSeconds 180
 Assert-Equal 'scenario18d (read-failure streak spans the warm-up boundary, escalates once post-warmup) -> HARNESS_ERROR' 'HARNESS_ERROR' $v18d.verdict
 
+# --------------------------------------------------------------- scenario 19
+# sandbox-lab lane follow-up A, item 2: -SeamlessReload cross-check against
+# -ReloadArmedNeverCommittedChannels (In-Sandbox-Soak.ps1 computes this
+# from the daemon log's "Seamless content-reload armed" line crossed
+# against WorkerStdoutParser.ps1's reload_committed_count, per channel).
+#
+# 19a: under -SeamlessReload, a channel that was armed but never committed
+# a reload -- must FAIL, naming the channel and the reason, even with an
+# otherwise perfectly clean cycle set and zero restart/abort events.
+$v19a = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -SeamlessReload $true -ReloadArmedNeverCommittedChannels @('public')
+Assert-Equal 'scenario19a (armed but never committed, -SeamlessReload) -> FAIL' 'FAIL' $v19a.verdict
+Assert-Equal 'scenario19a reason names the channel' $true ($v19a.reason -match 'public')
+Assert-Equal 'scenario19a reason explains why' $true ($v19a.reason -match 'never committed')
+
+# 19b: the IDENTICAL armed-never-committed finding, but -SeamlessReload NOT
+# passed (flag-off) -- must PASS. This check is only meaningful under the
+# flag that promises reloads land seamlessly in the first place.
+$v19b = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -ReloadArmedNeverCommittedChannels @('public')
+Assert-Equal 'scenario19b (same finding, flag-off) -> PASS (not checked off-flag)' 'PASS' $v19b.verdict
+
+# 19c: under -SeamlessReload, an EMPTY armed-never-committed list (the
+# normal/healthy case -- every armed reload committed, or none were armed
+# at all) must not itself fail the run.
+$v19c = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -SeamlessReload $true -ReloadArmedNeverCommittedChannels @()
+Assert-Equal 'scenario19c (-SeamlessReload, no armed-never-committed channels) -> PASS' 'PASS' $v19c.verdict
+
 Write-Host ""
 Write-Host "SoakVerdict unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })
 if ($script:failures -gt 0) { exit 1 }

@@ -61,6 +61,21 @@ $script:DaemonReloadAbortRegex = [regex]'civiccast\.egress\S*:\s*(?<reason>.*?\b
 # happens to contain the word "discarded").
 $script:DaemonReloadDiscardEchoRegex = [regex]'Content-reload for \S+ \(reload_id=\S+\) discarded:'
 
+# Round-16 finding (worker-stdout/-SeamlessReload cross-check): daemon.py's
+# own confirmation that a seamless content-reload was ARMED for a channel
+# (main bcb3ebe:1973-1979, `_LOG.info("Seamless content-reload armed for
+# %s (reload_id=%s, switch_at_end_of_current=%s); awaiting settlement.",
+# channel_id, reload_id, ...)`). Matched as a substring, not an anchored
+# full-line pattern (same convention as $DaemonReloadAbortRegex above) --
+# this must survive whatever timestamp/logger-name prefix the actual log
+# line carries, which this lane does not control or need to know.
+# In-Sandbox-Soak.ps1 records every channel this ever fires for
+# ($script:reloadArmedChannels) and, under -SeamlessReload, FAILs the run
+# if that channel's own worker-stdout reload_committed_count stayed 0 for
+# the whole soak -- an armed-but-never-committed reload is exactly the
+# fallback-to-restart failure mode -SeamlessReload exists to prove absent.
+$script:DaemonReloadArmedRegex = [regex]'Seamless content-reload armed for (?<ch>\S+) \(reload_id=(?<reload_id>[^,]+),'
+
 function New-StateReadFailureLastError {
     <#
       .SYNOPSIS
@@ -73,4 +88,61 @@ function New-StateReadFailureLastError {
     #>
     param($Status, $ErrorText)
     return "state read failed: status=$Status error=$ErrorText"
+}
+
+function Get-ReloadArmedNeverCommittedChannels {
+    <#
+      .SYNOPSIS
+      Round-2 finding 2 (HIGH): the -SeamlessReload armed-never-committed
+      cross-check (see $DaemonReloadArmedRegex's own header above), pulled
+      out of In-Sandbox-Soak.ps1 as a pure function so its own filtering
+      logic is directly unit-testable (Test-RestartClassifier.ps1) against
+      synthetic worker-stdout-counts snapshots, instead of only ever being
+      exercised by a live sandbox run.
+
+      Extracting this also fixes the bug that motivated it: the driver's
+      previous inline version read $script:workerStdoutCountsByChannel at
+      whatever point the poll loop happened to stop -- the LAST in-loop
+      Update-WorkerStdoutCounters call runs once per channel per cycle,
+      before the cycle's tsp probe and rollup, so a reload committed
+      during the final ~60-75s cycle window (after that call, before the
+      loop actually exited) was invisible to THIS check even though
+      In-Sandbox-Soak.ps1 already performs one more full drain of the
+      daemon log ring after the loop (Update-DaemonLogRing's own final
+      call). The fix is at the CALL SITE (a final per-channel
+      Update-WorkerStdoutCounters drain added right after that same daemon
+      log drain, before this function is ever invoked) -- this function
+      itself simply needs to be callable standalone so that fix's effect
+      (a late-arriving commit correctly removing a channel from the
+      returned list, so it never spuriously fails a -SeamlessReload run)
+      is provable without a live worker process.
+
+      .PARAMETER ArmedChannelIds
+      Channel ids the daemon log confirmed "Seamless content-reload
+      armed" for at least once ($script:reloadArmedChannels.Keys).
+
+      .PARAMETER WorkerStdoutCountsByChannel
+      Hashtable keyed by channel id, each value an object/hashtable with
+      at least a `reload_committed_count` property/key
+      ($script:workerStdoutCountsByChannel, or a synthetic stand-in in
+      tests) -- the SAME per-channel cumulative counts
+      Update-WorkerStdoutCounters accumulates from
+      ConvertFrom-WorkerStdoutLines.
+
+      .OUTPUTS
+      string[] -- channel ids that were armed but whose own
+      reload_committed_count is still 0 (or entirely absent from
+      WorkerStdoutCountsByChannel), in the same order as ArmedChannelIds.
+    #>
+    param(
+        [AllowEmptyCollection()]
+        [array]$ArmedChannelIds = @(),
+        $WorkerStdoutCountsByChannel = @{}
+    )
+    return @(
+        $ArmedChannelIds | Where-Object {
+            $wc = $WorkerStdoutCountsByChannel[$_]
+            (-not $wc) -or ($wc.reload_committed_count -eq 0)
+        }
+    )
 }

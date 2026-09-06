@@ -586,6 +586,42 @@ for ($i = 0; $i -lt 45; $i++) {
 }
 Assert-Equal 'scenario26b (45 entries, default -MaxRingSize 30, unchanged for existing callers) -> capped at 30' 30 $ctx26b.LogRing['public'].Count
 
+# -------------------------------------------------------------- scenario 27
+# Round-2 finding 2 (HIGH): Get-ReloadArmedNeverCommittedChannels
+# (DaemonLogPatterns.ps1) -- the -SeamlessReload armed-never-committed
+# cross-check pulled out of In-Sandbox-Soak.ps1 so it is directly
+# unit-testable. 'government' is armed and its worker-stdout counts show
+# reload_committed_count=0 -> still flagged. 'education' is armed too, but
+# a reload committed IN THE FINAL DRAIN WINDOW (the exact gap round-2
+# finding 2 fixed at the call site: In-Sandbox-Soak.ps1 now drains every
+# channel's worker stdout one more time right after the poll loop exits,
+# before this function ever runs) -- its count is 1, so it must NOT be
+# flagged, proving a late-arriving commit does not spuriously FAIL a
+# -SeamlessReload run. 'public' was never armed at all, so it never
+# appears in the input and never appears in the output either.
+$countsAfterFinalDrain = @{
+    'government' = [pscustomobject]@{ reload_committed_count = 0 }
+    'education'  = [pscustomobject]@{ reload_committed_count = 1 }
+}
+$armedNeverCommitted27 = Get-ReloadArmedNeverCommittedChannels -ArmedChannelIds @('government', 'education') -WorkerStdoutCountsByChannel $countsAfterFinalDrain
+Assert-Equal 'scenario27a (armed, committed=0) -> government IS flagged' 'True' "$($armedNeverCommitted27 -contains 'government')"
+Assert-Equal 'scenario27b (armed, committed=1 caught by the final drain) -> education is NOT flagged' 'False' "$($armedNeverCommitted27 -contains 'education')"
+Assert-Equal 'scenario27c (never armed) -> public never appears' 'False' "$($armedNeverCommitted27 -contains 'public')"
+Assert-Equal 'scenario27d (exactly one flagged channel)' 1 $armedNeverCommitted27.Count
+
+# -------------------------------------------------------------- scenario 28
+# Round-2 finding 2: a channel that was armed but has NO entry at all in
+# WorkerStdoutCountsByChannel (e.g. Update-WorkerStdoutCounters never
+# found its gst-worker.stdout.log) is conservatively flagged too -- absence
+# of evidence is never treated as evidence of a commit.
+$armedNeverCommitted28 = Get-ReloadArmedNeverCommittedChannels -ArmedChannelIds @('missing-channel') -WorkerStdoutCountsByChannel @{}
+Assert-Equal 'scenario28 (armed, no counts entry at all) -> flagged' 'True' "$($armedNeverCommitted28 -contains 'missing-channel')"
+
+# -------------------------------------------------------------- scenario 29
+# Round-2 finding 2: no channels armed at all -> empty result, never throws.
+$armedNeverCommitted29 = Get-ReloadArmedNeverCommittedChannels -ArmedChannelIds @() -WorkerStdoutCountsByChannel @{}
+Assert-Equal 'scenario29 (nothing armed) -> empty result' 0 $armedNeverCommitted29.Count
+
 Write-Host ""
 Write-Host "RestartClassifier unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })
 if ($script:failures -gt 0) { exit 1 }
