@@ -81,7 +81,377 @@ below.
   production ships, and the proof constructs its runtime with `live=True`, so
   an unoverridden capacity-proof run measures the actual deployed
   configuration instead of a station nobody ships.
-
+- **First ON_AIR no longer waits for a whole-clip re-encode (item 66).**
+  MEASURED: a fresh station took 8.5-12+ minutes to first ON_AIR because
+  `civiccast/egress/preparer.py`'s `_prepare_segment` conformed the WHOLE
+  first asset synchronously on the automation thread before the channel
+  could start, and every channel queued behind that one conform. An initial
+  pass at this fix also tried making the synchronous conform single-threaded
+  (`-threads 1`) or fully unthrottled, and probing loudness once per
+  segment; an Opus review measured both of those choices on real hardware
+  (HALO) and found real regressions, so the shipped fix is different from
+  that first pass. What actually ships, all measured on HALO:
+  - **A foreground thread cap, not `-threads 1` and not unthrottled.**
+    Conforming 300s of content took 233s at `-threads 1` vs 36.6s fully
+    unthrottled — serializing every synchronous conform to one thread (the
+    first pass's fix) was itself the kind of regression item 66 exists to
+    close, and it's reachable outside first-ON_AIR too:
+    `EgressDaemon._try_content_reload` (`daemon.py` around line 1839) runs
+    this same synchronous conform on the automation thread on the legacy
+    ffmpeg-concat engine while ANOTHER channel may genuinely be on air, so
+    fully unthrottled isn't safe there either. `build_conform_source_args`
+    now takes a `threads: int | None` argument instead of a `background:
+    bool` flag: warm-behind conforms (`_schedule_warm`) still pass
+    `threads=1` (a background warm must never starve the on-air encoder),
+    but every SYNCHRONOUS conform — first-ON_AIR and the content-reload path
+    above — now passes a cap of `max(1, os.cpu_count() // 2)` instead. This
+    is a real behavior change for `playout_trim_supported=True` (the legacy
+    ffmpeg-concat engine): its synchronous untrimmed-MISS conform used to run
+    fully unthrottled and is now thread-capped too.
+  - **Loudness probing is memoized per asset, not per segment.** A
+    `ebur128` loudness pass on a 39-minute clip took 46.7s (it decodes video
+    too — `check_loudness` in `civiccast/stream/loudness.py` now passes
+    `-vn`, audio-only decode, cutting that cost). An 8-segment plan of one
+    asset (8 distinct trims of the same recording) used to mean 8 full-file
+    probes — ~6.3 minutes, still on the synchronous start path. `_prepare_segment`
+    now consults the persisted cache meta (`_read_cache_meta`, keyed by the
+    same source fingerprint `_cache_key` uses) BEFORE probing; a miss probes
+    once and writes the meta immediately — even before any conform for that
+    asset exists — so every other segment of the same asset, in this
+    `prepare()` call or a later one, reuses it instead of re-probing.
+  - **An untrimmed foreground conform now populates the cache by LINKING
+    the already-finished per-plan file into it, never by moving it.**
+    Untrimmed segments are the full asset by definition (`source_plan.py`'s
+    untrimmed-segment contract) — on the GStreamer engine an untrimmed
+    MISS's bounded conform (`-t <duration>`) IS already a full-asset
+    conform. A round-2 version of this fix finished that conform into the
+    persistent cache FIRST and then copied it back OUT for the per-plan
+    file — an extra full-length copy on the blocking path, and if the cache
+    promotion raised (the entry alone exceeds `CIVICCAST_CONFORM_CACHE_GB`),
+    the per-plan file no longer existed and the segment failed to air where
+    it used to air fine. An Opus review caught both problems. The per-plan
+    file is now finished FIRST, unconditionally (`tmp_output_path.replace
+    (output_path)`), and airs from itself; the cache is populated
+    afterward via `_promote_finished_conform_into_cache` — a hard link
+    (`os.link`) of that SAME already-airing file into
+    `conform-cache/{key}.ts.tmp`, then the existing atomic rename.
+  - **The link/lock design in the paragraph above went through FOUR more
+    measured rounds of Opus review after it first shipped:**
+    - **Round 4, BLOCKER:** the lock guarding that promotion (and the
+      matching lock in `_conform_full_asset_into_cache`, used on the
+      `playout_trim_supported=True` engine) was still acquired BLOCKING. A
+      background warm holds the identical lock for its ENTIRE
+      single-threaded conform — tens of minutes for a long asset — so a
+      synchronous `prepare()` landing behind an in-progress warm for the
+      SAME asset stalled for just as long (measured: 3.01s against a
+      3-second fake warm in the regression test). Both lock sites now
+      acquire NON-BLOCKING: on contention, the promotion is skipped
+      (logged) and the untrimmed-miss path falls through to the bounded
+      per-segment conform instead of waiting — the segment already airs
+      from its own file either way. `_schedule_warm`'s queued job also
+      re-checks `{key}.ts` (and a fresh meta) right before doing any work,
+      so a job that sat in the single-worker warm queue while a foreground
+      promotion already populated the same entry skips its now-redundant
+      re-conform instead of racing it.
+    - **Round 4, point 3:** the `shutil.copy2` fallback (when `os.link`
+      fails, e.g. the cache and per-plan directories live on different
+      volumes) was still a full synchronous byte-for-byte copy on the
+      start path — the same class of blocking work item 66 exists to
+      close. It was handed to the warm scheduler
+      (`_schedule_cache_copy_promotion`) as a queued background job.
+    - **Round 5, BLOCKER:** round 4's fix for the point above scheduled
+      that background job from INSIDE the still-held per-key lock, and the
+      queued job itself blocking-acquired the SAME lock — with a
+      SYNCHRONOUS `warm_scheduler` (a test double, or any future
+      non-threaded integration) the job ran inline, before the caller's
+      own `finally: lock.release()` could ever execute: a reproducible
+      self-deadlock. With the real threaded scheduler it was head-of-line
+      blocking of the single warm worker on a lock its own caller still
+      held. Fixed: `_promote_finished_conform_into_cache` now releases its
+      lock FIRST (in `finally`) and only schedules the copy job
+      AFTERWARD; the queued job's own lock acquisition is now also
+      non-blocking (skip on contention rather than wait or busy-loop
+      re-queuing itself).
+    - **Round 6, point 7:** if handing the job to `self._warm_scheduler`
+      itself raised (the job "discarded" before it ever ran, e.g. a broken
+      or test-double scheduler), `key` was left stuck in `self._warming`
+      forever — silently suppressing every future GENUINE warm for that
+      asset. Both `_schedule_warm` and `_schedule_cache_copy_promotion` now
+      catch that failure, discard the key, and log instead of leaving it
+      stuck. Point 5: the copy job's OUTER exception handler (covering
+      every failure other than a failed `shutil.copy2` itself, e.g.
+      `_promote_conform_into_cache`'s own over-budget raise after the copy
+      already succeeded) now also unlinks its partial `.ts.tmp` — only the
+      inner handler did before.
+    Any failure in cache promotion (including the over-budget case) is
+    still logged and swallowed, never raised: the segment is already
+    safely on air regardless, and only the NEXT airing of that asset
+    misses the cache and re-conforms. TRIMMED misses are unchanged: bounded
+    conform straight to air, full-asset warm scheduled behind it.
+  - **The warm scheduler is a single-worker FIFO queue, not one thread per
+    job.** `_default_warm_scheduler` used to spawn an unbounded daemon
+    thread per warm job; it now queues onto one long-lived background
+    worker, so at most one warm conform (or cache-copy promotion, above)
+    runs at a time regardless of how many distinct assets are warming. The
+    existing per-key dedupe (`self._warming`) is unchanged, and now shared
+    between the two job kinds.
+  - **The loudness probe is now bounded to a window, not the whole file --
+    and, since round 4 (corrected round 5), not the HEAD of an untrimmed
+    asset either.** A trimmed segment probes exactly its own wanted window
+    (`-ss <inpoint>` before `-i`, `-t <duration>` after it — the same
+    convention `build_conform_source_args` uses). An untrimmed segment (the
+    full asset) samples 120 seconds starting 40% into the asset's REAL
+    MEDIA DURATION instead of its whole duration -- the initial round-3
+    shape sampled the HEAD instead, and an Opus review found a real failure
+    mode: a cold-open with silence or room tone measures the silence floor
+    instead of the program's real loudness, which then drives `loudnorm`'s
+    normalization target completely wrong and gets memoized for every
+    other segment/airing of that asset. A round-4 version of the 40%
+    offset used `segment.duration_seconds` for "the asset's duration" --
+    wrong: `source_plan.py`'s `_segment_duration` returns
+    `min(slot, playable)` (or the bare schedule SLOT for an un-probed
+    asset), so a slot shorter than the asset placed the sample past the
+    asset's actual EOF (measured: a past-EOF `-ss` reads as silence -> -70
+    LUFS -> an unnecessary floor fallback). Round 5 uses the asset's REAL
+    media duration instead -- a cheap ffprobe `-format` query (never a
+    decode), cached in the same meta as the loudness result -- and clamps
+    the 40% offset so it can never land past EOF even for a short asset.
+    If the mid-file sample itself measures at or below -60 LUFS integrated
+    (still silence -- e.g. a pause that happens to land in the sampled
+    window), a round-4 version fell back to a synchronous WHOLE-FILE probe
+    (measured 46.7s on a 39-minute clip) -- exactly the kind of
+    start-path-blocking work item 66 exists to close. Round 5 replaced that
+    with a SECOND bounded sample at a different offset (70% into the real
+    media duration, still 120 seconds).
+    **Round 6 found two more real bugs in that round-5 shape, both PROVEN
+    on real clips:** (1) when the real duration is genuinely UNKNOWN
+    (ffprobe unavailable or failed), round 5 still sampled at fixed 120s
+    and 240s offsets — for a real 67-second clip (true loudness -10.9
+    LUFS) BOTH offsets land past the clip's actual end, read as silence,
+    and the asset was misreported as genuinely silent. Round 6 samples
+    from 0s instead when duration is unknown (never past EOF for any
+    asset with real audio), and never trusts that single,
+    uncorroborated sample as proof of silence. (2) round 5's "second,
+    different offset" sample was actually IDENTICAL to the first for any
+    asset <=200s and OVERLAPPED it for up to 400s — never genuinely
+    independent evidence. Round 6 takes exactly ONE sample (0s, spanning
+    `min(duration, 120s)`) for any asset <=240s instead (trusted directly
+    as silence if it hits the floor — that one sample already covers the
+    whole, or nearly the whole, file); above 240s, the two samples are
+    placed and clamped so the second always starts at least 120s after
+    the first, guaranteeing no overlap. If the resample itself fails to
+    produce a measurement at all, the first (floor) reading is kept
+    rather than raising or silently discarding it.
+    `check_loudness`/`check_streaming_loudness` gained optional
+    `probe_start_seconds`/`probe_duration_seconds`/`threads` parameters for
+    this (`None` for every OTHER caller, still measuring the whole file,
+    unthrottled, unchanged); `_prepare_segment` now passes `threads=` on
+    every probe (round 6, point 6 — a production caller now exercises the
+    arg-order fix below, not just its own unit tests). This remains a
+    documented sample, not a full-file measurement, for material whose
+    loudness varies significantly across its length — the persisted-meta
+    memo above still means one asset gets one measured value shared
+    across every segment/airing of it, which was already this codebase's
+    model before item 66 (the cache key never depended on trim). The
+    asset's real media duration is threaded explicitly through every
+    conform/promotion call site that writes cache meta (round 6, point 3)
+    instead of `_write_cache_meta` doing a defensive read-modify-write on
+    every single write to avoid losing it.
+  - **`-threads`'s position in `check_loudness` was an OUTPUT option, not
+    an input one (round 5).** Round 4 placed `-threads <N>` after `-i`/
+    `-t`, which ffmpeg parses as applying to the `-f null` output --
+    capping nothing about the actual decode or filter graph. It now comes
+    BEFORE `-i` (an input/decoder option), paired with
+    `-filter_complex_threads <N>` to also cap the `ebur128` filter graph's
+    own threading, which `-threads` alone never bounded.
+  - **`_evict_cache_over_budget` now reaps orphaned cache-dir files** that
+    no other path here ever cleaned up: an abandoned `{key}.ts.tmp` (a
+    conform or promotion interrupted mid-write) older than 1 hour is
+    deleted outright, and a live one still counts toward the budget so a
+    burst of concurrent warms/promotions can't blow past
+    `CIVICCAST_CONFORM_CACHE_GB` before finishing; a `{key}.json` with no
+    sibling `{key}.ts` (a loudness-only probe whose conform never followed)
+    older than 24 hours is deleted outright. `_write_cache_meta`'s sidecar
+    write is now tmp+replace atomic, matching every `.ts` write in this
+    module. `os.utime(cached_ts)` on a cache HIT is now guarded against
+    `FileNotFoundError` (a concurrent eviction pass removing the entry
+    between the existence check and the utime call) and falls through to a
+    MISS instead of crashing. A failed/partial background copy (in the
+    cross-volume job above) now unlinks its own partial `.ts.tmp` instead
+    of leaving it for the orphan reap to find later.
+  - **`cli.py`'s CLI-driven worker now passes `playout_trim_supported`
+    too.** Its `SourcePreparer(work_dir=work_dir)` construction was missing
+    the argument entirely (silently defaulting to `False`, the
+    GStreamer-engine shape, even when running the legacy ffmpeg-concat
+    engine) — `automation.py`'s in-app driver already wired this correctly;
+    the CLI path now imports the same `gstreamer_engine_selected` helper
+    and mirrors it.
+  See `docs/ops/channel-egress-runbook.md`'s corrected "Cache HIT accuracy vs
+  MISS accuracy" note (an untrimmed asset's cache entry is a link -- or, on
+  a cross-volume layout, a background copy -- of the exact file that
+  already aired, so it is byte-identical, not a separately-produced copy),
+  its new "Cache promotion never waits behind an in-progress warm" note,
+  and its corrected "loudness probe" note describing the sampling window
+  (40%/70% of the asset's REAL media duration, not its schedule-slot
+  duration, with a single-sample shape for assets at or below 240s and a
+  never-trust-a-single-blind-sample rule when duration is unknown).
+  **Round 7 found two more real bugs, both PROVEN with a reproduction, in
+  the round-6 shape above:**
+  - **HIGH: an "untrimmed" segment is NOT, by definition, the whole asset.**
+    Round 6's own line above ("untrimmed segments are the full asset by
+    definition") was wrong once D42 (`source_plan.py`'s `_segment_duration`,
+    `min(slot, playable)`) shipped: a schedule slot shorter than its asset
+    makes an untrimmed segment's `duration_seconds` shorter than the
+    asset's real media length too, with no inpoint/outpoint attached to
+    show it. `_promote_finished_conform_into_cache` still hard-linked that
+    SHORT bounded conform into the persistent cache as if it were the whole
+    asset; a later, longer-slot airing of the same asset then hit that
+    entry and stream-copied `-t <longer duration>` from a file that didn't
+    have that much content — dead air, sticky in the cache until its
+    size/mtime happened to change. Reproduced: a 30-second schedule slot on
+    a 67-second asset, followed by a 60-second slot on the same asset.
+    Fixed at both ends: the promotion is now gated on the bounded conform's
+    own `duration_seconds` actually covering the asset's real media
+    duration (the same 1-second tolerance `_covers_slot` uses) — if it
+    doesn't, the full-asset cache is warmed behind it instead, exactly like
+    a genuinely trimmed miss already was. (A genuinely UNKNOWN real duration
+    — the preparer's own ffprobe unavailable or failing for this call —
+    keeps the pre-round-7 "trust untrimmed as full" assumption rather than
+    force every such segment through an extra, unverifiable warm: D42 itself
+    can only shorten a segment's duration below the real media length when
+    the asset's duration is KNOWN, so an untrimmed segment reaching this
+    gate with a genuinely unknown duration was never capped by D42 to begin
+    with.) The cache **read** side no longer
+    trusts `{key}.ts` on `duration_seconds` arithmetic either (a short
+    entry's meta still reports the asset's correct real length, so a
+    numeric comparison alone can't tell a genuine full conform apart from a
+    stale short one) — `_write_cache_meta` gained an explicit
+    `full_asset_conform` flag, set ONLY by `_promote_conform_into_cache`
+    (the one place a `.ts` is ever finalized into the cache), and a cache
+    HIT now requires that flag to be `True`. A `{key}.json` written by
+    pre-round-7 code never carries it, so an already-corrupted on-disk
+    entry from before this fix self-heals into a MISS (and gets correctly
+    re-conformed) instead of staying silently wrong.
+  - **MEDIUM: a single HEAD sample was trusted as conclusive silence for
+    assets up to 240 seconds, even though the sampled window only covers
+    120 of them — reintroducing the exact round-4 head-silence failure for
+    that range.** Reproduced: a 200-second clip whose only audio starts at
+    130 seconds (well past the sampled `[0, 120)` window) got memoized as
+    silent, and normalization was skipped. The single-sample-conclusive
+    cutoff (`_SHORT_ASSET_SINGLE_SAMPLE_MAX_S`) is now the probe window's
+    own size (120s, not 240s) — a "duration known" asset over 120 seconds
+    always falls into the sampled-window branch instead (40% in, not the
+    head), which happens to cover the 130-200s range in the reproduction
+    above. That branch's corroborating resample also gained an explicit
+    non-overlap check (`second_probe_start >= first + 120s`): lowering the
+    cutoff means the 120-240s range can now reach that branch too, where
+    two full non-overlapping 120-second windows don't always fit — without
+    the check, an overlapping/identical resample could count as
+    "corroboration" while providing none, exactly the failure round-6
+    already fixed for durations above 240s.
+  - Doc-only: `civiccast/stream/loudness.py`'s `check_streaming_loudness`
+    docstring claimed its `probe_start_seconds`/`probe_duration_seconds`/
+    `threads` parameters were "not currently exercised by any caller" —
+    false since round 6 shipped: `_prepare_segment` passes `threads=` on
+    every probe (see above) and `probe_start_seconds`/`probe_duration_seconds`
+    on every untrimmed/trimmed probe alike. Corrected.
+  See `docs/ops/channel-egress-runbook.md`'s corrected loudness-probe note
+  (the single-sample cutoff is 120s, not 240s, and the 120-240s range's
+  resample is skipped rather than trusted when no non-overlapping window
+  fits).
+  **Round 8 found the round-7 HIGH fix was still not fixed, reproduced
+  twice with real ffmpeg on an 8-second test asset (a 3-second slot, then a
+  6-second slot):**
+  - **HIGH: `media_duration is None` still promoted a slot-capped fragment
+    as the full asset.** Round 7's fallback reasoned that D42's own cap in
+    `source_plan.py` can only shorten a segment's `duration_seconds` below
+    the real media length when that file's `_playable_duration` already
+    knows the asset's duration — so an untrimmed segment reaching the
+    promotion gate with an UNKNOWN `media_duration` was "never capped by
+    D42 to begin with," and kept promoting it. That compares the wrong two
+    sources: D42's cap reads the asset's duration off the **database row**
+    (`source_plan.py:523-543`); `media_duration` in the preparer comes from
+    **this call's own live ffprobe**. The two can disagree, and disagree in
+    exactly the poisoning direction (DB knows the duration, ffprobe
+    doesn't): (a) ffprobe genuinely fails for one call while the DB row
+    still caps the segment to 3 of the asset's 8 seconds — the 3-second
+    fragment got promoted as the whole asset; (b) with no failure at all —
+    a TRIMMED airing runs first, takes the sibling probe branch that never
+    calls `probe_media_duration_seconds` at all, and persists
+    `media_duration_seconds: null`; the very next airing (untrimmed,
+    slot-capped to 6 of 8 seconds) reads that cached `null` back and
+    promotes its own fragment as the whole asset. `media_duration is None`
+    now **never** promotes — it always falls through to `_schedule_warm`,
+    whose background job conforms with `build_conform_source_args(segment=
+    None, ...)` — no `-ss`/`-t` at all — so its output genuinely is the
+    whole file regardless of what `media_duration` measured, unlike this
+    unverified fragment. `_promote_conform_into_cache` then marks the entry
+    `full_asset_conform=True` unconditionally (it measures nothing itself);
+    that is safe here only because the caller reaching it already
+    guaranteed a trim-free, whole-file conform. Threading the plan's
+    already-known (DB) asset duration through to the segment spec so the
+    preparer stops re-deriving it via a second, independently fallible
+    ffprobe is a listed follow-up, not done this round.
+  - **MEDIUM: the warm/copy-job skip checks didn't require the
+    `full_asset_conform` flag.** `_schedule_warm`'s and
+    `_schedule_cache_copy_promotion`'s own re-check-before-running guards
+    (added round-4/round-6 to skip redundant work if another caller already
+    populated the entry) accepted ANY meta file as "already populated," so
+    a flagless legacy entry (anything written before round 7) read as a
+    hit and the job returned without ever conforming — the asset never
+    healed: every future airing kept paying the foreground conform, and the
+    stale short `.ts` stayed in the eviction budget forever. Both guards
+    now require `meta.get("full_asset_conform") is True`, matching the
+    cache-HIT check round 7 already applied on the read side.
+  - **LOW: the "no room for a corroborating resample" comment named the
+    wrong cutoff.** With `probe_start = max(0, min(0.4·d, d−120))` and the
+    non-overlap requirement `second_probe_start >= probe_start + 120`,
+    working both clamped expressions through (not just describing them)
+    shows corroboration is actually unavailable for every asset under 400
+    seconds, not 240 — the fail-safe *behavior* was already correct
+    (skip the resample, keep the single reading), only the documented
+    boundary was wrong. Corrected in this file, the runbook, and the
+    in-code comments; no behavior change.
+  **Round 9 was tests/wording only — both round-8 functional fixes (the
+  warm/copy skip-predicate MEDIUM and the fail-closed HIGH gate) were
+  already correct, just uncovered:**
+  - **MEDIUM: added a mock-level test per job** (`_schedule_warm`'s and
+    `_schedule_cache_copy_promotion`'s own queued `_job`) that plants a
+    flagless legacy meta plus a short `.ts`, runs the job, and asserts it
+    re-conforms (does not return early) with the resulting cache entry
+    carrying `full_asset_conform=True` — reverting either skip predicate
+    back to `cached_meta is not None` now fails the suite instead of
+    passing silently.
+  - **MEDIUM: added a mock-level (no-ffmpeg) test of the HIGH fail-closed
+    gate** — an untrimmed, slot-capped segment with an unknown media
+    duration now asserts `_schedule_warm` is called and nothing is
+    promoted, catching a revert of `is_full_asset_conform`'s
+    `media_duration is not None` clause without needing real ffmpeg on the
+    runner. Also wired `tests/egress/test_preparer_conform_cache_real_ffmpeg.py`'s
+    four tests into `ci-test.yml`'s junit-floor guard pattern (matching the
+    existing `tests/live/test_finalization_worker` and live-HLS guards), so
+    CI fails if they were skipped (no ffmpeg/ffprobe on the runner) rather
+    than silently passing.
+  - **LOW: corrected a false invariant in a code comment and this file.**
+    Both claimed the warm job "sets `full_asset_conform=True` from its own
+    measured length via `_promote_conform_into_cache`" — that method sets
+    the flag unconditionally and measures nothing. The real invariant is
+    that the warm job's conform always builds with
+    `build_conform_source_args(segment=None, ...)`, emitting no `-ss`/`-t`,
+    so its output is genuinely the whole file regardless of what
+    `media_duration` measured; `_promote_conform_into_cache`'s unconditional
+    flag write is safe only because of that guarantee, not because it
+    verified anything itself.
+  - **LOW: `docs/ops/channel-egress-runbook.md`'s "for a 120-400 second
+    asset that room may not exist" line now says plainly that below 400s a
+    second sample never fits at all**, plus two new operational notes: a
+    broken ffprobe queues a single-threaded background whole-asset conform
+    for every slot-capped untrimmed airing until it heals (bounded by the
+    warm dedupe; can mean a long first-run queue on a GStreamer station with
+    many assets), and upgrading past this fix invalidates every
+    pre-existing conform-cache entry (flagless reads as a miss), so each
+    asset pays one re-conform after upgrade — synchronous on the start path
+    when `playout_trim_supported=True`.
 - **A seamless plan rollover collided its own concat aggregators, silently
   failed to join the pipeline, and was acked "applied" anyway -- so
   automation kept re-triggering it forever while the channel bounced.**
