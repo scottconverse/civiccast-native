@@ -438,10 +438,12 @@ def test_commit_watchdog_force_exits_when_the_commit_never_returns(
     exit_calls: list[int] = []
     monkeypatch.setattr(engine_module.os, "_exit", exit_calls.append)
 
-    watchdog = engine._arm_commit_watchdog()
-    # A commit that never returns never calls watchdog.cancel() -- exactly the
-    # condition this thread exists to escape. Join (bounded) rather than sleep:
-    # the thread fires as soon as its own timer elapses, not on this test's clock.
+    watchdog, completed = engine._arm_commit_watchdog()
+    # A commit that never returns never sets `completed` and never calls
+    # watchdog.cancel() -- exactly the condition this thread exists to escape.
+    # Join (bounded) rather than sleep: the thread fires as soon as its own
+    # timer elapses, not on this test's clock.
+    assert not completed.is_set()
     watchdog.join(timeout=5.0)
 
     assert not watchdog.is_alive(), "commit watchdog thread never fired"
@@ -489,6 +491,48 @@ def test_commit_watchdog_is_a_no_op_when_the_commit_finishes_in_time(
     assert result is False
     assert exit_calls == [], "a commit that finished in time must never force-exit"
     assert dump_calls == [], "a commit that finished in time must never dump a stack trace"
+
+
+def test_commit_watchdog_completion_flag_wins_a_cancel_race(engine_module, monkeypatch) -> None:
+    """Hostile-review follow-up: ``Timer.cancel()`` alone cannot close the race
+    where the watchdog thread has ALREADY started running
+    ``_on_commit_wedged`` (past ``Timer.cancel()``'s own internal check) at the
+    exact moment the commit finishes -- cancelling at that point is a no-op.
+    Simulates that exact race directly: fire ``_on_commit_wedged`` (obtained
+    via the real ``threading.Timer.function`` the production code built) AFTER
+    ``completed`` is set but BEFORE/without ever calling ``cancel()`` at all --
+    proving the function itself, not the ``Timer`` API, is what refuses to
+    exit once the commit is known to have finished."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.commit_timeout_s = 5.0  # never actually waited for the timer to fire
+    exit_calls: list[int] = []
+    monkeypatch.setattr(engine_module.os, "_exit", exit_calls.append)
+    dump_calls: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        engine_module.faulthandler,
+        "dump_traceback",
+        lambda **kwargs: dump_calls.append(kwargs),
+    )
+
+    watchdog, completed = engine._arm_commit_watchdog()
+    try:
+        # Simulates the commit finishing and _commit_reload's finally block
+        # setting `completed` BEFORE cancel() -- exactly the documented order.
+        completed.set()
+        watchdog.cancel()
+        # Even if the timer thread had ALREADY passed cancel()'s own check
+        # (the race this flag exists for), invoking the underlying function
+        # directly -- exactly what that thread would do next -- must still be
+        # a no-op now that `completed` is set.
+        watchdog.function()
+    finally:
+        watchdog.join(timeout=5.0)  # bounded: never actually fires (5s interval)
+
+    assert exit_calls == [], "a completed commit must never force-exit, even racing cancel()"
+    assert dump_calls == [], (
+        "a completed commit must never dump a stack trace, even racing cancel()"
+    )
 
 
 # --- (4) commit_timeout_s validation/clamping -----------------------------------

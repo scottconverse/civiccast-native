@@ -2248,7 +2248,7 @@ class GstPlayoutEngine:
         self._commit_reload()
         return False  # one-shot
 
-    def _arm_commit_watchdog(self) -> threading.Timer:
+    def _arm_commit_watchdog(self) -> tuple[threading.Timer, threading.Event]:
         """Item 85 (sandbox runs 12/14/15): ``_commit_reload`` must never be able to
         hang the worker forever. Seven soaks recorded the SAME wedge: the last line
         either worker ever printed was "boundary switch rebased...", then nothing --
@@ -2268,6 +2268,17 @@ class GstPlayoutEngine:
         ``_commit_reload`` actually returns; a commit that finishes in time never
         prints anything from this thread and never calls ``os._exit``.
 
+        Returns ``(timer, completed)``: ``completed`` is a ``threading.Event`` the
+        caller sets (in its ``finally``, BEFORE calling ``timer.cancel()``) the
+        moment the commit genuinely finishes. ``Timer.cancel()`` alone cannot
+        close the race where the timer's own thread has ALREADY started running
+        ``_on_commit_wedged`` (past the cancel-event check inside ``Timer.run``)
+        at the exact moment the commit finishes -- cancelling at that point is a
+        no-op, and without this second flag the watchdog would still dump a stack
+        and force-exit a worker that had, in fact, just committed cleanly.
+        ``_on_commit_wedged`` re-checks ``completed`` as its very first action and
+        returns immediately, exiting nothing, if it is set.
+
         Deliberately does NOT attempt ANY pipeline teardown before exiting (no
         ``set_state(Gst.State.NULL)``, unlike a graceful ``stop()``): a downward
         state transition takes GStreamer's internal per-element ``STREAM_LOCK``,
@@ -2275,8 +2286,10 @@ class GstPlayoutEngine:
         holds -- attempting it here would either do nothing (if the lock is free,
         in which case it wasn't a real wedge) or itself block this watchdog
         thread indefinitely, defeating the one guarantee this method exists to
-        provide. ``os._exit`` is called immediately after the diagnostic dump,
-        with no attempt at a clean exit in between.
+        provide. ``os._exit`` is called unconditionally (in a ``finally``)
+        immediately after the diagnostic dump, with no attempt at a clean exit in
+        between -- the exit must fire even if the dump or the print themselves
+        raise (e.g. a closed/unusable stderr).
 
         No ``WORKER_RESULT`` receipt is ever emitted on this path, BY DESIGN: the
         whole reason this watchdog exists is that the main thread that would
@@ -2287,28 +2300,38 @@ class GstPlayoutEngine:
         require_clean_worker_result``) must treat
         ``GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE`` as its own distinct, receipt-less
         signal, not as a missing-receipt failure of some other kind."""
+        completed = threading.Event()
 
         def _on_commit_wedged() -> None:
-            # FIRST: dump every thread's live Python stack to stderr -- this is
-            # the actual deliverable that localizes the wedge on the next soak
-            # that reproduces it (round 1 of this item shipped a hypothesis
-            # about where it was without this proof; review rejected that
-            # hypothesis and asked for the instrument instead of another guess).
-            faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
-            print(
-                "CTRL reload: commit did not finish within "
-                f"{self.commit_timeout_s:.0f}s - quitting for daemon restart",
-                file=sys.stderr,
-                flush=True,
-            )
-            os._exit(int(GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE))
+            if completed.is_set():
+                return  # the commit finished; cancel() lost the race, this didn't
+            try:
+                # FIRST: dump every thread's live Python stack to stderr -- this
+                # is the actual deliverable that localizes the wedge on the next
+                # soak that reproduces it (round 1 of this item shipped a
+                # hypothesis about where it was without this proof; review
+                # rejected that hypothesis and asked for the instrument instead
+                # of another guess).
+                faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
+                print(
+                    "CTRL reload: commit did not finish within "
+                    f"{self.commit_timeout_s:.0f}s - quitting for daemon restart",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            finally:
+                # Unconditional: the exit must happen even if stderr itself is
+                # unusable (a closed fd, a broken pipe) and the dump/print above
+                # raised -- this watchdog's one job is to guarantee the process
+                # goes away, not to guarantee a clean diagnostic first.
+                os._exit(int(GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE))
 
         # self.commit_timeout_s is already validated/clamped by
         # _resolve_commit_timeout_s in __init__ -- no inline floor needed here.
         timer = threading.Timer(self.commit_timeout_s, _on_commit_wedged)
         timer.daemon = True
         timer.start()
-        return timer
+        return timer, completed
 
     def _commit_reload(self) -> bool:
         """Main-loop commit of a reload: switch the selector(s) to the prerolled new
@@ -2340,10 +2363,15 @@ class GstPlayoutEngine:
         pending = self._pending_reload
         if pending is None:
             return False  # aborted or superseded before the first buffer landed
-        watchdog = self._arm_commit_watchdog()
+        watchdog, completed = self._arm_commit_watchdog()
         try:
             return self._commit_reload_body(pending)
         finally:
+            # Set BEFORE cancel(): closes the race where the watchdog thread has
+            # already started running (past Timer.cancel()'s own check) at the
+            # exact moment the commit finishes -- see _arm_commit_watchdog's
+            # docstring for why cancel() alone is not sufficient.
+            completed.set()
             watchdog.cancel()
 
     def _commit_reload_body(self, pending: dict[str, Any]) -> bool:

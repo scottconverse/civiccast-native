@@ -2216,10 +2216,10 @@ def test_deferred_rollover_commits_with_a_multi_segment_concat_playlist_reload(
         _send(control, f"reload {reload_path}")
         _wait_for_log(log, "CTRL reload committed", timeout=program_seconds + 30.0)
         text = log.read_text(encoding="utf-8", errors="replace")
-        # The item 85 staged commit prints, in order -- proves the reordering
-        # actually ran (holds released BEFORE the selector switch is announced
-        # complete, old leg disposed AFTER) rather than just happening to still
-        # reach "committed" some other way.
+        # The item 85 staged commit prints, in order -- proves the commit ran
+        # main's own ordering (switching announced, THEN the active-pad switch
+        # + hold-probe release actually happen, THEN the old leg is disposed)
+        # rather than just happening to still reach "committed" some other way.
         for marker in (
             "CTRL reload: switching selector",
             "CTRL reload: holds released",

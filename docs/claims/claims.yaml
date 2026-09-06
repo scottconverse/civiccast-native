@@ -972,11 +972,30 @@ entries:
       # these same bytes; that item's own current-source proof (its
       # dedicated test files, named earlier in this claim's history) covers
       # its half of what these blobs now bind.
+      #
+      # engine.py drifted a NINTH time (item 85, round-2 review, same PR
+      # #188): ``_on_commit_wedged`` now wraps the stack dump + print in
+      # ``try: ... finally: os._exit(...)`` so the force-exit is unconditional
+      # even if stderr itself is unusable; ``_arm_commit_watchdog`` now
+      # returns ``(timer, completed)`` -- a ``threading.Event`` the caller
+      # sets, in its own ``finally``, BEFORE calling ``timer.cancel()`` --
+      # because ``Timer.cancel()`` alone cannot close the race where the
+      # watchdog thread has already started running past its own cancel
+      # check at the exact moment the commit finishes; ``_on_commit_wedged``
+      # re-checks ``completed`` first and returns without exiting if it is
+      # set. Neither worker.py, decode_policy.py, graph.py, control.py, nor
+      # audio_tap.py changed. Current-source proof: tests/egress/
+      # test_gst_engine_reload_commit_ordering.py gained
+      # ``test_commit_watchdog_completion_flag_wins_a_cancel_race`` (fires
+      # the watchdog's underlying function directly after ``completed`` is
+      # set, proving the function itself -- not just ``Timer.cancel()`` --
+      # refuses to exit once the commit is known to have finished). Blob IDs
+      # re-hashed with `git hash-object --path <file> <file>`.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: 8b4696f803df606acaa4e6754e87a82d19afed44
         - path: civiccast/egress/gst/engine.py
-          blob: 54a5cfb4e2696398108dd05140a49017357f771e
+          blob: 89a3cde87d712d12ffaae5e7e3052753ea555958
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -987,7 +1006,7 @@ entries:
           blob: 338db038b43c0881bf41bee42a6d80b9864c32cc
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: a92344af8bcf9ad83b33ec1d67afa019152edcc7
+        blob: 16e8c5bc5eaaa281d7a97432e14e896a6b5f1fc8
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -1641,11 +1660,30 @@ entries:
       # these same bytes; that item's own current-source proof (its
       # dedicated test files, named earlier in this claim's history) covers
       # its half of what these blobs now bind.
+      #
+      # engine.py drifted a NINTH time (item 85, round-2 review, same PR
+      # #188): ``_on_commit_wedged`` now wraps the stack dump + print in
+      # ``try: ... finally: os._exit(...)`` so the force-exit is unconditional
+      # even if stderr itself is unusable; ``_arm_commit_watchdog`` now
+      # returns ``(timer, completed)`` -- a ``threading.Event`` the caller
+      # sets, in its own ``finally``, BEFORE calling ``timer.cancel()`` --
+      # because ``Timer.cancel()`` alone cannot close the race where the
+      # watchdog thread has already started running past its own cancel
+      # check at the exact moment the commit finishes; ``_on_commit_wedged``
+      # re-checks ``completed`` first and returns without exiting if it is
+      # set. Neither worker.py, decode_policy.py, graph.py, control.py, nor
+      # audio_tap.py changed. Current-source proof: tests/egress/
+      # test_gst_engine_reload_commit_ordering.py gained
+      # ``test_commit_watchdog_completion_flag_wins_a_cancel_race`` (fires
+      # the watchdog's underlying function directly after ``completed`` is
+      # set, proving the function itself -- not just ``Timer.cancel()`` --
+      # refuses to exit once the commit is known to have finished). Blob IDs
+      # re-hashed with `git hash-object --path <file> <file>`.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: 8b4696f803df606acaa4e6754e87a82d19afed44
         - path: civiccast/egress/gst/engine.py
-          blob: 54a5cfb4e2696398108dd05140a49017357f771e
+          blob: 89a3cde87d712d12ffaae5e7e3052753ea555958
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -1656,7 +1694,7 @@ entries:
           blob: 338db038b43c0881bf41bee42a6d80b9864c32cc
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: a92344af8bcf9ad83b33ec1d67afa019152edcc7
+        blob: 16e8c5bc5eaaa281d7a97432e14e896a6b5f1fc8
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
