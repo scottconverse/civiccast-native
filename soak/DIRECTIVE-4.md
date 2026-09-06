@@ -249,3 +249,8 @@ After the 9za..9zd chain, `AUTORUN-9ze.ps1` proves the installed code is kit 609
 ## Addendum -- soak #5 chain corrected (AUTORUN-9zg..9zk)
 
 `AUTORUN-9za` stalled with 'kit installer not found' because it was cloned from AUTORUN-9r, which assumed the kit was already fetched; kit 609273d never was. 9zb/9zc/9zd then ran against the old 91caebc station (their outputs are void; 9zj archives them). Corrected chain: `AUTORUN-9zg` fetches + verifies kit 609273d from the LAN server (same code as 9j), then quiet-uninstalls, removes ProgramData\CivicCast, installs fresh (/S) and waits for /health, clearing token + soak-started; `9zh` marker reset; `9zi` first-admin; `9zj` clips + 30-s schedule + config + start -> archive previous probes to `soak/archive-609273d-prev-soak/`, reset counters, `state\soak-started` (soak #5); `9zk` installed-code proof (#172 + #174 markers). Results: INSTALL-RESULT-9zg.md / REINSTALL-RESULT-9zg.md, STATE-RESET-RESULT-9zh.md, AUTORUN-9zi-RESULT-*.md, AUTORUN-9zj-RESULT-*.md, DIAG-9zk-*.md.
+
+
+## Addendum -- AUTORUN-9zl (soak #5 clock)
+
+9zk proved the installed code is kit 609273d (#172 + #174 markers, hashes equal to the pack). 9zj uploaded the 4 clips, scheduled 272 x 30-s items per channel, applied config and sent start, but no channel reported ON_AIR within its 3-minute window (same as on the previous fresh install). `AUTORUN-9zl.ps1` (runs once) records each channel's raw `/state`, sends `start` again (a no-op on a running channel), polls up to 6 minutes, and when all three are ON_AIR archives previous probes to `soak/archive-609273d-prev-soak/`, resets the counters and writes `state\soak-started` (soak #5). Result `soak/RESTART-RESULT-9zl.md`; exit 5 = still <3 ON_AIR.
