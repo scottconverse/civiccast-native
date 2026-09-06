@@ -23,17 +23,32 @@ from __future__ import annotations
 #     non-None `result["error"]`, e.g. the S9-5 stall watchdog).
 # 2 = worker.py usage error (missing argv[1]) — predates this change.
 GST_PREROLL_TIMEOUT_EXIT_CODE = 3
+# 4 = first-output watchdog timeout (item 84, PR #187) -- a slow start whose
+#     encoder reached PLAYING but produced no first output within its own
+#     budget. Reserved by that PR; not defined in this module.
 
-# Item 85 (sandbox runs 12/14/15): a reload commit (``GstPlayoutEngine.
-# _commit_reload``) that never finishes -- the measured wedge was the GLib
-# main-loop thread parked forever inside a synchronous ``set_state(NULL)`` on
-# an old source leg whose streaming thread was itself parked in input-selector's
-# sync-streams wait. Because the SAME thread runs the GLib loop, no ordinary
-# GLib timeout source can ever fire to notice -- only a real OS thread
-# (``engine._arm_commit_watchdog``'s ``threading.Timer``) escapes it, via
-# ``os._exit`` with this distinct code. Distinct from the generic crash code
-# (1) so the daemon's stderr-tail ``last_error`` and any future relaunch-path
-# branching (mirroring ``GST_PREROLL_TIMEOUT_EXIT_CODE`` above) can tell "the
-# worker force-exited itself out of a detected reload-commit wedge" apart from
-# an ordinary crash.
-GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE = 4
+# Item 85 (sandbox runs 12/14/15): ``GstPlayoutEngine._commit_reload`` did not
+# finish within its own watchdog bound (``_arm_commit_watchdog``,
+# ``commit_timeout_s``). The wedge this item was opened against is NOT yet
+# localized to a specific line inside ``_commit_reload``/``_dispose_source_
+# leg`` -- see those methods' own docstrings for round 1's reordering
+# hypothesis and why hostile review reverted it. What IS proven: a
+# ``GLib.timeout_add`` source could never fire if the wedge is the SAME
+# GLib main-loop thread that would run it, so only a real OS thread
+# (``threading.Timer``) can escape it; that thread dumps every live Python
+# stack (``faulthandler.dump_traceback``) before force-exiting via
+# ``os._exit`` with this distinct code -- the localization tool for whichever
+# future soak reproduces the wedge. UNLIKE ``GST_PREROLL_TIMEOUT_EXIT_CODE``
+# and code 4 above (both genuine "slow start, not a crash" cases), this exit
+# is deliberately treated as an ORDINARY CRASH by the daemon's relaunch path
+# (counts toward the crash-loop streak on every occurrence, no rate-limited
+# exemption) -- a reload-commit wedge is a real failure of an already-running
+# channel, not a slow-but-progressing start. Also unlike every other exit
+# path in this worker: this one emits NO ``WORKER_RESULT`` receipt, by
+# design -- ``os._exit`` bypasses every remaining line of Python on this
+# process, including whatever would have built and printed that receipt, so
+# a caller reading this exit (e.g.
+# ``civiccast.native.installed_gstreamer_smoke.require_clean_worker_result``)
+# must treat this code as its own distinct, receipt-less signal rather than a
+# missing-receipt failure of some other kind.
+GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE = 5

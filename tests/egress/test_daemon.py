@@ -65,6 +65,32 @@ class _FakeProcess:
         self.returncode = 0
 
 
+class _StubbornFakeProcess:
+    """Item 85 hostile-review follow-up: a worker so wedged that even
+    ``terminate()`` (SIGTERM / a Windows console-control-style request) is
+    never observed -- ``poll()`` keeps reporting "still alive" no matter how
+    many times ``terminate()`` is called. Only ``kill()`` (SIGKILL / a forced
+    Windows ``TerminateProcess``) actually ends it, with a distinct non-zero
+    returncode so a test can tell which call path actually worked."""
+
+    def __init__(self, *, pid: int = 4242) -> None:
+        self.pid = pid
+        self.returncode: int | None = None
+        self.terminate_calls = 0
+        self.killed = False
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+        # Deliberately does NOT set returncode -- terminate() is ignored.
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = 137  # conventional "killed" exit code (128 + SIGKILL)
+
+
 def _start_fake_process(
     pending: list[_FakeProcess],
     started: list[_FakeProcess],
@@ -2371,6 +2397,63 @@ def test_content_reload_ack_timeout_on_a_live_pid_terminates_the_wedged_worker(
     # called, so the NEXT poll tick's ordinary worker-exit handling restarts the
     # channel -- proving the pending-reload entry does not pin TRANSITIONING
     # against a pid that (in this fixed behavior) is no longer running.
+    daemon.process_once("gov")
+    assert started == [wedged_process, fresh_process]
+    state = store.read_state("gov")
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Mayor interview"
+
+
+def test_content_reload_ack_timeout_escalates_to_kill_when_terminate_is_ignored(
+    tmp_path: Path,
+) -> None:
+    """Hostile-review follow-up: the previous test's fake process reports
+    exited the INSTANT ``terminate()`` is called, which never exercises the
+    ``kill()`` escalation ``_process_terminate_bounded`` provides for exactly
+    this reason -- a worker wedged inside a synchronous GStreamer call may not
+    even observe (let alone act on) a graceful terminate request.
+    ``_StubbornFakeProcess`` ignores ``terminate()`` entirely (``poll()`` keeps
+    reporting "still alive" no matter how many times it's called) and only
+    ends on ``kill()``, with a distinct returncode (137) proving THAT call
+    path is what actually ended it."""
+
+    class _AckTimeoutStrategy(_FakeContentReloadStrategy):
+        def last_send_command_failure_reason(self, channel_id: str) -> str | None:
+            return "ack timeout after 5.0s (reissue_desired_state)"
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    wedged_process = _StubbornFakeProcess(pid=111)
+    fresh_process = _FakeProcess(pid=222)
+    processes = [wedged_process, fresh_process]
+    started: list[object] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _AckTimeoutStrategy(processes, started, reload_ok=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")  # starts wedged_process, writes ON_AIR
+    assert wedged_process.terminate_calls == 0
+    assert not wedged_process.killed
+
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # the declined reload -- must escalate to kill()
+
+    assert wedged_process.terminate_calls >= 1, "terminate() must still be tried first"
+    assert wedged_process.killed, "a terminate()-ignoring process must be escalated to kill()"
+    assert wedged_process.returncode == 137
+
+    # kill() actually ended the process (unlike the ignored terminate()), so the
+    # next poll tick's ordinary worker-exit handling restarts the channel.
     daemon.process_once("gov")
     assert started == [wedged_process, fresh_process]
     state = store.read_state("gov")

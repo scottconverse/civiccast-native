@@ -42,7 +42,10 @@ from civiccast.egress.errors import (
     SecretUnresolvedError,
     SourcePrepareError,
 )
-from civiccast.egress.gst.exit_codes import GST_PREROLL_TIMEOUT_EXIT_CODE
+from civiccast.egress.gst.exit_codes import (
+    GST_PREROLL_TIMEOUT_EXIT_CODE,
+    GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE,
+)
 from civiccast.egress.gst.reload_policy import should_defer_switch
 from civiccast.egress.health import (
     EgressEncoderMetrics,
@@ -1884,7 +1887,11 @@ class EgressDaemon:
             proof_event_id = escalation.event_id
         if self._restart_latch.should_run_now(channel_id):
             self._begin_relaunch(
-                channel_id, state.state, state.current_source_label, proof_event_id
+                channel_id,
+                state.state,
+                state.current_source_label,
+                proof_event_id,
+                returncode=returncode,
             )
         else:
             # Within the cooldown after a recent relaunch — defer instead of hot-looping.
@@ -1937,6 +1944,8 @@ class EgressDaemon:
         previous_state: str,
         previous_source_label: str | None,
         proof_event_id: str | None,
+        *,
+        returncode: int | None = None,
     ) -> None:
         # BLOCKER B1: a crash-relaunch streak that has never once reached a
         # healthy uptime is the "unreachable/dropping live source" signature —
@@ -1970,6 +1979,22 @@ class EgressDaemon:
             if force_fallback_slate
             else None
         )
+        # Item 85: a reload-commit-timeout exit (the worker's own commit
+        # watchdog force-exiting out of a detected wedge -- see engine.py's
+        # _arm_commit_watchdog) is a genuine failure of an already-running
+        # channel, not a slow-but-progressing start -- classify it distinctly
+        # in the relaunch log line so an operator/on-call reading last_error
+        # sees "reload commit wedged" rather than a generic non-zero exit.
+        # Deliberately NOT exempted from the crash-loop streak anywhere in
+        # this method or _relaunch_after_crash above (unlike
+        # GST_PREROLL_TIMEOUT_EXIT_CODE): every occurrence counts as an
+        # ordinary crash toward escalation to fallback slate.
+        relaunch_suffix = (
+            "the reload commit itself did not finish in time "
+            "(reload-commit-timeout); relaunching encoder."
+            if returncode == GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE
+            else "relaunching encoder."
+        )
         self._write_state(
             channel_id,
             "STARTING",
@@ -1977,7 +2002,7 @@ class EgressDaemon:
             current_proof_event_id=proof_event_id,
             last_error=(
                 force_fallback_reason
-                or self._child_exit_error(channel_id, suffix="relaunching encoder.")
+                or self._child_exit_error(channel_id, suffix=relaunch_suffix)
             ),
         )
         self._append_health(channel_id, "STARTING", sink_connected={}, dropped_frames=0)
@@ -2490,6 +2515,18 @@ class EgressDaemon:
                     channel_id,
                     reason,
                 )
+                # Hostile-review follow-up: set the ``_pending_reloads`` fallback
+                # entry BEFORE terminating, not after. ``_process_terminate_
+                # bounded`` blocks (bounded) waiting for the process to actually
+                # exit; if something else observed that exit (``_poll_process``)
+                # before this entry existed, the exit would be misread as an
+                # ordinary crash (no pending-reload entry to restore FROM) rather
+                # than the pending-reload restart it actually is. Mirrors exactly
+                # what ``_fall_back_to_restart_reload`` (called next, by
+                # ``_request_reload``, once this method returns False) sets --
+                # setting it here first closes the window; that later call
+                # harmlessly re-sets the same value.
+                self._pending_reloads[channel_id] = (state.state, state.current_source_label)
                 self._reload_kills.add(channel_id)
                 _process_terminate_bounded(process)
             return False

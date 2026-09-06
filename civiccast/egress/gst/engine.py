@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import faulthandler
 import json
 import math
 import os
@@ -283,6 +284,48 @@ def _resolve_preroll_timeout_s(explicit: float | None) -> float:
     return _DEFAULT_PREROLL_TIMEOUT_S
 
 
+# Item 85: bounds for the reload-commit watchdog (_arm_commit_watchdog). 3s
+# floor -- below that the watchdog would fire on ordinary GStreamer scheduling
+# jitter, not a real wedge; 120s ceiling -- an operator-configured value this
+# item's own worker.py env override (CIVICCAST_RELOAD_COMMIT_TIMEOUT_S) could
+# otherwise set arbitrarily high must still bound how long a genuinely wedged
+# worker can sit unresponsive before the daemon ever finds out.
+_DEFAULT_COMMIT_TIMEOUT_S = 15.0
+_MIN_COMMIT_TIMEOUT_S = 3.0
+_MAX_COMMIT_TIMEOUT_S = 120.0
+
+
+def _resolve_commit_timeout_s(explicit: float) -> float:
+    """Validate/clamp the reload-commit watchdog bound to
+    ``[_MIN_COMMIT_TIMEOUT_S, _MAX_COMMIT_TIMEOUT_S]``, WARNING on stderr
+    whenever the clamp actually changes the configured value -- unlike an
+    earlier draft's ``max(1.0, self.commit_timeout_s)`` inline in
+    ``_arm_commit_watchdog``, which silently floored an unreasonably low value
+    with no operator-visible signal at all. Mirrors
+    ``_resolve_preroll_timeout_s``'s non-finite guard (``math.isfinite``):
+    Python's ``min``/``max`` do not clamp NaN (every comparison against NaN is
+    False, so both keep their first argument), so a NaN here would otherwise
+    reach ``threading.Timer`` as its ``interval`` and either raise or silently
+    never fire, defeating the watchdog entirely."""
+    if not math.isfinite(explicit):
+        print(
+            f"CTRL reload: ignoring non-finite commit_timeout_s={explicit!r}; "
+            f"using default {_DEFAULT_COMMIT_TIMEOUT_S}s",
+            file=sys.stderr,
+            flush=True,
+        )
+        return _DEFAULT_COMMIT_TIMEOUT_S
+    clamped = min(max(explicit, _MIN_COMMIT_TIMEOUT_S), _MAX_COMMIT_TIMEOUT_S)
+    if clamped != explicit:
+        print(
+            f"CTRL reload: commit_timeout_s={explicit!r} out of bounds "
+            f"[{_MIN_COMMIT_TIMEOUT_S}, {_MAX_COMMIT_TIMEOUT_S}]; clamped to {clamped}s",
+            file=sys.stderr,
+            flush=True,
+        )
+    return clamped
+
+
 class SwapController:
     """Pluggable hot-swap mechanism. Lets GstInterpipe drop in later (S15 §9)."""
 
@@ -370,8 +413,10 @@ class GstPlayoutEngine:
         self.stall_timeout_s = stall_timeout_s
         # Item 85: bounds ``_commit_reload`` itself -- see ``_arm_commit_watchdog``
         # for why a plain ``GLib.timeout_add`` cannot do this job alone (the
-        # measured wedge blocks the very thread that would run it).
-        self.commit_timeout_s = commit_timeout_s
+        # measured wedge blocks the very thread that would run it). Validated/
+        # clamped (with a stderr warning on an out-of-bounds or non-finite
+        # value) by ``_resolve_commit_timeout_s`` -- never silently floored.
+        self.commit_timeout_s = _resolve_commit_timeout_s(commit_timeout_s)
         # Item 82: bounded PLAYING-preroll wait (see ``_await_playing`` / the
         # module-level ``_resolve_preroll_timeout_s`` for the constructor-arg /
         # env-var / default resolution and clamp).
@@ -2002,39 +2047,60 @@ class GstPlayoutEngine:
         """Item 85 (sandbox runs 12/14/15): ``_commit_reload`` must never be able to
         hang the worker forever. Seven soaks recorded the SAME wedge: the last line
         either worker ever printed was "boundary switch rebased...", then nothing --
-        the process stayed alive but the pipe control reader stopped answering
-        (the ordering bug this item fixes; see ``_commit_reload``'s reordering and
-        ``_dispose_source_leg``'s unlink-before-NULL change).
+        the process stayed alive but the pipe control reader stopped answering. The
+        wedge is NOT yet localized to a specific GStreamer call (see
+        ``_commit_reload``'s own docstring for round 1's reordering hypothesis and
+        why it was reverted); THIS watchdog is the localization tool for whichever
+        future soak reproduces it -- see the ``faulthandler.dump_traceback`` call
+        below.
 
         A ``GLib.timeout_add_seconds`` source is USELESS as the sole guard here: if
         the wedge is (as measured) the GLib main-loop thread itself blocked inside a
-        synchronous GStreamer call (``Gst.Element.set_state``/``get_state`` in
-        ``_dispose_source_leg``), the main loop never gets a turn to run ANY of its
-        own timeout sources -- the same thread is stuck. Only a real OS-level
+        synchronous GStreamer call, the main loop never gets a turn to run ANY of
+        its own timeout sources -- the same thread is stuck. Only a real OS-level
         thread, independent of the GLib loop, is guaranteed to fire regardless of
         what the main-loop thread is doing. Cancelled by the caller once
         ``_commit_reload`` actually returns; a commit that finishes in time never
-        prints anything from this thread and never calls ``os._exit``."""
+        prints anything from this thread and never calls ``os._exit``.
+
+        Deliberately does NOT attempt ANY pipeline teardown before exiting (no
+        ``set_state(Gst.State.NULL)``, unlike a graceful ``stop()``): a downward
+        state transition takes GStreamer's internal per-element ``STREAM_LOCK``,
+        which is exactly the lock a genuinely wedged streaming thread already
+        holds -- attempting it here would either do nothing (if the lock is free,
+        in which case it wasn't a real wedge) or itself block this watchdog
+        thread indefinitely, defeating the one guarantee this method exists to
+        provide. ``os._exit`` is called immediately after the diagnostic dump,
+        with no attempt at a clean exit in between.
+
+        No ``WORKER_RESULT`` receipt is ever emitted on this path, BY DESIGN: the
+        whole reason this watchdog exists is that the main thread that would
+        normally build and print that receipt is presumed stuck forever, and
+        ``os._exit`` bypasses every remaining line of Python on this process,
+        including the one that would print it. A caller reading this worker's
+        exit (e.g. ``civiccast.native.installed_gstreamer_smoke.
+        require_clean_worker_result``) must treat
+        ``GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE`` as its own distinct, receipt-less
+        signal, not as a missing-receipt failure of some other kind."""
 
         def _on_commit_wedged() -> None:
+            # FIRST: dump every thread's live Python stack to stderr -- this is
+            # the actual deliverable that localizes the wedge on the next soak
+            # that reproduces it (round 1 of this item shipped a hypothesis
+            # about where it was without this proof; review rejected that
+            # hypothesis and asked for the instrument instead of another guess).
+            faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
             print(
                 "CTRL reload: commit did not finish within "
                 f"{self.commit_timeout_s:.0f}s - quitting for daemon restart",
                 file=sys.stderr,
                 flush=True,
             )
-            self._error = ("reload-commit-timeout", "commit did not complete in time")
-            # Best-effort, bounded attempt at a graceful pipeline teardown -- never
-            # awaited: ``set_state`` itself does not block (only ``get_state``
-            # does), so this cannot turn into a second wedge on this watchdog
-            # thread. If the main thread is genuinely stuck inside GStreamer, this
-            # request may never be serviced either; the os._exit below is what
-            # actually guarantees the process goes away.
-            with contextlib.suppress(Exception):
-                self.pipeline.set_state(Gst.State.NULL)
             os._exit(int(GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE))
 
-        timer = threading.Timer(max(1.0, self.commit_timeout_s), _on_commit_wedged)
+        # self.commit_timeout_s is already validated/clamped by
+        # _resolve_commit_timeout_s in __init__ -- no inline floor needed here.
+        timer = threading.Timer(self.commit_timeout_s, _on_commit_wedged)
         timer.daemon = True
         timer.start()
         return timer
@@ -2045,20 +2111,27 @@ class GstPlayoutEngine:
         reload was aborted/superseded before this fired. ``return False`` so a GLib
         timeout/idle source that calls this directly runs once.
 
-        Item 85 root-cause fix: the hold probes on the new leg's tail pad(s) are
-        released BEFORE the selector's ``active-pad`` is ever touched -- the exact
-        invariant ``_abort_pending_reload`` already documents ("a held pad has a
-        GStreamer streaming thread parked inside the blocking probe... releasing
-        first lets those threads unwind normally") but this method used to violate:
-        it switched ``active-pad`` onto the new leg, THEN released its holds, THEN
-        disposed the old leg -- so the old leg's streaming thread could end up
-        parked inside input-selector's ``sync-streams`` pacing wait (paced against
-        the now-active new pad, which had not yet been allowed to produce anything)
-        at the exact moment ``_dispose_source_leg`` called the old leg's elements'
-        synchronous ``set_state(NULL)``, wedging the GLib main-loop thread inside
-        that call forever -- the seven-soak failure this whole item exists to fix.
-        Wrapped in a real-OS-thread watchdog (``_arm_commit_watchdog``) as the
-        backstop for a wedge this reordering does not anticipate."""
+        Item 85 status (sandbox runs 12/14/15, hostile review round 1): the wedge
+        this item was opened against is NOT yet localized to a specific line in
+        this method. Round 1 hypothesized the ordering below (switch active-pad,
+        THEN release the new leg's hold probes, THEN dispose the old leg) as the
+        root cause and reordered it (release before switch); that reorder was
+        REVERTED after review found it would introduce a NEW, deterministic
+        defect of its own -- input-selector's default (``cache-buffers=False``)
+        sink pad silently drops a buffer that arrives on a still-inactive pad, so
+        releasing the hold before the switch drops the new leg's first buffer(s)
+        (and, with them, the re-sent SEGMENT carrying the running-time-rebase
+        offset) on every single reload, not just the wedged ones. The ordering
+        below is therefore UNCHANGED from main. What this method now carries
+        instead: four staged stderr prints ("switching selector" / "holds
+        released" / "old leg disposed" / "committed (elements=N)") so the NEXT
+        soak that reproduces the wedge shows exactly which of these four steps
+        it stalled inside, plus a real-OS-thread commit watchdog
+        (``_arm_commit_watchdog``) that dumps every thread's live Python stack
+        (``faulthandler.dump_traceback``) the moment a commit exceeds
+        ``commit_timeout_s`` and then force-exits -- the actual localization
+        tool for whichever GStreamer call is holding the GIL/thread when a
+        future soak reproduces this."""
         pending = self._pending_reload
         if pending is None:
             return False  # aborted or superseded before the first buffer landed
@@ -2114,22 +2187,18 @@ class GstPlayoutEngine:
                 flush=True,
             )
         print("CTRL reload: switching selector", flush=True)
-        # Item 85 root-cause fix: release the new leg's hold probes BEFORE the
-        # selector's active-pad is touched at all -- NOT last, as this method used
-        # to. A held pad has a GStreamer streaming thread parked inside the
-        # blocking probe (mirrors ``_abort_pending_reload``'s identical invariant);
-        # releasing it first lets that thread unwind and start delivering buffers
-        # normally (input-selector silently drops what arrives on a non-active
-        # pad -- releasing before the switch is NOT a functional no-op, it is what
-        # keeps the leg's own streaming thread from ever blocking on
-        # ``sync-streams`` pacing against a switch that has not happened yet). Only
-        # once that thread is free do we actually flip ``active-pad``.
-        self._release_hold_probes(pending)
-        print("CTRL reload: holds released", flush=True)
         selector.set_property("active-pad", new_video_pad)
         audio_selector = self.audio_selector
         if new_audio_pad is not None and audio_selector is not None:
             audio_selector.set_property("active-pad", new_audio_pad)
+        # Release the hold LAST (unchanged from main -- item 85 review round 1's
+        # reorder here was REVERTED, see this method's docstring): the new leg's
+        # first buffer (and, with it, the re-sent SEGMENT carrying the offset
+        # above) may only flow once the selector is already pointing at it.
+        # Releasing before the switch deterministically drops the new leg's
+        # first buffer(s) at the (default) non-caching input-selector sink pad.
+        self._release_hold_probes(pending)
+        print("CTRL reload: holds released", flush=True)
         # Role index 0 (program) now points at the new leg. The swap controller shares
         # these list objects by reference, so an operator role-swap stays correct.
         self.selector_sink_pads[0] = new_video_pad
@@ -2255,46 +2324,40 @@ class GstPlayoutEngine:
         audio_pad: Gst.Pad | None,
         elements: list[Gst.Element],
     ) -> None:
-        """Tear down a now-inactive source leg: FLUSH + unlink from the selector(s)
-        and release the request pad(s) BEFORE NULLing its elements, then remove
-        them. Best-effort — a disposal hiccup is logged, never raised, so it can't
-        kill a live channel. (Without this a 24/7 channel would leak a leg's
-        elements on every program change.)
+        """Tear down a now-inactive source leg: unlink from the selector(s), release
+        the request pad(s), then NULL + remove its elements. Best-effort — a disposal
+        hiccup is logged, never raised, so it can't kill a live channel. (Without this
+        a 24/7 channel would leak a leg's elements on every program change.)
 
-        Item 85 root-cause fix: unlink + release_request_pad now run BEFORE
-        ``set_state(Gst.State.NULL)``, not after. The old ordering called
-        ``set_state(NULL)`` on a leg's elements while that leg's streaming thread
-        could still be parked inside input-selector's own sink-pad wait (paced
-        against the sibling stream by ``sync-streams``, or simply still delivering
-        its last few buffers to a pad the selector no longer forwards) --
-        ``set_state(NULL)`` blocks the calling thread until every streaming thread
-        touching that element has actually returned from its current callback, so
-        a thread parked inside the SELECTOR's own wait (not this leg's element at
-        all) could never be woken by NULLing the leg's own elements, and the GLib
-        main-loop thread calling this hung forever (the exact seven-soak wedge).
-        Sending FLUSH_START on the sink pad BEFORE unlinking wakes any streaming
-        thread blocked in that pad's wait (GstInputSelector's sync-streams
-        condvar checks the pad's flushing flag and is broadcast on FLUSH_START);
-        unlinking and releasing the request pad immediately after, still before
-        the leg's own elements are ever told to NULL, means that thread has
-        nothing left to block on by the time ``set_state(NULL)`` runs."""
+        Item 85 status (hostile review round 1): a round-1 hypothesis reordered this
+        to unlink/release BEFORE ``set_state(Gst.State.NULL)``, with FLUSH_START/
+        FLUSH_STOP bracketing the unlink, on the theory that a streaming thread
+        parked inside input-selector's own wait needed waking before its element
+        could be safely NULLed. REVERTED after review: releasing/unlinking the
+        selector's request pad before the retiring leg's OWN elements reach NULL
+        races that leg's still-live streaming thread into pushing into a pad that
+        no longer has a peer -- ``GST_FLOW_NOT_LINKED``, a FATAL flow error on this
+        leg's own source pad, not a benign no-op. And ``FLUSH_START`` sent directly
+        to the selector's sink pad does not reach (and cannot unblock) a thread
+        blocked further upstream in this leg's OWN elements; ``flush_stop(True)``
+        immediately after re-opens the exact race window it was meant to close.
+        The ordering below is therefore UNCHANGED from main -- this item has not
+        yet localized the wedge to this method; see ``_commit_reload``'s and
+        ``_arm_commit_watchdog``'s docstrings for what this item ships instead
+        (staged log lines + a stack-dumping commit watchdog)."""
         try:
+            for element in elements:
+                element.set_state(Gst.State.NULL)
             for selector, pad in (
                 (self.selector, video_pad),
                 (self.audio_selector, audio_pad),
             ):
                 if selector is None or pad is None:
                     continue
-                with contextlib.suppress(Exception):
-                    pad.send_event(Gst.Event.new_flush_start())
                 peer = pad.get_peer()
                 if peer is not None:
                     peer.unlink(pad)
-                with contextlib.suppress(Exception):
-                    pad.send_event(Gst.Event.new_flush_stop(True))
                 selector.release_request_pad(pad)
-            for element in elements:
-                element.set_state(Gst.State.NULL)
             for element in elements:
                 self.pipeline.remove(element)
         except Exception as exc:

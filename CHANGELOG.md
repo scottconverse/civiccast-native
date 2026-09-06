@@ -37,55 +37,91 @@ below.
 
 ### Fixed
 
-- **Seamless reload commit ordering + a commit watchdog + wedged-worker
-  termination (item 85).** MEASURED in sandbox runs 12/14/15: `CTRL reload
-  committed` never appeared in seven soaked workers' logs; the last line
-  either ever printed was `CTRL reload: boundary switch rebased to running
-  time Ns`, then the process sat alive but permanently unresponsive -- the
-  pipe control reader stopped answering, and the daemon logged `Seamless
-  content-reload declined... ack timeout after 5.0s (reissue_desired_state);
-  falling back to restart` every retry while rewriting `TRANSITIONING` every
-  ~2s for minutes, because the wedged pid never actually exited. Root cause,
-  `civiccast/egress/gst/engine.py`'s `_commit_reload`: it switched the
-  input-selector's `active-pad` onto the new leg, THEN released that leg's
-  hold probes, THEN disposed the old leg -- the opposite of the invariant
-  `_abort_pending_reload` already documented (a held pad's streaming thread
-  must be released BEFORE the leg around it is torn down), so the old leg's
-  streaming thread could end up parked inside input-selector's own
-  `sync-streams` wait at the exact moment `_dispose_source_leg` called that
-  leg's elements' synchronous `set_state(NULL)` -- blocking the GLib
-  main-loop thread forever. Two fixes, plus a watchdog belt-and-suspenders:
-  (1) `_commit_reload` now releases the new leg's hold probes BEFORE the
-  selector switch, staged with four ordered stderr lines (`CTRL reload:
-  switching selector` / `holds released` / `old leg disposed` / `committed
-  (elements=N)`) so a future wedge is diagnosable from the log alone; (2)
-  `_dispose_source_leg` now sends `FLUSH_START`/`FLUSH_STOP` and
-  unlinks/releases the retiring leg's selector request pad BEFORE `NULL`ing
-  its elements, not after; (3) `_commit_reload` is now wrapped by
-  `_arm_commit_watchdog`, a real OS `threading.Timer` -- not a `GLib` timeout
-  source, which could never fire if the wedge is the SAME thread that would
-  run it -- that force-exits the worker with a new, distinct
-  `civiccast.egress.gst.exit_codes.GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE` (4)
-  if the commit does not finish within `commit_timeout_s` (worker.py: new
-  `CIVICCAST_RELOAD_COMMIT_TIMEOUT_S` env override, default 15s). Daemon
-  side (`civiccast/egress/daemon.py`): a reload ack timeout while the
-  worker's own pid is confirmed still alive now terminates that worker
-  (bounded terminate -> wait -> kill) instead of leaving it running while
-  `_fall_back_to_restart_reload` pins `TRANSITIONING` forever -- the next
-  poll tick observes the real exit and restarts the channel cleanly. New
-  gi-free ordering coverage in
-  `tests/egress/test_gst_engine_reload_commit_ordering.py` (every hold pad's
-  `remove_probe` before `active-pad`, unlink/`release_request_pad` before
-  `set_state(NULL)`, and the commit-watchdog thread firing/no-op cases); an
-  extended real-GStreamer test in `tests/egress/test_gst_engine_wsl.py`
-  (a deferred rollover whose payload is a real multi-segment concat
+- **Reload-commit wedge: diagnostic instrumentation, a commit watchdog with a
+  stack-dump, and wedged-worker termination (item 85). The wedge itself is
+  NOT YET LOCALIZED** -- this is not the fix, it is the tooling that finds
+  it. MEASURED in sandbox runs 12/14/15: `CTRL reload committed` never
+  appeared in seven soaked workers' logs; the last line either ever printed
+  was `CTRL reload: boundary switch rebased to running time Ns`, then the
+  process sat alive but permanently unresponsive -- the pipe control reader
+  stopped answering, and the daemon logged `Seamless content-reload
+  declined... ack timeout after 5.0s (reissue_desired_state); falling back
+  to restart` every retry while rewriting `TRANSITIONING` every ~2s for
+  minutes, because the wedged pid never actually exited.
+
+  Round 1 of this item hypothesized a root cause in
+  `civiccast/egress/gst/engine.py`'s `_commit_reload`/`_dispose_source_leg`
+  (switching the selector's `active-pad` before releasing the new leg's hold
+  probes; NULLing a retiring leg's elements before unlinking its selector
+  pad) and shipped a REORDERING as the fix. Hostile review (10 real-GStreamer
+  runs of the extended test against that reordering: 4 failures, 0 on main,
+  every one `gst_base_src_loop ... streaming stopped, reason not-linked`
+  right after `CTRL reload committed`) found that reorder introduced a NEW,
+  deterministic defect: unlinking/releasing a retiring leg's selector
+  request pad BEFORE that leg's own elements reach `NULL` races its
+  still-live streaming thread into pushing a buffer through a pad with no
+  peer -- `GST_FLOW_NOT_LINKED`, a fatal flow error, not a benign no-op --
+  and releasing a new leg's hold probes before the selector switch
+  deterministically drops that leg's first buffer at the default
+  (`cache-buffers=False`) input-selector sink pad. **The reorder is
+  REVERTED**; `_commit_reload`/`_dispose_source_leg` keep main's original
+  ordering unchanged. What ships instead:
+
+  1. Four staged stdout lines in `_commit_reload` (`CTRL reload: switching
+     selector` / `holds released` / `old leg disposed` / `committed
+     (elements=N)`) so the next soak that reproduces the wedge shows exactly
+     which of these four steps it stalled inside.
+  2. `_commit_reload` is wrapped by `_arm_commit_watchdog`, a real OS
+     `threading.Timer` -- not a `GLib` timeout source, which could never fire
+     if the wedge is the SAME thread that would run it -- that, on
+     expiry, dumps every live thread's Python stack
+     (`faulthandler.dump_traceback(all_threads=True)`) to stderr FIRST (the
+     actual localization tool for whichever future soak reproduces the
+     wedge), then force-exits IMMEDIATELY with a new, distinct
+     `civiccast.egress.gst.exit_codes.GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE`
+     (`5` -- `4` is reserved by item 84's first-output watchdog). Deliberately
+     attempts NO pipeline teardown first: a downward `set_state` transition
+     takes the same `STREAM_LOCK` a genuinely wedged thread already holds, so
+     attempting one here would either do nothing or wedge this watchdog
+     thread too. This path emits no `WORKER_RESULT` receipt, by design --
+     `os._exit` bypasses the remaining Python that would print one.
+     `commit_timeout_s` (worker.py: `CIVICCAST_RELOAD_COMMIT_TIMEOUT_S` env
+     override, default 15s) is validated/clamped to `[3, 120]`s with a
+     stderr warning on an out-of-range or non-finite value -- never silently
+     floored.
+  3. Daemon side (`civiccast/egress/daemon.py`): a reload ack timeout while
+     the worker's own pid is confirmed still alive now terminates that
+     worker (bounded terminate -> wait -> kill, escalating to `kill()` if
+     `terminate()` is never observed) instead of leaving it running while
+     `_fall_back_to_restart_reload` pins `TRANSITIONING` forever -- the
+     `_pending_reloads` fallback entry is set BEFORE terminating (not after)
+     so a concurrent exit observation can never miss it. The next poll tick
+     restarts the channel cleanly. A `GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE`
+     exit is classified as `reload-commit-timeout` in the relaunch log line
+     and, unlike a genuine slow-start exit code, is deliberately NOT
+     exempted from the crash-loop streak -- every occurrence counts as an
+     ordinary crash toward fallback-slate escalation.
+
+  New gi-free coverage in `tests/egress/test_gst_engine_reload_commit_ordering.py`
+  (main's ordering is unchanged: `active-pad` switch before hold-probe
+  release, `NULL` before unlink/`release_request_pad`, no `FLUSH_START`/
+  `FLUSH_STOP` events sent at all; the four staged log lines print in order;
+  the commit-watchdog thread dumps all-threads then force-exits with no
+  pipeline teardown when a commit never returns, and is a no-op when it
+  finishes in time; `commit_timeout_s` clamps with a warning). Extended
+  real-GStreamer coverage in `tests/egress/test_gst_engine_wsl.py` (a
+  deferred rollover whose payload is a real multi-segment concat
   `PlaylistLeg` of 4 short real A/V clips, each decoded via
   `filesrc ! decodebin` -- the production shape a real schedule-derived
-  program leg takes -- committing within bound, run directly against a
-  bundled native GStreamer runtime on this box, not skipped); and new
-  daemon coverage in `tests/egress/test_daemon.py` (the ack-timeout-on-a-
-  live-pid termination, and that a decline for any OTHER reason does not
-  terminate a healthy worker).
+  program leg takes -- committing within bound, run 10x directly against a
+  bundled native GStreamer runtime on this box, not skipped: 0 `not-linked`
+  errors across all 10 runs). New daemon coverage in `tests/egress/
+  test_daemon.py` (the ack-timeout-on-a-live-pid termination including a
+  `kill()` escalation case, and that a decline for any other reason does not
+  terminate a healthy worker) and `tests/egress/
+  test_daemon_reload_commit_timeout_relaunch.py` (the relaunch log line's
+  classification, and that this exit code counts toward the crash-loop
+  streak on every occurrence, unlike a genuine slow-start code).
 - **Live caption tap knob hardening: one channel at a time, bounded live ASR
   threads, a longer first pause after an overload (item 79).** MEASURED in
   the sandbox on candidate 3b: 10 "Caption tap overload" events, with
