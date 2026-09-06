@@ -239,3 +239,8 @@ AUTORUN-9zd-RESULT-*.md / CHANNEL-SCHEDULE-9zd.md / SOAK-START-9zd.md / SETUP-BL
 ## Addendum -- AUTORUN-9ze (read-only)
 
 After the 9za..9zd chain, `AUTORUN-9ze.ps1` proves the installed code is kit 609273d: hashes of key civiccast files vs the kit's app-payload pack, plus markers `CaptionBackoffPolicy` (#172), `PLAN_MIN_SECONDS = 0.0` / `MAX_PLAYLIST_SUBCHAINS = 12` / `PlaylistCapBypassedError` (#174). Result `soak/DIAG-9ze-<stamp>.md`. A soak #5 verdict only counts with this proof.
+
+
+## Addendum -- AUTORUN-9zf (read-only)
+
+`AUTORUN-9ze` was pushed without the #174 marker checks. `AUTORUN-9zf.ps1` adds them (source_plan `PLAN_MIN_SECONDS = 0.0` + `MAX_PLAYLIST_SUBCHAINS`, models `MAX_PLAYLIST_SUBCHAINS = 12`, bridge `PlaylistCapBypassedError`). Result `soak/DIAG-9zf-<stamp>.md`.
