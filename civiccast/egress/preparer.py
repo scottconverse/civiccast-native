@@ -743,7 +743,24 @@ class SourcePreparer:
             tmp: Path | None = None
             try:
                 cached_ts = self._cache_dir() / f"{key}.ts"
-                if cached_ts.is_file() and self._read_cache_meta(key) is not None:
+                # Item 66 round-8 (MEDIUM fix): a flagless meta (a
+                # pre-round-7 entry, or a probe-only write that never got a
+                # conform) is not a genuine full-asset cache hit -- see
+                # ``_write_cache_meta``'s and the cache-HIT check's own
+                # docstrings for why ``full_asset_conform`` must be
+                # explicitly True. Without this check, a legacy flagless
+                # entry sitting here read as "already populated" and this
+                # job returned without ever conforming, so the asset never
+                # healed: every future airing kept paying the foreground
+                # conform cost forever, and the stale short ``.ts`` stayed
+                # in the eviction budget taking up space it was never
+                # supposed to hold.
+                cached_meta = self._read_cache_meta(key)
+                if (
+                    cached_ts.is_file()
+                    and cached_meta is not None
+                    and cached_meta.get("full_asset_conform") is True
+                ):
                     return  # already populated by the time this job ran
                 lock = self._conform_lock(key)
                 if not lock.acquire(blocking=False):
@@ -933,7 +950,17 @@ class SourcePreparer:
                 # Re-check right before doing any work and skip the
                 # redundant re-conform if it's already there.
                 cached_ts = self._cache_dir() / f"{key}.ts"
-                if cached_ts.is_file() and self._read_cache_meta(key) is not None:
+                # Item 66 round-8 (MEDIUM fix): same fix as
+                # ``_schedule_cache_copy_promotion``'s ``_job`` -- a flagless
+                # meta is not a genuine full-asset hit (see
+                # ``_write_cache_meta``'s docstring); without this the exact
+                # same permanent-miss self-heal failure applied here too.
+                cached_meta = self._read_cache_meta(key)
+                if (
+                    cached_ts.is_file()
+                    and cached_meta is not None
+                    and cached_meta.get("full_asset_conform") is True
+                ):
                     return
                 self._conform_full_asset_into_cache(
                     key,
@@ -1440,13 +1467,24 @@ class SourcePreparer:
                         # Long asset (now also anything just over 120s, not
                         # only >240s -- see the constant's docstring): 40% in,
                         # clamped so a LATER 70%-in resample can still fit
-                        # non-overlapping when there IS room for one (>=240s);
-                        # for 120-240s assets the reserved gap can't always
-                        # fit a second non-overlapping window at all, and
-                        # ``second_sample_is_usable``'s explicit non-overlap
-                        # check (below) is what actually keeps a
+                        # non-overlapping when there IS room for one.
+                        #
+                        # Item 66 round-8 (LOW fix): the "room for one" cutoff
+                        # is NOT 240s. Working the two clamped expressions
+                        # through (``probe_start = max(0, min(0.4d, d-120))``,
+                        # ``second = min(max(0.7d, probe_start+120), d-120)``,
+                        # both below) shows the non-overlap requirement
+                        # (``second >= probe_start + 120``) only holds once
+                        # ``d >= 400`` -- verified by direct evaluation of both
+                        # expressions across the whole range, not just algebra
+                        # (see the round-8 review). Below 400s (which fully
+                        # covers the 120-240s range this comment used to name,
+                        # but also the 240-400s range it missed) the reserved
+                        # gap can't fit a second non-overlapping window at
+                        # all, and ``second_sample_is_usable``'s explicit
+                        # non-overlap check (below) is what actually keeps a
                         # too-close/identical resample from being trusted as
-                        # corroboration in that case, rather than this
+                        # corroboration in that range, rather than this
                         # reservation alone.
                         probe_start_seconds = max(
                             0.0,
@@ -1534,11 +1572,13 @@ class SourcePreparer:
                 # now also runs for assets as short as just over 120s, where
                 # two full non-overlapping 120s windows cannot both fit --
                 # exactly the "identical/overlapping, never genuinely
-                # independent evidence" failure round-6 already fixed for the
-                # >240s range. Without this check the arithmetic above can
-                # compute a second window that starts AT OR BEFORE the first
-                # one ends (or is identical to it), which would count as
-                # "corroboration" while providing none.
+                # independent evidence" failure round-6 already fixed, but
+                # (round-8 LOW fix) that gap actually runs up to just under
+                # 400s, not 240s -- see the sibling comment above this
+                # branch for the worked-out boundary. Without this check the
+                # arithmetic above can compute a second window that starts AT
+                # OR BEFORE the first one ends (or is identical to it), which
+                # would count as "corroboration" while providing none.
                 second_sample_is_usable = (
                     second_probe_start >= 0.0
                     and second_probe_start + _UNTRIMMED_LOUDNESS_PROBE_CAP_S <= media_duration
@@ -1697,18 +1737,50 @@ class SourcePreparer:
             # sticky until the entry's size/mtime changed. Only promote this
             # bounded conform directly when it demonstrably covers the whole
             # known media duration (the same tolerance ``source_plan.py``'s
-            # own ``_covers_slot`` uses). ``media_duration`` unknown (ffprobe
-            # unavailable/failed for THIS call) keeps the pre-round-7 "trust
-            # untrimmed as full" assumption rather than routing every such
-            # segment to an extra, unverifiable warm: D42's own cap requires
-            # a KNOWN asset duration to ever shorten ``segment.duration_
-            # seconds`` below the real media length in the first place (see
-            # ``_playable_duration``'s ``None`` case in ``source_plan.py``),
-            # so an untrimmed segment reaching here with a genuinely unknown
-            # duration was never capped by D42 to begin with.
-            is_full_asset_conform = not trimmed and (
-                media_duration is None
-                or segment.duration_seconds >= media_duration - _FULL_ASSET_DURATION_TOLERANCE_S
+            # own ``_covers_slot`` uses).
+            #
+            # Item 66 round-8 (HIGH fix): round-7's ``media_duration is None``
+            # branch here still promoted -- reasoning that D42 can only ever
+            # cap ``segment.duration_seconds`` below the real media length
+            # when ``source_plan.py`` itself already knows the asset's
+            # duration, so an untrimmed segment reaching here with an UNKNOWN
+            # duration was "never capped by D42 to begin with." That
+            # reasoning compares the wrong two sources: D42's own cap in
+            # ``source_plan.py`` (``_segment_duration``/``_playable_duration``,
+            # source_plan.py:523-543) reads ``asset.duration_seconds`` off the
+            # DATABASE row, while ``media_duration`` here comes from THIS
+            # call's own live ffprobe -- the two can and do disagree. Two real
+            # reproductions on an 8s test asset (3s slot, then a 6s slot):
+            # (a) ffprobe genuinely unavailable/failing for this call while
+            # the DB row still carries a real (shorter) duration -- D42 caps
+            # the segment to 3s off the DB row, this call's own probe fails,
+            # ``media_duration`` reads ``None`` here, and the round-7 code
+            # promoted the 3s fragment as the full 8s asset; (b) a TRIMMED
+            # airing runs first and takes the sibling ``if trimmed:`` branch
+            # above, which probes nothing (it seeks/duration-limits off the
+            # segment's own inpoint/outpoint) and persists
+            # ``media_duration_seconds=None`` via ``_write_cache_meta`` --  no
+            # failure anywhere -- and the NEXT airing (untrimmed, slot-capped)
+            # takes the meta-reuse branch near the top of this method, reads
+            # that ``None`` back, and promotes ITS fragment as the whole
+            # asset. Both are the exact "DB-known, ffprobe-unknown" poisoning
+            # quadrant the round-7 comment dismissed. Fail closed instead:
+            # ``media_duration is None`` now NEVER promotes here, regardless
+            # of ``trimmed`` -- it always falls through to ``_schedule_warm``,
+            # which conforms the WHOLE asset (not this bounded fragment) on a
+            # background thread and, once that conform finishes, sets
+            # ``full_asset_conform=True`` from its own measured length via
+            # ``_promote_conform_into_cache`` -- never from this unverified
+            # fragment. Follow-up (not done this round, listed rather than
+            # silently deferred): thread the plan's own known asset duration
+            # (the DB row `source_plan.py` already read) through to the
+            # segment/``PreparedSegment`` spec so this method stops
+            # re-deriving it via a second, independently-fallible ffprobe at
+            # all -- see the round-7 review notes for the suggested shape.
+            is_full_asset_conform = (
+                not trimmed
+                and media_duration is not None
+                and segment.duration_seconds >= media_duration - _FULL_ASSET_DURATION_TOLERANCE_S
             )
             if is_full_asset_conform:
                 # This bounded conform's output already IS the full-asset

@@ -315,6 +315,54 @@ below.
   (the single-sample cutoff is 120s, not 240s, and the 120-240s range's
   resample is skipped rather than trusted when no non-overlapping window
   fits).
+  **Round 8 found the round-7 HIGH fix was still not fixed, reproduced
+  twice with real ffmpeg on an 8-second test asset (a 3-second slot, then a
+  6-second slot):**
+  - **HIGH: `media_duration is None` still promoted a slot-capped fragment
+    as the full asset.** Round 7's fallback reasoned that D42's own cap in
+    `source_plan.py` can only shorten a segment's `duration_seconds` below
+    the real media length when that file's `_playable_duration` already
+    knows the asset's duration — so an untrimmed segment reaching the
+    promotion gate with an UNKNOWN `media_duration` was "never capped by
+    D42 to begin with," and kept promoting it. That compares the wrong two
+    sources: D42's cap reads the asset's duration off the **database row**
+    (`source_plan.py:523-543`); `media_duration` in the preparer comes from
+    **this call's own live ffprobe**. The two can disagree, and disagree in
+    exactly the poisoning direction (DB knows the duration, ffprobe
+    doesn't): (a) ffprobe genuinely fails for one call while the DB row
+    still caps the segment to 3 of the asset's 8 seconds — the 3-second
+    fragment got promoted as the whole asset; (b) with no failure at all —
+    a TRIMMED airing runs first, takes the sibling probe branch that never
+    calls `probe_media_duration_seconds` at all, and persists
+    `media_duration_seconds: null`; the very next airing (untrimmed,
+    slot-capped to 6 of 8 seconds) reads that cached `null` back and
+    promotes its own fragment as the whole asset. `media_duration is None`
+    now **never** promotes — it always falls through to `_schedule_warm`,
+    which conforms the whole asset in the background and sets
+    `full_asset_conform` from its own measured length instead. Threading
+    the plan's already-known (DB) asset duration through to the segment
+    spec so the preparer stops re-deriving it via a second, independently
+    fallible ffprobe is a listed follow-up, not done this round.
+  - **MEDIUM: the warm/copy-job skip checks didn't require the
+    `full_asset_conform` flag.** `_schedule_warm`'s and
+    `_schedule_cache_copy_promotion`'s own re-check-before-running guards
+    (added round-4/round-6 to skip redundant work if another caller already
+    populated the entry) accepted ANY meta file as "already populated," so
+    a flagless legacy entry (anything written before round 7) read as a
+    hit and the job returned without ever conforming — the asset never
+    healed: every future airing kept paying the foreground conform, and the
+    stale short `.ts` stayed in the eviction budget forever. Both guards
+    now require `meta.get("full_asset_conform") is True`, matching the
+    cache-HIT check round 7 already applied on the read side.
+  - **LOW: the "no room for a corroborating resample" comment named the
+    wrong cutoff.** With `probe_start = max(0, min(0.4·d, d−120))` and the
+    non-overlap requirement `second_probe_start >= probe_start + 120`,
+    working both clamped expressions through (not just describing them)
+    shows corroboration is actually unavailable for every asset under 400
+    seconds, not 240 — the fail-safe *behavior* was already correct
+    (skip the resample, keep the single reading), only the documented
+    boundary was wrong. Corrected in this file, the runbook, and the
+    in-code comments; no behavior change.
 - **A seamless plan rollover collided its own concat aggregators, silently
   failed to join the pipeline, and was acked "applied" anyway -- so
   automation kept re-triggering it forever while the channel bounced.**

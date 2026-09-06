@@ -286,9 +286,13 @@ itself — no CLI worker needed. Posture for a three-channel station:
     the window), the preparer resamples ONCE more at 70% in — but only if
     a genuinely non-overlapping second window actually fits (the second
     must start at least 120 seconds after the first AND stay inside the
-    file); for a 120-240 second asset that room may not exist at all, in
-    which case no resample is attempted and the single (floor) reading is
-    used as measured. When a non-overlapping resample IS possible and
+    file); for a 120-400 second asset that room may not exist at all — item
+    66 round-8 corrected this from a previously-documented "120-240
+    seconds": working the two clamped windows through by hand (not just
+    describing them) shows the non-overlap requirement only starts holding
+    at exactly 400 seconds, not 240 — in which case no resample is
+    attempted and the single (floor) reading is used as measured. When a
+    non-overlapping resample IS possible and
     both independent samples land at the floor, the asset is treated as
     genuinely silent (normalization is skipped outright rather than
     trusting either floor reading as a real target). If the resample

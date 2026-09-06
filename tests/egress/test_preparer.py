@@ -998,7 +998,15 @@ def test_schedule_warm_job_skips_when_cache_already_populated_before_it_runs(
     (e.g. a foreground untrimmed-miss conform promoted its own
     already-finished file straight in). The job must re-check {key}.ts
     existence (and a fresh meta) right before doing any work and skip the
-    redundant re-conform if it's already there."""
+    redundant re-conform if it's already there.
+
+    Item 66 round-8 (MEDIUM fix): "already cached" now requires the
+    simulated meta to genuinely carry ``full_asset_conform=True`` -- a
+    flagless meta (what this test used to simulate) is no longer treated
+    as a real cache hit by the job's own skip check (see
+    ``_write_cache_meta``'s and the cache-HIT check's docstrings for why),
+    so the simulated write below must match what a genuine promotion
+    (``_promote_conform_into_cache``) actually persists."""
     calls: list[list[str]] = []
     warm_jobs: list = []
     preparer = SourcePreparer(
@@ -1019,7 +1027,7 @@ def test_schedule_warm_job_skips_when_cache_already_populated_before_it_runs(
 
     # Simulate the cache being populated by a concurrent caller WHILE this
     # job was still sitting in the queue.
-    preparer._write_cache_meta(key, loudness, False)
+    preparer._write_cache_meta(key, loudness, False, full_asset_conform=True)
     cache_dir = tmp_path / "work" / "conform-cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     (cache_dir / f"{key}.ts").write_text("already cached", encoding="utf-8")
@@ -1190,8 +1198,20 @@ def test_untrimmed_miss_runs_one_bounded_conform_and_links_into_cache(
     copy on the blocking path. The per-plan file must now be the DIRECT
     result of the one ffmpeg call (finished before the cache is touched at
     all), and the cache must be populated from a link/copy of that same
-    file, not a second ffmpeg invocation."""
+    file, not a second ffmpeg invocation.
+
+    Item 66 round-8 (HIGH fix): the direct-promotion path this test targets
+    now requires a KNOWN ``media_duration`` that demonstrably covers the
+    segment (see ``is_full_asset_conform`` in ``preparer.py`` -- an unknown
+    duration always routes to ``_schedule_warm`` instead, since it can no
+    longer be trusted that an untrimmed segment reaching here is genuinely
+    the whole asset). ``probe_media_duration_seconds`` is patched to return
+    exactly the plan's own ``duration_seconds`` (3600s) so this test keeps
+    exercising the direct-link path it was written for, rather than the
+    fake ``.mp4`` (plain text, no real media) failing a real ffprobe call
+    and silently falling into the round-8 fail-closed branch instead."""
     monkeypatch.setattr(preparer_module.os, "cpu_count", lambda: 8)
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda *_a, **_k: 3600.0)
     calls: list[list[str]] = []
     warm_jobs: list = []
     preparer = SourcePreparer(
