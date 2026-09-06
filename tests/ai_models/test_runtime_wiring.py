@@ -278,7 +278,7 @@ class TestCaptionsRuntimeSeam:
         assert runtime.model_size_or_path == "medium"
 
     def test_the_live_caption_runtime_is_sized_for_a_box_that_is_on_air(
-        self, tmp_path: Path
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """`live=True` is the LIVE tap's sizing, and it must be real here.
 
@@ -289,12 +289,19 @@ class TestCaptionsRuntimeSeam:
         native product. That is exactly how the measured field failure
         happened -- the live tap ran with `cpu_threads=0` (every core) and
         beam 5 on a CPU-only station with three channels ON_AIR.
+
+        Item 79: `cpu_threads` is no longer a flat `1` -- it is
+        core-count-aware (`default_live_tap_cpu_threads`), floored at
+        `LIVE_TAP_CPU_THREADS` and capped at `LIVE_TAP_CPU_THREADS_CEILING`.
+        `os.cpu_count()` is monkeypatched so this assertion is exact
+        regardless of what box CI runs on.
         """
+
+        monkeypatch.setattr("civiccast.captions.runtime.os.cpu_count", lambda: 8)
 
         from civiccast.ai_models.runtime import build_caption_runtime
         from civiccast.captions.runtime import (
             LIVE_TAP_CPU_BEAM_SIZE,
-            LIVE_TAP_CPU_THREADS,
             FasterWhisperRuntime,
         )
 
@@ -302,7 +309,7 @@ class TestCaptionsRuntimeSeam:
         live = build_caption_runtime(service, live=True)
 
         assert isinstance(live, FasterWhisperRuntime)
-        assert live.cpu_threads == LIVE_TAP_CPU_THREADS == 1
+        assert live.cpu_threads == 1  # 8 cpus // 8 == 1, at the floor
         assert live.beam_size == LIVE_TAP_CPU_BEAM_SIZE == 1
 
         # The batch/VOD default is deliberately untouched: a finalization pass
@@ -312,6 +319,45 @@ class TestCaptionsRuntimeSeam:
         assert isinstance(batch, FasterWhisperRuntime)
         assert batch.cpu_threads == 0
         assert batch.beam_size == 5
+
+    def test_the_live_caption_runtime_cpu_threads_scale_with_core_count(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Item 79's exact acceptance formula: `max(1, min(2, cpus // 8))`."""
+
+        from civiccast.ai_models.runtime import build_caption_runtime
+        from civiccast.captions.runtime import FasterWhisperRuntime
+
+        service = _service(tmp_path)
+
+        for cpu_count, expected in ((1, 1), (4, 1), (8, 1), (16, 2), (128, 2), (None, 1)):
+            monkeypatch.setattr(
+                "civiccast.captions.runtime.os.cpu_count", lambda n=cpu_count: n
+            )
+            live = build_caption_runtime(service, live=True)
+            assert isinstance(live, FasterWhisperRuntime)
+            assert live.cpu_threads == expected, f"cpu_count={cpu_count}"
+
+    def test_the_live_caption_runtime_cpu_threads_env_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`CIVICCAST_CAPTION_TAP_CPU_THREADS` overrides the live tap only."""
+
+        from civiccast.ai_models.runtime import build_caption_runtime
+        from civiccast.captions.runtime import FasterWhisperRuntime
+
+        monkeypatch.setattr("civiccast.captions.runtime.os.cpu_count", lambda: 8)
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_CPU_THREADS", "2")
+
+        service = _service(tmp_path)
+        live = build_caption_runtime(service, live=True)
+        batch = build_caption_runtime(service)
+
+        assert isinstance(live, FasterWhisperRuntime)
+        assert live.cpu_threads == 2
+        # The batch/VOD path never reads the tap-only override.
+        assert isinstance(batch, FasterWhisperRuntime)
+        assert batch.cpu_threads == 0
 
     def test_the_app_builds_its_live_tap_runtime_through_the_live_seam(self) -> None:
         """Wiring proof: `civiccast.app` must ask for the LIVE sizing.

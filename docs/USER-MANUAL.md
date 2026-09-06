@@ -829,15 +829,22 @@ station needs.
 - **`CIVICCAST_CAPTION_TAP_POLL_SECONDS`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`** — How many channels may be
-  transcribed at the same time. Default: one per 8 CPUs, never more than 3.
+  transcribed at the same time. Default: `1`, station-wide, regardless of core
+  count (item 79, 2026-09; a per-core-count formula still let a big enough
+  station run more than one channel's ASR at once).
 - **`CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS`** — First pause after a
-  channel falls behind (default 60); each further overload doubles it.
+  channel falls behind (default 120, doubled from 60 as of item 79, 2026-09);
+  each further overload doubles it.
 - **`CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS`** — Ceiling on that
   doubling (default 900). Both backoff values are clamped to a usable value
   with a warning if misconfigured, rather than stopping the station.
-- **`CIVICCAST_WHISPER_CPU_THREADS`** — Processor threads per transcription.
-  The live tap uses 1; `0` means "every core" and is the batch default. Do not
-  set it to `0` on a station that is also on air.
+- **`CIVICCAST_CAPTION_TAP_CPU_THREADS`** — Processor threads for the **live
+  tap only** (item 79, 2026-09). Default: one per 8 CPUs, never more than 2.
+  Recorded-meeting transcription is unaffected.
+- **`CIVICCAST_WHISPER_CPU_THREADS`** — Processor threads per transcription;
+  overrides `..._TAP_CPU_THREADS` above when set, for either the live tap or
+  batch. `0` means "every core" and is the batch default. Do not set it to `0`
+  on a station that is also on air.
 - **`CIVICCAST_WHISPER_BEAM_SIZE`** — Live-tap decoder beam width (default 1 on
   CPU, 5 on a GPU). Does not affect recorded-file captioning.
 - **`CIVICCAST_CAPTION_FEED_POLL_SECONDS`** — Caption feed and decode-back proof cadence.

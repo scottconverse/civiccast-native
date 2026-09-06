@@ -37,6 +37,28 @@ below.
 
 ### Fixed
 
+- **Live captions could still overload the CPU on a bigger box, in the same
+  way that produced the tester's beta.4 soak restarts.** MEASURED in the
+  sandbox on candidate 3b: 10 "Caption tap overload" events, with GStreamer
+  playout worker stalls clustered inside them -- PR #172's backoff alone
+  was not enough. Three changes, all in `civiccast/captions/tap_worker.py`
+  and `civiccast/captions/runtime.py` (item 79): (1) the live caption tap now
+  transcribes **one channel at a time, station-wide**, always -- the previous
+  "one channel per 8 CPUs" rule still let a big enough station run more than
+  one channel's speech recognition at once, which is exactly the mechanism
+  that starved playout in the first place (override:
+  `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`, unchanged); (2) the speech
+  recognition model used by the live tap now caps how many CPU threads it
+  uses per channel (1 on a small station, up to 2 on a bigger one, never
+  more, logged once when the tap starts; override:
+  `CIVICCAST_CAPTION_TAP_CPU_THREADS`) -- recorded meeting transcription is
+  untouched, it still uses as many threads as the box allows; (3) the first
+  pause after an overload is now twice as long (120 seconds instead of 60)
+  so a station that just proved it cannot keep up gets real recovery time
+  before speech recognition is attempted again. Does not add any new
+  cross-module wiring to the stall watchdog -- that stays a separate,
+  medium-risk item.
+
 - **A seamless plan rollover collided its own concat aggregators, silently
   failed to join the pipeline, and was acked "applied" anyway -- so
   automation kept re-triggering it forever while the channel bounced.**

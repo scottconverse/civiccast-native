@@ -348,22 +348,46 @@ class TestCaptionTapWorker:
         assert sorted(result.channels) == ["education", "government", "public"]
         assert runtime.max_active == 1
 
-    def test_default_concurrency_is_one_channel_per_eight_cpus(
+    def test_default_concurrency_is_always_one_channel_station_wide(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 8)
-        assert default_max_channel_workers() == 1
+        """Item 79: the default is a flat 1, regardless of core count.
+
+        This replaces the previous "one channel per 8 CPUs" formula, which
+        still let a 16+ core station run more than one channel's ASR at
+        once -- exactly the mechanism the original DESKTOP-VBMA6O5 field
+        defect (see the module docstring) already proved unsafe.
+        """
+
         monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 4)
         assert default_max_channel_workers() == 1
-        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 16)
-        assert default_max_channel_workers() == 2
-        # Never more than the historical flat maximum, however large the box.
-        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 128)
-        assert default_max_channel_workers() == 3
-        # `os.cpu_count()` is documented as possibly None.
+        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 8)
+        assert default_max_channel_workers() == 1
+        monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: 32)
+        assert default_max_channel_workers() == 1
+        # `os.cpu_count()` is documented as possibly None; still 1.
         monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: None)
         assert default_max_channel_workers() == 1
+
+    def test_default_concurrency_env_override_still_works(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The documented ``CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`` override
+        is read by ``CaptionTapWorkerSettings.from_env``, not by
+        ``default_max_channel_workers`` itself -- confirm the settings seam
+        still honours a value above the new flat default."""
+
+        from civiccast.captions.tap_worker import CaptionTapWorkerSettings
+
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "inline")
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", "/tmp/does-not-need-to-exist")
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS", "3")
+
+        settings = CaptionTapWorkerSettings.from_env()
+
+        assert settings.max_channel_workers == 3
 
     def test_backlog_fails_closed_instead_of_publishing_stale_captions(
         self,

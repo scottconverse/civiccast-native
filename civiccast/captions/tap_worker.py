@@ -32,9 +32,12 @@ because on a real CPU-only station they did not:
 - overload backs OFF (:mod:`civiccast.captions.tap_backoff`) -- a channel that
   cannot keep up is paused for an exponentially growing window instead of
   retrying, and re-logging, every scan;
-- ASR concurrency is BOUNDED (:func:`default_max_channel_workers`) -- one
-  transcribing channel per 8 CPUs, so three ON_AIR channels on an 8-core box
-  do not each claim the machine;
+- ASR concurrency is BOUNDED (:func:`default_max_channel_workers`) -- ONE
+  channel transcribes at a time, station-wide, regardless of core count, so
+  multiple ON_AIR channels never each claim the machine simultaneously
+  (item 79: even a per-core-count concurrency formula still let a big-enough
+  box run more than one channel's ASR at once, which is the same failure
+  mode this bound exists to prevent);
 - the playout workers are spawned at ``ABOVE_NORMAL`` priority class, and the
   Python ASR threads here drop to ``BELOW_NORMAL``. The first of those is the
   load-bearing one; see :func:`_lower_current_thread_priority` for what the
@@ -96,10 +99,6 @@ __all__ = [
     "default_max_channel_workers",
 ]
 
-#: How many CPUs one concurrently-transcribing channel is allowed to assume.
-#: See :func:`default_max_channel_workers`.
-_CPUS_PER_CAPTION_CHANNEL = 8
-
 #: Windows ``THREAD_PRIORITY_BELOW_NORMAL``, applied to the per-channel ASR
 #: threads. PARTIAL COVERAGE BY CONSTRUCTION -- read
 #: :func:`_lower_current_thread_priority` before relying on it.
@@ -133,17 +132,25 @@ def default_max_channel_workers() -> int:
     every core is how the control plane came to burn ~247% of a core while the
     playout workers were starved into their own 10-second stall watchdog.
 
-    One concurrent channel per 8 CPUs, never more than 3. On the 8-core field
-    station that is ONE, and paired with the runtime's new ``cpu_threads``
-    floor of 1 (:class:`civiccast.captions.runtime.FasterWhisperRuntime`) the
-    whole caption feature's steady-state budget is about one core. Channels
-    beyond the bound are not dropped -- they queue on the executor and are
-    transcribed in the same scan, just not simultaneously.
+    Item 79 (sandbox candidate 3b, 10 "Caption tap overload" events, the same
+    GStreamer-worker-stall cluster as the tester's beta.4 soak): even the
+    ``one concurrent channel per 8 CPUs`` formula this replaced still let a
+    16+ core station run two or three channels' ASR at once, which was
+    exactly the mechanism the field defect above already proved is unsafe.
+    The station-wide budget is now flat: **ONE** live-caption channel
+    transcribes at a time, station-wide, regardless of core count -- paired
+    with the runtime's ``cpu_threads`` cap
+    (:func:`civiccast.captions.runtime.FasterWhisperRuntime`) that is now also
+    core-count-aware rather than a flat floor of 1. Channels beyond the bound
+    are not dropped -- they queue on the executor and are transcribed in the
+    same scan, just not simultaneously.
 
-    Overridable end-to-end via ``CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS``.
+    Overridable end-to-end via ``CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS``,
+    which still means what it always has: force a different concurrency for a
+    station the operator has personally sized.
     """
 
-    return max(1, min(3, (os.cpu_count() or 1) // _CPUS_PER_CAPTION_CHANNEL))
+    return 1
 
 
 def _lower_current_thread_priority() -> None:

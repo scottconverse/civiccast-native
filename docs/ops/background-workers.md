@@ -133,11 +133,12 @@ kill the scan.
 | `CIVICCAST_CAPTION_TAP_DIR` | unset | Tap root shared by the egress fork and the worker. Required when the mode is not `off`; setting it also enables the egress fork. |
 | `CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS` | `5` | Segment length — the floor of the caption latency budget (tap → transcribe → stabilize → review queue). |
 | `CIVICCAST_CAPTION_TAP_POLL_SECONDS` | `2` | Worker scan interval. |
-| `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | one per 8 CPUs, max 3 | How many channels may be transcribed **at the same time**. |
+| `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | `1`, station-wide | How many channels may be transcribed **at the same time**. Item 79 (2026-09): flat `1` regardless of core count — a per-core-count formula still let a big enough box run more than one channel's ASR at once. |
 | `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` | `2` | Settled segments a channel may be behind before it counts as overloaded. |
-| `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS` | `60` | First pause after an overload; each consecutive overload doubles it. |
+| `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS` | `120` | First pause after an overload; each consecutive overload doubles it. Item 79 (2026-09): doubled from `60` — a struggling station needs real recovery room before ASR is attempted again. |
 | `CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS` | `900` | Ceiling on that doubling. |
-| `CIVICCAST_WHISPER_CPU_THREADS` | `1` for the live tap | CTranslate2 threads per transcription. `0` means "every core" and is the batch/VOD default — do not set it to `0` on a station that is also on air. |
+| `CIVICCAST_CAPTION_TAP_CPU_THREADS` | one per 8 CPUs, max 2 | CTranslate2 intra-op threads for the **live tap only** (item 79, 2026-09). Recorded-meeting transcription is unaffected. |
+| `CIVICCAST_WHISPER_CPU_THREADS` | (unset) | CTranslate2 threads per transcription; overrides `..._TAP_CPU_THREADS` above when set, for either the live tap or batch/VOD. `0` means "every core" and is the batch/VOD default — do not set it to `0` on a station that is also on air. |
 | `CIVICCAST_WHISPER_BEAM_SIZE` | `1` on CPU, `5` on CUDA | Decoder beam width. Wider is slightly more accurate and roughly linearly more expensive. |
 
 ### Turning live captions off
@@ -173,13 +174,13 @@ not.
 CivicCast therefore enforces an explicit ordering, and none of it is
 negotiable at runtime by the caption feature itself:
 
-- **ASR is bounded.** By default only one channel per 8 CPUs is transcribed at
-  a time, with one CTranslate2 thread and greedy decoding — roughly a one-core
-  budget for the whole caption feature on an 8-core station. Extra channels are
-  queued, not dropped.
+- **ASR is bounded.** By default only **one** channel, station-wide, is
+  transcribed at a time — regardless of core count (item 79, 2026-09) — with
+  1-2 CTranslate2 threads (core-count-aware, capped) and greedy decoding.
+  Extra channels are queued, not dropped.
 - **Overload backs off.** When a channel falls further behind than
   `..._MAX_BACKLOG_SEGMENTS`, its live captions are **paused** for an
-  exponentially growing window (60s, 120s, 240s … capped at 15 minutes), its
+  exponentially growing window (120s, 240s, 480s … capped at 15 minutes), its
   active caption file is blanked, and its stale audio is **discarded**. During
   the pause the station spends *nothing* on transcribing that channel, and
   keeps nothing: audio that was never transcribed cannot be reviewed, so
