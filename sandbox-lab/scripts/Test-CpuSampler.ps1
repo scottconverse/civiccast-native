@@ -109,6 +109,19 @@ Assert-Equal 'scenario12b (pythonw.exe, not a gst-worker pid) -> control-plane' 
 $r13 = Get-ProcessRoleLabel -ProcessName 'ffmpeg' -ProcessId 7001 -GstWorkerPidMap @{} -PidToChannelId @{}
 Assert-Equal 'scenario13 (ffmpeg.exe, unresolved) -> other' 'other' $r13
 
+# -------------------------------------------------------------- scenario 13b
+# Round-follow-up-B finding 2c (regression guard): an ffmpeg-fallback pid IS
+# resolved to a channel via PidToChannelId (a channel's own engine pid,
+# whichever engine is actually running it) even though it is never in
+# GstWorkerPidMap (that map is built from gst-worker.py command lines
+# only). Previously PidToChannelId was only ever consulted inside the
+# GstWorkerPidMap branch, so this pid fell all the way through to the
+# generic "other" label even though the caller already held its channel
+# mapping in scope -- fixed by resolving $chId once, before the
+# GstWorkerPidMap check.
+$r13b = Get-ProcessRoleLabel -ProcessName 'ffmpeg' -ProcessId 7002 -GstWorkerPidMap @{} -PidToChannelId (@{ 7002 = 'community' })
+Assert-Equal 'scenario13b (ffmpeg.exe, resolved channel) -> ffmpeg-fallback:community' 'ffmpeg-fallback:community' $r13b
+
 Write-Host ""
 Write-Host "CpuSampler unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })
 if ($script:failures -gt 0) { exit 1 }

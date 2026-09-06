@@ -97,14 +97,29 @@ function Get-ProcessRoleLabel {
                                      pass (a same-pass relaunch race --
                                      rare; see Resolve-EngineForPid's own
                                      comment on the identical race).
+        "ffmpeg-fallback:<channel_id>" -- (round-follow-up-B finding 2c) pid
+                                     is NOT a gst-worker process, but DOES
+                                     resolve to a channel via
+                                     PidToChannelId -- the ffmpeg-fallback
+                                     engine path (a channel's own state
+                                     sample carries its engine pid
+                                     regardless of which engine --
+                                     gstreamer or ffmpeg-fallback -- is
+                                     actually running it; PidToChannelId
+                                     was previously only ever consulted
+                                     inside the GstWorkerPidMap branch, so
+                                     an ffmpeg-fallback pid always fell
+                                     through to the generic "other" label
+                                     below even though the caller already
+                                     held its channel mapping in scope).
         "supervisor"              -- pythonservice.exe: the Windows
                                      service host (station_runtime.py:369)
                                      that hosts CivicCastSupervisor.
         "control-plane"           -- any other python/pythonw process not
-                                     in GstWorkerPidMap: the
-                                     `python -I -u -m uvicorn
-                                     civiccast.app:create_app` child
-                                     (civiccast/native/supervisor/
+                                     in GstWorkerPidMap and not resolved to
+                                     a channel: the `python -I -u -m
+                                     uvicorn civiccast.app:create_app`
+                                     child (civiccast/native/supervisor/
                                      service.py's control_plane_child_spec).
         "other"                   -- everything else (e.g. an ffmpeg.exe
                                      not resolved to any channel this pass).
@@ -115,12 +130,18 @@ function Get-ProcessRoleLabel {
         $GstWorkerPidMap = @{},
         $PidToChannelId = @{}
     )
+    # Round-follow-up-B finding 2c: resolved ONCE, outside the
+    # GstWorkerPidMap branch, so an ffmpeg-fallback pid (which never
+    # appears in GstWorkerPidMap -- that map is built from gst-worker.py
+    # command lines only) still gets its channel label instead of always
+    # falling through to "other".
+    $chId = $PidToChannelId[$ProcessId]
     if ($GstWorkerPidMap.ContainsKey($ProcessId)) {
-        $chId = $PidToChannelId[$ProcessId]
         if ($chId) { return "gst-worker:$chId" }
         return 'gst-worker:unknown'
     }
     if ($ProcessName -eq 'pythonservice') { return 'supervisor' }
     if ($ProcessName -match '^python') { return 'control-plane' }
+    if ($chId) { return "ffmpeg-fallback:$chId" }
     return 'other'
 }

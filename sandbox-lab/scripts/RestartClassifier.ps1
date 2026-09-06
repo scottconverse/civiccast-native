@@ -157,6 +157,18 @@
 # Register-ChannelSample falls back to the sample-ring signal and marks
 # log_evidence='missing'.
 
+# Followup finding 2 (round 14 addendum): Test-IsReadFailureMarker (the
+# CONSUMER side of the "state read failed: ..." contract -- see
+# DaemonLogPatterns.ps1's own header) replaces this file's own
+# hand-typed `-like 'state read failed*'` scriptblock. $PSScriptRoot here
+# resolves to wherever RestartClassifier.ps1 ITSELF lives, which is
+# correct in both contexts this file runs in: dot-sourced by
+# In-Sandbox-Soak.ps1 from C:\CivicCastSoakScripts\ inside the sandbox, or
+# dot-sourced by Test-RestartClassifier.ps1 from sandbox-lab\scripts\ on
+# the host -- DaemonLogPatterns.ps1 always lives alongside this file in
+# both locations.
+. (Join-Path $PSScriptRoot 'DaemonLogPatterns.ps1')
+
 function New-RestartClassifierContext {
     <#
       .SYNOPSIS
@@ -478,8 +490,7 @@ function Test-PlannedRestartSignal {
     # (skip over it when walking back for lastPrior) nor trip the
     # crash-signal veto below (its last_error text describes the HTTP read
     # failing, never the product's own last_error field).
-    $isReadFailureSample = { param($s) "$($s.last_error)" -like 'state read failed*' }
-    $realSamples = @($samples | Where-Object { -not (& $isReadFailureSample $_) })
+    $realSamples = @($samples | Where-Object { -not (Test-IsReadFailureMarker -LastError $_.last_error) })
 
     # The sample AT $BeforeUtc is the pid-change sample itself (already
     # added to the ring by Add-RingSample before this is called) -- the

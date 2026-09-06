@@ -591,23 +591,59 @@ Assert-Equal 'scenario26b (45 entries, default -MaxRingSize 30, unchanged for ex
 # (DaemonLogPatterns.ps1) -- the -SeamlessReload armed-never-committed
 # cross-check pulled out of In-Sandbox-Soak.ps1 so it is directly
 # unit-testable. 'government' is armed and its worker-stdout counts show
-# reload_committed_count=0 -> still flagged. 'education' is armed too, but
-# a reload committed IN THE FINAL DRAIN WINDOW (the exact gap round-2
-# finding 2 fixed at the call site: In-Sandbox-Soak.ps1 now drains every
-# channel's worker stdout one more time right after the poll loop exits,
-# before this function ever runs) -- its count is 1, so it must NOT be
-# flagged, proving a late-arriving commit does not spuriously FAIL a
-# -SeamlessReload run. 'public' was never armed at all, so it never
-# appears in the input and never appears in the output either.
+# reload_committed_count=0 -> still flagged. 'education' is armed too, and
+# its counts here ALREADY show reload_committed_count=1, as if a final
+# drain had already run and updated them before this function was called
+# -- so it must NOT be flagged. 'public' was never armed at all, so it
+# never appears in the input and never appears in the output either.
+#
+# Round-follow-up-B finding 2d (renamed from the old, inaccurately-named
+# "scenario27b (... caught by the final drain)"): this scenario ONLY
+# exercises the pure filter against already-updated counts -- it proves
+# the computation is correct GIVEN a channel whose count already reflects
+# a late commit, nothing more. It does NOT prove any drain actually ran,
+# or that a drain runs before this computation in the real driver -- a
+# regression that swapped that order (or dropped the drain call entirely)
+# would not have failed this scenario. Scenario 27e-27g below cover that
+# ordering claim directly, via Invoke-FinalWorkerStdoutDrainAndComputeArmedNeverCommitted.
 $countsAfterFinalDrain = @{
     'government' = [pscustomobject]@{ reload_committed_count = 0 }
     'education'  = [pscustomobject]@{ reload_committed_count = 1 }
 }
 $armedNeverCommitted27 = Get-ReloadArmedNeverCommittedChannels -ArmedChannelIds @('government', 'education') -WorkerStdoutCountsByChannel $countsAfterFinalDrain
 Assert-Equal 'scenario27a (armed, committed=0) -> government IS flagged' 'True' "$($armedNeverCommitted27 -contains 'government')"
-Assert-Equal 'scenario27b (armed, committed=1 caught by the final drain) -> education is NOT flagged' 'False' "$($armedNeverCommitted27 -contains 'education')"
+Assert-Equal 'scenario27b (armed, committed=1) -> education is NOT flagged (pure-filter check only, given already-updated counts)' 'False' "$($armedNeverCommitted27 -contains 'education')"
 Assert-Equal 'scenario27c (never armed) -> public never appears' 'False' "$($armedNeverCommitted27 -contains 'public')"
 Assert-Equal 'scenario27d (exactly one flagged channel)' 1 $armedNeverCommitted27.Count
+
+# ------------------------------------------------------------- scenario 27e-g
+# Round-follow-up-B finding 2d: THIS is the ordering proof scenario27b's
+# name used to claim but never actually tested.
+# Invoke-FinalWorkerStdoutDrainAndComputeArmedNeverCommitted
+# (DaemonLogPatterns.ps1) is the real function In-Sandbox-Soak.ps1 now
+# calls in place of a bare Get-ReloadArmedNeverCommittedChannels call --
+# it runs DrainAction once per ChannelId, IN ORDER, and only THEN computes
+# the armed-never-committed list. The injected $drainAction here plays the
+# role of the real Update-WorkerStdoutCounters call: it records every
+# channel it is invoked for (proving call order) AND, for 'education'
+# only, mutates $countsOrdering to simulate a reload that committed during
+# this exact drain window (proving the drain's effect is visible to the
+# computation that follows it, not just to a caller who already assumed
+# it happened).
+$callOrder = [System.Collections.Generic.List[string]]::new()
+$countsOrdering = @{
+    'government' = [pscustomobject]@{ reload_committed_count = 0 }
+    'education'  = [pscustomobject]@{ reload_committed_count = 0 }
+}
+$drainAction = {
+    param($cid)
+    $callOrder.Add($cid)
+    if ($cid -eq 'education') { $countsOrdering['education'].reload_committed_count = 1 }
+}
+$resultOrdering = Invoke-FinalWorkerStdoutDrainAndComputeArmedNeverCommitted -ChannelIds @('government', 'education') -ArmedChannelIds @('government', 'education') -WorkerStdoutCountsByChannel $countsOrdering -DrainAction $drainAction
+Assert-Equal 'scenario27e (DrainAction invoked for every channel, in order, before the computation runs)' 'government,education' ($callOrder -join ',')
+Assert-Equal 'scenario27f (drain-committed channel correctly excluded) -> education NOT flagged' 'False' "$($resultOrdering -contains 'education')"
+Assert-Equal 'scenario27g (channel with no drain-time commit still flagged) -> government IS flagged' 'True' "$($resultOrdering -contains 'government')"
 
 # -------------------------------------------------------------- scenario 28
 # Round-2 finding 2: a channel that was armed but has NO entry at all in

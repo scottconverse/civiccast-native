@@ -55,6 +55,16 @@
 #     never recovered within the tracking window, or recovered slower than
 #     60s, fails the run.
 
+# Followup finding 2 (round 14 addendum): Test-IsReadFailureMarker (the
+# CONSUMER side of DaemonLogPatterns.ps1's "state read failed: ..."
+# contract) replaces this file's own two hand-typed
+# `-like 'state read failed*'` scriptblocks. $PSScriptRoot resolves to
+# wherever SoakVerdict.ps1 ITSELF lives, correct in every context this
+# file runs in (dot-sourced from C:\CivicCastSoakScripts\ inside the
+# sandbox, or from sandbox-lab\scripts\ by Test-SoakVerdict.ps1 on the
+# host) -- DaemonLogPatterns.ps1 always lives alongside it.
+. (Join-Path $PSScriptRoot 'DaemonLogPatterns.ps1')
+
 function Test-SoakCycle {
     <#
       .SYNOPSIS
@@ -144,8 +154,7 @@ function Test-SoakCycle {
     # dropped read is excused silently; a channel that cannot be read three
     # times running means the read path itself is broken, not that the
     # channel fell off air, and must never present as a product FAIL).
-    $isStateReadFailure = { param($row) "$($row.last_error)" -like 'state read failed*' }
-    $notOnAir = @($channels | Where-Object { -not $_.in_planned_restart_window -and -not (& $isStateReadFailure $_) -and ($_.engine_state -ne 'ON_AIR' -or $_.engine -ne 'gstreamer') })
+    $notOnAir = @($channels | Where-Object { -not $_.in_planned_restart_window -and -not (Test-IsReadFailureMarker -LastError $_.last_error) -and ($_.engine_state -ne 'ON_AIR' -or $_.engine -ne 'gstreamer') })
     $tspFail = @($channels | Where-Object { $_.tsduck_verdict -ne 'pass' })
 
     if ($IsWarmup) {
@@ -297,7 +306,6 @@ function Get-SoakVerdict {
     # restart-event-based checks below, in favor of any confirmed product
     # FAIL -- with the harness note appended to its reason when a
     # harness-shape defect ALSO exists, so it is never silently dropped.
-    $isStateReadFailure = { param($row) "$($row.last_error)" -like 'state read failed*' }
     $consecutiveReadFailures = @{}
     $harnessErrorResult = $null
     $perCycleFailResult = $null
@@ -316,7 +324,7 @@ function Get-SoakVerdict {
         # post-warmup.
         foreach ($row in @($cycle.channels)) {
             $chId = "$($row.channel_id)"
-            if (& $isStateReadFailure $row) {
+            if (Test-IsReadFailureMarker -LastError $row.last_error) {
                 $consecutiveReadFailures[$chId] = $(if ($consecutiveReadFailures.ContainsKey($chId)) { $consecutiveReadFailures[$chId] + 1 } else { 1 })
                 if (-not $isWarmup -and -not $harnessErrorResult -and $consecutiveReadFailures[$chId] -ge 3) {
                     $harnessErrorResult = [pscustomobject]@{

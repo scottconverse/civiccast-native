@@ -82,15 +82,26 @@ function Test-ServiceStartFailureIsProductCrash {
       window (round-12 finding 5).
     #>
     param([string]$ExceptionText, [datetime]$SinceUtc)
+    # Followup finding 3 (round 14 addendum): the well-known display name
+    # the installer ships (main bcb3ebe -- re-verify against HEAD before
+    # trusting this constant blindly), used ONLY as a fallback when
+    # Get-Service itself throws (service uninstalled/renamed concurrently,
+    # or -- exactly the scenario this whole function exists for -- the
+    # service never even registered because the SCM refused the launch).
+    # Skipping the event-log check entirely in that case (the round-14
+    # behavior) meant a genuine crash could go undetected purely because
+    # Get-Service happened to fail at the wrong moment, silently
+    # defaulting to HARNESS_ERROR with no attempt to look.
+    $wellKnownDisplayName = 'CivicCast Native Supervisor'
     try {
         $displayName = $null
         try {
             $displayName = (Get-Service -Name 'CivicCastSupervisor' -ErrorAction Stop).DisplayName
         } catch {
-            # Get-Service itself can fail (service uninstalled/renamed
-            # concurrently) -- that is NOT evidence of anything; fall
-            # through with no display name, which skips the event-log
-            # check entirely below and lands on the exception-text check.
+            # Get-Service itself can fail -- NOT itself evidence of
+            # anything, but the event-log check must still be attempted
+            # against the well-known constant name rather than skipped.
+            $displayName = $wellKnownDisplayName
         }
         if ($displayName) {
             $scmEvents = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; Id = 7034, 7031, 7024, 7000, 7009; StartTime = $SinceUtc.ToLocalTime() } -ErrorAction SilentlyContinue |
