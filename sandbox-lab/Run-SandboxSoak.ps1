@@ -305,7 +305,16 @@ $scriptsToCheck = @(
     (Join-Path $scriptsDir 'In-Sandbox-Soak.ps1'),
     (Join-Path $scriptsDir 'SoakVerdict.ps1'),
     (Join-Path $scriptsDir 'RestartClassifier.ps1'),
-    (Join-Path $scriptsDir 'HostLiveness.ps1')
+    (Join-Path $scriptsDir 'HostLiveness.ps1'),
+    # Round-14 finding 6: DaemonLogPatterns.ps1 -- the shared regex/
+    # formula literals both In-Sandbox-Soak.ps1 and
+    # Test-RestartClassifier.ps1 now dot-source instead of each keeping
+    # their own copy.
+    (Join-Path $scriptsDir 'DaemonLogPatterns.ps1'),
+    # Round-14 finding 8: ServiceStartFailureCheck.ps1 -- extracted so
+    # Test-ServiceStartFailure.ps1 can unit-test it with synthetic
+    # Get-Service/Get-WinEvent results.
+    (Join-Path $scriptsDir 'ServiceStartFailureCheck.ps1')
 )
 $parseResults = @($scriptsToCheck | ForEach-Object { Test-ScriptParses -Path $_ })
 $parseOk = -not @($parseResults | Where-Object { -not $_.ok }).Count

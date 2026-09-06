@@ -9,6 +9,11 @@
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'RestartClassifier.ps1')
+# Round-14 finding 6 (MEDIUM): dot-source the SAME shared file
+# In-Sandbox-Soak.ps1 uses for its reload-abort regex and its
+# "state read failed: ..." formula, instead of this test file keeping its
+# own hand-typed copies that could silently drift from the real driver's.
+. (Join-Path $PSScriptRoot 'DaemonLogPatterns.ps1')
 
 $script:failures = 0
 $script:total = 0
@@ -452,16 +457,16 @@ Assert-Equal 'scenario22c (second event reason text carried through)' 'reported 
 
 # -------------------------------------------------------------- scenario 23
 # Round-12 finding 3 (HIGH): the reload-abort regex (In-Sandbox-Soak.ps1's
-# $script:daemonReloadAbortRegex -- duplicated here VERBATIM since that
-# script's own driver setup is not dot-sourceable in isolation; keep the
-# two copies in sync) must match ALL SIX known daemon.py WARNING-line
+# $script:DaemonReloadAbortRegex (round-14 finding 6: now dot-sourced from
+# DaemonLogPatterns.ps1, the SAME regex object the real driver uses --
+# never a re-typed copy) must match ALL SIX known daemon.py WARNING-line
 # shapes (main bcb3ebe:1946/2111/1860/2132/2143/2156), not just the two
 # the round-11 version happened to match. Each verbatim line below is
 # shaped exactly like the real log line (asctime + level + logger name +
 # message), and every one must both match AND extract the right channel.
 # Round-13 finding 4: the leading `.*` is now LAZY (`.*?`) so it anchors on
 # the FIRST "for" in the line -- see fixture "greedy mis-attribution" below.
-$abortRegex = [regex]'civiccast\.egress\S*:\s*(?<reason>.*?\bfor (?<ch>\S+)\b.*falling back to restart.*)$'
+$abortRegex = $script:DaemonReloadAbortRegex
 $abortFixtures = @(
     @{ Line = '2026-09-06 09:31:04,123 WARNING civiccast.egress.daemon: Seamless content-reload declined for public (reload not armed); falling back to restart.'; Ch = 'public'; Label = 'declined (:1946)' }
     @{ Line = '2026-09-06 09:31:05,123 WARNING civiccast.egress.daemon: Seamless content-reload for education reported "applied" but its worker had already exited (reload_id=abc); falling back to restart instead of stamping ON_AIR against a dead process.'; Ch = 'education'; Label = 'applied-but-worker-exited (:2111)' }
@@ -484,17 +489,31 @@ foreach ($fx in $abortFixtures) {
     }
 }
 
-# Round-13 finding 3 (BLOCKING regression): _discard_pending_reload_
+# Round-13 finding 3 / round-14 finding 5 (MEDIUM): _discard_pending_reload_
 # settlement's own INFO-level echo ("Content-reload for %s (reload_id=%s)
-# discarded: falling back to restart.") ALSO matches the same substring
-# test -- it must be excluded (the literal "discarded:" text is unique to
-# this one echo line) so a real driver never double-counts one abort as
-# two. This mirrors the exact exclusion check In-Sandbox-Soak.ps1's
-# Update-DaemonLogRing applies (`$line -notmatch 'discarded:'`).
+# discarded: %s.") CAN also match the base abort regex's substring test,
+# in the one case where its own free-text `reason` happens to contain
+# "falling back to restart" -- kept excluded defensively even though
+# round-14's own measurement found this does not actually occur in
+# practice (see DaemonLogPatterns.ps1's header). Anchored on the echo's
+# OWN FIXED shape ($script:DaemonReloadDiscardEchoRegex), not a bare
+# "discarded:" substring search.
 $discardEchoLine = '2026-09-06 09:31:11,123 INFO civiccast.egress.daemon: Content-reload for public (reload_id=xyz) discarded: falling back to restart.'
 $discardEchoMatch = $abortRegex.Match($discardEchoLine)
-Assert-Equal 'scenario23b (discard echo line still matches the base regex)' 'True' "$($discardEchoMatch.Success)"
-Assert-Equal 'scenario23b (discard echo line is excluded by the "discarded:" check)' 'True' "$($discardEchoLine -match 'discarded:')"
+Assert-Equal 'scenario23b (discard echo line still matches the base abort regex)' 'True' "$($discardEchoMatch.Success)"
+Assert-Equal 'scenario23b (discard echo line is excluded by the fixed-shape check)' 'True' "$($script:DaemonReloadDiscardEchoRegex.IsMatch($discardEchoLine))"
+
+# Round-14 finding 5b regression guard: a REAL abort whose own reason text
+# happens to contain the literal substring "discarded:" (coincidentally,
+# not as this echo's fixed shape) must NOT be wrongly excluded -- the OLD
+# bare "discarded:" substring check (`$line -notmatch 'discarded:'`) would
+# have dropped this genuine abort; the fixed-shape regex correctly does
+# NOT match it (the line lacks the echo's literal "Content-reload for X
+# (reload_id=Y) discarded:" prefix shape entirely).
+$realAbortMentioningDiscarded = '2026-09-06 09:31:12,123 WARNING civiccast.egress.daemon: Seamless content-reload for public did not land (stale plan discarded: reused); falling back to restart.'
+Assert-Equal 'scenario23c (real abort whose OWN reason text contains "discarded:") matches the base abort regex' 'True' "$($abortRegex.Match($realAbortMentioningDiscarded).Success)"
+Assert-Equal 'scenario23c (still contains the literal substring "discarded:" -- the OLD bare check would have wrongly excluded it)' 'True' "$($realAbortMentioningDiscarded -match 'discarded:')"
+Assert-Equal 'scenario23c (NOT excluded by the fixed-shape discard-echo check)' 'False' "$($script:DaemonReloadDiscardEchoRegex.IsMatch($realAbortMentioningDiscarded))"
 
 # -------------------------------------------------------------- scenario 24
 # Round-13 finding 1 (BLOCKING): In-Sandbox-Soak.ps1's Get-ChannelStateSample
@@ -503,19 +522,14 @@ Assert-Equal 'scenario23b (discard echo line is excluded by the "discarded:" che
 # ChannelSample via Invoke-ChannelSampleAndRegister's `-LastError
 # $Sample.last_error` (matching the real driver's exact call shape) --
 # fixing a bug where that call site received a bare $null (the read-
-# failure filter never matched in production). Reproduces the fix's exact
-# string-building formula and proves it round-trips through
-# Register-ChannelSample's read-failure-ignoring logic exactly like
-# scenario 16's hand-typed literal did -- and separately proves the OLD
-# (buggy) shape, a bare $null last_error, does NOT get ignored the same
-# way (demonstrating why the bug caused a false FAIL).
-function New-StateReadFailureLastError {
-    # Verbatim copy of Get-ChannelStateSample's ok=false formula (In-
-    # Sandbox-Soak.ps1) -- kept in sync deliberately; a drift between the
-    # two is exactly the class of bug this scenario exists to catch.
-    param($Status, $ErrorText)
-    return "state read failed: status=$Status error=$ErrorText"
-}
+# failure filter never matched in production). Round-14 finding 6:
+# New-StateReadFailureLastError is now dot-sourced from
+# DaemonLogPatterns.ps1 -- the SAME function the real driver calls, never
+# a re-typed copy. Proves it round-trips through Register-ChannelSample's
+# read-failure-ignoring logic exactly like scenario 16's hand-typed
+# literal did -- and separately proves the OLD (buggy) shape, a bare
+# $null last_error, does NOT get ignored the same way (demonstrating why
+# the bug caused a false FAIL).
 $ctx24 = New-RestartClassifierContext
 Register-ChannelSample -Context $ctx24 -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
 Register-ChannelSample -Context $ctx24 -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(20) -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
