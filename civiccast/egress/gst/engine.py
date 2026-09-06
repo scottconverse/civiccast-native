@@ -179,6 +179,33 @@ class PrerollTimeoutError(RuntimeError):
 # ``civiccast.egress.health.worker_reached_playing`` and only starts the 60s
 # healthy-uptime clock from the moment that evidence is first observed —
 # never from spawn time.
+#
+# Round-4 correction (PR #183 review, BLOCKER REPRODUCED): round-3's fix was
+# ITSELF not sufficient -- the marker text above is real, but the daemon's
+# per-channel stderr log is a single FIXED PATH opened in APPEND mode and
+# never truncated per spawn (``_default_worker_launcher`` in ``strategy.py``,
+# ``start_ffmpeg`` in ``_ffmpeg.py`` on the FFmpeg side). Once ANY worker on a
+# channel ever printed this marker, it sat in the log forever, and
+# ``worker_reached_playing``'s old fixed tail-window read had no way to tell
+# "this worker's own marker" apart from "a previous worker's marker still in
+# the tail window" -- every later worker was "confirmed on air" on its very
+# first poll tick, so the 60s healthy-uptime clock became a spawn clock again
+# (measured: 40 relaunches, streak pinned at 1 -- the exact round-2 symptom
+# this whole fix chain exists to close, reproduced through the round-3 fix
+# unchanged). Closed with two independent anchors, belt and braces:
+# ``EgressDaemon._stderr_spawn_offset`` records the log's byte SIZE at this
+# worker's own spawn, and ``worker_reached_playing`` /
+# ``read_ffmpeg_encoder_metrics_since`` (``civiccast.egress.health``) scan
+# ONLY bytes at or after that offset -- a previous worker's marker, which
+# always sits before it, is never read at all, not merely filtered out after
+# the fact; AND the marker line now carries THIS worker's own pid (see the
+# ``os.getpid()`` print below), which the daemon requires to match its
+# currently-tracked process before crediting the marker, independent of
+# whether the byte offset happens to be right. The fixed 64 KiB tail window
+# is gone from this check entirely -- the marker is the OLDEST line a worker
+# ever prints, so a small tail window was never actually safe against a
+# worker whose own startup chatter grew past it before the first observing
+# poll tick, append-log bug aside.
 _DEFAULT_PREROLL_TIMEOUT_S = 30.0
 _MIN_PREROLL_TIMEOUT_S = 5.0
 _MAX_PREROLL_TIMEOUT_S = 45.0
@@ -1305,8 +1332,23 @@ class GstPlayoutEngine:
                 # only + a stable prefix: this text is a parsed contract, not
                 # just a log line -- changing it silently breaks the daemon's
                 # match.
+                # Round-4 (PR #183 review, BLOCKER reproduced): the marker
+                # now also carries THIS worker's own pid. The daemon's
+                # per-channel stderr log is opened in APPEND mode and never
+                # truncated per spawn (see ``_default_worker_launcher`` /
+                # ``start_ffmpeg``), so a fixed marker string alone let a
+                # PREVIOUS worker's own "reached PLAYING" line satisfy a
+                # brand-new worker's on-air-evidence check the moment it was
+                # spawned. The daemon's primary defense is now anchoring the
+                # scan to bytes at or after ITS OWN spawn point
+                # (``EgressDaemon._stderr_spawn_offset``); this pid is a
+                # second, independent check
+                # (``civiccast.egress.health.worker_reached_playing``'s
+                # ``expected_pid``) that holds even if the byte offset is
+                # ever wrong.
                 print(
-                    f"CTRL preroll: reached PLAYING after {time.monotonic() - started:.1f}s",
+                    f"CTRL preroll: reached PLAYING after {time.monotonic() - started:.1f}s "
+                    f"pid={os.getpid()}",
                     file=sys.stderr,
                     flush=True,
                 )

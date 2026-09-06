@@ -51,22 +51,50 @@ class _FakeProcess:
 
 class _WorkerStrategy:
     """A GStreamer-named strategy that hands out fake processes in order,
-    mirroring ``tests/egress/test_gst_worker_exit_diagnosis.py``'s fixture."""
+    mirroring ``tests/egress/test_gst_worker_exit_diagnosis.py``'s fixture.
+
+    Round-4 (PR #183 review, BLOCKER reproduced): ``start()`` now opens the
+    channel's stderr log in APPEND mode, matching the real
+    ``_default_worker_launcher`` in ``strategy.py`` exactly -- the round-3
+    version of this fixture used ``write_text`` (truncates per spawn), which
+    is why the round-3 test matrix passed even though the real, never-
+    truncated append-mode log did not: every fake worker got a fresh, empty
+    log, so no worker could ever see a PREVIOUS worker's stale evidence
+    regardless of whether the daemon anchored its reads. ``stderr_texts``
+    (optional) supplies a DIFFERENT chunk of text appended on each
+    successive ``start()`` call -- falls back to repeating ``stderr_text``
+    on every call when not given, matching every pre-round-4 caller of this
+    fixture unchanged."""
 
     name = "gstreamer-playout-worker"
     supports_live_swap = True
     supports_content_reload = True
 
-    def __init__(self, processes: list[_FakeProcess], stderr_text: str) -> None:
+    def __init__(
+        self,
+        processes: list[_FakeProcess],
+        stderr_text: str = "",
+        *,
+        stderr_texts: list[str] | None = None,
+    ) -> None:
         self._processes = list(processes)
         self._stderr_text = stderr_text
+        self._stderr_texts = stderr_texts
+        self._start_count = 0
 
     def start(self, request: EncoderStartRequest) -> EncoderStartResult:
         process = self._processes.pop(0)
         log_dir = request.work_dir / request.channel_id / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         stderr_path = log_dir / "gst-worker.stderr.log"
-        stderr_path.write_text(self._stderr_text, encoding="utf-8")
+        if self._stderr_texts is not None:
+            index = min(self._start_count, len(self._stderr_texts) - 1)
+            text = self._stderr_texts[index]
+        else:
+            text = self._stderr_text
+        self._start_count += 1
+        with stderr_path.open("a", encoding="utf-8") as handle:
+            handle.write(text)
         return EncoderStartResult(
             process=process,
             concat_plan_path=request.work_dir / "playout-graph.json",
@@ -666,3 +694,109 @@ def test_alive_poll_path_resets_the_streak_once_on_air_evidence_is_held_for_60s(
     clock["t"] += 10.0  # t=67s since evidence was latched
     daemon.process_once("gov")
     assert "gov" not in daemon._restart_streak
+
+
+# --- Round-4 review (Opus, PR #183), BLOCKER reproduced -----------------------------
+#
+# Round-3 (above) fixed the alive-poll path's healthy-uptime reset to require
+# real on-air evidence instead of wall-clock seconds since spawn -- but the
+# fixture used ``write_text`` (truncates per spawn), which meant every fake
+# worker started from an EMPTY log. The real ``strategy.py`` /
+# ``_ffmpeg.py`` open the channel's stderr log in APPEND mode and never
+# truncate it per spawn, so on a real box, ONE worker ever reaching PLAYING
+# left that evidence sitting in the log FOREVER -- every later worker on the
+# same channel read as "confirmed on air" on its very first poll tick, streak
+# reset every single time, never escalating (measured: 40 relaunches, streak
+# pinned at 1 -- reproducing the round-2 symptom this whole chain exists to
+# close). The test below reproduces the reviewer's own scenario against the
+# fixture updated to real append semantics (see ``_WorkerStrategy``'s
+# docstring).
+
+
+def test_a_stale_marker_from_a_previous_worker_does_not_confirm_a_new_one(
+    tmp_path: Path,
+) -> None:
+    """Worker 1 emits the real ``reached PLAYING`` marker, airs 10s, then
+    exits with an ORDINARY (non-preroll-timeout) code. Workers 2 through 5
+    each append ONLY the never-reaches-PLAYING timeout line (no marker of
+    their own) to the SAME append-mode log, stay alive 62s, then exit with
+    ``GST_PREROLL_TIMEOUT_EXIT_CODE``. Under the pre-round-4 tail-window
+    read, worker 1's marker would still be visible to every one of workers
+    2-5 (it never left the log), latching "confirmed on air" on their very
+    first alive-poll tick and resetting the streak back to 0 every single
+    time -- the channel would relaunch forever and never reach
+    FALLBACK_SLATE. With the spawn-offset anchor, worker 1's marker sits
+    strictly before every later worker's own offset and is never read: the
+    streak must advance on each of workers 2-5's preroll-timeout exits
+    exactly as if no marker had ever been printed on this channel at all,
+    reaching FALLBACK_SLATE at the same measured cadence as the marker-free
+    62s case in
+    ``test_alive_poll_path_still_escalates_regardless_of_wall_clock_lifetime``:
+    streak 1 at t=10 (worker 1's own ordinary crash), 2 at t=72 (worker 2's
+    preroll-timeout exit), 3 at t=134, 4 at t=196, and 5 -- tripping
+    ``_LIVE_SOURCE_FAILURE_FALLBACK_STREAK`` -- at t=258 (worker 5's exit)."""
+    clock = {"t": 0.0}
+    processes = [_FakeProcess(pid=1400 + i) for i in range(10)]
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_start_command())
+    timeout_line = (
+        "CTRL preroll: worker exiting -- pipeline did not reach PLAYING "
+        "within 45.0s (get_state=async)\n"
+    )
+    strategy = _WorkerStrategy(
+        processes,
+        stderr_texts=[
+            "CTRL preroll: reached PLAYING after 3.0s pid=1400\n",
+            *([timeout_line] * 9),
+        ],
+    )
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        fallback_source_provider=lambda _config: _source_plan(tmp_path),
+        encoder_strategy=strategy,
+        monotonic=lambda: clock["t"],
+        restart_cooldown_seconds=0.0,
+    )
+
+    assert daemon.process_once("gov") == 1  # worker 1 starts; its marker is now in the log
+
+    # Worker 1 airs for 10s of alive polling (its own marker is real evidence
+    # -- this must NOT be confused with the bug under test, which is about
+    # LATER workers reading worker 1's marker as THEIR OWN evidence), then
+    # exits with an ordinary, non-preroll-timeout code.
+    elapsed = 0.0
+    while elapsed < 10.0:
+        clock["t"] += 2.0
+        elapsed += 2.0
+        daemon.process_once("gov")
+    worker = daemon._processes.get("gov")
+    assert worker is not None, "expected worker 1 still tracked as alive"
+    worker.returncode = 1
+    daemon.process_once("gov")  # relaunches into worker 2
+    assert daemon._restart_streak["gov"] == 1
+
+    reached_at: float | None = None
+    for _ in range(8):  # workers 2..9 at most -- must land well before this
+        elapsed = 0.0
+        while elapsed < 62.0:
+            clock["t"] += 2.0
+            elapsed += 2.0
+            worker = daemon._processes.get("gov")
+            assert worker is not None, "expected the worker still tracked as alive"
+            daemon.process_once("gov")
+        worker = daemon._processes.get("gov")
+        assert worker is not None, "expected the worker still tracked as alive at exit"
+        worker.returncode = GST_PREROLL_TIMEOUT_EXIT_CODE
+        daemon.process_once("gov")
+        if daemon._store.read_state("gov").state == "FALLBACK_SLATE":
+            reached_at = clock["t"]
+            break
+
+    assert daemon._store.read_state("gov").state == "FALLBACK_SLATE", (
+        "worker 1's stale marker must not keep resetting the streak forever"
+    )
+    assert daemon._restart_streak["gov"] >= 5
+    assert reached_at == 258.0

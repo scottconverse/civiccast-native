@@ -470,6 +470,58 @@ below.
     real outcome instead of a hardcoded `False`. A teardown that itself
     raises is caught and logged, never allowed to mask the distinct exit
     code.
+  - **Round-4 review BLOCKER (Opus, PR #183), reproduced -- round-3's fix
+    was NOT sufficient on its own.** Correcting the round-3 entry directly
+    above: `EgressDaemon._poll_process` did start greping for the
+    `CTRL preroll: reached PLAYING` marker via
+    `civiccast.egress.health.worker_reached_playing`, but that function read
+    a fixed tail window of the channel's per-worker stderr log with no
+    anchor to the CURRENT worker's own spawn point. Both encoder strategies
+    open that fixed per-channel log (`gst-worker.stderr.log` /
+    `ffmpeg.stderr.log`) in **APPEND mode and never truncate it per spawn**
+    (`_default_worker_launcher` in `strategy.py`, `start_ffmpeg` in
+    `_ffmpeg.py`) -- so once ANY worker on a channel ever reached PLAYING (or
+    ever showed FFmpeg fps/bitrate progress), that evidence sat in the log
+    forever, and every LATER worker spawned on the same channel read as
+    "confirmed on air" on its very first poll tick, whether or not it ever
+    produced any output of its own. The 60s healthy-uptime clock had become
+    a spawn clock again -- the exact round-3 symptom, reproduced (measured:
+    40 relaunches, streak pinned at 1). Fixed with two independent anchors,
+    belt and braces: `EgressDaemon._stderr_spawn_offset` now records the
+    stderr log's byte SIZE at the moment the CURRENT worker was spawned
+    (`_start`, popped alongside `_started_at` on every exit/spawn/stop route
+    so a fresh worker never inherits a stale offset), and
+    `civiccast.egress.health.worker_reached_playing` /
+    the new `read_ffmpeg_encoder_metrics_since` scan ONLY bytes at or after
+    that offset -- a previous worker's evidence, which always sits before
+    it, is never read at all, not merely filtered out afterward. If the log
+    is ever found smaller than the recorded offset (rotated/truncated
+    out from under the daemon), the read falls back to byte 0 rather than
+    erroring. Second, independent layer: `_await_playing`'s marker now also
+    prints the worker's own pid (`... pid=1234`, `os.getpid()`), and the
+    daemon requires that pid to match its currently-tracked process
+    (`_observed_on_air_evidence`) before crediting the marker -- a defense
+    that holds even on the (believed-impossible) case where the byte offset
+    itself were somehow wrong. The old fixed 64 KiB tail window is gone from
+    this check entirely, replaced by a 4 MiB bounded scan measured FROM the
+    spawn offset (not a hard requirement of the fix, but a deliberate choice
+    not to reintroduce an unbounded read from the other end of the file --
+    see `civiccast.egress.health._SPAWN_SCAN_LIMIT_BYTES`); per-tick cost of
+    the new scan measured directly (2,000 calls, wall-clock average) against
+    a representative unconfirmed-worker log: `worker_reached_playing`
+    (~55 KB, marker present, early-exit on match) averaged ~0.1ms/call;
+    `read_ffmpeg_encoder_metrics_since` (~110 KB / 2,000 progress lines, the
+    worst case of a channel that has been unconfirmed since spawn for a
+    while and keeps accumulating progress lines with no early exit) averaged
+    ~5.8ms/call. Both comfortably inside the existing ~2s poll cadence, and
+    the 4 MiB bound caps the worst case regardless of how long a channel
+    stays unconfirmed. `read_latest_ffmpeg_encoder_metrics`
+    (the sink-health tail-window reader used by `_health_metrics` /
+    `build_default_sink_health`) is unchanged -- that reader only ever wants
+    "is the encoder moving media right now," which a previous worker's
+    long-stale progress line cannot masquerade as once the current worker
+    has printed anything of its own; only the ON-AIR-EVIDENCE readers needed
+    the spawn anchor.
   - New tests: `tests/egress/test_gst_engine_preroll_timeout.py` (the
     engine's bounded wait, env-var resolution/clamp including the new 45s
     ceiling, the distinct exception, the current+pending log line, the new
@@ -479,17 +531,39 @@ below.
     returns the distinct exit code, still emits a `WORKER_RESULT` receipt,
     and now attempts a bounded teardown -- covering a clean teardown, an
     unclean one, and one that itself raises), `tests/egress/test_health.py`
-    (`worker_reached_playing`, including the tail-window behavior), and
-    `tests/egress/test_daemon_preroll_timeout_relaunch.py` (the rate-limited
-    streak wired through a REAL `_poll_process` returncode rather than a
-    direct call, per-channel isolation, the healthy-uptime exemption even at
-    uptime >= 60s, reset behavior, sustained-crash escalation to fallback
-    slate at both the 30s default and the 45s clamp ceiling with the
-    previously-loose cadence bound replaced by the actual measured value,
-    AND the round-3 alive-poll-path regression: sustained preroll timeouts
-    at worker lifetimes of 45/59/60/62/90s under both bounds -- reproduced
-    against the pre-fix gating logic to confirm each new test actually fails
-    without the fix before being restored). Also updated
+    (`worker_reached_playing`, spawn-offset anchoring and the pid check --
+    round-4 rewrote
+    `test_true_even_when_the_marker_is_outside_the_default_tail_window` into
+    `test_true_when_the_marker_is_130kb_past_the_spawn_offset` (the OLD test
+    named a tail-window parameter that no longer exists; the real behavior
+    now under test is that a marker well past the 64 KiB the old window
+    would have covered is still found because it's scanned from the spawn
+    offset forward with no window at all) plus a new
+    `test_a_marker_before_the_spawn_offset_does_not_count`, and
+    `read_ffmpeg_encoder_metrics_since`'s equivalent stale-progress-before-
+    offset case), and `tests/egress/test_daemon_preroll_timeout_relaunch.py`
+    (the rate-limited streak wired through a REAL `_poll_process` returncode
+    rather than a direct call, per-channel isolation, the healthy-uptime
+    exemption even at uptime >= 60s, reset behavior, sustained-crash
+    escalation to fallback slate at both the 30s default and the 45s clamp
+    ceiling with the previously-loose cadence bound replaced by the actual
+    measured value, AND the round-3 alive-poll-path regression: sustained
+    preroll timeouts at worker lifetimes of 45/59/60/62/90s under both
+    bounds -- reproduced against the pre-fix gating logic to confirm each
+    new test actually fails without the fix before being restored). Round-4
+    additionally: changed the fixture's `_WorkerStrategy.start` from
+    `write_text` (truncates per spawn -- the reason the round-3 test matrix
+    passed while the real append-mode log did not) to append mode, matching
+    `strategy.py`'s real behavior, and re-ran the full 45/59/60/62/90s x
+    30/45s matrix under it; added
+    `test_a_stale_marker_from_a_previous_worker_does_not_confirm_a_new_one`,
+    the reviewer's own reproduction: worker 1 emits the real marker, airs
+    10s, exits cleanly; workers 2 through 41 append ONLY the never-reaches-
+    PLAYING timeout line to the SAME log, each staying alive 62s before its
+    own preroll-timeout exit -- and the channel must still escalate to
+    FALLBACK_SLATE (asserted at cycle 5, the same cadence the non-stale-
+    marker 62s case already reaches) rather than latching "confirmed on air"
+    off worker 1's long-stale marker forever. Also updated
     `tests/egress/test_daemon.py::test_healthy_uptime_resets_the_crash_streak`,
     which used to force the reset by back-dating `_started_at` directly with
     no encoder evidence at all -- exactly the bug this round closes -- to

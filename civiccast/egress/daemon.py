@@ -48,6 +48,7 @@ from civiccast.egress.health import (
     EgressEncoderMetrics,
     build_default_sink_health,
     encoder_has_progress,
+    read_ffmpeg_encoder_metrics_since,
     read_latest_ffmpeg_encoder_metrics,
     worker_reached_playing,
 )
@@ -374,6 +375,24 @@ class EgressDaemon:
         # preroll wait itself, none of which is air, and none of which is
         # bounded by the worker's own preroll timeout.
         self._on_air_confirmed_at: dict[str, float] = {}
+        # Round-4 fix (PR #183 review, BLOCKER reproduced): the byte SIZE of
+        # the channel's stderr log at the moment the CURRENTLY-tracked worker
+        # was spawned (0 if the log did not exist yet). ``strategy.py`` /
+        # ``_ffmpeg.py`` open this fixed per-channel log in APPEND mode and
+        # never truncate it per spawn -- without this anchor, one worker
+        # EVER reaching PLAYING (or producing FFmpeg progress) left that
+        # evidence sitting in the log forever, and every later worker on the
+        # same channel read as "confirmed on air" on its very first poll
+        # tick even if it never produced any output itself (measured: 40
+        # relaunches, streak pinned at 1 -- the round-3 fix's own healthy-
+        # uptime clock never actually started from real evidence, because it
+        # was reading round-1's worker's marker). ``_observed_on_air_evidence``
+        # scans only bytes AT OR AFTER this offset (see
+        # ``civiccast.egress.health.worker_reached_playing`` /
+        # ``read_ffmpeg_encoder_metrics_since``). Popped on every exit/spawn
+        # alongside ``_started_at`` so a fresh worker never inherits a stale
+        # offset from the worker it replaced.
+        self._stderr_spawn_offset: dict[str, int] = {}
         # Per channel: the horizon of the source plan actually DISPATCHED to the
         # encoder (see dispatched_plan_horizon / _record_dispatched_plan).
         self._dispatched_plan_horizon: dict[str, tuple[str | None, tuple[float, ...], bool]] = {}
@@ -916,6 +935,29 @@ class EgressDaemon:
                         ),
                     )
 
+                # Round-4 fix (PR #183 review, BLOCKER reproduced): snapshot
+                # the channel's stderr log size BEFORE this spawn's
+                # ``strategy.start()`` call, not after -- ``strategy.py`` /
+                # ``_ffmpeg.py`` open a FIXED per-channel path in APPEND
+                # mode, so this is exactly "how big was the log the moment
+                # before this worker's own output could start landing in
+                # it," which is what the offset anchor needs to mean.
+                # Reading the size AFTER ``start()`` returns would already
+                # include whatever this brand-new worker itself just wrote
+                # (its subprocess's own real-world output has no such race
+                # in production, but this ordering is correct either way and
+                # removes even a theoretical one). Only reused if the new
+                # spawn's stderr path is the SAME file as the previous
+                # worker's (true in the overwhelmingly common case of an
+                # unchanged encoder strategy) -- a mid-flight strategy
+                # switch (the FfmpegNotFoundError independent-slate retry
+                # below) gets a fresh path and starts its own offset at 0.
+                previous_stderr_path = self._stderr_logs.get(channel_id)
+                pre_spawn_stderr_size = (
+                    _stderr_log_size(previous_stderr_path)
+                    if previous_stderr_path is not None
+                    else 0
+                )
                 try:
                     encoder_result = self._encoder_strategy.start(_encoder_request(source_plan))
                 except (EncoderUnavailableError, FfmpegNotFoundError) as exc:
@@ -972,6 +1014,17 @@ class EgressDaemon:
                 process = encoder_result.process
                 self._processes[channel_id] = process
                 self._started_at[channel_id] = self._monotonic()
+                # Round-4 fix (PR #183 review, BLOCKER reproduced): anchor
+                # this worker's on-air evidence scan to bytes at or after
+                # THIS spawn -- see ``_stderr_spawn_offset``'s docstring for
+                # why the append-mode log makes this necessary. Uses the
+                # PRE-spawn snapshot taken above (not the log's current size
+                # now, which may already include this worker's own output).
+                self._stderr_spawn_offset[channel_id] = (
+                    pre_spawn_stderr_size
+                    if previous_stderr_path == encoder_result.stderr_path
+                    else 0
+                )
                 # This IS a fresh spawn -- any on-air evidence latched for a
                 # PREVIOUS worker no longer describes this one.
                 self._on_air_confirmed_at.pop(channel_id, None)
@@ -1191,6 +1244,24 @@ class EgressDaemon:
         through the SAME GStreamer engine is just as capable of proving it
         reached PLAYING.
 
+        Round-4 (PR #183 review, BLOCKER reproduced): round-3's version read
+        both evidence sources from the CHANNEL's log with no anchor to the
+        CURRENT worker's own spawn point. ``strategy.py`` / ``_ffmpeg.py``
+        both open this fixed per-channel log in APPEND mode and never
+        truncate it per spawn, so one worker EVER reaching PLAYING (or ever
+        showing FFmpeg progress) left that evidence sitting in the log
+        forever -- every later worker on the same channel read as "confirmed
+        on air" on its very first poll tick, even one that never produced
+        any output itself (measured: 40 relaunches, streak pinned at 1; the
+        round-3 healthy-uptime clock never actually started from THIS
+        worker's evidence, because it kept reading a PREVIOUS worker's).
+        Both evidence sources below are now anchored to
+        ``self._stderr_spawn_offset[channel_id]`` -- the byte size of the log
+        at the moment THIS worker was spawned (see that attribute's
+        docstring) -- so a previous worker's evidence, which always sits
+        before that offset, is never read at all, not merely filtered out
+        after the fact.
+
         Two encoder families, two evidence sources, either is sufficient:
 
         * GStreamer (``civiccast.egress.gst.engine.GstPlayoutEngine``): the
@@ -1199,24 +1270,31 @@ class EgressDaemon:
           ``civiccast.egress.health.worker_reached_playing``). This is the
           exact evidence the reviewer asked for -- it means the pipeline
           actually reached PLAYING, not just that spawn-to-now hasn't hit an
-          arbitrary wall-clock threshold.
+          arbitrary wall-clock threshold. Belt-and-braces on top of the
+          offset anchor: the marker also carries the printing worker's own
+          pid, and ``worker_reached_playing`` is given the CURRENT worker's
+          pid (from ``self._processes[channel_id]``) to require against it,
+          so even a marker that somehow lands at or after the offset (e.g. a
+          test fixture, or a log-rotation edge case) cannot be credited to
+          the wrong worker.
         * FFmpeg (the other encoder strategy this daemon can launch): no
-          PLAYING marker exists, but ``read_latest_ffmpeg_encoder_metrics``
-          already parses live fps=/bitrate= progress out of the same stderr
-          log for sink-health purposes (``_sink_connected`` /
-          ``build_default_sink_health``) -- reused here via
-          ``encoder_has_progress`` as the FFmpeg-side equivalent: real
-          encoding progress is at least as strong a signal as a GStreamer
-          PLAYING transition, and without this branch an FFmpeg-encoded
-          channel would NEVER get its healthy-uptime reset at all (the
-          PLAYING marker only ever appears in a GStreamer worker's log).
+          PLAYING marker exists, but ``read_ffmpeg_encoder_metrics_since``
+          parses live fps=/bitrate= progress out of the same stderr log,
+          anchored the same way -- reused here via ``encoder_has_progress``
+          as the FFmpeg-side equivalent: real encoding progress is at least
+          as strong a signal as a GStreamer PLAYING transition, and without
+          this branch an FFmpeg-encoded channel would NEVER get its
+          healthy-uptime reset at all (the PLAYING marker only ever appears
+          in a GStreamer worker's log).
         """
         log_path = self._stderr_logs.get(channel_id)
         if log_path is None:
             return False
-        if worker_reached_playing(log_path):
+        offset = self._stderr_spawn_offset.get(channel_id, 0)
+        expected_pid = _process_pid(self._processes.get(channel_id))
+        if worker_reached_playing(log_path, offset=offset, expected_pid=expected_pid):
             return True
-        return encoder_has_progress(read_latest_ffmpeg_encoder_metrics(log_path))
+        return encoder_has_progress(read_ffmpeg_encoder_metrics_since(log_path, offset=offset))
 
     def _engine_label(self) -> str:
         """Which encoder engine actually runs this channel's child process.
@@ -1472,6 +1550,7 @@ class EgressDaemon:
         self._processes.pop(channel_id, None)
         self._started_at.pop(channel_id, None)
         self._on_air_confirmed_at.pop(channel_id, None)
+        self._stderr_spawn_offset.pop(channel_id, None)
         was_draining = channel_id in self._draining_channels
         self._draining_channels.discard(channel_id)
         # A deliberate filler kill (issue #157) exits non-zero on real
@@ -2422,6 +2501,7 @@ class EgressDaemon:
         process = self._processes.pop(channel_id, None)
         self._started_at.pop(channel_id, None)
         self._on_air_confirmed_at.pop(channel_id, None)
+        self._stderr_spawn_offset.pop(channel_id, None)
         self._reset_restart_tracking(channel_id)  # operator stop — clear crash back-off
         self._draining_channels.discard(channel_id)
         self._pending_reloads.pop(channel_id, None)
@@ -2705,6 +2785,20 @@ def _default_orphan_terminator(pid: int, created_at: float) -> None:
 
 def _process_pid(process: object) -> int | None:
     return getattr(process, "pid", None)
+
+
+def _stderr_log_size(path: Path) -> int:
+    """Byte size of a channel's stderr log right now, 0 if it does not exist
+    (or is otherwise unreadable) yet. Round-4 fix (PR #183 review, BLOCKER
+    reproduced): used to snapshot ``EgressDaemon._stderr_spawn_offset`` at
+    spawn time -- ``strategy.py`` / ``_ffmpeg.py`` open this fixed per-channel
+    log in APPEND mode and never truncate it per spawn, so a fresh worker's
+    "spawn point" in the log is this offset, not byte 0."""
+
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
 
 
 class _PollableProcess(Protocol):

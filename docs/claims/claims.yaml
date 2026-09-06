@@ -725,27 +725,56 @@ entries:
       # outcome instead of a hardcoded False. Neither graph.py, control.py,
       # decode_policy.py, nor audio_tap.py changed.
       #
+      # Round-4 review BLOCKER (Opus, PR #183), REPRODUCED: round-3's fix
+      # above (``worker_reached_playing``) was itself not sufficient --
+      # ``strategy.py`` / ``_ffmpeg.py`` (neither a code input of this claim)
+      # open the channel's per-worker stderr log in APPEND mode and never
+      # truncate it per spawn, so ONE worker ever reaching PLAYING left the
+      # marker in the log forever, and every LATER worker on the same
+      # channel read as "confirmed on air" on its own very first poll tick
+      # (measured: 40 relaunches, streak pinned at 1 -- the round-2 symptom,
+      # reproduced through the round-3 fix unchanged). Fixed with two
+      # independent anchors: the daemon (``civiccast/egress/daemon.py``, not
+      # itself a code input here) now snapshots the log's byte size at each
+      # worker's own spawn (``_stderr_spawn_offset``) and scans only bytes at
+      # or after it (``civiccast.egress.health.worker_reached_playing`` /
+      # the new ``read_ffmpeg_encoder_metrics_since``, health.py likewise not
+      # bound here); AND engine.py's marker now also prints the worker's own
+      # pid (``... pid=1234``, ``os.getpid()``), which the daemon requires to
+      # match its currently-tracked process before crediting the marker --
+      # a second, independent check that holds even if the byte offset were
+      # ever wrong. Only engine.py's re-hash reflects this round; worker.py
+      # is unchanged and its blob is unchanged from the round-3 value.
+      #
       # Current-source proof: tests/egress/test_gst_engine_preroll_timeout.py
       # (engine side, including the 45s clamp, the current+pending log line,
-      # the new ``reached PLAYING`` success marker, and the NaN-clamp-escape
-      # regression tests), tests/egress/test_gst_worker_preroll_timeout_exit.py
+      # the new ``reached PLAYING`` success marker now carrying a pid, and
+      # the NaN-clamp-escape regression tests),
+      # tests/egress/test_gst_worker_preroll_timeout_exit.py
       # (the worker's exit code, WORKER_RESULT receipt, and the new
       # bounded-teardown-attempt coverage including a teardown that itself
-      # raises), tests/egress/test_health.py (``worker_reached_playing``),
-      # and tests/egress/test_daemon_preroll_timeout_relaunch.py (the
+      # raises), tests/egress/test_health.py (``worker_reached_playing``'s
+      # spawn-offset anchor and pid check, and the new
+      # ``read_ffmpeg_encoder_metrics_since`` FFmpeg-side equivalent), and
+      # tests/egress/test_daemon_preroll_timeout_relaunch.py (the
       # daemon's rate-limited streak wired through a REAL ``_poll_process``
       # returncode, the healthy-uptime exemption, sustained-crash escalation
       # to fallback slate at both the 30s default and the 45s clamp ceiling,
-      # AND the round-3 alive-poll-path regression: sustained preroll
-      # timeouts at worker lifetimes of 45/59/60/62/90s under both bounds,
-      # which reproduce the reviewer's exact measured bug shape against the
-      # PRE-fix gating logic before being restored to the fix).
+      # the round-3 alive-poll-path regression: sustained preroll timeouts
+      # at worker lifetimes of 45/59/60/62/90s under both bounds, AND the
+      # round-4 append-mode fixture + the reviewer's own stale-marker
+      # reproduction (worker 1 emits the marker and exits cleanly, workers
+      # 2-5 each append only the timeout line to the SAME append-mode log
+      # and must still escalate to fallback slate rather than latching on
+      # worker 1's marker) -- all reproduce the reviewer's exact measured
+      # bug shape against the PRE-fix gating logic before being restored to
+      # the fix).
       # Blob IDs re-hashed with `git hash-object --path <file> <file>`.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: 06cdff1b94409a5f1c15afd7b063630fd162e60e
         - path: civiccast/egress/gst/engine.py
-          blob: 699eb7eb992627fc6190e594e313287399725ae6
+          blob: 59ba6fddbd87ae500fb6a336aa3594cd70e8fab6
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -1163,27 +1192,56 @@ entries:
       # outcome instead of a hardcoded False. Neither graph.py, control.py,
       # decode_policy.py, nor audio_tap.py changed.
       #
+      # Round-4 review BLOCKER (Opus, PR #183), REPRODUCED: round-3's fix
+      # above (``worker_reached_playing``) was itself not sufficient --
+      # ``strategy.py`` / ``_ffmpeg.py`` (neither a code input of this claim)
+      # open the channel's per-worker stderr log in APPEND mode and never
+      # truncate it per spawn, so ONE worker ever reaching PLAYING left the
+      # marker in the log forever, and every LATER worker on the same
+      # channel read as "confirmed on air" on its own very first poll tick
+      # (measured: 40 relaunches, streak pinned at 1 -- the round-2 symptom,
+      # reproduced through the round-3 fix unchanged). Fixed with two
+      # independent anchors: the daemon (``civiccast/egress/daemon.py``, not
+      # itself a code input here) now snapshots the log's byte size at each
+      # worker's own spawn (``_stderr_spawn_offset``) and scans only bytes at
+      # or after it (``civiccast.egress.health.worker_reached_playing`` /
+      # the new ``read_ffmpeg_encoder_metrics_since``, health.py likewise not
+      # bound here); AND engine.py's marker now also prints the worker's own
+      # pid (``... pid=1234``, ``os.getpid()``), which the daemon requires to
+      # match its currently-tracked process before crediting the marker --
+      # a second, independent check that holds even if the byte offset were
+      # ever wrong. Only engine.py's re-hash reflects this round; worker.py
+      # is unchanged and its blob is unchanged from the round-3 value.
+      #
       # Current-source proof: tests/egress/test_gst_engine_preroll_timeout.py
       # (engine side, including the 45s clamp, the current+pending log line,
-      # the new ``reached PLAYING`` success marker, and the NaN-clamp-escape
-      # regression tests), tests/egress/test_gst_worker_preroll_timeout_exit.py
+      # the new ``reached PLAYING`` success marker now carrying a pid, and
+      # the NaN-clamp-escape regression tests),
+      # tests/egress/test_gst_worker_preroll_timeout_exit.py
       # (the worker's exit code, WORKER_RESULT receipt, and the new
       # bounded-teardown-attempt coverage including a teardown that itself
-      # raises), tests/egress/test_health.py (``worker_reached_playing``),
-      # and tests/egress/test_daemon_preroll_timeout_relaunch.py (the
+      # raises), tests/egress/test_health.py (``worker_reached_playing``'s
+      # spawn-offset anchor and pid check, and the new
+      # ``read_ffmpeg_encoder_metrics_since`` FFmpeg-side equivalent), and
+      # tests/egress/test_daemon_preroll_timeout_relaunch.py (the
       # daemon's rate-limited streak wired through a REAL ``_poll_process``
       # returncode, the healthy-uptime exemption, sustained-crash escalation
       # to fallback slate at both the 30s default and the 45s clamp ceiling,
-      # AND the round-3 alive-poll-path regression: sustained preroll
-      # timeouts at worker lifetimes of 45/59/60/62/90s under both bounds,
-      # which reproduce the reviewer's exact measured bug shape against the
-      # PRE-fix gating logic before being restored to the fix).
+      # the round-3 alive-poll-path regression: sustained preroll timeouts
+      # at worker lifetimes of 45/59/60/62/90s under both bounds, AND the
+      # round-4 append-mode fixture + the reviewer's own stale-marker
+      # reproduction (worker 1 emits the marker and exits cleanly, workers
+      # 2-5 each append only the timeout line to the SAME append-mode log
+      # and must still escalate to fallback slate rather than latching on
+      # worker 1's marker) -- all reproduce the reviewer's exact measured
+      # bug shape against the PRE-fix gating logic before being restored to
+      # the fix).
       # Blob IDs re-hashed with `git hash-object --path <file> <file>`.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: 06cdff1b94409a5f1c15afd7b063630fd162e60e
         - path: civiccast/egress/gst/engine.py
-          blob: 699eb7eb992627fc6190e594e313287399725ae6
+          blob: 59ba6fddbd87ae500fb6a336aa3594cd70e8fab6
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
