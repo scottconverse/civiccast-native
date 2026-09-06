@@ -6326,6 +6326,7 @@ Read CivicCast local federation metadata.
 - `pid` (optional): `number | null`
 - `state` (required): `'STOPPED' | 'STARTING' | 'ON_AIR' | 'TRANSITIONING' | 'FALLBACK_SLATE' | 'DRAINING' | 'STOPPING' | 'ERROR'`
 - `state_entered_at` (optional): `string`
+- `transition_note` (optional): `string | null`
 - `updated_at` (required): `string`
 
 ### `EmergencyOverlay`

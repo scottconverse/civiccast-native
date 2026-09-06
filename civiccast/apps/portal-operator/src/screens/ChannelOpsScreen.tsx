@@ -601,6 +601,9 @@ export function EgressControlPanel({
         {state?.last_error && (
           <div role="alert" style={{ color: 'var(--cc-err)' }}>{state.last_error}</div>
         )}
+        {state?.transition_note && (
+          <div style={{ color: 'var(--cc-ink-3)' }}>{state.transition_note}</div>
+        )}
         {latestHealth && (
           <dl className="m-0 grid gap-2 text-xs sm:grid-cols-2" style={{ color: 'var(--cc-ink-3)' }}>
             <div>

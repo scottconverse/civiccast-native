@@ -332,6 +332,7 @@ class EgressStateDb(Base):
     pending_reload_deadline: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    transition_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class EgressHealthSampleDb(Base):
@@ -552,6 +553,13 @@ class EgressStateRow(BaseModel):
     # clears" convention already used by every other optional field here).
     pending_reload_since: datetime | None = None
     pending_reload_deadline: datetime | None = None
+    # Delta review fix (2026-09-05): the pending-reload annotation above was
+    # written into ``last_error``, which the operator console renders as a
+    # red ``role="alert"`` -- clobbering a genuine prior error and mislabeling
+    # routine, by-design drain waiting as an error. This carries the SAME
+    # honest annotation in its own field so the console can show it as an
+    # info line while ``last_error`` stays reserved for actual errors.
+    transition_note: Annotated[str | None, Field(default=None, max_length=1000)] = None
 
 
 class EgressHealthSample(BaseModel):

@@ -42854,6 +42854,18 @@
               }
             ],
             "title": "Pending Reload Deadline"
+          },
+          "transition_note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transition Note"
           }
         },
         "additionalProperties": false,

@@ -24,6 +24,12 @@ a graceful wait for the outgoing leg's own natural EOS, by design, not a
 stuck latch to cancel. Both are nullable and default NULL (no reload
 pending); a real write clears them by simply not supplying a value.
 
+``transition_note`` (delta review fix, same date) carries that same human-
+facing annotation on its OWN field -- an earlier pass wrote it into
+``last_error``, which the operator console renders as a red ``role="alert"``,
+clobbering a genuine prior error and mislabeling routine drain-waiting as an
+error. Nullable, defaults NULL, cleared the same way as the two fields above.
+
 Revision numbers are repo-global -- parent on the single current head
 (``alembic heads`` at authoring time: ``0087_retention_terms``, the
 ``civiccast.schedule`` module's most recent migration).
@@ -62,6 +68,11 @@ def upgrade() -> None:
         sa.Column("pending_reload_deadline", sa.DateTime(timezone=True), nullable=True),
         schema=schema,
     )
+    op.add_column(
+        "egress_states",
+        sa.Column("transition_note", sa.Text(), nullable=True),
+        schema=schema,
+    )
     # Backfill: an existing row's true state-entry time is not recoverable,
     # so updated_at (the closest available anchor) is the honest choice.
     op.execute(
@@ -81,6 +92,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     schema = "civiccast" if _use_schema() else None
+    op.drop_column("egress_states", "transition_note", schema=schema)
     op.drop_column("egress_states", "pending_reload_deadline", schema=schema)
     op.drop_column("egress_states", "pending_reload_since", schema=schema)
     op.drop_column("egress_states", "state_entered_at", schema=schema)

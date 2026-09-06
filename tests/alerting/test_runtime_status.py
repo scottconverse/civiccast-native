@@ -219,6 +219,25 @@ class TestChannelRuntimeStatus:
         )
         assert not_yet_overdue.color == "yellow"
 
+    def test_a_known_future_deadline_wins_over_the_flat_fallback_bound(self) -> None:
+        """Delta review fix: the flat fallback bound must NOT ALSO fire once
+        ``seconds_in_state`` crosses it -- a 2-hour program's drain would
+        otherwise escalate at the 10-minute mark even with a perfectly
+        valid, not-yet-due deadline. A KNOWN deadline is the ONLY signal
+        once it exists."""
+        long_drain = compute_channel_runtime_status(
+            _config(),
+            _state(
+                "public",
+                "TRANSITIONING",
+                age_s=900,  # well past the 600s flat fallback bound
+                pending_reload_deadline=_NOW + timedelta(hours=2),  # still hours away
+            ),
+            _sample("public", "TRANSITIONING"),
+            now=_NOW,
+        )
+        assert long_drain.color == "yellow"
+
     def test_transitioning_with_no_known_deadline_falls_back_to_the_flat_bound(self) -> None:
         """No ``pending_reload_deadline`` (an ordinary TRANSITIONING with no
         pending reload, or the daemon genuinely could not estimate one) must

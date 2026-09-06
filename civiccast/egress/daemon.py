@@ -154,6 +154,12 @@ _RESTART_STREAK_RESET_UPTIME_S = 60.0
 # and ``alerting/runtime_status.py`` escalates only once a pending reload has
 # genuinely outlived the plan it is waiting on -- never a flat guess here.
 _PENDING_RELOAD_DEADLINE_MARGIN_S = 60.0
+# Delta review fix: a FALLBACK_SLATE-originated pending reload terminates the
+# process immediately (_process_terminate below) -- there is no program
+# content to wait out, only the child's own teardown, so its deadline is a
+# short, flat bound rather than a (meaningless, since there's no plan to
+# measure) plan-duration estimate.
+_PENDING_RELOAD_SLATE_DEADLINE_S = 15.0
 # Emit an escalation proof event at this restart streak and every multiple after
 # (the S8 alerting hook — the actual alert dispatch is wired when S8 lands, build
 # step 4; until then the escalation is durably recorded as a proof event).
@@ -328,6 +334,13 @@ class EgressDaemon:
         # Per channel: the horizon of the source plan actually DISPATCHED to the
         # encoder (see dispatched_plan_horizon / _record_dispatched_plan).
         self._dispatched_plan_horizon: dict[str, tuple[str | None, tuple[float, ...], bool]] = {}
+        # Delta review fix: wall-clock companion to the tuple above, so a
+        # pending-reload deadline estimate can subtract elapsed time and
+        # escalate off the plan's REMAINING duration, not its total (see
+        # _estimate_pending_reload_deadline). A separate dict rather than
+        # widening the tuple above, which automation.py already unpacks as
+        # exactly 3 elements.
+        self._dispatched_plan_started_at: dict[str, datetime] = {}
         # S9-5 crash-relaunch back-off: a latch paces rapid repeat relaunches, a
         # per-channel streak counts consecutive rapid crashes (for escalation +
         # reset on healthy uptime), and _backoff_relaunch holds a deferred relaunch
@@ -522,6 +535,7 @@ class EgressDaemon:
             tuple(float(segment.duration_seconds) for segment in source_plan.segments),
             switch_deferred,
         )
+        self._dispatched_plan_started_at[channel_id] = datetime.now(UTC)
 
     def send_caption_cue(
         self,
@@ -886,6 +900,7 @@ class EgressDaemon:
         pid: int | None = None,
         pending_reload_since: datetime | None = None,
         pending_reload_deadline: datetime | None = None,
+        transition_note: str | None = None,
     ) -> None:
         # Gate A T4 diagnosability fix (2026-09): this is the ONE choke point
         # every pipeline state transition passes through -- every
@@ -915,6 +930,7 @@ class EgressDaemon:
         # aborts the whole automation pass if left unfolded.
         current_source_label = db_safe_text_or_none(current_source_label)
         last_error = db_safe_text_or_none(last_error)
+        transition_note = db_safe_text_or_none(transition_note)
         _LOG.info(
             "channel %s: egress state -> %s (source=%s, pid=%s, last_error=%s)",
             channel_id,
@@ -952,6 +968,7 @@ class EgressDaemon:
                 last_error=last_error,
                 pending_reload_since=pending_reload_since,
                 pending_reload_deadline=pending_reload_deadline,
+                transition_note=transition_note,
             )
         )
 
@@ -1218,7 +1235,7 @@ class EgressDaemon:
             # marker forward.
             pending_reload_since: datetime | None = None
             pending_reload_deadline: datetime | None = None
-            pending_reload_last_error: str | None = None
+            pending_reload_transition_note: str | None = None
             if channel_id in self._draining_channels:
                 current_state: EgressState = "DRAINING"
             elif channel_id in self._pending_reloads:
@@ -1235,7 +1252,7 @@ class EgressDaemon:
                 current_state = "TRANSITIONING"
                 pending_reload_since = state.pending_reload_since if state else None
                 pending_reload_deadline = state.pending_reload_deadline if state else None
-                pending_reload_last_error = self._pending_reload_label(
+                pending_reload_transition_note = self._pending_reload_label(
                     pending_reload_since, datetime.now(UTC)
                 )
             elif state and state.state == "FALLBACK_SLATE":
@@ -1256,7 +1273,7 @@ class EgressDaemon:
                 current_source_label=state.current_source_label if state else None,
                 current_proof_event_id=state.current_proof_event_id if state else None,
                 pid=_process_pid(process),
-                last_error=pending_reload_last_error,
+                transition_note=pending_reload_transition_note,
                 pending_reload_since=pending_reload_since,
                 pending_reload_deadline=pending_reload_deadline,
             )
@@ -1738,8 +1755,19 @@ class EgressDaemon:
         since: datetime,
     ) -> datetime | None:
         """Best-effort wall-clock estimate of when a pending content-reload
-        that fell back to the terminate+restart drain SHOULD resolve (the
-        currently-airing plan's own duration, from ``since``, plus a margin).
+        that fell back to the terminate+restart drain SHOULD resolve.
+
+        Delta review fix: this used to be ``since + TOTAL plan duration``,
+        which is wrong the moment the plan is already partway through --
+        the true remaining runway is ``total - elapsed since the plan was
+        dispatched``. Uses ``_dispatched_plan_started_at`` (a wall-clock
+        companion to ``dispatched_plan_horizon``, recorded at the same two
+        dispatch sites) as the elapsed-time anchor.
+
+        FALLBACK_SLATE is a separate, simpler case: the reload TERMINATES the
+        process immediately (see ``_request_reload`` below) -- there is no
+        program content to wait out, so its deadline is a short flat bound
+        instead of a plan-duration estimate.
 
         Returns None when the daemon cannot say (no dispatched-plan record,
         or the record does not match what is actually airing right now) --
@@ -1748,6 +1776,8 @@ class EgressDaemon:
         """
         if state is None:
             return None
+        if state.state == "FALLBACK_SLATE":
+            return since + timedelta(seconds=_PENDING_RELOAD_SLATE_DEADLINE_S)
         horizon = self.dispatched_plan_horizon(channel_id)
         if horizon is None:
             return None
@@ -1757,7 +1787,12 @@ class EgressDaemon:
         total_seconds = sum(durations)
         if total_seconds <= 0:
             return None
-        return since + timedelta(seconds=total_seconds + _PENDING_RELOAD_DEADLINE_MARGIN_S)
+        started_at = self._dispatched_plan_started_at.get(channel_id)
+        if started_at is None:
+            return None
+        elapsed_seconds = max(0.0, (since - started_at).total_seconds())
+        remaining_seconds = max(0.0, total_seconds - elapsed_seconds)
+        return since + timedelta(seconds=remaining_seconds + _PENDING_RELOAD_DEADLINE_MARGIN_S)
 
     @staticmethod
     def _pending_reload_label(since: datetime | None, now: datetime) -> str:
@@ -1773,6 +1808,25 @@ class EgressDaemon:
         )
 
     def _request_reload(self, channel_id: str) -> None:
+        if channel_id in self._pending_reloads:
+            # Delta review fix: a reload is ALREADY pending (the drain from
+            # an earlier request is still in flight) -- a duplicate request
+            # here (automation's own B2 retry re-issuing "reload" every 45s
+            # during a long drain, or an operator re-issuing "Restart feed")
+            # must be an idempotent no-op. Without this guard, falling
+            # through re-attempted the seamless path (a wasted synchronous
+            # prepare) and, on a second failure, OVERWROTE
+            # ``_pending_reloads``/``pending_reload_since``/
+            # ``pending_reload_deadline`` with ``state.state`` at THIS
+            # moment -- which is "TRANSITIONING", not the true prior
+            # ON_AIR/FALLBACK_SLATE -- losing the eventual handoff's
+            # previous_state/proof event, and resetting the "since" timer so
+            # an overdue reload could never actually escalate.
+            _LOG.info(
+                "channel %s: reload already pending; ignoring the duplicate request.",
+                channel_id,
+            )
+            return
         state = self._store.read_state(channel_id)
         process = self._processes.get(channel_id)
         if process is None or _process_poll(process) is not None:
@@ -1806,7 +1860,7 @@ class EgressDaemon:
             current_source_label=state.current_source_label if state else None,
             current_proof_event_id=state.current_proof_event_id if state else None,
             pid=_process_pid(process),
-            last_error=self._pending_reload_label(since, since),
+            transition_note=self._pending_reload_label(since, since),
             pending_reload_since=since,
             pending_reload_deadline=deadline,
         )

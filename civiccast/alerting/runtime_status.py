@@ -138,14 +138,21 @@ def compute_channel_runtime_status(
         # hostile-review redo: escalate a TRANSITIONING row once its pending
         # reload has genuinely outlived the plan it is waiting on (the real
         # hang), not after a flat guess that would false-alarm on every
-        # long-running program's graceful drain. STARTING (and a
-        # TRANSITIONING row with no computable deadline) escalates
-        # symmetrically, but only past a generous flat fallback bound.
-        transitioning_overdue = state == "TRANSITIONING" and _pending_reload_overdue(state_row, now)
-        if (
-            transitioning_overdue
-            or seconds_in_state >= _TRANSIENT_STATE_FALLBACK_ESCALATION_SECONDS
-        ):
+        # long-running program's graceful drain. Delta review fix: a KNOWN
+        # deadline must be the ONLY signal used once it exists -- the flat
+        # fallback bound must not ALSO fire once seconds_in_state crosses it,
+        # or a 2-hour program's drain would escalate at the 10-minute mark
+        # even with a perfectly valid, not-yet-due deadline. STARTING (and a
+        # TRANSITIONING row with no computable deadline at all) escalates
+        # symmetrically, but only past that generous flat fallback bound.
+        has_known_deadline = (
+            state == "TRANSITIONING"
+            and state_row is not None
+            and state_row.pending_reload_deadline is not None
+        )
+        if has_known_deadline:
+            color = "red" if _pending_reload_overdue(state_row, now) else "yellow"
+        elif seconds_in_state >= _TRANSIENT_STATE_FALLBACK_ESCALATION_SECONDS:
             color = "red"
         else:
             color = "yellow"

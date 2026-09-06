@@ -651,6 +651,11 @@ export function EgressReadinessPanel({
                   {state.last_error}
                 </div>
               )}
+              {state?.transition_note && (
+                <div className="rounded-md p-2 text-xs" style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-3)' }}>
+                  {state.transition_note}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {([
                   ['start', 'Start'],

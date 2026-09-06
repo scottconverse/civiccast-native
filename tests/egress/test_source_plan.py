@@ -134,12 +134,18 @@ class TestEscapeDrawtext:
 
 def test_slate_source_generator_returns_source_plan(tmp_path: Path) -> None:
     captured: dict[str, list[str]] = {}
-    generator = SlateSourceGenerator(
-        work_dir=tmp_path,
-        ffmpeg_runner=lambda args: (
-            captured.setdefault("args", args) and FfmpegResult(returncode=0, stdout="", stderr="")
-        ),
-    )
+
+    def runner(args: list[str]) -> FfmpegResult:
+        captured["args"] = args
+        # Delta review fix: the generator now renders to a staging path and
+        # atomically publishes it via .replace() -- a fake runner that
+        # claims success must actually create the file, same as a real one
+        # would.
+        Path(args[-1]).parent.mkdir(parents=True, exist_ok=True)
+        Path(args[-1]).write_bytes(b"ts")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    generator = SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=runner)
 
     plan = generator(_config())
 
@@ -149,7 +155,10 @@ def test_slate_source_generator_returns_source_plan(tmp_path: Path) -> None:
     # filename (duration + message + profile), not a fixed "slate.ts".
     assert plan.segments[0].path.endswith(".ts")
     assert "slate-" in plan.segments[0].path
-    assert captured["args"][-1] == plan.segments[0].path
+    # The staging path (what the runner was actually called with) is
+    # replaced onto the final cache path, so they differ but the final one
+    # is what the plan carries.
+    assert Path(plan.segments[0].path).exists()
 
 
 def test_slate_source_generator_falls_back_to_plain_color(tmp_path: Path) -> None:
@@ -157,7 +166,11 @@ def test_slate_source_generator_falls_back_to_plain_color(tmp_path: Path) -> Non
 
     def runner(args: list[str]) -> FfmpegResult:
         calls.append(args)
-        return FfmpegResult(returncode=1 if len(calls) == 1 else 0, stdout="", stderr="")
+        if len(calls) == 1:
+            return FfmpegResult(returncode=1, stdout="", stderr="")
+        Path(args[-1]).parent.mkdir(parents=True, exist_ok=True)
+        Path(args[-1]).write_bytes(b"ts")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
 
     generator = SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=runner)
 
@@ -488,6 +501,8 @@ def test_slate_plan_spans_the_fill_target_with_one_rendered_file(tmp_path: Path)
 
     def runner(args: list[str]) -> FfmpegResult:
         calls.append(args)
+        Path(args[-1]).parent.mkdir(parents=True, exist_ok=True)
+        Path(args[-1]).write_bytes(b"ts")
         return FfmpegResult(returncode=0, stdout="", stderr="")
 
     generator = SlateSourceGenerator(
@@ -509,9 +524,15 @@ def test_slate_plan_still_repeats_short_segments_when_under_the_playlist_cap(
 ) -> None:
     """A target the default 30s duration already covers within the cap is
     unaffected -- no need to lengthen the card just because the fix exists."""
+
+    def runner(args: list[str]) -> FfmpegResult:
+        Path(args[-1]).parent.mkdir(parents=True, exist_ok=True)
+        Path(args[-1]).write_bytes(b"ts")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
     generator = SlateSourceGenerator(
         work_dir=tmp_path,
-        ffmpeg_runner=lambda _args: FfmpegResult(returncode=0, stdout="", stderr=""),
+        ffmpeg_runner=runner,
         target_fill_seconds=200,
     )
 

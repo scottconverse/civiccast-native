@@ -359,6 +359,48 @@ below.
   flat-floor-bug counterfactual keeps demonstrating a lead reaching negative
   (now via a fresh re-establish-and-repeat cycle rather than an
   unconditional dispatch). `automation.py` is not claims.yaml-bound.
+- **Delta review of the three fixes above: nine further corrections.**
+  (1) The pending-reload annotation moved OUT of `last_error` (which the
+  operator console renders as a red alert, clobbering a genuine error and
+  mislabeling a routine drain wait as one) into a new `transition_note`
+  field (`EgressStateRow`, migration `0088`), rendered as a plain info line
+  on `ChannelOpsScreen`/`SystemHealthScreen`. (2) `runtime_status.py`'s flat
+  600s escalation bound now fires ONLY when `pending_reload_deadline` is
+  unknown -- a known, not-yet-due deadline is the sole signal once it
+  exists, so a 2-hour program's drain no longer escalates at the 10-minute
+  mark. (3) `pending_reload_deadline` now estimates off the plan's
+  REMAINING duration (a new `_dispatched_plan_started_at` wall-clock anchor
+  minus elapsed time), not its total, and a FALLBACK_SLATE-originated
+  pending reload (which terminates the process immediately) gets a short
+  flat bound instead of a plan-duration guess. (4) `_request_reload` now
+  ignores a duplicate "reload" request while one is already pending
+  (idempotent no-op -- no re-attempted prepare, no reset `since`/`deadline`,
+  no corrupted `previous_state`), and `automation.py`'s B2 undelivered-
+  reload retry fires at most once per drain instead of every 45s
+  indefinitely. (5) `SlateSourceGenerator` now renders to a staging path and
+  publishes atomically via `.replace()` (matching the bulletin rotation
+  cache), folds a new `SLATE_RENDER_VERSION` constant into its cache key,
+  and evicts stale `slate-*.ts` files on a miss. (6) `BulletinFillerSource
+  Generator` no longer silently drops slides past the 12-per-rotation cap --
+  a busy board PAGES across multiple rotation files (page k holds slides
+  `12k..12k+11`) so every slide still airs, logged at WARNING when coverage
+  falls short of the target. (7) A failed (or crashed-mid-render) rotation
+  concat now cleans up its staging file and concat-list text file in a
+  `finally` block instead of leaving them behind forever. (8) The slate
+  give-up counter now counts only CONFIRMED failures (detected the moment a
+  dispatched reload is observed flapping back to `FALLBACK_SLATE`, not on
+  every dispatch regardless of outcome) and resets on any success, instead
+  of creeping toward the give-up threshold across unrelated, always-
+  successful slate gaps. New/updated tests across `test_daemon.py`,
+  `test_automation.py`, `test_runtime_status.py`, `test_source_plan.py`,
+  `test_bulletin_filler.py`/`test_bulletin_filler_board.py`, and a new
+  `tests/egress/test_migration_0088.py` (upgrade/downgrade/round-trip,
+  `state_entered_at` backfill, and that the pre-existing `state` CHECK
+  constraint survives the SQLite batch-mode table rebuild). Operator-
+  console changes covered by `ChannelOpsScreen.test.tsx` and
+  `SystemHealthAlerting.test.tsx` (vitest); `client.ts`'s hand-maintained
+  `EgressStateRow` duplicate (a real drift risk flagged by this review) is
+  brought back in sync with the generated type.
 
 ### Changed
 

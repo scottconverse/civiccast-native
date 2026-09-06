@@ -108,6 +108,22 @@ class TestSlideArgs:
 class TestBulletinFiller:
     def test_renders_one_slide_per_approved_bulletin_in_order(self, tmp_path: Path) -> None:
         calls: list[list[str]] = []
+        concat_texts: list[str] = []
+
+        def runner(args: list[str]) -> FfmpegResult:
+            calls.append(args)
+            out = Path(args[-1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"ts")
+            # Delta review fix: the concat-list text file is cleaned up
+            # (try/finally) right after this call returns, so capture its
+            # content NOW (while it still exists) rather than after the
+            # generator call.
+            if "-safe" in args:
+                concat_list_path = Path(args[args.index("-i") + 1])
+                concat_texts.append(concat_list_path.read_text(encoding="utf-8"))
+            return FfmpegResult(returncode=0, stdout="", stderr="")
+
         generator = BulletinFillerSourceGenerator(
             work_dir=tmp_path,
             bulletins_provider=lambda _cid: [
@@ -115,7 +131,7 @@ class TestBulletinFiller:
                 _bulletin("cgb-2", title="Food drive"),
             ],
             branding_provider=lambda _cid: _BRANDING,
-            ffmpeg_runner=_ok_runner(calls),
+            ffmpeg_runner=runner,
         )
 
         plan = generator(_config())
@@ -130,9 +146,8 @@ class TestBulletinFiller:
         assert len({segment.path for segment in plan.segments}) == 1
         # 2 individual slide renders + 1 concat render of the rotation.
         assert len(calls) == 3
-        concat_args = calls[2]
-        concat_list_path = Path(concat_args[concat_args.index("-i") + 1])
-        concat_text = concat_list_path.read_text(encoding="utf-8")
+        assert len(concat_texts) == 1
+        concat_text = concat_texts[0]
         assert concat_text.index(calls[0][-1]) < concat_text.index(calls[1][-1])
 
     def test_unchanged_board_is_cached_changed_board_rerenders(self, tmp_path: Path) -> None:
@@ -351,12 +366,20 @@ def test_bulletin_plan_builds_one_rotation_file_and_repeats_it_up_to_the_cap(
     # same one that extends a schedule-derived program plan -- covers the
     # rest for as long as the channel stays on this fill).
     rendered: list[list[str]] = []
+    concat_texts: list[str] = []
 
     def runner(args: list[str]) -> FfmpegResult:
         rendered.append(args)
         out = Path(args[-1])
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_bytes(b"ts")
+        # Delta review fix: the concat-list text file is cleaned up
+        # (try/finally) right after this call returns, so capture its
+        # content NOW (while it still exists) rather than after the
+        # generator call.
+        if "-safe" in args:
+            concat_list_path = Path(args[args.index("-i") + 1])
+            concat_texts.append(concat_list_path.read_text(encoding="utf-8"))
         return FfmpegResult(returncode=0, stdout="", stderr="")
 
     generator = BulletinFillerSourceGenerator(
@@ -383,11 +406,11 @@ def test_bulletin_plan_builds_one_rotation_file_and_repeats_it_up_to_the_cap(
     total = sum(segment.duration_seconds for segment in plan.segments)
     assert total == 240  # short of the 600s target -- rollover covers the rest
 
-    # The concat list (the third ffmpeg call) preserves rotation order.
+    # The concat list (captured during the concat ffmpeg call) preserves
+    # rotation order.
     slide_paths = [rendered[0][-1], rendered[1][-1]]
-    concat_args = rendered[2]
-    concat_list_path = Path(concat_args[concat_args.index("-i") + 1])
-    concat_text = concat_list_path.read_text(encoding="utf-8")
+    assert len(concat_texts) == 1
+    concat_text = concat_texts[0]
     assert concat_text.index(slide_paths[0]) < concat_text.index(slide_paths[1])
 
 
@@ -413,31 +436,51 @@ def test_bulletin_rotation_is_cached_and_not_rebuilt_on_a_second_prepare(
     assert first.segments[0].path == second.segments[0].path
 
 
-@pytest.mark.parametrize("bulletin_count", [13, 40])
-def test_bulletin_rotation_caps_distinct_slides_at_the_playlist_subchain_limit(
-    tmp_path: Path, bulletin_count: int
+@pytest.mark.parametrize(("bulletin_count", "expected_pages"), [(13, 2), (40, 4)])
+def test_bulletin_rotation_pages_across_files_instead_of_dropping_slides(
+    tmp_path: Path, bulletin_count: int, expected_pages: int
 ) -> None:
-    """Hostile-review "invariant" fix: the first pass's cap check
-    (``cycles * segment_count > MAX_PLAYLIST_SUBCHAINS``) never actually
-    bounded ``segment_count`` itself -- a rotation with MORE distinct slides
-    than the cap (13, 40, ...) still built that many segments regardless.
-    The rotation must never exceed MAX_PLAYLIST_SUBCHAINS distinct slides,
-    however many are airable."""
+    """Delta review "invariant" fix: capping the rotation at
+    MAX_PLAYLIST_SUBCHAINS distinct slides (truncating the rest) SILENTLY
+    DROPPED content for a busy board with more slides than that -- neither
+    the first pass's broken cap check (which didn't actually bound
+    segment_count) nor a correct one is acceptable if it means real
+    approved bulletins never air at all. Slides are instead PAGED across
+    multiple rotation files (each holding at most MAX_PLAYLIST_SUBCHAINS
+    slides) so every slide airs at least once per cycle -- n=13 pages
+    across 2 rotation files (12 + 1), n=40 across 4 (12+12+12+4)."""
     bulletins = [_bulletin(f"cgb_{i}", title=f"Bulletin {i}") for i in range(bulletin_count)]
+    concat_slide_paths: list[set[str]] = []
+
+    def runner(args: list[str]) -> FfmpegResult:
+        out = Path(args[-1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"ts")
+        if "-safe" in args:
+            concat_list_path = Path(args[args.index("-i") + 1])
+            lines = concat_list_path.read_text(encoding="utf-8").splitlines()
+            concat_slide_paths.append({line for line in lines if line})
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
     generator = BulletinFillerSourceGenerator(
         work_dir=tmp_path,
         bulletins_provider=lambda _cid: bulletins,
-        ffmpeg_runner=_ok_runner([]),
+        ffmpeg_runner=runner,
         target_fill_seconds=60,
     )
 
     plan = generator(_config())
 
     assert len(plan.segments) <= MAX_PLAYLIST_SUBCHAINS
-    assert len({segment.path for segment in plan.segments}) == 1
-    # The rotation itself holds at most the capped number of slides (10s
-    # each) -- never bulletin_count's full, uncapped length.
-    assert plan.segments[0].duration_seconds <= MAX_PLAYLIST_SUBCHAINS * 10
+    distinct_paths = {segment.path for segment in plan.segments}
+    assert len(distinct_paths) == expected_pages
+    assert len(concat_slide_paths) == expected_pages
+    # Every one of the N distinct slides is referenced by SOME page's
+    # concat list -- none silently dropped.
+    all_referenced_slides: set[str] = set()
+    for page_paths in concat_slide_paths:
+        all_referenced_slides |= page_paths
+    assert len(all_referenced_slides) == bulletin_count
 
 
 class TestDefaultImageResolver:

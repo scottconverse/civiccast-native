@@ -347,6 +347,12 @@ class TestSlateReplan:
             automation_alerts=_FakeAlerts(),  # type: ignore[arg-type]
         )
 
+        # Delta review fix: a failure is counted the moment it is OBSERVED
+        # (back on FALLBACK_SLATE with the previous dispatch still marked
+        # pending) rather than pre-emptively on every dispatch -- so the 5th
+        # consecutive failure is detected (and give-up fires) at the
+        # "flapped back to slate" checkpoint of the 5th iteration below,
+        # not on a would-be 6th dispatch attempt.
         expected_cooldowns = [30.0, 60.0, 120.0, 240.0, 300.0]  # doubling, capped at 300s
         for attempt, cooldown in enumerate(expected_cooldowns, start=1):
             service.run_once(now=_NOW)
@@ -358,7 +364,9 @@ class TestSlateReplan:
             )
             service.run_once(now=_NOW)  # clears the one-shot _reload_issued latch
             self._slate_state(store, "public")
-            # Short of THIS attempt's cooldown: no retry yet.
+            # Short of THIS attempt's cooldown: no retry yet, but the flap
+            # back to slate IS observed here -- the failure is counted on
+            # this very tick, giving up immediately once the 5th one lands.
             clock["now"] += cooldown - 1.0
             service.run_once(now=_NOW)
             assert _pending_actions(store, "public") == [], (
@@ -366,13 +374,15 @@ class TestSlateReplan:
             )
             clock["now"] += 1.0  # now past the cooldown
 
-        # Past _SLATE_REPLAN_MAX_CONSECUTIVE_FAILURES: no 6th reload, ever.
-        assert not alerted
+        # The 5th consecutive failure was already observed and counted
+        # inside the loop above -- gave up without needing a distinct 6th
+        # dispatch attempt.
+        assert alerted
+        assert any("public" in detail and "5 consecutive failures" in detail for detail in alerted)
+
+        # It stays given up: no reload dispatches again, ever.
         service.run_once(now=_NOW)
         assert _pending_actions(store, "public") == []
-        assert alerted and "public" in alerted[0]
-
-        # It stays given up on subsequent ticks (no further reload storm).
         clock["now"] += 1000.0
         service.run_once(now=_NOW)
         assert _pending_actions(store, "public") == []
@@ -739,6 +749,21 @@ class TestPlanRollover:
         service.run_once(now=later)
         # Reachable DURING the drain -- no need to wait for ON_AIR to return.
         assert _pending_actions(store, "public") == ["reload"]
+        calls_after_first_retry = calls["n"]
+
+        # Delta review fix: this retry fires AT MOST ONCE per drain. The
+        # daemon-side already-pending guard would have ignored the
+        # duplicate "reload" this retry enqueued anyway (tested separately
+        # in test_daemon.py), so the row stays exactly as it was --
+        # TRANSITIONING, same proof event, same pending_reload_since --
+        # simulating that. 10 more ticks, well past ANOTHER
+        # _ROLLOVER_ISSUED_TIMEOUT_SECONDS window, must not retry again or
+        # re-query the schedule again.
+        for _ in range(10):
+            clock["now"] += 50.0
+            service.run_once(now=later)
+            assert _pending_actions(store, "public") == []
+        assert calls["n"] == calls_after_first_retry  # no further re-query, ever
 
     def test_rollover_bookkeeping_is_wiped_for_an_unrelated_transitioning_row(self) -> None:
         """Contrast case: a TRANSITIONING row with NO pending reload (an
