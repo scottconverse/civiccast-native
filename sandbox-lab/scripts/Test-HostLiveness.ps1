@@ -105,6 +105,23 @@ if ($v7.reason -match 'boot bound 0m' -or $v7.reason -notmatch 'boot bound 5m') 
     Write-Host "[PASS] scenario7 reason cites a real boot bound" -ForegroundColor Green
 }
 
+# ---------------------------------------------------------------- scenario 8
+# Round-8 finding 10: Get-SandboxLivenessVerdict must accept an EXPLICIT
+# $null for -MainThreadNewestUtc/-HeartbeatNewestUtc, called DIRECTLY (not
+# through Invoke-Verdict's splat helper, which conditionally omits the
+# parameter instead of passing $null and so would never have caught this
+# regression). A plain [datetime] parameter rejects an explicit $null
+# argument outright ("Cannot convert null to type System.DateTime",
+# confirmed directly) -- this call would have thrown before this fix.
+try {
+    $v8 = Get-SandboxLivenessVerdict -NowUtc $launchUtc.AddMinutes(1) -LaunchUtc $launchUtc -MainThreadNewestUtc $null -HeartbeatNewestUtc $null
+    Assert-Equal 'scenario8 (explicit $null args, direct call) -> alive, no throw' 'alive' $v8.verdict
+} catch {
+    $script:total++
+    $script:failures++
+    Write-Host "[FAIL] scenario8 (explicit `$null args, direct call) -- threw: $_" -ForegroundColor Red
+}
+
 Write-Host ""
 Write-Host "HostLiveness unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })
 if ($script:failures -gt 0) { exit 1 }

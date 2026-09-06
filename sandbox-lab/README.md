@@ -61,26 +61,51 @@ firewall allow rules are authored for tsp/ffmpeg/ffprobe (Defender's
 first-bind modal, same fix as Gate A's), first-admin setup succeeds, the
 kit's `samples\*.mp4` clips upload as assets (pinned to a 30-second
 schedule slot each — the deliberate rollover instrument, not a discovered
-duration; the schedule is sized for the ON_AIR poll's own worst case) and
-get scheduled + committed to air on all three channels, then polls (a
-lightweight state sample every ~15s, a full cycle with a TSDuck probe every
-~60s) for `-Minutes` SOAK minutes.
+duration; the schedule is sized for the ON_AIR poll's own worst case, from
+the actual COMMITTED item count, not the target), all three channels are
+configured/started and polled until **every** channel (not just one) is
+confirmed `ON_AIR` within a 12-minute bound before the soak clock starts —
+a bound expiring while the remaining channel(s) are still visibly
+progressing (a non-null state, never silent) is reported as `HARNESS_ERROR`
+(a lane-sizing gap), never a product FAIL; only a channel that never
+returns a single state row at all is a genuine FAIL. Then it polls for
+`-Minutes` SOAK minutes: a full ~20-25s tsp probe per channel, run 3
+channels per ~60-75s cycle, with an all-channel state sample taken
+immediately before each channel's own probe (so state/pid is sampled
+roughly 3 times per cycle, not once) into a 12-sample/~3-minute ring per
+channel — close enough in practice to catch a restart shorter than the
+worst-case ~75s cycle period, though it is NOT a literal independent 15s
+timer.
 
 **PASS** requires: every cycle after a 3-minute warm-up grace has all three
 channels `ON_AIR` on an OS-process-verified GStreamer engine (never a
 software fallback) UNLESS a channel is inside an active, classified
 planned-restart window; a passing TSDuck (`tsp.exe`) egress probe on every
 channel every cycle (no restart-window exception — a genuinely seamless
-reload should not drop packets either); **zero unplanned relaunches**; and
-**every planned restart returns to `ON_AIR` on GStreamer within 60
-seconds**. A worker pid change is classified `planned_restart` if the
-channel's own 15s-sample ring shows `TRANSITIONING` in the preceding 3
-minutes (a normal schedule-plan rollover, expected with
+reload should not drop packets either; a tsp result of `not-run` or
+`error:...` — the TOOL is missing or failed to launch — is `HARNESS_ERROR`
+instead, since a broken probe proves nothing about the product); **zero
+unplanned relaunches**; and **every planned restart returns to `ON_AIR` on
+GStreamer within 60 seconds** (a fixed PASS bound, unrelated to the
+in-flight EXEMPTION window below). A worker pid change is classified
+`planned_restart` if the channel's own sample ring shows `TRANSITIONING`
+in the preceding 3 minutes (a normal schedule-plan rollover, expected with
 `CIVICCAST_EGRESS_SEAMLESS_RELOAD` off, the beta.5 default) and
-`unplanned_relaunch` otherwise (a crash). `VERDICT.json` reports
-`unplanned_relaunch_count`, `planned_restart_count`,
-`max_restart_gap_seconds`, and the full `restart_events` list; otherwise
-**FAIL**, naming the first failing cycle/event and why.
+`unplanned_relaunch` otherwise (a crash); while a planned restart is in
+flight, the channel is excused from the ON_AIR check for
+max(60s, 2x the measured cycle period) — a separate, more generous number
+than the 60s PASS bound, sized so a ~75s real cycle period can't flag a
+correctly-classified restart before its own recovery clock has even been
+checked once. `VERDICT.json` reports `unplanned_relaunch_count`,
+`planned_restart_count`, `max_restart_gap_seconds`, and the full
+`restart_events` list; otherwise **FAIL**, naming the first failing
+cycle/event and why. This classification logic lives in
+`scripts/RestartClassifier.ps1` (dot-sourced by the in-sandbox driver and
+its own unit tests, `Test-RestartClassifier.ps1`) — extracted the same way
+`SoakVerdict.ps1`/`HostLiveness.ps1` already were, after an inline version
+had a parameter accidentally named `$Pid` (PowerShell's read-only `$PID`
+automatic variable), which silently no-opped every ring write with no
+crash and no product/host visible signal until this review caught it.
 
 Refuses to start (exit 3) if Windows Sandbox is already running (it's a
 single-instance-per-machine resource shared with Gate A and other agents on
@@ -111,20 +136,25 @@ separate per-run root from Gate A's own `output/` above (which
 `Host-Launch-Sandbox-Test.ps1` wipes at the start of every Gate A run, so
 sharing it would risk a soak run's evidence being deleted mid-run by a
 concurrent Gate A run). Every run writes `summary.json`, per-cycle JSON
-under `cycles/` (each channel row carries its own 12-sample/~3-minute
-`sample_ring`), `restart-events.json`, a rollup every 3 minutes under
-`rollups/`, per-channel egress worker logs (`logs/<label>/egress-per-channel/
-<channel>/`) alongside the daemon-level logs at each checkpoint and on every
-FAIL, and a final `VERDICT.json` / `VERDICT.txt`.
+under `cycles/` (each channel row carries its own up-to-12-sample
+`sample_ring` and the cycle's `measured_cycle_period_seconds`),
+`restart-events.json`, a rollup every 3 minutes under `rollups/`,
+per-channel egress worker logs (`logs/<label>/egress-per-channel/
+<channel>/`, plus a `prepared/` directory LISTING, never a copy) alongside
+the daemon-level logs at each checkpoint and on every FAIL, and a final
+`VERDICT.json` / `VERDICT.txt` (verdict one of `PASS`, `FAIL`,
+`HARNESS_ERROR`).
 
-The verify/verdict logic lives in `scripts/SoakVerdict.ps1` (dot-sourced by
-both the in-sandbox driver and its own unit tests) and
-`scripts/HostLiveness.ps1` (the host's stall/quiet-share classification,
-dot-sourced by `Run-SandboxSoak.ps1` and its own unit tests) — both pure,
-synthetic-data-testable functions so the same code judges a real run and a
-unit-test tuple. Run the unit tests with:
+The verify/verdict logic lives in `scripts/SoakVerdict.ps1` (the per-cycle
+PASS/FAIL/HARNESS_ERROR judgment), `scripts/RestartClassifier.ps1` (planned-
+vs-unplanned restart classification and ring sampling), and
+`scripts/HostLiveness.ps1` (the host's stall/quiet-share classification) —
+each dot-sourced by both its real caller and its own unit-test file, so
+the same code judges a real run and a synthetic unit-test tuple. Run the
+unit tests with:
 
 ```powershell
 pwsh -File sandbox-lab/scripts/Test-SoakVerdict.ps1
+pwsh -File sandbox-lab/scripts/Test-RestartClassifier.ps1
 pwsh -File sandbox-lab/scripts/Test-HostLiveness.ps1
 ```

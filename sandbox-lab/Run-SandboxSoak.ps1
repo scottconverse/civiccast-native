@@ -283,9 +283,18 @@ function Test-ScriptParses {
     return [pscustomobject]@{ path = $Path; ok = $true; errors = @() }
 }
 
+# Round-8 finding 10: also parse-check RestartClassifier.ps1 (a new
+# dependency In-Sandbox-Soak.ps1 dot-sources, shipped into the sandbox
+# alongside SoakVerdict.ps1) and HostLiveness.ps1 (dot-sourced by THIS host
+# script itself, near the top -- a syntax error there would already have
+# surfaced at that dot-source before this block even runs, but checking it
+# here too keeps one single place that answers "is everything in this
+# deployment parseable" for both the guest-shipped and host-only files).
 $scriptsToCheck = @(
     (Join-Path $scriptsDir 'In-Sandbox-Soak.ps1'),
-    (Join-Path $scriptsDir 'SoakVerdict.ps1')
+    (Join-Path $scriptsDir 'SoakVerdict.ps1'),
+    (Join-Path $scriptsDir 'RestartClassifier.ps1'),
+    (Join-Path $scriptsDir 'HostLiveness.ps1')
 )
 $parseResults = @($scriptsToCheck | ForEach-Object { Test-ScriptParses -Path $_ })
 $parseOk = -not @($parseResults | Where-Object { -not $_.ok }).Count

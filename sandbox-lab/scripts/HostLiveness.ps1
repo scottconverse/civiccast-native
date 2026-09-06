@@ -94,8 +94,17 @@ function Get-SandboxLivenessVerdict {
     param(
         [Parameter(Mandatory = $true)] [datetime]$NowUtc,
         [Parameter(Mandatory = $true)] [datetime]$LaunchUtc,
-        [datetime]$MainThreadNewestUtc,
-        [datetime]$HeartbeatNewestUtc,
+        # Round-8 finding 10 (LOW): plain [datetime] (no [Nullable[datetime]])
+        # rejects an EXPLICIT -MainThreadNewestUtc $null with "Cannot convert
+        # null to type System.DateTime" (confirmed directly) -- the only
+        # reason this worked at all before was that every caller happened to
+        # OMIT the parameter instead of passing $null, which PowerShell
+        # leaves as $null unbound. [AllowNull()][Nullable[datetime]] makes
+        # both calling conventions -- omit, or pass $null explicitly -- work
+        # identically, so this function is not silently depending on a
+        # caller convention it never enforced.
+        [AllowNull()] [Nullable[datetime]]$MainThreadNewestUtc,
+        [AllowNull()] [Nullable[datetime]]$HeartbeatNewestUtc,
         [int]$BootBoundMinutes = 5,
         [int]$QuietMinutes = 15
     )

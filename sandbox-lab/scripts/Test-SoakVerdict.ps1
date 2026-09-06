@@ -204,33 +204,46 @@ Assert-Equal 'scenario7 (no cycles) -> FAIL' 'FAIL' $v7.verdict
 # change) that returned to ON_AIR on gstreamer in 20s. The channel's cycle
 # row during the restart window is marked in_planned_restart_window so the
 # per-cycle ON_AIR check does not separately flag it. Expect PASS.
+#
+# Round-8 finding 3: cycles are now spaced 75s apart (not a flat 60s) --
+# the measured real heavy-cycle period once 3 serial ~20-25s tsp probes are
+# accounted for, per the coordinator's own instruction to fix this scenario
+# onto realistic spacing. Test-SoakCycle itself does not consume cycle
+# period directly (in_planned_restart_window is pre-computed by the guest
+# using RestartClassifier.ps1's own max(60s, 2x measured period) exemption
+# -- see Test-RestartClassifier.ps1's scenario 7 for THAT unit coverage);
+# this scenario exists to prove SoakVerdict.ps1 still PASSes a realistic,
+# non-60s-aligned cycle timeline once the guest has done its job.
 $channelsPublicInRestartWindow = @(
     (New-Channel -Id 'public' -State 'TRANSITIONING' -Engine $null -InPlannedRestartWindow $true)
     (New-Channel -Id 'education'), (New-Channel -Id 'government')
 )
 $cycles8 = @(
-    (New-Cycle -Utc '2026-09-05T18:01:00Z' -Channels $threeChannelsGood)
-    (New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $threeChannelsGood)
-    (New-Cycle -Utc '2026-09-05T18:05:00Z' -Channels $channelsPublicInRestartWindow)   # restart in progress
-    (New-Cycle -Utc '2026-09-05T18:06:00Z' -Channels $threeChannelsGood)               # recovered
+    (New-Cycle -Utc '2026-09-05T18:01:00Z' -Channels $threeChannelsGood)                # T+60s, warm-up
+    (New-Cycle -Utc '2026-09-05T18:03:15Z' -Channels $threeChannelsGood)                # T+195s, post-warmup, clean
+    (New-Cycle -Utc '2026-09-05T18:04:30Z' -Channels $channelsPublicInRestartWindow)    # +75s, restart in progress
+    (New-Cycle -Utc '2026-09-05T18:05:45Z' -Channels $threeChannelsGood)                # +75s, recovered
 )
 $restartEvents8 = @(
-    (New-RestartEvent -ChannelId 'public' -DetectedUtc '2026-09-05T18:05:00Z' -Classification 'planned_restart' -Recovered $true -RecoveryGapSeconds 20)
+    (New-RestartEvent -ChannelId 'public' -DetectedUtc '2026-09-05T18:04:30Z' -Classification 'planned_restart' -Recovered $true -RecoveryGapSeconds 20)
 )
 $v8 = Get-SoakVerdict -Cycles $cycles8 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents8
-Assert-Equal 'scenario8 (planned restart, 20s recovery) -> PASS' 'PASS' $v8.verdict
+Assert-Equal 'scenario8 (planned restart, 20s recovery, 75s-spaced cycles) -> PASS' 'PASS' $v8.verdict
 Assert-Equal 'scenario8 planned_restart_count' 1 $v8.planned_restart_count
 Assert-Equal 'scenario8 max_restart_gap_seconds' 20 $v8.max_restart_gap_seconds
 
 # ---------------------------------------------------------------- scenario 9
-# A PLANNED restart that took 90s to recover -- exceeds the 60s bound.
-# Expect FAIL even though the classification itself was correct (planned,
-# not a crash) -- "planned" only excuses the OUTAGE, not a slow recovery.
+# A PLANNED restart that took 90s to recover -- exceeds the 60s PASS bound
+# (a SEPARATE number from the exemption window RestartClassifier.ps1 uses
+# to decide in_planned_restart_window -- see that file's header,
+# "EXEMPTION WINDOW"). Expect FAIL even though the classification itself
+# was correct (planned, not a crash) -- "planned" only excuses the OUTAGE,
+# not a slow recovery.
 $restartEvents9 = @(
-    (New-RestartEvent -ChannelId 'public' -DetectedUtc '2026-09-05T18:05:00Z' -Classification 'planned_restart' -Recovered $true -RecoveryGapSeconds 90)
+    (New-RestartEvent -ChannelId 'public' -DetectedUtc '2026-09-05T18:04:30Z' -Classification 'planned_restart' -Recovered $true -RecoveryGapSeconds 90)
 )
 $v9 = Get-SoakVerdict -Cycles $cycles8 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents9
-Assert-Equal 'scenario9 (planned restart, 90s recovery) -> FAIL' 'FAIL' $v9.verdict
+Assert-Equal 'scenario9 (planned restart, 90s recovery, 75s-spaced cycles) -> FAIL' 'FAIL' $v9.verdict
 
 # --------------------------------------------------------------- scenario 10
 # A pid change classified unplanned_relaunch because NO TRANSITIONING
@@ -243,6 +256,43 @@ $restartEvents10 = @(
 $v10 = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents10
 Assert-Equal 'scenario10 (pid change w/o TRANSITIONING, classified unplanned) -> FAIL' 'FAIL' $v10.verdict
 Assert-Equal 'scenario10 unplanned_relaunch_count' 1 $v10.unplanned_relaunch_count
+
+# --------------------------------------------------------------- scenario 11
+# Round-8 finding 5: tsp 'not-run' (tool missing) is a HARNESS/TOOLING
+# defect, never a product FAIL -- it says nothing about the product because
+# the probe never ran at all. Must classify HARNESS_ERROR even though every
+# channel otherwise looks perfectly healthy.
+$channelsTspNotRun = @(
+    (New-Channel -Id 'public' -Tsduck 'not-run: tsp.exe not found'), (New-Channel -Id 'education'), (New-Channel -Id 'government')
+)
+$cycles11 = @(
+    (New-Cycle -Utc '2026-09-05T18:01:00Z' -Channels $threeChannelsGood)
+    (New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $channelsTspNotRun)
+)
+$v11 = Get-SoakVerdict -Cycles $cycles11 -StartUtc $startUtc -WarmupSeconds 180
+Assert-Equal 'scenario11a (tsp not-run, tool missing) -> HARNESS_ERROR' 'HARNESS_ERROR' $v11.verdict
+
+# A tsp exception (process threw trying to launch) is the same class of
+# harness defect, also HARNESS_ERROR.
+$channelsTspError = @(
+    (New-Channel -Id 'public' -Tsduck 'error: access denied launching tsp.exe'), (New-Channel -Id 'education'), (New-Channel -Id 'government')
+)
+$cycles11b = @(
+    (New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $channelsTspError)
+)
+$v11b = Get-SoakVerdict -Cycles $cycles11b -StartUtc $startUtc -WarmupSeconds 180
+Assert-Equal 'scenario11b (tsp error: launching) -> HARNESS_ERROR' 'HARNESS_ERROR' $v11b.verdict
+
+# fail-timed-out and fail-zero-packets (tsp DID run) stay product FAIL,
+# never HARNESS_ERROR -- the negative-control half of this same finding.
+$channelsTspTimedOut = @(
+    (New-Channel -Id 'public' -Tsduck 'fail-timed-out'), (New-Channel -Id 'education'), (New-Channel -Id 'government')
+)
+$cycles11c = @(
+    (New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $channelsTspTimedOut)
+)
+$v11c = Get-SoakVerdict -Cycles $cycles11c -StartUtc $startUtc -WarmupSeconds 180
+Assert-Equal 'scenario11c (tsp fail-timed-out, tool ran) -> FAIL (not HARNESS_ERROR)' 'FAIL' $v11c.verdict
 
 Write-Host ""
 Write-Host "SoakVerdict unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })

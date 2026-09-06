@@ -446,14 +446,17 @@ if (-not (Test-Path $soakStartPath)) {
     $ts = (Get-Date).ToUniversalTime().ToString('o')
     "watchdog_fired_utc=$ts phase=pre-soak reason=SOAK-START.json not present after ${PreSoakMaxMinutes}m -- install/health/setup presumed hung" |
         Set-Content -Path (Join-Path $LocalDir 'WATCHDOG-TIMEOUT.txt') -Encoding UTF8
+    # Round-8 finding 5: a watchdog timeout is a HARNESS condition -- the
+    # main script hung or died, which says nothing about the product --
+    # never a product FAIL.
     $verdict = [ordered]@{
-        schema_version = 1; verdict = 'FAIL'
+        schema_version = 1; verdict = 'HARNESS_ERROR'
         reason = 'in-sandbox watchdog fired before the soak clock ever started (install/health/setup presumed hung)'
         first_failing_cycle = $null; cycles_total = 0; cycles_warmup = 0; cycles_evaluated = 0
         watchdog_timeout = $true; watchdog_phase = 'pre-soak'; done_utc = $ts; soak_start_utc = $null
     }
     ($verdict | ConvertTo-Json -Depth 6) | Set-Content -Path $donePath -Encoding UTF8
-    "verdict=FAIL (watchdog timeout, pre-soak) reason=see WATCHDOG-TIMEOUT.txt" | Set-Content -Path (Join-Path $LocalDir 'VERDICT.txt') -Encoding UTF8
+    "verdict=HARNESS_ERROR (watchdog timeout, pre-soak) reason=see WATCHDOG-TIMEOUT.txt" | Set-Content -Path (Join-Path $LocalDir 'VERDICT.txt') -Encoding UTF8
     exit 0
 }
 
@@ -473,13 +476,13 @@ if (-not (Test-Path $donePath)) {
     "watchdog_fired_utc=$ts phase=post-soak reason=VERDICT.json not present by soak_start_utc($($soakStartUtc.ToString('o')))+Minutes($Minutes)+10" |
         Set-Content -Path (Join-Path $LocalDir 'WATCHDOG-TIMEOUT.txt') -Encoding UTF8
     $verdict = [ordered]@{
-        schema_version = 1; verdict = 'FAIL'
+        schema_version = 1; verdict = 'HARNESS_ERROR'
         reason = 'in-sandbox watchdog fired -- main script did not complete within soak_start_utc + Minutes + 10'
         first_failing_cycle = $null; cycles_total = 0; cycles_warmup = 0; cycles_evaluated = 0
         watchdog_timeout = $true; watchdog_phase = 'post-soak'; done_utc = $ts; soak_start_utc = $soakStartUtc.ToString('o')
     }
     ($verdict | ConvertTo-Json -Depth 6) | Set-Content -Path $donePath -Encoding UTF8
-    "verdict=FAIL (watchdog timeout, post-soak) reason=see WATCHDOG-TIMEOUT.txt" | Set-Content -Path (Join-Path $LocalDir 'VERDICT.txt') -Encoding UTF8
+    "verdict=HARNESS_ERROR (watchdog timeout, post-soak) reason=see WATCHDOG-TIMEOUT.txt" | Set-Content -Path (Join-Path $LocalDir 'VERDICT.txt') -Encoding UTF8
 }
 '@
     $watchdogPath = Join-Path $env:TEMP 'civiccast-soak-watchdog.ps1'
@@ -665,7 +668,7 @@ Write-SoakLog "run header: minutes=$Minutes seamless_reload=$([bool]$SeamlessRel
 
 $installerExe = Get-ChildItem -Path $KitDir -Filter '*setup.exe' -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $installerExe) {
-    Write-FailVerdictAndExit -Reason "no *setup.exe found under $KitDir"
+    Write-HarnessErrorVerdictAndExit -Reason "no *setup.exe found under $KitDir -- a bad/incomplete mapped kit, not a product finding"
 }
 $summary.installer_found = $installerExe.FullName
 Write-SoakLog "installer: $($installerExe.FullName)"
@@ -698,16 +701,47 @@ if (-not $installResult.exited -or $installResult.exit_code -ne 0) {
 #    Health PREDICATE: status=="healthy" AND schema=="current" (HTTP 200
 #    alone is liveness only -- In-Sandbox-Report.ps1:2852-2860).
 # --------------------------------------------------------------------------
-# Round-6 item 1: export the machine-scope env var BEFORE Start-Service so
-# the service (and the control-plane child it spawns) inherits it. Never
-# fatal if this fails -- seamless_reload_verified below is the honest
-# signal, not this call's own success.
+# Round-8 finding 4 (BLOCKER): the round-6 version -- a machine-scope
+# [Environment]::SetEnvironmentVariable followed by a plain Start-Service --
+# NEVER actually reached the service. Two independent reasons: (a) the
+# installer's own postinstall step already started CivicCastSupervisor, so
+# by the time this script called Start-Service the service was already
+# running -- Start-Service on an already-running service is a documented
+# no-op measured at ~0.4s before the very next health check, so it never
+# launched a fresh process to inherit anything; (b) even a fresh launch
+# would not have helped -- Windows services are started by services.exe,
+# whose own process environment block is captured once at boot and is NOT
+# refreshed by a later machine-scope SetEnvironmentVariable broadcast (a
+# real, well-documented Windows behavior, not specific to this box). The
+# ONLY reliable way to hand a specific env var to ONE service's own process
+# is the per-service Environment REG_MULTI_SZ value under that service's
+# own registry key, which the SCM reads and merges in at THAT service's own
+# launch time -- so this now writes there, then forces an actual
+# Stop-Service + Start-Service cycle so a fresh process is what launches.
 if ($SeamlessReload) {
+    $seamlessRegPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\CivicCastSupervisor'
+    $seamlessRegOk = $false
     try {
-        [Environment]::SetEnvironmentVariable('CIVICCAST_EGRESS_SEAMLESS_RELOAD', '1', 'Machine')
-        Write-SoakLog "set machine env var CIVICCAST_EGRESS_SEAMLESS_RELOAD=1 (before Start-Service)"
+        $existingEnv = @()
+        try { $existingEnv = @((Get-ItemProperty -Path $seamlessRegPath -Name 'Environment' -ErrorAction Stop).Environment) } catch { $existingEnv = @() }
+        $filteredEnv = @($existingEnv | Where-Object { $_ -notmatch '^CIVICCAST_EGRESS_SEAMLESS_RELOAD=' })
+        $newEnv = @($filteredEnv + @('CIVICCAST_EGRESS_SEAMLESS_RELOAD=1'))
+        Set-ItemProperty -Path $seamlessRegPath -Name 'Environment' -Value $newEnv -Type MultiString -ErrorAction Stop
+        $readBackEnv = @((Get-ItemProperty -Path $seamlessRegPath -Name 'Environment' -ErrorAction Stop).Environment)
+        $seamlessRegOk = ($readBackEnv -contains 'CIVICCAST_EGRESS_SEAMLESS_RELOAD=1')
+        Write-SoakLog "seamless_reload: wrote $seamlessRegPath\Environment (REG_MULTI_SZ, $($newEnv.Count) entries); read-back contains the flag: $seamlessRegOk"
     } catch {
-        Write-SoakLog "FAILED to set machine env var CIVICCAST_EGRESS_SEAMLESS_RELOAD: $_"
+        Write-SoakLog "seamless_reload: FAILED to write/read-back $seamlessRegPath\Environment : $_"
+    }
+    if (-not $seamlessRegOk) {
+        Write-HarnessErrorVerdictAndExit -Reason "SeamlessReload was requested but writing/confirming $seamlessRegPath\Environment (REG_MULTI_SZ) failed -- refusing to proceed with an unconfirmed seamless-reload configuration (never an 'unverified' PASS/FAIL for a flag the operator explicitly asked to test)"
+    }
+
+    try {
+        Stop-Service -Name 'CivicCastSupervisor' -Force -ErrorAction Stop
+        Write-SoakLog "seamless_reload: Stop-Service CivicCastSupervisor requested (forcing a fresh launch that reads the just-written per-service Environment)"
+    } catch {
+        Write-SoakLog "seamless_reload: Stop-Service CivicCastSupervisor: $_ (may not have been running yet -- proceeding to Start-Service regardless, which will still launch fresh with the registry value in place)"
     }
 }
 
@@ -739,16 +773,32 @@ if (-not $healthy) {
 }
 Write-PhaseMarker -Name 'PHASE-HEALTHY.json' -Obj ([ordered]@{ utc = (Get-Date).ToUniversalTime().ToString('o'); body_status = $lastHealthBody.status; body_schema = $lastHealthBody.schema })
 
-# Round-6 item 1: verify the env var actually reached the control-plane
-# child. Get-Process/-StartInfo never carries a process's real environment
-# block (it only reflects THIS process's own StartInfo template, not
-# another process's actual env), and Win32_Process has no CommandLine-
-# adjacent environment property either -- so this can only positively
-# CONFIRM via the control-plane's own log printing the flag, never by
-# reading its env directly from the outside. Absent such a line, this
-# reports "unverified" honestly rather than claiming a confirmation this
-# lane cannot actually make.
+# Round-8 finding 4: verification now runs AFTER the Stop-Service +
+# Start-Service cycle above and the health poll that follows it -- so
+# "control-plane process found" here means a FRESH one, launched after the
+# registry value was written, not the pre-existing one from the
+# installer's own postinstall start. Neither Get-Process/-StartInfo nor
+# Win32_Process can read another process's real environment block from
+# outside it (confirmed: Win32_Process carries no environment-adjacent
+# property at all) -- so this can never open the child's own memory and
+# read CIVICCAST_EGRESS_SEAMLESS_RELOAD out of it directly. What it CAN
+# do, and what this verifies: (1) the per-service registry value is
+# present (read back a second time, post-restart, in case something else
+# rewrote it), (2) a control-plane process actually exists after the
+# restart (proving the service cycle produced a live child at all), and
+# (3) an optional, best-effort grep of the station's own log for a
+# confirming line. If (1) or (2) fail, this is NOT reported as
+# "unverified" -- it is a HARNESS_ERROR: a flag the operator explicitly
+# asked to test must never silently ride along as an unconfirmed premise
+# of a PASS or FAIL verdict.
 if ($SeamlessReload) {
+    $seamlessRegOkAfterRestart = $false
+    try {
+        $readBackEnv2 = @((Get-ItemProperty -Path $seamlessRegPath -Name 'Environment' -ErrorAction Stop).Environment)
+        $seamlessRegOkAfterRestart = ($readBackEnv2 -contains 'CIVICCAST_EGRESS_SEAMLESS_RELOAD=1')
+    } catch { }
+    Write-SoakLog "seamless_reload verification: $seamlessRegPath\Environment still contains the flag: $seamlessRegOkAfterRestart"
+
     $cpProc = $null
     try {
         $cpProc = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
@@ -756,10 +806,15 @@ if ($SeamlessReload) {
             Select-Object -First 1
     } catch { }
     if ($cpProc) {
-        Write-SoakLog "seamless_reload verification: control-plane process found pid=$($cpProc.ProcessId) (Win32_Process/Get-Process cannot read another process's real env block -- checking the station's own logs for a confirming line next)"
+        Write-SoakLog "seamless_reload verification: control-plane process found post-restart pid=$($cpProc.ProcessId)"
     } else {
-        Write-SoakLog "seamless_reload verification: control-plane process (python.exe running uvicorn civiccast.app:create_app) NOT FOUND via Win32_Process"
+        Write-SoakLog "seamless_reload verification: control-plane process (python.exe running uvicorn civiccast.app:create_app) NOT FOUND via Win32_Process after the restart"
     }
+
+    if (-not $seamlessRegOkAfterRestart -or -not $cpProc) {
+        Write-HarnessErrorVerdictAndExit -Reason "SeamlessReload was requested but could not be confirmed after the service restart (registry_flag_present=$seamlessRegOkAfterRestart, control_plane_process_found=$([bool]$cpProc)) -- never an 'unverified' PASS/FAIL for a flag the operator explicitly asked to test"
+    }
+
     $logCandidates = @(
         'C:\ProgramData\CivicCast\logs\control_plane.log',
         'C:\ProgramData\CivicCast\logs\control_plane-app.log'
@@ -774,11 +829,11 @@ if ($SeamlessReload) {
         }
     }
     if ($foundLine) {
-        $summary.seamless_reload_verified = $true
-        Write-SoakLog "seamless_reload verification: CONFIRMED via log line: $foundLine"
+        $summary.seamless_reload_verified = 'confirmed-via-log'
+        Write-SoakLog "seamless_reload verification: CONFIRMED via log line (on top of the registry+process confirmation above): $foundLine"
     } else {
-        $summary.seamless_reload_verified = 'unverified'
-        Write-SoakLog "seamless_reload verification: unverified (control-plane process pid=$(if ($cpProc) { $cpProc.ProcessId } else { '<not found>' }), no log line in $($logCandidates -join ', ') mentioned the flag -- this is a limitation of what this lane can observe from outside the process, not evidence the flag was NOT applied)"
+        $summary.seamless_reload_verified = 'confirmed-via-registry-and-process'
+        Write-SoakLog "seamless_reload verification: confirmed via registry read-back + a live post-restart control-plane process; no log line additionally corroborated it (checked $($logCandidates -join ', '))"
     }
     Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 }
@@ -973,7 +1028,7 @@ Write-SoakLog "samples found: $($samples.Count)"
 Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 
 if ($samples.Count -lt 1) {
-    Write-FailVerdictAndExit -Reason "no sample videos found under $KitDir\samples"
+    Write-HarnessErrorVerdictAndExit -Reason "no sample videos found under $KitDir\samples -- a bad/incomplete mapped kit, not a product finding"
 }
 
 $channelSpecs = @(
@@ -1014,13 +1069,14 @@ if ($stagedAssets.Count -eq 0) {
     Write-FailVerdictAndExit -Reason "no assets uploaded successfully -- cannot schedule or start channels"
 }
 
-# Round-5 item 1: single source of truth for the ON_AIR poll bound, needed
-# HERE (to size the schedule for the worst case) and again below (as the
-# actual poll deadline) -- run 5 proved the worst case is real: state was
-# null for ~8 minutes before any channel reported ON_AIR (poll #34, ~8.5
-# min in), and the OLD (Minutes+10)*2 sizing left only a few minutes of
-# margin past $SoakStartUtc + Minutes + 3m once that 8.5 minutes was spent.
-$OnAirBoundMinutes = 10
+# Round-5 item 1 / round-8 finding 6: single source of truth for the
+# ON_AIR poll bound, needed HERE (to size the schedule for the worst case)
+# and again below (as the actual poll deadline). Raised 10 -> 12 minutes:
+# run 7 showed the "public" channel genuinely reaching ON_AIR at 645s
+# (10m45s) -- inside the OLD 10-minute/600s bound's own measured worst
+# case, but with no margin left at all. 12 minutes gives real headroom
+# past that measured number, not just past the round-5 8.5-minute one.
+$OnAirBoundMinutes = 12
 
 # Schedule + Commit-to-Air: a FIXED item count per channel, sized for the
 # WORST CASE where the ON_AIR poll takes its full $OnAirBoundMinutes bound --
@@ -1038,10 +1094,12 @@ $OnAirBoundMinutes = 10
 $itemsPerChannel = [Math]::Ceiling((($Minutes + $OnAirBoundMinutes + 13) * 60) / 30)
 $schedulingStart = (Get-Date)
 Write-SoakLog "scheduling $itemsPerChannel items/channel @ 30s each (sized for the ON_AIR bound's worst case: ceil((Minutes=$Minutes + OnAirBoundMinutes=$OnAirBoundMinutes + 13) * 60 / 30))"
+$committedCountByChannel = @{}
 foreach ($c in $channelSpecs) {
     $cursor = $schedulingStart.AddSeconds(-60)
     $scheduled = 0
     $committed = 0
+    $firstGapIndex = $null
     for ($i = 0; $i -lt $itemsPerChannel; $i++) {
         $asset = $stagedAssets[$i % $stagedAssets.Count]
         $itemBody = [ordered]@{
@@ -1051,6 +1109,7 @@ foreach ($c in $channelSpecs) {
             notes = 'sandbox-lab local soak lane'
         }
         $itemR = Invoke-CivicCastApi -Method 'Post' -Url "$Base/api/staff/schedule" -BodyObj $itemBody -BearerToken $token
+        $itemCommitted = $false
         if ($itemR.status -eq 201 -and $itemR.body_json -and $itemR.body_json.id) {
             $scheduled++
             $commitBody = [ordered]@{
@@ -1059,15 +1118,26 @@ foreach ($c in $channelSpecs) {
                 schedule_item_id = "$($itemR.body_json.id)"
             }
             $commitR = Invoke-CivicCastApi -Method 'Post' -Url "$Base/api/staff/playout/commit" -BodyObj $commitBody -BearerToken $token
-            if ($commitR.status -eq 201) { $committed++ }
+            if ($commitR.status -eq 201) { $committed++; $itemCommitted = $true }
             else { Write-SoakLog "commit FAILED channel=$($c.id) item=$($itemR.body_json.id) status=$($commitR.status) body=$($commitR.body_raw) error=$($commitR.error)" }
         } else {
             Write-SoakLog "schedule item FAILED channel=$($c.id) asset=$($asset.id) status=$($itemR.status) body=$($itemR.body_raw) error=$($itemR.error)"
         }
+        if (-not $itemCommitted -and $null -eq $firstGapIndex) { $firstGapIndex = $i }
         $cursor = $cursor.AddSeconds(30)
     }
-    Write-SoakLog "channel=$($c.id) schedule_items=$scheduled committed=$committed (target=$itemsPerChannel)"
+    # Round-8 finding 8: coverage is only as good as the CONTIGUOUS run of
+    # committed items from slot 0 -- a gap partway through (a failed
+    # schedule/commit call) breaks continuity even if later slots
+    # committed fine, so the channel's real, safe committed-coverage count
+    # is capped at the first gap, not the total committed count.
+    $contiguousCommitted = $(if ($null -ne $firstGapIndex) { $firstGapIndex } else { $committed })
+    $committedCountByChannel[$c.id] = $contiguousCommitted
+    Write-SoakLog "channel=$($c.id) schedule_items=$scheduled committed=$committed contiguous_from_slot0=$contiguousCommitted (target=$itemsPerChannel)"
 }
+# The N9 coverage check below is only as trustworthy as the WORST channel.
+$minContiguousCommitted = $(if ($committedCountByChannel.Count -gt 0) { ($committedCountByChannel.Values | Measure-Object -Minimum).Minimum } else { 0 })
+Write-SoakLog "schedule coverage: min contiguous committed items across all channels = $minContiguousCommitted (of target $itemsPerChannel)"
 
 # NOW configure + start each channel. allow_software_fallback=$false: a
 # fallback away from GStreamer must be a visible FAILURE for this soak, not
@@ -1154,6 +1224,7 @@ $onAirDeadline = (Get-Date).AddMinutes($OnAirBoundMinutes)
 $anyOnAir = $false
 $allOnAir = $false
 $lastStateRawByChannel = @{}
+$lastObservedStateByChannel = @{}
 $firstStateRowUtcByChannel = @{}
 $firstOnAirUtcByChannel = @{}
 $pollN = 0
@@ -1162,8 +1233,20 @@ do {
     foreach ($c in $channelSpecs) {
         try {
             $stR = Invoke-CivicCastApi -Method 'Get' -Url "$Base/api/staff/egress/channels/$($c.id)/state" -BearerToken $token -TimeoutSec 20
-            if ($stR.ok -and $stR.body_json) {
-                $st = $stR.body_json
+            # Round-8 finding 7: gate on $stR.ok ALONE, not
+            # "$stR.ok -and $stR.body_json" -- a genuinely successful 200
+            # response carrying a JSON `null` body (no state row yet, a
+            # normal pre-initialization state) has body_json=$null
+            # (ConvertFrom-Json turns the literal string "null" into
+            # PowerShell $null, confirmed directly), which made the OLD
+            # combined condition false and routed a real 200 into the
+            # "FAILED" branch below -- which never runs the health probe,
+            # so the one thing this branch exists to do (tell an
+            # uninitialized state row apart from a dead daemon) never ran
+            # on exactly the channels/polls that needed it most.
+            if ($stR.ok) {
+                $st = $(if ($stR.body_json) { $stR.body_json } else { [pscustomobject]@{ state = $null; pid = $null; current_source_label = $null; last_error = $null } })
+                $lastObservedStateByChannel[$c.id] = $st.state
                 Write-SoakLog "ON_AIR poll #$pollN channel=$($c.id): state=$($st.state) pid=$($st.pid) src=$($st.current_source_label) err=$($st.last_error)"
                 $rawNow = "$($stR.body_raw)"
                 $rawBefore = $(if ($lastStateRawByChannel.ContainsKey($c.id)) { $lastStateRawByChannel[$c.id] } else { $null })
@@ -1219,9 +1302,24 @@ $summary.time_to_on_air_s = $timeToOnAirSByChannel
 Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 
 if (-not $allOnAir) {
-    $notOnAirIds = @($channelSpecs | Where-Object { -not $firstOnAirUtcByChannel.ContainsKey($_.id) } | ForEach-Object { $_.id })
+    $stuckChannels = @($channelSpecs | Where-Object { -not $firstOnAirUtcByChannel.ContainsKey($_.id) })
+    $notOnAirIds = @($stuckChannels | ForEach-Object { $_.id })
     Copy-StationLogs -Label 'onair-poll-timeout'
-    Write-FailVerdictAndExit -Reason "not all channels reached ON_AIR within ${OnAirBoundMinutes} minutes of the start command -- soak clock not started; channel(s) never ON_AIR: $($notOnAirIds -join ', ') (see the ON_AIR poll #N lines in soak-log.txt for every channel's state/pid/src/err each cycle, and logs\onair-poll-timeout\ for station/egress logs at the moment of failure)"
+    # Round-8 finding 6: if every stuck channel's LAST OBSERVED state is
+    # non-null (the daemon is demonstrably alive and reporting SOMETHING --
+    # STARTING/TRANSITIONING/etc, just not ON_AIR yet within this bound),
+    # that is a BOUND-SIZING problem, not a product failure -- run 7's
+    # "public" channel reached ON_AIR at 645s, past the OLD 600s bound but
+    # clearly still progressing the whole time. Only a channel that never
+    # got a single non-null state row at all (truly silent, no signal
+    # whatsoever) is treated as a genuine product FAIL.
+    $stuckWithNonNullState = @($stuckChannels | Where-Object { $lastObservedStateByChannel.ContainsKey($_.id) -and $null -ne $lastObservedStateByChannel[$_.id] })
+    $stuckTrulySilent = @($stuckChannels | Where-Object { -not ($lastObservedStateByChannel.ContainsKey($_.id) -and $null -ne $lastObservedStateByChannel[$_.id]) })
+    if ($stuckTrulySilent.Count -eq 0 -and $stuckWithNonNullState.Count -gt 0) {
+        $stateSummary = ($stuckWithNonNullState | ForEach-Object { "$($_.id)=$($lastObservedStateByChannel[$_.id])" }) -join ', '
+        Write-HarnessErrorVerdictAndExit -Reason "ON_AIR bound (${OnAirBoundMinutes}m) expired while channel(s) were still progressing (non-null state, never silent): $stateSummary -- a lane sizing gap, not a product failure (see the ON_AIR poll #N lines in soak-log.txt for every channel's state/pid/src/err each cycle)"
+    }
+    Write-FailVerdictAndExit -Reason "not all channels reached ON_AIR within ${OnAirBoundMinutes} minutes of the start command -- soak clock not started; channel(s) never ON_AIR: $($notOnAirIds -join ', ') (truly silent, no state row ever observed: $(@($stuckTrulySilent | ForEach-Object { $_.id }) -join ', ')) (see the ON_AIR poll #N lines in soak-log.txt for every channel's state/pid/src/err each cycle, and logs\onair-poll-timeout\ for station/egress logs at the moment of failure)"
 }
 
 # --------------------------------------------------------------------------
@@ -1240,14 +1338,21 @@ $summary.soak_start_utc = $SoakStartUtc.ToString('o')
 # N9: the schedule was laid BEFORE the ON_AIR poll (deliberately -- see
 # section 4's header, AUTORUN-9m's B-B anti-reload-storm ordering), anchored
 # at $schedulingStart, not at $SoakStartUtc, which is only known now --
-# AFTER the (up to 6-minute) ON_AIR poll above. A slow poll eats directly
+# AFTER the (up to 12-minute) ON_AIR poll above. A slow poll eats directly
 # into the margin between "content is scheduled through" and "the soak
 # actually needs coverage through". Verify the schedule's own coverage_end
 # still clears soak_start_utc + Minutes + a 3-minute margin; if a slow
 # setup already ate that margin, this is a HARNESS problem (bad sizing),
 # never a product FAIL -- the engine cannot be blamed for running out of
 # scheduled content this script itself failed to lay down far enough out.
-$coverageEndUtc = $schedulingStart.ToUniversalTime().AddSeconds(-60 + ($itemsPerChannel * 30))
+#
+# Round-8 finding 8: coverage_end_utc is computed from $minContiguousCommitted
+# (the worst channel's actual, contiguous-from-slot0 COMMITTED item count),
+# never from $itemsPerChannel -- $itemsPerChannel is only the TARGET this
+# script attempted; a schedule/commit API failure partway through means
+# real coverage ends at that gap, not at the target, and reporting the
+# target here would let a coverage shortfall silently pass this check.
+$coverageEndUtc = $schedulingStart.ToUniversalTime().AddSeconds(-60 + ($minContiguousCommitted * 30))
 $requiredCoverageUtc = $SoakStartUtc.AddSeconds(($Minutes * 60) + 180)
 Write-SoakLog "schedule coverage check: coverage_end_utc=$($coverageEndUtc.ToString('o')) required (soak_start+Minutes+3m)=$($requiredCoverageUtc.ToString('o'))"
 if ($coverageEndUtc -le $requiredCoverageUtc) {
@@ -1343,31 +1448,33 @@ function Get-GlobalEngineCensus {
 }
 
 # --------------------------------------------------------------------------
-# Round-6 item 2: restart/relaunch CLASSIFICATION machinery. With
-# CIVICCAST_EGRESS_SEAMLESS_RELOAD off (the beta.5 default), every
-# schedule-plan rollover is a PLANNED worker restart -- the daemon writes
-# state=TRANSITIONING, drains to EOS, then starts a new worker (new pid). A
-# bare pid change was never itself evidence of a crash; classification
-# needs to know whether TRANSITIONING preceded it. $ring keeps a 12-sample
-# (targeting 15s apart = ~3 minutes of history) per-channel history of
-# {utc,state,pid,updated_at} for exactly that lookback. All of $ring,
-# $pendingRestarts, $lastPidForRestart are hashtables and $restartEvents is
-# an ArrayList -- reference types, so functions below mutate them via
-# indexer/.Add() without needing $script: scope qualifiers (only a bare `=`
-# rebind of the variable itself would need that).
+# Round-8: the restart/relaunch CLASSIFICATION machinery (ring sampling,
+# planned-vs-unplanned classification, recovery tracking) now lives in
+# sandbox-lab/scripts/RestartClassifier.ps1 -- extracted so it is
+# unit-testable (Test-RestartClassifier.ps1) with synthetic (utc,state,pid)
+# tuples, matching SoakVerdict.ps1/HostLiveness.ps1's own pattern. See that
+# file's header for the $Pid-shadows-$PID bug this extraction fixes (round-8
+# finding 1: the ring was silently never populated, so every pid change --
+# including run 7's genuinely planned restart -- was misclassified
+# unplanned_relaunch) and for the exemption-window fix (finding 3).
 # --------------------------------------------------------------------------
-$ring = @{}
-$pendingRestarts = @{}
-$lastPidForRestart = @{}
-$restartEvents = New-Object System.Collections.ArrayList
-# Bound on how long this script keeps waiting for a detected restart to
-# recover before giving up and recording it as recovered=$false (rather
-# than never resolving it at all, which would silently drop it from the
-# final tally). Generous relative to the 60s PASS bound so a genuinely slow
-# recovery is still measured, not just declared missing.
-$RestartTrackingMaxSeconds = 300
+. (Join-Path 'C:\CivicCastSoakScripts' 'RestartClassifier.ps1')
+$restartCtx = New-RestartClassifierContext -RestartTrackingMaxSeconds 300
 
 function Get-ChannelStateSample {
+    <#
+      Round-8 finding 7 (medium): `$stR.ok -and $stR.body_json` treated a
+      genuinely successful 200 response carrying a JSON `null` body (no
+      state row exists for this channel yet -- a normal, expected state
+      before the daemon has posted anything) the SAME as a real read
+      failure, because ConvertFrom-Json turns the literal string "null"
+      into PowerShell $null (confirmed directly), which is falsy in the
+      `-and` check -- so this fell into the "FAILED" branch and stamped
+      last_error="state read failed: status=200 error=" on a request that
+      had not failed at all. Status 200 with a null/empty body is now its
+      own ok=true, state=$null outcome; only a non-2xx status or a thrown
+      exception is a real read failure.
+    #>
     param([string]$ChannelId)
     try {
         $stR = Invoke-CivicCastApi -Method 'Get' -Url "$Base/api/staff/egress/channels/$ChannelId/state" -BearerToken $token -TimeoutSec 20
@@ -1380,182 +1487,124 @@ function Get-ChannelStateSample {
                 status = $stR.status; body_raw = $stR.body_raw; error = $stR.error
             }
         }
+        if ($stR.ok) {
+            # HTTP 2xx but no parseable body_json (e.g. a literal JSON
+            # `null`, or an empty body) -- no state row yet, NOT a failure.
+            return [pscustomobject]@{ ok = $true; state = $null; pid = $null; updated_at = $null; last_error = $null; status = $stR.status; body_raw = $stR.body_raw; error = $null }
+        }
         return [pscustomobject]@{ ok = $false; state = $null; pid = $null; updated_at = $null; last_error = $null; status = $stR.status; body_raw = $stR.body_raw; error = $stR.error }
     } catch {
         return [pscustomobject]@{ ok = $false; state = $null; pid = $null; updated_at = $null; last_error = $null; status = $null; body_raw = $null; error = "$_" }
     }
 }
 
-function Add-RingSample {
-    param([string]$ChannelId, [datetime]$Utc, $State, $Pid, $UpdatedAt)
-    if (-not $ring.ContainsKey($ChannelId)) { $ring[$ChannelId] = New-Object System.Collections.ArrayList }
-    $null = $ring[$ChannelId].Add([ordered]@{ utc = $Utc.ToUniversalTime().ToString('o'); state = $State; pid = $Pid; updated_at = $UpdatedAt })
-    while ($ring[$ChannelId].Count -gt 12) { $ring[$ChannelId].RemoveAt(0) }
-}
-
-function Test-TransitioningInWindow {
-    param([string]$ChannelId, [datetime]$BeforeUtc, [int]$WindowSeconds = 180)
-    if (-not $ring.ContainsKey($ChannelId)) { return $false }
-    foreach ($s in @($ring[$ChannelId])) {
-        if ($s.state -ne 'TRANSITIONING') { continue }
-        try {
-            $sUtc = [datetime]::Parse($s.utc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
-        } catch { continue }
-        if ($sUtc -le $BeforeUtc -and ($BeforeUtc - $sUtc).TotalSeconds -le $WindowSeconds) { return $true }
-    }
-    return $false
-}
-
-function Register-ChannelSample {
+function Invoke-ChannelSampleAndRegister {
     <#
-      Called for EVERY sample (light 15s tick or the heavy 60s cycle's own
-      state read) -- records it into the ring, checks any pending restart
-      for recovery-or-give-up, then checks THIS sample for a new pid
-      change and classifies it via Test-TransitioningInWindow.
+      Thin wrapper: takes one Get-ChannelStateSample result, resolves its
+      engine (needs Win32_Process, which is why RestartClassifier.ps1
+      itself never does this -- it stays pure/synthetic-data-testable),
+      and registers it against $restartCtx. Logs a restart
+      DETECTED/RECOVERED/NEVER-RECOVERED line whenever $restartCtx's own
+      event/pending counts change, so the log keeps the same visibility
+      the old inline version had.
     #>
-    param([string]$ChannelId, [datetime]$NowUtc, $State, [Nullable[int]]$NewPid, $UpdatedAt)
-
-    Add-RingSample -ChannelId $ChannelId -Utc $NowUtc -State $State -Pid $NewPid -UpdatedAt $UpdatedAt
-
-    if ($pendingRestarts.ContainsKey($ChannelId)) {
-        $pending = $pendingRestarts[$ChannelId]
-        $engineNow = Get-EngineForWorkerPid -ProcId $NewPid
-        if ($State -eq 'ON_AIR' -and $engineNow -eq 'gstreamer') {
-            $gap = ($NowUtc - $pending.detected_utc).TotalSeconds
-            $null = $restartEvents.Add([ordered]@{
-                channel_id = $ChannelId; detected_utc = $pending.detected_utc.ToUniversalTime().ToString('o')
-                old_pid = $pending.old_pid; new_pid = $pending.new_pid
-                classification = $pending.classification
-                recovered = $true; recovery_gap_seconds = [math]::Round($gap, 1)
-            })
-            Write-SoakLog "restart RECOVERED channel=$ChannelId classification=$($pending.classification) gap_seconds=$([math]::Round($gap, 1))"
-            $pendingRestarts.Remove($ChannelId)
-        } elseif ((($NowUtc) - $pending.detected_utc).TotalSeconds -gt $RestartTrackingMaxSeconds) {
-            $null = $restartEvents.Add([ordered]@{
-                channel_id = $ChannelId; detected_utc = $pending.detected_utc.ToUniversalTime().ToString('o')
-                old_pid = $pending.old_pid; new_pid = $pending.new_pid
-                classification = $pending.classification
-                recovered = $false; recovery_gap_seconds = $null
-            })
-            Write-SoakLog "restart NEVER RECOVERED channel=$ChannelId classification=$($pending.classification) (gave up tracking after ${RestartTrackingMaxSeconds}s)"
-            $pendingRestarts.Remove($ChannelId)
-        }
+    param([string]$ChannelId, [datetime]$NowUtc, $Sample)
+    $engine = Get-EngineForWorkerPid -ProcId $Sample.pid
+    $pendingBefore = $restartCtx.PendingRestarts.ContainsKey($ChannelId)
+    $eventsBefore = $restartCtx.RestartEvents.Count
+    Register-ChannelSample -Context $restartCtx -ChannelId $ChannelId -NowUtc $NowUtc -State $Sample.state -NewPid $Sample.pid -UpdatedAt $Sample.updated_at -Engine $engine
+    if ($restartCtx.RestartEvents.Count -gt $eventsBefore) {
+        $ev = $restartCtx.RestartEvents[$restartCtx.RestartEvents.Count - 1]
+        Write-SoakLog "restart $(if ($ev.recovered) { 'RECOVERED' } else { 'NEVER RECOVERED' }) channel=$ChannelId classification=$($ev.classification) gap_seconds=$($ev.recovery_gap_seconds)"
+    } elseif (-not $pendingBefore -and $restartCtx.PendingRestarts.ContainsKey($ChannelId)) {
+        $p = $restartCtx.PendingRestarts[$ChannelId]
+        Write-SoakLog "restart DETECTED channel=$ChannelId old_pid=$($p.old_pid) new_pid=$($p.new_pid) classification=$($p.classification)"
     }
-
-    $prevPid = $(if ($lastPidForRestart.ContainsKey($ChannelId)) { $lastPidForRestart[$ChannelId] } else { $null })
-    if ($null -ne $NewPid -and $null -ne $prevPid -and $prevPid -ne $NewPid) {
-        $isPlanned = Test-TransitioningInWindow -ChannelId $ChannelId -BeforeUtc $NowUtc -WindowSeconds 180
-        $classification = $(if ($isPlanned) { 'planned_restart' } else { 'unplanned_relaunch' })
-        Write-SoakLog "restart DETECTED channel=$ChannelId old_pid=$prevPid new_pid=$NewPid classification=$classification (TRANSITIONING in preceding 3min: $isPlanned)"
-        $pendingRestarts[$ChannelId] = [ordered]@{ detected_utc = $NowUtc; old_pid = $prevPid; new_pid = $NewPid; classification = $classification }
-    }
-    if ($null -ne $NewPid) { $lastPidForRestart[$ChannelId] = $NewPid }
-}
-
-function Test-InActivePlannedRestartWindow {
-    <#
-      A channel is inside an ACTIVE (not yet recovered) planned-restart
-      window if it has a pending restart classified planned_restart whose
-      detected_utc is within the last 60 seconds -- this is exactly the
-      licensed exception Test-SoakCycle (SoakVerdict.ps1) exempts from the
-      ON_AIR check.
-    #>
-    param([string]$ChannelId, [datetime]$NowUtc)
-    if (-not $pendingRestarts.ContainsKey($ChannelId)) { return $false }
-    $pending = $pendingRestarts[$ChannelId]
-    if ($pending.classification -ne 'planned_restart') { return $false }
-    return (($NowUtc - $pending.detected_utc).TotalSeconds -le 60)
 }
 
 $allCycles = @()
 $cycleN = 0
 $lastRollupCycle = 0
 $deadline = $SoakStartUtc.ToLocalTime().AddMinutes($Minutes)
-Write-SoakLog "entering poll loop: -Minutes $Minutes SOAK minutes from soak_start_utc (deadline $($deadline.ToUniversalTime().ToString('o'))); light state samples every 15s (12-sample/3min ring per channel), heavy tsp cycle every 60s"
-
-# Independent timers: light samples target 15s regardless of how long the
-# heavy tsp work takes; the heavy cycle targets 60s and simply runs late
-# (never skipped) if tsp work overruns -- same graceful-degradation shape
-# the previous single-timer loop already had.
-$nextLightSampleAtUtc = (Get-Date).ToUniversalTime()
-$nextHeavyCycleAtUtc = (Get-Date).ToUniversalTime()
+# Round-8 finding 2/3: no independent 15s timer -- see RestartClassifier.ps1's
+# header for why (the two-timer version's light-sample branch was
+# mathematically unreachable once a heavy cycle ran even slightly over 60s,
+# which every real heavy cycle does). Instead, a full all-channel state
+# sample is INTERLEAVED before each of the three per-channel tsp probes
+# inside one heavy cycle, giving ~3 ring samples spaced by roughly each
+# channel's own tsp duration (~20-25s) across the whole ~60-75s heavy-cycle
+# period -- close enough to make a TRANSITIONING state visible within that
+# period without promising a literal independent timer. $measuredCyclePeriodSeconds
+# tracks the actual observed time between heavy-cycle starts (default 60
+# before the first one completes) and feeds Test-InActivePlannedRestartWindow's
+# exemption window (max(60s, 2x that)), never the fixed PASS bound.
+$measuredCyclePeriodSeconds = 60.0
+$lastCycleStartUtc = $null
+Write-SoakLog "entering poll loop: -Minutes $Minutes SOAK minutes from soak_start_utc (deadline $($deadline.ToUniversalTime().ToString('o'))); state sampled for all channels before each channel's own tsp probe (~3x/cycle), tsp probe cycle ~60-75s"
 
 while ((Get-Date) -lt $deadline) {
-    $nowUtc = (Get-Date).ToUniversalTime()
+    $cycleN++
+    $cycleUtc = (Get-Date).ToUniversalTime()
+    if ($lastCycleStartUtc) { $measuredCyclePeriodSeconds = ($cycleUtc - $lastCycleStartUtc).TotalSeconds }
+    $lastCycleStartUtc = $cycleUtc
 
-    if ($nowUtc -ge $nextHeavyCycleAtUtc) {
-        $cycleN++
-        $cycleUtc = $nowUtc
-        $rows = @()
-        foreach ($c in $channelSpecs) {
-            $sample = Get-ChannelStateSample -ChannelId $c.id
-            $row = [ordered]@{
-                channel_id = $c.id; engine_state = $sample.state; engine = $null
-                last_error = $(if ($sample.ok) { $sample.last_error } else { "state read failed: status=$($sample.status) error=$($sample.error)" })
-                pid = $sample.pid; tsduck_verdict = $null; in_planned_restart_window = $false
-            }
-            $row.engine = Get-EngineForWorkerPid -ProcId $sample.pid
-            Register-ChannelSample -ChannelId $c.id -NowUtc $nowUtc -State $sample.state -NewPid $sample.pid -UpdatedAt $sample.updated_at
-            $row.in_planned_restart_window = Test-InActivePlannedRestartWindow -ChannelId $c.id -NowUtc $nowUtc
-
-            $ts = Test-TsProof -TspExe $tsp -Port $c.port -Seconds 20 -OutDir (Join-Path $LocalDir 'cycles') -Label "$($c.id)-c$cycleN"
-            $row.tsduck_verdict = $ts.verdict
-            $row.sample_ring = @($ring[$c.id])
-            $rows += $row
+    $rows = @()
+    foreach ($c in $channelSpecs) {
+        # Interleaved light sample: ALL channels, not just $c -- see the
+        # header note above. Also captures the sample this row itself uses,
+        # so no extra round-trip for $c specifically.
+        $samplesThisPass = @{}
+        foreach ($c2 in $channelSpecs) {
+            $s2 = Get-ChannelStateSample -ChannelId $c2.id
+            Invoke-ChannelSampleAndRegister -ChannelId $c2.id -NowUtc (Get-Date).ToUniversalTime() -Sample $s2
+            $samplesThisPass[$c2.id] = $s2
         }
-        $nextLightSampleAtUtc = (Get-Date).ToUniversalTime().AddSeconds(15)
+        $sample = $samplesThisPass[$c.id]
 
-        $globalCensus = Get-GlobalEngineCensus
-        $cycle = [ordered]@{ cycle_utc = $cycleUtc.ToString('o'); channels = $rows; global_engine_observed = $globalCensus }
-        $allCycles += $cycle
-        Save-Json -Obj $cycle -Path (Join-Path $LocalDir "cycles\cycle-$('{0:d4}' -f $cycleN).json")
-        Write-SoakLog "cycle $cycleN @ $($cycleUtc.ToString('o')): $(($rows | ForEach-Object { "$($_.channel_id)=$($_.engine_state)/$($_.engine)/tsp=$($_.tsduck_verdict)/restart_window=$($_.in_planned_restart_window)" }) -join ' ') global: ffmpeg=$($globalCensus.ffmpeg_processes) gst_workers=$($globalCensus.gst_worker_processes)"
-
-        # Rollup + log copy every 3 minutes (every 3rd heavy cycle at a 60s cadence).
-        if (($cycleN - $lastRollupCycle) -ge 3) {
-            $lastRollupCycle = $cycleN
-            $rollup = [ordered]@{
-                rollup_utc = (Get-Date).ToUniversalTime().ToString('o')
-                cycles_so_far = $cycleN
-                soak_start_utc = $SoakStartUtc.ToString('o')
-                elapsed_minutes = [math]::Round(((Get-Date).ToUniversalTime() - $SoakStartUtc).TotalMinutes, 2)
-                latest_cycle = $cycle
-                restart_events_so_far = @($restartEvents)
-            }
-            Save-Json -Obj $rollup -Path (Join-Path $LocalDir "rollups\rollup-$('{0:d4}' -f $cycleN).json")
-            Copy-StationLogs -Label "checkpoint-cycle$cycleN"
-            Write-SoakLog "rollup + log checkpoint written at cycle $cycleN"
+        $row = [ordered]@{
+            channel_id = $c.id; engine_state = $sample.state; engine = $null
+            last_error = $(if ($sample.ok) { $sample.last_error } else { "state read failed: status=$($sample.status) error=$($sample.error)" })
+            pid = $sample.pid; tsduck_verdict = $null; in_planned_restart_window = $false
         }
+        $row.engine = Get-EngineForWorkerPid -ProcId $sample.pid
+        $row.in_planned_restart_window = Test-InActivePlannedRestartWindow -Context $restartCtx -ChannelId $c.id -NowUtc (Get-Date).ToUniversalTime() -MeasuredCyclePeriodSeconds $measuredCyclePeriodSeconds
 
-        $nextHeavyCycleAtUtc = $cycleUtc.AddSeconds(60)
-    } elseif ($nowUtc -ge $nextLightSampleAtUtc) {
-        foreach ($c in $channelSpecs) {
-            $sample = Get-ChannelStateSample -ChannelId $c.id
-            Register-ChannelSample -ChannelId $c.id -NowUtc $nowUtc -State $sample.state -NewPid $sample.pid -UpdatedAt $sample.updated_at
-        }
-        $nextLightSampleAtUtc = $nowUtc.AddSeconds(15)
+        $ts = Test-TsProof -TspExe $tsp -Port $c.port -Seconds 20 -OutDir (Join-Path $LocalDir 'cycles') -Label "$($c.id)-c$cycleN"
+        $row.tsduck_verdict = $ts.verdict
+        $row.sample_ring = @($restartCtx.Ring[$c.id])
+        $rows += $row
     }
 
-    $sleepTargetUtc = $(if ($nextLightSampleAtUtc -lt $nextHeavyCycleAtUtc) { $nextLightSampleAtUtc } else { $nextHeavyCycleAtUtc })
-    $sleepSec = [int]([Math]::Max(1, [Math]::Min(15, ($sleepTargetUtc - (Get-Date).ToUniversalTime()).TotalSeconds)))
-    if ((Get-Date).AddSeconds($sleepSec) -gt $deadline) { break }
-    Start-Sleep -Seconds $sleepSec
+    $globalCensus = Get-GlobalEngineCensus
+    $cycle = [ordered]@{ cycle_utc = $cycleUtc.ToString('o'); channels = $rows; global_engine_observed = $globalCensus; measured_cycle_period_seconds = [math]::Round($measuredCyclePeriodSeconds, 1) }
+    $allCycles += $cycle
+    Save-Json -Obj $cycle -Path (Join-Path $LocalDir "cycles\cycle-$('{0:d4}' -f $cycleN).json")
+    Write-SoakLog "cycle $cycleN @ $($cycleUtc.ToString('o')) (period=$([math]::Round($measuredCyclePeriodSeconds, 1))s): $(($rows | ForEach-Object { "$($_.channel_id)=$($_.engine_state)/$($_.engine)/tsp=$($_.tsduck_verdict)/restart_window=$($_.in_planned_restart_window)" }) -join ' ') global: ffmpeg=$($globalCensus.ffmpeg_processes) gst_workers=$($globalCensus.gst_worker_processes)"
+
+    # Rollup + log copy every 3 minutes (every 3rd cycle at the measured cadence).
+    if (($cycleN - $lastRollupCycle) -ge 3) {
+        $lastRollupCycle = $cycleN
+        $rollup = [ordered]@{
+            rollup_utc = (Get-Date).ToUniversalTime().ToString('o')
+            cycles_so_far = $cycleN
+            soak_start_utc = $SoakStartUtc.ToString('o')
+            elapsed_minutes = [math]::Round(((Get-Date).ToUniversalTime() - $SoakStartUtc).TotalMinutes, 2)
+            latest_cycle = $cycle
+            restart_events_so_far = @($restartCtx.RestartEvents)
+        }
+        Save-Json -Obj $rollup -Path (Join-Path $LocalDir "rollups\rollup-$('{0:d4}' -f $cycleN).json")
+        Copy-StationLogs -Label "checkpoint-cycle$cycleN"
+        Write-SoakLog "rollup + log checkpoint written at cycle $cycleN"
+    }
+
+    if ((Get-Date) -ge $deadline) { break }
 }
 
-# Flush any restart still pending when the soak loop ended -- never let one
-# silently disappear from the tally just because time ran out before it
-# resolved either way.
-foreach ($channelId in @($pendingRestarts.Keys)) {
-    $pending = $pendingRestarts[$channelId]
-    $null = $restartEvents.Add([ordered]@{
-        channel_id = $channelId; detected_utc = $pending.detected_utc.ToUniversalTime().ToString('o')
-        old_pid = $pending.old_pid; new_pid = $pending.new_pid
-        classification = $pending.classification
-        recovered = $false; recovery_gap_seconds = $null
-    })
-    Write-SoakLog "restart still pending at soak end, flushed as not-recovered: channel=$channelId classification=$($pending.classification)"
+$eventsBeforeFinalFlush = $restartCtx.RestartEvents.Count
+$restartEventsArray = @(Get-FlushedRestartEvents -Context $restartCtx)
+foreach ($ev in ($restartEventsArray | Select-Object -Skip $eventsBeforeFinalFlush)) {
+    Write-SoakLog "restart still pending at soak end, flushed as not-recovered: channel=$($ev.channel_id) classification=$($ev.classification)"
 }
-$restartEventsArray = @($restartEvents)
 Save-Json -Obj $restartEventsArray -Path (Join-Path $LocalDir 'restart-events.json')
 
 Write-SoakLog "poll loop complete: $cycleN cycles recorded, $($restartEventsArray.Count) restart event(s) ($(@($restartEventsArray | Where-Object { $_.classification -eq 'planned_restart' }).Count) planned, $(@($restartEventsArray | Where-Object { $_.classification -eq 'unplanned_relaunch' }).Count) unplanned)"

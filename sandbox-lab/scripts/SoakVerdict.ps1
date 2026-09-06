@@ -70,10 +70,13 @@ function Test-SoakCycle {
       cycle_utc is earlier than StartUtc + WarmupSeconds).
 
       .OUTPUTS
-      [pscustomobject] @{ ok; reason; not_on_air; tsp_fail }
+      [pscustomobject] @{ ok; harness_error; reason; not_on_air; tsp_fail; tsp_harness_error }
       `ok` is $true when the cycle satisfies the PASS criteria for its
-      warm-up status. `reason` is a short human string naming the first
-      failing condition when ok is $false.
+      warm-up status. `harness_error` is $true when the failure is a
+      harness/tooling defect (tsp.exe missing, or tsp itself threw
+      launching), never a product finding -- Get-SoakVerdict reports these
+      as HARNESS_ERROR, never FAIL. `reason` is a short human string
+      naming the first failing condition when ok is $false.
     #>
     param(
         [Parameter(Mandatory = $true)] $Cycle,
@@ -82,7 +85,22 @@ function Test-SoakCycle {
 
     $channels = @($Cycle.channels)
     if ($channels.Count -eq 0) {
-        return [pscustomobject]@{ ok = $false; reason = 'no channel data in cycle'; not_on_air = @(); tsp_fail = @() }
+        return [pscustomobject]@{ ok = $false; harness_error = $false; reason = 'no channel data in cycle'; not_on_air = @(); tsp_fail = @() }
+    }
+
+    # Round-8 finding 5 (HIGH): tsp verdicts 'not-run' (tsp.exe missing from
+    # the bounded candidate list) and 'error: ...' (the process threw
+    # trying to launch) are HARNESS/TOOLING defects -- the probe never ran
+    # at all, so they say nothing about the product. 'fail-timed-out' and
+    # 'fail-zero-packets' (and every other 'fail-*' shape: tsp DID run and
+    # observed something concrete about the actual stream) stay product
+    # FAIL, unchanged. Checked BEFORE anything else, in every cycle
+    # (including warm-up -- a missing tool is not something warm-up should
+    # ever mask, since it means NO cycle's tsp result can be trusted).
+    $tspHarnessError = @($channels | Where-Object { "$($_.tsduck_verdict)" -eq 'not-run' -or "$($_.tsduck_verdict)" -like 'not-run:*' -or "$($_.tsduck_verdict)" -like 'error:*' })
+    if ($tspHarnessError.Count -gt 0) {
+        $ids = ($tspHarnessError | ForEach-Object { "$($_.channel_id)=$($_.tsduck_verdict)" }) -join ', '
+        return [pscustomobject]@{ ok = $false; harness_error = $true; reason = "tsp harness/tooling defect (tool missing or failed to launch, not a product finding): $ids"; not_on_air = @(); tsp_fail = @() }
     }
 
     # engine must be exactly 'gstreamer' post-warmup -- $null (worker not
@@ -103,19 +121,19 @@ function Test-SoakCycle {
         # During warm-up, a channel that is not yet ON_AIR/gstreamer is
         # tolerated (still transitioning). A tsp FAIL is also tolerated
         # during warm-up for the same reason (no stream up yet to probe).
-        return [pscustomobject]@{ ok = $true; reason = $null; not_on_air = @($notOnAir | ForEach-Object { $_.channel_id }); tsp_fail = @($tspFail | ForEach-Object { $_.channel_id }) }
+        return [pscustomobject]@{ ok = $true; harness_error = $false; reason = $null; not_on_air = @($notOnAir | ForEach-Object { $_.channel_id }); tsp_fail = @($tspFail | ForEach-Object { $_.channel_id }) }
     }
 
     if ($notOnAir.Count -gt 0) {
         $ids = ($notOnAir | ForEach-Object { $_.channel_id }) -join ', '
-        return [pscustomobject]@{ ok = $false; reason = "not ON_AIR on gstreamer (and not inside a classified planned-restart window): $ids"; not_on_air = @($notOnAir | ForEach-Object { $_.channel_id }); tsp_fail = @() }
+        return [pscustomobject]@{ ok = $false; harness_error = $false; reason = "not ON_AIR on gstreamer (and not inside a classified planned-restart window): $ids"; not_on_air = @($notOnAir | ForEach-Object { $_.channel_id }); tsp_fail = @() }
     }
     if ($tspFail.Count -gt 0) {
         $ids = ($tspFail | ForEach-Object { $_.channel_id }) -join ', '
-        return [pscustomobject]@{ ok = $false; reason = "tsduck egress probe failed: $ids"; not_on_air = @(); tsp_fail = @($tspFail | ForEach-Object { $_.channel_id }) }
+        return [pscustomobject]@{ ok = $false; harness_error = $false; reason = "tsduck egress probe failed: $ids"; not_on_air = @(); tsp_fail = @($tspFail | ForEach-Object { $_.channel_id }) }
     }
 
-    return [pscustomobject]@{ ok = $true; reason = $null; not_on_air = @(); tsp_fail = @() }
+    return [pscustomobject]@{ ok = $true; harness_error = $false; reason = $null; not_on_air = @(); tsp_fail = @() }
 }
 
 function Get-SoakVerdict {
@@ -147,7 +165,7 @@ function Get-SoakVerdict {
 
       .OUTPUTS
       [pscustomobject] @{
-        verdict                  = 'PASS' | 'FAIL'
+        verdict                  = 'PASS' | 'FAIL' | 'HARNESS_ERROR'
         reason                   = $null | string
         first_failing_cycle      = $null | (the cycle_utc string)
         cycles_total             = int
@@ -176,6 +194,30 @@ function Get-SoakVerdict {
     $maxGap = $(if ($gapValues.Count -gt 0) { ($gapValues | Measure-Object -Maximum).Maximum } else { $null })
 
     $sorted = @($Cycles | Sort-Object { [datetime]$_.cycle_utc })
+
+    # Round-8 finding 5: a tsp harness/tooling defect (tool missing, or
+    # threw trying to launch) in ANY cycle -- warm-up or not -- means NO
+    # cycle's tsp result in this run can be trusted, so this is checked
+    # FIRST and wins over every other classification. HARNESS_ERROR, never
+    # FAIL: a broken probe says nothing about the product.
+    foreach ($cycle in $sorted) {
+        $cycleUtc = [datetime]$cycle.cycle_utc
+        $isWarmup = ($cycleUtc.ToUniversalTime() - $StartUtc.ToUniversalTime()).TotalSeconds -lt $WarmupSeconds
+        $r = Test-SoakCycle -Cycle $cycle -IsWarmup $isWarmup
+        if ($r.harness_error) {
+            return [pscustomobject]@{
+                verdict = 'HARNESS_ERROR'
+                reason = "cycle $($cycle.cycle_utc): $($r.reason)"
+                first_failing_cycle = "$($cycle.cycle_utc)"
+                cycles_total = $sorted.Count
+                cycles_warmup = 0
+                cycles_evaluated = 0
+                unplanned_relaunch_count = $unplannedCount
+                planned_restart_count = $plannedCount
+                max_restart_gap_seconds = $maxGap
+            }
+        }
+    }
 
     $failResult = $null
 
