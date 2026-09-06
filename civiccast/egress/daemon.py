@@ -1482,15 +1482,38 @@ class EgressDaemon:
         fallback slate for a source that was never actually unreachable -- the
         exact failure this rate limit exists to prevent, without weakening the
         streak's real job of catching a genuinely dead/unreachable source
-        (an ordinary non-zero exit still increments on every single crash)."""
+        (an ordinary non-zero exit still increments on every single crash).
+
+        Round-2 review BLOCKER (Opus, PR #183): a preroll-timeout exit's
+        ``uptime`` (how long the worker was alive before it gave up) is NOT
+        evidence of a healthy run -- it is simply how long the doomed preroll
+        attempt took, which can legitimately be close to (engine.py now clamps
+        it below) the ``_RESTART_STREAK_RESET_UPTIME_S`` (60s) reset threshold
+        below. Applying that reset to a preroll-timeout exit would silently
+        defeat the crash-loop escalation to fallback slate for a source that
+        NEVER comes up (measured: 40 consecutive relaunches, streak stuck at
+        0, before this exemption existed) -- so this reset is skipped
+        entirely for that exit reason; only a genuinely different exit
+        (successful start reaching PLAYING, then crashing later, or an
+        ordinary crash) can benefit from it."""
         streak = self._restart_streak.get(channel_id, 0)
-        if uptime is not None and uptime >= _RESTART_STREAK_RESET_UPTIME_S:
+        if (
+            uptime is not None
+            and uptime >= _RESTART_STREAK_RESET_UPTIME_S
+            and returncode != GST_PREROLL_TIMEOUT_EXIT_CODE
+        ):
             # Belt-and-suspenders with the healthy-poll reset in _poll_process: that
             # path clears the streak while the worker is RUNNING healthily; this one
             # covers a worker that ran healthily and then crashed in the SAME gap
             # between polls (so the poll-reset never saw it). Either way a fresh
             # failure after a healthy run is streak 1 → immediate relaunch.
             streak = 0
+            # Round-2 review nit: a healthy run also makes any earlier
+            # preroll-timeout rate-limit window stale -- clear it so a FUTURE
+            # preroll-timeout exit (a fresh problem, unrelated to whatever
+            # last incremented the streak before this healthy stretch) is
+            # never rate-limited by a now-irrelevant past timestamp.
+            self._preroll_timeout_streak_incr_at.pop(channel_id, None)
         if returncode == GST_PREROLL_TIMEOUT_EXIT_CODE:
             last_incr_at = self._preroll_timeout_streak_incr_at.get(channel_id)
             if (

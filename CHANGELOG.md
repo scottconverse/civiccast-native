@@ -378,23 +378,52 @@ below.
   bound reused `teardown_timeout_s` (5.0s), a constant never meant to double
   as a preroll bound. `engine.py`'s `_await_playing` now waits up to a
   dedicated, configurable `preroll_timeout_s` (30s default,
-  `CIVICCAST_GST_PREROLL_TIMEOUT_S` env override, clamped >= 5s), polling in
-  5s slices and logging the pipeline's `get_state`/pending state on every
-  slice instead of blocking silently for the whole bound. Once the bound is
-  actually exceeded it raises the distinct `PrerollTimeoutError` (a
-  `RuntimeError` subclass) rather than a bare `RuntimeError`; `worker.py`
-  catches that and exits with a new, distinct
-  `civiccast.egress.gst.exit_codes.GST_PREROLL_TIMEOUT_EXIT_CODE` instead of
-  the generic crash code. `EgressDaemon._relaunch_after_crash` still
-  relaunches that exit through the exact same back-off path as any other
-  crash, but no longer counts it toward the crash-loop streak that eventually
-  forces fallback slate (`_LIVE_SOURCE_FAILURE_FALLBACK_STREAK`) more than
-  once per 60s -- a train of legitimate slow starts under load can no longer
-  force a healthy source onto fallback slate. New tests:
-  `tests/egress/test_gst_engine_preroll_timeout.py` (the engine's bounded
-  wait, env-var resolution/clamp, and the distinct exception) and
-  `tests/egress/test_daemon_preroll_timeout_relaunch.py` (the daemon's
-  rate-limited streak, per-channel isolation, and reset behavior).
+  `CIVICCAST_GST_PREROLL_TIMEOUT_S` env override, clamped to `[5, 45]`s),
+  polling in 5s slices and logging the `get_state` result, the CURRENT
+  pipeline state, and the pending state on every slice instead of blocking
+  silently for the whole bound. Once the bound is actually exceeded it raises
+  the distinct `PrerollTimeoutError` (a `RuntimeError` subclass) rather than a
+  bare `RuntimeError`; `worker.py` catches that, emits its `WORKER_RESULT`
+  receipt (`{"error": ("preroll-timeout", ...), "teardown_clean": False}`, so
+  `civiccast.native.installed_gstreamer_smoke.require_clean_worker_result`
+  can name the reason instead of reporting a missing receipt), and exits with
+  a new, distinct `civiccast.egress.gst.exit_codes.GST_PREROLL_TIMEOUT_EXIT_CODE`
+  instead of the generic crash code. `EgressDaemon._relaunch_after_crash`
+  still relaunches that exit through the exact same back-off path as any
+  other crash, but no longer counts it toward the crash-loop streak that
+  eventually forces fallback slate (`_LIVE_SOURCE_FAILURE_FALLBACK_STREAK`)
+  more than once per 60s -- a train of legitimate slow starts under load can
+  no longer force a healthy source onto fallback slate.
+  - **Round-2 review BLOCKER (Opus, PR #183), fixed same day:** the 45s
+    upper clamp is load-bearing, not cosmetic. An unclamped
+    `CIVICCAST_GST_PREROLL_TIMEOUT_S >= 60` made a worker that ALWAYS
+    preroll-times-out still measure >= 60s of "uptime" on every single exit
+    (it dies right at its own configured bound) -- which is exactly the
+    daemon's healthy-uptime streak-reset threshold
+    (`_RESTART_STREAK_RESET_UPTIME_S`), so the crash-loop streak reset on
+    every single crash and NEVER escalated to fallback slate (measured: 40
+    consecutive relaunches, streak stuck at 0 -- a genuinely dead source
+    would have relaunched forever). Fixed on both sides: the 45s clamp keeps
+    the configured bound safely under that threshold, and
+    `_relaunch_after_crash` now ALSO exempts a
+    `GST_PREROLL_TIMEOUT_EXIT_CODE` exit from the healthy-uptime reset
+    outright (a preroll that never reached PLAYING is not "healthy uptime"
+    regardless of how long it took) -- belt-and-suspenders, either fix alone
+    would have closed the hole. The healthy-uptime reset (for every OTHER
+    exit reason) now also clears the preroll-timeout rate-limit bookkeeping,
+    so a genuinely healthy run doesn't leave a stale rate-limit window
+    behind for a later, unrelated preroll timeout.
+  - New tests: `tests/egress/test_gst_engine_preroll_timeout.py` (the
+    engine's bounded wait, env-var resolution/clamp including the new 45s
+    ceiling, the distinct exception, and the current+pending log line),
+    `tests/egress/test_gst_worker_preroll_timeout_exit.py` (`worker.main()`
+    returns the distinct exit code and still emits a `WORKER_RESULT`
+    receipt), and `tests/egress/test_daemon_preroll_timeout_relaunch.py`
+    (the rate-limited streak wired through a REAL `_poll_process` returncode
+    rather than a direct call, per-channel isolation, the healthy-uptime
+    exemption even at uptime >= 60s, reset behavior, and sustained-crash
+    escalation to fallback slate at both the 30s default -- by t<=300s,
+    measured t=270s -- and the 45s clamp ceiling).
 
 ### Changed
 

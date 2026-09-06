@@ -651,23 +651,52 @@ entries:
       # bound -- and the daemon relaunched it as an ordinary crash. Fixed:
       # ``_await_playing`` now waits up to a dedicated, configurable
       # ``preroll_timeout_s`` (30s default, ``CIVICCAST_GST_PREROLL_TIMEOUT_S``
-      # env override, clamped >= 5s), polling and logging pipeline state every
-      # 5s instead of blocking silently, and raises the distinct
-      # ``PrerollTimeoutError`` once the bound is exceeded. ``worker.py``
-      # catches that and exits with the distinct
+      # env override, clamped to ``[5, 45]``s), polling every 5s and logging
+      # the ``get_state`` result, the CURRENT pipeline state, AND the pending
+      # state on every slice instead of blocking silently, and raises the
+      # distinct ``PrerollTimeoutError`` once the bound is exceeded.
+      # ``worker.py`` catches that and exits with the distinct
       # ``civiccast.egress.gst.exit_codes.GST_PREROLL_TIMEOUT_EXIT_CODE`` (a
       # new, gi-free sibling module, NOT itself bound here -- the daemon's own
       # ``civiccast/egress/daemon.py`` reads it and is not a code input of
-      # this native-Windows-line spike claim). Neither graph.py, control.py,
-      # decode_policy.py, nor audio_tap.py changed. Current-source proof:
-      # tests/egress/test_gst_engine_preroll_timeout.py (engine side) and
-      # tests/egress/test_daemon_preroll_timeout_relaunch.py (daemon relaunch
-      # path). Blob IDs re-hashed with `git hash-object --path <file> <file>`.
+      # this native-Windows-line spike claim) and, on that path, still emits
+      # its ``WORKER_RESULT`` receipt (``{"error": ("preroll-timeout", ...),
+      # "teardown_clean": False}``) so
+      # ``civiccast.native.installed_gstreamer_smoke.require_clean_worker_result``
+      # can name the reason instead of reporting a missing receipt. Neither
+      # graph.py, control.py, decode_policy.py, nor audio_tap.py changed.
+      #
+      # Round-2 review BLOCKER (Opus, PR #183, same day): the 45s upper clamp
+      # above is load-bearing, not cosmetic -- an unclamped bound
+      # >= ``_RESTART_STREAK_RESET_UPTIME_S`` (60s, ``civiccast/egress/
+      # daemon.py``) made a worker that ALWAYS preroll-times-out still measure
+      # >= 60s of "uptime" on every single exit, which reset the daemon's
+      # crash-loop streak on every crash and silently defeated escalation to
+      # fallback slate forever (measured: 40 relaunches, streak stuck at 0).
+      # Fixed on BOTH sides: engine.py's clamp keeps the configured bound
+      # under that threshold with margin, AND ``EgressDaemon.
+      # _relaunch_after_crash`` now exempts a
+      # ``GST_PREROLL_TIMEOUT_EXIT_CODE`` exit from the healthy-uptime streak
+      # reset outright (a preroll that never reached PLAYING is not "healthy
+      # uptime" regardless of how long it took) -- daemon.py is not itself a
+      # `code` input of this native-Windows-line spike claim (unchanged from
+      # before this entry existed), so only engine.py's re-hash reflects this
+      # round.
+      #
+      # Current-source proof: tests/egress/test_gst_engine_preroll_timeout.py
+      # (engine side, including the 45s clamp and the current+pending log
+      # line), tests/egress/test_gst_worker_preroll_timeout_exit.py (the
+      # worker's exit code and WORKER_RESULT receipt), and
+      # tests/egress/test_daemon_preroll_timeout_relaunch.py (the daemon's
+      # rate-limited streak wired through a REAL ``_poll_process`` returncode,
+      # the healthy-uptime exemption, and sustained-crash escalation to
+      # fallback slate at both the 30s default and the 45s clamp ceiling).
+      # Blob IDs re-hashed with `git hash-object --path <file> <file>`.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 32f222de0da01f7d3fc1be08e4b6ffc643d6824b
+          blob: 260da581962095e118ce9bd92f27c60b66a4c4d5
         - path: civiccast/egress/gst/engine.py
-          blob: 386c072ef963a090fbb0a1e9d37873a941af42f3
+          blob: 6c46b94e85585a730f42e14871af4ad3d25b52c9
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -1011,23 +1040,52 @@ entries:
       # bound -- and the daemon relaunched it as an ordinary crash. Fixed:
       # ``_await_playing`` now waits up to a dedicated, configurable
       # ``preroll_timeout_s`` (30s default, ``CIVICCAST_GST_PREROLL_TIMEOUT_S``
-      # env override, clamped >= 5s), polling and logging pipeline state every
-      # 5s instead of blocking silently, and raises the distinct
-      # ``PrerollTimeoutError`` once the bound is exceeded. ``worker.py``
-      # catches that and exits with the distinct
+      # env override, clamped to ``[5, 45]``s), polling every 5s and logging
+      # the ``get_state`` result, the CURRENT pipeline state, AND the pending
+      # state on every slice instead of blocking silently, and raises the
+      # distinct ``PrerollTimeoutError`` once the bound is exceeded.
+      # ``worker.py`` catches that and exits with the distinct
       # ``civiccast.egress.gst.exit_codes.GST_PREROLL_TIMEOUT_EXIT_CODE`` (a
       # new, gi-free sibling module, NOT itself bound here -- the daemon's own
       # ``civiccast/egress/daemon.py`` reads it and is not a code input of
-      # this native-Windows-line spike claim). Neither graph.py, control.py,
-      # decode_policy.py, nor audio_tap.py changed. Current-source proof:
-      # tests/egress/test_gst_engine_preroll_timeout.py (engine side) and
-      # tests/egress/test_daemon_preroll_timeout_relaunch.py (daemon relaunch
-      # path). Blob IDs re-hashed with `git hash-object --path <file> <file>`.
+      # this native-Windows-line spike claim) and, on that path, still emits
+      # its ``WORKER_RESULT`` receipt (``{"error": ("preroll-timeout", ...),
+      # "teardown_clean": False}``) so
+      # ``civiccast.native.installed_gstreamer_smoke.require_clean_worker_result``
+      # can name the reason instead of reporting a missing receipt. Neither
+      # graph.py, control.py, decode_policy.py, nor audio_tap.py changed.
+      #
+      # Round-2 review BLOCKER (Opus, PR #183, same day): the 45s upper clamp
+      # above is load-bearing, not cosmetic -- an unclamped bound
+      # >= ``_RESTART_STREAK_RESET_UPTIME_S`` (60s, ``civiccast/egress/
+      # daemon.py``) made a worker that ALWAYS preroll-times-out still measure
+      # >= 60s of "uptime" on every single exit, which reset the daemon's
+      # crash-loop streak on every crash and silently defeated escalation to
+      # fallback slate forever (measured: 40 relaunches, streak stuck at 0).
+      # Fixed on BOTH sides: engine.py's clamp keeps the configured bound
+      # under that threshold with margin, AND ``EgressDaemon.
+      # _relaunch_after_crash`` now exempts a
+      # ``GST_PREROLL_TIMEOUT_EXIT_CODE`` exit from the healthy-uptime streak
+      # reset outright (a preroll that never reached PLAYING is not "healthy
+      # uptime" regardless of how long it took) -- daemon.py is not itself a
+      # `code` input of this native-Windows-line spike claim (unchanged from
+      # before this entry existed), so only engine.py's re-hash reflects this
+      # round.
+      #
+      # Current-source proof: tests/egress/test_gst_engine_preroll_timeout.py
+      # (engine side, including the 45s clamp and the current+pending log
+      # line), tests/egress/test_gst_worker_preroll_timeout_exit.py (the
+      # worker's exit code and WORKER_RESULT receipt), and
+      # tests/egress/test_daemon_preroll_timeout_relaunch.py (the daemon's
+      # rate-limited streak wired through a REAL ``_poll_process`` returncode,
+      # the healthy-uptime exemption, and sustained-crash escalation to
+      # fallback slate at both the 30s default and the 45s clamp ceiling).
+      # Blob IDs re-hashed with `git hash-object --path <file> <file>`.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 32f222de0da01f7d3fc1be08e4b6ffc643d6824b
+          blob: 260da581962095e118ce9bd92f27c60b66a4c4d5
         - path: civiccast/egress/gst/engine.py
-          blob: 386c072ef963a090fbb0a1e9d37873a941af42f3
+          blob: 6c46b94e85585a730f42e14871af4ad3d25b52c9
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py

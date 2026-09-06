@@ -118,7 +118,11 @@ def _start_command() -> EgressCommand:
 
 
 def _daemon_with_fake_clock(
-    tmp_path: Path, *, processes: list[_FakeProcess], clock: dict[str, float]
+    tmp_path: Path,
+    *,
+    processes: list[_FakeProcess],
+    clock: dict[str, float],
+    with_fallback: bool = False,
 ) -> EgressDaemon:
     store = InMemoryEgressStore()
     store.upsert_config(_config())
@@ -134,6 +138,13 @@ def _daemon_with_fake_clock(
         store,
         work_dir=tmp_path,
         source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        # A real fallback provider (not None) is required for
+        # _begin_relaunch's force_fallback_slate branch to actually take --
+        # the escalation tests below need this wired to prove the channel
+        # really lands on FALLBACK_SLATE, not just that the streak counted up.
+        fallback_source_provider=(lambda _config: _source_plan(tmp_path))
+        if with_fallback
+        else None,
         encoder_strategy=strategy,
         monotonic=lambda: clock["t"],
         # Isolate the preroll-timeout rate limit from the general restart
@@ -339,3 +350,129 @@ def test_reset_restart_tracking_clears_the_preroll_timeout_rate_limit_state(
 
     assert "gov" not in daemon._preroll_timeout_streak_incr_at
     assert "gov" not in daemon._restart_streak
+
+
+# --- Round-2 review (Opus, PR #183) -------------------------------------------------
+
+
+def test_poll_process_plumbs_a_real_returncode_3_into_the_rate_limited_streak(
+    tmp_path: Path,
+) -> None:
+    """Requirement 2: exercise the actual wiring (``_poll_process`` reading
+    ``process.poll()`` and threading that returncode into
+    ``_relaunch_after_crash``), not a direct call to ``_relaunch_after_crash``
+    with a hand-picked ``returncode`` argument like the tests above. Every
+    assertion here goes through ``daemon.process_once`` only."""
+    clock = {"t": 0.0}
+    processes = [_FakeProcess(pid=700 + i) for i in range(4)]
+    daemon = _daemon_with_fake_clock(tmp_path, processes=processes, clock=clock)
+
+    assert daemon.process_once("gov") == 1
+    assert daemon._store.read_state("gov").state == "ON_AIR"
+
+    # The REAL worker process object the daemon is tracking exits with the
+    # REAL preroll-timeout exit code -- nothing hand-constructs the
+    # returncode argument from here on; _poll_process reads process.poll()
+    # itself and passes it through.
+    daemon._processes["gov"].returncode = GST_PREROLL_TIMEOUT_EXIT_CODE
+    daemon.process_once("gov")
+    assert daemon._restart_streak["gov"] == 1
+    assert "gov" in daemon._preroll_timeout_streak_incr_at
+
+    # A second real returncode=3 poll, still inside the 60s rate-limit
+    # window: the daemon must still relaunch (a fresh process is tracked)
+    # but the streak must NOT advance a second time.
+    clock["t"] += 5.0
+    daemon._processes["gov"].returncode = GST_PREROLL_TIMEOUT_EXIT_CODE
+    daemon.process_once("gov")
+    assert daemon._restart_streak["gov"] == 1
+    assert daemon._processes["gov"] is not None  # a fresh worker IS running
+
+
+def _run_sustained_preroll_timeout_cycles(
+    daemon: EgressDaemon, clock: dict[str, float], *, spacing_s: float, max_cycles: int
+) -> float:
+    """Drives 'gov' through repeated real preroll-timeout exits, spaced
+    ``spacing_s`` apart on the fake clock (simulating the engine's own
+    preroll bound elapsing every single time, worst case), going through
+    ``daemon.process_once`` only -- never ``_relaunch_after_crash`` directly.
+    Returns the clock time at which the channel first reads FALLBACK_SLATE.
+    Raises ``AssertionError`` if it never does within ``max_cycles``."""
+    assert daemon.process_once("gov") == 1
+    for _ in range(max_cycles):
+        clock["t"] += spacing_s
+        process = daemon._processes.get("gov")
+        assert process is not None, "expected a freshly relaunched worker process"
+        process.returncode = GST_PREROLL_TIMEOUT_EXIT_CODE
+        daemon.process_once("gov")
+        if daemon._store.read_state("gov").state == "FALLBACK_SLATE":
+            return clock["t"]
+    raise AssertionError(f"channel never reached FALLBACK_SLATE within {max_cycles} cycles")
+
+
+def test_sustained_preroll_timeouts_at_45s_still_reach_fallback_slate(tmp_path: Path) -> None:
+    """Requirement 1's own test: at the new 45s clamp ceiling (the maximum an
+    operator can configure via CIVICCAST_GST_PREROLL_TIMEOUT_S), a source that
+    NEVER comes up must still eventually escalate to fallback slate -- the
+    exact case the BLOCKER fixed (before it, an unclamped >=60s bound made
+    every such exit look like a "healthy uptime" and reset the streak on
+    every single crash, so escalation NEVER happened: measured 40 relaunches,
+    streak stuck at 0)."""
+    clock = {"t": 0.0}
+    processes = [_FakeProcess(pid=800 + i) for i in range(12)]
+    daemon = _daemon_with_fake_clock(tmp_path, processes=processes, clock=clock, with_fallback=True)
+
+    reached_at = _run_sustained_preroll_timeout_cycles(daemon, clock, spacing_s=45.0, max_cycles=10)
+
+    assert daemon._store.read_state("gov").state == "FALLBACK_SLATE"
+    assert daemon._restart_streak["gov"] >= 5
+    assert reached_at <= 500.0  # generous -- no tight bound asserted at this spacing
+
+
+def test_sustained_preroll_timeouts_at_30s_reach_fallback_slate_by_t_le_300s(
+    tmp_path: Path,
+) -> None:
+    """Requirement 4: the whole risk surface, at the engine's DEFAULT 30s
+    preroll bound. Consecutive crashes land every 30s, but the streak only
+    advances once per 60s rate-limit window, so escalation (streak reaching
+    ``_LIVE_SOURCE_FAILURE_FALLBACK_STREAK`` = 5) lands on the 9th crash --
+    measured t=270s -- well inside the 300s bound this test asserts."""
+    clock = {"t": 0.0}
+    processes = [_FakeProcess(pid=900 + i) for i in range(12)]
+    daemon = _daemon_with_fake_clock(tmp_path, processes=processes, clock=clock, with_fallback=True)
+
+    reached_at = _run_sustained_preroll_timeout_cycles(daemon, clock, spacing_s=30.0, max_cycles=10)
+
+    assert daemon._store.read_state("gov").state == "FALLBACK_SLATE"
+    assert reached_at <= 300.0
+
+
+def test_preroll_timeout_streak_is_not_reset_even_at_uptime_above_60s(tmp_path: Path) -> None:
+    """Defense-in-depth for the BLOCKER's daemon-side half: even if a caller
+    somehow passes ``uptime >= _RESTART_STREAK_RESET_UPTIME_S`` (60s) for a
+    preroll-timeout exit -- e.g. a future engine bug, or a value that bypassed
+    engine.py's own 45s clamp -- the daemon must NOT treat that as a "healthy
+    run" and reset the streak. Only the exit's OWN reason is what disqualifies
+    a preroll-timeout exit from the healthy-uptime reset, independent of
+    whatever the (informational only) uptime number happens to be."""
+    clock = {"t": 0.0}
+    processes = [_FakeProcess(pid=1000 + i) for i in range(4)]
+    daemon = _daemon_with_fake_clock(tmp_path, processes=processes, clock=clock)
+
+    assert daemon.process_once("gov") == 1
+    state = daemon._store.read_state("gov")
+
+    daemon._processes.pop("gov", None)
+    daemon._relaunch_after_crash(
+        "gov", state, uptime=70.0, returncode=GST_PREROLL_TIMEOUT_EXIT_CODE
+    )
+    assert daemon._restart_streak["gov"] == 1
+
+    clock["t"] += 65.0  # past the 60s rate-limit window -- must advance again
+    daemon._processes.pop("gov", None)
+    daemon._relaunch_after_crash(
+        "gov", state, uptime=70.0, returncode=GST_PREROLL_TIMEOUT_EXIT_CODE
+    )
+    # If the healthy-uptime reset wrongly applied here, this would read back
+    # to 1 (reset to 0, then incremented) instead of accumulating to 2.
+    assert daemon._restart_streak["gov"] == 2

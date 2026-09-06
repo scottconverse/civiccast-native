@@ -144,9 +144,27 @@ class PrerollTimeoutError(RuntimeError):
 # never so long that a genuinely wedged pipeline hangs the worker
 # indefinitely (the time-bounded-teardown audit finding M1 this method
 # already exists for). Configurable per-instance and via env var for ops
-# tuning without a code change; always clamped to >= 5s.
+# tuning without a code change; clamped to [5, 45]s.
+#
+# Round-2 review BLOCKER (Opus, PR #183): the upper bound is load-bearing, not
+# cosmetic. ``EgressDaemon._relaunch_after_crash`` treats a worker that stayed
+# up >= ``_RESTART_STREAK_RESET_UPTIME_S`` (60s) as having had a "healthy run"
+# and resets the crash-loop streak to 0 — an unclamped
+# ``CIVICCAST_GST_PREROLL_TIMEOUT_S >= 60`` would make a worker that ALWAYS
+# preroll-times-out still measure >= 60s of "uptime" on every single exit
+# (it dies right at its own configured bound), so the streak would reset on
+# every crash and NEVER reach ``_LIVE_SOURCE_FAILURE_FALLBACK_STREAK`` — a
+# genuinely dead source would relaunch forever instead of ever landing on
+# fallback slate (measured: 40 relaunches, streak stuck at 0). 45s keeps the
+# preroll bound comfortably below the 60s reset threshold with margin for
+# poll/scheduling jitter. Belt-and-suspenders: the daemon ALSO exempts a
+# ``GST_PREROLL_TIMEOUT_EXIT_CODE`` exit from that healthy-uptime reset
+# outright (see ``_relaunch_after_crash``'s own docstring) — a preroll that
+# never reached PLAYING is not "healthy uptime" by definition, regardless of
+# how this bound is configured.
 _DEFAULT_PREROLL_TIMEOUT_S = 30.0
 _MIN_PREROLL_TIMEOUT_S = 5.0
+_MAX_PREROLL_TIMEOUT_S = 45.0
 _PREROLL_TIMEOUT_ENV_VAR = "CIVICCAST_GST_PREROLL_TIMEOUT_S"
 # How often _await_playing logs the pipeline's still-waiting state while a
 # preroll is in flight, so a SLOW preroll is visible on stderr (and in the
@@ -159,14 +177,18 @@ _PREROLL_POLL_INTERVAL_S = 5.0
 def _resolve_preroll_timeout_s(explicit: float | None) -> float:
     """Resolve the PLAYING-preroll bound: an explicit constructor value wins,
     else the ``CIVICCAST_GST_PREROLL_TIMEOUT_S`` env var, else the 30s
-    default — always clamped to >= 5s (a tighter bound would false-positive
-    on ordinary CPU-load preroll jitter, the exact item 82 failure mode)."""
+    default — always clamped to ``[5, 45]``s. The floor guards against
+    false-positiving on ordinary CPU-load preroll jitter (the exact item 82
+    failure mode); the ceiling keeps the bound safely under the daemon's 60s
+    healthy-uptime streak-reset threshold (see the module-level comment above
+    ``_DEFAULT_PREROLL_TIMEOUT_S`` for why an unclamped value there silently
+    defeats the crash-loop escalation to fallback slate)."""
     if explicit is not None:
-        return max(explicit, _MIN_PREROLL_TIMEOUT_S)
+        return min(max(explicit, _MIN_PREROLL_TIMEOUT_S), _MAX_PREROLL_TIMEOUT_S)
     raw = os.environ.get(_PREROLL_TIMEOUT_ENV_VAR)
     if raw:
         try:
-            return max(float(raw), _MIN_PREROLL_TIMEOUT_S)
+            return min(max(float(raw), _MIN_PREROLL_TIMEOUT_S), _MAX_PREROLL_TIMEOUT_S)
         except ValueError:
             pass
     return _DEFAULT_PREROLL_TIMEOUT_S
@@ -1205,14 +1227,12 @@ class GstPlayoutEngine:
           path can tell a slow start apart from a genuine crash.
         """
         deadline = time.monotonic() + self.preroll_timeout_s
-        result = Gst.StateChangeReturn.ASYNC
-        pending = Gst.State.VOID_PENDING
         while True:
             remaining = deadline - time.monotonic()
             slice_s = (
                 remaining if remaining < _PREROLL_POLL_INTERVAL_S else _PREROLL_POLL_INTERVAL_S
             )
-            result, _current, pending = self.pipeline.get_state(int(max(slice_s, 0.0) * Gst.SECOND))
+            result, current, pending = self.pipeline.get_state(int(max(slice_s, 0.0) * Gst.SECOND))
             if result in (Gst.StateChangeReturn.SUCCESS, Gst.StateChangeReturn.NO_PREROLL):
                 return
             if result == Gst.StateChangeReturn.FAILURE:
@@ -1228,11 +1248,16 @@ class GstPlayoutEngine:
                     f"pipeline did not reach PLAYING within {self.preroll_timeout_s}s "
                     f"(get_state={result.value_nick})"
                 )
+            # Round-2 review, item 3: log the CURRENT state too, not just the
+            # get_state result and the pending state -- ``current`` is what
+            # actually tells an operator whether the pipeline is stuck in
+            # NULL/READY (never really started) vs PAUSED (genuinely
+            # prerolling, just slowly) while it waits.
             print(
                 f"CTRL preroll: still waiting for PLAYING after "
                 f"{self.preroll_timeout_s - (deadline - now):.1f}s of "
                 f"{self.preroll_timeout_s:.1f}s (get_state={result.value_nick}, "
-                f"pending={pending.value_nick})",
+                f"current={current.value_nick}, pending={pending.value_nick})",
                 file=sys.stderr,
                 flush=True,
             )

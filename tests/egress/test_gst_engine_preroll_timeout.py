@@ -211,6 +211,10 @@ def test_await_playing_logs_pipeline_state_every_poll_interval(
     err = capsys.readouterr().err
     assert err.count("CTRL preroll: still waiting for PLAYING") >= 2
     assert "get_state=async" in err
+    # Round-2 review, item 3: the CURRENT state must be logged too, not
+    # discarded -- NULL/READY/PAUSED tells an operator whether the pipeline
+    # never really started vs is genuinely (just slowly) prerolling.
+    assert "current=null" in err
     assert "pending=playing" in err
 
 
@@ -277,3 +281,30 @@ def test_resolve_preroll_timeout_clamps_an_explicit_constructor_value_too(
     engine_module,
 ) -> None:
     assert engine_module._resolve_preroll_timeout_s(1.0) == 5.0
+
+
+def test_resolve_preroll_timeout_clamps_the_env_override_to_45s_maximum(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round-2 review BLOCKER (Opus, PR #183): an unclamped upper bound (e.g.
+    ``CIVICCAST_GST_PREROLL_TIMEOUT_S=90``) would let a worker that ALWAYS
+    preroll-times-out still measure >= 60s of "uptime" on every single exit,
+    which resets the daemon's crash-loop streak on every crash and defeats
+    escalation to fallback slate entirely (measured: 40 relaunches, streak
+    stuck at 0). 45s keeps the bound safely under that 60s threshold."""
+    monkeypatch.setenv("CIVICCAST_GST_PREROLL_TIMEOUT_S", "90")
+    assert engine_module._resolve_preroll_timeout_s(None) == 45.0
+
+
+def test_resolve_preroll_timeout_clamps_an_explicit_constructor_value_to_45s_maximum(
+    engine_module,
+) -> None:
+    assert engine_module._resolve_preroll_timeout_s(90.0) == 45.0
+
+
+def test_resolve_preroll_timeout_45s_is_still_the_allowed_maximum(
+    engine_module,
+) -> None:
+    """The boundary itself must not be clamped down further -- 45s is a valid,
+    allowed configuration, not just anything above it."""
+    assert engine_module._resolve_preroll_timeout_s(45.0) == 45.0
