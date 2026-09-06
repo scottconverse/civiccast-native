@@ -262,11 +262,15 @@ below.
     `_request_reload`'s own pop instead (the same round-4 rule that keeps
     `_start` from popping this dict). Note: `_poll_process`'s clean-exit
     branch is shared by two cases -- a worker that simply exited on its
-    own, and a drain that has finished (`was_draining`). Only the former
-    was actually leaking; a drain's own `_stop(draining=True)` call already
-    pops this entry unconditionally the moment the drain begins, so the
-    drain-completed case reaching this branch later is redundant, not a
-    route this fix newly closes.
+    own, and a drain that has finished (`was_draining`). An operator-issued
+    "drain" command (`_process_command` -> `EgressDaemon._drain`) never
+    calls `_stop` at all -- it only writes the `DRAINING` state and waits
+    for the worker to actually exit -- so `_stop(draining=True)`'s own pop
+    plays no part in that path; only `stop_all_channels` calls `_stop(...,
+    draining=True)`. The clean-exit pop this round adds is therefore what
+    actually covers an operator drain finishing: it is the only pop either
+    case (a plain clean exit or a completed drain) reaches, not a
+    redundant backstop behind an earlier one.
   - **Round 6 (coordinator review): the round-5 fix's "nothing recorded
     before a channel goes fully dark can ever survive" claim was still
     false -- two more routes leaked, both MEASURED.** First, a worker
@@ -280,15 +284,22 @@ below.
     current` came back `False` (cut) instead of the deferred `True` a
     rollover plan_end sitting in the dict should have produced, and the
     dict was confirmed empty during the back-off window itself. The same
-    leak reached the operator via a second path: an explicit operator
+    leak also reached the operator via a second path: an explicit operator
     start command superseding a still-deferred relaunch (`_process_command`
     already pops `_backoff_relaunch` there, but was not popping this
-    dict). Second, `_start`'s own two terminal-`ERROR` `except` clauses
-    (`ConfigInvalidError`/`SecretUnresolvedError`/`FfmpegNotFoundError`,
-    and the general `EgressError` fallback) never popped -- `ERROR` is
-    off-air by the same definition every other route in this list uses,
-    so a value recorded going into a `_start` call that lands in `ERROR`
-    survived across it. Both routes now pop, closing those two gaps.
+    dict). Fixed by a single pop, not two: `_relaunch_after_crash`'s
+    DEFERRED branch itself now clears the entry the moment the channel
+    enters the back-off (`_backoff_relaunch[channel_id] = ...`), before
+    either later resolution runs -- so both the latch eventually firing the
+    deferred relaunch on its own AND an operator start command superseding
+    it first find the entry already gone; `_process_command` itself gained
+    no new pop of this dict. Second, `_start`'s own two terminal-`ERROR`
+    `except` clauses (`ConfigInvalidError`/`SecretUnresolvedError`/
+    `FfmpegNotFoundError`, and the general `EgressError` fallback) never
+    popped -- `ERROR` is off-air by the same definition every other route
+    in this list uses, so a value recorded going into a `_start` call that
+    lands in `ERROR` survived across it. That branch now pops directly,
+    closing the second gap.
     Exactly two routes deliberately still do not pop, unchanged from
     round 4: the pending-reload restart inside `_poll_process`, and the
     IMMEDIATE crash-relaunch path (`_relaunch_after_crash` ->
@@ -299,6 +310,56 @@ below.
     for `_rollover_plan_end_at` names both of these still-standing
     exceptions explicitly rather than repeating the "nothing can ever
     survive" claim this round disproved twice.
+  - **Round 7 (coordinator review): the IMMEDIATE crash-relaunch path
+    round 6 left standing (deliberately -- it keeps the channel effectively
+    on air through the transition, per round 4) still leaked, MEASURED.**
+    `record_rollover_plan_end` for a rollover reload about to be enqueued,
+    then a crash lands and the channel relaunches immediately
+    (`_relaunch_after_crash` -> `_begin_relaunch` -> `_start`, which per
+    round 4 must not pop this dict) BEFORE that reload command ever
+    drains -- and a wholly unrelated operator reload landing afterward
+    inherited the stale, already-past `plan_end_at` and was wrongly cut
+    immediately (`switch_at_end_of_current=False`) instead of deferring
+    normally (`True`). This closes the mixup round 4's own fix explicitly
+    left open (see that round's entry above, and
+    `test_the_recorded_plan_end_binds_to_whichever_reload_drains_first_
+    not_automations_own`, which now documents the WILDCARD/unscoped shape
+    only, not the caller ChannelAutomationService actually uses): every
+    pop above still fires unconditionally exactly as before (this round
+    changes none of the "does the channel go off-air" routes), but the
+    entry is now `(command_id, plan_end_at)` rather than a bare
+    `plan_end_at`, and `EgressDaemon._request_reload` only hands the
+    value down to `_try_content_reload` when the command actually
+    draining matches the `command_id` the value was recorded for (or the
+    recorded id is the `None` wildcard -- kept as the default so a direct
+    call that bypasses the command queue entirely, e.g. every
+    `PlayoutSupervisor` live-takeover/handback/slate route, and any
+    pre-round-7 test double, keeps its exact prior behavior). A mismatch
+    discards the value outright -- the reload that finds it gone falls
+    back to `should_defer_switch`'s ordinary ON_AIR/no-override behavior
+    (defer), the same as if nothing had ever been recorded, never a wrong
+    cut and never a wrong defer off a horizon it wasn't actually computed
+    against. `ChannelAutomationService._check_plan_rollover` now
+    generates its rollover reload's `command_id` up front and passes the
+    SAME id to both `record_rollover_plan_end` and the `_enqueue` call
+    that dispatches it (`_enqueue` gained an optional `command_id`
+    parameter for exactly this); every other `_enqueue` call site is
+    unaffected (defaults to generating its own id, as before). Two new
+    tests exercise the fix directly:
+    `test_command_id_scoping_closes_the_immediate_crash_relaunch_leak`
+    (the scenario above: the crash-relaunch leaves the entry untouched,
+    and the scoped id keeps the later unrelated reload from consuming it)
+    and `test_command_id_scoping_discards_value_when_an_unrelated_reload_
+    drains_first` (an unrelated reload draining BEFORE the rollover's own
+    scoped reload discards the value outright; the rollover's own reload,
+    draining second, finds nothing left and also defers normally --
+    neither wrongly cuts). No prior claim in this file or the daemon's own
+    `_rollover_plan_end_at`/`_request_reload`/`_try_content_reload`
+    docstrings asserted this specific mixup was closed; the claims about
+    `_request_reload`'s pop "passing the value down" (never discarding it)
+    were and remain accurate -- what changes this round is that the value
+    passed down is now gated on the command_id matching before it is used
+    at all.
 - **Install-over could leave the PREVIOUS kit's application payload silently
   running.** MEASURED on a real tester (2026-09-05): installing kit B `/S`
   (install-over) on a station kit A had already installed, where both kits

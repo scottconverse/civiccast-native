@@ -436,10 +436,47 @@ class EgressDaemon:
         # _request_reload's own pop instead: the pending-reload restart
         # inside _poll_process, and the IMMEDIATE crash-relaunch path
         # (_relaunch_after_crash -> _begin_relaunch -> _start, taken when the
-        # back-off latch permits running now rather than deferring). See
-        # reload_policy.should_defer_switch's plan_end_at/now parameters,
-        # which this feeds.
-        self._rollover_plan_end_at: dict[str, datetime] = {}
+        # back-off latch permits running now rather than deferring).
+        #
+        # Round 7 (coordinator review): the IMMEDIATE crash-relaunch path
+        # above still leaked, MEASURED: record_rollover_plan_end for a
+        # rollover reload about to be enqueued -> a crash lands before that
+        # command drains -> the immediate relaunch (_begin_relaunch -> _start,
+        # which per round 4 must not pop) re-resolves a fresh plan and puts
+        # the channel back ON_AIR -> the value sits here, popped by nothing,
+        # until whatever "reload" command drains next -- which is not
+        # necessarily the rollover's own command. A later, wholly unrelated
+        # operator reload draining before (or instead of) the rollover's own
+        # queued command inherited the stale, already-past plan_end_at and
+        # was wrongly cut immediately (switch_at_end_of_current=False)
+        # instead of deferring (True, the ordinary ON_AIR/no-override shape
+        # an unrecorded reload takes). Every route above closes "does the
+        # channel go off-air" leaks; none of them closes "does the reload
+        # that drains next actually belong to the automation that recorded
+        # this."
+        #
+        # Fixed by scoping the recorded value to the specific reload command
+        # it was recorded for: this dict now stores ``(command_id,
+        # plan_end_at)`` pairs. ``record_rollover_plan_end`` takes the
+        # ``command_id`` of the reload command automation is about to
+        # enqueue (see ``ChannelAutomationService._enqueue``, which now
+        # returns the id it generated so the caller can record against the
+        # exact same id). ``_request_reload`` still pops unconditionally --
+        # every route inventoried above still needs that -- but only USES
+        # the popped value when its own ``command_id`` (threaded in from
+        # ``_process_command``, or ``None`` for the direct-call routes in
+        # ``supervisor.py`` that bypass the command queue entirely) matches
+        # the recorded one. A mismatch means some other command drained
+        # (or is draining) first, so the value is discarded and
+        # ``should_defer_switch`` falls back to its ordinary,
+        # nothing-recorded behavior instead. A recorded ``command_id`` of
+        # ``None`` is a wildcard (matches whatever drains next) -- the shape
+        # every call site that predates this round, and every direct
+        # ``supervisor.py`` reload, still uses; only
+        # ``ChannelAutomationService``'s own rollover dispatch passes a real
+        # id. See ``record_rollover_plan_end`` and ``_request_reload``'s
+        # docstrings for the exact matching rule.
+        self._rollover_plan_end_at: dict[str, tuple[str | None, datetime]] = {}
         # S9-5 crash-relaunch back-off: a latch paces rapid repeat relaunches, a
         # per-channel streak counts consecutive rapid crashes (for escalation +
         # reset on healthy uptime), and _backoff_relaunch holds a deferred relaunch
@@ -730,7 +767,7 @@ class EgressDaemon:
             self._drain(command.channel_id)
             return
         if command.action == "reload":
-            self._request_reload(command.channel_id)
+            self._request_reload(command.channel_id, command_id=command.command_id)
             return
         raise ConfigInvalidError(f"unsupported egress command action: {command.action}")
 
@@ -1908,7 +1945,9 @@ class EgressDaemon:
             if plan_dir is not None
         )
 
-    def record_rollover_plan_end(self, channel_id: str, plan_end_at: datetime) -> None:
+    def record_rollover_plan_end(
+        self, channel_id: str, plan_end_at: datetime, *, command_id: str | None = None
+    ) -> None:
         """Public capability ``ChannelAutomationService`` calls (mirrors the
         ``dispatched_plan_horizon``/``has_manual_override`` getattr-probed
         shape) immediately before it enqueues a plan-rollover reload command,
@@ -1917,8 +1956,19 @@ class EgressDaemon:
         defer to the outgoing leg's own EOS, or must cut immediately because
         the horizon it was computed against has already passed (item 78 fix
         3). See ``_rollover_plan_end_at``'s docstring for why this rides an
-        in-memory side channel rather than the durable command queue."""
-        self._rollover_plan_end_at[channel_id] = plan_end_at
+        in-memory side channel rather than the durable command queue.
+
+        Round 7 (coordinator review): ``command_id`` should be the id of the
+        SAME reload command the caller is about to enqueue (``_enqueue``
+        returns the id it generated for exactly this purpose) -- it scopes
+        the recorded value so ``_request_reload`` only hands it to
+        ``should_defer_switch`` when the command actually draining is this
+        one, never a different reload that happens to land first. Defaults
+        to ``None``, a wildcard that matches whatever "reload" command for
+        this channel ``_request_reload`` sees next -- the pre-round-7
+        behavior, kept as the default for every caller that does not (or
+        cannot, e.g. a bare test double) supply a real id."""
+        self._rollover_plan_end_at[channel_id] = (command_id, plan_end_at)
 
     def has_pending_reload_settlement(self, channel_id: str) -> bool:
         """Public capability ``ChannelAutomationService`` probes (via
@@ -2066,19 +2116,25 @@ class EgressDaemon:
             # keyword-only parameter, sourced by ``_request_reload`` popping
             # ``self._rollover_plan_end_at`` unconditionally at the top of
             # ITS body -- before any of its own branches run. Round 5
-            # (coordinator review): that pop does NOT scope the value to the
-            # reload automation recorded it for -- it binds to whichever
-            # "reload" command for this channel ``_request_reload`` drains
-            # NEXT, which may be a different, unrelated reload (e.g. an
-            # operator-issued one queued ahead of automation's own, or a
-            # plain reload issued after a stale entry survived the channel
-            # going off-air and being restarted). See
-            # ``test_the_recorded_plan_end_binds_to_whichever_reload_drains_first_not_automations_own``
-            # and ``_rollover_plan_end_at``'s docstring for the routes that
-            # now clear it before that mixup can happen; scoping the value
-            # to the specific command id it was recorded for (rather than
-            # relying on every off-air/relaunch route to pop it in time) is
-            # follow-up work, not done here.
+            # (coordinator review) found that pop alone does not scope the
+            # value to the reload automation recorded it for -- it bound to
+            # whichever "reload" command for this channel ``_request_reload``
+            # drained NEXT, which could be a different, unrelated reload
+            # (e.g. an operator-issued one queued ahead of automation's own,
+            # or a plain reload issued after a stale entry survived the
+            # channel going off-air and being restarted).
+            #
+            # Round 7 (coordinator review) closed that: ``_rollover_plan_
+            # end_at`` now stores ``(command_id, plan_end_at)``, and
+            # ``_request_reload`` only forwards ``plan_end_at`` down to this
+            # method (as ``rollover_plan_end_at=``) when the command
+            # actually draining matches the recorded ``command_id`` (or the
+            # recorded id is the ``None`` wildcard). A value that reaches
+            # this parameter has therefore always either been confirmed to
+            # belong to the reload command now being processed, or was never
+            # scoped by its recorder in the first place -- never handed down
+            # from a mismatched command. See ``_rollover_plan_end_at`` and
+            # ``_request_reload``'s docstrings for the exact matching rule.
             switch_at_end_of_current=should_defer_switch(
                 previous_state=state.state if state else None,
                 manual_override_active=self.has_manual_override(channel_id),
@@ -2393,7 +2449,7 @@ class EgressDaemon:
             self._reload_kills.add(channel_id)
             _process_terminate(process)
 
-    def _request_reload(self, channel_id: str) -> None:
+    def _request_reload(self, channel_id: str, *, command_id: str | None = None) -> None:
         # Item 78 fix 3 (coordinator review, round 3): pop the automation-
         # recorded rollover plan_end_at HERE, at the very top of the ONE
         # method every "reload" command reaches, before any of this
@@ -2408,7 +2464,32 @@ class EgressDaemon:
         # read by whatever reload attempt for this channel came next.
         # Passed down explicitly to ``_try_content_reload`` rather than
         # having it read the (now already-emptied) dict itself.
-        rollover_plan_end_at = self._rollover_plan_end_at.pop(channel_id, None)
+        #
+        # Round 7 (coordinator review): still pops unconditionally (every
+        # route inventoried in ``_rollover_plan_end_at``'s docstring still
+        # needs that), but the popped entry is now ``(recorded_command_id,
+        # plan_end_at)`` and is only USED when ``recorded_command_id``
+        # matches ``command_id`` -- the id of the command actually draining
+        # right now (threaded in from ``_process_command``, or ``None`` for
+        # a direct call that bypasses the command queue, e.g.
+        # ``supervisor.py``'s live-takeover/handback/slate routes). A
+        # recorded ``command_id`` of ``None`` is a wildcard and always
+        # matches (the pre-round-7 shape kept for callers that don't supply
+        # one). Any other mismatch means a DIFFERENT reload command (not the
+        # one automation recorded this value for) is the one draining --
+        # the value is discarded, unused, exactly as if nothing had been
+        # recorded, and ``should_defer_switch`` falls back to its ordinary
+        # ON_AIR/no-override behavior. This is what closes the immediate-
+        # crash-relaunch leak: the relaunch itself never pops (per round 4),
+        # so the entry survives to whatever "reload" drains next, but that
+        # next reload can no longer wrongly consume a value recorded for a
+        # DIFFERENT command.
+        popped = self._rollover_plan_end_at.pop(channel_id, None)
+        rollover_plan_end_at: datetime | None = None
+        if popped is not None:
+            recorded_command_id, recorded_plan_end_at = popped
+            if recorded_command_id is None or recorded_command_id == command_id:
+                rollover_plan_end_at = recorded_plan_end_at
         state = self._store.read_state(channel_id)
         process = self._processes.get(channel_id)
         if process is None or _process_poll(process) is not None:

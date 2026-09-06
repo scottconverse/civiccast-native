@@ -1119,10 +1119,21 @@ class ChannelAutomationService:
         # runs (reload_policy.should_defer_switch's plan_end_at/now
         # parameters) -- optional capability, getattr-probed like
         # dispatched_plan_horizon/has_manual_override above.
+        #
+        # Round 7 (coordinator review): generate THIS reload command's id
+        # up front and pass the SAME id to both calls, so the daemon can
+        # scope the recorded value to the exact command it is for (see
+        # ``EgressDaemon._rollover_plan_end_at``'s docstring) -- a value
+        # recorded here must never be consumed by some other reload for
+        # this channel that happens to drain first (an operator-issued one
+        # queued ahead of it, or one landing after an intervening crash-
+        # relaunch that leaves this record untouched). ``_enqueue`` accepts
+        # a pre-generated id for exactly this reason.
+        reload_command_id = f"auto-reload-{uuid.uuid4().hex[:12]}"
         record_plan_end = getattr(self._daemon, "record_rollover_plan_end", None)
         if callable(record_plan_end):
-            record_plan_end(channel_id, plan_end_at)
-        self._enqueue(channel_id, "reload", now=now)
+            record_plan_end(channel_id, plan_end_at, command_id=reload_command_id)
+        self._enqueue(channel_id, "reload", now=now, command_id=reload_command_id)
         self._rollover_issued.add(channel_id)
         self._rollover_issued_at[channel_id] = self._monotonic()
         self._rollover_dispatched_at[channel_id] = self._monotonic()
@@ -1327,16 +1338,28 @@ class ChannelAutomationService:
             return False
         return bool(reader(channel_id))
 
-    def _enqueue(self, channel_id: str, action: str, *, now: datetime) -> None:
+    def _enqueue(
+        self, channel_id: str, action: str, *, now: datetime, command_id: str | None = None
+    ) -> str:
+        """Enqueue an automation-issued command. ``command_id`` lets a caller
+        that must correlate this command with other bookkeeping (round 7:
+        ``_check_plan_rollover`` scoping a recorded ``record_rollover_plan_end``
+        value to the exact reload it is for) pre-generate the id and pass it
+        in, rather than only being able to read it back after the fact.
+        Defaults to generating a fresh one, same as every pre-round-7 caller.
+        Returns the id actually used, so a caller that DIDN'T pre-generate
+        one can still learn it if a future need arises."""
+        resolved_command_id = command_id or f"auto-{action}-{uuid.uuid4().hex[:12]}"
         self._store.enqueue_command(
             EgressCommand(
                 channel_id=channel_id,
                 action=action,  # type: ignore[arg-type]
                 issued_at=now,
                 issued_by=_ISSUED_BY,
-                command_id=f"auto-{action}-{uuid.uuid4().hex[:12]}",
+                command_id=resolved_command_id,
             )
         )
+        return resolved_command_id
 
 
 _RELAY_CMDLINE_MARKERS = ("-f decklink", "-f libndi_newtek")

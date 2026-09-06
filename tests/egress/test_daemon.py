@@ -1360,7 +1360,7 @@ def test_stop_clears_the_recorded_rollover_plan_end(tmp_path: Path) -> None:
     daemon.process_once("gov")  # initial start -> ON_AIR
 
     daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
-    assert daemon._rollover_plan_end_at == {"gov": datetime(2020, 1, 1, tzinfo=UTC)}
+    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC))}
 
     store.enqueue_command(_command("stop"))
     daemon.process_once("gov")
@@ -1490,7 +1490,7 @@ def test_drain_with_no_live_process_clears_the_recorded_rollover_plan_end(
     )
 
     daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC))
-    assert daemon._rollover_plan_end_at == {"gov": datetime(2020, 1, 1, tzinfo=UTC)}
+    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC))}
 
     store.enqueue_command(_command("drain"))
     daemon.process_once("gov")  # _drain: process is None -> STOPPED
@@ -1741,18 +1741,28 @@ def test_start_terminal_error_clears_the_recorded_rollover_plan_end(tmp_path: Pa
 def test_the_recorded_plan_end_binds_to_whichever_reload_drains_first_not_automations_own(
     tmp_path: Path,
 ) -> None:
-    """Coordinator review, round 4, item 4: the recorded value is NOT scoped
-    to the reload automation dispatched it for -- it binds to whatever
-    "reload" command for that channel ``_request_reload`` processes NEXT.
+    """Coordinator review, round 4, item 4: when the caller does not scope
+    the recorded value to a specific command (``record_rollover_plan_end``'s
+    ``command_id`` left at its ``None`` wildcard default), it binds to
+    whatever "reload" command for that channel ``_request_reload`` processes
+    NEXT -- not necessarily the one automation dispatched it for.
     ``pop_pending_commands`` drains a channel's queued commands sorted by
     ``issued_at`` (not enqueue order), so an operator reload issued EARLIER
     than automation's own rollover reload -- even if both are enqueued in
     the same tick, in either order -- drains first and consumes the value
     instead; automation's own reload, draining second, sees nothing
-    recorded and defers normally. This is a real mixup this fix does not
-    close (only the indefinite leak the earlier rounds fixed) -- automation's
-    own 45-second retry-timeout/settlement bookkeeping is what recovers the
-    never-landed reload it was actually tracking."""
+    recorded and defers normally.
+
+    Round 7 (coordinator review): this mixup is exactly what command-id
+    scoping (``record_rollover_plan_end(..., command_id=...)``) exists to
+    close, and ``ChannelAutomationService`` now always supplies its own
+    reload command's id (see ``_check_plan_rollover``/``_enqueue`` in
+    automation.py) -- so this UNSCOPED shape no longer reflects the real
+    caller's behavior; it demonstrates the wildcard fallback every OTHER
+    caller (or a bare test double) still gets by not passing an id. See
+    ``test_command_id_scoping_closes_the_immediate_crash_relaunch_leak``
+    and ``test_command_id_scoping_discards_value_when_an_unrelated_reload_
+    drains_first`` below for the scoped, fixed behavior."""
     store = InMemoryEgressStore()
     store.upsert_config(_config())
     store.enqueue_command(_command())
@@ -1801,6 +1811,140 @@ def test_the_recorded_plan_end_binds_to_whichever_reload_drains_first_not_automa
     # second) sees nothing recorded and defers normally, the ordinary ON_AIR/
     # no-override shape.
     assert strategy.switch_at_end_of_current_calls == [False, True]
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_command_id_scoping_closes_the_immediate_crash_relaunch_leak(tmp_path: Path) -> None:
+    """Coordinator review, round 7, item 1 -- the IMMEDIATE crash-relaunch
+    path (``_relaunch_after_crash`` -> ``_begin_relaunch`` -> ``_start``)
+    deliberately does not pop ``_rollover_plan_end_at`` (round 4: it keeps
+    the channel effectively ON_AIR through the transition, relying on
+    ``_request_reload``'s own pop -- see that dict's docstring). MEASURED
+    without command-id scoping: ``record_rollover_plan_end`` for a rollover
+    reload about to be enqueued, then a crash lands and the channel
+    relaunches immediately (a fresh process, the recorded ``plan_end_at``
+    untouched in the dict) BEFORE that rollover reload command ever drains
+    -- and a wholly UNRELATED operator reload landing afterward inherited
+    the stale, already-past ``plan_end_at`` and was wrongly cut immediately
+    (``switch_at_end_of_current=False``) instead of deferring (``True``,
+    the ordinary ON_AIR/no-override shape an unrecorded reload takes).
+
+    Scoping the recorded value to the ``command_id`` it was recorded for
+    closes this: the unrelated reload's own command_id does not match, so
+    the stale value is discarded (as if nothing had been recorded) rather
+    than consumed."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR (process 111)
+
+    # Automation records a rollover plan_end (already stale) scoped to the
+    # specific reload command it is about to enqueue -- but that command is
+    # never enqueued here: the crash below preempts it entirely, exactly
+    # the scenario this test measures.
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2020, 1, 1, tzinfo=UTC), command_id="auto-reload-scoped"
+    )
+    started[0].returncode = 1  # the worker crashes
+    daemon.process_once("gov")  # _poll_process relaunches immediately (process 222)
+
+    assert len(started) == 2  # the immediate relaunch really did happen
+    # Untouched by the relaunch -- _start must never pop this (round 4).
+    assert daemon._rollover_plan_end_at == {
+        "gov": ("auto-reload-scoped", datetime(2020, 1, 1, tzinfo=UTC))
+    }
+
+    # A wholly unrelated operator reload, drained afterward.
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))  # command_id="cmd-reload" -- does NOT match
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == ["Mayor interview"]
+    assert strategy.switch_at_end_of_current_calls == [True]  # deferred, not wrongly cut
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_command_id_scoping_discards_value_when_an_unrelated_reload_drains_first(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 7, item 1 (second shape reviewer asked for):
+    an unrelated reload command draining BEFORE the reload command the
+    value was actually recorded for must discard it outright -- not merely
+    leave it for the later, matching command to still consume. The pop is
+    unconditional (every off-air/relaunch route inventoried in
+    ``_rollover_plan_end_at``'s docstring still needs that), so once ANY
+    "reload" command drains for this channel, the entry is gone from the
+    dict regardless of whether its ``command_id`` matched.
+
+    Contrast ``test_the_recorded_plan_end_binds_to_whichever_reload_drains_
+    first_not_automations_own`` above: with the wildcard (unscoped) record
+    there is nothing to compare against, so the FIRST reload wrongly
+    consumes the value. Here the value is recorded scoped to automation's
+    own command_id, so the first (unrelated) reload's mismatch discards it,
+    and automation's own reload -- draining second -- finds nothing left
+    and falls back to its ordinary ON_AIR/no-override behavior: deferring
+    (``switch_at_end_of_current=True``), the same as if nothing had ever
+    been recorded for it, rather than either wrongly cutting (consuming a
+    mismatched value) or wrongly deferring off a stale horizon it was never
+    actually computed against."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    # Automation records a rollover plan_end (already stale) scoped to its
+    # own about-to-be-enqueued reload command.
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2020, 1, 1, tzinfo=UTC), command_id="cmd-automation-reload"
+    )
+    # An unrelated operator reload, issued_at EARLIER, drains first.
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 11, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-operator-reload",
+        )
+    )
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+            issued_by="channel-automation",
+            command_id="cmd-automation-reload",
+        )
+    )
+    current_label = "Mayor interview"
+    daemon.process_once("gov")
+
+    # Both reloads defer normally: the mismatched first reload never sees
+    # the stale value (discarded on the mismatch), and the matching second
+    # reload finds it already gone -- neither wrongly cuts.
+    assert strategy.switch_at_end_of_current_calls == [True, True]
     assert daemon._rollover_plan_end_at == {}
 
 
