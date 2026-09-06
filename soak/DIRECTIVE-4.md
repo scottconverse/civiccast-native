@@ -216,3 +216,21 @@ DIAG-9x (20:56Z): caption tap is the new code and backs off (state paused, CRITI
 ## Addendum -- AUTORUN-9zz (read-only)
 
 Soak #4's 22:46Z rollup: workers are small again (340-390 MB, few sub-chains) but each relaunched exactly once this cycle, most likely at the 22:22Z boundary where the plan switched from 30-s items to the long clips. `AUTORUN-9zz.ps1` (runs once, changes nothing) records worker start times, every STARTING/TRANSITIONING/STOPPED/FALLBACK line with its last_error since 22:10Z, reload/rollover/Content-reload/Live-source lines, and the worker stderr tails. Result `soak/DIAG-9zz-<stamp>.md`.
+
+
+## Addendum -- SOAK #5: clean install of kit 609273d (beta.5 candidate 2)
+
+Kit `609273da22b968b8ed9320dfc158d67b01eb30b3` = main with #172 (caption-tap backoff + operator switch),
+#173 (installer stages packs by content identity), #174 (plan window capped at 8 segments, replan floor
+and lead scaled to plan length, engine fails closed on oversized program plans). Served from
+`http://192.168.0.135:8766/609273da22b968b8ed9320dfc158d67b01eb30b3/`. Gate A ran on it first.
+
+Same chain as 9r..9u, new names: `AUTORUN-9za` (quiet uninstall, remove ProgramData\CivicCast, fresh /S
+install, wait /health), `AUTORUN-9zb` (station-state.json marker reset + restart), `AUTORUN-9zc`
+(first-admin -> token), `AUTORUN-9zd` (upload the 4 clips, schedule 2h15 per channel -- 30-s items
+because ffprobe is absent here, which is the exact shape that exposed item 51 -- Commit-to-Air, config
+PUT, start, archive soak #4's probes to `soak/archive-609273d-prev-soak/`, reset counters, write
+`state\soak-started`). AUTORUN-3 verifies every 30 min (3-min warm-up grace) and writes
+`soak/final-verdict.json` at 2 h. PASS = ON_AIR on GStreamer every cycle, tsp pass every cycle, zero
+relaunches. Results: REINSTALL-RESULT-9za.md, STATE-RESET-RESULT-9zb.md, AUTORUN-9zc-RESULT-*.md,
+AUTORUN-9zd-RESULT-*.md / CHANNEL-SCHEDULE-9zd.md / SOAK-START-9zd.md / SETUP-BLOCKED-9zd.md.
