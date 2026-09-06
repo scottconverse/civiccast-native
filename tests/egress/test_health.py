@@ -12,6 +12,7 @@ from civiccast.egress.health import (
     encoder_has_progress,
     parse_ffmpeg_encoder_metrics_line,
     read_latest_ffmpeg_encoder_metrics,
+    worker_reached_playing,
 )
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
 
@@ -112,6 +113,58 @@ def test_encoder_has_progress_requires_fps_and_bitrate() -> None:
     assert not encoder_has_progress(EgressEncoderMetrics(encoder_fps=30.0))
     assert not encoder_has_progress(EgressEncoderMetrics(encoder_bitrate_kbps=6100))
     assert not encoder_has_progress(EgressEncoderMetrics(encoder_fps=0.0, encoder_bitrate_kbps=0.0))
+
+
+class TestWorkerReachedPlaying:
+    """Round-3 fix (PR #183 review, BLOCKER item 1): the daemon's ONLY real
+    evidence a GStreamer worker's pipeline reached PLAYING, as opposed to
+    merely not having exited yet. Emitted exactly once, on the success path
+    of ``GstPlayoutEngine._await_playing`` (see
+    ``tests/egress/test_gst_engine_preroll_timeout.py``)."""
+
+    def test_true_when_the_marker_is_present(self, tmp_path: Path) -> None:
+        log_path = tmp_path / "gst-worker.stderr.log"
+        log_path.write_text(
+            "CTRL decode: demoted hardware decoders to CPU decode: vaapih264dec\n"
+            "CTRL preroll: reached PLAYING after 6.2s\n",
+            encoding="utf-8",
+        )
+
+        assert worker_reached_playing(log_path) is True
+
+    def test_false_while_still_waiting(self, tmp_path: Path) -> None:
+        log_path = tmp_path / "gst-worker.stderr.log"
+        log_path.write_text(
+            "CTRL preroll: still waiting for PLAYING after 5.0s of 30.0s "
+            "(get_state=async, current=null, pending=playing)\n",
+            encoding="utf-8",
+        )
+
+        assert worker_reached_playing(log_path) is False
+
+    def test_false_on_a_missing_log(self, tmp_path: Path) -> None:
+        assert worker_reached_playing(tmp_path / "nope.log") is False
+
+    def test_false_on_an_empty_log(self, tmp_path: Path) -> None:
+        log_path = tmp_path / "gst-worker.stderr.log"
+        log_path.write_text("", encoding="utf-8")
+
+        assert worker_reached_playing(log_path) is False
+
+    def test_true_even_when_the_marker_is_outside_the_default_tail_window(
+        self, tmp_path: Path
+    ) -> None:
+        """The marker prints exactly once near the start of the worker's
+        lifetime; it must still be found via a SMALL tail window explicitly
+        sized to cover it, proving the function honors ``tail_bytes`` the
+        same way ``read_latest_ffmpeg_encoder_metrics`` does."""
+        log_path = tmp_path / "gst-worker.stderr.log"
+        log_path.write_text(
+            "CTRL preroll: reached PLAYING after 6.2s\n" + ("CTRL reload: filler tick\n" * 500),
+            encoding="utf-8",
+        )
+
+        assert worker_reached_playing(log_path, tail_bytes=1024 * 1024) is True
 
 
 def test_default_sink_health_keeps_file_sinks_local_only_true() -> None:

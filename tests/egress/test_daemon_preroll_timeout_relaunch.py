@@ -20,6 +20,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from civiccast.egress.daemon import EgressDaemon
 from civiccast.egress.encoder_strategy import EncoderStartRequest, EncoderStartResult
 from civiccast.egress.gst.exit_codes import GST_PREROLL_TIMEOUT_EXIT_CODE
@@ -123,6 +125,7 @@ def _daemon_with_fake_clock(
     processes: list[_FakeProcess],
     clock: dict[str, float],
     with_fallback: bool = False,
+    preroll_bound_s: float = 30.0,
 ) -> EgressDaemon:
     store = InMemoryEgressStore()
     store.upsert_config(_config())
@@ -131,7 +134,7 @@ def _daemon_with_fake_clock(
         processes,
         stderr_text=(
             "CTRL preroll: worker exiting -- pipeline did not reach PLAYING "
-            "within 30.0s (get_state=async)\n"
+            f"within {preroll_bound_s:.1f}s (get_state=async)\n"
         ),
     )
     return EgressDaemon(
@@ -426,7 +429,12 @@ def test_sustained_preroll_timeouts_at_45s_still_reach_fallback_slate(tmp_path: 
 
     assert daemon._store.read_state("gov").state == "FALLBACK_SLATE"
     assert daemon._restart_streak["gov"] >= 5
-    assert reached_at <= 500.0  # generous -- no tight bound asserted at this spacing
+    # Round-3 fix (item 3): the review flagged this as a loose, effectively
+    # untested bound ("generous") -- replaced with the actual measured
+    # cadence. At 45s spacing the rate limit (one streak increment per 60s)
+    # lets every OTHER crash advance the streak, so escalation to
+    # _LIVE_SOURCE_FAILURE_FALLBACK_STREAK (5) lands on the 9th crash, t=405s.
+    assert reached_at == 405.0
 
 
 def test_sustained_preroll_timeouts_at_30s_reach_fallback_slate_by_t_le_300s(
@@ -476,3 +484,185 @@ def test_preroll_timeout_streak_is_not_reset_even_at_uptime_above_60s(tmp_path: 
     # If the healthy-uptime reset wrongly applied here, this would read back
     # to 1 (reset to 0, then incremented) instead of accumulating to 2.
     assert daemon._restart_streak["gov"] == 2
+
+
+# --- Round-3 review (Opus, PR #183), BLOCKER item 1 ---------------------------------
+#
+# Everything above exercises the CRASH path (``_relaunch_after_crash``'s own
+# healthy-uptime exemption, gated on the exit's returncode). The daemon has a
+# SEPARATE healthy-uptime reset on the ALIVE-poll path
+# (``EgressDaemon._poll_process``, the ``returncode is None`` branch) that has
+# no returncode to exempt -- before this round it reset the crash streak on
+# wall-clock seconds since the worker was SPAWNED, which also counts
+# interpreter start + ``import gi``/``Gst.init`` + graph build + the preroll
+# wait itself, none of which is air. The reviewer measured this against the
+# REAL ``process_once`` loop (2s poll ticks while alive, then a real
+# returncode=3 exit): a worker "alive" for 45/58/59s still escalated to
+# FALLBACK_SLATE by cycle 9, but one "alive" for 60 or 62s got its streak
+# reset on every single alive poll past the 60s mark -- BEFORE it even
+# exited -- so the streak stayed stuck at 1 forever (never escalated in 40
+# cycles). The tests below reproduce that exact shape and prove the fix
+# (evidence-gated healthy-uptime reset, see ``_observed_on_air_evidence`` /
+# ``_on_air_confirmed_at`` in daemon.py) closes it: a worker that never once
+# printed real on-air evidence must escalate to FALLBACK_SLATE regardless of
+# how long it stayed "alive" per poll before its preroll-timeout exit.
+
+
+def _run_alive_then_exit_cycle(
+    daemon: EgressDaemon,
+    clock: dict[str, float],
+    *,
+    lifetime_s: float,
+    tick_s: float = 2.0,
+) -> None:
+    """Mirrors the reviewer's own probe shape: advances the fake clock in
+    ``tick_s`` (2s, a realistic poll cadence) slices while 'gov's tracked
+    worker process reports still-alive (``poll()`` -> ``None``, driving the
+    REAL ``_poll_process`` alive-poll branch through ``daemon.process_once``)
+    for a total of ``lifetime_s``, then makes the SAME process exit with
+    ``GST_PREROLL_TIMEOUT_EXIT_CODE`` and drives one more ``process_once`` so
+    the crash-relaunch path handles it and (if the source stays down)
+    launches the next worker."""
+    elapsed = 0.0
+    while elapsed < lifetime_s:
+        clock["t"] += tick_s
+        elapsed += tick_s
+        process = daemon._processes.get("gov")
+        assert process is not None, "expected the worker still tracked as alive"
+        daemon.process_once("gov")
+    process = daemon._processes.get("gov")
+    assert process is not None, "expected the worker still tracked as alive at exit"
+    process.returncode = GST_PREROLL_TIMEOUT_EXIT_CODE
+    daemon.process_once("gov")
+
+
+def _run_sustained_preroll_timeout_cycles_with_alive_ticks(
+    daemon: EgressDaemon,
+    clock: dict[str, float],
+    *,
+    lifetime_s: float,
+    max_cycles: int,
+) -> float:
+    """The alive-poll-path twin of ``_run_sustained_preroll_timeout_cycles``:
+    each cycle keeps 'gov's worker reporting alive for ``lifetime_s`` of real
+    2s-tick polls (never printing on-air evidence -- the fixture's stderr
+    text is the same permanently-failing message every other test in this
+    file uses) before it actually exits with the preroll-timeout code.
+    Returns the clock time the channel first reads FALLBACK_SLATE; raises if
+    it never does within ``max_cycles``."""
+    assert daemon.process_once("gov") == 1
+    for _ in range(max_cycles):
+        _run_alive_then_exit_cycle(daemon, clock, lifetime_s=lifetime_s)
+        if daemon._store.read_state("gov").state == "FALLBACK_SLATE":
+            return clock["t"]
+    raise AssertionError(f"channel never reached FALLBACK_SLATE within {max_cycles} cycles")
+
+
+@pytest.mark.parametrize("preroll_bound_s", [30.0, 45.0])
+@pytest.mark.parametrize("lifetime_s", [45.0, 59.0, 60.0, 62.0, 90.0])
+def test_alive_poll_path_still_escalates_regardless_of_wall_clock_lifetime(
+    tmp_path: Path, lifetime_s: float, preroll_bound_s: float
+) -> None:
+    """The BLOCKER's own reproduction: a source that NEVER comes up (the
+    fixture's worker never prints the ``reached PLAYING`` evidence marker)
+    must escalate to FALLBACK_SLATE even when each doomed worker happens to
+    stay "alive" per poll for exactly 60s or 62s before its preroll-timeout
+    exit -- the wall-clock lifetime that used to trip the alive-poll path's
+    reset on every single tick past 60s, before it ever got a chance to
+    exit. 45/59s (below the old 60s trip point) already worked before this
+    fix and must keep working; 60/62/90s are the regression this fix closes."""
+    clock = {"t": 0.0}
+    processes = [_FakeProcess(pid=1100 + i) for i in range(20)]
+    daemon = _daemon_with_fake_clock(
+        tmp_path,
+        processes=processes,
+        clock=clock,
+        with_fallback=True,
+        preroll_bound_s=preroll_bound_s,
+    )
+
+    reached_at = _run_sustained_preroll_timeout_cycles_with_alive_ticks(
+        daemon, clock, lifetime_s=lifetime_s, max_cycles=20
+    )
+
+    assert daemon._store.read_state("gov").state == "FALLBACK_SLATE"
+    assert daemon._restart_streak["gov"] >= 5
+    assert reached_at > 0.0
+
+
+def test_alive_poll_path_does_not_reset_the_streak_on_wall_clock_alone(
+    tmp_path: Path,
+) -> None:
+    """Narrower unit-level reproduction of the same BLOCKER: drive the alive
+    poll branch directly for 62s of 2s ticks (no exit yet) against a worker
+    that has a live crash streak already recorded but has NEVER printed
+    on-air evidence. Before this fix, ``_poll_process`` reset the streak the
+    moment ``_seconds_on_air`` crossed 60s -- with no exit and no evidence,
+    just time since spawn. After it, the streak must survive untouched."""
+    clock = {"t": 0.0}
+    processes = [_FakeProcess(pid=1200 + i) for i in range(2)]
+    daemon = _daemon_with_fake_clock(tmp_path, processes=processes, clock=clock)
+
+    assert daemon.process_once("gov") == 1
+    # Manufacture a live crash streak exactly the way the reviewer's own
+    # scenario would have one already accumulated from a PRIOR doomed cycle.
+    daemon._restart_streak["gov"] = 3
+
+    elapsed = 0.0
+    while elapsed < 62.0:
+        clock["t"] += 2.0
+        elapsed += 2.0
+        daemon.process_once("gov")
+
+    assert daemon._restart_streak["gov"] == 3, (
+        "the alive-poll path must not reset a live streak on wall-clock time "
+        "alone -- no on-air evidence was ever observed"
+    )
+
+
+def test_alive_poll_path_resets_the_streak_once_on_air_evidence_is_held_for_60s(
+    tmp_path: Path,
+) -> None:
+    """The positive case: a worker that DOES print the real
+    ``reached PLAYING`` evidence marker, and then keeps running for a full
+    60s past that, is the genuinely healthy run this reset exists to
+    recognize -- proving the fix does not just refuse to reset, it resets
+    for the RIGHT reason (held evidence, not elapsed wall time since
+    spawn)."""
+    clock = {"t": 0.0}
+    processes = [_FakeProcess(pid=1300 + i) for i in range(2)]
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_start_command())
+    strategy = _WorkerStrategy(
+        processes,
+        stderr_text="CTRL preroll: reached PLAYING after 3.1s\n",
+    )
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        encoder_strategy=strategy,
+        monotonic=lambda: clock["t"],
+        restart_cooldown_seconds=0.0,
+    )
+    assert daemon.process_once("gov") == 1
+    # A live crash streak from some earlier, unrelated trouble.
+    daemon._restart_streak["gov"] = 3
+
+    # First alive poll tick: evidence is observed and latched, but 0s have
+    # elapsed since -- must NOT reset yet.
+    clock["t"] += 2.0
+    daemon.process_once("gov")
+    assert daemon._restart_streak["gov"] == 3
+    assert "gov" in daemon._on_air_confirmed_at
+
+    # Short of the 60s healthy-uptime window since evidence was first seen.
+    clock["t"] += 55.0  # t=57s since evidence was latched at t=2.0
+    daemon.process_once("gov")
+    assert daemon._restart_streak["gov"] == 3
+
+    # Past the 60s window since evidence was first observed: now it resets.
+    clock["t"] += 10.0  # t=67s since evidence was latched
+    daemon.process_once("gov")
+    assert "gov" not in daemon._restart_streak

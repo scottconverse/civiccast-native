@@ -408,22 +408,93 @@ below.
     `_relaunch_after_crash` now ALSO exempts a
     `GST_PREROLL_TIMEOUT_EXIT_CODE` exit from the healthy-uptime reset
     outright (a preroll that never reached PLAYING is not "healthy uptime"
-    regardless of how long it took) -- belt-and-suspenders, either fix alone
-    would have closed the hole. The healthy-uptime reset (for every OTHER
-    exit reason) now also clears the preroll-timeout rate-limit bookkeeping,
-    so a genuinely healthy run doesn't leave a stale rate-limit window
-    behind for a later, unrelated preroll timeout.
+    regardless of how long it took). The healthy-uptime reset (for every
+    OTHER exit reason) now also clears the preroll-timeout rate-limit
+    bookkeeping, so a genuinely healthy run doesn't leave a stale rate-limit
+    window behind for a later, unrelated preroll timeout.
+  - **Round-3 review BLOCKER (Opus, PR #183), fixed same day: round-2's fix
+    was NOT sufficient on its own.** Correcting the round-2 entry directly
+    above: the 45s clamp and the crash-path exemption did **not**, either
+    alone or together, close the hole -- `EgressDaemon._poll_process` has a
+    SEPARATE healthy-uptime reset on the **alive-poll** path (no returncode
+    there to exempt, since the worker hasn't exited) that reset the crash
+    streak on wall-clock seconds since the worker was **spawned** -- which
+    also counts interpreter start, `import gi`/`Gst.init`, graph build, and
+    the preroll wait itself, none of which is air, and none of which is
+    bounded by the worker's own `preroll_timeout_s`. Measured against the
+    real `process_once` poll loop (2s ticks while alive, then a real
+    preroll-timeout exit): a worker "alive" for 45/58/59s still escalated to
+    fallback slate by cycle 9 as expected, but one "alive" for 60 or 62s got
+    its streak reset on every single alive poll past the 60s mark --
+    **before it even exited** -- so the streak stayed stuck at 1 forever
+    (never escalated in 40 cycles), reproducing the exact 40-relaunch
+    symptom this whole fix chain exists to close. Fixed: `_await_playing`
+    now prints a stable `CTRL preroll: reached PLAYING` marker on stderr
+    ONLY on the actual PLAYING success path (never on timeout or failure);
+    the daemon greps for it via a new
+    `civiccast.egress.health.worker_reached_playing`, and the alive-poll
+    reset now starts its 60s healthy-uptime clock from the moment that
+    evidence is first observed (`EgressDaemon._on_air_confirmed_at`), never
+    from spawn time. An FFmpeg-strategy channel has no PLAYING marker of its
+    own, so the same evidence check also accepts real fps/bitrate progress
+    (`civiccast.egress.health.encoder_has_progress`, already used for sink
+    health) as an equally valid on-air signal --
+    `EgressDaemon._observed_on_air_evidence` covers both encoder families.
+    Also fixed the same round, both false claims this document and the code
+    itself were carrying: the "either fix alone would have closed the hole"
+    line directly above was not true (see this correction), and
+    `engine.py`'s own module comment claiming the healthy-uptime exemption
+    holds "regardless of how this bound is configured" was equally false
+    for the identical reason -- both now read the corrected story. And a
+    separate BLOCKER: `CIVICCAST_GST_PREROLL_TIMEOUT_S=nan` escaped the
+    `[5, 45]` clamp entirely (`min(max(nan, 5), 45)` evaluates to `nan`, not
+    `5.0` -- Python's `min`/`max` keep their first argument across any
+    comparison against NaN, and `float("nan")` parses without raising, so
+    the pre-existing malformed-value guard never caught it either), which
+    reached `_await_playing`'s deadline arithmetic as `nan` and fell through
+    to the generic pipeline-construction `ValueError` path instead of ever
+    raising the distinct `PrerollTimeoutError` -- `_resolve_preroll_timeout_s`
+    now guards both the explicit-arg and env-var paths with `math.isfinite`
+    before clamping, falling back to the 30s default (with a stderr warning)
+    on any non-finite value.
+  - **Carry-over follow-up (item 5), fixed the same round:** `worker.py`'s
+    `PrerollTimeoutError` handler used to let the exception propagate out of
+    `run_forever` without ever calling `engine_instance.stop()` -- the only
+    teardown was the unconditional, non-graceful `os._exit()` at the very
+    bottom of the file. `main()` now attempts `stop(force_exit_on_hang=False)`
+    in that handler (already time-bounded via `teardown_timeout_s`;
+    deliberately never `force_exit_on_hang=True`, which would call
+    `os._exit(70)` on a stuck teardown and silently swap out the distinct
+    `GST_PREROLL_TIMEOUT_EXIT_CODE` this whole path exists to preserve), and
+    the `WORKER_RESULT` receipt's `teardown_clean` field now reports that
+    real outcome instead of a hardcoded `False`. A teardown that itself
+    raises is caught and logged, never allowed to mask the distinct exit
+    code.
   - New tests: `tests/egress/test_gst_engine_preroll_timeout.py` (the
     engine's bounded wait, env-var resolution/clamp including the new 45s
-    ceiling, the distinct exception, and the current+pending log line),
+    ceiling, the distinct exception, the current+pending log line, the new
+    `reached PLAYING` success marker -- present only on success, never on
+    timeout -- and the NaN-clamp-escape regression),
     `tests/egress/test_gst_worker_preroll_timeout_exit.py` (`worker.main()`
-    returns the distinct exit code and still emits a `WORKER_RESULT`
-    receipt), and `tests/egress/test_daemon_preroll_timeout_relaunch.py`
-    (the rate-limited streak wired through a REAL `_poll_process` returncode
-    rather than a direct call, per-channel isolation, the healthy-uptime
-    exemption even at uptime >= 60s, reset behavior, and sustained-crash
-    escalation to fallback slate at both the 30s default -- by t<=300s,
-    measured t=270s -- and the 45s clamp ceiling).
+    returns the distinct exit code, still emits a `WORKER_RESULT` receipt,
+    and now attempts a bounded teardown -- covering a clean teardown, an
+    unclean one, and one that itself raises), `tests/egress/test_health.py`
+    (`worker_reached_playing`, including the tail-window behavior), and
+    `tests/egress/test_daemon_preroll_timeout_relaunch.py` (the rate-limited
+    streak wired through a REAL `_poll_process` returncode rather than a
+    direct call, per-channel isolation, the healthy-uptime exemption even at
+    uptime >= 60s, reset behavior, sustained-crash escalation to fallback
+    slate at both the 30s default and the 45s clamp ceiling with the
+    previously-loose cadence bound replaced by the actual measured value,
+    AND the round-3 alive-poll-path regression: sustained preroll timeouts
+    at worker lifetimes of 45/59/60/62/90s under both bounds -- reproduced
+    against the pre-fix gating logic to confirm each new test actually fails
+    without the fix before being restored). Also updated
+    `tests/egress/test_daemon.py::test_healthy_uptime_resets_the_crash_streak`,
+    which used to force the reset by back-dating `_started_at` directly with
+    no encoder evidence at all -- exactly the bug this round closes -- to
+    instead write real evidence and assert the reset only fires once that
+    evidence has been held for the healthy-uptime window.
 
 ### Changed
 

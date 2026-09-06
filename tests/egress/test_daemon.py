@@ -3020,20 +3020,46 @@ def test_restart_escalation_event_fires_at_threshold_and_every_multiple(tmp_path
 
 
 def test_healthy_uptime_resets_the_crash_streak(tmp_path: Path) -> None:
-    """A worker that stays up healthily clears the crash streak, so a later failure is
-    treated as a fresh one-off (immediate relaunch, no escalation carry-over)."""
-    import time as _time
+    """A worker that stays up healthily -- REAL observed evidence, held for
+    the full healthy-uptime window -- clears the crash streak, so a later
+    failure is treated as a fresh one-off (immediate relaunch, no escalation
+    carry-over).
 
+    Round-3 fix (PR #183 review, BLOCKER item 1): this reset used to fire on
+    wall-clock seconds since spawn alone (this test used to force it by
+    back-dating ``daemon._started_at`` directly, with no encoder evidence of
+    any kind) -- that let a worker whose SPAWN overhead alone (interpreter
+    start, import, graph build, or -- for the GStreamer strategy -- the
+    preroll wait itself) crossed the threshold reset the streak despite
+    never producing any real output. It now requires observed on-air
+    evidence (see ``EgressDaemon._observed_on_air_evidence``): for this
+    FFmpeg-strategy channel, real fps/bitrate progress written to the
+    worker's own stderr log, held for the healthy-uptime window from the
+    moment it was FIRST observed -- never from spawn time."""
+    clock = {"t": 0.0}
     started: list[_FakeProcess] = []
-    daemon, store = _backoff_daemon(tmp_path, started, (100, 101, 102), cooldown=0.0)
+    daemon, store = _backoff_daemon(
+        tmp_path, started, (100, 101, 102), cooldown=0.0, monotonic=lambda: clock["t"]
+    )
 
     daemon.process_once("gov")  # start → 100
     started[0].returncode = 1
     daemon.process_once("gov")  # crash 1 → streak 1 → relaunch 101
     assert daemon._restart_streak.get("gov") == 1
 
-    # the relaunched worker has now been up well past the reset threshold
-    daemon._started_at["gov"] = _time.monotonic() - 120.0
+    # The relaunched worker (101) is now genuinely producing output -- write
+    # real ffmpeg progress into ITS stderr log, the evidence this reset now
+    # requires (not merely time since spawn).
+    log_path = daemon._stderr_logs["gov"]
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("frame=100 fps=30.0 bitrate=6000.0kbits/s\n", encoding="utf-8")
+    clock["t"] += 1.0
+    daemon.process_once("gov")  # evidence observed and latched this tick
+    assert daemon._restart_streak.get("gov") == 1  # not reset yet -- 0s held so far
+    assert "gov" in daemon._on_air_confirmed_at
+
+    # Past the 60s healthy-uptime window since evidence was FIRST observed.
+    clock["t"] += 65.0
     daemon.process_once("gov")  # healthy poll → streak cleared
     assert daemon._restart_streak.get("gov") is None
     assert store.read_state("gov").state == "ON_AIR"

@@ -35,6 +35,44 @@ _FPS_RE = re.compile(r"\bfps=\s*(?P<value>[0-9]+(?:\.[0-9]+)?)")
 _BITRATE_RE = re.compile(r"\bbitrate=\s*(?P<value>[0-9]+(?:\.[0-9]+)?)\s*(?P<unit>[kKmM]?bits/s)")
 _DROP_RE = re.compile(r"\bdrop(?:_frames)?=\s*(?P<value>[0-9]+)")
 
+#: Item 82 round-3 (PR #183 review, BLOCKER item 1): the ONLY genuine evidence
+#: that a GStreamer worker's pipeline actually reached PLAYING -- printed by
+#: ``civiccast.egress.gst.engine.GstPlayoutEngine._await_playing`` exactly
+#: once, on the success path, never on a timeout. A stable, parsed contract
+#: (not just a human-readable log line): the daemon's alive-poll health check
+#: (``EgressDaemon._poll_process``) greps for it instead of trusting
+#: wall-clock seconds since the worker was spawned, which also counts
+#: interpreter start + ``import gi``/``Gst.init`` + graph build + the preroll
+#: wait itself -- none of which is air, and none of which is bounded by the
+#: worker's own ``preroll_timeout_s``.
+_PLAYING_REACHED_RE = re.compile(r"^CTRL preroll: reached PLAYING")
+
+
+def worker_reached_playing(path: Path, *, tail_bytes: int = _TAIL_BYTES) -> bool:
+    """Return whether the worker's stderr log shows real evidence it reached
+    the PLAYING state (see ``_PLAYING_REACHED_RE``) -- as opposed to merely
+    having not exited yet, which proves nothing about whether it ever produced
+    output. Only the last ``tail_bytes`` are scanned (D44 cost rationale,
+    same as ``read_latest_ffmpeg_encoder_metrics``); the marker is a single
+    short line printed once, so 64 KiB of tail comfortably covers a
+    multi-minute-old worker's still-recent history. Missing/unreadable log
+    -> False, same fail-closed default as no evidence at all."""
+
+    try:
+        with path.open("rb") as handle:
+            size = handle.seek(0, 2)
+            if tail_bytes >= 0 and size > tail_bytes:
+                handle.seek(size - tail_bytes)
+            else:
+                handle.seek(0)
+            raw = handle.read()
+    except OSError:
+        return False
+    return any(
+        _PLAYING_REACHED_RE.match(line)
+        for line in raw.decode("utf-8", errors="replace").splitlines()
+    )
+
 
 def parse_ffmpeg_encoder_metrics_line(line: str) -> EgressEncoderMetrics:
     """Parse one FFmpeg progress/status line into health metrics."""

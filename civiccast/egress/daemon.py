@@ -47,7 +47,9 @@ from civiccast.egress.gst.reload_policy import should_defer_switch
 from civiccast.egress.health import (
     EgressEncoderMetrics,
     build_default_sink_health,
+    encoder_has_progress,
     read_latest_ffmpeg_encoder_metrics,
+    worker_reached_playing,
 )
 from civiccast.egress.models import (
     CaptionStatus,
@@ -358,6 +360,20 @@ class EgressDaemon:
         self._ffmpeg_starter = ffmpeg_starter
         self._processes: dict[str, object] = {}
         self._started_at: dict[str, float] = {}
+        # Round-3 fix (PR #183 review, BLOCKER item 1): _monotonic() of the
+        # FIRST poll tick that observed real evidence the current worker
+        # reached PLAYING (GStreamer: the ``CTRL preroll: reached PLAYING``
+        # stderr marker) or is actively encoding (FFmpeg: fps/bitrate
+        # progress) -- see ``_observed_on_air_evidence``. Absent until that
+        # evidence is seen; popped on every exit/spawn alongside
+        # ``_started_at`` so a fresh worker never inherits a stale timestamp.
+        # ``_poll_process``'s healthy-uptime reset (the ALIVE-poll twin of
+        # ``_relaunch_after_crash``'s own reset) is gated on THIS, never on
+        # wall-clock seconds since spawn -- spawn-to-PLAYING time includes
+        # interpreter start + ``import gi``/``Gst.init`` + graph build + the
+        # preroll wait itself, none of which is air, and none of which is
+        # bounded by the worker's own preroll timeout.
+        self._on_air_confirmed_at: dict[str, float] = {}
         # Per channel: the horizon of the source plan actually DISPATCHED to the
         # encoder (see dispatched_plan_horizon / _record_dispatched_plan).
         self._dispatched_plan_horizon: dict[str, tuple[str | None, tuple[float, ...], bool]] = {}
@@ -956,6 +972,9 @@ class EgressDaemon:
                 process = encoder_result.process
                 self._processes[channel_id] = process
                 self._started_at[channel_id] = self._monotonic()
+                # This IS a fresh spawn -- any on-air evidence latched for a
+                # PREVIOUS worker no longer describes this one.
+                self._on_air_confirmed_at.pop(channel_id, None)
                 # Hostile-review follow-up, item 4: track the plan actually being
                 # aired so it gets released on the next exit/stop even when the
                 # seamless-reload flag is OFF (supports_content_reload=False, the
@@ -1158,6 +1177,46 @@ class EgressDaemon:
         if log_path is None:
             return EgressEncoderMetrics()
         return read_latest_ffmpeg_encoder_metrics(log_path)
+
+    def _observed_on_air_evidence(self, channel_id: str) -> bool:
+        """Round-3 fix (PR #183 review, BLOCKER item 1): real evidence the
+        CURRENT worker has produced actual output, as opposed to merely
+        having not exited yet.
+
+        Checked (and, once True, latched into ``_on_air_confirmed_at``) on
+        EVERY alive poll tick regardless of the channel's current state
+        (ON_AIR / FALLBACK_SLATE / etc. all run a real encoder child that can
+        supply this evidence) -- deliberately not gated the way
+        ``_health_metrics`` is, since a channel airing the fallback slate
+        through the SAME GStreamer engine is just as capable of proving it
+        reached PLAYING.
+
+        Two encoder families, two evidence sources, either is sufficient:
+
+        * GStreamer (``civiccast.egress.gst.engine.GstPlayoutEngine``): the
+          ``CTRL preroll: reached PLAYING`` stderr marker
+          ``_await_playing`` prints ONLY on the success path (see
+          ``civiccast.egress.health.worker_reached_playing``). This is the
+          exact evidence the reviewer asked for -- it means the pipeline
+          actually reached PLAYING, not just that spawn-to-now hasn't hit an
+          arbitrary wall-clock threshold.
+        * FFmpeg (the other encoder strategy this daemon can launch): no
+          PLAYING marker exists, but ``read_latest_ffmpeg_encoder_metrics``
+          already parses live fps=/bitrate= progress out of the same stderr
+          log for sink-health purposes (``_sink_connected`` /
+          ``build_default_sink_health``) -- reused here via
+          ``encoder_has_progress`` as the FFmpeg-side equivalent: real
+          encoding progress is at least as strong a signal as a GStreamer
+          PLAYING transition, and without this branch an FFmpeg-encoded
+          channel would NEVER get its healthy-uptime reset at all (the
+          PLAYING marker only ever appears in a GStreamer worker's log).
+        """
+        log_path = self._stderr_logs.get(channel_id)
+        if log_path is None:
+            return False
+        if worker_reached_playing(log_path):
+            return True
+        return encoder_has_progress(read_latest_ffmpeg_encoder_metrics(log_path))
 
     def _engine_label(self) -> str:
         """Which encoder engine actually runs this channel's child process.
@@ -1375,21 +1434,44 @@ class EgressDaemon:
                 pid=_process_pid(process),
             )
             self._sync_cg_overlay_proof(channel_id, current_state)
-            if self._seconds_on_air(channel_id) >= _RESTART_STREAK_RESET_UPTIME_S and (
-                channel_id in self._restart_streak
-                or channel_id in self._backoff_relaunch
-                or self._restart_latch.next_allowed_at(channel_id) != 0.0
+            # Round-3 fix (PR #183 review, BLOCKER item 1): latch the FIRST
+            # tick that observes real on-air evidence, never re-derive it from
+            # wall-clock seconds since spawn (see ``_observed_on_air_evidence``
+            # and ``_on_air_confirmed_at``'s own docstring for why spawn time
+            # is the wrong clock -- it includes interpreter start, ``import
+            # gi``/``Gst.init``, graph build, and the preroll wait itself).
+            if channel_id not in self._on_air_confirmed_at and self._observed_on_air_evidence(
+                channel_id
             ):
-                # The worker has stayed up healthily — any earlier crash streak was
-                # transient, not a loop; clear it so the next crash relaunches at once.
-                # Guarded so it fires once per healthy stretch (when there is state to
-                # clear) rather than force-resetting the latch on every ~2s poll.
+                self._on_air_confirmed_at[channel_id] = self._monotonic()
+            confirmed_at = self._on_air_confirmed_at.get(channel_id)
+            if (
+                confirmed_at is not None
+                and self._monotonic() - confirmed_at >= _RESTART_STREAK_RESET_UPTIME_S
+                and (
+                    channel_id in self._restart_streak
+                    or channel_id in self._backoff_relaunch
+                    or self._restart_latch.next_allowed_at(channel_id) != 0.0
+                )
+            ):
+                # The worker has held real on-air evidence for a full healthy
+                # window — any earlier crash streak was transient, not a loop;
+                # clear it so the next crash relaunches at once. Guarded so it
+                # fires once per healthy stretch (when there is state to
+                # clear) rather than force-resetting the latch on every ~2s
+                # poll. Before this evidence gate, this fired on wall-clock
+                # uptime alone (measured: a worker that stayed "alive" per
+                # poll for 60-62s of interpreter-start/import/graph-build
+                # overhead, never once reaching PLAYING, still got its streak
+                # reset here every tick -- streak stuck at 1, never escalating
+                # to fallback slate in 40 cycles).
                 self._reset_restart_tracking(channel_id)
             return
         started_at = self._started_at.get(channel_id)
         uptime = None if started_at is None else max(0.0, self._monotonic() - started_at)
         self._processes.pop(channel_id, None)
         self._started_at.pop(channel_id, None)
+        self._on_air_confirmed_at.pop(channel_id, None)
         was_draining = channel_id in self._draining_channels
         self._draining_channels.discard(channel_id)
         # A deliberate filler kill (issue #157) exits non-zero on real
@@ -2339,6 +2421,7 @@ class EgressDaemon:
     def _stop(self, channel_id: str, *, draining: bool) -> None:
         process = self._processes.pop(channel_id, None)
         self._started_at.pop(channel_id, None)
+        self._on_air_confirmed_at.pop(channel_id, None)
         self._reset_restart_tracking(channel_id)  # operator stop — clear crash back-off
         self._draining_channels.discard(channel_id)
         self._pending_reloads.pop(channel_id, None)

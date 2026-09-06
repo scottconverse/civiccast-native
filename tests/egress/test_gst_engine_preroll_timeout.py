@@ -23,6 +23,7 @@ so these tests run instantly, never a real multi-second sleep.
 from __future__ import annotations
 
 import importlib
+import math
 import sys
 import types
 from typing import Any
@@ -174,14 +175,39 @@ def test_await_playing_passes_when_playing_arrives_before_the_default_bound(
     assert clock.now >= 12.0
 
 
+def test_await_playing_logs_reached_playing_marker_on_success(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Round-3 fix (PR #183 review, BLOCKER item 1): a successful PLAYING
+    transition prints a stable, parsed-contract marker to stderr --
+    ``civiccast.egress.health.worker_reached_playing`` greps for this EXACT
+    prefix, and ``EgressDaemon._poll_process`` only starts its healthy-uptime
+    clock once this evidence (not wall-clock seconds since spawn) is
+    observed. Never printed on the timeout or failure paths (see the
+    adjacent tests) -- it is evidence of a REAL PLAYING transition, not of
+    the wait merely having finished."""
+    clock = _FakeClock()
+    monkeypatch.setattr(engine_module.time, "monotonic", clock.monotonic)
+    pipeline = _FakePipeline(clock, reach_playing_at_s=12.0)
+    engine = _bare_engine(engine_module, pipeline, preroll_timeout_s=30.0)
+
+    engine._await_playing()
+
+    err = capsys.readouterr().err
+    assert "CTRL preroll: reached PLAYING" in err
+
+
 def test_await_playing_raises_preroll_timeout_error_past_the_bound(
-    engine_module, monkeypatch: pytest.MonkeyPatch
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A pipeline that never reaches PLAYING raises the DISTINCT
     ``PrerollTimeoutError`` once the configured bound (31s here) is exceeded --
     not a bare ``RuntimeError`` (worker.py tells them apart to choose the exit
     code; a bare ``RuntimeError`` IS a ``PrerollTimeoutError`` since it
-    subclasses it, but the reverse must not hold for other RuntimeErrors)."""
+    subclasses it, but the reverse must not hold for other RuntimeErrors).
+    Round-3: the ``reached PLAYING`` evidence marker must NEVER print on this
+    path -- it is the daemon's proof the pipeline actually came up, and this
+    pipeline never did."""
     clock = _FakeClock()
     monkeypatch.setattr(engine_module.time, "monotonic", clock.monotonic)
     pipeline = _FakePipeline(clock, reach_playing_at_s=None)  # wedged forever
@@ -192,6 +218,7 @@ def test_await_playing_raises_preroll_timeout_error_past_the_bound(
 
     assert issubclass(engine_module.PrerollTimeoutError, RuntimeError)
     assert clock.now >= 31.0
+    assert "reached PLAYING" not in capsys.readouterr().err
 
 
 def test_await_playing_logs_pipeline_state_every_poll_interval(
@@ -300,6 +327,39 @@ def test_resolve_preroll_timeout_clamps_an_explicit_constructor_value_to_45s_max
     engine_module,
 ) -> None:
     assert engine_module._resolve_preroll_timeout_s(90.0) == 45.0
+
+
+def test_resolve_preroll_timeout_env_nan_falls_back_to_default(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round-2 review item 4 (Opus, PR #183): ``min(max(nan, 5), 45)`` does NOT
+    clamp -- Python's max/min keep their first argument across any comparison
+    against NaN, so an unclamped NaN would reach ``_await_playing`` as the
+    deadline arithmetic's operand, every bound comparison against it silently
+    evaluates False, and the worker would fall through to the generic
+    pipeline-construction ValueError path instead of ever raising the
+    distinct PrerollTimeoutError. ``float("nan")`` parses without raising, so
+    the pre-existing ``except ValueError`` never caught it either."""
+    monkeypatch.setenv("CIVICCAST_GST_PREROLL_TIMEOUT_S", "nan")
+    resolved = engine_module._resolve_preroll_timeout_s(None)
+    assert resolved == 30.0
+    assert math.isfinite(resolved)
+
+
+def test_resolve_preroll_timeout_explicit_nan_falls_back_to_default(
+    engine_module,
+) -> None:
+    resolved = engine_module._resolve_preroll_timeout_s(float("nan"))
+    assert resolved == 30.0
+    assert math.isfinite(resolved)
+
+
+def test_resolve_preroll_timeout_explicit_infinity_falls_back_to_default(
+    engine_module,
+) -> None:
+    resolved = engine_module._resolve_preroll_timeout_s(float("inf"))
+    assert resolved == 30.0
+    assert math.isfinite(resolved)
 
 
 def test_resolve_preroll_timeout_45s_is_still_the_allowed_maximum(
