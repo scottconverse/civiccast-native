@@ -667,6 +667,7 @@ while ((Get-Date) -lt $verdictReadDeadline) {
     if (-not [string]::IsNullOrWhiteSpace($candidate)) { $verdictText = $candidate; break }
     Start-Sleep -Milliseconds 500
 }
+$vj = $null
 if ([string]::IsNullOrWhiteSpace($verdictText)) {
     Write-Warning "[Run-SandboxSoak] VERDICT.txt was still empty after a 10s re-read -- falling back to VERDICT.json."
     if (Test-Path $verdictJsonPath) {
@@ -687,6 +688,33 @@ Write-Host $verdictText
 if (Test-Path $verdictJsonPath) {
     Write-Host "Full verdict: $verdictJsonPath"
 }
+
+# Followup finding 1: harness_notes (round-14 finding 7 -- accumulated
+# operator-visibility notes, e.g. an exceptionally slow measured cycle
+# period) were carried into VERDICT.json but never actually surfaced to a
+# human anywhere -- the host script's own final console block never read
+# them, and VERDICT.txt (the short, human-skimmed summary line) never
+# carried them either. $vj is only already loaded on the VERDICT.json-
+# fallback path above; load it here too when VERDICT.txt itself was the
+# source, so harness_notes are surfaced on EVERY path, not just the
+# fallback one.
+if (-not $vj -and (Test-Path $verdictJsonPath)) {
+    try { $vj = Get-Content -Path $verdictJsonPath -Raw | ConvertFrom-Json } catch { }
+}
+if ($vj -and $vj.harness_notes -and @($vj.harness_notes).Count -gt 0) {
+    Write-Host ""
+    Write-Host "Harness notes:" -ForegroundColor Yellow
+    foreach ($note in @($vj.harness_notes)) {
+        Write-Host "  - $note" -ForegroundColor Yellow
+    }
+    try {
+        $notesBlock = @("", "Harness notes:") + (@($vj.harness_notes) | ForEach-Object { "  - $_" })
+        Add-Content -Path $verdictTxtPath -Value $notesBlock -Encoding UTF8
+    } catch {
+        Write-Warning "[Run-SandboxSoak] failed to append harness_notes to VERDICT.txt: $_"
+    }
+}
+
 Write-Host "Evidence: $outputDir"
 
 # Round-3(c): confirmed directly that the sandbox does NOT tear itself down

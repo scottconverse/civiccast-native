@@ -81,10 +81,13 @@ function New-StateReadFailureLastError {
       .SYNOPSIS
       Round-13 finding 1 (BLOCKING): the EXACT formula In-Sandbox-Soak.ps1's
       Get-ChannelStateSample uses to build the "state read failed: ..."
-      text RestartClassifier.ps1's read-failure filter matches on
-      (`-like 'state read failed*'`). Extracted here (round-14 finding 6)
-      so the driver and the unit tests call the SAME function instead of
-      each typing the string literal separately.
+      text RestartClassifier.ps1's/SoakVerdict.ps1's read-failure filter
+      (Test-IsReadFailureMarker, below) matches on. Extracted here (round-14
+      finding 6) so the driver and the unit tests call the SAME function
+      instead of each typing the string literal separately. This is the
+      PRODUCER side of the contract; Test-IsReadFailureMarker is the
+      CONSUMER side -- kept in the same file so the two can never drift
+      apart from each other either.
     #>
     param($Status, $ErrorText)
     return "state read failed: status=$Status error=$ErrorText"
@@ -145,4 +148,22 @@ function Get-ReloadArmedNeverCommittedChannels {
             (-not $wc) -or ($wc.reload_committed_count -eq 0)
         }
     )
+}
+
+function Test-IsReadFailureMarker {
+    <#
+      .SYNOPSIS
+      Followup finding 2 (round 14 addendum): the CONSUMER side of the
+      "state read failed: ..." contract -- previously each of
+      RestartClassifier.ps1 (Test-PlannedRestartSignal's ignore-on-walk-
+      back) and SoakVerdict.ps1 (Test-SoakCycle's ON_AIR-check exclusion,
+      AND Get-SoakVerdict's 3-consecutive-failure escalation) kept its OWN
+      hand-typed copy of the same `-like 'state read failed*'` predicate --
+      three separate copies of one contract, none of them able to catch the
+      others drifting. Takes the SAME value New-StateReadFailureLastError
+      produces (a ring/row's own `last_error` field) and returns whether it
+      is that harness-read-failure marker.
+    #>
+    param($LastError)
+    return ("$LastError" -like 'state read failed*')
 }

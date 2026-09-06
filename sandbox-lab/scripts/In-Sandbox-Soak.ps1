@@ -2245,6 +2245,23 @@ $lastRollupCycle = 0
 # run and carried into both the periodic rollup and the final VERDICT.json
 # as `harness_notes`.
 $harnessNotes = @()
+function Add-HarnessNote {
+    <#
+      .SYNOPSIS
+      Followup finding 4 (round 14 addendum): a 15-minute soak polling
+      every ~20-25s could in principle repeat the SAME underlying
+      condition (e.g. the measured-cycle-period warning) dozens of times
+      -- appending one line per occurrence would make harness_notes grow
+      unbounded and mostly redundant. Deduplicates by EXACT text (one note
+      per distinct message, not one per occurrence) and caps the total at
+      20 (a run with more than 20 DISTINCT harness conditions has bigger
+      problems than a truncated notes list).
+    #>
+    param([string]$Note)
+    if ($script:harnessNotes -contains $Note) { return }
+    if (@($script:harnessNotes).Count -ge 20) { return }
+    $script:harnessNotes += $Note
+}
 $deadline = $SoakStartUtc.ToLocalTime().AddMinutes($Minutes)
 # Round-8 finding 2/3: no independent 15s timer -- see RestartClassifier.ps1's
 # header for why (the two-timer version's light-sample branch was
@@ -2338,7 +2355,13 @@ while ((Get-Date) -lt $deadline) {
         if ($row.log_ring_sizing_warning) {
             # Round-14 finding 7: actually surface the flag somewhere a
             # human reads -- see $harnessNotes' own init comment above.
-            $harnessNotes += "cycle $cycleN channel=$($c.id): measured cycle period $([math]::Round($measuredCyclePeriodSeconds, 1))s is exceptionally slow (period/6 >= 30s) -- log-ring sizing still covers it, but this is itself a sign of station/box distress"
+            # Followup finding 4: deliberately GENERIC (no cycleN/exact
+            # period value) so a condition that repeats across many cycles
+            # collapses into ONE deduped note instead of dozens of
+            # near-identical ones -- the per-cycle log line already above
+            # (Write-SoakLog "cycle $cycleN ... period=...") carries the
+            # precise numbers for whichever cycle a human wants to look up.
+            Add-HarnessNote "channel=$($c.id): measured cycle period is exceptionally slow (period/6 >= 30s) -- log-ring sizing still covers it, but this is itself a sign of station/box distress"
         }
         $row.in_planned_restart_window = Test-InActivePlannedRestartWindow -Context $restartCtx -ChannelId $c.id -NowUtc (Get-Date).ToUniversalTime() -MeasuredCyclePeriodSeconds $measuredCyclePeriodSeconds
 
@@ -2397,7 +2420,16 @@ while ((Get-Date) -lt $deadline) {
             latest_cycle = $cycle
             restart_events_so_far = @($restartCtx.RestartEvents)
             reload_abort_events_so_far = @($restartCtx.ReloadAbortEvents)
-            harness_notes = @($harnessNotes)
+            # Followup finding 4: the rollup is written every 3 minutes and
+            # is meant to be a lightweight checkpoint -- re-embedding the
+            # FULL (already deduped/capped, but still potentially up-to-20-
+            # entry) harness_notes array in every single rollup is
+            # needless repetition of the SAME notes over and over across a
+            # long soak. The rollup instead carries the count plus the
+            # most recent 3; the full list is always in the final
+            # VERDICT.json.
+            harness_notes_count = @($harnessNotes).Count
+            harness_notes_recent = @($harnessNotes | Select-Object -Last 3)
             # sandbox-lab lane follow-up A, item 2: cumulative-since-soak-start
             # snapshot per channel, for a rollup reader who does not want to
             # dig into latest_cycle.channels[*] for the same numbers.

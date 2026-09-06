@@ -134,6 +134,23 @@ $r6 = Test-ServiceStartFailureIsProductCrash -ExceptionText 'Cannot start servic
 Assert-Equal 'scenario6 (no events, exception text is an SCM refusal) -> IsProductCrash=False' 'False' "$($r6.IsProductCrash)"
 Assert-Equal 'scenario6 reason cites the exception text' 'True' "$($r6.Reason -match 'Access is denied')"
 
+# ---------------------------------------------------------------- scenario 7
+# Followup finding 3 (round 14 addendum): Get-Service ITSELF throws (e.g.
+# the service failed to register at all -- exactly the scenario this
+# function exists for), but a real 7034 crash event is still present in
+# the System event log, naming the WELL-KNOWN constant display name
+# ('CivicCast Native Supervisor') the function falls back to when
+# Get-Service fails. Must still catch it -- IsProductCrash=True -- rather
+# than silently skipping the event-log check entirely and defaulting to
+# HARNESS_ERROR just because Get-Service happened to fail.
+$script:MockDisplayName = $null   # forces the mock Get-Service to throw
+$script:MockEvents = @(
+    (New-SyntheticScmEvent -Id 7034 -TimeCreated $now -DisplayNameValue 'CivicCast Native Supervisor')
+)
+$r7 = Test-ServiceStartFailureIsProductCrash -ExceptionText '' -SinceUtc $sinceUtc
+Assert-Equal 'scenario7 (Get-Service throws, but a real 7034 exists under the well-known constant name) -> IsProductCrash=True' 'True' "$($r7.IsProductCrash)"
+$script:MockDisplayName = 'CivicCast Native Supervisor'   # restore for tidiness
+
 Write-Host ""
 Write-Host "ServiceStartFailure unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })
 if ($script:failures -gt 0) { exit 1 }
