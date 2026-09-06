@@ -259,49 +259,53 @@ function Get-SoakVerdict {
 
     $sorted = @($Cycles | Sort-Object { [datetime]$_.cycle_utc })
 
-    # Round-10 finding 4 (HIGH): a channel whose state read fails THREE
-    # CONSECUTIVE cycles running (last_error starting with the literal
-    # "state read failed", the exact prefix Get-ChannelStateSample stamps
-    # in In-Sandbox-Soak.ps1) means the read path itself is broken, not
-    # that the channel actually fell off air -- Test-SoakCycle above
-    # already excludes a single such row from the ON_AIR check, but a
-    # PERSISTENT read failure needs its own escalation (a channel that is
-    # actually down would otherwise sail through cycle after cycle with
-    # every row silently excused, engine_state=$null the entire time, and
-    # never be reported as anything at all). Tracked per-channel across the
-    # whole run, in cycle order, resetting to 0 on any row that is NOT a
-    # read failure -- checked in the SAME pass as the tsp harness-defect
-    # check below (both are harness/tooling conditions, checked first,
-    # before any product PASS/FAIL classification).
+    # Round-10 finding 4 (HIGH) / round-11 finding 6 (MEDIUM): a channel
+    # whose state read fails THREE CONSECUTIVE cycles running (last_error
+    # starting with the literal "state read failed") means the read path
+    # itself is broken, not that the channel actually fell off air --
+    # Test-SoakCycle above already excludes a single such row from the
+    # ON_AIR check, but a PERSISTENT read failure needs its own escalation.
+    # Round-11 finding 6: a harness-SHAPE condition (this read-failure
+    # streak, OR Test-SoakCycle's own tsp-tooling-defect flag) must NEVER
+    # pre-empt a CONFIRMED product finding (an unplanned relaunch, a slow/
+    # missing planned recovery, a -SeamlessReload contract violation, or a
+    # real per-cycle ON_AIR/tsp FAIL) -- a run that both crash-looped AND
+    # happened to also hit a flaky read/tsp probe must report FAIL, not
+    # quietly wave the crash away as HARNESS_ERROR. So this is now ONE pass
+    # collecting BOTH kinds of evidence (never an early return), scoped to
+    # POST-WARMUP cycles only for both -- a harness-shape defect confined
+    # entirely to the warm-up window is not surfaced at all (warm-up
+    # already excuses far more than this for the same reason: the tsp
+    # probe and the read path may not even be meaningful yet).
+    # Precedence is decided ONCE, after this pass and after the
+    # restart-event-based checks below, in favor of any confirmed product
+    # FAIL -- with the harness note appended to its reason when a
+    # harness-shape defect ALSO exists, so it is never silently dropped.
     $isStateReadFailure = { param($row) "$($row.last_error)" -like 'state read failed*' }
     $consecutiveReadFailures = @{}
+    $harnessErrorResult = $null
+    $perCycleFailResult = $null
+    $warmupCountFinal = 0
+    $evaluatedCountFinal = 0
 
-    # Round-8 finding 5: a tsp harness/tooling defect (tool missing, or
-    # threw trying to launch) in ANY cycle -- warm-up or not -- means NO
-    # cycle's tsp result in this run can be trusted, so this is checked
-    # FIRST and wins over every other classification. HARNESS_ERROR, never
-    # FAIL: a broken probe says nothing about the product.
     foreach ($cycle in $sorted) {
         $cycleUtc = [datetime]$cycle.cycle_utc
         $isWarmup = ($cycleUtc.ToUniversalTime() - $StartUtc.ToUniversalTime()).TotalSeconds -lt $WarmupSeconds
+        if ($isWarmup) { $warmupCountFinal++ } else { $evaluatedCountFinal++ }
 
+        # Read-failure streak tracking runs across EVERY cycle (warm-up
+        # included) so a streak that starts in warm-up and continues past
+        # it is still counted correctly -- only the ESCALATION to a
+        # harness finding is gated on the triggering cycle being
+        # post-warmup.
         foreach ($row in @($cycle.channels)) {
             $chId = "$($row.channel_id)"
             if (& $isStateReadFailure $row) {
                 $consecutiveReadFailures[$chId] = $(if ($consecutiveReadFailures.ContainsKey($chId)) { $consecutiveReadFailures[$chId] + 1 } else { 1 })
-                if ($consecutiveReadFailures[$chId] -ge 3) {
-                    return [pscustomobject]@{
-                        verdict = 'HARNESS_ERROR'
+                if (-not $isWarmup -and -not $harnessErrorResult -and $consecutiveReadFailures[$chId] -ge 3) {
+                    $harnessErrorResult = [pscustomobject]@{
                         reason = "cycle $($cycle.cycle_utc): channel=$chId state read failed $($consecutiveReadFailures[$chId]) consecutive cycles running (last_error: $($row.last_error)) -- the read path itself is broken, not a product finding"
-                        first_failing_cycle = "$($cycle.cycle_utc)"
-                        cycles_total = $sorted.Count
-                        cycles_warmup = 0
-                        cycles_evaluated = 0
-                        unplanned_relaunch_count = $unplannedCount
-                        planned_restart_count = $plannedCount
-                        incomplete_restart_count = $incompleteCount
-                        reload_aborted_count = $reloadAbortedCount
-                        max_restart_gap_seconds = $maxGap
+                        cycle_utc = "$($cycle.cycle_utc)"
                     }
                 }
             } else {
@@ -311,30 +315,23 @@ function Get-SoakVerdict {
 
         $r = Test-SoakCycle -Cycle $cycle -IsWarmup $isWarmup
         if ($r.harness_error) {
-            return [pscustomobject]@{
-                verdict = 'HARNESS_ERROR'
-                reason = "cycle $($cycle.cycle_utc): $($r.reason)"
-                first_failing_cycle = "$($cycle.cycle_utc)"
-                cycles_total = $sorted.Count
-                cycles_warmup = 0
-                cycles_evaluated = 0
-                unplanned_relaunch_count = $unplannedCount
-                planned_restart_count = $plannedCount
-                incomplete_restart_count = $incompleteCount
-                reload_aborted_count = $reloadAbortedCount
-                max_restart_gap_seconds = $maxGap
+            if (-not $isWarmup -and -not $harnessErrorResult) {
+                $harnessErrorResult = [pscustomobject]@{ reason = "cycle $($cycle.cycle_utc): $($r.reason)"; cycle_utc = "$($cycle.cycle_utc)" }
             }
+            continue   # a harness-shape cycle is never ALSO a per-cycle product FAIL (Test-SoakCycle returns ok=$false alongside harness_error=$true, but that is the SAME finding, not a second one)
+        }
+        if (-not $r.ok -and -not $perCycleFailResult) {
+            $perCycleFailResult = [pscustomobject]@{ reason = "cycle $($cycle.cycle_utc): $($r.reason)"; cycle_utc = "$($cycle.cycle_utc)" }
         }
     }
 
-    $failResult = $null
+    $restartFailResult = $null
 
     if ($unplannedCount -gt 0) {
         $first = $unplannedEvents | Sort-Object { [datetime]$_.detected_utc } | Select-Object -First 1
-        $failResult = [pscustomobject]@{
-            verdict = 'FAIL'
+        $restartFailResult = [pscustomobject]@{
             reason = "unplanned relaunch on channel=$($first.channel_id) at $($first.detected_utc) (old_pid=$($first.old_pid) new_pid=$($first.new_pid)) -- no TRANSITIONING sample preceded the pid change"
-            first_failing_cycle = "$($first.detected_utc)"
+            cycle_utc = "$($first.detected_utc)"
         }
     }
 
@@ -347,97 +344,84 @@ function Get-SoakVerdict {
     # since it can fail a run that would otherwise look like a clean PASS
     # (fast, fully-recovered restarts are still restarts the flag promised
     # would not happen).
-    if (-not $failResult -and $SeamlessReload) {
+    if (-not $restartFailResult -and $SeamlessReload) {
         if ($reloadAbortedCount -gt 0) {
             $firstAbort = $reloadAbortEvents | Select-Object -First 1
-            $failResult = [pscustomobject]@{
-                verdict = 'FAIL'
+            $restartFailResult = [pscustomobject]@{
                 reason = "-SeamlessReload requested but a seamless content-reload aborted on channel=$($firstAbort.channel_id) ($($firstAbort.reason)) -- fell back to a restart"
-                first_failing_cycle = $null
+                cycle_utc = $null
             }
         } elseif ($plannedCount -gt 0) {
             $firstPlanned = $plannedEvents | Sort-Object { [datetime]$_.detected_utc } | Select-Object -First 1
-            $failResult = [pscustomobject]@{
-                verdict = 'FAIL'
+            $restartFailResult = [pscustomobject]@{
                 reason = "-SeamlessReload requested but channel=$($firstPlanned.channel_id) had a classified planned_restart at $($firstPlanned.detected_utc) -- the seamless content-reload path did not run"
-                first_failing_cycle = "$($firstPlanned.detected_utc)"
+                cycle_utc = "$($firstPlanned.detected_utc)"
             }
         }
     }
 
-    if (-not $failResult) {
+    if (-not $restartFailResult) {
         # Round-10 finding 8 (MEDIUM): a SUPERSEDED planned-restart event
         # (RestartClassifier.ps1's round-9 N1 fix -- flushed with
         # recovered=$false, recovery_gap_seconds=$null the moment a SECOND
-        # pid change arrives before the first one resolves) is not itself
-        # a recovery failure -- it is accounted for by whatever pid change
-        # superseded it (that successor event is its own, separate entry
-        # in $plannedEvents/$unplannedEvents and is judged on its own
-        # merits above/below). Counting a superseded event against the
-        # 60s-recovery rule double-penalizes a channel that simply
-        # restarted twice in quick succession for a FAIL neither restart,
-        # on its own, actually earned. Superseded events are still counted
-        # in planned_restart_count/unplanned_relaunch_count above (via
-        # $restartEvents, unfiltered) -- only excluded from THIS recovery
-        # check.
+        # pid change arrives before the first one resolves) and round-11
+        # finding 3's INCOMPLETE events (detected in the soak's final 60s,
+        # never had a fair chance to recover) are not themselves recovery
+        # failures -- excluded from this rule (still counted in
+        # planned_restart_count above, via $restartEvents unfiltered).
         $slowOrMissing = @($plannedEvents | Where-Object { -not ($_.superseded -eq $true) -and -not ($_.incomplete -eq $true) -and (-not $_.recovered -or $null -eq $_.recovery_gap_seconds -or [double]$_.recovery_gap_seconds -gt 60) })
         if ($slowOrMissing.Count -gt 0) {
             $first = $slowOrMissing | Sort-Object { [datetime]$_.detected_utc } | Select-Object -First 1
             $gapDesc = $(if ($null -ne $first.recovery_gap_seconds) { "$($first.recovery_gap_seconds)s" } else { 'never (not recovered within the tracking window)' })
-            $failResult = [pscustomobject]@{
-                verdict = 'FAIL'
+            $restartFailResult = [pscustomobject]@{
                 reason = "planned restart on channel=$($first.channel_id) at $($first.detected_utc) did not return to ON_AIR on gstreamer within 60s (actual: $gapDesc)"
-                first_failing_cycle = "$($first.detected_utc)"
+                cycle_utc = "$($first.detected_utc)"
             }
         }
     }
 
-    if (-not $failResult) {
+    if (-not $restartFailResult -and -not $perCycleFailResult) {
         if ($sorted.Count -eq 0) {
-            $failResult = [pscustomobject]@{ verdict = 'FAIL'; reason = 'no cycles recorded'; first_failing_cycle = $null }
-        } else {
-            $warmupCount = 0
-            $evaluatedCount = 0
-            foreach ($cycle in $sorted) {
-                $cycleUtc = [datetime]$cycle.cycle_utc
-                $isWarmup = ($cycleUtc.ToUniversalTime() - $StartUtc.ToUniversalTime()).TotalSeconds -lt $WarmupSeconds
-                if ($isWarmup) { $warmupCount++ } else { $evaluatedCount++ }
-
-                $r = Test-SoakCycle -Cycle $cycle -IsWarmup $isWarmup
-                if (-not $r.ok) {
-                    $failResult = [pscustomobject]@{
-                        verdict = 'FAIL'
-                        reason = "cycle $($cycle.cycle_utc): $($r.reason)"
-                        first_failing_cycle = "$($cycle.cycle_utc)"
-                    }
-                    break
-                }
-            }
-            if (-not $failResult -and $evaluatedCount -eq 0) {
-                $failResult = [pscustomobject]@{
-                    verdict = 'FAIL'
-                    reason = 'every recorded cycle fell inside the warm-up window -- no post-warmup cycle was ever evaluated (soak too short or warm-up misconfigured)'
-                    first_failing_cycle = $null
-                }
+            $perCycleFailResult = [pscustomobject]@{ reason = 'no cycles recorded'; cycle_utc = $null }
+        } elseif ($evaluatedCountFinal -eq 0) {
+            $perCycleFailResult = [pscustomobject]@{
+                reason = 'every recorded cycle fell inside the warm-up window -- no post-warmup cycle was ever evaluated (soak too short or warm-up misconfigured)'
+                cycle_utc = $null
             }
         }
     }
 
-    # Recompute warmup/evaluated counts once more for the final object
-    # (the loop above may have broken early on a mid-run failure, before
-    # every cycle was classified into warmup/evaluated).
-    $warmupCountFinal = 0
-    $evaluatedCountFinal = 0
-    foreach ($cycle in $sorted) {
-        $cycleUtc = [datetime]$cycle.cycle_utc
-        if (($cycleUtc.ToUniversalTime() - $StartUtc.ToUniversalTime()).TotalSeconds -lt $WarmupSeconds) { $warmupCountFinal++ } else { $evaluatedCountFinal++ }
-    }
+    # Round-11 finding 6: precedence -- a CONFIRMED product FAIL (restart-
+    # event-based, or a real per-cycle ON_AIR/tsp miss) always wins over a
+    # mere harness-shape defect; the harness note is appended, never
+    # dropped, when both are present.
+    $confirmedFail = $(if ($restartFailResult) { $restartFailResult } elseif ($perCycleFailResult) { $perCycleFailResult } else { $null })
 
-    if ($failResult) {
+    if ($confirmedFail) {
+        $reason = $confirmedFail.reason
+        if ($harnessErrorResult) {
+            $reason = "$reason (NOTE: a harness-shape defect was also observed and does not excuse this FAIL -- $($harnessErrorResult.reason))"
+        }
         return [pscustomobject]@{
             verdict = 'FAIL'
-            reason = $failResult.reason
-            first_failing_cycle = $failResult.first_failing_cycle
+            reason = $reason
+            first_failing_cycle = $confirmedFail.cycle_utc
+            cycles_total = $sorted.Count
+            cycles_warmup = $warmupCountFinal
+            cycles_evaluated = $evaluatedCountFinal
+            unplanned_relaunch_count = $unplannedCount
+            planned_restart_count = $plannedCount
+            incomplete_restart_count = $incompleteCount
+            reload_aborted_count = $reloadAbortedCount
+            max_restart_gap_seconds = $maxGap
+        }
+    }
+
+    if ($harnessErrorResult) {
+        return [pscustomobject]@{
+            verdict = 'HARNESS_ERROR'
+            reason = $harnessErrorResult.reason
+            first_failing_cycle = $harnessErrorResult.cycle_utc
             cycles_total = $sorted.Count
             cycles_warmup = $warmupCountFinal
             cycles_evaluated = $evaluatedCountFinal

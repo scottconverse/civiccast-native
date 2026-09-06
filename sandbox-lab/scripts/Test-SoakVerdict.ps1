@@ -490,6 +490,65 @@ $restartEvents15b = @(
 $v15b = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents15b
 Assert-Equal 'scenario15b (NOT superseded, never recovered) -> FAIL' 'FAIL' $v15b.verdict
 
+# --------------------------------------------------------------- scenario 18
+# Round-12 finding 6 (MEDIUM): a harness-shape tsp/read-failure defect must
+# NEVER pre-empt a confirmed product FAIL, and must never even be
+# evaluated (let alone escalate) when confined entirely to the warm-up
+# window.
+#
+# 18a: a POST-warmup cycle carries a tsp harness-shape defect (tool
+# missing) AND a confirmed unplanned_relaunch restart event exists. The
+# run must report FAIL (the crash), with the harness-shape defect
+# mentioned as a note in the reason -- never silently reported as
+# HARNESS_ERROR, which would look like the crash never happened at all.
+$channelsTspNotRunPostWarmup = @(
+    (New-Channel -Id 'public' -Tsduck 'not-run: tsp.exe not found'), (New-Channel -Id 'education'), (New-Channel -Id 'government')
+)
+$cycles18a = @(
+    (New-Cycle -Utc '2026-09-05T18:01:00Z' -Channels $threeChannelsGood)
+    (New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $channelsTspNotRunPostWarmup)
+)
+$restartEvents18a = @(
+    (New-RestartEvent -ChannelId 'education' -DetectedUtc '2026-09-05T18:02:00Z' -Classification 'unplanned_relaunch' -Recovered $true -RecoveryGapSeconds 10)
+)
+$v18a = Get-SoakVerdict -Cycles $cycles18a -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents18a
+Assert-Equal 'scenario18a (post-warmup tsp harness-defect AND a confirmed unplanned relaunch) -> FAIL, not HARNESS_ERROR' 'FAIL' $v18a.verdict
+Assert-Equal 'scenario18a reason mentions the crash' $true ($v18a.reason -match 'unplanned relaunch')
+Assert-Equal 'scenario18a reason ALSO carries the harness note (never silently dropped)' $true ($v18a.reason -match 'harness-shape')
+
+# 18b: the SAME tsp harness-shape defect, but confined ENTIRELY to the
+# warm-up window, with everything else clean post-warmup -- must PASS. A
+# harness-shape defect the run never even got to evaluate (still inside
+# warm-up, where the tsp probe/read path may not be meaningful yet) is not
+# surfaced as anything at all.
+$cycles18b = @(
+    (New-Cycle -Utc '2026-09-05T18:00:19Z' -Channels $channelsTspNotRunPostWarmup)   # T+19s, inside 180s warm-up
+    (New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $threeChannelsGood)             # post-warmup, clean
+)
+$v18b = Get-SoakVerdict -Cycles $cycles18b -StartUtc $startUtc -WarmupSeconds 180
+Assert-Equal 'scenario18b (tsp harness-defect confined to warm-up only) -> PASS' 'PASS' $v18b.verdict
+
+# 18c: the harness-shape defect IS post-warmup, and there is NO confirmed
+# product FAIL anywhere -- must still report HARNESS_ERROR (the round-8/10
+# baseline behavior, now correctly scoped to post-warmup cycles only).
+$v18c = Get-SoakVerdict -Cycles $cycles18a -StartUtc $startUtc -WarmupSeconds 180
+Assert-Equal 'scenario18c (post-warmup tsp harness-defect, no product FAIL) -> HARNESS_ERROR' 'HARNESS_ERROR' $v18c.verdict
+
+# 18d: a 3-consecutive-read-failure streak that STARTS during warm-up and
+# continues past it -- the tally must carry across the warm-up boundary
+# (not reset at the boundary), but the ESCALATION only fires once the
+# triggering cycle is itself post-warmup.
+$channelsOneReadFailure18d = @(
+    (New-Channel -Id 'public' -State $null -Engine $null -LastError 'state read failed: status=0 error=timeout'), (New-Channel -Id 'education'), (New-Channel -Id 'government')
+)
+$cycles18d = @(
+    (New-Cycle -Utc '2026-09-05T18:00:10Z' -Channels $channelsOneReadFailure18d)   # T+10s, warm-up, streak=1
+    (New-Cycle -Utc '2026-09-05T18:00:40Z' -Channels $channelsOneReadFailure18d)   # T+40s, warm-up, streak=2
+    (New-Cycle -Utc '2026-09-05T18:04:00Z' -Channels $channelsOneReadFailure18d)   # post-warmup, streak=3 -> escalate
+)
+$v18d = Get-SoakVerdict -Cycles $cycles18d -StartUtc $startUtc -WarmupSeconds 180
+Assert-Equal 'scenario18d (read-failure streak spans the warm-up boundary, escalates once post-warmup) -> HARNESS_ERROR' 'HARNESS_ERROR' $v18d.verdict
+
 Write-Host ""
 Write-Host "SoakVerdict unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })
 if ($script:failures -gt 0) { exit 1 }

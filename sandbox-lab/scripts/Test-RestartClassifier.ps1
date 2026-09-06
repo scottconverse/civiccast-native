@@ -268,78 +268,127 @@ Register-ChannelSample -Context $ctx16 -ChannelId 'public' -NowUtc $baseUtc.AddS
 Assert-Equal 'scenario16 (dropped read between TRANSITIONING and pid change is ignored) -> planned_restart' 'planned_restart' $ctx16.PendingRestarts['public'].classification
 
 # -------------------------------------------------------------- scenario 17
-# Round-10 finding 5: Test-PlannedRestartFromLog, the PURE log-line
-# classifier, fed synthetic lines shaped exactly like
-# civiccast/egress/daemon.py:901-902's format string
-# ("channel %s: egress state -> %s (source=%s, pid=%s, last_error=%s)") --
-# only the parsed (state, last_error) fields matter here, matching what
-# Add-LogRingSample stores.
+# Round-12 finding 1 (BLOCKER): Test-PlannedRestartFromLog now anchors on
+# PID, not ON_AIR position -- because `_start` writes the running state
+# TWICE for the SAME rollover (daemon.py:860-866 with pid=None/"-", then
+# :992-999 with the REAL new pid), the round-11 "last ON_AIR" anchor landed
+# on the pid=None write and left a one-line window with no STARTING in it.
+# These fixtures use the daemon's TRUE full shape at main bcb3ebe, including
+# the double ON_AIR write, and are fed real -LogPid values so the pid
+# anchor actually has something to match against.
+
+# (a) plain crash, full daemon shape including the double ON_AIR write.
+# The crash STARTING line (daemon.py:1546-1554, no explicit pid= kwarg ->
+# defaults pid=None/"-") is followed by _start()'s own clean STARTING
+# (:832, pid=None), TRANSITIONING (:844-859, pid=None), and BOTH running-
+# state ON_AIR writes (:860-866 pid=None, then :992-999 the real new pid) --
+# a scan that only looks at the FINAL clean lines must still catch the
+# crash text earlier in the same window.
 $ctx17a = New-RestartClassifierContext
-Add-LogRingSample -Context $ctx17a -ChannelId 'public' -State 'ON_AIR' -LastError '-'
-Add-LogRingSample -Context $ctx17a -ChannelId 'public' -State 'TRANSITIONING' -LastError '-'
-Add-LogRingSample -Context $ctx17a -ChannelId 'public' -State 'STARTING' -LastError '-'
-Assert-Equal 'scenario17a (clean TRANSITIONING -> STARTING, last_error=-) -> planned ($true)' 'True' "$(Test-PlannedRestartFromLog -Context $ctx17a -ChannelId 'public')"
+Add-LogRingSample -Context $ctx17a -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '1001'
+Add-LogRingSample -Context $ctx17a -ChannelId 'public' -State 'STARTING' -LastError 'GStreamer child exited non-zero; relaunching encoder.' -LogPid '-'
+Add-LogRingSample -Context $ctx17a -ChannelId 'public' -State 'STARTING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17a -ChannelId 'public' -State 'TRANSITIONING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17a -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17a -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '1002'
+Assert-Equal 'scenario17a (crash, full daemon shape w/ double ON_AIR write) -> crash ($false)' 'False' "$(Test-PlannedRestartFromLog -Context $ctx17a -ChannelId 'public' -OldPid 1001 -NewPid 1002)"
 
-# Round-11 finding 1 (BLOCKER): the round-10 version of this scenario
-# stopped at the crash-flavored STARTING line -- but daemon.py never stops
-# there. _begin_relaunch (main 250026b:1538-1552) writes that crash
-# STARTING line, then IMMEDIATELY calls _start() itself, which unconditionally
-# writes its OWN clean STARTING (:832), a clean TRANSITIONING (:844-859,
-# since the previous state was ON_AIR), and finally the clean running-state
-# ON_AIR -- the FULL 5-line sequence a real crash-then-relaunch produces.
-# Test-PlannedRestartFromLog must still classify this crash even though
-# the window ends on lines that individually look clean.
+# (b) plain planned rollover, full daemon shape including the double
+# ON_AIR-equivalent STARTING write: _poll_process's pending_reload branch
+# (daemon.py:1399-1409, pid=None) THEN calls _start() which writes its OWN
+# second clean STARTING (:832), a clean TRANSITIONING (:844-859, since
+# previous_state was ON_AIR), the pid=None running-state ON_AIR (:860-866),
+# and finally the real-pid ON_AIR (:992-999). Anchor is the TRANSITIONING
+# the daemon logs periodically WHILE THE OLD PID IS STILL ALIVE and a
+# reload is armed (daemon.py:1341-1361's early-return branch, pid=old).
 $ctx17b = New-RestartClassifierContext
-Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'ON_AIR' -LastError '-'
-# daemon.py:1183-1188's exact _child_exit_error text shape, written by
-# _begin_relaunch's own STARTING write.
-Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'STARTING' -LastError 'GStreamer child exited non-zero; relaunching encoder.'
-Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'STARTING' -LastError '-'
-Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'TRANSITIONING' -LastError '-'
-Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'ON_AIR' -LastError '-'
-Assert-Equal 'scenario17b (full 5-line daemon crash sequence, ends clean) -> crash ($false)' 'False' "$(Test-PlannedRestartFromLog -Context $ctx17b -ChannelId 'public')"
+Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'TRANSITIONING' -LastError '-' -LogPid '1001'
+Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'STARTING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'STARTING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'TRANSITIONING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17b -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '1002'
+Assert-Equal 'scenario17b (planned, full daemon shape w/ double STARTING/TRANSITIONING) -> planned ($true)' 'True' "$(Test-PlannedRestartFromLog -Context $ctx17b -ChannelId 'public' -OldPid 1001 -NewPid 1002)"
 
+# (c) crash -> recover -> ANOTHER rollover, all inside what the SAMPLE
+# poll saw as ONE gap (it only ever observed pid 1001 and pid 1003 --
+# 1002 lived and died entirely between two samples). The caller (Register-
+# ChannelSample) only ever hands in the pids it actually knows about
+# (-OldPid 1001 -NewPid 1003) -- the window still spans the ENTIRE log
+# ring between them, so the intermediate crash text is still caught even
+# though nothing in the sample-visible pid pair (1001, 1003) is itself
+# dirty.
 $ctx17c = New-RestartClassifierContext
-Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'ON_AIR' -LastError '-'
-Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'ON_AIR' -LastError '-'
-Assert-Equal 'scenario17c (no TRANSITIONING line anywhere) -> inconclusive ($null)' '' "$(Test-PlannedRestartFromLog -Context $ctx17c -ChannelId 'public')"
+Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'TRANSITIONING' -LastError '-' -LogPid '1001'
+Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'STARTING' -LastError 'GStreamer child exited non-zero; relaunching encoder.' -LogPid '-'
+Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'STARTING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'TRANSITIONING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '1002'
+Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'STARTING' -LastError 'GStreamer child exited non-zero; relaunching encoder.' -LogPid '-'
+Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'STARTING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'TRANSITIONING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17c -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '1003'
+Assert-Equal 'scenario17c (crash->recover->rollover inside one sample-poll gap, intermediate pid 1002 never seen by the sample side) -> crash ($false)' 'False' "$(Test-PlannedRestartFromLog -Context $ctx17c -ChannelId 'public' -OldPid 1001 -NewPid 1003)"
 
+# (d) old pid never appears anywhere in the retained ring (expired past
+# the 10-minute age limit, or never logged at all) -> no evidence, $null.
 $ctx17d = New-RestartClassifierContext
-Add-LogRingSample -Context $ctx17d -ChannelId 'public' -State 'TRANSITIONING' -LastError '-'
-Add-LogRingSample -Context $ctx17d -ChannelId 'public' -State 'ERROR' -LastError 'some daemon error text'
-Assert-Equal 'scenario17d (ERROR line after TRANSITIONING, before classification point) -> crash ($false)' 'False' "$(Test-PlannedRestartFromLog -Context $ctx17d -ChannelId 'public')"
+Add-LogRingSample -Context $ctx17d -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '9999'
+Assert-Equal 'scenario17d (old pid 1001 never appears in the ring) -> inconclusive ($null)' '' "$(Test-PlannedRestartFromLog -Context $ctx17d -ChannelId 'public' -OldPid 1001 -NewPid 1002)"
 
-Assert-Equal 'scenario17e (no log ring at all for this channel) -> inconclusive ($null)' '' "$(Test-PlannedRestartFromLog -Context (New-RestartClassifierContext) -ChannelId 'public')"
+# (e/f) FALLBACK_SLATE-STABLE channel: the OLD pid's own anchor line is
+# FALLBACK_SLATE (a channel with no live source, stably parked on slate --
+# NOT itself a crash), then a legitimate scheduled restart brings up a NEW
+# pid that reaches real ON_AIR (a live source became available). Anchoring
+# on ON_AIR (round-11) could never even find a baseline for a channel that
+# never once logged ON_AIR; anchoring on PID (round-12) works regardless
+# of what state the anchor itself was in -- and the anchor's own state is
+# deliberately EXCLUDED from the dirty-evidence check (only what happens
+# strictly AFTER it counts), so a stable FALLBACK_SLATE baseline does not
+# itself read as a crash.
+$ctx17e = New-RestartClassifierContext
+Add-LogRingSample -Context $ctx17e -ChannelId 'public' -State 'FALLBACK_SLATE' -LastError '-' -LogPid '1001'
+Add-LogRingSample -Context $ctx17e -ChannelId 'public' -State 'STARTING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17e -ChannelId 'public' -State 'STARTING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17e -ChannelId 'public' -State 'TRANSITIONING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17e -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx17e -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '1002'
+Assert-Equal 'scenario17e (FALLBACK_SLATE-stable baseline, legitimate restart to real ON_AIR) -> planned ($true)' 'True' "$(Test-PlannedRestartFromLog -Context $ctx17e -ChannelId 'public' -OldPid 1001 -NewPid 1002)"
+
+Assert-Equal 'scenario17f (no log ring at all for this channel) -> inconclusive ($null)' '' "$(Test-PlannedRestartFromLog -Context (New-RestartClassifierContext) -ChannelId 'public' -OldPid 1001 -NewPid 1002)"
 
 # -------------------------------------------------------------- scenario 18
 # Round-10 finding 5 end to end via Register-ChannelSample: the daemon LOG
 # is the PRIMARY signal and overrides what the sample ring alone would
-# conclude. 18a: sample ring shows a clean TRANSITIONING immediately
-# before the pid change (sample-only would say planned) but the log shows
-# the crash text -- log wins, unplanned, log_evidence='log'. 18b: the
-# reverse -- sample ring has NO TRANSITIONING at all (sample-only would
-# say unplanned) but the log shows the clean planned path -- log wins,
-# planned, log_evidence='log'.
-# Round-11 finding 1: extended to the daemon's FULL 5-line crash sequence
-# (see scenario17b) -- proves the end-to-end Register-ChannelSample path
-# still classifies unplanned even though the log window's LAST lines
-# (the STARTING/TRANSITIONING/ON_AIR _start() writes) look individually
-# clean; only the earlier crash-flavored STARTING line makes it a crash.
+# conclude. Round-12: LogRing entries now carry real -LogPid values
+# matching the sample side's own pids (1001 old, 1002 new) -- required for
+# the pid-anchored window to find anything at all. 18a: sample ring shows
+# a clean TRANSITIONING immediately before the pid change (sample-only
+# would say planned) but the log shows the crash text -- log wins,
+# unplanned, log_evidence='log'. 18b: the reverse -- sample ring has NO
+# TRANSITIONING at all (sample-only would say unplanned) but the log shows
+# the clean planned path -- log wins, planned, log_evidence='log'.
 $ctx18a = New-RestartClassifierContext
 Register-ChannelSample -Context $ctx18a -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
 Register-ChannelSample -Context $ctx18a -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(20) -State 'TRANSITIONING' -NewPid 1001 -UpdatedAt $null -Engine $null
-Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'ON_AIR' -LastError '-'
-Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'STARTING' -LastError 'GStreamer child exited non-zero; relaunching encoder.'
-Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'STARTING' -LastError '-'
-Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'TRANSITIONING' -LastError '-'
+Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '1001'
+Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'STARTING' -LastError 'GStreamer child exited non-zero; relaunching encoder.' -LogPid '-'
+Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'STARTING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'TRANSITIONING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx18a -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '1002'
 Register-ChannelSample -Context $ctx18a -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(35) -State 'STARTING' -NewPid 1002 -UpdatedAt $null -Engine $null
 Assert-Equal 'scenario18a (log shows crash despite clean sample ring) -> unplanned_relaunch' 'unplanned_relaunch' $ctx18a.PendingRestarts['public'].classification
 Assert-Equal 'scenario18a log_evidence=log' 'log' $ctx18a.PendingRestarts['public'].log_evidence
 
 $ctx18b = New-RestartClassifierContext
 Register-ChannelSample -Context $ctx18b -ChannelId 'public' -NowUtc $baseUtc -State 'ON_AIR' -NewPid 1001 -UpdatedAt $null -Engine 'gstreamer'
-Add-LogRingSample -Context $ctx18b -ChannelId 'public' -State 'TRANSITIONING' -LastError '-'
-Add-LogRingSample -Context $ctx18b -ChannelId 'public' -State 'STARTING' -LastError '-'
+Add-LogRingSample -Context $ctx18b -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '1001'
+Add-LogRingSample -Context $ctx18b -ChannelId 'public' -State 'TRANSITIONING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx18b -ChannelId 'public' -State 'STARTING' -LastError '-' -LogPid '-'
+Add-LogRingSample -Context $ctx18b -ChannelId 'public' -State 'ON_AIR' -LastError '-' -LogPid '1002'
 Register-ChannelSample -Context $ctx18b -ChannelId 'public' -NowUtc $baseUtc.AddSeconds(15) -State 'STARTING' -NewPid 1002 -UpdatedAt $null -Engine $null
 Assert-Equal 'scenario18b (log shows clean planned path despite no TRANSITIONING in sample ring) -> planned_restart' 'planned_restart' $ctx18b.PendingRestarts['public'].classification
 Assert-Equal 'scenario18b log_evidence=log' 'log' $ctx18b.PendingRestarts['public'].log_evidence
@@ -400,6 +449,32 @@ Add-ReloadAbortSample -Context $ctx22 -ChannelId 'education' -Reason 'reported n
 Assert-Equal 'scenario22a (two reload-abort events recorded)' 2 $ctx22.ReloadAbortEvents.Count
 Assert-Equal 'scenario22b (first event channel_id)' 'public' $ctx22.ReloadAbortEvents[0].channel_id
 Assert-Equal 'scenario22c (second event reason text carried through)' 'reported no settlement within 45s (reload_id=abc123)' $ctx22.ReloadAbortEvents[1].reason
+
+# -------------------------------------------------------------- scenario 23
+# Round-12 finding 3 (HIGH): the reload-abort regex (In-Sandbox-Soak.ps1's
+# $script:daemonReloadAbortRegex -- duplicated here VERBATIM since that
+# script's own driver setup is not dot-sourceable in isolation; keep the
+# two copies in sync) must match ALL SIX known daemon.py WARNING-line
+# shapes (main bcb3ebe:1946/2111/1860/2132/2143/2156), not just the two
+# the round-11 version happened to match. Each verbatim line below is
+# shaped exactly like the real log line (asctime + level + logger name +
+# message), and every one must both match AND extract the right channel.
+$abortRegex = [regex]'civiccast\.egress\S*:\s*(?<reason>.*\bfor (?<ch>\S+)\b.*falling back to restart.*)$'
+$abortFixtures = @(
+    @{ Line = '2026-09-06 09:31:04,123 WARNING civiccast.egress.daemon: Seamless content-reload declined for public (reload not armed); falling back to restart.'; Ch = 'public'; Label = 'declined (:1946)' }
+    @{ Line = '2026-09-06 09:31:05,123 WARNING civiccast.egress.daemon: Seamless content-reload for education reported "applied" but its worker had already exited (reload_id=abc); falling back to restart instead of stamping ON_AIR against a dead process.'; Ch = 'education'; Label = 'applied-but-worker-exited (:2111)' }
+    @{ Line = '2026-09-06 09:31:06,123 WARNING civiccast.egress.daemon: Seamless content-reload for government did not land (aborted: build failed); falling back to restart.'; Ch = 'government'; Label = 'did not land (:2132)' }
+    @{ Line = "2026-09-06 09:31:07,123 WARNING civiccast.egress.daemon: Seamless content-reload for public reported an unrecognized settlement result 'weird' (reload_id=xyz); treating as aborted and falling back to restart."; Ch = 'public'; Label = 'unrecognized settlement, extra words before "falling back" (:2143)' }
+    @{ Line = '2026-09-06 09:31:08,123 WARNING civiccast.egress.daemon: Seamless content-reload for education reported no settlement within 45s (reload_id=def); falling back to restart.'; Ch = 'education'; Label = 'no settlement within (:2156)' }
+    @{ Line = '2026-09-06 09:31:09,123 WARNING civiccast.egress.daemon: Content-reload source preparation FAILED for government after 12.3s; falling back to restart.'; Ch = 'government'; Label = 'source preparation FAILED, no "Seamless" prefix (:1860)' }
+)
+foreach ($fx in $abortFixtures) {
+    $m = $abortRegex.Match($fx.Line)
+    Assert-Equal "scenario23 ($($fx.Label)) matches" 'True' "$($m.Success)"
+    if ($m.Success) {
+        Assert-Equal "scenario23 ($($fx.Label)) channel extracted" $fx.Ch $m.Groups['ch'].Value
+    }
+}
 
 Write-Host ""
 Write-Host "RestartClassifier unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })

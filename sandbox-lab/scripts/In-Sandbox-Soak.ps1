@@ -745,34 +745,48 @@ if ($SeamlessReload) {
     }
 }
 
-# Round-11 finding 5 (MEDIUM): Start-Service THROWING is not always a
-# harness/setup problem -- if the SCM actually launched the service binary
-# and it exited/crashed immediately, that is a real product defect (FAIL),
-# never something this harness caused. Only a throw where the SCM itself
-# refused to even attempt the launch (access denied, the service marked
-# for deletion, a missing/failed dependency) is a genuine harness/setup
-# condition (HARNESS_ERROR).
+# Round-11 finding 5 (MEDIUM) / round-12 findings 4-5: neither a
+# Start-Service THROW nor a Start-Service SUCCESS followed by the service
+# never reaching Running is automatically a harness/setup problem -- if
+# the SCM actually launched the service binary and it exited/crashed, that
+# is a real product defect (FAIL), never something this harness caused.
+# Only a case where the SCM itself refused to even attempt the launch
+# (access denied, the service marked for deletion, a missing/failed
+# dependency), or genuinely never got the process running at all, is a
+# harness/setup condition (HARNESS_ERROR). Round-12 finding 4: this check
+# now runs on BOTH branches (a throw, AND a success-then-dies-before-
+# Running) -- the round-11 version only ran it on the throw branch, so a
+# service that accepted Start-Service and then crashed before settling
+# into Running unconditionally read as HARNESS_ERROR with no event-log
+# check at all.
 function Test-ServiceStartFailureIsProductCrash {
     <#
       .SYNOPSIS
       Evidence checked, in order: (1) the System event log for a Service
       Control Manager EventID 7034 (terminated unexpectedly) or 7031
-      (crashed, scheduled for restart) naming CivicCastSupervisor within
-      the last 5 minutes -- either one means the SCM DID launch the
-      process and it died: a real product crash, FAIL. (2) the exception
-      text itself for the SCM's own refusal phrasing ("access is denied",
-      "marked for deletion", "dependency"). Neither a positive crash-event
-      match NOR a clear SCM-refusal phrase found defaults to HARNESS_ERROR
-      (the conservative default when evidence is ambiguous -- never guess
-      FAIL without a positive product-crash signal).
+      (crashed, scheduled for restart) for CivicCastSupervisor, with
+      TimeCreated at or after $SinceUtc (round-12 finding 5: the actual
+      moment THIS SCRIPT attempted Start-Service, not a fixed "last 5
+      minutes" window that could span an unrelated PRIOR crash from
+      before this run even started) -- either event ID means the SCM DID
+      launch the process and it died: a real product crash, FAIL. Matched
+      by the event's own structured service-name PROPERTY
+      (Properties[0].Value -- Service Control Manager's 7034/7031 events
+      carry the service name as their first parameter), never by matching
+      localized message TEXT, which is locale-dependent and not a
+      structural guarantee. (2) the exception text itself for the SCM's
+      own refusal phrasing ("access is denied", "marked for deletion",
+      "dependency"). Neither a positive crash-event match NOR a clear
+      SCM-refusal phrase found defaults to HARNESS_ERROR (the conservative
+      default when evidence is ambiguous -- never guess FAIL without a
+      positive product-crash signal).
     #>
-    param([string]$ExceptionText)
+    param([string]$ExceptionText, [datetime]$SinceUtc)
     try {
-        $since = (Get-Date).AddMinutes(-5)
-        $crashEvents = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; Id = 7034, 7031; StartTime = $since } -ErrorAction SilentlyContinue |
-            Where-Object { $_.Message -match 'CivicCastSupervisor' })
+        $crashEvents = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager'; Id = 7034, 7031; StartTime = $SinceUtc.ToLocalTime() } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Properties.Count -gt 0 -and "$($_.Properties[0].Value)" -eq 'CivicCastSupervisor' })
         if ($crashEvents.Count -gt 0) {
-            return [pscustomobject]@{ IsProductCrash = $true; Reason = "System event log: Service Control Manager logged event ID $($crashEvents[0].Id) for CivicCastSupervisor within the last 5 minutes -- '$($crashEvents[0].Message)'" }
+            return [pscustomobject]@{ IsProductCrash = $true; Reason = "System event log: Service Control Manager logged event ID $($crashEvents[0].Id) for service name 'CivicCastSupervisor' (structured property match) at $($crashEvents[0].TimeCreated.ToString('o')), at/after this script's own Start-Service attempt ($($SinceUtc.ToString('o')))" }
         }
     } catch {
         # Get-WinEvent itself can fail (channel not present, permissions) --
@@ -782,11 +796,16 @@ function Test-ServiceStartFailureIsProductCrash {
     if ("$ExceptionText" -match 'access is denied|marked for deletion|dependen') {
         return [pscustomobject]@{ IsProductCrash = $false; Reason = "Start-Service exception text indicates the SCM itself refused the launch: $ExceptionText" }
     }
-    return [pscustomobject]@{ IsProductCrash = $false; Reason = "no SCM crash event (7034/7031) found for CivicCastSupervisor in the last 5 minutes, and the exception text does not match a known SCM-refusal phrase -- defaulting to HARNESS_ERROR (ambiguous evidence, not a confirmed product crash): $ExceptionText" }
+    return [pscustomobject]@{ IsProductCrash = $false; Reason = "no SCM crash event (7034/7031, matched by structured service-name property) for CivicCastSupervisor at/after this script's Start-Service attempt ($($SinceUtc.ToString('o'))), and the exception text (if any) does not match a known SCM-refusal phrase -- defaulting to HARNESS_ERROR (ambiguous evidence, not a confirmed product crash)$(if ($ExceptionText) { ": $ExceptionText" })" }
 }
 
 $startServiceOk = $false
 $startServiceExceptionText = $null
+# Round-12 finding 5 (MEDIUM): captured immediately before the actual
+# Start-Service call so the event-log query above has a precise lower
+# bound -- never a crash from some earlier, unrelated point in this run
+# (or a prior run entirely) mistaken for evidence about THIS attempt.
+$startAttemptUtc = (Get-Date).ToUniversalTime()
 try {
     Start-Service -Name 'CivicCastSupervisor' -ErrorAction Stop
     Write-SoakLog "Start-Service CivicCastSupervisor: requested"
@@ -803,11 +822,11 @@ try {
 # Split the two: confirm the SERVICE itself actually reached Running
 # BEFORE trusting the health poll to mean anything -- Start-Service
 # throwing, or the service settling into any state OTHER than Running
-# (short poll below to ride out a transient StartPending), is a
-# harness/setup failure (the station process itself never came up, so no
-# health result can be judged as a product finding); a service that IS
-# Running and simply never reports healthy is judged as FAIL below,
-# unconditionally (seamless-reload or not).
+# (short poll below to ride out a transient StartPending), is checked
+# against the event log above (round-12 findings 4-5) before deciding
+# harness-vs-product; a service that IS Running and simply never reports
+# healthy is judged as FAIL below, unconditionally (seamless-reload or
+# not).
 $serviceRunning = $false
 $svc = $null
 $svcPollDeadline = (Get-Date).AddSeconds(30)
@@ -820,15 +839,15 @@ while ((Get-Date) -lt $svcPollDeadline) {
 }
 Write-SoakLog "CivicCastSupervisor service status after Start-Service: $(if ($svc) { $svc.Status } else { '<Get-Service failed>' }) (serviceRunning=$serviceRunning)"
 if (-not $startServiceOk -or -not $serviceRunning) {
+    $crashCheck = Test-ServiceStartFailureIsProductCrash -ExceptionText $startServiceExceptionText -SinceUtc $startAttemptUtc
+    Write-SoakLog "Start-Service $(if (-not $startServiceOk) { 'threw' } else { "succeeded but the service never reached Running (status='$(if ($svc) { $svc.Status } else { '<unknown>' })')" }) -- product-crash-vs-harness check: IsProductCrash=$($crashCheck.IsProductCrash) ($($crashCheck.Reason))"
+    if ($crashCheck.IsProductCrash) {
+        Write-FailVerdictAndExit -Reason "Start-Service CivicCastSupervisor $(if (-not $startServiceOk) { 'threw' } else { 'succeeded but the service never reached Running' }), and evidence shows the service process actually started and then crashed: $($crashCheck.Reason)"
+    }
     if (-not $startServiceOk) {
-        $crashCheck = Test-ServiceStartFailureIsProductCrash -ExceptionText $startServiceExceptionText
-        Write-SoakLog "Start-Service threw -- product-crash-vs-harness check: IsProductCrash=$($crashCheck.IsProductCrash) ($($crashCheck.Reason))"
-        if ($crashCheck.IsProductCrash) {
-            Write-FailVerdictAndExit -Reason "Start-Service CivicCastSupervisor threw, but evidence shows the service process actually started and then crashed: $($crashCheck.Reason)"
-        }
         Write-HarnessErrorVerdictAndExit -Reason "Start-Service CivicCastSupervisor threw and no evidence the process itself ever started/crashed ($($crashCheck.Reason)) -- the SCM itself never launched the station process, so no health poll result can be judged as a product finding"
     }
-    Write-HarnessErrorVerdictAndExit -Reason "Start-Service CivicCastSupervisor left the service in state '$(if ($svc) { $svc.Status } else { '<unknown>' })', never reached Running within 30s -- the station process itself never came up, so no health poll result can be judged as a product finding"
+    Write-HarnessErrorVerdictAndExit -Reason "Start-Service CivicCastSupervisor left the service in state '$(if ($svc) { $svc.Status } else { '<unknown>' })', never reached Running within 30s, and no event-log evidence the process itself crashed ($($crashCheck.Reason)) -- the station process itself never came up, so no health poll result can be judged as a product finding"
 }
 
 Write-SoakLog "polling for station health (bounded to ${HealthBoundMinutes}m): require status=='healthy' AND schema=='current'"
@@ -1637,19 +1656,50 @@ $script:daemonLogPath = 'C:\ProgramData\CivicCast\logs\control_plane-app.log'
 # the old offset again before the next read; the first line changing is
 # unambiguous, since rotation always starts a brand-new file). Reads ONLY
 # the new bytes via a seek, never the whole file.
+# Round-12 finding 7 (LOW): starting the offset at 0 means the FIRST
+# ingestion pass reads the entire pre-existing log -- everything the
+# install/first-admin/schedule/channel-start phases already logged BEFORE
+# this soak's own clock started -- and stamps it all with THIS pass's
+# -ObservedUtc ("now"), which is wrong on two counts: those lines are not
+# actually fresh (they predate the soak, sometimes by many minutes), and
+# ring entries and their pids belong to a channel-start sequence this
+# soak's classification has no business reasoning about at all. Start the
+# offset at the file's CURRENT length instead -- only lines appended from
+# this point forward (soak-clock start) are ever ingested.
 $script:daemonLogOffsetBytes = 0
+try {
+    $script:daemonLogOffsetBytes = (Get-Item -Path $script:daemonLogPath -ErrorAction Stop).Length
+} catch {
+    $script:daemonLogOffsetBytes = 0
+}
 $script:daemonLogFirstLineText = $null
 # civiccast/egress/daemon.py:1064-1071's exact format string (main
-# 250026b -- re-verify against HEAD before trusting this citation blindly):
+# bcb3ebe -- re-verify against HEAD before trusting this citation blindly):
 #   "channel %s: egress state -> %s (source=%s, pid=%s, last_error=%s)"
-$script:daemonLogLineRegex = [regex]'channel (?<ch>\S+): egress state -> (?<state>\S+) \(source=.*?, pid=\S+, last_error=(?<err>.*)\)\s*$'
-# Round-11 finding 4 (MEDIUM): a seamless content-reload abort is NOT a
-# _write_state line -- it is one of four daemon.py WARNING lines (main
-# 250026b:1946/2132/2143/2156) that all embed the channel id as plain text
-# ("...for <channel_id> ...") and all end "; falling back to restart." --
-# one regex covers all four variants by capturing everything between
-# "for <ch>" and the trailing "; falling back to restart." as the reason.
-$script:daemonReloadAbortRegex = [regex]'Seamless content-reload (?:declined )?for (?<ch>\S+) (?<reason>.+?); falling back to restart\.'
+# Round-12 finding 1 (BLOCKER): now ALSO captures pid= (previously matched
+# but discarded via a bare \S+) -- RestartClassifier.ps1's
+# Test-PlannedRestartFromLog anchors its crash/planned classification
+# window on the pid this line carries, not on which STATE it happens to
+# be (`_start` logs the running state TWICE for the same rollover, once
+# with pid=None/"-" and again with the real pid, which broke a
+# state-anchored window -- see that file's header).
+$script:daemonLogLineRegex = [regex]'channel (?<ch>\S+): egress state -> (?<state>\S+) \(source=.*?, pid=(?<pid>\S+), last_error=(?<err>.*)\)\s*$'
+# Round-11 finding 4 (MEDIUM) / round-12 finding 3 (HIGH, the round-11
+# regex missed half of its own target lines): a seamless content-reload
+# abort is NOT a _write_state line -- it is one of SIX distinct daemon.py
+# WARNING lines (main bcb3ebe:1946 "declined", :2111 "falling back to
+# restart instead of stamping ON_AIR" -- a worker exited before an
+# "applied" settlement could be committed, :2132 "did not land", :2143
+# "...treating as aborted and falling back to restart" -- NOTE the extra
+# words between the semicolon and "falling back", which the round-11
+# regex's literal `; falling back to restart\.` anchor missed entirely,
+# :2156 "no settlement within", and :1860 "Content-reload source
+# preparation FAILED for %s..." -- NO "Seamless" prefix at all, a
+# completely different lead-in). The only thing common to all six is the
+# literal substring "falling back to restart" appearing SOMEWHERE later
+# in the same civiccast.egress-logged line as "for <channel_id>" -- match
+# on that instead of trying to anchor each variant's own punctuation.
+$script:daemonReloadAbortRegex = [regex]'civiccast\.egress\S*:\s*(?<reason>.*\bfor (?<ch>\S+)\b.*falling back to restart.*)$'
 
 function Update-DaemonLogRing {
     param($Context)
@@ -1703,7 +1753,7 @@ function Update-DaemonLogRing {
         if (-not $line) { continue }
         $m = $script:daemonLogLineRegex.Match($line)
         if ($m.Success) {
-            Add-LogRingSample -Context $Context -ChannelId $m.Groups['ch'].Value -State $m.Groups['state'].Value -LastError $m.Groups['err'].Value -ObservedUtc $nowUtc
+            Add-LogRingSample -Context $Context -ChannelId $m.Groups['ch'].Value -State $m.Groups['state'].Value -LastError $m.Groups['err'].Value -LogPid $m.Groups['pid'].Value -ObservedUtc $nowUtc
             continue
         }
         $ra = $script:daemonReloadAbortRegex.Match($line)
@@ -1889,6 +1939,12 @@ while ((Get-Date) -lt $deadline) {
 
     if ((Get-Date) -ge $deadline) { break }
 }
+
+# Round-12 finding 7 (LOW): one final ingestion pass -- the last in-loop
+# call was up to one whole cycle period (~60-75s) ago; a crash/rollover
+# that logged in that final gap deserves to be seen before classification
+# is finalized and events are flushed below, not silently missed.
+Update-DaemonLogRing -Context $restartCtx
 
 $eventsBeforeFinalFlush = $restartCtx.RestartEvents.Count
 # Round-11 finding 3 (HIGH): pass the REAL soak-end instant explicitly

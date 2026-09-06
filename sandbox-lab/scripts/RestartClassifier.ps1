@@ -94,16 +94,16 @@
 # (control_plane-app.log) is a strictly better signal because it is
 # written at EVERY state transition the daemon itself makes, not just
 # whichever instant this lane happens to poll -- civiccast/egress/
-# daemon.py:1064-1071 (`_write_state`, main 250026b -- line citations in
+# daemon.py:1064-1071 (`_write_state`, main bcb3ebe -- line citations in
 # this file are pinned to that revision, re-verify against HEAD before
 # trusting them blindly) is the ONE choke point every transition passes
 # through, logged as:
 #   "channel {id}: egress state -> {STATE} (source={label}, pid={pid}, last_error={err})"
 # `last_error` is the literal text "-" when there is none. A PLANNED
-# rollover (_poll_process's pending_reload branch, daemon.py:1394-1409)
+# rollover (_poll_process's pending_reload branch, daemon.py:1399-1409)
 # writes its STARTING line with NO last_error at all -- literal "-". A
 # CRASH relaunch (_relaunch_after_crash -> _begin_relaunch, daemon.py:
-# 1538-1552) writes ITS STARTING line with last_error set from
+# 1546-1554) writes ITS STARTING line with last_error set from
 # _child_exit_error (daemon.py:1183-1188, always contains the literal
 # substring "child exited non-zero") or, past the escalation streak
 # threshold, _begin_relaunch's own force-fallback text (contains
@@ -115,34 +115,47 @@
 # ALSO produces a clean TRANSITIONING line, later in the same sequence,
 # because `_begin_relaunch` writes its crash-flavored STARTING line
 # (last_error containing "child exited non-zero") and THEN calls
-# `_start()` (daemon.py:1556-ish), which unconditionally writes its OWN
-# clean STARTING (daemon.py:832, no last_error), then a clean TRANSITIONING
-# (daemon.py:844-859, whenever the previous state was ON_AIR/FALLBACK_SLATE
-# -- true for a crash restarting from ON_AIR) BEFORE the real pid is even
-# bound, and finally the clean running-state write (ON_AIR/FALLBACK_SLATE).
-# Scanning backward from that final clean state and stopping at the first
-# TRANSITIONING therefore reads EVERY crash-then-successful-relaunch
-# exactly like a planned rollover -- the crash STARTING line is real but
-# sits BEFORE that TRANSITIONING, invisible to a scan that stops there.
+# `_start()`, which unconditionally writes its OWN clean STARTING, then a
+# clean TRANSITIONING (whenever the previous state was ON_AIR/FALLBACK_
+# SLATE -- true for a crash restarting from ON_AIR) BEFORE the real pid is
+# even bound, and finally the clean running-state write. Scanning backward
+# and stopping at that clean TRANSITIONING reads EVERY crash-then-
+# successful-relaunch exactly like a planned rollover.
 #
-# CORRECT RULE (measured against main 250026b's exact call chain, both
-# paths traced line by line): define the WINDOW as every log line for this
-# channel from just AFTER its last confirmed ON_AIR line (the OLD pid's
-# last known-good state -- the ring's SECOND-to-last ON_AIR occurrence,
-# since the very last ring entry may itself already be the NEW pid's own
-# ON_AIR) through the end of the retained ring (inclusive of the STARTING/
-# TRANSITIONING lines and whatever the ring currently ends at). UNPLANNED
-# if ANY line in that window carries a non-"-" last_error or an ERROR/
-# FALLBACK_SLATE state -- the crash-path STARTING line is ALWAYS somewhere
-# in this window even though later lines in the SAME window look clean.
-# PLANNED only if the window contains at least one STARTING line AND every
-# single line in it is clean. Test-PlannedRestartFromLog below implements
-# exactly this; Register-ChannelSample only falls back to the sample-ring
-# signal (Test-PlannedRestartSignal) when the log ring has no evidence at
-# all for this channel (log file missing/unreadable, or no ON_AIR baseline
-# and no STARTING line landed in the retained window), and marks that
-# pending restart's log_evidence accordingly ('log' vs 'missing') for
-# transparency in the final report.
+# ROUND-12 finding 1 (BLOCKER, the round-11 window was STILL wrong):
+# anchoring the window on "the last ON_AIR" breaks the moment `_start`
+# writes the running state TWICE for the SAME rollover -- once at
+# daemon.py:860-866 with pid=None (before the encoder has even launched),
+# and again at daemon.py:992-999 with the REAL new pid (once the encoder
+# is confirmed up). "Last ON_AIR strictly before the final entry" then
+# lands on the pid=None ON_AIR, leaving a one-line "window" (just the
+# final real-pid ON_AIR) with no STARTING in it -- $null, falls back to
+# the sample-ring signal, and a genuine crash-loop can classify planned
+# with log_evidence='missing'. Anchoring on STATE (ON_AIR) is fundamentally
+# the wrong axis when the daemon can log the SAME state twice with
+# different pids, or never reach ON_AIR at all for a FALLBACK_SLATE-stable
+# channel.
+#
+# CORRECT RULE (anchor on PID, not state -- every `_write_state` line
+# carries its own `pid=<n>` or `pid=-`): the WINDOW is every log line for
+# this channel from the LAST line whose pid == the OLD pid (in ANY state --
+# this is the old worker's own last-known-good report, whatever state it
+# was in, which correctly handles a channel that was stably parked on
+# FALLBACK_SLATE the whole time) through the FIRST subsequent ON_AIR line
+# whose pid == the NEW pid, inclusive of every line in between regardless
+# of what pid THEY carry (pid=- transient lines, or another worker's
+# unrelated activity). UNPLANNED if ANY line in that window (excluding the
+# anchor line itself -- see below) carries a non-"-" last_error or an
+# ERROR/FALLBACK_SLATE state. PLANNED only if the window contains a
+# STARTING line and everything strictly after the anchor is clean. The
+# anchor line's OWN state/last_error is deliberately NOT itself evidence --
+# only what happens AFTER it is (a channel legitimately, stably parked on
+# FALLBACK_SLATE is not itself a crash; only a NEW FALLBACK_SLATE/ERROR
+# appearing during the actual transition is). If the OLD pid never appears
+# anywhere in the retained ring at all (expired past the 10-minute age
+# limit, or simply never logged), this returns $null (no evidence) --
+# Register-ChannelSample falls back to the sample-ring signal and marks
+# log_evidence='missing'.
 
 function New-RestartClassifierContext {
     <#
@@ -182,6 +195,16 @@ function Add-LogRingSample {
       never against $null/empty (this is parsed log TEXT, not a
       PowerShell-native value).
 
+      .PARAMETER LogPid
+      Round-12 finding 1 (BLOCKER): the raw captured `pid=...` text from
+      the log line -- "-" (daemon.py's own sentinel for pid=None) or a
+      decimal pid string. Deliberately NOT named `$Pid` -- see this file's
+      header on the $Pid/$PID automatic-variable-shadowing bug that this
+      whole extraction exists to fail loudly on. Compare via string
+      equality against a real pid's `"$RealPid"`, never parse as [int] (a
+      "-" would throw). This is what Test-PlannedRestartFromLog anchors
+      its window on instead of ON_AIR state -- see this file's header.
+
       .PARAMETER ObservedUtc
       Round-11 finding 2 (HIGH): THIS SCRIPT's own clock at the moment the
       line was read/parsed -- never the log's own %(asctime)s text (see
@@ -194,9 +217,9 @@ function Add-LogRingSample {
       classification. Defaults to "now" so existing callers/tests that
       never pass it keep working unchanged.
     #>
-    param($Context, [string]$ChannelId, [string]$State, [string]$LastError, [datetime]$ObservedUtc = (Get-Date).ToUniversalTime())
+    param($Context, [string]$ChannelId, [string]$State, [string]$LastError, [string]$LogPid = '-', [datetime]$ObservedUtc = (Get-Date).ToUniversalTime())
     if (-not $Context.LogRing.ContainsKey($ChannelId)) { $Context.LogRing[$ChannelId] = New-Object System.Collections.ArrayList }
-    $null = $Context.LogRing[$ChannelId].Add([ordered]@{ state = $State; last_error = $LastError; observed_utc = $ObservedUtc })
+    $null = $Context.LogRing[$ChannelId].Add([ordered]@{ state = $State; last_error = $LastError; pid = $LogPid; observed_utc = $ObservedUtc })
     while ($Context.LogRing[$ChannelId].Count -gt 30) { $Context.LogRing[$ChannelId].RemoveAt(0) }
     # Age expiry: drop entries older than 10 minutes relative to THIS
     # sample's own observation time (monotonic with the ring's append
@@ -210,16 +233,22 @@ function Add-LogRingSample {
 function Add-ReloadAbortSample {
     <#
       .SYNOPSIS
-      Round-11 finding 4 (MEDIUM): a seamless content-reload abort is
-      invisible to everything above -- it is NOT a `_write_state` line at
-      all, it is one of four distinct daemon.py WARNING lines (main
-      250026b:1946 "declined", :2132 "did not land", :2143 "unrecognized
-      settlement result", :2156 "no settlement within") that all end
-      "...falling back to restart." A channel that hits any of these
-      DID fall back to a real worker restart -- exactly what -SeamlessReload
+      Round-11 finding 4 (MEDIUM) / round-12 finding 3 (HIGH, two more
+      variants found): a seamless content-reload abort is invisible to
+      everything above -- it is NOT a `_write_state` line at all, it is
+      one of SIX distinct daemon.py WARNING lines (main bcb3ebe:1946
+      "declined", :2111 "falling back to restart instead of stamping
+      ON_AIR" (a worker exited before an "applied" settlement could be
+      committed), :2132 "did not land", :2143 "...treating as aborted and
+      falling back to restart", :2156 "no settlement within", and :1860
+      "Content-reload source preparation FAILED..." -- no "Seamless"
+      prefix at all) that all contain the substring "falling back to
+      restart" somewhere in the line. A channel that hits any of these DID
+      fall back to a real worker restart -- exactly what -SeamlessReload
       exists to prove never happens -- so this needs its own event class,
       never silently folded into (or missed by) the planned/unplanned
-      restart classification above.
+      restart classification above. See In-Sandbox-Soak.ps1's
+      $script:daemonReloadAbortRegex for the actual parsing.
     #>
     param($Context, [string]$ChannelId, [string]$Reason)
     $null = $Context.ReloadAbortEvents.Add([ordered]@{ channel_id = $ChannelId; reason = $Reason })
@@ -229,53 +258,87 @@ function Test-PlannedRestartFromLog {
     <#
       .SYNOPSIS
       Round-10 finding 5 (MEDIUM, "the important one") / round-11 finding 1
-      (BLOCKER, this function's round-10 form was STILL wrong): classify a
-      pid change from the daemon's OWN log lines for this channel, when
-      any are available, instead of (or in addition to) inferring it from
-      polled state -- see this file's header for the full citation of why
-      this catches a crash-and-recover that happened entirely inside one
-      poll gap, which polling alone cannot, and for the exact reason the
-      round-10 "scan backward, stop at first TRANSITIONING" rule
-      misclassified a real crash-relaunch as planned (its OWN clean
-      TRANSITIONING line, written by `_start` AFTER the crash-flavored
-      STARTING line, sits closer to the end of the ring and gets found
-      first).
+      / round-12 finding 1 (both BLOCKER, this function's earlier forms
+      were STILL wrong): classify a pid change from the daemon's OWN log
+      lines for this channel, when any are available, instead of (or in
+      addition to) inferring it from polled state -- see this file's
+      header for the full citation of why this catches a crash-and-recover
+      that happened entirely inside one poll gap, which polling alone
+      cannot, and for the two prior anchoring mistakes this fixes (round-
+      10's "stop at first TRANSITIONING scanning backward", round-11's
+      "anchor on the second-to-last ON_AIR" -- both broke on real daemon
+      behavior `_start` actually exhibits).
 
-      WINDOW definition: everything for this channel from just after its
-      SECOND-to-last ON_AIR occurrence (the OLD pid's last known-good
-      state -- deliberately not the LAST ON_AIR, since the final ring
-      entry may already be the classification target's own resolved
-      ON_AIR) through the end of the ring, inclusive. No timestamp
-      comparison is used or needed -- log lines arrive in the file's own
-      append order, and this deliberately does NOT parse/compare the
-      log's own %(asctime)s text (local-time, would need a timezone
-      reconciliation against this script's UTC clock not worth risking).
+      WINDOW definition (round-12): anchor on PID, not state. The window
+      is every log line for this channel from the LAST line whose pid ==
+      $OldPid (in ANY state -- the old worker's own last-known-good
+      report) through the FIRST subsequent line whose state == 'ON_AIR'
+      AND pid == $NewPid, inclusive of everything in between regardless of
+      what pid THOSE lines carry (transient pid=- lines are normal and
+      expected mid-transition). No timestamp comparison is used or needed
+      -- log lines arrive in the file's own append order, and this
+      deliberately does NOT parse/compare the log's own %(asctime)s text
+      (local-time, would need a timezone reconciliation against this
+      script's UTC clock not worth risking).
+
+      The anchor line itself (old pid's last state) is NOT itself treated
+      as crash evidence -- only what happens strictly AFTER it is. This is
+      what correctly handles a channel stably parked on FALLBACK_SLATE the
+      whole time (its own steady state is not a crash; a NEW FALLBACK_SLATE/
+      ERROR appearing during the actual transition is).
+
+      .PARAMETER OldPid
+      .PARAMETER NewPid
+      The real (integer) pids either side of the change, as already known
+      to the sample-based caller (Register-ChannelSample's
+      $prevPidBeforeThisSample / $NewPid) -- compared against the ring's
+      own captured pid TEXT via string equality (a ring entry's pid is
+      "-" or a decimal string, never parsed as [int]).
 
       .OUTPUTS
-      $null   -- no evidence either way (empty ring, or a window with no
-                 STARTING line in it at all -- not enough has happened yet
-                 to conclude anything) -- caller should fall back to the
-                 sample-ring signal (Test-PlannedRestartSignal) and record
-                 log_evidence='missing'.
+      $null   -- no evidence either way ($OldPid never appears anywhere in
+                 the retained ring at all -- expired past the 10-minute
+                 age limit, or simply never logged -- or $NewPid never
+                 reached a logged ON_AIR yet) -- caller should fall back to
+                 the sample-ring signal (Test-PlannedRestartSignal) and
+                 record log_evidence='missing'.
       $true   -- log evidence supports a planned rollover (the window
-                 contains a STARTING line and every line in it is clean).
-      $false  -- log evidence shows a crash (ANY line in the window is
-                 ERROR/FALLBACK_SLATE or carries a non-"-" last_error).
+                 contains a STARTING line and everything strictly after
+                 the anchor is clean).
+      $false  -- log evidence shows a crash (ANY line strictly after the
+                 anchor is ERROR/FALLBACK_SLATE or carries a non-"-"
+                 last_error).
     #>
-    param($Context, [string]$ChannelId)
+    param($Context, [string]$ChannelId, $OldPid, $NewPid)
     if (-not $Context.LogRing.ContainsKey($ChannelId)) { return $null }
     $lines = @($Context.LogRing[$ChannelId])
     if ($lines.Count -eq 0) { return $null }
 
-    # Find the last ON_AIR occurrence STRICTLY BEFORE the final ring entry
-    # (skip the final entry itself even if it is ON_AIR -- that would be
-    # the very thing being classified, not the OLD pid's baseline).
-    $lastOnAirIdx = -1
-    for ($i = $lines.Count - 2; $i -ge 0; $i--) {
-        if ($lines[$i].state -eq 'ON_AIR') { $lastOnAirIdx = $i; break }
-    }
-    $window = @($lines[($lastOnAirIdx + 1)..($lines.Count - 1)])
+    $oldPidText = "$OldPid"
+    $newPidText = "$NewPid"
 
+    # Last line (ANY state) whose pid == old pid -- scan from the END
+    # backward for the MOST RECENT occurrence (the process typically logs
+    # many identical-pid lines while healthy; we want the LAST one before
+    # it died/relaunched).
+    $oldPidIdx = -1
+    for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+        if ("$($lines[$i].pid)" -eq $oldPidText) { $oldPidIdx = $i; break }
+    }
+    if ($oldPidIdx -lt 0) { return $null }
+
+    # First ON_AIR line AFTER that whose pid == new pid.
+    $newPidOnAirIdx = -1
+    for ($i = $oldPidIdx + 1; $i -lt $lines.Count; $i++) {
+        if ($lines[$i].state -eq 'ON_AIR' -and "$($lines[$i].pid)" -eq $newPidText) { $newPidOnAirIdx = $i; break }
+    }
+    if ($newPidOnAirIdx -lt 0) { return $null }
+
+    # The dirty-evidence/STARTING check runs on everything STRICTLY AFTER
+    # the anchor through the terminal ON_AIR, inclusive of the terminal --
+    # the anchor line's own state/last_error is deliberately excluded (see
+    # .SYNOPSIS: a stable FALLBACK_SLATE baseline is not itself a crash).
+    $window = @($lines[($oldPidIdx + 1)..$newPidOnAirIdx])
     $sawStarting = $false
     foreach ($l in $window) {
         if ($l.state -eq 'ERROR' -or $l.state -eq 'FALLBACK_SLATE') { return $false }
@@ -486,7 +549,7 @@ function Register-ChannelSample {
         # TRANSITIONING line landed in the retained window) -- see this
         # file's header for why the log wins when both are available (it
         # sees transitions polling can miss entirely inside one gap).
-        $logVerdict = Test-PlannedRestartFromLog -Context $Context -ChannelId $ChannelId
+        $logVerdict = Test-PlannedRestartFromLog -Context $Context -ChannelId $ChannelId -OldPid $prevPidBeforeThisSample -NewPid $NewPid
         if ($null -ne $logVerdict) {
             $isPlanned = $logVerdict
             $logEvidence = 'log'
