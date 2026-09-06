@@ -193,6 +193,75 @@ def test_station_environment_enables_mandatory_offline_captions(
     assert env["TRANSFORMERS_OFFLINE"] == "1"
 
 
+def test_station_environment_caption_tap_off_switch_disables_the_tap_leg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 91: ``CIVICCAST_CAPTION_TAP=off`` in the service environment must
+    survive into the child environment unmolested, and the tap directory must
+    never be injected alongside it -- otherwise ``build_audio_tap_plan``
+    (``civiccast.captions.tap``) sees a directory and builds the tee anyway,
+    since it only ever consults ``CIVICCAST_CAPTION_TAP_DIR``."""
+
+    from civiccast.native import station_runtime
+
+    monkeypatch.setenv("PATH", "existing-control-plane-path")
+    monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "off")
+    # A stray leftover from a previous configuration must not survive the
+    # merge either -- the off switch removes the dir entirely rather than
+    # trusting it to already be absent.
+    monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tmp_path / "stale-tap-dir"))
+    version_root, files = _write_station(tmp_path)
+    monkeypatch.setattr(station_runtime, "WHISPER_MODEL_FILES", files)
+    monkeypatch.setattr(station_runtime, "_probe_nvidia_vram_gb", lambda: None)
+    monkeypatch.delenv("CIVICCAST_WHISPER_DEVICE", raising=False)
+    monkeypatch.delenv("CIVICCAST_WHISPER_COMPUTE_TYPE", raising=False)
+
+    env = station_runtime.load_native_station_environment(
+        version_root,
+        program_data_root=tmp_path / "ProgramData" / "CivicCast",
+    )
+
+    assert env["CIVICCAST_CAPTION_TAP"] == "off"
+    assert "CIVICCAST_CAPTION_TAP_DIR" not in env
+    # Everything else the tap doesn't own is unaffected.
+    assert env["CIVICCAST_CAPTION_TAP_ATOMIC"] == "1"
+    assert env["CIVICCAST_CAPTION_RUNTIME"] == "faster-whisper"
+    assert env["CIVICCAST_EGRESS_EMBED_CAPTIONS"] == "1"
+
+
+@pytest.mark.parametrize("configured_value", ["", "inline", "ON", "  ", "unexpected-value"])
+def test_station_environment_caption_tap_non_off_values_keep_forcing_inline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, configured_value: str
+) -> None:
+    """Anything other than the literal ``off`` (unset, ``inline``, or a typo)
+    must keep today's behavior byte-for-byte: forced inline mode, tap dir
+    injected. Only the exact ``off`` string (case/whitespace-insensitive)
+    changes anything."""
+
+    from civiccast.native import station_runtime
+
+    monkeypatch.setenv("PATH", "existing-control-plane-path")
+    if configured_value:
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP", configured_value)
+    else:
+        monkeypatch.delenv("CIVICCAST_CAPTION_TAP", raising=False)
+    version_root, files = _write_station(tmp_path)
+    monkeypatch.setattr(station_runtime, "WHISPER_MODEL_FILES", files)
+    monkeypatch.setattr(station_runtime, "_probe_nvidia_vram_gb", lambda: None)
+    monkeypatch.delenv("CIVICCAST_WHISPER_DEVICE", raising=False)
+    monkeypatch.delenv("CIVICCAST_WHISPER_COMPUTE_TYPE", raising=False)
+
+    env = station_runtime.load_native_station_environment(
+        version_root,
+        program_data_root=tmp_path / "ProgramData" / "CivicCast",
+    )
+
+    assert env["CIVICCAST_CAPTION_TAP"] == "inline"
+    assert env["CIVICCAST_CAPTION_TAP_DIR"] == str(
+        tmp_path / "ProgramData" / "CivicCast" / "data" / "caption-tap"
+    )
+
+
 def test_station_environment_starts_without_cuda_dependencies(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

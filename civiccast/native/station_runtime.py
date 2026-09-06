@@ -1335,6 +1335,54 @@ def load_native_station_environment(
             receipt_root / "activation-self-test.json",
         )
     tap_root = civiccast_data_root / "data" / "caption-tap"
+    # Item 91: the ONE explicit off switch for the live caption audio tap
+    # leg. Read from `os.environ` here -- this function runs inside the
+    # supervisor process that is about to spawn the control-plane child
+    # (`installer/supervisor/service.py`'s `env = {**os.environ, **spec.env}`
+    # applies `spec.env` LAST, so `spec.env` is the only place an override
+    # can ever win) -- i.e. the SERVICE environment: whatever the operator
+    # set in the Windows service's registry `Environment` (REG_MULTI_SZ),
+    # inherited by this process at spawn. Before this fix the two lines this
+    # replaces were unconditional: `CIVICCAST_CAPTION_TAP` was always forced
+    # to `"inline"` and `CIVICCAST_CAPTION_TAP_DIR` was always injected, so an
+    # operator's `CIVICCAST_CAPTION_TAP=off` in the service environment could
+    # never reach the child -- `spec.env` always overwrote it back to
+    # "inline" with a real tap dir. `build_audio_tap_plan`
+    # (`civiccast/captions/tap.py`) only ever consults
+    # `CIVICCAST_CAPTION_TAP_DIR`, so as long as ANY dir was set the egress
+    # tee was built regardless of the mode string.
+    #
+    # Any value other than the literal `"off"` (unset, `"inline"`, or
+    # anything else) keeps today's behavior byte-for-byte: forced inline
+    # mode, tap dir injected. Only `"off"` changes anything, and it changes
+    # exactly two things: the mode string passed through as `"off"` instead
+    # of being overwritten, and the tap dir omitted entirely (never merely
+    # blanked to `""`, which `build_audio_tap_plan`'s `.strip()` check would
+    # treat the same as absent, but a stray leftover `CIVICCAST_CAPTION_TAP_DIR`
+    # from `os.environ` -- there should never be one, but a live station's
+    # own environment is exactly the thing this switch does not get to trust
+    # -- must not survive the merge either).
+    #
+    # `civiccast.app`'s app-factory only calls `build_tap_worker` when
+    # `CaptionTapWorkerSettings.from_env().mode == "inline"` (`civiccast/app.py`
+    # around the "Live caption tap" comment), so passing `"off"` through also
+    # means the in-app tap worker thread is never started -- it does not need
+    # to idle against a missing directory, because it is never constructed
+    # in the first place. `CaptionTapWorkerSettings.from_env()`
+    # (`civiccast/captions/tap_worker.py`) already treats `mode == "off"` with
+    # no `CIVICCAST_CAPTION_TAP_DIR` as fully valid (the fail-fast dir check
+    # is gated on `mode != TAP_MODE_OFF`), so the external-process entrypoint
+    # (`python -m civiccast.captions.tap_worker`) is likewise safe run against
+    # this same environment.
+    caption_tap_disabled = os.environ.get("CIVICCAST_CAPTION_TAP", "").strip().lower() == "off"
+    caption_tap_environment: dict[str, str] = (
+        {"CIVICCAST_CAPTION_TAP": "off"}
+        if caption_tap_disabled
+        else {
+            "CIVICCAST_CAPTION_TAP": "inline",
+            "CIVICCAST_CAPTION_TAP_DIR": str(tap_root),
+        }
+    )
     # The front door. `civiccast/app.py`'s `_mount_packaged_portals` serves
     # /operator/ and / ONLY when these are set, and nothing on a native station
     # ever set them (only the WSL `headless-bootstrap.ps1` did) -- so the
@@ -1358,8 +1406,7 @@ def load_native_station_environment(
         "CIVICCAST_NATIVE_STATION": "1",
         "CIVICCAST_NATIVE_STATION_ROOT": str(root),
         "CIVICCAST_NATIVE_STATION_MANIFEST": str(station_path),
-        "CIVICCAST_CAPTION_TAP": "inline",
-        "CIVICCAST_CAPTION_TAP_DIR": str(tap_root),
+        **caption_tap_environment,
         "CIVICCAST_CAPTION_TAP_ATOMIC": "1",
         "CIVICCAST_CAPTION_RUNTIME": "faster-whisper",
         "CIVICCAST_CAPTION_TIER": tier_id,

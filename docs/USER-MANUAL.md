@@ -828,7 +828,18 @@ station needs.
 
 - **`CIVICCAST_CAPTION_TAP`** — Live caption tap configuration. Setting it to
   `off` forces live captions off regardless of the station-profile switch; it
-  can never force them back on against an operator who turned them off.
+  can never force them back on against an operator who turned them off. On an
+  activated native station this is the ONLY way to disable the tap without
+  restarting the control plane between channel content changes: the station
+  runtime otherwise always sets this to `inline` on every start (item 91,
+  2026-09). Before item 91, `off` in the service environment stopped only
+  ASR transcription (the tap worker discarded and deleted what it read); the
+  egress audio-fork leg (the tee that writes rolling WAV segments) kept
+  running regardless. `off` now stops the fork leg itself — no tap directory
+  is created, no segment is written, and no tap worker thread starts. The
+  operator-facing `live_captions_enabled` station-profile switch (Staff →
+  Station Profile) also now stops the fork leg, at the next channel start or
+  content reload rather than mid-broadcast.
 - **`CIVICCAST_CAPTION_TAP_DIR`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_POLL_SECONDS`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`** — Live caption tap configuration.

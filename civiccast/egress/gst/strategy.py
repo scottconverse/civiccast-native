@@ -797,6 +797,35 @@ class GstPlayoutStrategy:
 
     @staticmethod
     def _with_audio_tap(graph: PlayoutGraph, channel_id: str) -> PlayoutGraph:
+        # Item 91 follow-up: the operator-facing switch
+        # (``StationProfile.live_captions_enabled``, ``PUT /staff/profile``)
+        # only ever stopped TRANSCRIPTION before this -- the in-app tap
+        # worker's ``is_enabled`` check (``civiccast.app``'s
+        # ``resolve_live_captions_enabled`` wiring) discards what it reads
+        # and deletes settled segments (``CaptionTapWorker._run_disabled``),
+        # but the egress tee/appsink/WAV writer this graph builds kept
+        # running regardless -- the audio tap LEG never stopped, only what
+        # consumed it. This is called only at channel start
+        # (``GstPlayoutStrategy.start``) and at a content reload
+        # (``reload_content``), never mid-pipeline, so "next worker start"
+        # is exactly the granularity this check runs at: a channel already
+        # streaming keeps its already-built graph until its next reload or
+        # restart, matching every other startup-time config resolution in
+        # this strategy (e.g. ``_resolve_encoder_override``).
+        #
+        # ``resolve_live_captions_enabled`` (`civiccast.installer.station_state`)
+        # already folds in the ``CIVICCAST_CAPTION_TAP=off`` env switch too
+        # (env override > persisted profile > default-on), so this one check
+        # covers both item 91 switches: the ops/experiment env override and
+        # the operator-facing profile toggle. Imported lazily, matching the
+        # existing lazy import in ``civiccast.app`` for the same function --
+        # ``civiccast.installer`` is not otherwise a dependency of the egress
+        # graph-building path and this keeps it that way for every caller
+        # that never disables the tap.
+        from civiccast.installer.station_state import resolve_live_captions_enabled
+
+        if not resolve_live_captions_enabled():
+            return graph
         plan = build_audio_tap_plan(channel_id)
         if plan is None:
             return graph

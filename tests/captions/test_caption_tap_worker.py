@@ -141,6 +141,28 @@ def _active_vtt(tap_root: Path, channel_id: str) -> Path:
 
 
 class TestCaptionTapWorker:
+    def test_run_once_idles_cleanly_when_the_tap_directory_does_not_exist(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Item 91: an off-switched station never even builds a
+        ``CaptionTapWorker`` (``civiccast.app`` gates that on
+        ``mode == "inline"``), but this covers the adjacent, already-shipped
+        guarantee that keeps the switch safe either way -- a scan against a
+        tap root that has not been created yet (or was created, then
+        removed, e.g. by an operator cleaning up after switching off) must
+        return an empty result, never raise ``OSError``/``FileNotFoundError``
+        from ``Path.iterdir()``."""
+
+        tap_root = tmp_path / "tap-not-created"
+        assert not tap_root.exists()
+        worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
+
+        result = worker.run_once()
+
+        assert result.consumed_segments == 0
+        assert result.channels == ()
+
     def test_atomic_gstreamer_segment_is_consumed_without_waiting_for_a_newer_file(
         self,
         tmp_path: Path,
@@ -994,6 +1016,27 @@ class TestCaptionTapWorkerSettings:
         monkeypatch.delenv("CIVICCAST_CAPTION_TAP_DIR", raising=False)
         with pytest.raises(ValueError, match="CIVICCAST_CAPTION_TAP_DIR"):
             CaptionTapWorkerSettings.from_env()
+
+    def test_off_with_no_tap_dir_parses_without_raising(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Item 91: this is exactly what a station-set with the off switch
+        looks like -- ``CIVICCAST_CAPTION_TAP=off`` and no
+        ``CIVICCAST_CAPTION_TAP_DIR`` at all (``station_runtime`` omits it
+        entirely rather than setting it to an empty string). The fail-fast
+        dir check is gated on ``mode != TAP_MODE_OFF``, so this must parse
+        cleanly with ``tap_root=None`` rather than raising -- and
+        ``civiccast.app`` never calls ``build_tap_worker`` in this case
+        (gated on ``mode == "inline"``), so a missing tap_root here can never
+        reach ``build_tap_worker``'s own ``ValueError`` guard in production."""
+
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "off")
+        monkeypatch.delenv("CIVICCAST_CAPTION_TAP_DIR", raising=False)
+
+        settings = CaptionTapWorkerSettings.from_env()
+
+        assert settings.mode == "off"
+        assert settings.tap_root is None
 
     def test_invalid_mode_fails_fast(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "sometimes")

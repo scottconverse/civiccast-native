@@ -129,8 +129,8 @@ kill the scan.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `CIVICCAST_CAPTION_TAP` | `off` | `inline` runs the worker as a lifespan-supervised thread; `external` means you run `python -m civiccast.captions.tap_worker` as a separate process (same env + `DATABASE_URL`); `off` disables the worker (the egress fork still writes segments if the tap dir is set). |
-| `CIVICCAST_CAPTION_TAP_DIR` | unset | Tap root shared by the egress fork and the worker. Required when the mode is not `off`; setting it also enables the egress fork. |
+| `CIVICCAST_CAPTION_TAP` | `off` | `inline` runs the worker as a lifespan-supervised thread; `external` means you run `python -m civiccast.captions.tap_worker` as a separate process (same env + `DATABASE_URL`); `off` disables the worker AND the egress fork (item 91, 2026-09: `off` now wins even if a tap dir is still set -- `build_audio_tap_plan` checks the mode itself before it ever looks at the dir). |
+| `CIVICCAST_CAPTION_TAP_DIR` | unset | Tap root shared by the egress fork and the worker. Required when the mode is not `off`; setting it also enables the egress fork -- UNLESS the mode is explicitly `off`, which now suppresses the fork regardless of a configured (or stray leftover) dir. |
 | `CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS` | `5` | Segment length — the floor of the caption latency budget (tap → transcribe → stabilize → review queue). |
 | `CIVICCAST_CAPTION_TAP_POLL_SECONDS` | `2` | Worker scan interval. |
 | `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | `1`, station-wide | How many channels' ASR calls may be in flight **at the same time**. Item 79 (2026-09): tightened from a per-core-count formula (max 3) to a flat `1`, regardless of core count. See "Captions are best effort; playout wins" below for why this is knob hardening, not a standalone fix -- the tap already shares one model instance across channels. |
@@ -159,8 +159,16 @@ this switch is the live/accessibility one.
 and wins over the persisted value. The reverse is deliberately *not* true: no
 environment value can turn live captions back on against an operator who
 switched them off. An activated native station sets
-`CIVICCAST_CAPTION_TAP=inline` unconditionally, so the reverse precedence
-would make the switch unreachable on exactly the deployments that need it.
+`CIVICCAST_CAPTION_TAP=inline` UNLESS the service's own environment (the
+Windows service's registry `Environment`) already carries
+`CIVICCAST_CAPTION_TAP=off`, in which case that value is passed through
+instead of being overwritten (item 91, 2026-09) -- so the reverse
+precedence (letting a persisted "on" win over an explicit env "off") would
+still make the switch unreachable on exactly the deployments that need it,
+and the asymmetric-safe rule above still governs when both are set.
+Either switch -- the env variable or the station-profile toggle -- now stops
+the egress audio-fork leg itself at the channel's next start or content
+reload, not only the transcription step downstream of it.
 
 ### Captions are best effort; playout wins
 
@@ -252,14 +260,18 @@ review and publication flow is unchanged.
 
 **`off` is the default of the *variable*, not of an activated native
 station.** `civiccast.native.station_runtime` sets `CIVICCAST_CAPTION_TAP=inline`
-unconditionally for every activated station, so on a real station live
-captioning runs for every ON_AIR channel whether or not the operator asked for
-it. That is why the guarantees in *Captions are best effort; playout wins*
-above are enforced in code rather than left to configuration: on a station
-that never opted in, an unbounded caption feature is a defect in the broadcast,
-not a degraded optional feature. The operator's actual off switch is the
-station-profile setting in *Turning live captions off* above, not this
-variable.
+for every activated station unless the service environment already carries
+the literal `off` (item 91, 2026-09 -- see *Turning live captions off*
+above), so on a real station live captioning runs for every ON_AIR channel by
+default, whether or not the operator asked for it. That is why the
+guarantees in *Captions are best effort; playout wins* above are enforced in
+code rather than left to configuration: on a station that never opted in, an
+unbounded caption feature is a defect in the broadcast, not a degraded
+optional feature. The operator's day-to-day off switch is still the
+station-profile setting in *Turning live captions off* above; the
+`CIVICCAST_CAPTION_TAP=off` environment variable is the ops/experiment-level
+switch (set once, in the service environment, before the station starts) --
+both now actually stop the audio-fork leg, not only ASR.
 
 ## Offline caption job (published-file captions)
 

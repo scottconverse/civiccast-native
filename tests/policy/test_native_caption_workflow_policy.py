@@ -1156,7 +1156,18 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # constructor and a SimpleNamespace fake), so both lanes advance by one.
     # Re-derived by an actual `--collect-only` run on this tree, not by
     # arithmetic: (1797, 1998) -> (1798, 1999).
-    assert (collect("not windows_only"), collect()) == (1798, 1999)
+    # feat/caption-tap-off-switch-item91: six new platform-independent cases
+    # in tests/native/test_station_runtime.py --
+    # test_station_environment_caption_tap_off_switch_disables_the_tap_leg
+    # (1) plus test_station_environment_caption_tap_non_off_values_keep_forcing_inline
+    # parametrized over 5 values (5) -- covering the env-composition fix that
+    # makes CIVICCAST_CAPTION_TAP=off actually reach an activated native
+    # station's child environment instead of always being overwritten back
+    # to "inline". No windows_only marker and no OS dependency (tmp_path +
+    # monkeypatch env only), so both lanes advance by six. Re-derived by an
+    # actual `--collect-only` run on this tree, not by arithmetic:
+    # (1798, 1999) -> (1804, 2005).
+    assert (collect("not windows_only"), collect()) == (1804, 2005)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

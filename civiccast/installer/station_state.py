@@ -279,10 +279,15 @@ def resolve_live_captions_enabled() -> bool:
     ``CIVICCAST_CAPTION_TAP=off`` in the environment turns live captioning off
     no matter what is persisted, but no environment value can turn it back on
     against an operator who switched it off. An activated native station sets
-    ``CIVICCAST_CAPTION_TAP=inline`` unconditionally
-    (``civiccast.native.station_runtime``), so the reverse precedence would
-    make the operator's switch unreachable on exactly the deployments that
-    need it.
+    ``CIVICCAST_CAPTION_TAP=inline`` (and injects
+    ``CIVICCAST_CAPTION_TAP_DIR``) UNLESS the service environment already
+    carries ``CIVICCAST_CAPTION_TAP=off`` (item 91:
+    ``civiccast.native.station_runtime.load_native_station_environment``
+    passes that value through instead of overwriting it), so the reverse
+    precedence -- letting a persisted "on" win over an explicit env "off" --
+    would make the operator's switch unreachable on exactly the deployments
+    that need it, and the asymmetric-safe direction chosen here still applies
+    when both are in play.
 
     Defaults to on: live captions are an accessibility feature, and a station
     that can run them should. The caption tap's own overload backoff

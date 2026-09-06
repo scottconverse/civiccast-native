@@ -669,6 +669,64 @@ def test_strategy_builds_the_live_caption_audio_tap_into_the_gstreamer_graph(
     )
 
 
+def test_strategy_omits_the_audio_tap_when_live_captions_are_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 91 follow-up: the operator's ``StationProfile.live_captions_enabled``
+    switch (and/or ``CIVICCAST_CAPTION_TAP=off``, which
+    ``resolve_live_captions_enabled`` also folds in) must stop the egress
+    audio-tap LEG at the next channel start, not just stop the tap worker
+    from transcribing what it forked. Before this, a caption dir configured
+    in the environment always produced a tap leg regardless of the
+    operator's switch -- ``_with_audio_tap`` never consulted it."""
+
+    tap_root = tmp_path / "caption-tap"
+    monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tap_root))
+    monkeypatch.setattr(
+        "civiccast.installer.station_state.resolve_live_captions_enabled",
+        lambda: False,
+    )
+    strategy = GstPlayoutStrategy(
+        worker_launcher=lambda *_args: SimpleNamespace(
+            pid=1, poll=lambda: None, terminate=lambda **_kwargs: 0
+        ),
+        pipe_channel_factory=_fake_pipe_channel_factory,
+    )
+
+    result = strategy.start(_start_request(tmp_path))
+
+    graph = graph_from_json(result.concat_plan_path.read_text(encoding="utf-8"))
+    assert graph.audio_tap is None
+
+
+def test_strategy_builds_the_audio_tap_when_live_captions_stay_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sibling of the disabled case above: an explicit ``True`` (the default,
+    an operator who never touched the switch) still builds the tap exactly
+    as before -- the new check is a gate, not a behavior change for the
+    common case."""
+
+    tap_root = tmp_path / "caption-tap"
+    monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tap_root))
+    monkeypatch.setattr(
+        "civiccast.installer.station_state.resolve_live_captions_enabled",
+        lambda: True,
+    )
+    strategy = GstPlayoutStrategy(
+        worker_launcher=lambda *_args: SimpleNamespace(
+            pid=1, poll=lambda: None, terminate=lambda **_kwargs: 0
+        ),
+        pipe_channel_factory=_fake_pipe_channel_factory,
+    )
+
+    result = strategy.start(_start_request(tmp_path))
+
+    graph = graph_from_json(result.concat_plan_path.read_text(encoding="utf-8"))
+    assert graph.audio_tap is not None
+    assert graph.audio_tap.tap_dir == str(tap_root / "ch1")
+
+
 @_POSIX_FIFO_ONLY
 def test_strategy_reload_carries_caption_leg_when_embedding(tmp_path) -> None:
     strategy = GstPlayoutStrategy(worker_launcher=lambda *a: None, embed_captions=True)
