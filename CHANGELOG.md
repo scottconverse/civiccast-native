@@ -60,14 +60,27 @@ roughly 20% CPU with the caption tap backed off, and workers at roughly
 threads -- but from roughly 02:58Z every worker began relaunching about
 every 30 seconds again, and `government` tripped the 5-crash guard at
 03:01Z. **Verdict: FAIL** (relaunches: one per channel by 02:56Z, then
-about every 30 s). Root cause (item 60, below, code-proven): every
-in-place plan rollover builds new GStreamer concat elements under the
-same fixed names as the live ones, GStreamer refuses to add them, the
-reload can never commit, and the worker acknowledges it as a success
-anyway -- automation keeps re-issuing the rollover and the doubled
-decoder tree eventually starves the encoder past the same stall
-watchdog. Present in beta.4 as well; it simply fired far less often
-there. Fix `fix/gst-reload-concat-collision` will cut **candidate 3**.
+about every 30 s). Root cause (item 60, below, tester-proven 2026-09-06,
+`tester-soak5-609273d-20260906`): when the planner extends a running
+plan, (a) the reload's prepare step writes the new plan's segment files
+onto the same paths the live worker is still playing
+(`<work>/<channel>/prepared/segment-NNNN.ts`, keyed by channel only,
+written in place, not atomically -- `civiccast/egress/preparer.py:342`/
+`378`, `:246-268`, `:465-476`), starving playback and tripping the same
+10-second stall watchdog, which relaunches the worker; and (b) the
+in-place reload command itself can fail to reach the worker at all, and
+the daemon returns without logging that failure
+(`civiccast/egress/daemon.py:1617-1618`), falling into the drain path
+(`TRANSITIONING`) with the worker's own logs showing no reload ever
+arrived. The `vconcat_program`/`aconcat_program` element-name collision
+is a real defect in the same code path but was not the trigger measured
+on hardware. Present in beta.4 as well; it simply fired far less often
+there. Fix `fix/gst-reload-concat-collision` (per-plan prepared
+directories with atomic writes and cleanup, a logged failure, unique
+element names, an honest reload acknowledgement, and the seamless
+in-place rollover disabled by default for the GStreamer engine in
+beta.5, `CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` re-enables it) will cut
+**candidate 3**.
 Candidate 2's facts below (SHA `609273d`, build `33997406150`, Gate A
 `33998901590`) are preserved as history: **candidate 2 -- Gate A clean
 PASS / cross-version invalidated by harness gap (item 58) / download-only
@@ -522,38 +535,58 @@ hardware soak, whose identity is still pending: source SHA
   worker began relaunching about every 30 seconds again**, and
   `government` tripped the 5-crash guard at 03:01Z. **Verdict: FAIL**
   (one relaunch per channel by 02:56Z, then about every 30 seconds).
-  **Root cause (item 60), code-proven:** every in-place plan rollover
-  (the seamless extension #162 added) builds new GStreamer concat
-  elements under the same fixed names as the live ones already in the
-  pipeline -- `vconcat_program`/`aconcat_program`
+  **Root cause (item 60), tester-proven 2026-09-06
+  (`tester-soak5-609273d-20260906`):** when the planner extends a running
+  plan with a new plan, two defects fire in the same reload path. **(a)**
+  the reload's prepare step (`SourcePreparer.prepare`) derives its output
+  directory from the channel id alone
+  (`civiccast/egress/preparer.py:342`) and writes each new plan's
+  segments onto the same `segment-NNNN.ts` paths
+  (`civiccast/egress/preparer.py:378`) that the *currently airing* plan's
+  GStreamer pipeline still has open for read, keyed by channel rather
+  than by plan and written straight to the final path with no
+  temp-file-plus-rename step in either the cache-hit
+  (`civiccast/egress/preparer.py:246-268`) or cache-miss
+  (`civiccast/egress/preparer.py:465-476`) write path (contrast
+  `_conform_full_asset_into_cache`, which *does* write to a `.tmp` file
+  and `Path.replace()` it into place). The live worker reads a
+  half-overwritten or truncated file mid-playback, playback starves, and
+  the existing 10-second stall watchdog fires and relaunches the worker
+  -- the same `CTRL stall: no output for 10s` signature as the
+  decoder-pileup fix above, from a different mechanism. **(b)** the
+  in-place reload command itself can fail to reach the worker at all,
+  and `EgressDaemon`'s reload path returns without logging it
+  (`civiccast/egress/daemon.py:1617-1618` is `if not applied: return
+  False` -- no log line, no proof event), so the caller falls through
+  into the ordinary drain path and the channel sits in `TRANSITIONING`
+  believing a graceful hand-off is in progress while the worker's own
+  logs show no reload ever arrived. **The `vconcat_program`/
+  `aconcat_program` element-name collision
   (`civiccast/egress/gst/engine.py:361-363`,
-  `civiccast/egress/gst/bridge.py:639`). GStreamer refuses to add a
-  duplicate-named element, so the reload can never commit and is aborted
-  by the existing 10-second stall watchdog -- but the worker acknowledges
-  the reload as a success anyway, so channel automation believes the
-  rollover landed and issues the same doomed rollover again at the next
-  projected plan boundary, a few minutes later. Each failed attempt
-  leaves a duplicate decoder tree behind it before the watchdog tears the
-  failed elements down; repeated attempts compound the CPU cost until the
-  encoder itself starves and the worker trips the same stall watchdog and
-  is relaunched -- the same `CTRL stall: no output for 10s` signature as
-  the decoder-pileup fix above, from a different mechanism. **No in-place
-  rollover has ever committed on real hardware.** Present in beta.4 as
-  well -- the concat-name collision is not new code in this candidate,
-  but beta.4 fired the in-place rollover path far less often because
-  #162 (the feature that attempts an in-place rollover at all) postdates
-  beta.4. **This is why `609273d` is not the beta.5 release candidate.**
-  Fix pending: `fix/gst-reload-concat-collision` (open, not yet merged)
-  -- fails loud when GStreamer refuses to add a duplicately-named
-  element instead of silently timing out, gives each rollover's new
-  concat elements unique names, makes the worker's reload
-  acknowledgement honest, and, until unique naming is proven stable on
-  hardware, disables the seamless in-place rollover by default for the
-  GStreamer engine in beta.5 (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=1`
-  re-enables it) so a plan's natural end becomes one ordinary encoder
-  restart instead of an attempted in-place splice -- rare with real
-  10-40 minute schedule items, but roughly every 4 minutes with 30-second
-  items. Not part of candidate 2; will be part of candidate 3.
+  `civiccast/egress/gst/bridge.py:639`) is a real defect in this same
+  reload path -- GStreamer does refuse to add a second element under a
+  name already present in the pipeline -- but tester evidence shows it
+  was not the trigger on hardware:** (a) and (b) above are what soak #5
+  actually measured. **No in-place rollover has ever committed on real
+  hardware.** Present in beta.4 as well -- none of this is new code in
+  this candidate, but beta.4 fired the in-place rollover path far less
+  often because #162 (the feature that attempts an in-place rollover at
+  all) postdates beta.4. **This is why `609273d` is not the beta.5
+  release candidate.** Fix pending: `fix/gst-reload-concat-collision`
+  (open, not yet merged) -- gives each plan its own prepared directory
+  (not just each channel) with atomic writes and cleanup of superseded
+  plans' directories, logs and records a failed reload instead of
+  silently falling through to drain, fails loud when GStreamer refuses
+  to add a duplicately-named element instead of silently timing out,
+  gives each rollover's new concat elements unique names, makes the
+  worker's reload acknowledgement honest, and, until this is proven
+  stable on hardware, disables the seamless in-place rollover by default
+  for the GStreamer engine in beta.5
+  (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` re-enables it) so a plan's
+  natural end becomes one ordinary encoder restart instead of an
+  attempted in-place splice -- rare with real 10-40 minute schedule
+  items, but roughly every 4 minutes with 30-second items. Not part of
+  candidate 2; will be part of candidate 3.
 - **Gate A `33998901590`'s cross-version-upgrade lane failed at its own
   phase 1 on a harness/sandbox gap, not a product defect (item 58).** The
   pinned `v1.0.0-beta.4` baseline installer crashed inside the sandbox
@@ -710,28 +743,36 @@ hardware soak, whose identity is still pending: source SHA
     pending:** the sandbox/harness gap that let the baseline install
     itself crash before phase 1 started; re-run in progress as Gate A
     `34004354641`.
-11. **(item 60) In-place plan rollover can never actually commit --
-    root-caused, present since #162, previously masked by item 51.** Every
-    in-place rollover rebuilds GStreamer concat elements under the same
-    fixed names the live ones already use (`vconcat_program`/
-    `aconcat_program`, `civiccast/egress/gst/engine.py:361-363`,
-    `civiccast/egress/gst/bridge.py:639`); GStreamer refuses to add a
-    duplicate-named element, so the reload can never commit and is aborted
-    by the existing 10-second stall watchdog -- but the worker still
-    acknowledges the reload as a success, so automation re-issues the same
-    doomed rollover every few minutes, and the resulting doubled decoder
-    tree eventually starves the encoder past the same watchdog. No
+11. **(item 60) When the planner extends a running plan, the in-place
+    reload starves live playback and can fail silently -- present since
+    #162, previously masked by item 51.** Tester-proven 2026-09-06
+    (`tester-soak5-609273d-20260906`): (a) the reload's prepare step
+    writes the new plan's segment files onto the same paths the live
+    worker is still playing -- `<work>/<channel>/prepared/segment-
+    NNNN.ts`, keyed by channel only and written in place, not atomically
+    (`civiccast/egress/preparer.py:342`/`378`, `:246-268`, `:465-476`) --
+    so playback starves and the existing 10-second stall watchdog
+    relaunches the worker; and (b) the in-place reload command itself can
+    fail to reach the worker at all, and the daemon returns without
+    logging it (`civiccast/egress/daemon.py:1617-1618`), falling into the
+    drain path (`TRANSITIONING`) with the worker's own logs showing no
+    reload ever arrived. The `vconcat_program`/`aconcat_program` element
+    name collision (`civiccast/egress/gst/engine.py:361-363`,
+    `civiccast/egress/gst/bridge.py:639`) is a real defect in the same
+    reload path but was not the trigger measured on hardware. No
     in-place rollover has ever committed on real hardware. Present in
     beta.4 as well -- beta.4 simply never exercised the code path, since
     #162 postdates beta.4. **MEASURED:** soak #5 (candidate 2, `609273d`),
     clean install, FAIL from roughly 02:58Z. **This is why `609273d` is
     not the beta.5 release candidate.** Fix: `fix/gst-reload-concat-
-    collision` (open, not yet merged) -- fails loud on a refused element
-    add, gives each rollover's concat elements unique names, makes the
-    reload acknowledgement honest, and disables the seamless in-place
-    rollover by default for the GStreamer engine in beta.5
-    (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` re-enables it). Not part of
-    candidate 2; will be part of candidate 3.
+    collision` (open, not yet merged) -- gives each plan its own prepared
+    directory with atomic writes and cleanup, logs a failed reload
+    instead of silently falling through to drain, fails loud on a
+    refused element add, gives each rollover's concat elements unique
+    names, makes the reload acknowledgement honest, and disables the
+    seamless in-place rollover by default for the GStreamer engine in
+    beta.5 (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` re-enables it). Not part
+    of candidate 2; will be part of candidate 3.
 12. **(item 61, targeted for beta.6) A worker's reload acknowledgement
     reports success before the reload actually commits.** The same defect
     underlying item 60's masking: the control-pipe reload ack is sent once
@@ -746,6 +787,22 @@ hardware soak, whose identity is still pending: source SHA
     (the outgoing plan's chains plus the incoming plan's chains
     coexisting) -- the cap does not account for that overlap. Tracked for
     beta.6.
+14. **(item 64, part of item 60) The prepare step for a rollover clobbers
+    the live worker's own segment files.** `SourcePreparer.prepare` keys
+    its output directory by channel id only
+    (`civiccast/egress/preparer.py:342`) and writes each new plan's
+    segments over the same `segment-NNNN.ts` paths
+    (`civiccast/egress/preparer.py:378`) the currently-airing plan is
+    still reading, with no per-plan directory and no atomic write. Fix:
+    `fix/gst-reload-concat-collision` (per-plan prepared directories,
+    atomic writes, cleanup).
+15. **(item 65, part of item 60) A failed in-place reload is never
+    logged.** `EgressDaemon`'s reload path returns `False` with no log
+    line or proof event when `reload_content` fails
+    (`civiccast/egress/daemon.py:1617-1618`), so a reload that never
+    reached the worker is indistinguishable, from the logs, from one
+    that was never attempted. Fix: `fix/gst-reload-concat-collision`
+    (logged, honest reload failure).
 
 ## [1.0.0-beta.4] - 2026-09-04
 
