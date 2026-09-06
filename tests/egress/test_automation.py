@@ -398,6 +398,59 @@ class TestPlanRollover:
         service.run_once(now=later + timedelta(seconds=1))
         assert _pending_actions(store, "public") == []
 
+    def test_check_plan_rollover_records_the_plan_end_scoped_to_the_enqueued_commands_own_id(
+        self,
+    ) -> None:
+        """Coordinator review, round 8, item 4: ``_check_plan_rollover``
+        generates the reload command's id up front and must pass the EXACT
+        same id to both ``record_rollover_plan_end`` and the ``_enqueue``
+        call that dispatches it (round 7's whole point) -- nothing in the
+        prior test suite pinned that the two ids actually agree, only that
+        ``_enqueue`` was CALLED with *a* ``command_id`` keyword. If the two
+        ever drifted apart, ``EgressDaemon._request_reload``'s command-id
+        scoping would never match the command that actually drains, and the
+        recorded ``plan_end_at`` would silently never be used at all --
+        reintroducing dead air on an already-past horizon that should have
+        cut immediately (see ``_rollover_plan_end_at``'s docstring)."""
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+
+        class _RecordingDaemon(_FakeDaemon):
+            def __init__(self) -> None:
+                super().__init__(live_channels={"public"})
+                self.recorded: list[tuple[str, datetime, str | None]] = []
+
+            def record_rollover_plan_end(
+                self, channel_id: str, plan_end_at: datetime, *, command_id: str | None
+            ) -> None:
+                self.recorded.append((channel_id, plan_end_at, command_id))
+
+        daemon = _RecordingDaemon()
+        calls = {"n": 0}
+
+        def provider(_cid: str) -> EgressSourcePlan:
+            calls["n"] += 1
+            return _plan_with_duration("public", 40.0 if calls["n"] == 1 else 400.0)
+
+        service = ChannelAutomationService(
+            store, daemon, provider, settings=ChannelAutomationSettings()
+        )
+
+        service.run_once(now=_NOW)  # establish the horizon: plan ends 40s from now
+        later = _NOW + timedelta(seconds=15)
+        service.run_once(now=later)  # inside the lookahead -> rollover dispatch
+
+        assert len(daemon.recorded) == 1
+        pending = store.pop_pending_commands("public")
+        assert [command.action for command in pending] == ["reload"]
+        recorded_channel_id, _recorded_plan_end_at, recorded_command_id = daemon.recorded[0]
+        assert recorded_channel_id == "public"
+        # The load-bearing assertion: the id EgressDaemon will see draining
+        # this command must be the exact id the plan_end was scoped to.
+        assert recorded_command_id is not None
+        assert recorded_command_id == pending[0].command_id
+
     def test_no_rollover_when_schedule_has_nothing_further(self) -> None:
         store = InMemoryEgressStore()
         store.upsert_config(_config("public"))

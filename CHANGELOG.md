@@ -360,6 +360,75 @@ below.
     were and remain accurate -- what changes this round is that the value
     passed down is now gated on the command_id matching before it is used
     at all.
+  - **Round 8 (coordinator review): round 7's claim above -- "never a wrong
+    cut and never a wrong defer off a horizon it wasn't actually computed
+    against" -- was FALSE, MEASURED.** Round 7's `_request_reload` popped
+    `_rollover_plan_end_at` UNCONDITIONALLY on every drain and only gated
+    *use* of the popped value on the command_id match; a mismatch still
+    discarded whatever was recorded. The common trigger is
+    `ChannelAutomationService`'s own 45s issued-timeout retry
+    (`_check_plan_rollover`'s `retrying_undelivered` branch): dispatch A
+    records `command_id=A` and enqueues reload A; the daemon stalls past
+    the retry timeout; the retry re-records (OVERWRITING the dict entry)
+    `command_id=B` and enqueues reload B. Both A and B are real, live
+    commands sitting in the queue when the daemon catches up. If A drains
+    first, round 7's unconditional pop threw away B's freshly-recorded
+    entry right there, on A's mismatch -- so when B itself drained moments
+    later there was nothing left at all, and the daemon deferred against no
+    recorded horizon even though B's own horizon (the one just discarded)
+    had already passed. Round 6 measured the pre-scoping shape as
+    `[False, True]` (A wrongly cut on a value recorded for a different
+    command); round 7's scoping flipped it to `[True, True]` (both wrongly
+    defer -- dead air on a horizon already past, never cut at all). Neither
+    shape is correct; the right one is `[True, False]` (A: mismatch, value
+    left in place, ordinary defer; B: match, cut on the past horizon it was
+    actually recorded against).
+
+    Fixed by popping `_rollover_plan_end_at` ONLY on an actual command_id
+    match -- a mismatch now leaves the entry untouched for whichever
+    command it was really recorded for to consume when that one drains,
+    instead of discarding it on the first unrelated command that happens to
+    drain first. This stays safe against every off-air/relaunch leak the
+    prior rounds closed: none of those routes go through `_request_reload`
+    at all, so a mismatched entry left here still cannot outlive the
+    channel going off-air (every off-air route pops the dict itself,
+    unconditionally, unchanged by this round).
+
+    `record_rollover_plan_end`'s `command_id` is now a REQUIRED
+    keyword-only parameter -- the round-7 `None` default doubled as a
+    "wildcard, matches whatever drains next" behavior that zero production
+    callers relied on (`ChannelAutomationService` is the only recorder and
+    always supplies a real generated id); a caller that genuinely wants an
+    unscoped recording must now say so explicitly (`command_id=None`), and
+    an explicit `None` matches only a drain whose own `command_id` is also
+    `None` (`supervisor.py`'s direct-call routes) by ordinary equality, not
+    a special-cased wildcard -- since a real `EgressCommand` drawn from the
+    durable queue always carries a real string id, an unscoped record can
+    no longer be wrongly consumed by whichever queued reload happens to
+    drain first at all (see
+    `test_unscoped_record_never_matches_a_real_queued_reload_and_needs_an_
+    off_air_pop`). `_enqueue`'s previously-unused `str` return value is
+    removed (nothing read it; every call site that needs to correlate an id
+    already pre-generates its own, per round 7).
+
+    `test_command_id_scoping_closes_the_immediate_crash_relaunch_leak` and
+    `test_command_id_scoping_discards_value_when_an_unrelated_reload_drains_
+    first` are rewritten (the latter renamed
+    `test_command_id_scoping_defers_and_retains_value_when_an_unrelated_
+    reload_drains_first`) to the corrected pop-only-on-match shape,
+    `test_the_recorded_plan_end_binds_to_whichever_reload_drains_first_not_
+    automations_own` is rewritten as
+    `test_unscoped_record_never_matches_a_real_queued_reload_and_needs_an_
+    off_air_pop` (the old wildcard-binds-to-whichever-drains-first shape is
+    no longer reachable at all), and a new
+    `test_retry_collision_a_stalled_retry_that_overwrites_the_recorded_
+    value_still_cuts` reproduces the exact production trigger above end to
+    end through the real command queue. `tests/egress/test_automation.py`
+    gained
+    `test_check_plan_rollover_records_the_plan_end_scoped_to_the_enqueued_
+    commands_own_id`, pinning that `_check_plan_rollover` actually passes
+    the SAME id to both `record_rollover_plan_end` and `_enqueue` --
+    nothing had asserted the two agree before this round.
 - **Install-over could leave the PREVIOUS kit's application payload silently
   running.** MEASURED on a real tester (2026-09-05): installing kit B `/S`
   (install-over) on a station kit A had already installed, where both kits

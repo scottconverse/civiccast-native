@@ -1340,15 +1340,19 @@ class ChannelAutomationService:
 
     def _enqueue(
         self, channel_id: str, action: str, *, now: datetime, command_id: str | None = None
-    ) -> str:
+    ) -> None:
         """Enqueue an automation-issued command. ``command_id`` lets a caller
         that must correlate this command with other bookkeeping (round 7:
         ``_check_plan_rollover`` scoping a recorded ``record_rollover_plan_end``
         value to the exact reload it is for) pre-generate the id and pass it
         in, rather than only being able to read it back after the fact.
         Defaults to generating a fresh one, same as every pre-round-7 caller.
-        Returns the id actually used, so a caller that DIDN'T pre-generate
-        one can still learn it if a future need arises."""
+
+        Round 8 (coordinator review): dropped the ``str`` return value --
+        every call site pre-generates its own id when it needs to correlate
+        one (see ``_check_plan_rollover`` above), and nothing anywhere reads
+        the id this method generates internally for the callers that don't
+        supply one."""
         resolved_command_id = command_id or f"auto-{action}-{uuid.uuid4().hex[:12]}"
         self._store.enqueue_command(
             EgressCommand(
@@ -1359,7 +1363,6 @@ class ChannelAutomationService:
                 command_id=resolved_command_id,
             )
         )
-        return resolved_command_id
 
 
 _RELAY_CMDLINE_MARKERS = ("-f decklink", "-f libndi_newtek")
