@@ -24,6 +24,7 @@ from civiccast.egress.cg_bridge import (
 from civiccast.egress.daemon import _RESTART_ESCALATION_STREAK, EgressDaemon
 from civiccast.egress.encoder_strategy import EncoderStartRequest, EncoderStartResult
 from civiccast.egress.errors import SourcePrepareError
+from civiccast.egress.gst.strategy import GstPlayoutStrategy
 from civiccast.egress.models import (
     EgressCommand,
     EgressConfig,
@@ -946,6 +947,86 @@ def test_content_reload_swaps_program_in_place_without_restart(tmp_path: Path) -
     assert [event.state for event in proof_events] == ["ON_AIR", "TRANSITIONING", "ON_AIR"]
     assert proof_events[0].source_label == "Mayor interview"
     assert "from 'Council meeting' to 'Mayor interview'" in proof_events[1].machine_summary
+
+
+class _SpyPipeChannel:
+    """Structural stand-in for the D2 ``_WindowsPipeChannel`` (mirrors
+    ``tests/egress/test_gst_strategy.py``'s ``_FakePipeChannel``) so a test can
+    construct the REAL ``GstPlayoutStrategy`` -- not the ``_FakeContentReloadStrategy``
+    double used elsewhere in this file -- and still exercise its ``os.name=='nt'``
+    branch platform-agnostically. Records every verb sent so the daemon's routing
+    can be proven from the outside, independent of the strategy's own bookkeeping."""
+
+    def __init__(self, channel_id: str) -> None:
+        self.channel_id = channel_id
+        self.sent: list[tuple[str, str, str | None]] = []
+
+    def start(self) -> None:
+        pass
+
+    def send_and_wait(self, verb: str, line: str, *, command_id: str | None = None) -> bool:
+        self.sent.append((verb, line, command_id))
+        return True
+
+    def close(self) -> None:
+        pass
+
+
+def test_real_strategy_default_takes_the_seamless_reload_path_env_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Beta.5 gate (owner decision 2026-09-06), proven end-to-end through the
+    daemon rather than in isolation: with ``CIVICCAST_EGRESS_SEAMLESS_RELOAD``
+    unset, a REAL ``GstPlayoutStrategy`` (not the ``_FakeContentReloadStrategy``
+    test double every other reload test in this file uses) must default
+    ``supports_content_reload`` to True, and a plan rollover through
+    ``EgressDaemon`` must actually enter ``_try_content_reload`` and reach the
+    strategy's real ``reload_content`` -> ``send_command`` path -- proved here
+    via a spy on the D2 pipe channel's ``send_and_wait`` -- rather than falling
+    back to terminate+restart. ``tests/egress/test_gst_strategy.py`` separately
+    covers ``supports_content_reload``'s default/override matrix in isolation;
+    this test proves the daemon actually takes that path, not just that the
+    flag reads True."""
+    monkeypatch.delenv("CIVICCAST_EGRESS_SEAMLESS_RELOAD", raising=False)
+    pending = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    channels: dict[str, _SpyPipeChannel] = {}
+
+    def pipe_channel_factory(channel_id: str) -> _SpyPipeChannel:
+        channel = _SpyPipeChannel(channel_id)
+        channels[channel_id] = channel
+        return channel
+
+    strategy = GstPlayoutStrategy(
+        worker_launcher=lambda argv, stdout, stderr: _start_fake_process(pending, started),
+        pipe_channel_factory=pipe_channel_factory,  # type: ignore[arg-type]
+        is_windows=True,  # exercises the D2 pipe path platform-agnostically
+    )
+    assert strategy.supports_content_reload is True  # sanity: the default this test relies on
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")  # _start -> worker up
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # a due plan rollover: must enter _try_content_reload
+
+    channel = channels["gov"]
+    assert [verb for verb, _line, _cid in channel.sent] == ["reload"]
+    assert len(started) == 1  # no second worker was started -- no restart happened
 
 
 def test_content_reload_defers_switch_for_an_on_air_reload_with_no_override(
@@ -2997,12 +3078,15 @@ def test_worker_exit_between_poll_process_and_poll_reload_settlement_falls_back(
 
 
 def test_start_tracks_and_releases_its_active_plan_dir_on_worker_exit(tmp_path: Path) -> None:
-    """Hostile-review follow-up, item 4: with the seamless-reload flag OFF
-    (``supports_content_reload=False``, the shipped default),
-    ``_try_content_reload``/``_commit_reload_settlement`` never run at all --
-    only ``_start`` ever prepares a plan for that channel, so without this
-    the ONLY cleanup for its directory was age/budget GC. Proves ``_start``
-    tracks its own plan as active and releases it once the worker exits."""
+    """Hostile-review follow-up, item 4: the fake strategy here
+    (``_FakeContentReloadStrategy``) reports ``supports_content_reload=True``,
+    but this test never enqueues a reload command, so the reload path
+    (``_try_content_reload``/``_commit_reload_settlement``) never runs
+    regardless of that flag -- ``_start`` is the only thing that ever
+    prepares a plan for this channel. Proves ``_start`` tracks its own plan
+    as active and releases it once the worker exits, independent of the
+    reload path -- without this the ONLY cleanup for its directory was
+    age/budget GC."""
     store = InMemoryEgressStore()
     store.upsert_config(_config())
     store.enqueue_command(_command())
