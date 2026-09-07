@@ -70,8 +70,17 @@ def build_audio_tap_plan(channel_id: str) -> AudioTapPlan | None:
     ``CIVICCAST_CAPTION_TAP_DIR`` is the tap root shared with the caption tap
     worker; each channel forks into its own subdirectory.
     ``CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`` tunes segment length (default 5).
+
+    Item 91: ``CIVICCAST_CAPTION_TAP=off`` always means no tap, even if
+    ``CIVICCAST_CAPTION_TAP_DIR`` is (still, or stray) set -- checked here
+    directly rather than relying solely on callers to omit the directory, so
+    this function stays the single place that decides "does this channel's
+    audio get forked" no matter which caller reaches it (the GStreamer
+    strategy's ``_with_audio_tap`` and any future caller alike).
     """
 
+    if os.environ.get("CIVICCAST_CAPTION_TAP", "").strip().lower() == "off":
+        return None
     root = os.environ.get("CIVICCAST_CAPTION_TAP_DIR", "").strip()
     if not root:
         return None
