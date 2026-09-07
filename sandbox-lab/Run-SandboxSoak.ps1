@@ -121,6 +121,20 @@ param(
     # SOAK-START.json/VERDICT.json regardless of whether this is passed.
     [switch]$CaptionsOff,
 
+    # sandbox-lab lane follow-up D: threaded through to In-Sandbox-Soak.ps1's
+    # own -WorkerEnv via the .wsb template's {{WORKER_ENV_ARG}} placeholder
+    # (same empty-when-unset convention as -SeamlessReload/-CaptionsOff's
+    # own placeholders). Accepts either a single ';'-separated string
+    # ("NAME=VALUE;NAME2=VALUE2") or an array of one-pair-per-element
+    # strings (@('A=1','B=2')) -- see scripts/WorkerEnv.ps1's own header
+    # for why PowerShell's `[string[]]` coercion makes both call shapes
+    # parse identically. Parsed, deduped (later wins), and validated HERE
+    # before ever rendering the .wsb or launching a sandbox -- a malformed
+    # -WorkerEnv value is a config problem this host can diagnose
+    # immediately, not something worth discovering only after the guest's
+    # own install+health window has already burned.
+    [string[]]$WorkerEnv,
+
     [switch]$DryRun
 )
 
@@ -151,7 +165,7 @@ function Exit-HarnessError {
 
 if (-not $Root) { $Root = $PSScriptRoot }
 if (-not $Root) { $Root = (Get-Location).Path }
-Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), OnAirBoundMinutes: $OnAirBoundMinutes, KitRoot: $KitRoot, SeamlessReload: $($SeamlessReload.IsPresent), CaptionsOff: $($CaptionsOff.IsPresent), DryRun: $($DryRun.IsPresent)"
+Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), OnAirBoundMinutes: $OnAirBoundMinutes, KitRoot: $KitRoot, SeamlessReload: $($SeamlessReload.IsPresent), CaptionsOff: $($CaptionsOff.IsPresent), WorkerEnv: $($WorkerEnv -join '; '), DryRun: $($DryRun.IsPresent)"
 
 $hostLivenessPath = Join-Path $Root 'scripts\HostLiveness.ps1'
 if (-not (Test-Path $hostLivenessPath)) {
@@ -164,6 +178,24 @@ if (-not (Test-Path $backstopMarkerGracePath)) {
     Exit-HarnessError "BackstopMarkerGrace.ps1 not found at $backstopMarkerGracePath"
 }
 . $backstopMarkerGracePath
+
+# sandbox-lab lane follow-up D: parsed/validated/rendered well before the
+# kit-verify/render/parse-check sequence below (section 2/3), same
+# fail-fast-on-the-host principle as HostLiveness.ps1/BackstopMarkerGrace.ps1
+# just above.
+$workerEnvScriptPath = Join-Path $Root 'scripts\WorkerEnv.ps1'
+if (-not (Test-Path $workerEnvScriptPath)) {
+    Exit-HarnessError "WorkerEnv.ps1 not found at $workerEnvScriptPath"
+}
+. $workerEnvScriptPath
+$workerEnvParsed = ConvertTo-WorkerEnvEntries -WorkerEnv $WorkerEnv
+if ($workerEnvParsed.errors.Count -gt 0) {
+    foreach ($e in $workerEnvParsed.errors) { Write-Warning $e }
+    Exit-HarnessError "-WorkerEnv failed to parse ($($workerEnvParsed.errors.Count) error(s)) -- see warnings above"
+}
+$workerEnvDeduped = @(Get-DedupedWorkerEnvEntries -Entries $workerEnvParsed.entries)
+$workerEnvCanonical = Format-WorkerEnvArg -Entries $workerEnvDeduped
+Write-Step "WorkerEnv: $($workerEnvDeduped.Count) entry(ies) parsed/deduped -> canonical arg: $(if ($workerEnvCanonical) { $workerEnvCanonical } else { '(none)' })"
 
 # --------------------------------------------------------------------------
 # 1a. Refuse if Windows Sandbox is already running (Gate A owns it, and
@@ -283,6 +315,14 @@ if (-not (Test-Path $templatePath)) {
 }
 $seamlessReloadArg = $(if ($SeamlessReload) { '-SeamlessReload' } else { '' })
 $captionsOffArg = $(if ($CaptionsOff) { '-CaptionsOff' } else { '' })
+# sandbox-lab lane follow-up D: Get-QuotedWorkerEnvArgToken already returns
+# '' for an empty canonical arg (same empty-when-unset convention as the
+# two args just above) and throws on a character this render step could
+# never safely embed -- a throw here is a real bug (ConvertTo-
+# WorkerEnvEntries already rejected every such character at parse time
+# above), so it is deliberately NOT caught: let it surface as an
+# unhandled, loud failure rather than silently render a broken command.
+$workerEnvArg = Get-QuotedWorkerEnvArgToken -CanonicalArg $workerEnvCanonical
 $template = Get-Content -Path $templatePath -Raw -Encoding UTF8
 $rendered = $template `
     -replace [regex]::Escape('{{KIT_ROOT}}'), $kitDir `
@@ -291,14 +331,25 @@ $rendered = $template `
     -replace [regex]::Escape('{{MINUTES}}'), "$Minutes" `
     -replace [regex]::Escape('{{ON_AIR_BOUND_MINUTES}}'), "$OnAirBoundMinutes" `
     -replace [regex]::Escape('{{SEAMLESS_RELOAD_ARG}}'), $seamlessReloadArg `
-    -replace [regex]::Escape('{{CAPTIONS_OFF_ARG}}'), $captionsOffArg
+    -replace [regex]::Escape('{{CAPTIONS_OFF_ARG}}'), $captionsOffArg `
+    -replace [regex]::Escape('{{WORKER_ENV_ARG}}'), $workerEnvArg
 
 $wsbPath = Join-Path $Root "CivicCastSandboxSoak-$runName.wsb"
 Set-Content -Path $wsbPath -Value $rendered -Encoding UTF8
 Write-Step "Rendered $wsbPath"
 
-$logonCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes $Minutes -OnAirBoundMinutes $OnAirBoundMinutes $seamlessReloadArg $captionsOffArg"
+$logonCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes $Minutes -OnAirBoundMinutes $OnAirBoundMinutes $seamlessReloadArg $captionsOffArg $workerEnvArg"
 Write-Step "LogonCommand: $logonCommand"
+
+# sandbox-lab lane follow-up D: round-trip the rendered LogonCommand
+# BEFORE ever launching a sandbox (and every time -DryRun runs) -- a
+# quoting regression here must fail the run, never silently ship a
+# truncated/mangled -WorkerEnv value into the guest.
+$workerEnvRoundTrip = Test-RenderedWorkerEnvRoundTrip -RenderedCommand $logonCommand -ExpectedCanonicalArg $workerEnvCanonical
+if (-not $workerEnvRoundTrip.ok) {
+    Exit-HarnessError "-WorkerEnv rendered-command round-trip check FAILED: $($workerEnvRoundTrip.reason) -- refusing to launch with a possibly-mangled LogonCommand"
+}
+Write-Step "WorkerEnv rendered-command round-trip: OK ($(if ($workerEnvCanonical) { "found '$($workerEnvRoundTrip.found)'" } else { 'no -WorkerEnv token, none expected' }))"
 
 # --------------------------------------------------------------------------
 # 3. Parse-check both in-sandbox scripts before ever launching anything --
@@ -350,7 +401,14 @@ $scriptsToCheck = @(
     # its own Test-*.ps1.
     (Join-Path $scriptsDir 'CaptionsOffCheck.ps1'),
     (Join-Path $scriptsDir 'WorkerStdoutParser.ps1'),
-    (Join-Path $scriptsDir 'CpuSampler.ps1')
+    (Join-Path $scriptsDir 'CpuSampler.ps1'),
+    # sandbox-lab lane follow-up D: WorkerEnv.ps1 -- dot-sourced by THIS
+    # host script (near the top, alongside HostLiveness.ps1/
+    # BackstopMarkerGrace.ps1) AND by In-Sandbox-Soak.ps1 in the guest.
+    (Join-Path $scriptsDir 'WorkerEnv.ps1'),
+    # sandbox-lab lane follow-up D, item 2 (round-3 review): GstDebugTail.ps1
+    # -- dot-sourced by In-Sandbox-Soak.ps1 in the guest, same pattern.
+    (Join-Path $scriptsDir 'GstDebugTail.ps1')
 )
 $parseResults = @($scriptsToCheck | ForEach-Object { Test-ScriptParses -Path $_ })
 $parseOk = -not @($parseResults | Where-Object { -not $_.ok }).Count
@@ -392,7 +450,7 @@ if ($httpCheckOutStr -match '^OK') {
 }
 
 if ($DryRun) {
-    Write-Step "DRY RUN complete. Kit verified ($verifiedCount files), .wsb rendered at $wsbPath, all in-sandbox scripts parse cleanly, HttpClientHandler self-check OK. SeamlessReload=$($SeamlessReload.IsPresent) CaptionsOff=$($CaptionsOff.IsPresent) (LogonCommand: $logonCommand)"
+    Write-Step "DRY RUN complete. Kit verified ($verifiedCount files), .wsb rendered at $wsbPath, all in-sandbox scripts parse cleanly, HttpClientHandler self-check OK. SeamlessReload=$($SeamlessReload.IsPresent) CaptionsOff=$($CaptionsOff.IsPresent) WorkerEnv=$(if ($workerEnvCanonical) { $workerEnvCanonical } else { '(none)' }) (WorkerEnv round-trip: OK) (LogonCommand: $logonCommand)"
     Write-Step "Would launch: Start-Process -FilePath 'C:\Windows\System32\WindowsSandbox.exe' -ArgumentList `"$wsbPath`""
     Write-Step "Would poll for: $outputDir\VERDICT.txt (phase bounds: install=${InstallBoundMinutes}m, health=${HealthBoundMinutes}m after install, rollup-stall=${RollupStallMinutes}m once soak_start_utc is set, generic quiet-bound=${QuietMinutes}m throughout)"
     Write-Step "Output directory prepared at: $outputDir (empty -- no sandbox launched)"
@@ -583,6 +641,7 @@ function Get-ShipperHeartbeatUtc {
     return (Get-Item $p).LastWriteTimeUtc
 }
 
+
 $phase = 'installing'
 $installDeadlineUtc = $launchTimeUtc.AddMinutes($InstallBoundMinutes)
 $healthDeadlineUtc = $null
@@ -626,22 +685,39 @@ while ($true) {
             $healthDeadlineUtc = (Get-Item $installDoneMarker).LastWriteTimeUtc.AddMinutes($HealthBoundMinutes)
             Write-Step "phase -> awaiting-health (health bound: $($healthDeadlineUtc.ToString('o')))"
         } elseif ((Get-Date).ToUniversalTime() -gt $installDeadlineUtc) {
-            Write-StallAndExit -Reason "installer bound (${InstallBoundMinutes}m from launch $($launchTimeUtc.ToString('o'))) exceeded -- PHASE-INSTALL-DONE.json never appeared" -LaunchedPids $launchedPids -OutputDir $outputDir
+            # Round-4 review finding 4: give VERDICT.txt the same bounded
+            # grace (Wait-ForVerdictWithGrace -- BackstopMarkerGrace.ps1,
+            # dot-sourced near the top of this script) as awaiting-soak-start
+            # already does -- follow-up D added
+            # Write-HarnessErrorVerdictAndExit call sites (an unparsable
+            # -WorkerEnv value, a missing installer) that fire BEFORE
+            # PHASE-INSTALL-DONE.json is ever written, so a harness error
+            # here has the same in-principle shipper-tick race as the
+            # original awaiting-soak-start finding.
+            $graceResult = Wait-ForVerdictWithGrace -VerdictTxtPath $verdictTxtPath -PhaseDescription "installer bound (${InstallBoundMinutes}m from launch $($launchTimeUtc.ToString('o'))) exceeded" -LogSuccess { param($m) Write-Step $m }
+            if ($graceResult.verdict_arrived) { break }
+            Write-StallAndExit -Reason "installer bound (${InstallBoundMinutes}m from launch $($launchTimeUtc.ToString('o'))) exceeded -- PHASE-INSTALL-DONE.json never appeared, and VERDICT.txt still had not arrived after a $($graceResult.waited_seconds)s grace wait" -LaunchedPids $launchedPids -OutputDir $outputDir
         }
     } elseif ($phase -eq 'awaiting-health') {
         if (Test-Path $healthyMarker) {
             $phase = 'awaiting-soak-start'
             Write-Step "phase -> awaiting-soak-start (generic quiet-bound covers first-admin/assets/schedule/channel-start from here)"
         } elseif ((Get-Date).ToUniversalTime() -gt $healthDeadlineUtc) {
-            Write-StallAndExit -Reason "station-healthy bound (${HealthBoundMinutes}m from install-done) exceeded -- PHASE-HEALTHY.json never appeared" -LaunchedPids $launchedPids -OutputDir $outputDir
+            # Round-4 review finding 4: same grace, same reason -- follow-up
+            # D's own registry-write/verify harness-error call sites fire
+            # BEFORE PHASE-HEALTHY.json is ever written.
+            $graceResult = Wait-ForVerdictWithGrace -VerdictTxtPath $verdictTxtPath -PhaseDescription "station-healthy bound (${HealthBoundMinutes}m from install-done) exceeded" -LogSuccess { param($m) Write-Step $m }
+            if ($graceResult.verdict_arrived) { break }
+            Write-StallAndExit -Reason "station-healthy bound (${HealthBoundMinutes}m from install-done) exceeded -- PHASE-HEALTHY.json never appeared, and VERDICT.txt still had not arrived after a $($graceResult.waited_seconds)s grace wait" -LaunchedPids $launchedPids -OutputDir $outputDir
         }
     } elseif ($phase -eq 'awaiting-soak-start') {
         if (Test-Path $soakStartMarker) {
             # Round-follow-up-B finding: SOAK-START.json's mere EXISTENCE is
             # not proof the soak clock actually started -- In-Sandbox-Soak.ps1's
-            # own harness-error path (Write-VerdictAndExit's backstop, see its
-            # header) writes a SOAK-START.json of its own on a run that failed
-            # BEFORE reaching the real clock-start write, explicitly marked
+            # own harness-error path (Write-HarnessErrorVerdictAndExit's own
+            # backstop marker; see that function's header) writes a
+            # SOAK-START.json of its own on a run that failed BEFORE
+            # reaching the real clock-start write, explicitly marked
             # `harness_error_before_soak_start: true` with `soak_start_utc:
             # $null` so it is never mistaken for the real one. Flipping to
             # 'running' on that backstop marker armed a rollup-stall bound
@@ -658,24 +734,24 @@ while ($true) {
             if ($soakStartObj -and ($soakStartObj.harness_error_before_soak_start -eq $true -or $null -eq $soakStartObj.soak_start_utc)) {
                 # Round-follow-up-C finding: SOAK-START.json's backstop
                 # marker and VERDICT.txt/.json ride the SAME ~15s shipper
-                # tick (In-Sandbox-Soak.ps1:400/416-417/419's own write
-                # order) -- "SOAK-START.json" sorts before "VERDICT.txt" in
-                # a robocopy tick, so a tick that lands mid-write-sequence
-                # can ship the marker without yet shipping the verdict.
-                # Killing the VM the instant the marker is seen (the
-                # pre-fix behavior) could beat VERDICT.txt to the share by
-                # a matter of seconds, leaving the operator with only
-                # HOST-QUIET-SHARE.txt even though the real verdict had
-                # already been written in the guest. Give VERDICT.txt a
-                # bounded grace (Wait-ForVerdictAfterBackstopMarker,
-                # BackstopMarkerGrace.ps1 -- unit-tested in
-                # Test-BackstopMarkerGrace.ps1) before falling back to the
-                # quiet-share exit.
-                $graceResult = Wait-ForVerdictAfterBackstopMarker -TestVerdictPathExists { Test-Path $verdictTxtPath }
-                if ($graceResult.verdict_arrived) {
-                    Write-Step "SOAK-START.json is the harness-error backstop marker, but VERDICT.txt arrived after a $($graceResult.waited_seconds)s grace wait ($($graceResult.polls) poll(s)) -- taking the normal verdict path instead of a premature quiet-share exit."
-                    break
-                }
+                # tick (In-Sandbox-Soak.ps1's shipper script, and
+                # Write-HarnessErrorVerdictAndExit's own write order --
+                # SOAK-START.json, then VERDICT.json/.txt, then
+                # Invoke-FinalFlush) -- "SOAK-START.json" sorts before
+                # "VERDICT.txt" in a robocopy tick, so a tick that lands
+                # mid-write-sequence can ship the marker without yet
+                # shipping the verdict. Killing the VM the instant the
+                # marker is seen (the pre-fix behavior) could beat
+                # VERDICT.txt to the share by a matter of seconds, leaving
+                # the operator with only HOST-QUIET-SHARE.txt even though
+                # the real verdict had already been written in the guest.
+                # Give VERDICT.txt a bounded grace (Wait-ForVerdictWithGrace,
+                # wrapping Wait-ForVerdictAfterBackstopMarker -- both live in
+                # BackstopMarkerGrace.ps1, dot-sourced near the top of this
+                # script, unit-tested in Test-BackstopMarkerGrace.ps1) before
+                # falling back to the quiet-share exit.
+                $graceResult = Wait-ForVerdictWithGrace -VerdictTxtPath $verdictTxtPath -PhaseDescription 'SOAK-START.json is the harness-error backstop marker' -LogSuccess { param($m) Write-Step $m }
+                if ($graceResult.verdict_arrived) { break }
                 Write-QuietShareAndExit -Reason "SOAK-START.json is the harness-error backstop marker (harness_error_before_soak_start=$($soakStartObj.harness_error_before_soak_start), soak_start_utc=$($soakStartObj.soak_start_utc)) -- the guest failed before the soak clock actually started, and VERDICT.txt still had not arrived after a $($graceResult.waited_seconds)s grace wait; see this run's own VERDICT.txt/.json for the underlying reason if it ships later" -LaunchedPids $launchedPids -OutputDir $outputDir
             } elseif ($soakStartObj) {
                 $phase = 'running'

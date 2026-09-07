@@ -108,7 +108,33 @@ param(
     # -SeamlessReload's own verification above). Recorded as
     # captions_enabled/captions_off_verified in SOAK-START.json and
     # VERDICT.json regardless.
-    [switch]$CaptionsOff
+    [switch]$CaptionsOff,
+
+    # sandbox-lab lane follow-up D: arbitrary environment-variable
+    # injection into the CivicCastSupervisor service's own per-service
+    # Environment REG_MULTI_SZ -- and therefore into every GStreamer
+    # egress worker, which inherits the daemon's process environment
+    # wholesale (civiccast/egress/gst/strategy.py's
+    # _default_worker_launcher: `env = {key: value for key, value in
+    # os.environ.items() if key not in ("SWAPS", "INTERVAL")}`, passed
+    # straight to subprocess.Popen). Accepts either a single ';'-separated
+    # string ("NAME=VALUE;NAME2=VALUE2") or an array of one-pair-per-
+    # element strings (@('A=1','B=2')) -- see WorkerEnv.ps1's own header
+    # for why both shapes parse identically once PowerShell's own
+    # `[string[]]` coercion is accounted for. An empty VALUE ("NAME=") is
+    # the explicit unset/remove form -- see WorkerEnv.ps1 and
+    # civiccast/captions/tap.py:67-73's own empty-string-is-absent
+    # handling for CIVICCAST_CAPTION_TAP_DIR specifically (this lane does
+    # not assume every variable shares that fallback, hence a real
+    # removal rather than writing an empty string). Merged into the SAME
+    # Stop-Service/Start-Service cycle as -SeamlessReload (one restart
+    # total, never two) and verified the same way that flag already is --
+    # per-entry results recorded as worker_env_requested/
+    # worker_env_verified in SOAK-START.json and VERDICT.json; an
+    # unverified entry is HARNESS_ERROR, exactly like -SeamlessReload and
+    # -CaptionsOff (never an unconfirmed premise of a PASS/FAIL verdict
+    # for a flag the operator explicitly asked to test).
+    [string[]]$WorkerEnv
 )
 
 $ErrorActionPreference = 'Continue'
@@ -391,6 +417,10 @@ function Write-HarnessErrorVerdictAndExit {
     $capOffRequested = $(if ($summary) { $summary.captions_off_requested } else { $null })
     $capEnabled      = $(if ($summary) { $summary.captions_enabled } else { $null })
     $capOffVerified  = $(if ($summary) { $summary.captions_off_verified } else { $null })
+    # sandbox-lab lane follow-up D: same never-guessed, $null-before-init
+    # guard as the caption fields just above.
+    $workerEnvReq = $(if ($summary) { $summary.worker_env_requested } else { $null })
+    $workerEnvVer = $(if ($summary) { $summary.worker_env_verified } else { $null })
     if ($summary) {
         $summary.error = $Reason
         Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
@@ -403,6 +433,8 @@ function Write-HarnessErrorVerdictAndExit {
             captions_off_requested = $capOffRequested
             captions_enabled       = $capEnabled
             captions_off_verified  = $capOffVerified
+            worker_env_requested   = $workerEnvReq
+            worker_env_verified    = $workerEnvVer
         })
         $script:soakStartWritten = $true
     }
@@ -412,6 +444,8 @@ function Write-HarnessErrorVerdictAndExit {
         captions_off_requested = $capOffRequested
         captions_enabled       = $capEnabled
         captions_off_verified  = $capOffVerified
+        worker_env_requested   = $workerEnvReq
+        worker_env_verified    = $workerEnvVer
     }
     Save-Json -Obj $verdict -Path (Join-Path $LocalDir 'VERDICT.json')
     "verdict=HARNESS_ERROR reason=$Reason" | Set-Content -Path (Join-Path $LocalDir 'VERDICT.txt') -Encoding UTF8
@@ -570,6 +604,34 @@ if (-not (Test-Path $donePath)) {
     Write-SoakLog "watchdog spawned (pre-soak bound=${PreSoakMaxMinutes}m; post-soak bound=soak_start_utc+Minutes(${Minutes})+10m)"
 } catch {
     Write-SoakLog "watchdog spawn failed (non-fatal): $_"
+}
+
+# sandbox-lab lane follow-up D, item 2 (round-3 review): Copy-GstDebugTail
+# now lives in its own dot-sourceable file, GstDebugTail.ps1, matching this
+# project's established extraction pattern (ServiceStartFailureCheck.ps1/
+# CaptionsOffCheck.ps1/WorkerStdoutParser.ps1/CpuSampler.ps1/WorkerEnv.ps1)
+# so it is unit-testable (Test-GstDebugTail.ps1) against real temp files/
+# streams -- including a file held open for write by another process and
+# a file that is still growing when this copy STARTS -- instead of only
+# ever being exercised inside a live sandbox soak. See that file's own
+# header for the live-open-file share-mode fix, the one-time-snapshot
+# contract (round-7 review finding 1 -- content written to the source
+# AFTER the snapshot is deliberately not captured by this call; the next
+# checkpoint's own fresh snapshot picks it up), and the banner/naming fix.
+. (Join-Path 'C:\CivicCastSoakScripts' 'GstDebugTail.ps1')
+
+function Format-MBPrecise {
+    <#
+      .SYNOPSIS
+      Round-7 review finding 5: the gst-debug capture NOTE lines (a human-
+      read evidence trail, not a filename) keep 2-decimal-place MB
+      precision for bytes_written/effective-bound/budget-so-far --
+      Get-ByteSizeLabel's own coarse, filename-safe rounding (whole
+      MB/KB, no decimals) stays reserved for the ".tailNNN(kb|mb)"
+      filename suffix alone, where brevity matters more than precision.
+    #>
+    param([long]$Bytes)
+    return "$([math]::Round($Bytes / 1MB, 2)) MB"
 }
 
 function Copy-StationLogs {
@@ -738,6 +800,191 @@ function Copy-StationLogs {
     try {
         $conformProgress | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $dst 'conform-progress.json') -Encoding UTF8
     } catch { }
+
+    # sandbox-lab lane follow-up D, item 2: when -WorkerEnv set GST_DEBUG_FILE
+    # (see $script:GstDebugFilePath, resolved once near the top of this
+    # file), copy that file AND any rotated/sibling *.gstdebug files
+    # sitting in the same directory into this checkpoint's own
+    # gst-debug\ subfolder -- called on every Copy-StationLogs invocation
+    # (every checkpoint-cycleN AND 'final'), same as the rest of this
+    # function, so a mid-soak GStreamer debug log is visible in the
+    # evidence trail even if the run never reaches 'final'. GST_DEBUG at
+    # level 4 across four elements for a whole soak can grow large fast,
+    # and this evidence capture must never itself become the thing that
+    # stalls a checkpoint OR flood the host with gigabytes of shipped
+    # evidence -- see Get-GstDebugCaptureDecision (GstDebugTail.ps1,
+    # round-4/round-5/round-6 review findings) for the gating/split-budget
+    # rules applied just below, and Copy-GstDebugTail's own header for the
+    # tail-copy mechanics (live-open-file share mode, the one-time-snapshot
+    # contract, banner-only-when-truncated, and the wall-clock
+    # -WholeCopyDeadlineSeconds safety net -- round-7 review finding 1).
+    $gstDebugDst = Join-Path $dst 'gst-debug'
+    $gstDebugNote = Join-Path $dst 'gst-debug-note.txt'
+    if (-not $script:GstDebugFilePath) {
+        "GST_DEBUG_FILE was not requested via -WorkerEnv for this run -- nothing to capture" | Set-Content -Path $gstDebugNote -Encoding UTF8
+    } else {
+        $gstDebugMaxBytes = 200MB
+        $isPeriodicCheckpoint = ($Label -match '^checkpoint-cycle\d+$')
+        if ($isPeriodicCheckpoint) { $script:GstDebugPeriodicCheckpointCount++ }
+        $captureDecision = Get-GstDebugCaptureDecision `
+            -IsPeriodicCheckpoint $isPeriodicCheckpoint `
+            -PeriodicCheckpointIndex $script:GstDebugPeriodicCheckpointCount `
+            -EveryN $GstDebugCaptureEveryN `
+            -PeriodicBytesSoFar $script:GstDebugPeriodicBytesCopied `
+            -PeriodicCapBytes $GstDebugPeriodicCapBytes `
+            -NonPeriodicBytesSoFar $script:GstDebugNonPeriodicBytesCopied `
+            -NonPeriodicCapBytes $GstDebugNonPeriodicCapBytes
+
+        if (-not $captureDecision.should_capture) {
+            "SKIPPED for label '$Label': $($captureDecision.reason) (periodic so far: $(Format-MBPrecise -Bytes $script:GstDebugPeriodicBytesCopied) of a $(Format-MBPrecise -Bytes $GstDebugPeriodicCapBytes) cap; non-periodic so far: $(Format-MBPrecise -Bytes $script:GstDebugNonPeriodicBytesCopied) of a $(Format-MBPrecise -Bytes $GstDebugNonPeriodicCapBytes) reserve)" | Set-Content -Path $gstDebugNote -Encoding UTF8
+        } else {
+            # Round-6 review finding 6: a SINGLE checkpoint can have
+            # MULTIPLE candidate files (the primary GST_DEBUG_FILE plus
+            # any rotated/*.gstdebug siblings) -- without a bound on this
+            # checkpoint's OWN total, one checkpoint with two or more
+            # large candidates could drain the entire 400 MB periodic
+            # budget by itself in a single Copy-StationLogs call, well
+            # before the every-10th gate even had a chance to space
+            # things out. Capped here, LOCAL to this one invocation (reset
+            # every call, unlike the run-wide periodic/non-periodic
+            # counters below) at the same 200 MB as a single file's own
+            # bound -- so one checkpoint's total footprint is bounded
+            # independently of how many candidate files it happens to have.
+            $perCheckpointBytesCopied = [int64]0
+            $gstDebugDir = Split-Path -Parent $script:GstDebugFilePath
+            $gstDebugBaseName = Split-Path -Leaf $script:GstDebugFilePath
+            $gstDebugNoteLines = @(
+                "GST_DEBUG_FILE requested: $($script:GstDebugFilePath)"
+                "capture reason: $($captureDecision.reason)"
+            )
+            if (-not (Test-Path $gstDebugDir)) {
+                $gstDebugNoteLines += "directory does not exist (yet): $gstDebugDir"
+            } else {
+                # Candidates come from TWO independent, deliberately separate
+                # rules, never a blind directory-wide sweep: (1) the primary
+                # file plus GStreamer's own rotation convention (a numeric/
+                # backup suffix appended to the base name), matched by PREFIX
+                # against the requested base name; and (2) any file with a
+                # `.gstdebug` extension in this same directory, matched by
+                # EXTENSION ALONE -- NOT gated on the base-name prefix at all.
+                # Rule (2) is a deliberately wider net (the accepted risk: a
+                # stray, unrelated `.gstdebug` file some other tool dropped in
+                # this exact directory would also be swept), because this is a
+                # directory THIS RUN itself created for its own GST_DEBUG_FILE
+                # (see the New-Item -Force call at this run's own registry-
+                # write step) -- something else writing into it is already
+                # unexpected enough that surfacing it as evidence is more
+                # useful than silently excluding it.
+                $gstCandidates = @(
+                    Get-ChildItem -LiteralPath $gstDebugDir -File -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Name -eq $gstDebugBaseName -or $_.Name -like "$gstDebugBaseName*" -or $_.Extension -eq '.gstdebug' }
+                )
+                if ($gstCandidates.Count -eq 0) {
+                    $gstDebugNoteLines += "directory exists but no matching file(s) found yet: $gstDebugDir (looked for '$gstDebugBaseName', '$gstDebugBaseName*', and '*.gstdebug')"
+                } else {
+                    New-Item -ItemType Directory -Force -Path $gstDebugDst | Out-Null
+                    # Round-4 review finding 1 (HIGH), comment corrected in
+                    # round-5 review finding 7: each $f below is a
+                    # [System.IO.FileInfo] populated once by the Get-ChildItem
+                    # call above -- its .Length property is a SNAPSHOT taken
+                    # at THAT moment; .NET does not auto-refresh it, and this
+                    # code never calls .Refresh() on it either. An EARLIER
+                    # version of this loop branched on that cached $f.Length
+                    # to decide whether the file "needed" truncation, so by
+                    # the time that branch actually ran (after whatever else
+                    # happened earlier in the same checkpoint), the live
+                    # GST_DEBUG_FILE could already be far larger than what
+                    # $f.Length still reported (measured directly, via
+                    # Test-GstDebugTail.ps1's own regression guard: a file
+                    # written to 1 MB, stat'd via Get-ChildItem, then grown to
+                    # 5 MB through a separate handle -- the ORIGINAL FileInfo
+                    # object's own .Length stayed frozen at the 1 MB value it
+                    # captured, never reflecting the grown, live size).
+                    # Trusting that cached value would have routed the EXACT
+                    # live file this feature exists to capture down an
+                    # unbounded path. Fixed by dropping any size-based branch
+                    # on $f.Length entirely: Copy-GstDebugTail is always
+                    # called, and it establishes truncated-vs-whole from ITS
+                    # OWN freshly opened stream's live Length, never from a
+                    # FileInfo any caller might have cached earlier.
+                    foreach ($f in $gstCandidates) {
+                        # Round-5 review finding 1: periodic and non-periodic
+                        # captures draw against SEPARATE budgets/caps -- see
+                        # Get-GstDebugCaptureDecision's own header. Re-checked
+                        # here too (not just once per Copy-StationLogs call)
+                        # because a SINGLE checkpoint can have MULTIPLE
+                        # candidate files (the primary + rotated siblings),
+                        # and the budget can be exhausted partway through
+                        # that same foreach.
+                        $bytesSoFarForThisKind = $(if ($isPeriodicCheckpoint) { $script:GstDebugPeriodicBytesCopied } else { $script:GstDebugNonPeriodicBytesCopied })
+                        $capForThisKind = $(if ($isPeriodicCheckpoint) { $GstDebugPeriodicCapBytes } else { $GstDebugNonPeriodicCapBytes })
+                        # Round-6 review finding 6: this checkpoint's own
+                        # running total is a THIRD, independent ceiling,
+                        # alongside the run-wide periodic/non-periodic
+                        # budgets AND the normal 200 MB per-file bound --
+                        # whichever of the three is tightest wins (pure
+                        # three-way min, unit-tested in
+                        # Get-GstDebugEffectiveMaxBytes/GstDebugTail.ps1).
+                        # Round-5 review finding 6: enforced as a HARD
+                        # ceiling, not a pre-write check that can still
+                        # overshoot by up to one file's worth -- the result
+                        # is passed through as THIS COPY's own -MaxBytes
+                        # directly. Copy-GstDebugTail itself floors -MaxBytes
+                        # at 4096 bytes (round-5 finding 4) -- if what's left
+                        # is smaller than that, there is no meaningful budget
+                        # left at all, so this capture (and every later one
+                        # of the same kind, this checkpoint) is skipped
+                        # outright rather than attempting an invalid call.
+                        $effectiveMaxBytes = Get-GstDebugEffectiveMaxBytes -NormalMaxBytes $gstDebugMaxBytes `
+                            -KindBytesSoFar $bytesSoFarForThisKind -KindCapBytes $capForThisKind `
+                            -PerCheckpointBytesSoFar $perCheckpointBytesCopied -PerCheckpointCapBytes $GstDebugPerCheckpointCapBytes
+                        if ($effectiveMaxBytes -lt 4096) {
+                            $gstDebugNoteLines += "SKIPPED $($f.Name): $(if ($isPeriodicCheckpoint) { 'periodic' } else { 'non-periodic' })/per-checkpoint budget has less than 4 KB remaining ($(Get-ByteSizeLabel -Bytes ([Math]::Max(0, $effectiveMaxBytes)))) -- effectively exhausted"
+                            continue
+                        }
+                        $baseName = $f.Name
+                        $wholeDestPath = Join-Path $gstDebugDst $baseName
+                        $truncatedDestPath = Join-Path $gstDebugDst "$baseName.tail$((Get-ByteSizeLabel -Bytes $effectiveMaxBytes).ToLowerInvariant())"
+                        try {
+                            $copyResult = Copy-GstDebugTail -SourcePath $f.FullName -DestPathWhole $wholeDestPath -DestPathTruncated $truncatedDestPath -MaxBytes $effectiveMaxBytes
+                            if ($isPeriodicCheckpoint) { $script:GstDebugPeriodicBytesCopied += $copyResult.bytes_written } else { $script:GstDebugNonPeriodicBytesCopied += $copyResult.bytes_written }
+                            $perCheckpointBytesCopied += $copyResult.bytes_written
+                            $destLeaf = Split-Path -Leaf $copyResult.dest_path
+                            # Round-7 review finding 5: bytes_written, this
+                            # copy's effective bound, and the running
+                            # budget totals keep 2-decimal-MB PRECISION
+                            # here (Format-MBPrecise) -- Get-ByteSizeLabel's
+                            # own coarse, whole-number rounding stays
+                            # reserved for the filename suffix above, where
+                            # brevity (not precision) is what matters.
+                            $statusWord = if ($copyResult.partial) { 'PARTIAL (wall-clock deadline hit mid-copy)' } elseif ($copyResult.truncated) { 'TRUNCATED' } else { 'whole file, untruncated' }
+                            $gstDebugNoteLines += "$($f.Name) -> $destLeaf ($statusWord): wrote $(Format-MBPrecise -Bytes $copyResult.bytes_written) (this copy's effective bound $(Format-MBPrecise -Bytes $effectiveMaxBytes); directory-entry size at listing time was $(Format-MBPrecise -Bytes $f.Length) -- Copy-GstDebugTail takes its OWN snapshot of the live length at open time and never trusts this cached directory-entry value for the copy bound itself). $(if ($isPeriodicCheckpoint) { 'Periodic' } else { 'Non-periodic' }) budget used so far: $(Format-MBPrecise -Bytes $(if ($isPeriodicCheckpoint) { $script:GstDebugPeriodicBytesCopied } else { $script:GstDebugNonPeriodicBytesCopied })) of $(Format-MBPrecise -Bytes $capForThisKind); this checkpoint's own total so far: $(Format-MBPrecise -Bytes $perCheckpointBytesCopied) of $(Format-MBPrecise -Bytes $GstDebugPerCheckpointCapBytes)"
+                        } catch {
+                            # Round-6 review finding 5: a mid-copy throw
+                            # (e.g. a disk-full or sharing-violation error
+                            # partway through Copy-GstDebugTail) can leave a
+                            # PARTIAL, incomplete file behind at either
+                            # candidate destination path -- unaccounted for
+                            # in the budget (never added to either counter
+                            # above, since the throw happened before this
+                            # try block's own success-path additions) AND a
+                            # stray, potentially confusing partial artifact
+                            # in the evidence tree. Deleted here so neither
+                            # problem survives: nothing is silently charged
+                            # to the budget, and no half-written file is
+                            # left for a human to mistake for a complete
+                            # capture.
+                            foreach ($partialPath in @($wholeDestPath, $truncatedDestPath)) {
+                                try { if (Test-Path -LiteralPath $partialPath) { Remove-Item -LiteralPath $partialPath -Force -ErrorAction SilentlyContinue } } catch { }
+                            }
+                            $gstDebugNoteLines += "FAILED to copy $($f.Name): $_ (any partial destination file was deleted, not charged to the budget)"
+                        }
+                    }
+                }
+            }
+            $gstDebugNoteLines | Set-Content -Path $gstDebugNote -Encoding UTF8
+        }
+    }
 }
 
 # N2 (blocker): Windows Defender Firewall raises a modal "Do you want to
@@ -783,6 +1030,41 @@ function Add-CivicCastFirewallAllowRule {
     return $ok
 }
 
+# sandbox-lab lane follow-up D: dot-sourced here, well before the installer
+# even runs, so -WorkerEnv can be validated and this run can fail fast
+# (before burning the full install+health window) on a malformed value --
+# same "dot-sourced before first use" convention as
+# ServiceStartFailureCheck.ps1/CaptionsOffCheck.ps1/WorkerStdoutParser.ps1/
+# CpuSampler.ps1 just below (all four stay dot-sourced at their existing,
+# later call sites -- this one alone needs to run before section 1 because
+# a parse failure here is a config problem the guest can diagnose
+# immediately, not something worth discovering only after a 13+ minute
+# install).
+. (Join-Path 'C:\CivicCastSoakScripts' 'WorkerEnv.ps1')
+$workerEnvParsed = ConvertTo-WorkerEnvEntries -WorkerEnv $WorkerEnv
+$workerEnvDeduped = @(Get-DedupedWorkerEnvEntries -Entries $workerEnvParsed.entries)
+$workerEnvRequestedStrings = @(Format-WorkerEnvArg -Entries $workerEnvDeduped) -split ';' | Where-Object { $_.Length -gt 0 }
+$script:GstDebugFilePath = Get-GstDebugFilePath -Entries $workerEnvDeduped
+# Round-4 review finding 2 (round-5 review finding 1 split this into two
+# INDEPENDENT budgets -- see Get-GstDebugCaptureDecision's own header for
+# why a single shared cap let periodic checkpoints starve 'final' out of
+# its own evidence budget): gst-debug capture is gated and volume-capped --
+# see Copy-StationLogs's own gst-debug section and GstDebugTail.ps1's
+# Get-GstDebugCaptureDecision for the full rules. State tracked here
+# (script scope) so it persists correctly across every Copy-StationLogs
+# call for the life of this run.
+$script:GstDebugPeriodicCheckpointCount = 0
+$script:GstDebugPeriodicBytesCopied = 0
+$script:GstDebugNonPeriodicBytesCopied = 0
+$GstDebugCaptureEveryN = 10
+$GstDebugPeriodicCapBytes = 400MB
+$GstDebugNonPeriodicCapBytes = 200MB
+# Round-6 review finding 6: bounds a SINGLE checkpoint's own total capture
+# (across every candidate file that one checkpoint copies), independent of
+# the run-wide periodic/non-periodic budgets above -- see the gst-debug
+# capture loop's own comment for why.
+$GstDebugPerCheckpointCapBytes = 200MB
+
 # --------------------------------------------------------------------------
 # 1. Locate and run the installer silently, bounded to $InstallBoundMinutes.
 # --------------------------------------------------------------------------
@@ -802,9 +1084,17 @@ $summary = [ordered]@{
     assets_uploaded = 0
     channels_started = @()
     soak_start_utc = $null
+    worker_env_requested = @($workerEnvRequestedStrings)
+    worker_env_verified = @()
+    gst_debug_file = $script:GstDebugFilePath
     error = $null
 }
-Write-SoakLog "run header: minutes=$Minutes seamless_reload=$([bool]$SeamlessReload) install_bound_minutes=$InstallBoundMinutes health_bound_minutes=$HealthBoundMinutes"
+Write-SoakLog "run header: minutes=$Minutes seamless_reload=$([bool]$SeamlessReload) install_bound_minutes=$InstallBoundMinutes health_bound_minutes=$HealthBoundMinutes worker_env_requested=$($summary.worker_env_requested -join ', ') gst_debug_file=$($script:GstDebugFilePath)"
+
+if ($workerEnvParsed.errors.Count -gt 0) {
+    foreach ($e in $workerEnvParsed.errors) { Write-SoakLog "worker_env parse error: $e" }
+    Write-HarnessErrorVerdictAndExit -Reason "-WorkerEnv failed to parse ($($workerEnvParsed.errors.Count) error(s)): $($workerEnvParsed.errors -join ' | ') -- a config problem this guest can diagnose immediately, not a product finding"
+}
 
 $installerExe = Get-ChildItem -Path $KitDir -Filter '*setup.exe' -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $installerExe) {
@@ -858,30 +1148,82 @@ if (-not $installResult.exited -or $installResult.exit_code -ne 0) {
 # own registry key, which the SCM reads and merges in at THAT service's own
 # launch time -- so this now writes there, then forces an actual
 # Stop-Service + Start-Service cycle so a fresh process is what launches.
-if ($SeamlessReload) {
+# sandbox-lab lane follow-up D: -WorkerEnv's requested entries are merged
+# into this SAME registry write and this SAME Stop-Service/Start-Service
+# cycle as -SeamlessReload -- one restart total, never two. $seamlessRegPath
+# and the registry-write mechanics are unchanged from the pre-existing
+# -SeamlessReload code (Round-8 finding 4's own fix); what changed is WHICH
+# entries get merged in before the single Set-ItemProperty call.
+$anyEnvInjectionRequested = ([bool]$SeamlessReload) -or ($workerEnvDeduped.Count -gt 0)
+if ($anyEnvInjectionRequested) {
     $seamlessRegPath = 'HKLM:\SYSTEM\CurrentControlSet\Services\CivicCastSupervisor'
-    $seamlessRegOk = $false
+    $envRegOk = $false
+
+    # Item 2: if the requested env sets GST_DEBUG_FILE, create its
+    # containing directory BEFORE the restart -- ffmpeg/GStreamer does not
+    # create intermediate directories for a log-file path, so a worker
+    # that launches with GST_DEBUG_FILE pointed at a directory that does
+    # not exist yet would simply fail to write the debug log at all (not a
+    # crash, just silent evidence loss). Non-fatal: a directory-creation
+    # failure is logged and surfaced later via Copy-StationLogs's own
+    # missing-file note, never a HARNESS_ERROR by itself -- the operator
+    # explicitly asked to test env injection, not directory permissions.
+    if ($script:GstDebugFilePath) {
+        try {
+            $gstDebugDir = Split-Path -Parent $script:GstDebugFilePath
+            if ($gstDebugDir) {
+                New-Item -ItemType Directory -Force -Path $gstDebugDir -ErrorAction Stop | Out-Null
+                Write-SoakLog "worker_env: created GST_DEBUG_FILE directory $gstDebugDir"
+            }
+        } catch {
+            Write-SoakLog "worker_env: FAILED to create GST_DEBUG_FILE directory for $($script:GstDebugFilePath): $_ (non-fatal -- the worker's own debug-log write will simply fail silently if this directory never exists)"
+        }
+    }
+
+    # Requested entries for THIS registry write: the -SeamlessReload flag's
+    # own synthetic entry (if set) plus every -WorkerEnv entry, deduped
+    # together (later position wins) so a -WorkerEnv value that happens to
+    # also name CIVICCAST_EGRESS_SEAMLESS_RELOAD is a well-defined
+    # override, not two competing writes.
+    $seamlessEntries = @()
+    if ($SeamlessReload) {
+        $seamlessEntries += [pscustomobject]@{ Name = 'CIVICCAST_EGRESS_SEAMLESS_RELOAD'; Value = '1'; IsUnset = $false }
+    }
+    $envEntriesToWrite = @(Get-DedupedWorkerEnvEntries -Entries (@($seamlessEntries) + @($workerEnvDeduped)))
+
     try {
         $existingEnv = @()
         try { $existingEnv = @((Get-ItemProperty -Path $seamlessRegPath -Name 'Environment' -ErrorAction Stop).Environment) } catch { $existingEnv = @() }
-        $filteredEnv = @($existingEnv | Where-Object { $_ -notmatch '^CIVICCAST_EGRESS_SEAMLESS_RELOAD=' })
-        $newEnv = @($filteredEnv + @('CIVICCAST_EGRESS_SEAMLESS_RELOAD=1'))
+        $newEnv = @(Merge-WorkerEnvIntoRegistryList -ExistingEnv $existingEnv -Entries $envEntriesToWrite)
         Set-ItemProperty -Path $seamlessRegPath -Name 'Environment' -Value $newEnv -Type MultiString -ErrorAction Stop
         $readBackEnv = @((Get-ItemProperty -Path $seamlessRegPath -Name 'Environment' -ErrorAction Stop).Environment)
-        $seamlessRegOk = ($readBackEnv -contains 'CIVICCAST_EGRESS_SEAMLESS_RELOAD=1')
-        Write-SoakLog "seamless_reload: wrote $seamlessRegPath\Environment (REG_MULTI_SZ, $($newEnv.Count) entries); read-back contains the flag: $seamlessRegOk"
+        $envRegOk = $true
+        # Round-2 review finding (optional item): -ccontains/-cmatch, not
+        # the case-INSENSITIVE default -- these compare against the exact
+        # "NAME=VALUE" strings THIS RUN just wrote via Set-ItemProperty,
+        # so the correct semantic is byte-for-byte string equality, not a
+        # case-folded one (dedupe-by-name, elsewhere, is deliberately
+        # still case-insensitive -- that is a different question, "is
+        # this logically the same variable").
+        foreach ($e in ($envEntriesToWrite | Where-Object { -not $_.IsUnset })) {
+            if (-not ($readBackEnv -ccontains "$($e.Name)=$($e.Value)")) { $envRegOk = $false }
+        }
+        foreach ($e in ($envEntriesToWrite | Where-Object { $_.IsUnset })) {
+            if (@($readBackEnv | Where-Object { $_ -cmatch "^$([regex]::Escape($e.Name))=" }).Count -gt 0) { $envRegOk = $false }
+        }
+        Write-SoakLog "worker_env: wrote $seamlessRegPath\Environment (REG_MULTI_SZ, $($newEnv.Count) entries; seamless_reload=$([bool]$SeamlessReload), worker_env_entries=$($workerEnvDeduped.Count)); read-back matches every requested entry: $envRegOk"
     } catch {
-        Write-SoakLog "seamless_reload: FAILED to write/read-back $seamlessRegPath\Environment : $_"
+        Write-SoakLog "worker_env: FAILED to write/read-back $seamlessRegPath\Environment : $_"
     }
-    if (-not $seamlessRegOk) {
-        Write-HarnessErrorVerdictAndExit -Reason "SeamlessReload was requested but writing/confirming $seamlessRegPath\Environment (REG_MULTI_SZ) failed -- refusing to proceed with an unconfirmed seamless-reload configuration (never an 'unverified' PASS/FAIL for a flag the operator explicitly asked to test)"
+    if (-not $envRegOk) {
+        Write-HarnessErrorVerdictAndExit -Reason "-SeamlessReload/-WorkerEnv env injection was requested but writing/confirming $seamlessRegPath\Environment (REG_MULTI_SZ) failed -- refusing to proceed with an unconfirmed environment configuration (never an 'unverified' PASS/FAIL for a flag the operator explicitly asked to test)"
     }
 
     try {
         Stop-Service -Name 'CivicCastSupervisor' -Force -ErrorAction Stop
-        Write-SoakLog "seamless_reload: Stop-Service CivicCastSupervisor requested (forcing a fresh launch that reads the just-written per-service Environment)"
+        Write-SoakLog "worker_env: Stop-Service CivicCastSupervisor requested (forcing a fresh launch that reads the just-written per-service Environment)"
     } catch {
-        Write-SoakLog "seamless_reload: Stop-Service CivicCastSupervisor: $_ (may not have been running yet -- proceeding to Start-Service regardless, which will still launch fresh with the registry value in place)"
+        Write-SoakLog "worker_env: Stop-Service CivicCastSupervisor: $_ (may not have been running yet -- proceeding to Start-Service regardless, which will still launch fresh with the registry value in place)"
     }
 }
 
@@ -1007,13 +1349,11 @@ Write-PhaseMarker -Name 'PHASE-HEALTHY.json' -Obj ([ordered]@{ utc = (Get-Date).
 # "unverified" -- it is a HARNESS_ERROR: a flag the operator explicitly
 # asked to test must never silently ride along as an unconfirmed premise
 # of a PASS or FAIL verdict.
-if ($SeamlessReload) {
-    $seamlessRegOkAfterRestart = $false
+if ($anyEnvInjectionRequested) {
+    $readBackEnv2 = @()
     try {
         $readBackEnv2 = @((Get-ItemProperty -Path $seamlessRegPath -Name 'Environment' -ErrorAction Stop).Environment)
-        $seamlessRegOkAfterRestart = ($readBackEnv2 -contains 'CIVICCAST_EGRESS_SEAMLESS_RELOAD=1')
     } catch { }
-    Write-SoakLog "seamless_reload verification: $seamlessRegPath\Environment still contains the flag: $seamlessRegOkAfterRestart"
 
     $cpProc = $null
     try {
@@ -1022,36 +1362,81 @@ if ($SeamlessReload) {
             Select-Object -First 1
     } catch { }
     if ($cpProc) {
-        Write-SoakLog "seamless_reload verification: control-plane process found post-restart pid=$($cpProc.ProcessId)"
+        Write-SoakLog "worker_env verification: control-plane process found post-restart pid=$($cpProc.ProcessId)"
     } else {
-        Write-SoakLog "seamless_reload verification: control-plane process (python.exe running uvicorn civiccast.app:create_app) NOT FOUND via Win32_Process after the restart"
+        Write-SoakLog "worker_env verification: control-plane process (python.exe running uvicorn civiccast.app:create_app) NOT FOUND via Win32_Process after the restart"
     }
 
-    if (-not $seamlessRegOkAfterRestart -or -not $cpProc) {
-        Write-HarnessErrorVerdictAndExit -Reason "SeamlessReload was requested but could not be confirmed after the service restart (registry_flag_present=$seamlessRegOkAfterRestart, control_plane_process_found=$([bool]$cpProc)) -- never an 'unverified' PASS/FAIL for a flag the operator explicitly asked to test"
-    }
+    if ($SeamlessReload) {
+        $seamlessRegOkAfterRestart = ($readBackEnv2 -ccontains 'CIVICCAST_EGRESS_SEAMLESS_RELOAD=1')
+        Write-SoakLog "seamless_reload verification: $seamlessRegPath\Environment still contains the flag: $seamlessRegOkAfterRestart"
 
-    $logCandidates = @(
-        'C:\ProgramData\CivicCast\logs\control_plane.log',
-        'C:\ProgramData\CivicCast\logs\control_plane-app.log'
-    )
-    $foundLine = $null
-    foreach ($lp in $logCandidates) {
-        if (Test-Path $lp) {
-            try {
-                $match = Get-Content -Path $lp -Tail 500 -ErrorAction SilentlyContinue | Where-Object { $_ -match 'seamless' -or $_ -match 'CIVICCAST_EGRESS_SEAMLESS_RELOAD' } | Select-Object -Last 1
-                if ($match) { $foundLine = "$lp : $match"; break }
-            } catch { }
+        if (-not $seamlessRegOkAfterRestart -or -not $cpProc) {
+            Write-HarnessErrorVerdictAndExit -Reason "SeamlessReload was requested but could not be confirmed after the service restart (registry_flag_present=$seamlessRegOkAfterRestart, control_plane_process_found=$([bool]$cpProc)) -- never an 'unverified' PASS/FAIL for a flag the operator explicitly asked to test"
+        }
+
+        $logCandidates = @(
+            'C:\ProgramData\CivicCast\logs\control_plane.log',
+            'C:\ProgramData\CivicCast\logs\control_plane-app.log'
+        )
+        $foundLine = $null
+        foreach ($lp in $logCandidates) {
+            if (Test-Path $lp) {
+                try {
+                    $match = Get-Content -Path $lp -Tail 500 -ErrorAction SilentlyContinue | Where-Object { $_ -match 'seamless' -or $_ -match 'CIVICCAST_EGRESS_SEAMLESS_RELOAD' } | Select-Object -Last 1
+                    if ($match) { $foundLine = "$lp : $match"; break }
+                } catch { }
+            }
+        }
+        if ($foundLine) {
+            $summary.seamless_reload_verified = 'confirmed-via-log'
+            Write-SoakLog "seamless_reload verification: CONFIRMED via log line (on top of the registry+process confirmation above): $foundLine"
+        } else {
+            $summary.seamless_reload_verified = 'confirmed-via-registry-and-process'
+            Write-SoakLog "seamless_reload verification: confirmed via registry read-back + a live post-restart control-plane process; no log line additionally corroborated it (checked $($logCandidates -join ', '))"
         }
     }
-    if ($foundLine) {
-        $summary.seamless_reload_verified = 'confirmed-via-log'
-        Write-SoakLog "seamless_reload verification: CONFIRMED via log line (on top of the registry+process confirmation above): $foundLine"
-    } else {
-        $summary.seamless_reload_verified = 'confirmed-via-registry-and-process'
-        Write-SoakLog "seamless_reload verification: confirmed via registry read-back + a live post-restart control-plane process; no log line additionally corroborated it (checked $($logCandidates -join ', '))"
+
+    # sandbox-lab lane follow-up D: per-entry -WorkerEnv verification.
+    # Reuses the EXACT same evidence -SeamlessReload's own verification
+    # above already established this lane can honestly gather -- neither
+    # Get-Process/-StartInfo nor Win32_Process can read another process's
+    # real environment block from outside it (Win32_Process carries no
+    # environment-adjacent property at all, confirmed by the comment
+    # above), so "verified" here means (1) the per-service registry
+    # value matches what was requested for this entry (present with the
+    # exact value for a set entry; genuinely absent for an unset/removal
+    # entry) AND (2) a live post-restart control-plane process exists
+    # (proving the service cycle produced a fresh child at all) -- never
+    # a literal read of the worker's own process environment block, which
+    # this harness has no mechanism to perform. A mismatch on either
+    # condition is HARNESS_ERROR, exactly like -SeamlessReload/-CaptionsOff
+    # (the operator explicitly asked to test this entry).
+    $workerEnvVerifiedList = @()
+    $workerEnvAllOk = $true
+    foreach ($e in $workerEnvDeduped) {
+        $expectPresent = -not $e.IsUnset
+        # Round-2 review finding (optional item): case-sensitive -- see
+        # the matching comment at this run's own registry-write step above.
+        $isPresentWithValue = ($readBackEnv2 -ccontains "$($e.Name)=$($e.Value)")
+        $isAbsent = (@($readBackEnv2 | Where-Object { $_ -cmatch "^$([regex]::Escape($e.Name))=" }).Count -eq 0)
+        $entryOk = [bool]$cpProc -and $(if ($expectPresent) { $isPresentWithValue } else { $isAbsent })
+        if (-not $entryOk) { $workerEnvAllOk = $false }
+        $workerEnvVerifiedList += [ordered]@{
+            name = $e.Name
+            unset_requested = $e.IsUnset
+            registry_matches_request = $(if ($expectPresent) { $isPresentWithValue } else { $isAbsent })
+            verified = $entryOk
+        }
+        Write-SoakLog "worker_env verification: name=$($e.Name) unset_requested=$($e.IsUnset) registry_matches_request=$(if ($expectPresent) { $isPresentWithValue } else { $isAbsent }) verified=$entryOk"
     }
+    $summary.worker_env_verified = $workerEnvVerifiedList
     Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
+
+    if ($workerEnvDeduped.Count -gt 0 -and (-not $workerEnvAllOk -or -not $cpProc)) {
+        $failedNames = @($workerEnvVerifiedList | Where-Object { -not $_.verified } | ForEach-Object { $_.name }) -join ', '
+        Write-HarnessErrorVerdictAndExit -Reason "-WorkerEnv was requested but could not be confirmed after the service restart for: $failedNames (control_plane_process_found=$([bool]$cpProc)) -- never an 'unverified' PASS/FAIL for entries the operator explicitly asked to test"
+    }
 }
 
 # --------------------------------------------------------------------------
@@ -1643,6 +2028,10 @@ Write-PhaseMarker -Name 'SOAK-START.json' -Obj ([ordered]@{
     captions_off_verified = $summary.captions_off_verified
     # sandbox-lab lane follow-up A, item 3: guest-level, recorded once.
     cpu_count = [Environment]::ProcessorCount
+    # sandbox-lab lane follow-up D.
+    worker_env_requested = $summary.worker_env_requested
+    worker_env_verified  = $summary.worker_env_verified
+    gst_debug_file       = $summary.gst_debug_file
 })
 $script:soakStartWritten = $true
 Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
@@ -2698,6 +3087,10 @@ $verdict = [ordered]@{
     )
     reload_armed_channels               = @($script:reloadArmedChannels.Keys)
     reload_armed_never_committed_channels = $reloadArmedNeverCommittedChannels
+    # sandbox-lab lane follow-up D.
+    worker_env_requested = $summary.worker_env_requested
+    worker_env_verified  = $summary.worker_env_verified
+    gst_debug_file       = $summary.gst_debug_file
 }
 # N8: copy station logs BEFORE writing the verdict, not after -- the fail
 # path (Write-FailVerdictAndExit) already had this order right; the success

@@ -84,6 +84,97 @@ $r4 = Wait-ForVerdictAfterBackstopMarker `
 Assert-Equal 'scenario4 (custom grace/poll) -> waited_seconds=20' 20 $r4.waited_seconds
 Assert-Equal 'scenario4 (custom grace/poll) -> verdict_arrived=False' 'False' "$($r4.verdict_arrived)"
 
+# ======================================================= Wait-ForVerdictWithGrace
+# Round-4 review finding 4/5: this wrapper is the ONE shared helper
+# Run-SandboxSoak.ps1's three pre-'running' phases (installing,
+# awaiting-health, awaiting-soak-start) all now call -- extracted here
+# (rather than left inline in Run-SandboxSoak.ps1, which has top-level
+# side-effecting code and so cannot itself be dot-sourced by a test) so
+# THIS wiring is directly unit-testable too, not just the underlying
+# Wait-ForVerdictAfterBackstopMarker it wraps.
+
+# scenario 5: verdict already present -- verdict_arrived=$true, and
+# -LogSuccess IS called (the wrapper's whole point is to surface a
+# human-readable "grace saved this run from a premature stall" message).
+$script:s5LogCalls = @()
+$r5 = Wait-ForVerdictWithGrace `
+    -VerdictTxtPath 'C:\fake\VERDICT.txt' `
+    -PhaseDescription 'installer bound exceeded' `
+    -TestVerdictPathExists { param($p) $true } `
+    -LogSuccess { param($m) $script:s5LogCalls += $m } `
+    -SleepSeconds { param($s) }
+Assert-Equal 'scenario5 (Wait-ForVerdictWithGrace, verdict present) -> verdict_arrived=True' 'True' "$($r5.verdict_arrived)"
+Assert-Equal 'scenario5 -LogSuccess called exactly once' 1 $script:s5LogCalls.Count
+Assert-Equal 'scenario5 logged message includes the -PhaseDescription' 'True' "$($script:s5LogCalls[0] -match [regex]::Escape('installer bound exceeded'))"
+
+# scenario 6: verdict never arrives within the grace window --
+# verdict_arrived=$false, and -LogSuccess is NEVER called (nothing to
+# report -- the caller falls through to its own stall/quiet-share exit).
+$script:s6LogCalls = @()
+$r6 = Wait-ForVerdictWithGrace `
+    -VerdictTxtPath 'C:\fake\VERDICT.txt' `
+    -PhaseDescription 'station-healthy bound exceeded' `
+    -TestVerdictPathExists { param($p) $false } `
+    -LogSuccess { param($m) $script:s6LogCalls += $m } `
+    -SleepSeconds { param($s) } `
+    -GraceSeconds 10 -PollIntervalSeconds 5
+Assert-Equal 'scenario6 (Wait-ForVerdictWithGrace, verdict never arrives) -> verdict_arrived=False' 'False' "$($r6.verdict_arrived)"
+Assert-Equal 'scenario6 -LogSuccess is never called when the grace window is exhausted' 0 $script:s6LogCalls.Count
+Assert-Equal 'scenario6 waited_seconds honors the custom -GraceSeconds (10)' 10 $r6.waited_seconds
+
+# scenario 7: -VerdictTxtPath is actually threaded through to the
+# -TestVerdictPathExists closure's own argument (not silently dropped) --
+# the fake closure only returns $true for the EXACT path passed in.
+$script:s7ReceivedPath = $null
+$r7 = Wait-ForVerdictWithGrace `
+    -VerdictTxtPath 'C:\fake\a-specific-run\VERDICT.txt' `
+    -PhaseDescription 'x' `
+    -TestVerdictPathExists { param($p) $script:s7ReceivedPath = $p; $p -eq 'C:\fake\a-specific-run\VERDICT.txt' } `
+    -LogSuccess { param($m) } `
+    -SleepSeconds { param($s) }
+Assert-Equal 'scenario7 -VerdictTxtPath reaches the TestVerdictPathExists closure unmodified' 'C:\fake\a-specific-run\VERDICT.txt' $script:s7ReceivedPath
+Assert-Equal 'scenario7 (matching path) -> verdict_arrived=True' 'True' "$($r7.verdict_arrived)"
+
+# scenario 8 (round-5 review finding 8): NAMED regression guard for the
+# parameter-name-collision infinite-recursion bug this function's own
+# implementation hit while it was first being wired up (see
+# Wait-ForVerdictWithGrace's own header/inline comment). The bug: a
+# wrapping scriptblock that referenced `$TestVerdictPathExists` directly
+# -- the SAME name as Wait-ForVerdictAfterBackstopMarker's own parameter
+# -- recursed into itself under PowerShell's dynamic (not lexical)
+# scriptblock variable resolution, because by the time that scriptblock
+# actually RUNS (inside Wait-ForVerdictAfterBackstopMarker's own function
+# body), the name `$TestVerdictPathExists` resolves to THAT function's own
+# same-named parameter -- which, by then, IS the very scriptblock trying
+# to run, so invoking it calls itself, forever ("call depth overflow" was
+# the observed failure). This test passes a -TestVerdictPathExists
+# scriptblock whose OWN BODY deliberately references a variable literally
+# named `$TestVerdictPathExists` (shadowing-by-name, the exact collision
+# shape that broke this the first time) and confirms the CALL STILL
+# TERMINATES normally instead of recursing -- proving
+# Wait-ForVerdictWithGrace's own internal rename (capturing the injected
+# closure into a differently-named local variable before wrapping it) is
+# what actually prevents the collision, regardless of what name a CALLER
+# happens to use for its own variables.
+$script:s8CallCount = 0
+$r8 = Wait-ForVerdictWithGrace `
+    -VerdictTxtPath 'C:\fake\collision-test\VERDICT.txt' `
+    -PhaseDescription 'collision regression guard' `
+    -TestVerdictPathExists {
+        param($p)
+        # This scriptblock's OWN body names a variable
+        # $TestVerdictPathExists -- deliberately shadowing the name of
+        # Wait-ForVerdictAfterBackstopMarker's own parameter, the exact
+        # collision shape that caused the original infinite recursion.
+        $TestVerdictPathExists = 'deliberately shadowing the collision name'
+        $script:s8CallCount++
+        $script:s8CallCount -ge 1
+    } `
+    -LogSuccess { param($m) } `
+    -SleepSeconds { param($s) }
+Assert-Equal 'scenario8 (parameter-name-collision regression guard) call terminates normally, does not recurse' 'True' "$($r8.verdict_arrived)"
+Assert-Equal 'scenario8 the (potentially colliding) closure was invoked exactly once, not recursively' 1 $script:s8CallCount
+
 Write-Host ""
 Write-Host "BackstopMarkerGrace unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })
 if ($script:failures -gt 0) { exit 1 }
