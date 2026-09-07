@@ -27,12 +27,19 @@ function Get-ByteSizeLabel {
       4096-byte floor -- so in practice this function only ever needs to
       render 4 KB and up.
 
+      Round-7 review finding 4: rounding is explicitly
+      [MidpointRounding]::AwayFromZero (never .NET's own default,
+      ToEven/"banker's rounding", which would round some exact .5 KB/MB
+      boundaries DOWN instead of up) -- pinned by
+      Test-GstDebugTail.ps1's own byte-size-label table, including the
+      1048575-byte (1 MB minus 1 byte) boundary case.
+
       .OUTPUTS
       [string] -- e.g. "200MB", "512KB". No space (filename-safe).
     #>
     param([long]$Bytes)
-    if ($Bytes -ge 1MB) { return "$([math]::Round($Bytes / 1MB, 0))MB" }
-    return "$([math]::Round($Bytes / 1KB, 0))KB"
+    if ($Bytes -ge 1MB) { return "$([Math]::Round($Bytes / 1MB, 0, [MidpointRounding]::AwayFromZero))MB" }
+    return "$([Math]::Round($Bytes / 1KB, 0, [MidpointRounding]::AwayFromZero))KB"
 }
 
 function Get-GstDebugEffectiveMaxBytes {
@@ -99,33 +106,56 @@ function Copy-GstDebugTail {
       when nothing was dropped, which is actively misleading for the
       common case where GST_DEBUG never grew past the bound at all).
 
-      Round-6 review finding 1 (HIGH): the "whole copy" path -- taken
-      whenever the source's length AT OPEN TIME was already <= -MaxBytes
-      -- used to read straight to EOF with NO bound of its own, on the
-      theory that "it was already under the bound, so it can't need
-      truncating". That theory is false for a file still being actively
-      written: the source can keep GROWING for the entire duration of
-      this copy (this is, after all, the whole reason Copy-GstDebugTail
-      exists), so a file that was 100 MB when opened but grows to
-      1119 MB while a 120 MB bound copy is running got ALL 1119 MB copied
-      -- MEASURED directly. Fixed by giving this path the SAME counted
-      read loop the already-truncated path has always had, bounded to
-      -MaxBytes: if real EOF is reached before the bound, this genuinely
-      was untruncated (the common, cheap case -- no banner, no rename, as
-      above). If the bound is hit WITHOUT reaching EOF (confirmed via one
-      extra 1-byte probe read past the bound, so an exact source length of
-      precisely -MaxBytes is never mistaken for "still growing"), the
-      source grew past the bound mid-copy -- the tentative whole-file
-      output (already written, unbannered) is discarded, and a TRUNCATED
-      result is built instead: a banner (honestly describing this as the
-      FIRST -MaxBytes-worth of the file, not the last -- this path never
-      had the chance to seek to a true tail, since it did not know
-      truncation would be needed until the copy was already under way)
-      plus that same already-read content, trimmed to fit the banner's own
-      length. This keeps the promise that -MaxBytes really is a hard
-      ceiling on what this function ever writes, and lets a caller's
-      budget accounting (In-Sandbox-Soak.ps1's own periodic/non-periodic
-      caps) stay true regardless of which path is taken.
+      Round-7 review finding 1 (HIGH) REPLACED round-6's own fix for the
+      "source still growing during this copy" problem, which added a
+      counted read loop PLUS a 500 ms wall-clock grace window on every
+      zero-byte read (to tolerate a live writer's own buffered-flush
+      cadence). That grace window RESET on every successful read, so a
+      source trickling in at even 1 byte per 200 ms could keep a single
+      Copy-GstDebugTail call open indefinitely -- and because
+      Copy-StationLogs (and therefore this function) runs SYNCHRONOUSLY
+      inside In-Sandbox-Soak.ps1's own poll loop, a copy that never
+      returns starves the host's 6-minute rollup-stall bound into firing
+      a FALSE STALL on an otherwise healthy run.
+
+      THE FIX: no more grace window, no more "wait and see if more data
+      shows up" at all. This function now takes a single, one-time
+      SNAPSHOT of the source's length the moment it opens the file
+      (`$srcStream.Length`, read exactly once) and commits to that
+      snapshot for the whole call: it copies exactly
+      `min(snapshot length, -MaxBytes)` bytes, starting at
+      `max(0, snapshot length - MaxBytes)`, and nothing written to the
+      source AFTER that snapshot is captured by this call at all --
+      stated here plainly, since it is the contract every caller and
+      every test now relies on. A source that keeps growing after the
+      snapshot cannot make this function copy any more than -MaxBytes,
+      and cannot make it run any longer than reading that fixed, known
+      amount takes -- there is no more open-ended "is there more coming"
+      question for this function to answer at all. The NEXT checkpoint
+      (a fresh call, a fresh snapshot) picks up whatever grew in the
+      meantime, exactly the same way every OTHER piece of evidence this
+      lane captures is a point-in-time snapshot, not a live tail.
+
+      A SEPARATE, purely defensive -WholeCopyDeadlineSeconds bounds the
+      read loop's own wall-clock duration (default 30 s -- generous for
+      even a 200 MB read against a healthy local disk, trivial next to
+      the 6-minute rollup-stall bound this exists to protect): if the
+      loop has not finished copying the snapshot-determined amount by
+      that deadline (a slow/contended disk, not a growing source -- the
+      snapshot already fixed how much there is to read), it stops where
+      it is and the result is marked BOTH .truncated and .partial, with
+      the destination renamed to "<name>.partial" so an incomplete
+      capture is never mistaken for a complete one at its otherwise-
+      legitimate filename (round-7 finding 7's own "never leave an
+      unbannered partial at the legitimate name" principle, applied here
+      too). This deadline is a safety net for a genuinely slow disk, not
+      a mechanism this lane's own tests need to routinely exercise -- the
+      snapshot rule alone is what makes an ordinary copy (of either kind)
+      finish in the time a plain sequential read of a bounded, already-
+      known amount of data actually takes: a static/no-growth copy costs
+      0 ms of extra waiting (round-7 finding 2), never the 500 ms this
+      function's OWN round-6 iteration used to spend even when nothing
+      was wrong at all.
 
       Round-3 review findings 1-2 (still in force): opens with
       FileShare.ReadWrite, not FileShare.Read ([System.IO.File]::OpenRead's
@@ -134,18 +164,14 @@ function Copy-GstDebugTail {
       process" (measured directly against a file held open for write by a
       separate process; Copy-Item on the identical file succeeds, because
       it goes through a different Win32 CopyFile path that tolerates this
-      share mode). When truncation IS needed via the "already over the
-      bound at open time" path, the bound is enforced on the READ LOOP
-      itself -- exactly -MaxBytes bytes are read and written, counted down
-      per chunk, regardless of how large the source grows during the copy.
+      share mode).
 
-      Round-4 review finding 3 (still in force): when truncating via that
-      same "already over the bound at open time" path, the OUTPUT FILE
-      (banner + content), not just the content, is bounded to AT MOST
-      -MaxBytes total. The banner's length is computed FIRST and
+      Round-4 review finding 3 (still in force): when truncating, the
+      OUTPUT FILE (banner + content), not just the content, is bounded to
+      AT MOST -MaxBytes total. The banner's length is computed FIRST and
       subtracted from the content budget before the read position is even
-      chosen, so the retained content still ends at the source's true (as
-      of copy time) end-of-file.
+      chosen, so the retained content still ends at the snapshot's own
+      true end-of-file.
 
       Round-5 review finding 4: -MaxBytes below the banner's own length
       would make even an EMPTY content budget exceed the bound (measured:
@@ -162,176 +188,109 @@ function Copy-GstDebugTail {
       from. May still be open for write by another process.
 
       .PARAMETER DestPathWhole
-      Where to write an UNTRUNCATED copy (source never exceeded -MaxBytes
-      for the whole duration of this copy) -- a plain, verbatim copy, no
-      banner, no rename. Also used as a TEMPORARY scratch file when the
-      source turns out to grow past the bound mid-copy (round-6 finding
-      1) -- deleted once the truncated conversion below completes.
+      Where to write an UNTRUNCATED copy (the snapshot length was already
+      <= -MaxBytes) -- a plain, verbatim copy, no banner, no rename
+      (unless the wall-clock deadline fires mid-copy, in which case it is
+      renamed to "<DestPathWhole>.partial" instead).
 
       .PARAMETER DestPathTruncated
-      Where to write a TRUNCATED copy -- either because the source already
-      exceeded -MaxBytes when this function opened it, or because it grew
-      past -MaxBytes while this copy was running. Only one of
-      -DestPathWhole/-DestPathTruncated is ever left behind when this
-      function returns; which one is reported back in the returned
-      object's .dest_path.
+      Where to write a TRUNCATED copy (the snapshot length exceeded
+      -MaxBytes). Only one of -DestPathWhole/-DestPathTruncated is ever
+      left behind when this function returns; which one (or its
+      ".partial"-suffixed form) is reported back in the returned object's
+      .dest_path.
 
       .PARAMETER MaxBytes
       The bound (200 MB in production, or a smaller per-run-cap-derived
       residual -- see In-Sandbox-Soak.ps1) on the TOTAL output file
-      (banner + content, whichever path is taken). Must be at least 4096
-      bytes.
+      (banner + content, when truncated). Must be at least 4096 bytes.
+
+      .PARAMETER WholeCopyDeadlineSeconds
+      Wall-clock ceiling on the read loop itself, default 30. Purely
+      defensive (a slow/contended disk) -- the snapshot rule already
+      bounds how much there is to read; this bounds how long reading it
+      is allowed to take.
 
       .OUTPUTS
-      [pscustomobject] @{ truncated; dest_path; bytes_written }
+      [pscustomobject] @{ truncated; partial; dest_path; bytes_written }
     #>
     param(
         [string]$SourcePath,
         [string]$DestPathWhole,
         [string]$DestPathTruncated,
         [ValidateRange(4096, [long]::MaxValue)]
-        [long]$MaxBytes
+        [long]$MaxBytes,
+        [int]$WholeCopyDeadlineSeconds = 30
     )
     $srcStream = [System.IO.File]::Open($SourcePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
     try {
-        $currentLength = $srcStream.Length
+        # Round-7 review finding 1: ONE-TIME SNAPSHOT. Never re-queried.
+        # Anything the source gains after this line is simply not part of
+        # this call's world -- see this function's own header for why that
+        # is the deliberate contract, not an oversight.
+        $snapshotLength = $srcStream.Length
+        $truncated = ($snapshotLength -gt $MaxBytes)
 
-        if ($currentLength -gt $MaxBytes) {
-            # Already over the bound at open time -- the ORIGINAL
-            # truncated path (round-3/round-4/round-5 fixes, all still in
-            # force). Seek straight to the correct tail-start position and
-            # stream a bounded, bannered copy.
-            $banner = "# sandbox-lab TRUNCATED: kept at most the LAST $(Get-ByteSizeLabel -Bytes $MaxBytes) of this file (it was $(Get-ByteSizeLabel -Bytes $currentLength) when listed for copy -- it may have grown further since); earlier content was dropped, not the whole file.`r`n"
+        if ($truncated) {
+            $banner = "# sandbox-lab TRUNCATED: kept at most the LAST $(Get-ByteSizeLabel -Bytes $MaxBytes) of this file (it was $(Get-ByteSizeLabel -Bytes $snapshotLength) at the moment this copy started; anything written after that snapshot was not captured -- see the next checkpoint for that).`r`n"
             $bannerBytes = [System.Text.Encoding]::ASCII.GetBytes($banner)
             $contentBudget = [Math]::Max(0, $MaxBytes - $bannerBytes.Length)
-            $startPos = [Math]::Max(0, $currentLength - $contentBudget)
-            $null = $srcStream.Seek($startPos, [System.IO.SeekOrigin]::Begin)
-            $destStream = [System.IO.File]::Create($DestPathTruncated)
-            try {
-                $destStream.Write($bannerBytes, 0, $bannerBytes.Length)
-                $bufferSize = [Math]::Min([int64]1MB, [Math]::Max([int64]1, $contentBudget))
-                $buffer = New-Object byte[] ([int]$bufferSize)
-                $remaining = $contentBudget
-                while ($remaining -gt 0) {
-                    $toRead = [int]([Math]::Min($bufferSize, $remaining))
-                    $read = $srcStream.Read($buffer, 0, $toRead)
-                    if ($read -le 0) { break }
-                    $destStream.Write($buffer, 0, $read)
-                    $remaining -= $read
-                }
-            } finally { $destStream.Dispose() }
-            return [pscustomobject]@{
-                truncated = $true
-                dest_path = $DestPathTruncated
-                bytes_written = (Get-Item -LiteralPath $DestPathTruncated).Length
-            }
+            $startPos = [Math]::Max(0, $snapshotLength - $contentBudget)
+            $destPath = $DestPathTruncated
+        } else {
+            $bannerBytes = [byte[]]@()
+            $contentBudget = $snapshotLength
+            $startPos = 0
+            $destPath = $DestPathWhole
         }
+        $null = $srcStream.Seek($startPos, [System.IO.SeekOrigin]::Begin)
 
-        # Round-6 review finding 1: TENTATIVELY under the bound at open
-        # time -- but this copy can take a while, and the source may keep
-        # growing for its entire duration. Stream with a COUNTED loop
-        # bounded to -MaxBytes (never "read to EOF, however far away that
-        # turns out to be"), then decide which outcome actually happened.
-        $destStream = [System.IO.File]::Create($DestPathWhole)
-        $totalWritten = [int64]0
-        $hitBoundWithoutEof = $false
+        $destStream = [System.IO.File]::Create($destPath)
+        $partial = $false
         try {
-            $bufferSize = [Math]::Min([int64]1MB, [Math]::Max([int64]1, $MaxBytes))
+            if ($truncated) { $destStream.Write($bannerBytes, 0, $bannerBytes.Length) }
+            $bufferSize = [Math]::Min([int64]1MB, [Math]::Max([int64]1, $contentBudget))
             $buffer = New-Object byte[] ([int]$bufferSize)
-            $remaining = $MaxBytes
-            # Round-6 review finding 1's own regression test exposed a
-            # second, subtler half of this same bug: a plain
-            # zero-bytes-read-means-EOF loop gives up the INSTANT it
-            # catches up to whatever the writer has produced SO FAR, even
-            # though the writer is still actively appending -- for a local
-            # file, Read() returning 0 is not "closed"/"error", it is
-            # simply "nothing past the current position RIGHT NOW", and a
-            # live GStreamer worker's own write cadence (buffered flushes,
-            # not a continuous byte stream) means this reader can easily
-            # win that race and wrongly conclude "done" while there is
-            # more still coming. A short, BOUNDED grace window on a
-            # zero-byte read (wall-clock deadline, not a fixed retry
-            # count -- more forgiving of a loaded/slow box, where a fixed
-            # small number of fixed-length sleeps could still run out
-            # before a genuinely-still-writing source produces its next
-            # chunk) gives a still-writing source a fair chance to catch
-            # up before this loop commits to "that was a genuine end of
-            # file". Bounded to 500 ms per gap (reset the instant real
-            # data resumes) -- trivial next to this function's real
-            # calling cadence (a checkpoint every ~3 minutes), so this can
-            # never turn into the kind of unbounded wait the -MaxBytes cap
-            # itself exists to prevent.
-            $zeroReadGraceDeadline = $null
-            $zeroReadGraceMs = 500
+            $remaining = $contentBudget
+            # Round-7 finding 1's purely defensive wall-clock ceiling --
+            # see this function's own header. Not a growth-detection
+            # mechanism (the snapshot already settled that question); only
+            # a genuinely slow/contended disk should ever trip this.
+            $deadline = (Get-Date).AddSeconds($WholeCopyDeadlineSeconds)
             while ($remaining -gt 0) {
+                if ((Get-Date) -ge $deadline) { $partial = $true; break }
                 $toRead = [int]([Math]::Min($bufferSize, $remaining))
                 $read = $srcStream.Read($buffer, 0, $toRead)
-                if ($read -le 0) {
-                    if (-not $zeroReadGraceDeadline) { $zeroReadGraceDeadline = (Get-Date).AddMilliseconds($zeroReadGraceMs) }
-                    if ((Get-Date) -ge $zeroReadGraceDeadline) { break }
-                    Start-Sleep -Milliseconds 20
-                    continue
-                }
-                $zeroReadGraceDeadline = $null
+                if ($read -le 0) { break }
                 $destStream.Write($buffer, 0, $read)
-                $totalWritten += $read
                 $remaining -= $read
-            }
-            if ($remaining -le 0) {
-                # Wrote exactly -MaxBytes bytes without the read loop ever
-                # seeing a natural end-of-file. This is ambiguous on its
-                # own -- the source could be EXACTLY -MaxBytes bytes long
-                # (genuinely whole, coincidentally landing right on the
-                # bound) -- so resolve it with one more real read: if
-                # there is truly nothing left, this 1-byte probe returns 0
-                # (untruncated after all); if it returns data, the source
-                # has already grown past what this loop just wrote (or was
-                # always longer and this loop simply hadn't reached the
-                # end yet), and this copy must be treated as truncated.
-                $probe = New-Object byte[] 1
-                if ($srcStream.Read($probe, 0, 1) -gt 0) { $hitBoundWithoutEof = $true }
             }
         } finally { $destStream.Dispose() }
 
-        if (-not $hitBoundWithoutEof) {
-            return [pscustomobject]@{
-                truncated = $false
-                dest_path = $DestPathWhole
-                bytes_written = $totalWritten
+        $finalPath = $destPath
+        if ($partial) {
+            # Round-7 finding 7's principle applied here too: an
+            # incomplete capture must never sit at the same filename a
+            # complete one would use. Best-effort rename; if it fails for
+            # some reason, the file stays at its original (still
+            # accurate-to-what-was-written, just unrenamed) path and
+            # .partial in the returned object still tells the caller the
+            # truth.
+            $partialPath = "$destPath.partial"
+            try {
+                Move-Item -LiteralPath $destPath -Destination $partialPath -Force -ErrorAction Stop
+                $finalPath = $partialPath
+            } catch {
+                # Left at $destPath -- .partial=$true in the result is
+                # still authoritative regardless of whether the rename
+                # itself succeeded.
             }
         }
-
-        # The source grew past -MaxBytes while this copy was running.
-        # Convert the tentative whole-file scratch copy into a truncated
-        # result: a banner (honestly describing this as the FIRST
-        # -MaxBytes-worth, not the last -- there was no way to know in
-        # advance that a tail-seek would be needed) plus that already-read
-        # content, trimmed to fit within -MaxBytes alongside the banner.
-        $banner = "# sandbox-lab TRUNCATED: kept the FIRST $(Get-ByteSizeLabel -Bytes $MaxBytes) of this file (it exceeded that bound WHILE this copy was running -- it was under $(Get-ByteSizeLabel -Bytes $MaxBytes) when this copy started, so this is a from-the-start capture, not the file's tail); later content was dropped.`r`n"
-        $bannerBytes = [System.Text.Encoding]::ASCII.GetBytes($banner)
-        $contentBudget = [Math]::Max(0, $MaxBytes - $bannerBytes.Length)
-        $truncStream = [System.IO.File]::Create($DestPathTruncated)
-        try {
-            $truncStream.Write($bannerBytes, 0, $bannerBytes.Length)
-            $wholeReadStream = [System.IO.File]::OpenRead($DestPathWhole)
-            try {
-                $bufferSize2 = [Math]::Min([int64]1MB, [Math]::Max([int64]1, $contentBudget))
-                $buffer2 = New-Object byte[] ([int]$bufferSize2)
-                $remaining2 = $contentBudget
-                while ($remaining2 -gt 0) {
-                    $toRead2 = [int]([Math]::Min($bufferSize2, $remaining2))
-                    $read2 = $wholeReadStream.Read($buffer2, 0, $toRead2)
-                    if ($read2 -le 0) { break }
-                    $truncStream.Write($buffer2, 0, $read2)
-                    $remaining2 -= $read2
-                }
-            } finally { $wholeReadStream.Dispose() }
-        } finally { $truncStream.Dispose() }
-        Remove-Item -LiteralPath $DestPathWhole -Force -ErrorAction SilentlyContinue
         return [pscustomobject]@{
-            truncated = $true
-            dest_path = $DestPathTruncated
-            bytes_written = (Get-Item -LiteralPath $DestPathTruncated).Length
+            truncated = ($truncated -or $partial)
+            partial = $partial
+            dest_path = $finalPath
+            bytes_written = (Get-Item -LiteralPath $finalPath).Length
         }
     } finally { $srcStream.Dispose() }
 }

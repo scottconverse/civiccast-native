@@ -612,11 +612,27 @@ if (-not (Test-Path $donePath)) {
 # CaptionsOffCheck.ps1/WorkerStdoutParser.ps1/CpuSampler.ps1/WorkerEnv.ps1)
 # so it is unit-testable (Test-GstDebugTail.ps1) against real temp files/
 # streams -- including a file held open for write by another process and
-# a file that grows mid-copy -- instead of only ever being exercised
-# inside a live sandbox soak. See that file's own header for the
-# live-open-file share-mode fix, the growing-file bound fix, and the
-# banner/naming fix.
+# a file that is still growing when this copy STARTS -- instead of only
+# ever being exercised inside a live sandbox soak. See that file's own
+# header for the live-open-file share-mode fix, the one-time-snapshot
+# contract (round-7 review finding 1 -- content written to the source
+# AFTER the snapshot is deliberately not captured by this call; the next
+# checkpoint's own fresh snapshot picks it up), and the banner/naming fix.
 . (Join-Path 'C:\CivicCastSoakScripts' 'GstDebugTail.ps1')
+
+function Format-MBPrecise {
+    <#
+      .SYNOPSIS
+      Round-7 review finding 5: the gst-debug capture NOTE lines (a human-
+      read evidence trail, not a filename) keep 2-decimal-place MB
+      precision for bytes_written/effective-bound/budget-so-far --
+      Get-ByteSizeLabel's own coarse, filename-safe rounding (whole
+      MB/KB, no decimals) stays reserved for the ".tailNNN(kb|mb)"
+      filename suffix alone, where brevity matters more than precision.
+    #>
+    param([long]$Bytes)
+    return "$([math]::Round($Bytes / 1MB, 2)) MB"
+}
 
 function Copy-StationLogs {
     <#
@@ -797,10 +813,11 @@ function Copy-StationLogs {
     # and this evidence capture must never itself become the thing that
     # stalls a checkpoint OR flood the host with gigabytes of shipped
     # evidence -- see Get-GstDebugCaptureDecision (GstDebugTail.ps1,
-    # round-4/round-5 review findings) for the gating/split-budget rules
-    # applied just below, and Copy-GstDebugTail's own header for the
-    # tail-copy mechanics (live-open-file share mode, growing-file bound,
-    # banner-only-when-truncated).
+    # round-4/round-5/round-6 review findings) for the gating/split-budget
+    # rules applied just below, and Copy-GstDebugTail's own header for the
+    # tail-copy mechanics (live-open-file share mode, the one-time-snapshot
+    # contract, banner-only-when-truncated, and the wall-clock
+    # -WholeCopyDeadlineSeconds safety net -- round-7 review finding 1).
     $gstDebugDst = Join-Path $dst 'gst-debug'
     $gstDebugNote = Join-Path $dst 'gst-debug-note.txt'
     if (-not $script:GstDebugFilePath) {
@@ -819,7 +836,7 @@ function Copy-StationLogs {
             -NonPeriodicCapBytes $GstDebugNonPeriodicCapBytes
 
         if (-not $captureDecision.should_capture) {
-            "SKIPPED for label '$Label': $($captureDecision.reason) (periodic so far: $(Get-ByteSizeLabel -Bytes $script:GstDebugPeriodicBytesCopied) of a $(Get-ByteSizeLabel -Bytes $GstDebugPeriodicCapBytes) cap; non-periodic so far: $(Get-ByteSizeLabel -Bytes $script:GstDebugNonPeriodicBytesCopied) of a $(Get-ByteSizeLabel -Bytes $GstDebugNonPeriodicCapBytes) reserve)" | Set-Content -Path $gstDebugNote -Encoding UTF8
+            "SKIPPED for label '$Label': $($captureDecision.reason) (periodic so far: $(Format-MBPrecise -Bytes $script:GstDebugPeriodicBytesCopied) of a $(Format-MBPrecise -Bytes $GstDebugPeriodicCapBytes) cap; non-periodic so far: $(Format-MBPrecise -Bytes $script:GstDebugNonPeriodicBytesCopied) of a $(Format-MBPrecise -Bytes $GstDebugNonPeriodicCapBytes) reserve)" | Set-Content -Path $gstDebugNote -Encoding UTF8
         } else {
             # Round-6 review finding 6: a SINGLE checkpoint can have
             # MULTIPLE candidate files (the primary GST_DEBUG_FILE plus
@@ -933,7 +950,15 @@ function Copy-StationLogs {
                             if ($isPeriodicCheckpoint) { $script:GstDebugPeriodicBytesCopied += $copyResult.bytes_written } else { $script:GstDebugNonPeriodicBytesCopied += $copyResult.bytes_written }
                             $perCheckpointBytesCopied += $copyResult.bytes_written
                             $destLeaf = Split-Path -Leaf $copyResult.dest_path
-                            $gstDebugNoteLines += "$($f.Name) -> $destLeaf ($(if ($copyResult.truncated) { 'TRUNCATED' } else { 'whole file, untruncated' })): wrote $(Get-ByteSizeLabel -Bytes $copyResult.bytes_written) (this copy's effective bound $(Get-ByteSizeLabel -Bytes $effectiveMaxBytes); directory-entry size at listing time was $(Get-ByteSizeLabel -Bytes $f.Length) -- may be stale for a live-open/growing file, never trusted for the copy bound itself). $(if ($isPeriodicCheckpoint) { 'Periodic' } else { 'Non-periodic' }) budget used so far: $(Get-ByteSizeLabel -Bytes $(if ($isPeriodicCheckpoint) { $script:GstDebugPeriodicBytesCopied } else { $script:GstDebugNonPeriodicBytesCopied })) of $(Get-ByteSizeLabel -Bytes $capForThisKind); this checkpoint's own total so far: $(Get-ByteSizeLabel -Bytes $perCheckpointBytesCopied) of $(Get-ByteSizeLabel -Bytes $GstDebugPerCheckpointCapBytes)"
+                            # Round-7 review finding 5: bytes_written, this
+                            # copy's effective bound, and the running
+                            # budget totals keep 2-decimal-MB PRECISION
+                            # here (Format-MBPrecise) -- Get-ByteSizeLabel's
+                            # own coarse, whole-number rounding stays
+                            # reserved for the filename suffix above, where
+                            # brevity (not precision) is what matters.
+                            $statusWord = if ($copyResult.partial) { 'PARTIAL (wall-clock deadline hit mid-copy)' } elseif ($copyResult.truncated) { 'TRUNCATED' } else { 'whole file, untruncated' }
+                            $gstDebugNoteLines += "$($f.Name) -> $destLeaf ($statusWord): wrote $(Format-MBPrecise -Bytes $copyResult.bytes_written) (this copy's effective bound $(Format-MBPrecise -Bytes $effectiveMaxBytes); directory-entry size at listing time was $(Format-MBPrecise -Bytes $f.Length) -- Copy-GstDebugTail takes its OWN snapshot of the live length at open time and never trusts this cached directory-entry value for the copy bound itself). $(if ($isPeriodicCheckpoint) { 'Periodic' } else { 'Non-periodic' }) budget used so far: $(Format-MBPrecise -Bytes $(if ($isPeriodicCheckpoint) { $script:GstDebugPeriodicBytesCopied } else { $script:GstDebugNonPeriodicBytesCopied })) of $(Format-MBPrecise -Bytes $capForThisKind); this checkpoint's own total so far: $(Format-MBPrecise -Bytes $perCheckpointBytesCopied) of $(Format-MBPrecise -Bytes $GstDebugPerCheckpointCapBytes)"
                         } catch {
                             # Round-6 review finding 5: a mid-copy throw
                             # (e.g. a disk-full or sharing-violation error

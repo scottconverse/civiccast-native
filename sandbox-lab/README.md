@@ -133,17 +133,29 @@ create intermediate directories for a log-file path itself), and
 `Copy-StationLogs` copies that file — plus any rotated/sibling files
 matching the same base name or a `*.gstdebug` extension in the same
 directory — into `logs\checkpoint-cycleN\gst-debug\` and `logs\final\
-gst-debug\`, alongside the rest of that checkpoint's evidence. A file that
-is still **within** the 200 MB per-file bound is copied **verbatim** — no
-banner, no rename — since nothing was dropped. Only a file that actually
-**exceeds** the bound is truncated: its **last** ~200 MB is kept (streamed,
-never loaded whole into memory), written under the name
-`<original-name>.tailNNNmb` (never overwriting/being confused with a
+gst-debug\`, alongside the rest of that checkpoint's evidence. Each copy
+takes a **one-time snapshot** of the source's length the moment it opens
+the file: it copies exactly `min(snapshot length, 200 MB)` bytes, and
+anything the source gains **after** that snapshot is simply not part of
+that capture — the next checkpoint's own fresh snapshot picks up whatever
+grew in the meantime, the same way every other piece of evidence this lane
+gathers is a point-in-time snapshot, not a live tail. A file whose snapshot
+length is still **within** the 200 MB per-file bound is copied
+**verbatim** — no banner, no rename — since nothing was dropped. Only a
+file whose snapshot length actually **exceeds** the bound is truncated:
+its **last** ~200 MB is kept (streamed, never loaded whole into memory),
+written under the name `<original-name>.tailNNN(kb|mb)` (the unit matches
+whatever the bound actually was — never overwriting/being confused with a
 complete copy) with a one-line banner prepended to the bytes themselves so
 a reader of the file knows content was dropped — an earlier version wrote
 that banner and rename even when nothing had been dropped at all, which
 was actively misleading for the common case where `GST_DEBUG` never grows
-past the bound.
+past the bound. A separate, purely defensive 30-second wall-clock ceiling
+on the copy itself (never a growth-detection mechanism — the snapshot
+already settles that question) guards against a genuinely slow/contended
+disk; on the rare occasion it fires, the result is marked partial and
+renamed to `<name>.partial` so an incomplete capture can never be mistaken
+for a complete one.
 
 Capture is **gated and volume-capped**, not run on every single checkpoint,
 using **two independent budgets** so one can never starve the other:
@@ -152,9 +164,15 @@ one and every **10th** thereafter, and draw only against a **400 MB**
 periodic budget; `final` (and an early-failure label like the
 ON_AIR-poll-timeout path) is always attempted and draws only against its
 own separate **200 MB** reserve — a periodic checkpoint can never exhaust
-the reserve `final` needs, and vice versa. Each per-file copy's own 200 MB
-bound is additionally clamped to whatever remains of the relevant budget,
-so the combined ceiling (400 MB + 200 MB = 600 MB per run) is a **hard**
+the reserve `final` needs, and vice versa. A THIRD, independent cap bounds
+a single checkpoint's own total across every candidate file it copies
+(the primary `GST_DEBUG_FILE` plus any rotated/`*.gstdebug` siblings) at
+**200 MB** — without it, one checkpoint with two or more large candidates
+could otherwise drain the entire 400 MB periodic budget by itself, well
+before the every-10th gate ever had a chance to space things out. Each
+per-file copy's own 200 MB bound is additionally clamped to whatever
+remains of the tightest of these three budgets, so the combined ceiling
+(400 MB + 200 MB = 600 MB per run) is a **hard**
 one, never overshoot by "one file's worth" the way a simple pre-write check
 would allow — true because the 200 MB (or smaller, clamped) per-copy bound
 is enforced with a counted read loop in **every** path Copy-GstDebugTail

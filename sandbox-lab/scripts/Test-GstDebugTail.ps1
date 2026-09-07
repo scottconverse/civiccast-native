@@ -1,15 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
 #
-# Test-GstDebugTail.ps1 -- unit/integration checks for Copy-GstDebugTail and
-# Get-GstDebugCaptureDecision (GstDebugTail.ps1, sandbox-lab lane follow-up
-# D item 2's GST_DEBUG_FILE capture). Unlike this project's other
-# Test-*.ps1 suites, the Copy-GstDebugTail scenarios DO touch the real
-# filesystem (real temp files/streams, and one real background job to
-# simulate a growing file) -- it is inherently I/O-bound (real
-# FileStreams, real sharing-violation semantics), so there is no
-# meaningful pure-function form to test instead. Everything runs under the
-# OS temp directory and is cleaned up in a try/finally.
+# Test-GstDebugTail.ps1 -- unit/integration checks for Copy-GstDebugTail,
+# Get-GstDebugCaptureDecision, Get-GstDebugEffectiveMaxBytes, and
+# Get-ByteSizeLabel (GstDebugTail.ps1, sandbox-lab lane follow-up D item
+# 2's GST_DEBUG_FILE capture). Unlike this project's other Test-*.ps1
+# suites, the Copy-GstDebugTail scenarios DO touch the real filesystem
+# (real temp files/streams, and real background jobs to simulate a
+# growing/trickling source) -- it is inherently I/O-bound (real
+# FileStreams, real sharing-violation semantics, real elapsed-time
+# behavior), so there is no meaningful pure-function form to test instead.
+# Everything runs under the OS temp directory and is cleaned up in a
+# try/finally.
 #
 # Run: pwsh -File sandbox-lab/scripts/Test-GstDebugTail.ps1
 
@@ -47,10 +49,9 @@ function Get-BannerAndContentSplit {
       bounded content (truncated case only). Locates the first CRLF and
       returns the banner text and the byte-length of everything after it
       -- used instead of predicting the banner's exact text (which embeds
-      a "currentLength" that is non-deterministic for a file that is
-      still growing while Copy-GstDebugTail reads it). Returns
-      BannerText=$null when there is no CRLF at all (the untruncated
-      case -- no banner is ever written there).
+      a snapshot length that varies test to test). Returns BannerText=$null
+      when there is no CRLF at all (the untruncated case -- no banner is
+      ever written there).
     #>
     param([byte[]]$Bytes)
     $crlfIndex = -1
@@ -65,15 +66,18 @@ function Get-BannerAndContentSplit {
     return [pscustomobject]@{ BannerText = $bannerText; ContentLength = $contentLength }
 }
 
+# Round-7 review finding 3: this test file used to maintain its OWN
+# parallel mirror of the production suffix-naming logic (a bare
+# MB-only [math]::Round), which drifted from the real
+# Get-ByteSizeLabel the moment round-6 made that function KB-aware
+# (".tail0mb" in the stale mirror vs the real ".tail4kb" production would
+# actually produce) -- silently making every test's OWN destination-path
+# prediction wrong in exactly the cases most worth testing. Fixed by
+# calling the REAL, dot-sourced production function directly; this
+# helper can never drift again because it has nothing left to drift.
 function Get-TailSuffix {
-    <#
-      Round-5 review finding 8: mirrors In-Sandbox-Soak.ps1's own dynamic
-      "-tailNNNmb" suffix derivation exactly, so tests never hardcode a
-      literal ".tail200mb" -- if the naming convention or MaxBytes value
-      changes, this helper (and every test using it) stays correct.
-    #>
     param([long]$MaxBytes)
-    return ".tail$([math]::Round($MaxBytes / 1MB, 0))mb"
+    return ".tail$((Get-ByteSizeLabel -Bytes $MaxBytes).ToLowerInvariant())"
 }
 
 $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("gstdebugtail-test-" + [guid]::NewGuid().ToString('N'))
@@ -94,7 +98,8 @@ try {
     # Win32 code path) succeeds against the identical file, which is
     # exactly what made the original bug so easy to miss. Copy-
     # GstDebugTail must succeed here (FileShare.ReadWrite). This is also
-    # the TRUNCATED case (5 MB source, 1 MB bound).
+    # the TRUNCATED case (5 MB source, 1 MB bound -- already over the
+    # bound at the moment this function takes its one-time snapshot).
     $src1 = Join-Path $tmpRoot 'live-open.log'
     [System.IO.File]::WriteAllBytes($src1, (New-Object byte[] (5MB)))
     $writer1 = [System.IO.File]::Open($src1, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
@@ -115,7 +120,8 @@ try {
         try { $result1 = Copy-GstDebugTail -SourcePath $src1 -DestPathWhole $wholeDest1 -DestPathTruncated $truncDest1 -MaxBytes $maxBytes1 } catch { $threw1 = $true; Write-Host "  (exception: $_)" }
         Assert-True 'scenario1 Copy-GstDebugTail succeeds against a live-open (Write/Read-shared) file' (-not $threw1)
         if (-not $threw1) {
-            Assert-True 'scenario1 result.truncated is True (5 MB source > 1 MB bound)' $result1.truncated
+            Assert-True 'scenario1 result.truncated is True (5 MB snapshot > 1 MB bound)' $result1.truncated
+            Assert-True 'scenario1 result.partial is False (no deadline involved)' (-not $result1.partial)
             Assert-Equal 'scenario1 result.dest_path is the TRUNCATED path' $truncDest1 $result1.dest_path
             $bytes1 = [System.IO.File]::ReadAllBytes($result1.dest_path)
             $split1 = Get-BannerAndContentSplit -Bytes $bytes1
@@ -131,23 +137,34 @@ try {
     }
 
     # ---------------------------------------------------------- scenario 2
-    # Round-3 review finding 2: the source keeps GROWING (a second process
-    # -- a real background job, not a same-thread simulation -- appends to
-    # it) for the whole duration of the copy. Regardless of how large the
-    # source grows, the copy must never keep more than EXACTLY -MaxBytes
-    # bytes of content. The OLD implementation (Length snapshotted once,
-    # then CopyTo to whatever EOF happened to be by the time it got there)
-    # would have kept MORE than MaxBytes here -- this is the regression
-    # guard for that specific defect.
-    $src2 = Join-Path $tmpRoot 'growing.log'
+    # Round-7 review finding 1 REPLACED the growth-detection mechanism
+    # entirely with a ONE-TIME SNAPSHOT contract: Copy-GstDebugTail reads
+    # the source's length exactly once, at open time, and commits to that
+    # snapshot for the whole call -- content the source gains AFTER that
+    # snapshot is simply not part of this capture. This scenario proves
+    # exactly that: the source is already over the bound at open time
+    # (truncated case, same as scenario 1), and then a REAL background job
+    # keeps appending to it for the whole duration of the copy -- the
+    # output must be determined ENTIRELY by what existed at snapshot time,
+    # completely unaffected by everything the background job adds
+    # afterward.
+    $src2 = Join-Path $tmpRoot 'growing-ignored.log'
     $maxBytes2 = 2MB
-    [System.IO.File]::WriteAllBytes($src2, (New-Object byte[] (3MB)))  # already over the bound before growth starts
-    $job = Start-Job -ScriptBlock {
+    $originalBytes2 = New-Object byte[] (3MB)  # already over the 2 MB bound at snapshot time
+    for ($i = 0; $i -lt $originalBytes2.Length; $i++) { $originalBytes2[$i] = [byte]($i % 251) }  # recognizable, non-zero pattern
+    [System.IO.File]::WriteAllBytes($src2, $originalBytes2)
+    $job2 = Start-Job -ScriptBlock {
         param($path)
         $ws = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
         try {
             $ws.Seek(0, [System.IO.SeekOrigin]::End) | Out-Null
+            # A DIFFERENT, all-0xFF pattern for everything appended AFTER
+            # the original content -- if any of THIS ever showed up in the
+            # captured output, that would prove the snapshot contract was
+            # violated (growth leaking into a call that already committed
+            # to its own earlier snapshot).
             $chunk = New-Object byte[] (256KB)
+            for ($i = 0; $i -lt $chunk.Length; $i++) { $chunk[$i] = 0xFF }
             for ($i = 0; $i -lt 40; $i++) {
                 $ws.Write($chunk, 0, $chunk.Length)
                 $ws.Flush()
@@ -156,44 +173,49 @@ try {
         } finally { $ws.Dispose() }
     } -ArgumentList $src2
     try {
-        Start-Sleep -Milliseconds 50  # let the job start actively growing the file first
-        $wholeDest2 = Join-Path $tmpRoot 'out-growing-whole.log'
-        $truncDest2 = Join-Path $tmpRoot "out-growing-trunc$(Get-TailSuffix -MaxBytes $maxBytes2)"
+        $wholeDest2 = Join-Path $tmpRoot 'out-growing-ignored-whole.log'
+        $truncDest2 = Join-Path $tmpRoot "out-growing-ignored-trunc$(Get-TailSuffix -MaxBytes $maxBytes2)"
         $result2 = Copy-GstDebugTail -SourcePath $src2 -DestPathWhole $wholeDest2 -DestPathTruncated $truncDest2 -MaxBytes $maxBytes2
-        Wait-Job $job -Timeout 30 | Out-Null
-        $jobOutput = Receive-Job $job -ErrorAction SilentlyContinue
-        $finalSrcSize = (Get-Item $src2).Length
-        Assert-True 'scenario2 sanity: the source actually grew past its starting size during the copy' ($finalSrcSize -gt 3MB) "(final size: $finalSrcSize bytes, job output: $jobOutput)"
-        Assert-True 'scenario2 result.truncated is True' $result2.truncated
+        Wait-Job $job2 -Timeout 30 | Out-Null
+        $finalSrcSize2 = (Get-Item $src2).Length
+        Assert-True 'scenario2 sanity: the source DID keep growing during/after the copy (background job kept appending)' ($finalSrcSize2 -gt $originalBytes2.Length) "(final size: $finalSrcSize2 bytes)"
+        Assert-True 'scenario2 result.truncated is True (3 MB snapshot > 2 MB bound)' $result2.truncated
+        Assert-True 'scenario2 result.partial is False (this is the SNAPSHOT contract, not a deadline hit)' (-not $result2.partial)
 
         $bytes2 = [System.IO.File]::ReadAllBytes($result2.dest_path)
         $split2 = Get-BannerAndContentSplit -Bytes $bytes2
         Assert-True 'scenario2 banner line present' ($null -ne $split2.BannerText -and $split2.BannerText -match '^# sandbox-lab TRUNCATED')
-        # Round-4 review finding 3: assert the TOTAL FILE (banner +
-        # content), never just content, against the bound -- this holds
-        # exactly regardless of the growing file's own final size or the
-        # banner's exact text length (banner-length cancels out
-        # algebraically: total = bannerLength + (MaxBytes - bannerLength)).
-        Assert-Equal 'scenario2 (growing-file bound) TOTAL FILE length == MaxBytes EXACTLY, never more, despite the source growing well past it during the copy' ([int64]$maxBytes2) $bytes2.Length
+        Assert-Equal 'scenario2 TOTAL FILE length == MaxBytes EXACTLY, determined by the ORIGINAL 3 MB snapshot alone' ([int64]$maxBytes2) $bytes2.Length
+        # THE core snapshot-contract proof: every content byte must come
+        # from the ORIGINAL (pre-growth) pattern -- none of the 0xFF bytes
+        # the background job appended afterward may appear anywhere in
+        # the captured content.
+        $anyGrowthByteLeaked = $false
+        for ($i = ($bytes2.Length - $split2.ContentLength); $i -lt $bytes2.Length; $i++) {
+            if ($bytes2[$i] -eq 0xFF) { $anyGrowthByteLeaked = $true; break }
+        }
+        Assert-True 'scenario2 NONE of the content reflects growth that happened during/after this call -- the snapshot is the whole and only truth for this capture' (-not $anyGrowthByteLeaked)
     } finally {
-        Remove-Job $job -Force -ErrorAction SilentlyContinue
+        Remove-Job $job2 -Force -ErrorAction SilentlyContinue
     }
 
     # --------------------------------------------------------- scenario 2b
-    # Round-6 review finding 1 (HIGH), the specific regression this fix
-    # exists for: the source starts SMALLER than the bound (the "whole
-    # copy" path would have been taken under the OLD, unbounded
-    # implementation) and then grows PAST the bound WHILE the copy is
-    # actively running -- not already-over-the-bound-at-open like
-    # scenario 2 above. MEASURED against the OLD code: a source under a
-    # 120 MB bound at open time that kept growing during an unbounded
-    # "read to EOF" whole-copy loop ended up with 1119 MB copied in full.
-    # The same continuous, high-rate background-job writer pattern as
-    # scenario 2 (proven reliable there) is reused here, just starting
-    # from a seed well UNDER the bound instead of over it.
+    # Round-7 review finding 1's own explicit test list, item "grow-past
+    # bounded": the source starts UNDER the bound (untruncated at snapshot
+    # time) and grows PAST the bound during/after the copy via a real
+    # background job. Under the NEW snapshot contract this must be the
+    # UNTRUNCATED case -- exactly what was on disk at the one-time
+    # snapshot, verbatim, no banner, completely unaffected by the later
+    # growth (the inverse of round-6's own now-removed
+    # detect-and-convert-to-truncated behavior, which this round replaced
+    # for the reasons in Copy-GstDebugTail's own header: that mechanism's
+    # bounded-grace-window implementation could keep a single call open
+    # indefinitely against a sufficiently slow/trickling writer).
     $src2b = Join-Path $tmpRoot 'growing-under-bound.log'
     $maxBytes2b = 2MB
-    [System.IO.File]::WriteAllBytes($src2b, (New-Object byte[] (200KB)))  # well under the 2 MB bound at open time
+    $originalBytes2b = New-Object byte[] (200KB)  # well under the 2 MB bound at snapshot time
+    for ($i = 0; $i -lt $originalBytes2b.Length; $i++) { $originalBytes2b[$i] = [byte]($i % 251) }
+    [System.IO.File]::WriteAllBytes($src2b, $originalBytes2b)
     $job2b = Start-Job -ScriptBlock {
         param($path)
         $ws = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
@@ -208,34 +230,102 @@ try {
         } finally { $ws.Dispose() }
     } -ArgumentList $src2b
     try {
-        Start-Sleep -Milliseconds 50  # let the job start actively growing the file first
         $wholeDest2b = Join-Path $tmpRoot 'out-growing-under-bound-whole.log'
         $truncDest2b = Join-Path $tmpRoot "out-growing-under-bound-trunc$(Get-TailSuffix -MaxBytes $maxBytes2b)"
         $result2b = Copy-GstDebugTail -SourcePath $src2b -DestPathWhole $wholeDest2b -DestPathTruncated $truncDest2b -MaxBytes $maxBytes2b
         Wait-Job $job2b -Timeout 30 | Out-Null
-        $jobOutput2b = Receive-Job $job2b -ErrorAction SilentlyContinue
         $finalSrcSize2b = (Get-Item $src2b).Length
-        Assert-True 'scenario2b sanity: the source actually grew past the 2 MB bound during this run (started at 200 KB)' ($finalSrcSize2b -gt $maxBytes2b) "(final size: $finalSrcSize2b bytes, job output: $jobOutput2b)"
-        # THE regression this fix targets: the tentative whole-copy path
-        # must itself be bounded and must correctly convert to a
-        # TRUNCATED result once it detects the source outgrew -MaxBytes
-        # mid-copy -- never silently copy the whole (by-then-enormous)
-        # growing file just because it looked small at open time.
-        Assert-True 'scenario2b result.truncated is True (source grew past the bound mid-copy, even though it started under it)' $result2b.truncated
-        Assert-Equal 'scenario2b result.dest_path is the TRUNCATED path' $truncDest2b $result2b.dest_path
-        Assert-True 'scenario2b the WHOLE (scratch) destination was cleaned up, not left behind' (-not (Test-Path $wholeDest2b))
+        Assert-True 'scenario2b sanity: the source DID grow past the 2 MB bound eventually (background job kept appending)' ($finalSrcSize2b -gt $maxBytes2b) "(final size: $finalSrcSize2b bytes)"
+        # THE new contract: untruncated, because the SNAPSHOT (taken at
+        # open time, before any of that growth happened) was under the
+        # bound -- regardless of what the source becomes afterward.
+        Assert-True 'scenario2b result.truncated is False (snapshot was under the bound; later growth is irrelevant to this call)' (-not $result2b.truncated)
+        Assert-True 'scenario2b result.partial is False' (-not $result2b.partial)
+        Assert-Equal 'scenario2b result.dest_path is the WHOLE path' $wholeDest2b $result2b.dest_path
+        Assert-True 'scenario2b the TRUNCATED destination was never even created' (-not (Test-Path $truncDest2b))
+        Assert-Equal 'scenario2b bytes_written == exactly the snapshot length (200 KB), not the eventual grown size' $originalBytes2b.Length $result2b.bytes_written
         $bytes2b = [System.IO.File]::ReadAllBytes($result2b.dest_path)
-        Assert-True 'scenario2b TOTAL FILE length <= MaxBytes (never exceeds the bound, unlike the old unbounded whole-copy path)' ($bytes2b.Length -le $maxBytes2b) "(file length: $($bytes2b.Length), MaxBytes: $maxBytes2b)"
-        $split2b = Get-BannerAndContentSplit -Bytes $bytes2b
-        Assert-True 'scenario2b banner line present' ($null -ne $split2b.BannerText -and $split2b.BannerText -match '^# sandbox-lab TRUNCATED')
-        # This path never had the chance to seek to a true tail (it did
-        # not know truncation would be needed until mid-copy) -- the
-        # banner must honestly say "FIRST", never "LAST", for this
-        # specific conversion case.
-        Assert-True 'scenario2b banner honestly says "FIRST" (a from-the-start capture), never "LAST" (this path never sought a true tail)' ($split2b.BannerText -match 'kept the FIRST' -and $split2b.BannerText -notmatch 'kept at most the LAST')
+        Assert-Equal 'scenario2b file length == the snapshot length exactly' $originalBytes2b.Length $bytes2b.Length
+        $matches2b = $true
+        for ($i = 0; $i -lt $originalBytes2b.Length; $i++) {
+            if ($bytes2b[$i] -ne $originalBytes2b[$i]) { $matches2b = $false; break }
+        }
+        Assert-True 'scenario2b captured content is byte-for-byte the ORIGINAL (pre-growth) snapshot content, verbatim' $matches2b
     } finally {
         Remove-Job $job2b -Force -ErrorAction SilentlyContinue
     }
+
+    # --------------------------------------------------------- scenario 2c
+    # Round-7 review finding 1's explicit test list, item "trickle writer
+    # terminates within the deadline": THE regression test for the actual
+    # bug this round fixes. Round-6's own grace-window mechanism reset on
+    # EVERY successful read, so a source trickling in even 1 byte per
+    # 200 ms could keep a single Copy-GstDebugTail call open indefinitely
+    # -- and because this function runs SYNCHRONOUSLY inside In-Sandbox-
+    # Soak.ps1's own poll loop, a call that never returns starves the
+    # host's 6-minute rollup-stall bound into firing a FALSE STALL on an
+    # otherwise healthy run. A real background job trickles 1 byte every
+    # 50 ms for 3 full seconds (60 iterations) -- comfortably longer than
+    # any reasonable single-copy budget if this function were still
+    # waiting around for it. The snapshot contract means this call should
+    # return almost immediately regardless, having captured only what
+    # existed at open time.
+    $src2c = Join-Path $tmpRoot 'trickle.log'
+    $maxBytes2c = 2MB
+    [System.IO.File]::WriteAllBytes($src2c, (New-Object byte[] (500KB)))
+    $job2c = Start-Job -ScriptBlock {
+        param($path)
+        $ws = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
+        try {
+            $ws.Seek(0, [System.IO.SeekOrigin]::End) | Out-Null
+            $one = [byte[]]@(1)
+            for ($i = 0; $i -lt 60; $i++) {
+                $ws.Write($one, 0, 1)
+                $ws.Flush()
+                Start-Sleep -Milliseconds 50
+            }
+        } finally { $ws.Dispose() }
+    } -ArgumentList $src2c
+    try {
+        Start-Sleep -Milliseconds 20  # let the trickle job actually start first
+        $wholeDest2c = Join-Path $tmpRoot 'out-trickle-whole.log'
+        $truncDest2c = Join-Path $tmpRoot "out-trickle-trunc$(Get-TailSuffix -MaxBytes $maxBytes2c)"
+        $stopwatch2c = [System.Diagnostics.Stopwatch]::StartNew()
+        $result2c = Copy-GstDebugTail -SourcePath $src2c -DestPathWhole $wholeDest2c -DestPathTruncated $truncDest2c -MaxBytes $maxBytes2c
+        $stopwatch2c.Stop()
+        # The trickle job's own full run is ~3000 ms (60 x 50 ms) -- a
+        # generous 2-second ceiling here proves this call did NOT wait
+        # around for it (measured directly: this call actually completes
+        # in well under 200 ms in practice; 2000 ms leaves comfortable
+        # headroom for a loaded CI box without weakening the regression
+        # guard's real point, which is "does not hang for seconds").
+        Assert-True 'scenario2c (trickle writer) Copy-GstDebugTail returns well within 2000 ms, proving it does not wait for a still-trickling source' ($stopwatch2c.ElapsedMilliseconds -lt 2000) "(elapsed: $($stopwatch2c.ElapsedMilliseconds) ms)"
+        Assert-True 'scenario2c result.truncated is False (500 KB snapshot < 2 MB bound)' (-not $result2c.truncated)
+        Assert-True 'scenario2c result.partial is False (returned on its own, not via the deadline)' (-not $result2c.partial)
+        Assert-Equal 'scenario2c bytes_written == exactly the snapshot length (500 KB), none of the trickle' 512000 $result2c.bytes_written
+    } finally {
+        Remove-Job $job2c -Force -ErrorAction SilentlyContinue
+    }
+
+    # --------------------------------------------------------- scenario 2d
+    # Round-7 review finding 2: with the snapshot rule, a genuine
+    # untruncated copy of a STATIC (non-growing) source costs 0 ms of
+    # extra waiting -- no more 500 ms grace window "just in case" the way
+    # round-6's own (now-removed) implementation spent even when nothing
+    # was wrong at all. MEASURED directly: a 2 MB static copy actually
+    # completes in ~50 ms in practice; asserted here against a 200 ms
+    # ceiling (comfortable headroom for a loaded box, while still failing
+    # loudly if a future change reintroduces any kind of artificial wait).
+    $src2d = Join-Path $tmpRoot 'static-timing.log'
+    [System.IO.File]::WriteAllBytes($src2d, (New-Object byte[] (2MB)))
+    $wholeDest2d = Join-Path $tmpRoot 'out-static-timing-whole.log'
+    $truncDest2d = Join-Path $tmpRoot "out-static-timing-trunc$(Get-TailSuffix -MaxBytes 200MB)"
+    $stopwatch2d = [System.Diagnostics.Stopwatch]::StartNew()
+    $result2d = Copy-GstDebugTail -SourcePath $src2d -DestPathWhole $wholeDest2d -DestPathTruncated $truncDest2d -MaxBytes 200MB
+    $stopwatch2d.Stop()
+    Assert-True 'scenario2d (static file) Copy-GstDebugTail completes in under 200 ms -- no artificial grace-window wait' ($stopwatch2d.ElapsedMilliseconds -lt 200) "(elapsed: $($stopwatch2d.ElapsedMilliseconds) ms)"
+    Assert-True 'scenario2d result.truncated is False' (-not $result2d.truncated)
+    Assert-Equal 'scenario2d bytes_written == the exact static source size' 2097152 $result2d.bytes_written
 
     # ---------------------------------------------------------- scenario 3
     # Content correctness: the kept bytes really are the TAIL of the
@@ -268,12 +358,12 @@ try {
             if ($actualTailBytes[$i] -ne $expectedTail[$i]) { $tailMatches = $false; break }
         }
     }
-    Assert-True 'scenario3 kept content is byte-for-byte the LAST (MaxBytes - banner) bytes of the source -- ends at the true EOF, not the head, not some other slice' $tailMatches
+    Assert-True 'scenario3 kept content is byte-for-byte the LAST (MaxBytes - banner) bytes of the source -- ends at the snapshot''s true end, not the head, not some other slice' $tailMatches
 
     # ---------------------------------------------------------- scenario 4
     # Round-5 review finding 2: the UNTRUNCATED case -- source is SMALLER
     # than the bound, so nothing was dropped. Must produce NO banner and
-    # NO ".tailNNNmb" rename (an earlier version always wrote both,
+    # NO ".tailNNN(kb|mb)" rename (an earlier version always wrote both,
     # actively misleading for the common case where GST_DEBUG never grew
     # past the bound at all): result.truncated is $false, result.dest_path
     # is the WHOLE path (never the truncated one, which must not even be
@@ -315,20 +405,18 @@ try {
     # UNBOUNDED Copy-Item path instead of the bounded tail-copy path. The
     # fix was to drop the size branch entirely -- Copy-GstDebugTail is now
     # called UNCONDITIONALLY and NEVER accepts or trusts a caller-supplied
-    # Length; it always re-stats via its own freshly opened stream
-    # (Copy-GstDebugTail's own $srcStream.Length, read after this test's
-    # OWN growth already happened). This regression guard reproduces the
-    # stale-FileInfo precondition directly, then proves the fix (driven
-    # only by -SourcePath, a live path, never a pre-fetched Length) still
-    # produces a correctly bounded, correctly-tailed capture.
+    # Length; it always takes its OWN one-time snapshot from its own
+    # freshly opened stream (round-7 review finding 1's own contract),
+    # never from a FileInfo any caller might have cached earlier.
     $src5 = Join-Path $tmpRoot 'stale-entry.log'
     [System.IO.File]::WriteAllBytes($src5, (New-Object byte[] (1MB)))
     $staleFileInfo = Get-ChildItem -LiteralPath $src5 -File
     $staleLengthBeforeGrowth = $staleFileInfo.Length
     # Grow the file well past the (soon to be stale) cached FileInfo's own
-    # .Length, via a SEPARATE handle -- mirrors a live GStreamer worker
-    # continuing to write after this run's own candidate listing already
-    # captured a FileInfo for it.
+    # .Length, via a SEPARATE handle, BEFORE calling Copy-GstDebugTail --
+    # mirrors a live GStreamer worker continuing to write after this run's
+    # own candidate listing already captured a FileInfo for it, but before
+    # this run's own capture attempt actually starts.
     $writer5 = [System.IO.File]::Open($src5, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
     try {
         $writer5.Seek(0, [System.IO.SeekOrigin]::End) | Out-Null
@@ -354,7 +442,8 @@ try {
     $truncDest5 = Join-Path $tmpRoot "out-stale-entry-trunc$(Get-TailSuffix -MaxBytes $maxBytes5)"
     # THE FIX under test: called with only -SourcePath (a path, not the
     # stale FileInfo or its cached .Length at all) -- must reflect the
-    # file's TRUE current size, not whatever a caller might have cached.
+    # file's TRUE current size (its own fresh snapshot, taken now), not
+    # whatever a caller might have cached earlier.
     $result5 = Copy-GstDebugTail -SourcePath $src5 -DestPathWhole $wholeDest5 -DestPathTruncated $truncDest5 -MaxBytes $maxBytes5
     Assert-True 'scenario5 result.truncated is True (5 MB live size > 2 MB bound, even though the cached FileInfo said 1 MB)' $result5.truncated
     $bytes5 = [System.IO.File]::ReadAllBytes($result5.dest_path)
@@ -365,16 +454,9 @@ try {
     # whole stale-length region copied verbatim" (which -- since the first
     # 1 MB was all zero bytes from New-Object byte[] -- would show up here
     # as an all-zero content region if this test's fix somehow regressed).
-    # Round-5 review finding 8: the previous version of this check,
-    # `@($split5.ContentLength) -gt 0 -and (...).Count -gt 0`, wrapped a
-    # plain scalar in an array before comparing it with -gt -- PowerShell
-    # then applies -gt as an ARRAY FILTER (returning the matching elements,
-    # not a boolean), which happened to still evaluate truthy/falsy
-    # correctly in an `if`/`-and` context but obscures a genuine boolean
-    # intent behind confusing, easy-to-miscopy array-filter semantics.
-    # Fixed: plain scalar comparisons throughout, combined with a normal
-    # boolean $result variable built via a loop instead of a Where-Object
-    # pipeline whose .Count is compared to another scalar.
+    # Round-5 review finding 8 (still in force): plain scalar comparisons
+    # throughout, never an array wrapped around a scalar and compared with
+    # -gt (which PowerShell applies as an array FILTER, not a boolean).
     $anyNonZero = $false
     if ($split5.ContentLength -gt 0) {
         $checkLimit = [Math]::Min(4095, $split5.ContentLength - 1)
@@ -399,8 +481,47 @@ try {
     }
     Assert-True 'scenario6 -MaxBytes below the 4096-byte floor is REJECTED (ValidateRange), not silently over-bound' $threw6
 
+    # --------------------------------------------------------- scenario 2e
+    # Round-7 review finding 1's own -WholeCopyDeadlineSeconds safety net
+    # -- purely defensive (a slow/contended disk, never a growth-detection
+    # mechanism, which the snapshot rule already made unnecessary). A
+    # deliberately tiny deadline (0 seconds -- guaranteed to already be in
+    # the past by the time the read loop's first iteration checks it)
+    # against a source with real content to copy proves the loop actually
+    # stops, marks the result partial, and renames the destination to
+    # "<name>.partial" rather than leaving an unbannered, incomplete file
+    # sitting at its otherwise-legitimate name (round-7 finding 7's own
+    # principle, applied here too).
+    $src2e = Join-Path $tmpRoot 'deadline.log'
+    [System.IO.File]::WriteAllBytes($src2e, (New-Object byte[] (2MB)))
+    $wholeDest2e = Join-Path $tmpRoot 'out-deadline-whole.log'
+    $truncDest2e = Join-Path $tmpRoot "out-deadline-trunc$(Get-TailSuffix -MaxBytes 200MB)"
+    $result2e = Copy-GstDebugTail -SourcePath $src2e -DestPathWhole $wholeDest2e -DestPathTruncated $truncDest2e -MaxBytes 200MB -WholeCopyDeadlineSeconds 0
+    Assert-True 'scenario2e result.partial is True (the 0-second deadline fired)' $result2e.partial
+    Assert-True 'scenario2e result.truncated is also True (partial implies truncated -- an incomplete capture is never reported as a clean, complete one)' $result2e.truncated
+    Assert-Equal 'scenario2e result.dest_path carries the ".partial" suffix' "$wholeDest2e.partial" $result2e.dest_path
+    Assert-True 'scenario2e the ".partial" file actually exists on disk' (Test-Path $result2e.dest_path)
+    Assert-True 'scenario2e the ORIGINAL (unrenamed) whole-copy path does NOT exist -- never left at the legitimate name' (-not (Test-Path $wholeDest2e))
+
 } finally {
     Remove-Item -Recurse -Force $tmpRoot -ErrorAction SilentlyContinue
+}
+
+# ======================================================= Get-ByteSizeLabel
+# Round-7 review finding 4: pinned table, including the exact boundary
+# case named in review (1048575 -> "1024KB", one byte short of 1 MB) and
+# the explicit AwayFromZero rounding mode this function now uses.
+$byteSizeLabelTable = @(
+    @{ Bytes = 0; Expected = '0KB' }
+    @{ Bytes = 4096; Expected = '4KB' }
+    @{ Bytes = 512000; Expected = '500KB' }
+    @{ Bytes = 1048575; Expected = '1024KB' }   # exactly 1 MB minus 1 byte -- still the KB branch
+    @{ Bytes = 1048576; Expected = '1MB' }      # exactly 1 MB -- the MB branch's own lower boundary
+    @{ Bytes = 1572864; Expected = '2MB' }      # 1.5 MB -- AwayFromZero rounds up, never down
+    @{ Bytes = 209715200; Expected = '200MB' }
+)
+foreach ($row in $byteSizeLabelTable) {
+    Assert-Equal "Get-ByteSizeLabel($($row.Bytes)) -> '$($row.Expected)'" $row.Expected (Get-ByteSizeLabel -Bytes $row.Bytes)
 }
 
 # ============================================================ capture gate
@@ -516,7 +637,6 @@ $simPeriodicBytes = 0
 $simNonPeriodicBytes = 0
 $simCapturedCount = 0
 $simSkippedCount = 0
-$simTotalPeriodicBytesIfAllCaptured = 0
 for ($cp = 1; $cp -le 40; $cp++) {
     $decision = Get-GstDebugCaptureDecision -IsPeriodicCheckpoint $true -PeriodicCheckpointIndex $cp -EveryN 10 `
         -PeriodicBytesSoFar $simPeriodicBytes -PeriodicCapBytes $defaultPeriodicCap `
