@@ -156,7 +156,14 @@ the reserve `final` needs, and vice versa. Each per-file copy's own 200 MB
 bound is additionally clamped to whatever remains of the relevant budget,
 so the combined ceiling (400 MB + 200 MB = 600 MB per run) is a **hard**
 one, never overshoot by "one file's worth" the way a simple pre-write check
-would allow. Without any of this, an earlier version captured on every
+would allow — true because the 200 MB (or smaller, clamped) per-copy bound
+is enforced with a counted read loop in **every** path Copy-GstDebugTail
+can take, including the common case where the source looked small enough
+to copy verbatim: that path used to read straight to the source's real
+end-of-file with no bound of its own, so a file still being actively
+written could grow far past the bound for the whole duration of a single
+copy (measured: 1119 MB copied under a 120 MB bound) before this was
+fixed. Without any of this, an earlier version captured on every
 single checkpoint with no budget at all, measured to project to roughly
 8 GB shipped over a 2-hour soak — and a single shared 600 MB cap (an
 earlier fix) still let periodic checkpoints consume the whole thing before

@@ -179,6 +179,64 @@ try {
         Remove-Job $job -Force -ErrorAction SilentlyContinue
     }
 
+    # --------------------------------------------------------- scenario 2b
+    # Round-6 review finding 1 (HIGH), the specific regression this fix
+    # exists for: the source starts SMALLER than the bound (the "whole
+    # copy" path would have been taken under the OLD, unbounded
+    # implementation) and then grows PAST the bound WHILE the copy is
+    # actively running -- not already-over-the-bound-at-open like
+    # scenario 2 above. MEASURED against the OLD code: a source under a
+    # 120 MB bound at open time that kept growing during an unbounded
+    # "read to EOF" whole-copy loop ended up with 1119 MB copied in full.
+    # The same continuous, high-rate background-job writer pattern as
+    # scenario 2 (proven reliable there) is reused here, just starting
+    # from a seed well UNDER the bound instead of over it.
+    $src2b = Join-Path $tmpRoot 'growing-under-bound.log'
+    $maxBytes2b = 2MB
+    [System.IO.File]::WriteAllBytes($src2b, (New-Object byte[] (200KB)))  # well under the 2 MB bound at open time
+    $job2b = Start-Job -ScriptBlock {
+        param($path)
+        $ws = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::Read)
+        try {
+            $ws.Seek(0, [System.IO.SeekOrigin]::End) | Out-Null
+            $chunk = New-Object byte[] (256KB)
+            for ($i = 0; $i -lt 40; $i++) {
+                $ws.Write($chunk, 0, $chunk.Length)
+                $ws.Flush()
+                Start-Sleep -Milliseconds 25
+            }
+        } finally { $ws.Dispose() }
+    } -ArgumentList $src2b
+    try {
+        Start-Sleep -Milliseconds 50  # let the job start actively growing the file first
+        $wholeDest2b = Join-Path $tmpRoot 'out-growing-under-bound-whole.log'
+        $truncDest2b = Join-Path $tmpRoot "out-growing-under-bound-trunc$(Get-TailSuffix -MaxBytes $maxBytes2b)"
+        $result2b = Copy-GstDebugTail -SourcePath $src2b -DestPathWhole $wholeDest2b -DestPathTruncated $truncDest2b -MaxBytes $maxBytes2b
+        Wait-Job $job2b -Timeout 30 | Out-Null
+        $jobOutput2b = Receive-Job $job2b -ErrorAction SilentlyContinue
+        $finalSrcSize2b = (Get-Item $src2b).Length
+        Assert-True 'scenario2b sanity: the source actually grew past the 2 MB bound during this run (started at 200 KB)' ($finalSrcSize2b -gt $maxBytes2b) "(final size: $finalSrcSize2b bytes, job output: $jobOutput2b)"
+        # THE regression this fix targets: the tentative whole-copy path
+        # must itself be bounded and must correctly convert to a
+        # TRUNCATED result once it detects the source outgrew -MaxBytes
+        # mid-copy -- never silently copy the whole (by-then-enormous)
+        # growing file just because it looked small at open time.
+        Assert-True 'scenario2b result.truncated is True (source grew past the bound mid-copy, even though it started under it)' $result2b.truncated
+        Assert-Equal 'scenario2b result.dest_path is the TRUNCATED path' $truncDest2b $result2b.dest_path
+        Assert-True 'scenario2b the WHOLE (scratch) destination was cleaned up, not left behind' (-not (Test-Path $wholeDest2b))
+        $bytes2b = [System.IO.File]::ReadAllBytes($result2b.dest_path)
+        Assert-True 'scenario2b TOTAL FILE length <= MaxBytes (never exceeds the bound, unlike the old unbounded whole-copy path)' ($bytes2b.Length -le $maxBytes2b) "(file length: $($bytes2b.Length), MaxBytes: $maxBytes2b)"
+        $split2b = Get-BannerAndContentSplit -Bytes $bytes2b
+        Assert-True 'scenario2b banner line present' ($null -ne $split2b.BannerText -and $split2b.BannerText -match '^# sandbox-lab TRUNCATED')
+        # This path never had the chance to seek to a true tail (it did
+        # not know truncation would be needed until mid-copy) -- the
+        # banner must honestly say "FIRST", never "LAST", for this
+        # specific conversion case.
+        Assert-True 'scenario2b banner honestly says "FIRST" (a from-the-start capture), never "LAST" (this path never sought a true tail)' ($split2b.BannerText -match 'kept the FIRST' -and $split2b.BannerText -notmatch 'kept at most the LAST')
+    } finally {
+        Remove-Job $job2b -Force -ErrorAction SilentlyContinue
+    }
+
     # ---------------------------------------------------------- scenario 3
     # Content correctness: the kept bytes really are the TAIL of the
     # source, not some other slice. A recognizable, non-repeating-enough
@@ -482,6 +540,50 @@ $finalDecision = Get-GstDebugCaptureDecision -IsPeriodicCheckpoint $false -Perio
     -NonPeriodicBytesSoFar $simNonPeriodicBytes -NonPeriodicCapBytes $defaultNonPeriodicCap
 Assert-True 'scenario17 final -- called AFTER the periodic budget is fully exhausted by 40 checkpoints -- STILL captures (its own reserve was never touched)' $finalDecision.should_capture
 Assert-Equal 'scenario17 the non-periodic byte counter was never incremented by any periodic checkpoint in this simulation' 0 $simNonPeriodicBytes
+
+# ================================================= per-checkpoint cap (finding 6)
+# Round-6 review finding 6: Get-GstDebugEffectiveMaxBytes is a pure
+# three-way minimum -- tested with synthetic inputs, no filesystem needed.
+
+# scenario 18: plenty of run-wide budget AND per-checkpoint budget left --
+# the NORMAL per-file bound (200 MB here) is the binding constraint.
+$e18 = Get-GstDebugEffectiveMaxBytes -NormalMaxBytes 200MB -KindBytesSoFar 0 -KindCapBytes $defaultPeriodicCap -PerCheckpointBytesSoFar 0 -PerCheckpointCapBytes 200MB
+Assert-Equal 'e18 (plenty of budget everywhere) -> the normal 200 MB bound wins' ([int64]200MB) $e18
+
+# scenario 19: run-wide (kind) budget is nearly exhausted -- IT is the
+# binding constraint, even though per-checkpoint has plenty left.
+$e19 = Get-GstDebugEffectiveMaxBytes -NormalMaxBytes 200MB -KindBytesSoFar (399MB) -KindCapBytes $defaultPeriodicCap -PerCheckpointBytesSoFar 0 -PerCheckpointCapBytes 200MB
+Assert-Equal 'e19 (run-wide/kind budget nearly exhausted) -> that residual wins, not the normal bound' ([int64]1MB) $e19
+
+# scenario 20 (THE core case round-6 finding 6 exists for): a single
+# checkpoint has already captured 150 MB (e.g. from a first candidate
+# file) against its OWN 200 MB per-checkpoint cap, while the run-wide
+# periodic budget still has plenty left (only 150 MB used of 400 MB) --
+# the PER-CHECKPOINT residual (50 MB) must be the binding constraint for
+# a SECOND candidate file in the SAME checkpoint, even though the
+# run-wide budget alone would have allowed a full 200 MB.
+$e20 = Get-GstDebugEffectiveMaxBytes -NormalMaxBytes 200MB -KindBytesSoFar 150MB -KindCapBytes $defaultPeriodicCap -PerCheckpointBytesSoFar 150MB -PerCheckpointCapBytes 200MB
+Assert-Equal 'e20 (per-checkpoint cap is the tightest constraint) -> 50 MB residual wins' ([int64]50MB) $e20
+
+# scenario 21: two large candidate files in ONE checkpoint -- the second
+# candidate's own effective bound must reflect what the FIRST candidate's
+# copy already consumed of the per-checkpoint cap, simulating exactly
+# In-Sandbox-Soak.ps1's own foreach loop (a single checkpoint's own
+# running total accumulates across candidates within that one call).
+$perCheckpointRunning = [int64]0
+$firstCandidateBound = Get-GstDebugEffectiveMaxBytes -NormalMaxBytes 200MB -KindBytesSoFar 0 -KindCapBytes $defaultPeriodicCap -PerCheckpointBytesSoFar $perCheckpointRunning -PerCheckpointCapBytes 200MB
+Assert-Equal 'e21 first candidate in the checkpoint gets the full 200 MB (nothing consumed yet)' ([int64]200MB) $firstCandidateBound
+$perCheckpointRunning += $firstCandidateBound  # worst case: the first candidate actually used its whole bound
+$secondCandidateBound = Get-GstDebugEffectiveMaxBytes -NormalMaxBytes 200MB -KindBytesSoFar $firstCandidateBound -KindCapBytes $defaultPeriodicCap -PerCheckpointBytesSoFar $perCheckpointRunning -PerCheckpointCapBytes 200MB
+Assert-True 'e21 second candidate in the SAME checkpoint is refused (per-checkpoint cap already exhausted by the first) -- one checkpoint with 2 candidates cannot drain 400 MB of run-wide periodic budget by itself' ($secondCandidateBound -lt 4096) "(second candidate bound: $secondCandidateBound)"
+
+# scenario 22: a fully exhausted budget (either kind) yields zero or
+# negative -- never silently clamped back up to something positive by
+# this function itself (the CALLER is responsible for checking against
+# Copy-GstDebugTail's own 4096-byte floor, per this function's own
+# .OUTPUTS doc).
+$e22 = Get-GstDebugEffectiveMaxBytes -NormalMaxBytes 200MB -KindBytesSoFar $defaultPeriodicCap -KindCapBytes $defaultPeriodicCap -PerCheckpointBytesSoFar 0 -PerCheckpointCapBytes 200MB
+Assert-True 'e22 (kind budget fully exhausted) -> zero or negative, not silently positive' ($e22 -le 0) "(got: $e22)"
 
 Write-Host ""
 Write-Host "GstDebugTail unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })
