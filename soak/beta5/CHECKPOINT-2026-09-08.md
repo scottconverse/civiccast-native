@@ -1,6 +1,6 @@
 # Beta.5 tester support checkpoint
 
-## Inert browser support: 2026-09-08, 17:39 UTC
+## Inert browser support: 2026-09-08, 17:31 UTC
 
 Seven new browser-proof files, plus these support docs and README banner.
 No new autorun, remote browser launch, installed-service change or original
