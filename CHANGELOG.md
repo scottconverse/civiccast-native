@@ -60,7 +60,8 @@ below.
   unchanged. This changes build-time validation only: it does not change the
   files selected for the shipped runtime, installer behavior, or station
   storage resolution. A rebuilt artifact still receives the new commit's
-  source identity and hashes.
+  source identity and hashes. The native collection-count contract includes
+  both new success/failure regression cases; CI minimum floors are unchanged.
 - **Finite program and filler plans roll over before running out.** The
   end of scheduled media arms the configured filler, and finite filler
   refreshes without a planned worker restart. Due programs still interrupt
