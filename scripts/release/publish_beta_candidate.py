@@ -49,9 +49,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -108,7 +110,14 @@ def run_command(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[st
 
 
 def run_powershell(script: str) -> subprocess.CompletedProcess[str]:
-    return run_command(["powershell", "-NoProfile", "-NonInteractive", "-Command", script])
+    child_env = os.environ.copy()
+    for name in list(child_env):
+        if name.casefold() == "psmodulepath":
+            del child_env[name]
+    return run_command(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+        env=child_env,
+    )
 
 
 def run_gh(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -234,11 +243,16 @@ def download_gate_a_verdicts(
     because its fakes never modeled a real Gate A run's artifact names.
     """
 
+    # A dry-run may be followed by live publication using the same destination.
+    # Archive every fetch under a fresh directory so an old proof is never
+    # overwritten, reused, or mistaken for the current Gate A run.
+    attempt_dir = dest_dir / f"attempt-{uuid.uuid4().hex}"
+    attempt_dir.mkdir(parents=True, exist_ok=False)
     verdicts: dict[str, dict[str, Any]] = {}
     for lane in GATE_A_LANES:
         artifact_name = GATE_A_ARTIFACT_NAMES[lane].format(run_id=build_run_id)
-        lane_dir = dest_dir / lane
-        lane_dir.mkdir(parents=True, exist_ok=True)
+        lane_dir = attempt_dir / lane
+        lane_dir.mkdir(parents=True, exist_ok=False)
         proc = run_gh(
             [
                 "run",

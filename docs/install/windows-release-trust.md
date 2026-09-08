@@ -74,6 +74,10 @@ be distributed as a public beta.
 The native release chain carries no Sigstore/cosign step. Do not look for or
 download a Sigstore bundle; verify the actual executable's Authenticode
 signature and matching checksum metadata as described below.
+The release publisher's child Windows PowerShell uses its own default module
+paths rather than inheriting PowerShell 7 paths. This prevents the observed
+type-data import conflict without changing the parent environment or replacing
+the operator's signature checks below.
 
 1. From the exact tagged GitHub Release, obtain these matching files and
    keep them together in one folder (these are the exact asset names the
@@ -84,6 +88,9 @@ signature and matching checksum metadata as described below.
    - any `*.ccpack` runtime pack(s) your install needs
    Use the exact release page, not a draft, an older prerelease, or a
    generic "latest" link.
+   Publisher preflight downloads are archived under a fresh attempt directory
+   on each run, so later preparation cannot reuse or overwrite an older Gate A
+   proof.
 2. Open PowerShell in the download folder.
 3. Compute the local hash:
 
