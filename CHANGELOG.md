@@ -35,8 +35,8 @@ below.
   directory.
 
 - **Mutation collection includes the Sandbox harness fixtures.** The isolated
-  mutation workspace now copies `sandbox-lab`, which the installed-bound policy
-  tests read. This repairs collection without skipping those tests.
+  mutation workspace now copies `sandbox-lab` and `gate-b`, which the harness
+  policy tests read. This repairs collection without skipping those tests.
 
 - **Field-installation guidance now separates installation, trust and cutover.**
   The external quickstart and tester guides require the actual installer hash
