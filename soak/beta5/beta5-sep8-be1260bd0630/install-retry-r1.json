@@ -1,0 +1,23 @@
+﻿{
+    "schema":  "civiccast-native-beta5-preinstall-retry-receipt-v1",
+    "mission":  "beta5-sep8-be1260bd0630",
+    "candidate_source_sha":  "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "started_utc":  "2026-09-08T19:16:28.9356190Z",
+    "completed_utc":  "2026-09-08T19:43:04.2348713Z",
+    "status":  "FAILED",
+    "wrapper_returned":  false,
+    "failure":  {
+                    "exception_type":  "System.Management.Automation.RuntimeException",
+                    "script_basename":  "BETA5-PREINSTALL-RETRY.ps1",
+                    "line":  143
+                },
+    "report_kind":  "dispatch receipt only; not an installer, media, or terminal soak verdict",
+    "retry_journal":  {
+                          "present":  true,
+                          "status":  "FAILED_REQUIRES_RECONCILIATION",
+                          "stage":  "04-SOAK-CYCLE",
+                          "error_type":  "System.Management.Automation.RuntimeException",
+                          "read_failure":  null
+                      }
+}
