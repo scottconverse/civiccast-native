@@ -27,8 +27,10 @@ below.
   The JSON sidecar is not a separately signed attestation. The landing-page
   download question now explicitly describes a Windows beta, not a production
   installer. Regression tests reject the prior false signing and completion
-  claims. These are external-documentation corrections after the signed
-  beta.5 source; the preserved candidate kit and packaged manual are unchanged.
+  claims. The README also identifies the already-merged caption repairs rather
+  than calling their PR pending, without treating a merge as installed soak
+  acceptance. These are external-documentation corrections made after the signed
+  beta.5 candidate was built; the preserved kit and packaged manual are unchanged.
 
 ### Added
 

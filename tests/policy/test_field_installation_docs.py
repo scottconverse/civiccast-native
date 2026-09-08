@@ -72,6 +72,14 @@ def test_field_delivery_docs_do_not_claim_plain_metadata_is_signed() -> None:
     assert not offenders, f"Plain sidecar/delivery metadata is described as signed: {offenders}"
 
 
+def test_readme_separates_merged_caption_repairs_from_candidate_acceptance() -> None:
+    readme = _normalized_plaintext(ROOT / "README.md")
+    assert "caption-tap overload fix itself has no merged pr yet" not in readme
+    for repair in ("/pull/172", "/pull/182", "/pull/190", "/pull/191"):
+        assert repair in readme
+    assert "merged code is not a completed two-hour candidate soak" in readme
+
+
 def test_quickstart_verifies_hash_and_authenticode_before_running_installer() -> None:
     quickstart = _normalized_plaintext(ROOT / "docs/QUICKSTART-OPERATOR.md")
     hash_check = quickstart.index("sha-256 against the trusted handoff")

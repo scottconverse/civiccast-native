@@ -228,8 +228,16 @@ things outside this repository's control:
   driving the control-plane process to ~2.5 CPU cores and starving the
   GStreamer playout workers, whose own 10-second stall watchdog then
   exits, which the daemon relaunches. Fixed in beta.5: #169 (the
-  state-write `UnicodeEncodeError` above). The caption-tap overload fix
-  itself has no merged PR yet (PR pending). **Workaround for beta.4:
+  state-write `UnicodeEncodeError` above). **Current beta.5 source update:**
+  the caption backoff repair [#172](https://github.com/scottconverse/civiccast-native/pull/172),
+  bounded live-caption work [#182](https://github.com/scottconverse/civiccast-native/pull/182),
+  non-blocking audio tap [#190](https://github.com/scottconverse/civiccast-native/pull/190),
+  and native caption-tap off switch [#191](https://github.com/scottconverse/civiccast-native/pull/191)
+  are merged and included in the candidate source. Merged code is not a
+  completed two-hour candidate soak; the exact installed beta.5 candidate
+  still needs its own acceptance evidence before release. This does not
+  retroactively turn the historical beta.4 or earlier beta.5 soaks into passes.
+  **Workaround for beta.4:
   none in the product.** `CIVICCAST_CAPTION_TAP` is the only switch for
   the live caption tap, and a native station's control-plane process
   hardcodes it to `inline` unconditionally
