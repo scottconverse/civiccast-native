@@ -1,5 +1,19 @@
 # Exact beta.5 tester installation diagnostic
 
+R1 returned successfully at18:26:13UTC. It showed the initial identity had no
+verified-artifact or installed receipt, no soak state, and the older installed
+service still running. Its original autorun log stopped at16:06:39UTC. The
+known ffprobe, completed-upgrade and signature-rejection phrases were absent.
+This is a pre-install verification failure, not a completed upgrade/soak.
+
+R2 uses a new `install-inventory-r2` directory and report; R1 is preserved.
+It adds fixed pre-install error categories and known script-name/line/character
+locations plus a bounded PowerShell category name. No arbitrary error text or
+log contents are exported. Null pending hash fields are valid JSON and no
+longer incorrectly mark the identity as malformed; they remain no proof of
+completed artifact verification or installation. Actual adapter tests16PASS
+on both PS5.1/PS7, plus inventory contracts and inert wrapper plans.
+
 This support package is not shipped CivicCast product code. Its unique
 `AUTORUN-SEP8-BETA5-INSTALL-INVENTORY-R1.ps1` directive uses the existing
 tester poll channel, only on DESKTOP-VBMA6O5, for mission

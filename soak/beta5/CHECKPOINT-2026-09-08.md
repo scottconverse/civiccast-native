@@ -1,5 +1,20 @@
 # Beta.5 tester support checkpoint
 
+## Actual tester diagnosis and R2 follow-up: 18:30 UTC
+
+R1 returned on4cb241d5883602820a57c74ffdbbecab4f45859b at18:26:13Z.
+Initialidentitymtime15:16:12Z; actualmanifest/installerhashes stillnull,
+noinstalledreceipt/soakstate, oldservice18580fromSep5. Kit21files27,816,513,345
+bytes. Original2494bytelogmtime16:06:39Z. No installer/curl/tar process.
+Noffprobe/completedupgrade/signaturerejectionknownphrases. Current blockage
+isbeforeverified-artifactreceiptandinstallerlaunch, notthelaterffprobeissue.
+
+Queued new INSTALL-INVENTORY-R2 wrapper, freshownroot/report, preservesR1.
+Adds known preinstallerrorcategories and exactknownscriptline/char/category,
+never arbitraryerrortext/rawlogs. Corrects pendingnullhash JSONvaliditylabel.
+16actualadaptertestsPS5/7PASS, existinginventorycontracts/DryRunPASS.
+Noinstall/restart/API/taskchange. Do not activate after-installresume draft.
+
 ## Inert filler token-boundary correction
 
 The initializer now uses the same-process call operator with splatted params,

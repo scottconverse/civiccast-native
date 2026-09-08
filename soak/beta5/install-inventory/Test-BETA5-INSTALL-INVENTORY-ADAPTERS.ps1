@@ -19,6 +19,12 @@ try {
     Assert-InventoryAdapter ($signal.inspected -and $signal.ffprobe_lookup_failure) 'actual known failure classified'
     Assert-InventoryAdapter (-not $signal.fetch_verify_upgrade_pass) 'no invented completed install'
     Assert-InventoryAdapter (-not (($signal | ConvertTo-Json) -match 'not-for-export|gap-free schedule')) 'raw log and secrets never serialized'
+    @('tar.exe : Not found in archive SECRET_DO_NOT_EXPORT', 'At C:\CivicCastSoak\missions\beta5-sep8-be1260bd0630\bin\AUTORUN-SEP8-BETA5-02-FETCH-INSTALL.ps1:70 char:19', '    + CategoryInfo : NotSpecified: (SECRET:String) [], RemoteException', '    + FullyQualifiedErrorId : NativeCommandError') | Set-Content -LiteralPath $log
+    $nativeSignal = Get-Beta5KnownInstallLogSignals $log
+    Assert-InventoryAdapter ($nativeSignal.known_failure_categories -contains 'native_archive_member_missing') 'known archive category classified'
+    Assert-InventoryAdapter ($nativeSignal.script_locations.Count -eq 1 -and $nativeSignal.script_locations[0].line -eq 70) 'only known script location retained'
+    Assert-InventoryAdapter ($nativeSignal.powershell_error_categories -contains 'NotSpecified') 'only bounded PowerShell category retained'
+    Assert-InventoryAdapter (-not (($nativeSignal | ConvertTo-Json -Depth 8) -match 'SECRET|FullyQualifiedErrorId|RemoteException')) 'arbitrary error text excluded'
     'FETCH/VERIFY/UPGRADE PASS: 1.0.0-beta.5, manifest+installer hashes independent, signer Scott Converse, service running from C:\CivicCastHostStore\install.' | Set-Content -LiteralPath $log
     $signal = Get-Beta5KnownInstallLogSignals $log
     Assert-InventoryAdapter ($signal.fetch_verify_upgrade_pass -and -not $signal.ffprobe_lookup_failure) 'actual exact success phrase distinguished'

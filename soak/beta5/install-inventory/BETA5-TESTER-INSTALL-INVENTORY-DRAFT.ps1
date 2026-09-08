@@ -109,7 +109,7 @@ function Get-Beta5InventoryJsonSummary {
     foreach ($name in $allowed) {
         $property = $identity.PSObject.Properties[$name]
         if ($null -ne $property) {
-            if ($null -eq $property.Value) { $summary.valid_json = $false; $summary.receipt_matches_expected = $false; $summary.mismatches += $name; continue }
+            if ($null -eq $property.Value) { $summary[$name] = $null; continue }
             if ($property.Value -is [System.Collections.IDictionary] -or $property.Value -is [System.Array] -or $property.Value -is [pscustomobject] -and $property.Value -isnot [string]) {
                 $summary.valid_json = $false
                 continue

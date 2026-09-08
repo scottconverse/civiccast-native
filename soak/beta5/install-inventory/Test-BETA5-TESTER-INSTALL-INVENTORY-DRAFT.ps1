@@ -32,6 +32,8 @@ try {
   Assert-True 'log callback receives its filename prefix unchanged' ($script:observedLogPrefix -eq 'AUTORUN-SEP8-BETA5-BE1260-R1-')
   $missing = Get-Beta5InventoryJsonSummary 'identity.json' { param($p) [pscustomobject]@{ schema='civiccast-native-tester-run-identity-v3' } }
   Assert-True 'missing expected identity fields are reported' (-not $missing.receipt_matches_expected -and $missing.mismatches -contains 'mission')
+  $pendingHash = Get-Beta5InventoryJsonSummary 'identity.json' { param($p) [pscustomobject]@{schema='civiccast-native-tester-run-identity-v3';actual_manifest_sha256=$null;actual_installer_sha256=$null} }
+  Assert-True 'pending null hash fields are valid JSON, not completed installation' ($pendingHash.valid_json -and $null -eq $pendingHash.actual_manifest_sha256 -and -not $pendingHash.receipt_matches_expected)
   $nullService = Get-Beta5InventorySnapshot -ActualHostname 'DESKTOP-VBMA6O5' -Root 'C:\CivicCastSoak' -FileReader { param($p) $null } -JsonReader { param($p) $null } -ProcessReader { param($n) @() } -ServiceReader { param($n) $null } -KitReader { param($p) @() } -LogReader { param($d,$p) @() }
   Assert-True 'missing service is represented as null' ($null -eq $nullService.service)
   $snapshot = Get-Beta5InventorySnapshot -ActualHostname 'DESKTOP-VBMA6O5' -Root 'C:\CivicCastSoak' -FileReader { param($p) if ($p -like '*run-identity.json') { $file } elseif ($p -like '*install-progress.log') { $file } else { $null } } -JsonReader { param($p) $json } -ProcessReader { param($n) @($process) } -ServiceReader { param($n) $service } -KitReader { param($p) @([pscustomobject]@{RelativePath='setup.exe';Length=12;LastWriteTimeUtc=[datetime]'2026-09-08T00:00:00Z'}) } -LogReader { param($d,$prefix) @() }

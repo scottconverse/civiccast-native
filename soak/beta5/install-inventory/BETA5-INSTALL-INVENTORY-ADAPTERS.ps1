@@ -99,6 +99,7 @@ function Get-Beta5KnownInstallLogSignals {
         inspected = $false; skipped_oversize = $false
         ffprobe_lookup_failure = $false; fetch_verify_upgrade_pass = $false
         exact_signature_rejection = $false; raw_log_exported = $false
+        known_failure_categories = @(); script_locations = @(); powershell_error_categories = @()
     }
     if ($null -eq $item) { return [pscustomobject] $result }
     if ($item.Length -gt 4MB) { $result.skipped_oversize = $true; return [pscustomobject] $result }
@@ -107,6 +108,30 @@ function Get-Beta5KnownInstallLogSignals {
         $result.ffprobe_lookup_failure = $content.Contains('Installed ffprobe.exe is required for gap-free schedule durations.')
         $result.fetch_verify_upgrade_pass = $content.Contains('FETCH/VERIFY/UPGRADE PASS: 1.0.0-beta.5, manifest+installer hashes independent, signer Scott Converse, service running from C:\CivicCastHostStore\install.')
         $result.exact_signature_rejection = $content.Contains('Installer signature is not Valid and signed by Scott Converse')
+        $phrases = [ordered]@{
+            download_failed = 'Download failed:'
+            manifest_hash_mismatch = 'does not equal the independently supplied hash.'
+            entry_hash_mismatch = 'Manifest mismatch after download:'
+            app_manifest_read_failed = 'Could not read native-app-payload.ccpack manifest.json.'
+            app_signature_missing = 'Native app payload has no embedded manifest signature.'
+            app_identity_mismatch = 'Native app payload manifest does not bind the clean expected candidate source/version.'
+            runtime_manifest_binding_failed = 'Native app payload manifest does not uniquely bind'
+            installer_hash_mismatch = 'Installer hash does not equal the independently supplied installer hash.'
+            installer_version_mismatch = 'Installer ProductVersion'
+            native_archive_member_missing = 'Not found in archive'
+            property_missing = 'cannot be found on this object'
+            variable_unset = 'has not been set'
+            native_command_error = 'NativeCommandError'
+        }
+        foreach ($key in $phrases.Keys) {
+            if ($content.Contains($phrases[$key])) { $result.known_failure_categories += $key }
+        }
+        foreach ($match in [regex]::Matches($content, '(AUTORUN-SEP8-BETA5-(?:01-PREFLIGHT|02-FETCH-INSTALL|03-START-SOAK)\.ps1):(\d+)\s+char:(\d+)')) {
+            $result.script_locations += [pscustomobject]@{ script = $match.Groups[1].Value; line = [int]$match.Groups[2].Value; character = [int]$match.Groups[3].Value }
+        }
+        foreach ($match in [regex]::Matches($content, '(?m)^\s*\+?\s*CategoryInfo\s*:\s*([A-Za-z]+)\s*:')) {
+            $result.powershell_error_categories += $match.Groups[1].Value
+        }
     }
     $result.inspected = $true
     return [pscustomobject] $result
