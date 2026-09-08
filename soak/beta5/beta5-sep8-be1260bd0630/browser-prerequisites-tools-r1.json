@@ -1,0 +1,171 @@
+﻿{
+    "schema":  "civiccast-native-beta5-browser-prerequisites-v1",
+    "observed_utc":  "2026-09-08T19:46:15.1175243Z",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "mission":  "beta5-sep8-be1260bd0630",
+    "candidate_source_sha":  "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+    "portal_source_root":  "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\return-repo\\civiccast\\apps\\portal-public",
+    "known_path_inventory_only":  true,
+    "process_execution":  false,
+    "browser_launched":  false,
+    "install_attempted":  false,
+    "executables":  [
+                        {
+                            "kind":  "node",
+                            "path":  "C:\\Program Files\\nodejs\\node.exe",
+                            "exists":  false,
+                            "file_version":  null,
+                            "product_version":  null
+                        },
+                        {
+                            "kind":  "npm-command",
+                            "path":  "C:\\Program Files\\nodejs\\npm.cmd",
+                            "exists":  false,
+                            "file_version":  null,
+                            "product_version":  null
+                        },
+                        {
+                            "kind":  "node",
+                            "path":  "C:\\Program Files (x86)\\nodejs\\node.exe",
+                            "exists":  false,
+                            "file_version":  null,
+                            "product_version":  null
+                        },
+                        {
+                            "kind":  "npm-command",
+                            "path":  "C:\\Program Files (x86)\\nodejs\\npm.cmd",
+                            "exists":  false,
+                            "file_version":  null,
+                            "product_version":  null
+                        },
+                        {
+                            "kind":  "edge",
+                            "path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+                            "exists":  true,
+                            "file_version":  "152.0.4191.66",
+                            "product_version":  "152.0.4191.66"
+                        },
+                        {
+                            "kind":  "edge",
+                            "path":  "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
+                            "exists":  false,
+                            "file_version":  null,
+                            "product_version":  null
+                        },
+                        {
+                            "kind":  "chrome",
+                            "path":  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+                            "exists":  true,
+                            "file_version":  "152.0.7977.65",
+                            "product_version":  "152.0.7977.65"
+                        },
+                        {
+                            "kind":  "chrome",
+                            "path":  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+                            "exists":  false,
+                            "file_version":  null,
+                            "product_version":  null
+                        }
+                    ],
+    "packages":  [
+                     {
+                         "kind":  "npm-package",
+                         "path":  "C:\\Program Files\\nodejs\\node_modules\\npm\\package.json",
+                         "exists":  false,
+                         "package_name":  null,
+                         "package_version":  null
+                     },
+                     {
+                         "kind":  "npm-package",
+                         "path":  "C:\\Program Files (x86)\\nodejs\\node_modules\\npm\\package.json",
+                         "exists":  false,
+                         "package_name":  null,
+                         "package_version":  null
+                     },
+                     {
+                         "kind":  "playwright-test",
+                         "path":  "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\return-repo\\civiccast\\apps\\portal-public\\node_modules\\@playwright\\test\\package.json",
+                         "exists":  false,
+                         "package_name":  null,
+                         "package_version":  null
+                     },
+                     {
+                         "kind":  "playwright-core",
+                         "path":  "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\return-repo\\civiccast\\apps\\portal-public\\node_modules\\playwright-core\\package.json",
+                         "exists":  false,
+                         "package_name":  null,
+                         "package_version":  null
+                     },
+                     {
+                         "kind":  "playwright-core",
+                         "path":  "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\tools\\browser-proof-r1\\node_modules\\playwright-core\\package.json",
+                         "exists":  true,
+                         "package_name":  "playwright-core",
+                         "package_version":  "1.59.1"
+                     }
+                 ],
+    "path_command_discovery":  [
+                                   {
+                                       "name":  "node.exe",
+                                       "found":  true,
+                                       "path":  "C:\\dev\\node-v24.17.0-win-x64\\node.exe",
+                                       "command_type":  "Application",
+                                       "process_executed":  false
+                                   },
+                                   {
+                                       "name":  "npm.cmd",
+                                       "found":  true,
+                                       "path":  "C:\\dev\\node-v24.17.0-win-x64\\npm.cmd",
+                                       "command_type":  "Application",
+                                       "process_executed":  false
+                                   }
+                               ],
+    "playwright_config":  {
+                              "path":  "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\return-repo\\civiccast\\apps\\portal-public\\playwright.config.ts",
+                              "exists":  true
+                          },
+    "existing_caption_spec":  {
+                                  "path":  "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\return-repo\\civiccast\\apps\\portal-public\\e2e\\a11y.spec.ts",
+                                  "exists":  true,
+                                  "qualification":  "Existing test uses mocked HLS and is not installed resident-playback proof."
+                              },
+    "readiness":  {
+                      "node_present":  true,
+                      "npm_present":  true,
+                      "edge_or_chrome_present":  true,
+                      "playwright_test_package_present":  false,
+                      "resident_playback_proven":  false
+                  },
+    "portable_dependency_provisioning":  {
+                                             "schema":  "civiccast-browser-proof-portable-core-v1",
+                                             "status":  "PROVISIONED",
+                                             "package":  "playwright-core@1.59.1",
+                                             "sha256":  "22304c3d9106ed8372ff58656f645a93bc3a2b17df8567f1413079a730d8d6fa",
+                                             "integrity":  "HBV/RJg81z5BiiZ9yPzIiClYV/QMsDCKUyogwH9p3MCP6IYjUFu/MActgYAvK0oWyV9NlwM3GLBjADyWgydVyg==",
+                                             "archive_member_count":  465,
+                                             "prerequisites":  {
+                                                                   "node_path":  "C:\\dev\\node-v24.17.0-win-x64\\node.exe",
+                                                                   "edge_path":  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+                                                                   "playwright_core_path":  "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\tools\\browser-proof-r1\\node_modules\\playwright-core",
+                                                                   "global_npm_install":  false,
+                                                                   "npm_scripts_run":  false,
+                                                                   "browser_downloaded":  false
+                                                               }
+                                         },
+    "diagnostic_status":  "COLLECTED",
+    "qualification":  "Prerequisite inventory is read-only; the enclosing directive additionally downloaded/verified/extracted one portable test module. No Node/browser/npm execution, global installation, product modification, or station API call.",
+    "support_files":  [
+                          {
+                              "name":  "Beta5Tester.Common.ps1",
+                              "sha256":  "fc06d3199a6983799e9b02050890b0a0c4467c8970411d5c76bf3db7810abc90"
+                          },
+                          {
+                              "name":  "Get-Beta5BrowserPrerequisites.ps1",
+                              "sha256":  "2057446cd12eb0c92fd783517851f691b9c46d27882d9e2dbfa3b62dfbc5ac78"
+                          },
+                          {
+                              "name":  "Provision-PortablePlaywrightCore.ps1",
+                              "sha256":  "fd8efa804c18e79d75c4a908500604d629ef5df855a1f2037004041e309a8c7a"
+                          }
+                      ]
+}
