@@ -8,10 +8,14 @@
 
 ## Current Release
 
-`v1.0.0-beta.4` is the current release, a download-only upgrade for
-stations already on `v1.0.0-beta.3`: `setup.exe`, the five runtime
-`.ccpack` packs, a `SHA256SUMS.txt` checksum file, and a signed
-`setup.exe.sidecar.json` are attached to the
+`v1.0.0-beta.4` is the current published release. The beta.5 native Windows
+candidate is not published yet. Do not describe beta.5 as a public download
+until the release owner publishes the exact candidate and updates the release
+truth record. For a published GitHub release, use its `setup.exe`, runtime
+`.ccpack` packs, `SHA256SUMS.txt`, and `setup.exe.sidecar.json` metadata from the
+exact release page. For a USB/LAN field kit, use the complete kit's own hash-pinned
+delivery manifest and do not require a GitHub sidecar that is not present. The
+current published release is the
 [`v1.0.0-beta.4` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4)
 as a **prerelease** -- watch
 <https://github.com/scottconverse/civiccast-native/releases>, not
@@ -25,11 +29,12 @@ authored release-state record.
 `v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
 upgrade-baseline kit, never a release a tester receives.
 
-**If you are reading this after Scott has told you a new beta is
+**If you are reading this after the release owner has told you a new beta is
 available, check
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) first
 -- it is the single source of truth for which tag is current, and this page
-may not have been updated yet.**
+may not have been updated yet. A beta.5 candidate remains unpublished until
+that record and the public release page say otherwise.**
 
 A first-time install on a station with no prior CivicCast install needs the
 complete signed native station bundle. The current bundle is about 21 GB and
@@ -88,7 +93,8 @@ before clicking through it.
 ## What You Should Be Able To Do
 
 1. Verify the release Windows proof kit or setup executable against its
-   matching manifest, sidecar, and checksum (`SHA256SUMS.txt`).
+   matching delivery manifest or, for a GitHub download, its sidecar and
+   checksum (`SHA256SUMS.txt`).
 2. Run the Windows setup app. Plan enough disk space for the exact downloaded
    station bundle and the installed runtime/model copy it produces, plus the
    recordings, media, and backups used by the station. The installer verifies

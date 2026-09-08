@@ -17,6 +17,19 @@ came across and what deliberately did not.
 candidate; it does not change the `v1.0.0-beta.4` install story documented
 below.
 
+### External field documentation
+
+- **Field-installation guidance now separates installation, trust and cutover.**
+  The external quickstart and tester guides require the actual installer hash
+  and Authenticode publisher checks before running it, distinguish USB/LAN
+  delivery manifests from GitHub sidecar metadata, and no longer describe a
+  waiting setup screen or an accessible console as an operating station.
+  The JSON sidecar is not a separately signed attestation. The landing-page
+  download question now explicitly describes a Windows beta, not a production
+  installer. Regression tests reject the prior false signing and completion
+  claims. These are external-documentation corrections after the signed
+  beta.5 source; the preserved candidate kit and packaged manual are unchanged.
+
 ### Added
 
 - **An operator switch for live captions: `Show live captions on air` on

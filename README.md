@@ -20,7 +20,8 @@ repository, not this one).
 already on `v1.0.0-beta.3`. `setup.exe` and the five runtime `.ccpack` packs
 are attached to the
 [`v1.0.0-beta.4` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4),
-each verified by `SHA256SUMS.txt` and a signed sidecar; the ~21 GB AI-model
+with `SHA256SUMS.txt` and installer sidecar metadata for checksum checks;
+the installer itself carries the Authenticode signature. The ~21 GB AI-model
 `station\` bundle is deliberately not a release asset (see "Install and run"
 below). `v1.0.0-beta.3` (the first downloadable public release) is now
 superseded; `v1.0.0-beta.1` (USB-delivered, no downloadable assets) remains
@@ -247,7 +248,7 @@ things outside this repository's control:
   model. `v1.0.0-beta.4` is the current release, a download-only upgrade
   for stations already on `v1.0.0-beta.3` (the first
   **downloadable** release): `setup.exe`, the five runtime `.ccpack` packs,
-  `SHA256SUMS.txt`, and a signed sidecar are attached to the
+  `SHA256SUMS.txt`, and installer sidecar metadata are attached to the
   [GitHub Releases page](https://github.com/scottconverse/civiccast-native/releases).
   `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is superseded.
   `v1.0.0-beta.2` was never published -- it exists only as an internal
