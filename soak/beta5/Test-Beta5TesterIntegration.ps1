@@ -78,6 +78,11 @@ try {
     $receiptIdentityPath = $identityPath
     $env:BETA5_TESTER_LIBRARY = '1'
     try { . (Join-Path $PSScriptRoot 'AUTORUN-SEP8-BETA5-03-START-SOAK.ps1') -IdentityPath 'library-only' } finally { Remove-Item Env:BETA5_TESTER_LIBRARY -ErrorAction SilentlyContinue }
+    Assert-True 'fractional duration matches product ingest floor' ((ConvertTo-Beta5ScheduleDuration '31.75') -eq 31)
+    Assert-True 'whole duration is unchanged' ((ConvertTo-Beta5ScheduleDuration '31.0') -eq 31)
+    foreach ($invalidDuration in 'NaN', 'Infinity', '0.9', '-2', 'not-a-duration', '2147483648') {
+        Assert-Throws "invalid duration rejected: $invalidDuration" { ConvertTo-Beta5ScheduleDuration $invalidDuration }
+    }
     $receiptAssets = @(
         [pscustomobject]@{ id = 'asset-first'; duration_seconds = 60; title = 'Mission first sample' },
         [pscustomobject]@{ id = 'asset-second'; duration_seconds = 61; title = 'Mission second sample' }

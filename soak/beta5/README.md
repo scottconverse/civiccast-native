@@ -86,7 +86,9 @@ that release gate.
 5. Start reuses the existing token at `C:\CivicCastSoak\state\token`; it never
    creates, prints, or commits credentials. Exactly two verified kit samples
    are uploaded through the proven multipart API, packaged, readied, approved,
-   and measured with installed `ffprobe.exe`. After both approvals succeed,
+   and measured with installed `ffprobe.exe`. Scheduling uses whole seconds
+   rounded down, matching the product ingest API; it never adds a nonexistent
+   fractional tail. After both approvals succeed,
    their IDs, durations, and exact titles are stored in deterministic program
    order as the identity's `approved_assets` receipt for the post-soak filler
    probe; existing install and immutable kickoff receipts are retained.
@@ -135,3 +137,8 @@ Tester acceptance still requires the final signed kit, real tester upgrade,
 real API provisioning, two hours of TSDuck samples, and the published verdict.
 Release publication additionally requires the independently recorded PASS from
 all three Gate A lanes.
+
+After the three-channel soak passes, the separate
+[installed filler probe](filler-probe/README.md) can verify program-to-bulletin
+and bulletin-to-program handoffs on a new loopback-only test channel. It is
+not automatically dispatched by this support package.

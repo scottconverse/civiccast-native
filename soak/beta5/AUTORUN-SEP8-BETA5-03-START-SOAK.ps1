@@ -45,14 +45,21 @@ function Invoke-Beta5Upload {
     } finally { $form.Dispose(); $client.Dispose() }
 }
 
+function ConvertTo-Beta5ScheduleDuration {
+    param([Parameter(Mandatory)][string] $Value)
+    $measured = [double] 0
+    $ok = [double]::TryParse($Value, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref] $measured)
+    if (-not $ok -or [double]::IsNaN($measured) -or [double]::IsInfinity($measured) -or $measured -lt 1 -or $measured -gt [int]::MaxValue) { throw 'Media duration must contain at least one finite whole second.' }
+    # Match schedule/ingest.py: int(float(format.duration)). Never schedule
+    # an extra fractional tail beyond the playable whole-second source.
+    return [int] [Math]::Floor($measured)
+}
+
 function Get-Beta5MediaDuration {
     param([string] $FfprobeExe, [string] $FilePath)
     $output = @(& $FfprobeExe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 $FilePath 2>$null)
     if ($LASTEXITCODE -ne 0 -or $output.Count -eq 0) { throw "ffprobe failed for $FilePath" }
-    $value = [double] 0
-    $ok = [double]::TryParse("$($output[0])", [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref] $value)
-    if (-not $ok -or $value -le 0) { throw "ffprobe returned an invalid duration for $FilePath" }
-    return [int] [Math]::Ceiling($value)
+    return ConvertTo-Beta5ScheduleDuration "$($output[0])"
 }
 
 function Set-Beta5ApprovedAssetsReceipt {

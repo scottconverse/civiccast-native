@@ -30,3 +30,25 @@ support-contract checks, not tester installation or two-hour acceptance.
 The older product code and manuals on this control branch are historical and
 must not be merged over current product main. Product fixes use PR193; this
 branch exists solely for dedicated tester execution/evidence coordination.
+
+## Follow-up: finite-media rounding and installed filler probe
+
+Parent review found that the helper rounded fractional durations up, while
+`civiccast/schedule/ingest.py` uses `int(float(format.duration))`. The old
+function returned32 for a31.75-second fixture; the product returns31. The helper
+now matches the product's whole-second duration, and rejects nonfinite, invalid,
+subsecond and overflowing values. Integration and strict-verdict suites pass.
+
+The `filler-probe` subdirectory contains an additional inert post-soak test.
+It requires the real three-channel PASS verdict and exact installed identity,
+uses the two recorded approved assets, refuses an existing channel ID, and
+creates a separate loopback test channel. It observes program/filler/program
+states with unchanged GStreamer PID and real transport packets. Cleanup always
+attempts stop and disable; the API has no channel-delete operation, so the
+dedicated channel remains disabled. Thirteen accepted bulletin records prove
+retention, not that all thirteen slides were visually observed on air.
+
+Parent verification:15 script/module parser checks passed, all three functional
+PowerShell test suites passed, and the preserved real bundled-TSDuck fixture
+parsed65 packets with zero sync/transport/discontinuity counters. No filler
+probe has run against a live tester at this checkpoint.
