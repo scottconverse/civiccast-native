@@ -1,0 +1,13 @@
+{
+  "schema": "civiccast-native-beta5-retry-package-v1",
+  "candidate_source_sha": "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+  "wrapper": {"name":"BETA5-PREINSTALL-RETRY.ps1","sha256":"e7a3dbc9478b409774b027581ff4a4126786548dd51ff49f5c2573e0d3e538c1"},
+  "files": [
+    {"name":"Beta5Tester.Common.ps1","sha256":"fc06d3199a6983799e9b02050890b0a0c4467c8970411d5c76bf3db7810abc90"},
+    {"name":"ProbeContracts.psm1","sha256":"3c2f6cd6ef15e457a61de8be231ab0c2dcb511b30c485d0fcfb6568764709f99"},
+    {"name":"AUTORUN-SEP8-BETA5-02-FETCH-INSTALL.ps1","sha256":"88332190e066e2d79009da21fc99e00868b91f0711b035c75d6c4574d33a6bf4"},
+    {"name":"AUTORUN-SEP8-BETA5-03-START-SOAK.ps1","sha256":"1d991448ae56757d347e4bd8927ae95e689deced1f440a38b677ac80c7d13e79"},
+    {"name":"AUTORUN-SEP8-BETA5-04-SOAK-CYCLE.ps1","sha256":"69e8066579976158e4e56773e4367c35f353fc43d17ae96c5c2dc18a46d95ec2"},
+    {"name":"AUTORUN-SEP8-BETA5-05-SCHEDULE-CYCLES.ps1","sha256":"6ed527a6df665a457ce7f103f5322c373481f3e7f7af90468a68e5e8369ed5b0"}
+  ]
+}

@@ -161,8 +161,19 @@ function Write-Beta5JsonAtomic {
 
 function Invoke-Beta5Git {
     param([Parameter(Mandatory)][string] $Repository, [Parameter(Mandatory)][string[]] $Arguments)
-    $output = @(& git -C $Repository @Arguments 2>&1)
-    if ($LASTEXITCODE -ne 0) { throw "git $($Arguments -join ' ') failed in $Repository`: $($output -join ' ')" }
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Git writes normal progress/diagnostic text to stderr even on exit 0.
+        # Continue is scoped to this native capture only; callers still receive
+        # a terminating error for a non-zero Git exit code below.
+        $ErrorActionPreference = 'Continue'
+        $rawOutput = @(& git -C $Repository @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    $output = @($rawOutput | ForEach-Object { [string]$_ })
+    if ($exitCode -ne 0) { throw "git $($Arguments -join ' ') failed in $Repository`: $($output -join ' ')" }
     return @($output)
 }
 

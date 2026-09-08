@@ -33,6 +33,19 @@ function Invoke-Beta5Download {
     }
 }
 
+function Wait-Beta5PrimaryInstaller {
+    param([Parameter(Mandatory)] $Process, [ValidateRange(1,2700000)][int] $TimeoutMilliseconds = 2700000)
+    # Wait only for the actual setup process, not every long-lived descendant.
+    # Cache its handle before exit so Windows PowerShell retains the exit code.
+    $null = $Process.Handle
+    if (-not $Process.WaitForExit($TimeoutMilliseconds)) {
+        throw [TimeoutException]::new('Installer exceeded its45-minute bound; its process was left running for diagnosis. Do not blindly retry.')
+    }
+    $Process.Refresh()
+    if ($null -eq $Process.ExitCode) { throw 'Installer exited without a readable exit code.' }
+    return [int]$Process.ExitCode
+}
+
 New-Item -ItemType Directory -Force -Path $kitRoot | Out-Null
 $manifestDownload = "$manifestPath.download"
 Invoke-Beta5Download -Url ($id.kit_base_url + 'SHA256SUMS.txt') -Destination $manifestDownload
@@ -75,9 +88,9 @@ if ($packManifest.product -ne 'civiccast-native' -or $packManifest.product_versi
 $runtimeTargets = @('Lib/site-packages/civiccast/egress/daemon.py', 'Lib/site-packages/civiccast/egress/gst/strategy.py')
 $expectedRuntimeHashes = [ordered]@{}
 foreach ($relative in $runtimeTargets) {
-    $matches = @($packManifest.files | Where-Object { $_.path -eq $relative })
-    if ($matches.Count -ne 1 -or "$($matches[0].sha256)" -notmatch '^[0-9a-f]{64}$') { throw "Native app payload manifest does not uniquely bind $relative." }
-    $expectedRuntimeHashes[$relative] = "$($matches[0].sha256)"
+    $runtimeEntries = @($packManifest.files | Where-Object { $_.path -eq $relative })
+    if ($runtimeEntries.Count -ne 1 -or "$($runtimeEntries[0].sha256)" -notmatch '^[0-9a-f]{64}$') { throw "Native app payload manifest does not uniquely bind $relative." }
+    $expectedRuntimeHashes[$relative] = "$($runtimeEntries[0].sha256)"
 }
 
 $installer = $installers[0].local_path
@@ -101,9 +114,14 @@ Write-Beta5JsonAtomic -Object $id -Path $IdentityPath
 
 # Normal upgrade only: no uninstaller, ProgramData removal, install-root removal, or reboot.
 $installInvocationUtc = (Get-Date).ToUniversalTime()
-$process = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$installRoot") -PassThru -Wait -WindowStyle Hidden
+$process = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$installRoot") -PassThru -WindowStyle Hidden
 $null = $process.Handle
-if ($process.ExitCode -ne 0) { throw "Installer exited $($process.ExitCode)." }
+Set-Beta5IdentityField $id 'retry_install_started_utc' $installInvocationUtc.ToString('o')
+Set-Beta5IdentityField $id 'retry_installer_process_id' ([int]$process.Id)
+Set-Beta5IdentityField $id 'retry_installer_process_started_utc' $process.StartTime.ToUniversalTime().ToString('o')
+Write-Beta5JsonAtomic -Object $id -Path $IdentityPath
+$installerExitCode = Wait-Beta5PrimaryInstaller -Process $process
+if ($installerExitCode -ne 0) { throw "Installer exited $installerExitCode." }
 
 $installed = $null
 $deadline = (Get-Date).AddMinutes(30)
