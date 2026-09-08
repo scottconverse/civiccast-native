@@ -19,6 +19,25 @@ below.
 
 ### External field documentation
 
+- **Publisher-generated SmartScreen guidance now states the verification order.**
+  Release notes require the exact SHA-256 and valid Authenticode publisher
+  before any conditional SmartScreen action; a warning alone is not proof of a
+  failed signature or valid publisher, and missing options or mismatched
+  publisher/hash remain stop conditions.
+
+- **Publisher PowerShell preflight isolates `PSModulePath`.** The child uses
+  Windows PowerShell's own default module paths, preventing the observed
+  inherited-PowerShell-7 type-data import failure before signature checking.
+  The parent process environment and actual signature checks remain unchanged.
+
+- **Gate A preflight downloads use fresh archived attempts.** Repeated dry-run
+  and live preparation cannot overwrite or silently reuse an older verdict
+  directory.
+
+- **Mutation collection includes the Sandbox harness fixtures.** The isolated
+  mutation workspace now copies `sandbox-lab` and `gate-b`, which the harness
+  policy tests read. This repairs collection without skipping those tests.
+
 - **Field-installation guidance now separates installation, trust and cutover.**
   The external quickstart and tester guides require the actual installer hash
   and Authenticode publisher checks before running it, distinguish USB/LAN
