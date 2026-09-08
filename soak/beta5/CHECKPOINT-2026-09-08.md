@@ -1,5 +1,26 @@
 # Beta.5 tester support checkpoint
 
+## Installation diagnostic: 2026-09-08, 18:16 UTC
+
+Added one unique read-only diagnostic autorun and five support/test/docs files
+under install-inventory. Original installer/mission stable bin remains unchanged.
+The existing Git poller will execute the diagnostic once it is available; an
+ongoing original install task can delay pickup. No blind reinstall or restart.
+Report path: soak/beta5/beta5-sep8-be1260bd0630/install-inventory-r1.json
+on the established tester return branch. No result existed at this checkpoint.
+
+Root and Terra independently verified PS5/7 parser/plan/inventory contracts;
+actual filesystem adapter tests12PASS perengine. Known original-log phrases
+are internally classified into booleans only, up to3logs/4MiB each. No rawlog,
+commandline, token, arbitraryexceptiontext or credential export. Read-only
+selected helper process metadata may include unrelated processes, explicitly
+qualified; names/PIDs alone do not establish installation ownership.
+
+Latest tester heartbeat18:06:11Z is still not a newcandidate installation
+receipt. GateA34248734841 clean and cross-version lanes both passed and their
+evidence uploaded; final download-only lane is running. Signed candidate be
+and build34237280539 unchanged. No beta5release/tag yet.
+
 ## Inert browser support: 2026-09-08, 17:31 UTC
 
 Seven new browser-proof files, plus these support docs and README banner.

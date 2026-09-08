@@ -11,6 +11,8 @@
 > presence. Caption acceptance and resident-browser playback proof remain inert
 > post-soak helpers, not autoruns. The browser helper requires actual active
 > English/Spanish timed captions, not merely selected buttons.
+> A separate installation diagnostic reports selected process/file metadata and
+> fixed known log signals without exporting raw logs or restarting anything.
 > Dispatch is not evidence of installation or a completed two-hour soak.
 
 **CivicCast is an open-source, self-hostable civic broadcast platform for

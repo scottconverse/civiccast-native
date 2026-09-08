@@ -17,6 +17,13 @@ an inert template for comparison, not an additional executable directive.
 
 ## Control-branch layout
 
+`install-inventory/` supplies the unique follow-up diagnostic
+`AUTORUN-SEP8-BETA5-INSTALL-INVENTORY-R1.ps1`. It returns selected identity,
+file/service/process metadata and fixed known original-log boolean signals.
+It does not restart or reinstall anything, export raw logs/command lines, or
+claim candidate installation acceptance. Generic helper process names can
+include unrelated processes. See [install-inventory/README.md](install-inventory/README.md).
+
 `browser-proof/` contains a separately reviewed, inert post-soak resident
 playback helper. It requires explicit already-installed Node, Playwright Core
 and Edge/Chrome paths; it does not install tooling or run from the poller.
