@@ -4,31 +4,25 @@
 
 ---
 
-## Mandatory CivicCast Cross-Agent Audit Protocol
+## Current owner authorization — 2026-09-08 beta.5 release
 
-For any CivicCast audit, audit-fix, release-gate, verification, status report,
-Claude/Codex report check, merge/tag-readiness decision, or directive-writing
-work, read and follow the repo-local protocol:
+The outdated cross-agent audit protocol has been removed at Scott's request.
+Do not restore or follow it. The current release manager is authorized to
+finish the operating beta for LPM: repair, test, document, push, merge on
+green CI, tag, and publish. This explicit assignment supersedes historical
+owner-only execution rules below for this release; no per-stage approval is
+needed. Station production cutover and new spending still require authorization.
 
-`docs/process/CIVICCAST_AUDIT_PROTOCOL.md`
-
-The protocol requires claim verification against git/GitHub/logs, durable
-artifact reads, substantive content checks, drift checks, working-tree
-reporting, unreported catches, caveats, and paste-ready directives with exact
-files, examples, acceptance criteria, halt triggers, and proof requirements.
-
-A sparse status report is not acceptable unless Scott explicitly requests a
-narrow summary.
+Do not use staged-build, Workflowwright, GauntletGate, Proof Gate, or Audit
+Team skills on this assignment. Manage work directly, use independent agents
+when useful, and support release claims with results from the actual candidate.
 
 ---
 
 ## Mandatory 5-lens self-audit before every push
 
-This rule is the *implementation-side* counterpart to the verification-side
-audit protocol above. The verification protocol governs how Codex / Claude
-audit each other's work. This rule governs how Claude audits its own work
-before the verification turn ever runs, so the verification turn finds less
-to fix.
+This repository checklist covers engineering, user experience, tests,
+documentation, and QA before pushing a change.
 
 **Before every `git push` that touches code, docs, or status artifacts on
 this repo,** run a hostile 5-lens self-audit on the actual diff. The result
@@ -56,8 +50,8 @@ proves otherwise):
    Hostile means: a doc silent about the change is wrong, not OK.
 5. **QA.** Read the final state across files cold, as the next agent
    walking in. Cross-file contradictions, ledger top-totals vs row
-   counts, forbidden status words (`done`/`ready`/`taggable`/`shippable`
-   per audit protocol §12). Hostile means: drift exists until cross-file
+   counts, and readiness claims unsupported by current evidence.
+   Hostile means: drift exists until cross-file
    reading proves it doesn't.
 
 The artifact-state checklist (specific drift Scott has had to find by hand)

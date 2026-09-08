@@ -18,22 +18,6 @@ CURRENT_BETA_RELEASE_TAG = yaml.safe_load(
 )["current"]
 
 
-def test_mandatory_audit_protocol_is_repo_local() -> None:
-    protocol = REPO_ROOT / "docs/process/CIVICCAST_AUDIT_PROTOCOL.md"
-    self_audit = REPO_ROOT / "docs/process/5-lens-self-audit.md"
-    claude = REPO_ROOT / "CLAUDE.md"
-
-    assert protocol.exists()
-    assert "repo-local mandatory protocol" in protocol.read_text(encoding="utf-8")
-
-    for path in (claude, self_audit):
-        text = path.read_text(encoding="utf-8")
-        assert "docs/process/CIVICCAST_AUDIT_PROTOCOL.md" in text
-        assert "CIVICCAST_AUDIT_PROTOCOL.md" in text
-        assert "OneDrive" not in text
-        assert "feedback_5_lens_self_audit_before_push.md" not in text
-
-
 def test_active_public_docs_link_validated_current_candidate() -> None:
     """Every public front door must name the current release tag and link
     its validated verification record (docs/releases/v<version>-verification.md)

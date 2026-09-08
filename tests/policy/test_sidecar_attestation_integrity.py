@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from scripts.policy.check_sidecar_attestation_integrity import (
     evaluate_sidecar_attestation_integrity,
@@ -48,13 +51,27 @@ def test_passes_when_no_sidecars_exist(tmp_path: Path) -> None:
     assert evaluate_sidecar_attestation_integrity(tmp_path) == []
 
 
-def test_plain_script_entrypoint_is_not_redirected_by_ambient_pythonpath(tmp_path: Path) -> None:
-    poison = tmp_path / "scripts"
-    poison.mkdir()
-    (poison / "build_release_artifacts.py").write_text(
+@pytest.mark.parametrize("missing_signed_artifact", [False, True])
+def test_plain_script_entrypoint_is_not_redirected_by_ambient_pythonpath(
+    tmp_path: Path, missing_signed_artifact: bool
+) -> None:
+    (tmp_path / "policy_utils.py").write_text(
         "raise ImportError('ambient checkout won')\n", encoding="utf-8"
     )
-    script = Path("scripts/policy/check_sidecar_attestation_integrity.py").resolve()
+    # Run the real entrypoint in a controlled checkout layout. Ignored release
+    # remnants in the developer's checkout must not decide an import test.
+    fixture_root = tmp_path / "checkout"
+    policy_dir = fixture_root / "scripts" / "policy"
+    policy_dir.mkdir(parents=True)
+    for name in ("check_sidecar_attestation_integrity.py", "policy_utils.py"):
+        shutil.copyfile(Path("scripts/policy") / name, policy_dir / name)
+    script = policy_dir / "check_sidecar_attestation_integrity.py"
+    if missing_signed_artifact:
+        _write_sidecar(
+            fixture_root,
+            "setup.exe.sidecar.json",
+            {"sha256": "0" * 64, "attestation": None, "install_manifest": {"signed": True}},
+        )
     env = os.environ.copy()
     env["PYTHONPATH"] = str(tmp_path)
 
@@ -67,8 +84,13 @@ def test_plain_script_entrypoint_is_not_redirected_by_ambient_pythonpath(tmp_pat
         check=False,
     )
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "check_sidecar_attestation_integrity: PASS" in result.stdout
+    assert "ambient checkout won" not in result.stdout + result.stderr
+    if missing_signed_artifact:
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "has no embedded Authenticode evidence" in result.stdout
+    else:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "check_sidecar_attestation_integrity: PASS" in result.stdout
 
 
 def test_passes_when_unsigned_sidecar_has_null_attestation(tmp_path: Path) -> None:
