@@ -1,0 +1,154 @@
+﻿{
+    "schema":  "civiccast-native-beta5-install-inventory-draft-v1",
+    "candidate_source_sha":  "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+    "build_run_id":  "34237280539",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "mission":  "beta5-sep8-be1260bd0630",
+    "identity":  {
+                     "path":  "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\run-identity.json",
+                     "present":  true,
+                     "valid_json":  true,
+                     "receipt_matches_expected":  true,
+                     "mismatches":  [
+
+                                    ],
+                     "schema":  "civiccast-native-tester-run-identity-v3",
+                     "mission":  "beta5-sep8-be1260bd0630",
+                     "candidate_source_sha":  "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+                     "build_source_sha":  "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+                     "gate_a_source_sha":  "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+                     "build_run_id":  34237280539,
+                     "expected_version":  "1.0.0-beta.5",
+                     "hostname":  "DESKTOP-VBMA6O5",
+                     "expected_hostname":  "DESKTOP-VBMA6O5",
+                     "actual_manifest_sha256":  null,
+                     "actual_installer_sha256":  null
+                 },
+    "markers":  [
+                    {
+                        "path":  "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\run-identity.json",
+                        "present":  true,
+                        "size_bytes":  1942,
+                        "modified_utc":  "2026-09-08T15:16:12.7264420Z"
+                    },
+                    {
+                        "path":  "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\soak-state.json",
+                        "present":  false,
+                        "size_bytes":  null,
+                        "modified_utc":  null
+                    },
+                    {
+                        "path":  "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\return-repo\\soak\\beta5\\beta5-sep8-be1260bd0630\\final-verdict.json",
+                        "present":  false,
+                        "size_bytes":  null,
+                        "modified_utc":  null
+                    }
+                ],
+    "install_progress":  {
+                             "path":  "C:\\ProgramData\\CivicCast\\install-progress.log",
+                             "present":  true,
+                             "size_bytes":  7159,
+                             "modified_utc":  "2026-09-06T01:55:26.5123625Z"
+                         },
+    "original_autorun_logs":  {
+                                  "path":  "C:\\CivicCastSoak\\reports\\AUTORUN-SEP8-BETA5-BE1260-R1-20260908T151611Z.log",
+                                  "present":  true,
+                                  "size_bytes":  2494,
+                                  "modified_utc":  "2026-09-08T16:06:39.2575038Z"
+                              },
+    "service":  {
+                    "name":  "CivicCastSupervisor",
+                    "state":  "Running",
+                    "process_id":  18580,
+                    "executable_path":  "C:\\CivicCastHostStore\\install\\runtime\\pythonservice.exe",
+                    "started_utc":  "2026-09-05T19:56:17.7939460-06:00"
+                },
+    "processes":  [
+                      {
+                          "name":  "powershell.exe",
+                          "process_id":  8100,
+                          "parent_process_id":  6084,
+                          "started_utc":  "2026-08-28T17:27:50.2863950-06:00",
+                          "cpu_seconds":  16116.0625
+                      },
+                      {
+                          "name":  "pwsh.exe",
+                          "process_id":  17140,
+                          "parent_process_id":  7724,
+                          "started_utc":  "2026-09-03T02:13:57.2385550-06:00",
+                          "cpu_seconds":  6.71875
+                      },
+                      {
+                          "name":  "powershell.exe",
+                          "process_id":  35036,
+                          "parent_process_id":  2476,
+                          "started_utc":  "2026-09-08T12:56:11.2545550-06:00",
+                          "cpu_seconds":  0.453125
+                      },
+                      {
+                          "name":  "powershell.exe",
+                          "process_id":  18372,
+                          "parent_process_id":  35036,
+                          "started_utc":  "2026-09-08T12:56:12.6208370-06:00",
+                          "cpu_seconds":  0.609375
+                      }
+                  ],
+    "kit_files_count":  21,
+    "kit_files_total_bytes":  27816513345,
+    "safety":  "No raw log text, process command lines, tokens, passwords, or credentials exported. At most 3 original autorun logs of at most 4MiB each inspected for fixed boolean signals.",
+    "known_original_log_signals":  [
+                                       {
+                                           "path":  "C:\\CivicCastSoak\\reports\\AUTORUN-SEP8-BETA5-BE1260-R1-20260908T151611Z.log",
+                                           "bytes":  2494,
+                                           "inspected":  true,
+                                           "skipped_oversize":  false,
+                                           "ffprobe_lookup_failure":  false,
+                                           "fetch_verify_upgrade_pass":  false,
+                                           "exact_signature_rejection":  false,
+                                           "raw_log_exported":  false,
+                                           "known_failure_categories":  [
+                                                                            "property_missing",
+                                                                            "native_command_error"
+                                                                        ],
+                                           "script_locations":  [
+
+                                                                ],
+                                           "powershell_error_categories":  [
+                                                                               "NotSpecified",
+                                                                               "NotSpecified"
+                                                                           ],
+                                           "missing_property_names":  [
+                                                                          "sha256"
+                                                                      ],
+                                           "mentioned_script_filenames":  [
+                                                                              "AUTORUN-SEP8-BETA5-02-FETCH-INSTALL.ps1",
+                                                                              "Invoke-Beta5TesterMission.ps1",
+                                                                              "poll-directives.ps1"
+                                                                          ],
+                                           "line_character_locations":  [
+                                                                            {
+                                                                                "line":  56,
+                                                                                "character":  5
+                                                                            },
+                                                                            {
+                                                                                "line":  51,
+                                                                                "character":  1
+                                                                            }
+                                                                        ]
+                                       }
+                                   ],
+    "collected_utc":  "2026-09-08T18:56:13.6825083Z",
+    "qualification":  "Diagnostic metadata and exact known log phrases only. Identity binding is not installed-source or soak acceptance.",
+    "process_qualification":  "Selected generic helper names may include unrelated processes. Metadata does not establish association with this candidate install; no process command line was collected.",
+    "diagnostic_status":  "COLLECTED",
+    "support_files":  [
+                          {
+                              "name":  "BETA5-TESTER-INSTALL-INVENTORY-DRAFT.ps1",
+                              "sha256":  "ac56ad758902da2dcc430e03a0ebc7e4e179be9b34625016298d8a75ce75bfdb"
+                          },
+                          {
+                              "name":  "BETA5-INSTALL-INVENTORY-ADAPTERS.ps1",
+                              "sha256":  "a43dd54462dd990cf3bd580cd6f9f9e68387310401f39eeadc5f97bb157d3706"
+                          }
+                      ]
+}
