@@ -51,6 +51,15 @@ below.
 
 ### Fixed
 
+- **Sandbox-soak install and health deadlines now remain consistent across
+  the host and guest.** `Run-SandboxSoak.ps1 -InstallBoundMinutes` and
+  `-HealthBoundMinutes` are rendered into the Windows Sandbox LogonCommand
+  and accepted by `In-Sandbox-Soak.ps1`, rather than letting the guest
+  silently revert to its 20/10-minute defaults. The effective values are
+  retained in `SOAK-START.json` and `VERDICT.json`; defaults and all product
+  verdict criteria are unchanged. This is test-harness maintenance after the
+  signed beta.5 candidate was built; its installer and runtime bytes are unchanged.
+
 - **The native app-payload runtime probe now redirects its profile-backed
   application state.** The build-only embedded-Python smoke test removes
   inherited `DATABASE_URL` and `CIVICCAST_*` overrides from its child
@@ -65,6 +74,7 @@ below.
   The builder tests load the source under its fully qualified module name so
   mutation-test trampoline hits map to the builder's actual mutant keys,
   rather than aborting without mutation data under a bare module alias.
+
 - **Finite program and filler plans roll over before running out.** The
   end of scheduled media arms the configured filler, and finite filler
   refreshes without a planned worker restart. Due programs still interrupt

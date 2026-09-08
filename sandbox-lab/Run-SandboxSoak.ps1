@@ -69,8 +69,8 @@ param(
     # own $InstallBoundMinutes/$HealthBoundMinutes -- the in-sandbox
     # watchdog is a second, independent backstop using the same numbers,
     # not a substitute for this host-side guard.
-    [int]$InstallBoundMinutes = 20,
-    [int]$HealthBoundMinutes = 10,
+    [ValidateRange(1, 180)][int]$InstallBoundMinutes = 20,
+    [ValidateRange(1, 180)][int]$HealthBoundMinutes = 10,
 
     # Minutes with no new rollup file under output\rollups\ once the soak
     # clock has started (SOAK-START.json present) before this script
@@ -288,6 +288,8 @@ $rendered = $template `
     -replace [regex]::Escape('{{OUTPUT_DIR}}'), $outputDir `
     -replace [regex]::Escape('{{SCRIPTS_DIR}}'), $scriptsDir `
     -replace [regex]::Escape('{{MINUTES}}'), "$Minutes" `
+    -replace [regex]::Escape('{{INSTALL_BOUND_MINUTES}}'), "$InstallBoundMinutes" `
+    -replace [regex]::Escape('{{HEALTH_BOUND_MINUTES}}'), "$HealthBoundMinutes" `
     -replace [regex]::Escape('{{ON_AIR_BOUND_MINUTES}}'), "$OnAirBoundMinutes" `
     -replace [regex]::Escape('{{SEAMLESS_RELOAD_ARG}}'), $seamlessReloadArg `
     -replace [regex]::Escape('{{CAPTIONS_OFF_ARG}}'), $captionsOffArg
@@ -296,7 +298,7 @@ $wsbPath = Join-Path $Root "CivicCastSandboxSoak-$runName.wsb"
 Set-Content -Path $wsbPath -Value $rendered -Encoding UTF8
 Write-Step "Rendered $wsbPath"
 
-$logonCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes $Minutes -OnAirBoundMinutes $OnAirBoundMinutes $seamlessReloadArg $captionsOffArg"
+$logonCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes $Minutes -InstallBoundMinutes $InstallBoundMinutes -HealthBoundMinutes $HealthBoundMinutes -OnAirBoundMinutes $OnAirBoundMinutes $seamlessReloadArg $captionsOffArg"
 Write-Step "LogonCommand: $logonCommand"
 
 # --------------------------------------------------------------------------
