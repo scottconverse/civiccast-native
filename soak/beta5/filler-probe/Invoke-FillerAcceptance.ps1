@@ -46,6 +46,7 @@ $plan = [ordered]@{
 $plan | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $out 'PLAN.json') -Encoding UTF8
 if (-not $Execute) { Write-Host "PLAN ONLY: $out"; exit 0 }
 $samples=@();$phaseProof=@{};$created=@();$bulletinIds=@()
+$receipt=$null;$receiptHash=$null
 trap {
     $samples|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $out 'STATE-SAMPLES.json') -Encoding UTF8
     [ordered]@{verdict='FAIL';run_id=$runId;expected_sha=$ExpectedSha.ToLowerInvariant();install_receipt_path=$receipt;install_receipt_sha256=$receiptHash;expected_version=$ExpectedVersion;error="$($_.Exception.GetType().Name): $($_.Exception.Message)";phase_proof=$phaseProof;created_schedule=$created;bulletin_ids=$bulletinIds}|ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $out 'RESULT.json') -Encoding UTF8

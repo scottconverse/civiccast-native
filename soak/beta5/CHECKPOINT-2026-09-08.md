@@ -1,5 +1,24 @@
 # Beta.5 tester support checkpoint
 
+## Inert filler token-boundary correction
+
+The initializer now uses the same-process call operator with splatted params,
+not powershell.exe with the bearer token in argv. It resets/validates the child
+logical exit code, preserves stop-and-disable cleanup and SETUP-RESULT, and
+initializes receipt variables before early error handling under StrictMode.
+No criteria, station behavior, original mission bin or autorun changes.
+
+Sol and root verified actual acceptance-script plan/error paths and the actual
+initializer with hermetic API/child stubs:52 assertions perengine, plus existing
+ProbeContracts PASS. Root ensured the nested initializer test uses the current
+PS5.1/PS7 executable, rather than silently always testing PS5.1. Token absence
+from evidence and success/failure/invalid/missing-exit cleanup are covered.
+These are helper boundary tests, not live full media acceptance.
+
+The earlier scriptblock exit experiment was not equivalent to invoking a .ps1
+file. Actual files return to the caller after exit and preserve LASTEXITCODE;
+the unnecessary ReturnResult envelope design was discarded before integration.
+
 ## Installation diagnostic: 2026-09-08, 18:16 UTC
 
 Added one unique read-only diagnostic autorun and five support/test/docs files

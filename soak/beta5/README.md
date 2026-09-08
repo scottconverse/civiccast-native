@@ -17,6 +17,12 @@ an inert template for comparison, not an additional executable directive.
 
 ## Control-branch layout
 
+The private filler helper invokes its acceptance script in the same PowerShell
+process with in-memory parameters, so the operator token is not placed in a
+nested native process command line. Actual script-file exit/cleanup tests pass
+under PS5.1 and PS7. This remains inert post-soak support, not a new autorun or
+evidence that a live filler test already passed.
+
 `install-inventory/` supplies the unique follow-up diagnostic
 `AUTORUN-SEP8-BETA5-INSTALL-INVENTORY-R1.ps1`. It returns selected identity,
 file/service/process metadata and fixed known original-log boolean signals.

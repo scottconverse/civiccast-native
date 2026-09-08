@@ -55,3 +55,27 @@ stop and retains the fourth channel disabled because the API has no delete endpo
 Choose a new dedicated id and unused UDP port. A `finally` block attempts both stop
 and disable even if start or acceptance fails, and records either cleanup failure;
 the script never alters any pre-existing channel.
+
+## In-process token boundary
+
+This correction was developed and tested in a separate workspace before being
+integrated into this control package. The verified baseline SHA-256 values were
+`e0190c2dd7f5d6ac08c6b0024486950310fdc10d067140ceac690d8292eb3969` for
+`Initialize-FillerProbe.ps1` and
+`98e0efcfddf6856dcd72989a7784d2ff25f29292a0e1481b1af107f0570f7081` for
+`Invoke-FillerAcceptance.ps1`.
+
+The initializer now calls the acceptance script in the same PowerShell process
+with a splatted parameter hashtable. The bearer value remains an in-memory
+PowerShell argument and is not placed in a native child process command line.
+Actual `.ps1` child tests corrected an earlier scriptblock-based inference: `exit`
+from a called script file returns to its caller, sets `$LASTEXITCODE`, and allows
+the caller's `finally` and result-writing logic to run under both Windows
+PowerShell 5.1 and PowerShell 7. The initializer clears stale `$LASTEXITCODE` before
+the call and accepts only explicit `0`, `1`, or `2` results.
+
+`Test-FillerInvocationBoundary.ps1` invokes copied production acceptance bytes for
+plan and early trapped-error paths, then invokes the actual initializer with
+hermetic HTTP/acceptance stubs. It covers PASS, proof FAIL, trapped error, invalid
+exit, and a child that returns without setting an exit code, without contacting
+CivicCast.

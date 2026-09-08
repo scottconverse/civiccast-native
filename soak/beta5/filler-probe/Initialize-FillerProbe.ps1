@@ -54,8 +54,13 @@ try{
  $deadline=(Get-Date).ToUniversalTime().AddSeconds(90)
  do{Start-Sleep -Seconds 2;$state=Invoke-Api Get "/api/staff/egress/channels/$ChannelId/state"}while(((Get-Date).ToUniversalTime()-lt$deadline)-and($null-eq$state-or$state.state-notin@('ON_AIR','FALLBACK_SLATE')))
  if($null-eq$state-or$state.state-notin@('ON_AIR','FALLBACK_SLATE')){throw "dedicated channel did not start: $($state.state)"}
- $a=@('-NoProfile','-File',(Join-Path $PSScriptRoot 'Invoke-FillerAcceptance.ps1'),'-ApiBase',$base,'-ChannelId',$ChannelId,'-BearerToken',$BearerToken,'-FirstAssetId',"$($approved[0].asset_id)",'-SecondAssetId',"$($approved[1].asset_id)",'-FirstSourceLabel',"$($approved[0].title)",'-SecondSourceLabel',"$($approved[1].title)",'-ExpectedSha',$ExpectedSha,'-ExpectedVersion',$ExpectedVersion,'-InstallReceiptPath',$identityPath,'-UdpPort',"$UdpPort",'-TspExe',$TspExe,'-LeadSeconds','120','-ProgramSeconds',"$programSeconds",'-Execute')
- if($LongBoard){$a+='-LongBoard'};& powershell.exe @a;$acceptanceExit=$LASTEXITCODE
+ $acceptanceParameters=@{ApiBase=$base;ChannelId=$ChannelId;BearerToken=$BearerToken;FirstAssetId="$($approved[0].asset_id)";SecondAssetId="$($approved[1].asset_id)";FirstSourceLabel="$($approved[0].title)";SecondSourceLabel="$($approved[1].title)";ExpectedSha=$ExpectedSha;ExpectedVersion=$ExpectedVersion;InstallReceiptPath=$identityPath;UdpPort=$UdpPort;TspExe=$TspExe;LeadSeconds=120;ProgramSeconds=$programSeconds;Execute=$true}
+ if($LongBoard){$acceptanceParameters.LongBoard=$true}
+ $global:LASTEXITCODE=$null
+ & (Join-Path $PSScriptRoot 'Invoke-FillerAcceptance.ps1') @acceptanceParameters
+ if($null-eq$global:LASTEXITCODE){throw 'acceptance child returned without setting a logical exit code'}
+ if("$global:LASTEXITCODE"-notmatch'^[012]$'){throw "acceptance child returned invalid logical exit code '$global:LASTEXITCODE'"}
+ $acceptanceExit=[int]$global:LASTEXITCODE
 }catch{$primaryError="$($_.Exception.GetType().Name): $($_.Exception.Message)"}
 finally{$cleanupErrors=@(Invoke-ProbeCleanup $created $ChannelId $UdpPort ${function:Invoke-Api})}
 [ordered]@{configured_channel=$saved;initial_state=$state;acceptance_exit_code=$acceptanceExit;primary_error=$primaryError;cleanup_errors=$cleanupErrors;retained_channel_disabled=($created-and$cleanupErrors.Count-eq0);asset_evidence=(Join-Path $out 'IDENTITY-APPROVED-ASSETS.json')}|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $out 'SETUP-RESULT.json') -Encoding UTF8
