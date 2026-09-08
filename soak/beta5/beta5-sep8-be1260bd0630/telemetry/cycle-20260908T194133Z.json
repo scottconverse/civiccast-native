@@ -1,0 +1,53 @@
+﻿{
+    "schema":  "civiccast-native-beta5-media-cycle-v3",
+    "mission":  "beta5-sep8-be1260bd0630",
+    "candidate_source_sha":  "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+    "utc":  "2026-09-08T19:41:33.6769561Z",
+    "channels":  [
+                     {
+                         "channel_id":  "public",
+                         "state":  "ON_AIR",
+                         "pid":  33756,
+                         "engine":  "unknown",
+                         "command_line":  null,
+                         "tsduck":  {
+                                        "verdict":  "fail-timed-out",
+                                        "packets_total":  null,
+                                        "invalid_syncs":  null,
+                                        "transport_errors":  null,
+                                        "discontinuities":  null
+                                    }
+                     },
+                     {
+                         "channel_id":  "education",
+                         "state":  "ON_AIR",
+                         "pid":  39356,
+                         "engine":  "gstreamer",
+                         "command_line":  "C:\\CivicCastHostStore\\install\\runtime\\python.exe C:\\CivicCastHostStore\\install\\runtime\\Lib\\site-packages\\civiccast\\egress\\gst\\worker.py C:\\ProgramData\\CivicCast\\data\\egress\\education\\playout-graph.json \\\\.\\pipe\\civiccast-worker-education",
+                         "tsduck":  {
+                                        "verdict":  "fail-stream-errors",
+                                        "packets_total":  54497,
+                                        "invalid_syncs":  0,
+                                        "transport_errors":  0,
+                                        "discontinuities":  3
+                                    }
+                     },
+                     {
+                         "channel_id":  "government",
+                         "state":  "TRANSITIONING",
+                         "pid":  23708,
+                         "engine":  "unknown",
+                         "command_line":  null,
+                         "tsduck":  {
+                                        "verdict":  "pass",
+                                        "packets_total":  1491,
+                                        "invalid_syncs":  0,
+                                        "transport_errors":  0,
+                                        "discontinuities":  0
+                                    }
+                     }
+                 ],
+    "pid_change_count":  1,
+    "reload_aborted_count":  0,
+    "reload_stuck_count":  0
+}
