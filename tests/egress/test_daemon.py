@@ -983,6 +983,7 @@ def test_content_reload_defers_switch_for_an_on_air_reload_with_no_override(
 
 def test_horizon_rollover_from_terminal_schedule_settles_as_fallback_without_restart(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = InMemoryEgressStore()
     store.upsert_config(_config())
@@ -1014,12 +1015,31 @@ def test_horizon_rollover_from_terminal_schedule_settles_as_fallback_without_res
     assert strategy.switch_at_end_of_current_calls == [True]
     assert len(started) == 1
 
-    daemon.process_once("gov")
+    sink_states: list[str] = []
+    alert_states: list[str] = []
+    original_sink_connected = daemon._sink_connected
+
+    def record_sink_state(*args: Any, **kwargs: Any) -> dict[str, bool]:
+        sink_states.append(kwargs["state"])
+        return original_sink_connected(*args, **kwargs)
+
+    monkeypatch.setattr(daemon, "_sink_connected", record_sink_state)
+    monkeypatch.setattr(
+        daemon,
+        "_alert_evaluator_hook",
+        lambda _channel, state, _fps, _bitrate: alert_states.append(state),
+    )
+    # Inspect the settlement itself: a later ordinary poll would overwrite
+    # the inconsistent immediate sample and hide the regression.
+    daemon._poll_reload_settlement("gov")
     state = store.read_state("gov")
     assert state is not None
     assert state.state == "FALLBACK_SLATE"
     assert state.current_source_label == "CivicCast filler"
     assert state.pid == 111
+    assert store.recent_health("gov", 1)[0].state == "FALLBACK_SLATE"
+    assert sink_states == ["FALLBACK_SLATE"]
+    assert alert_states == ["FALLBACK_SLATE"]
     assert [event.state for event in store.recent_proof_events("gov", 3)] == [
         "FALLBACK_SLATE",
         "TRANSITIONING",

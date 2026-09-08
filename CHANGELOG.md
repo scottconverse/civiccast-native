@@ -49,7 +49,10 @@ below.
   end of scheduled media arms the configured filler, and finite filler
   refreshes without a planned worker restart. Due programs still interrupt
   filler immediately; manual overrides and live sources keep their existing
-  behavior. Reload settlement records the actual program or filler state.
+  behavior. Reload settlement records the actual program or filler state
+  consistently in channel status, immediate health samples, sink evaluation
+  and alert evaluation. A regression observes the settlement itself before
+  an ordinary poll can mask an inconsistent health sample.
 - **Filler horizons match the playable decoder-chain limit.** Slate uses
   immutable cached media and at most 12 segments. Larger bulletin rotations
   concatenate groups into at most 12 files without dropping later slides.

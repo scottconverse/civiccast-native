@@ -2653,7 +2653,7 @@ class EgressDaemon:
         previous_source_label = pending.previous_source_label
         # Record the source-to-source transition in the proof chain for parity with
         # the restart path — but DO NOT write a TRANSITIONING *state*: the seamless
-        # swap never takes output down, so the channel stays ON_AIR throughout.
+        # swap never takes output down, so the channel stays in a running state.
         if previous_state in {"ON_AIR", "FALLBACK_SLATE"}:
             transition_event = self._build_proof_event(
                 channel_id=channel_id,
@@ -2671,8 +2671,8 @@ class EgressDaemon:
             previous_source_label=previous_source_label,
         )
         self._store.append_proof_event(proof_event)
-        # The GStreamer seamless-swap twin of the _start ON_AIR site: the channel
-        # stays ON_AIR but the source actually changed, so it IS an as-run boundary.
+        # The seamless twin of _start: output keeps running but the source
+        # changed, so this is an as-run boundary for program or filler.
         self._record_as_run_transition(
             channel_id=channel_id,
             running_state=pending.target_state,
@@ -2694,8 +2694,8 @@ class EgressDaemon:
         )
         self._append_health(
             channel_id,
-            "ON_AIR",
-            sink_connected=self._sink_connected(channel_id, config, state="ON_AIR"),
+            pending.target_state,
+            sink_connected=self._sink_connected(channel_id, config, state=pending.target_state),
             seconds_on_air=self._seconds_on_air(channel_id),
         )
         # F3: the reload just settled -- the PREVIOUS plan is retired (the
@@ -2714,7 +2714,7 @@ class EgressDaemon:
         the worker-pipe ack.
 
         * status ``"id"`` matches the pending reload and ``"result" ==
-          "applied"`` -- the switch actually landed: finish the ON_AIR
+          "applied"`` -- the switch actually landed: finish the target-state
           bookkeeping (``_commit_reload_settlement``) and clear the pending
           entry.
         * status matches and ``"result"`` starts with ``"aborted:"`` -- the

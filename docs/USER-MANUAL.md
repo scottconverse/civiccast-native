@@ -62,6 +62,8 @@ by default: the playout worker prepares the next plan while the current plan
 airs. When scheduled media ends, the channel switches to its configured
 bulletins or slate; that filler refreshes until another program is due.
 Large bulletin rotations retain every approved, currently airable slide.
+After a handoff, channel status and health reporting agree on whether the
+channel is airing a scheduled program or its configured filler.
 Operators do not need to enable an environment flag. For troubleshooting,
 IT may set `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` (also `false`, `no`, or `off`)
 in the service environment and restart the service during a maintenance

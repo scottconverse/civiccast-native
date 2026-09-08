@@ -43,6 +43,8 @@ The beta.5 development build enables in-place schedule rollover by default.
 This lets the playout worker load the next plan without a planned encoder
 restart, including refreshing filler between programs. Bulletin rotations
 retain all approved, currently airable slides within the decoder-chain limit.
+Channel status and health reporting distinguish scheduled programs from filler
+as soon as a handoff completes.
 Setting `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` explicitly selects the
 restart fallback for diagnosis and can interrupt output. Installed-candidate
 soaks remain required before beta.5 publication; see the

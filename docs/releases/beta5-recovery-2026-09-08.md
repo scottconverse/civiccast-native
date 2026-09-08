@@ -96,6 +96,34 @@ not an assumed post-install internet model download.
 
 ## Remaining release work
 
+### Integrated review follow-up
+
+Baseline PR192 passed all required CI and merged as
+`e15a1011c132efbb7bc19ce00fbbe50e99fc2b7b`. Runtime PR193 was pushed at
+`44a02308154d79971093e5a18586a9c0289f5aa3`. GitHub review found that its
+filler settlement wrote the correct channel state but still sent ON_AIR to
+immediate health, sink and alert evaluation. A strengthened regression
+observed settlement directly and failed with all three values still ON_AIR.
+The correction passes the actual settlement target through both health paths;
+the daemon, automation and reload-policy suites then passed 211 tests in
+7.04 seconds. The in-flight signed build34231404699 was cancelled because
+the final candidate must include this correction.
+
+The previous full local run completed with 11,750 passed, 135 skipped and
+six failures in 1,524.14 seconds. Five cleanup tests correctly refused the
+selected output root; the other was the already-corrected landing link.
+All affected modules passed in the allowed artifacts directory: 85 tests
+in 6.37 seconds. A fresh full regression run was started separately.
+
+Additional native-Windows runtime proof: 58 live GStreamer engine, HLS relay
+and named-pipe tests passed in 99 seconds, using current source and the
+already-installed GStreamer runtime without modifying the running station.
+The historical `test_gst_engine_wsl.py` filename also runs native Windows;
+no WSL was used. Bundled FFmpeg 8.1.2 rendered visible bulletin and slate
+text despite nonfatal Fontconfig warnings. Its verified pack hash is
+`2a26749b01d460ebd7aa2716c0714ea6d4ce9bc8d89ecdae56485b145eb91afb`.
+These proofs do not replace installation/soak of the final signed candidate.
+
 1. Prove continuous program and filler output in the installed runtime,
    including text rendering with the candidate's bundled FFmpeg/fonts.
 2. Review the integrated physical-tester dispatch package and verify its
