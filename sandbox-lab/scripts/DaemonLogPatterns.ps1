@@ -70,7 +70,7 @@ $script:DaemonReloadDiscardEchoRegex = [regex]'Content-reload for \S+ \(reload_i
 # this must survive whatever timestamp/logger-name prefix the actual log
 # line carries, which this lane does not control or need to know.
 # In-Sandbox-Soak.ps1 records every channel this ever fires for
-# ($script:reloadArmedChannels) and, under -SeamlessReload, FAILs the run
+# ($script:reloadArmedChannels) and, when seamless reload is expected, FAILs the run
 # if that channel's own worker-stdout reload_committed_count stayed 0 for
 # the whole soak -- an armed-but-never-committed reload is exactly the
 # fallback-to-restart failure mode -SeamlessReload exists to prove absent.

@@ -8,7 +8,7 @@ leaves Azure). The installer is signed during the GitHub Actions release build u
 service principal — no key or `.pfx` ever touches the runner. Verify a downloaded installer with:
 
 ```powershell
-Get-AuthenticodeSignature .\civiccast-<version>-windows-setup.exe | Format-List Status, SignerCertificate
+Get-AuthenticodeSignature .\setup.exe | Format-List Status, SignerCertificate
 ```
 
 Expect **Status: Valid**, signer **CN=Scott Converse**, chaining to the **Microsoft Identity
@@ -57,7 +57,7 @@ always `null`, kept only for sidecar-schema stability.
 
 To verify a downloaded release artifact yourself:
 
-1. **Windows installer (`*-windows-setup.exe`):** `Get-AuthenticodeSignature` per "Current status"
+1. **Windows installer (`setup.exe`):** `Get-AuthenticodeSignature` per "Current status"
    above, and compare its SHA-256 against the matching `*.sidecar.json` / release manifest.
 2. **Native distribution packs (`*.ccpack`):** verified automatically by the installer via their
    embedded ed25519 signature; `uv run civiccast installer verify-package --artifact --sidecar`

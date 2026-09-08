@@ -39,6 +39,16 @@ _REQUIRED_FRAGMENTS = (
 )
 
 
+def test_packaged_manual_does_not_freeze_mutable_publication_status() -> None:
+    introduction = " ".join(
+        _SOURCE.read_text(encoding="utf-8").split("## Who Reads What")[0].split()
+    )
+    assert "owner-held unpublished candidate" not in introduction
+    assert "current published release described in this manual" not in introduction
+    assert "https://github.com/scottconverse/civiccast-native/releases" in introduction
+    assert "does not itself establish publication or installation acceptance" in introduction
+
+
 @pytest.fixture
 def docx_artifact(tmp_path: Path) -> Path:
     """Render USER-MANUAL.md to DOCX into a tmp directory; yield the path."""
@@ -127,9 +137,20 @@ class TestUserManualVersionHeaderConsistency:
     by the subtitle) had already moved to `v1.0.0-rc18`, and nothing checked
     the two against each other."""
 
-    def test_source_version_token_reads_the_subtitle(self) -> None:
+    @pytest.mark.parametrize(
+        ("version", "expected"),
+        (
+            ("v1.0.0", "v1.0.0"),
+            ("v1.0.0-rc18", "v1.0.0-rc18"),
+            ("v1.0.0-beta.5", "v1.0.0-beta.5"),
+        ),
+    )
+    def test_source_version_token_reads_supported_versions(
+        self, version: str, expected: str
+    ) -> None:
         text = "---\ntitle: X\nsubtitle: For ops - v1.0.0-rc18 public beta\n---\n"
-        assert render_user_manual._source_version_token(text) == "v1.0.0-rc18"
+        text = text.replace("v1.0.0-rc18", version)
+        assert render_user_manual._source_version_token(text) == expected
 
     def test_source_version_token_rejects_a_subtitle_without_a_version(self) -> None:
         with pytest.raises(RuntimeError):

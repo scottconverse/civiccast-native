@@ -578,16 +578,11 @@ def graph_from_config(
     prevent; truncating here would have hidden that desync instead of
     surfacing it.
 
-    Truncating (with a WARNING, not an error) is still the right answer for
-    an ``EgressSourcePlan`` producer that is NOT clamped to this constant by
-    design: ``source_plan.SlateSourceGenerator`` and
-    ``bulletin_filler._plan_with_cycle`` intentionally repeat one
-    pre-conformed file ("slate"/"cg"-kind segments) well past 12 segments to
-    span an hour of slate/bulletin fill (CA-8: a short single-segment plan
-    relaunched the encoder, and reset the TS session, every
-    ``duration_seconds``). For those, playing only the first
-    ``MAX_PLAYLIST_SUBCHAINS`` repeats of the SAME file is a harmless,
-    graceful degradation, not a bug to fail the channel over.
+    Oversized legacy slate/cg plans retain the warning/truncation compatibility
+    path. Built-in slate and bulletin producers now respect the same cap:
+    they repeat cached media within it or concatenate large rotations first.
+    Their declared horizon therefore matches the plan this bridge plays;
+    automation refreshes finite filler before EOS.
     """
     profile = config.canonical_profile
     common_caps = (

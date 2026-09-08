@@ -841,10 +841,10 @@ class ChannelAutomationService:
         )
 
     def _check_plan_rollover(self, channel_id: str, *, now: datetime) -> None:
-        """Extend a LIVE plan before it EOSes (the fix for the soak defect).
+        """Extend a finite program or filler plan before it EOSes.
 
-        ``_check_slate_replan`` above only reacts to a GAP (FALLBACK_SLATE):
-        it has never looked at a plan that is actively airing (ON_AIR). A
+        ``_check_slate_replan`` reacts to a due program while filler is airing;
+        this check protects both ON_AIR and finite FALLBACK_SLATE horizons. A
         schedule of back-to-back published premieres builds a source plan
         capped at ``max_segments`` (``source_plan.py``); once the last
         segment finishes the GStreamer worker EOSes, the daemon writes
@@ -864,8 +864,10 @@ class ChannelAutomationService:
         with a join-in-progress offset and windows forward from there
         (``source_plan.build_source_plan_from_schedule``), so a later call
         naturally reaches further into the schedule than the original call
-        did. If that fresh plan reaches further than the one already
-        airing, the SAME ``reload`` command ``_check_slate_replan`` uses is
+        did. If that fresh plan reaches further than the one already airing,
+        it becomes the rollover target. If the provider only returns the
+        shrinking terminal item, filler is bound to the command instead. The
+        SAME ``reload`` command ``_check_slate_replan`` uses is
         enqueued -- the daemon's ``_request_reload`` dispatches it through
         ``_try_content_reload`` (the GStreamer seamless content-swap;
         ``gst/strategy.py``'s ``reload_content``), so the channel stays
@@ -935,16 +937,14 @@ class ChannelAutomationService:
         If the schedule has nothing beyond what is already loaded (the
         freshly-built plan does not reach any further), this deliberately
         does nothing: there is no more program content to roll onto, so the
-        plan is left to reach its own natural end. That crash-restart-free
-        path is unchanged by this fix (see the module docstring and #157);
-        closing that residual gap (a seamless swap onto filler/slate BEFORE
-        the true end of schedule) is a separate follow-on, not needed by
-        the continuous-premiere soak scenario this fixes.
+        plan is left to reach its own natural end. When no later schedule
+        item extends that horizon, the command is instead bound to a finite
+        filler plan and switches at the same natural boundary.
         """
 
         state_row = self._store.read_state(channel_id)
-        if state_row is None or state_row.state != "ON_AIR":
-            # Not airing a schedule-derived program right now (dark, slate,
+        if state_row is None or state_row.state not in {"ON_AIR", "FALLBACK_SLATE"}:
+            # Not airing a finite program or filler plan right now (dark,
             # starting, transitioning, draining) -- nothing to extend.
             self._plan_horizon.pop(channel_id, None)
             self._rollover_issued.discard(channel_id)
@@ -962,6 +962,10 @@ class ChannelAutomationService:
             # tracked horizon as-is; it will be re-established (or correctly
             # found stale and discarded) once the override clears and this
             # channel's state/proof-event settle back to a normal rollover.
+            return
+        if state_row.state == "FALLBACK_SLATE" and channel_id in self._reload_issued:
+            # _check_slate_replan already queued the newly-due schedule plan
+            # during this pass. Do not also queue a horizon rollover.
             return
         proof_event_id = state_row.current_proof_event_id
         self._track_worker_pid(channel_id, state_row)
@@ -1179,23 +1183,20 @@ class ChannelAutomationService:
                 self._monotonic() + self._ROLLOVER_RETRY_COOLDOWN_SECONDS
             )
             return
-        if fresh_plan is None or not fresh_plan.segments:
-            # Schedule exhausted for now -- let the current plan reach its
-            # own end.
-            self._rollover_retry_at[channel_id] = (
-                self._monotonic() + self._ROLLOVER_RETRY_COOLDOWN_SECONDS
-            )
-            return
-        fresh_end = now + timedelta(
-            seconds=sum(segment.duration_seconds for segment in fresh_plan.segments)
-        )
-        if fresh_end <= plan_end_at:
-            # No more published schedule content beyond what is already
-            # loaded (the window did not advance) -- nothing to roll onto.
-            self._rollover_retry_at[channel_id] = (
-                self._monotonic() + self._ROLLOVER_RETRY_COOLDOWN_SECONDS
-            )
-            return
+        force_fallback = fresh_plan is None or not fresh_plan.segments
+        fresh_end = plan_end_at
+        if not force_fallback:
+            fresh_seconds = sum(segment.duration_seconds for segment in fresh_plan.segments)
+            fresh_end = now + timedelta(seconds=fresh_seconds)
+            # A final schedule window commonly resolves to the same item with
+            # less time remaining. It cannot extend the live horizon, so roll
+            # seamlessly onto filler instead of allowing EOS.
+            force_fallback = fresh_end <= plan_end_at and fresh_seconds < planned_seconds
+            if fresh_end <= plan_end_at and not force_fallback:
+                self._rollover_retry_at[channel_id] = (
+                    self._monotonic() + self._ROLLOVER_RETRY_COOLDOWN_SECONDS
+                )
+                return
         self._rollover_retry_at.pop(channel_id, None)
         # Item 78 fix 3: hand the daemon the plan_end_at THIS dispatch is
         # computed against before enqueuing the reload, so
@@ -1217,7 +1218,10 @@ class ChannelAutomationService:
         reload_command_id = f"auto-reload-{uuid.uuid4().hex[:12]}"
         record_plan_end = getattr(self._daemon, "record_rollover_plan_end", None)
         if callable(record_plan_end):
-            record_plan_end(channel_id, plan_end_at, command_id=reload_command_id)
+            record_kwargs: dict[str, object] = {"command_id": reload_command_id}
+            if force_fallback:
+                record_kwargs["force_fallback"] = True
+            record_plan_end(channel_id, plan_end_at, **record_kwargs)
         self._enqueue(channel_id, "reload", now=now, command_id=reload_command_id)
         self._rollover_issued.add(channel_id)
         self._rollover_issued_at[channel_id] = self._monotonic()
@@ -1244,11 +1248,10 @@ class ChannelAutomationService:
             self._rollover_pid_age_warned_at.pop(channel_id, None)
         _LOG.info(
             "Channel automation issued a seamless plan rollover for %s: the live plan "
-            "ends in %.0fs and the schedule continues %.0fs further; extending in place "
-            "before the engine reaches EOS.",
+            "ends in %.0fs; target=%s before the engine reaches EOS.",
             channel_id,
             (plan_end_at - now).total_seconds(),
-            (fresh_end - plan_end_at).total_seconds(),
+            "filler" if force_fallback else "extended schedule",
         )
 
     def _reestablish_plan_horizon(

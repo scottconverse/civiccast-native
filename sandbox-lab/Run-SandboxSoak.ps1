@@ -97,12 +97,11 @@ param(
     # as staleness from t=0, firing ~40s after launch).
     [int]$BootBoundMinutes = 5,
 
-    # Round-6 item 1: passed through to In-Sandbox-Soak.ps1's own
-    # -SeamlessReload switch, which exports
-    # CIVICCAST_EGRESS_SEAMLESS_RELOAD=1 at machine scope before starting
-    # the station service (PR #176, head 20f316f -- unmerged as of this
-    # writing; the env var name/contract is taken as given from the
-    # coordinator, not independently verified against this checkout).
+    # Compatibility/reproduction override passed through to the guest. It
+    # explicitly exports CIVICCAST_EGRESS_SEAMLESS_RELOAD=1 before service
+    # start. Beta.5 already defaults seamless reload on, so an ordinary run
+    # does not need this switch and deliberately leaves the environment unset.
+    # Both paths are judged by the same strict default-on verdict contract.
     [switch]$SeamlessReload,
 
     # Round-15 finding (a): threaded through to In-Sandbox-Soak.ps1's own
@@ -151,7 +150,7 @@ function Exit-HarnessError {
 
 if (-not $Root) { $Root = $PSScriptRoot }
 if (-not $Root) { $Root = (Get-Location).Path }
-Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), OnAirBoundMinutes: $OnAirBoundMinutes, KitRoot: $KitRoot, SeamlessReload: $($SeamlessReload.IsPresent), CaptionsOff: $($CaptionsOff.IsPresent), DryRun: $($DryRun.IsPresent)"
+Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), OnAirBoundMinutes: $OnAirBoundMinutes, KitRoot: $KitRoot, SeamlessReloadOverrideRequested: $($SeamlessReload.IsPresent), SeamlessReloadExpected: True, CaptionsOff: $($CaptionsOff.IsPresent), DryRun: $($DryRun.IsPresent)"
 
 $hostLivenessPath = Join-Path $Root 'scripts\HostLiveness.ps1'
 if (-not (Test-Path $hostLivenessPath)) {
@@ -392,7 +391,7 @@ if ($httpCheckOutStr -match '^OK') {
 }
 
 if ($DryRun) {
-    Write-Step "DRY RUN complete. Kit verified ($verifiedCount files), .wsb rendered at $wsbPath, all in-sandbox scripts parse cleanly, HttpClientHandler self-check OK. SeamlessReload=$($SeamlessReload.IsPresent) CaptionsOff=$($CaptionsOff.IsPresent) (LogonCommand: $logonCommand)"
+    Write-Step "DRY RUN complete. Kit verified ($verifiedCount files), .wsb rendered at $wsbPath, all in-sandbox scripts parse cleanly, HttpClientHandler self-check OK. SeamlessReloadOverrideRequested=$($SeamlessReload.IsPresent) SeamlessReloadExpected=True CaptionsOff=$($CaptionsOff.IsPresent) (LogonCommand: $logonCommand)"
     Write-Step "Would launch: Start-Process -FilePath 'C:\Windows\System32\WindowsSandbox.exe' -ArgumentList `"$wsbPath`""
     Write-Step "Would poll for: $outputDir\VERDICT.txt (phase bounds: install=${InstallBoundMinutes}m, health=${HealthBoundMinutes}m after install, rollup-stall=${RollupStallMinutes}m once soak_start_utc is set, generic quiet-bound=${QuietMinutes}m throughout)"
     Write-Step "Output directory prepared at: $outputDir (empty -- no sandbox launched)"

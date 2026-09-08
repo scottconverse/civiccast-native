@@ -137,9 +137,9 @@ class TestShouldDeferSwitchPlanEndAt:
             is True
         )
 
-    def test_a_past_plan_end_at_does_not_make_a_slate_replan_defer(self) -> None:
-        # FALLBACK_SLATE never defers regardless -- a past plan_end_at cannot
-        # accidentally flip the decision the other way.
+    def test_fallback_rollover_with_a_future_horizon_defers(self) -> None:
+        # A horizon-scoped filler rollover waits for the outgoing finite
+        # filler leg; an immediate due-program replan supplies no horizon.
         assert (
             should_defer_switch(
                 previous_state="FALLBACK_SLATE",
@@ -147,7 +147,7 @@ class TestShouldDeferSwitchPlanEndAt:
                 plan_end_at=_NOW + timedelta(seconds=100),
                 now=_NOW,
             )
-            is False
+            is True
         )
 
 

@@ -67,6 +67,7 @@ jobs:
         run: |
           chmod +x scripts/render-user-manual.sh
           OUT_DIR=$PWD/artifacts ./scripts/render-user-manual.sh
+          uv run python scripts/render_user_manual.py --out-dir artifacts --check-current
 
       - name: Check tracked USER-MANUAL release artifacts
         run: uv run python scripts/render_user_manual.py --out-dir docs --check-current

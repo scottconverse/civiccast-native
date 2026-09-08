@@ -581,6 +581,27 @@ Assert-Equal 'scenario19b (same finding, flag-off) -> PASS (not checked off-flag
 $v19c = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -SeamlessReload $true -ReloadArmedNeverCommittedChannels @()
 Assert-Equal 'scenario19c (-SeamlessReload, no armed-never-committed channels) -> PASS' 'PASS' $v19c.verdict
 
+# --------------------------------------------------------------- scenario 20
+# Beta.5 defaults seamless reload on even when the compatibility override was
+# not requested. Exercise the three strict negative outcomes through the new
+# effective-expectation input, independently of legacy -SeamlessReload.
+$v20Planned = Get-SoakVerdict -Cycles $cycles8 -StartUtc $startUtc -WarmupSeconds 180 -RestartEvents $restartEvents8 -SeamlessReloadExpected $true
+Assert-Equal 'scenario20a (default-on expectation, planned restart, no override) -> FAIL' 'FAIL' $v20Planned.verdict
+Assert-Equal 'scenario20a reason identifies effective expectation' $true ($v20Planned.reason -match 'seamless reload was expected')
+
+$v20Abort = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -SeamlessReloadExpected $true -ReloadAbortEvents $reloadAborts17
+Assert-Equal 'scenario20b (default-on expectation, reload aborted, no override) -> FAIL' 'FAIL' $v20Abort.verdict
+
+$v20Stuck = Get-SoakVerdict -Cycles $cycles1 -StartUtc $startUtc -WarmupSeconds 180 -SeamlessReloadExpected $true -ReloadArmedNeverCommittedChannels @('government')
+Assert-Equal 'scenario20c (default-on expectation, armed never committed, no override) -> FAIL' 'FAIL' $v20Stuck.verdict
+
+# The real guest driver must pass its separately recorded effective expectation
+# into the exact verdict function tested above. This catches a future return to
+# grading the default invocation from the override switch alone.
+$driverText = Get-Content -Path (Join-Path $PSScriptRoot 'In-Sandbox-Soak.ps1') -Raw -Encoding UTF8
+Assert-Equal 'scenario20d guest declares beta.5 seamless expectation true' $true ($driverText -match '\$seamlessReloadExpected\s*=\s*\$true')
+Assert-Equal 'scenario20e guest passes effective expectation to verdict' $true ($driverText -match 'Get-SoakVerdict[^\r\n]+-SeamlessReloadExpected\s+\$seamlessReloadExpected')
+
 Write-Host ""
 Write-Host "SoakVerdict unit checks: $($script:total - $script:failures)/$($script:total) passed" -ForegroundColor $(if ($script:failures -eq 0) { 'Green' } else { 'Red' })
 if ($script:failures -gt 0) { exit 1 }

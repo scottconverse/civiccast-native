@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import logging
+import uuid
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -57,6 +60,7 @@ _PLAYABLE_ASSET_STATES = {ASSET_STATE_VALIDATED, ASSET_STATE_RECORDED}
 #: ON-AIR plan's own duration rather than a fixed 300s, so a short plan still
 #: gets rolled over comfortably inside its own lifetime.
 PLAN_MIN_SECONDS = 0.0
+SLATE_RENDER_VERSION = 1
 
 
 class SlateSourceGenerator:
@@ -76,32 +80,46 @@ class SlateSourceGenerator:
         # CA-8 finding: a single-segment plan relaunched the encoder (and
         # reset the TS session) every `duration_seconds` during slate
         # periods — a headend monitor logs CC errors at every reset. The
-        # plan repeats the one rendered file to span this target; the
-        # automation reload still interrupts it the moment a program is due.
+        # plan repeats the one rendered file, but never beyond the shared
+        # decoder-chain cap. The plan's horizon consequently matches what the
+        # bridge can actually play; a due scheduled item still replaces slate
+        # through the normal fallback replan path.
         self._target_fill_seconds = target_fill_seconds
 
     def __call__(self, config: EgressConfig) -> EgressSourcePlan:
-        output_path = self._work_dir / config.channel_id / "slate.ts"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        args = build_slate_source_args(
-            output_path=output_path,
-            config=config,
-            duration_seconds=self._duration_seconds,
+        slate_dir = self._work_dir / config.channel_id
+        slate_dir.mkdir(parents=True, exist_ok=True)
+        cache_key = self._cache_key(config, self._duration_seconds)
+        output_path = slate_dir / f"slate-{cache_key}.ts"
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            staging = slate_dir / f".{cache_key}.{uuid.uuid4().hex}.partial.ts"
+            try:
+                args = build_slate_source_args(
+                    output_path=staging,
+                    config=config,
+                    duration_seconds=self._duration_seconds,
+                )
+                result = self._ffmpeg_runner(args)
+                if result.returncode != 0:
+                    args = build_slate_source_args(
+                        output_path=staging,
+                        config=config,
+                        duration_seconds=self._duration_seconds,
+                        include_text=False,
+                    )
+                    result = self._ffmpeg_runner(args)
+                if result.returncode != 0:
+                    raise SourcePrepareError(
+                        "Could not generate the egress slate source; inspect FFmpeg output before retrying."
+                    )
+                staging.replace(output_path)
+            finally:
+                with contextlib.suppress(OSError):
+                    staging.unlink(missing_ok=True)
+        repeats = min(
+            MAX_PLAYLIST_SUBCHAINS,
+            max(1, -(-self._target_fill_seconds // self._duration_seconds)),
         )
-        result = self._ffmpeg_runner(args)
-        if result.returncode != 0:
-            args = build_slate_source_args(
-                output_path=output_path,
-                config=config,
-                duration_seconds=self._duration_seconds,
-                include_text=False,
-            )
-            result = self._ffmpeg_runner(args)
-        if result.returncode != 0:
-            raise SourcePrepareError(
-                "Could not generate the egress slate source; inspect FFmpeg output before retrying."
-            )
-        repeats = max(1, -(-self._target_fill_seconds // self._duration_seconds))
         segment = EgressSourceSegment(
             label="CivicCast slate",
             path=str(output_path),
@@ -113,6 +131,19 @@ class SlateSourceGenerator:
             channel_id=config.channel_id,
             segments=[segment] * repeats,
         )
+
+    @staticmethod
+    def _cache_key(config: EgressConfig, duration_seconds: int) -> str:
+        digest = hashlib.sha256()
+        for part in (
+            str(SLATE_RENDER_VERSION),
+            str(duration_seconds),
+            config.slate_message,
+            config.canonical_profile.model_dump_json(),
+        ):
+            digest.update(part.encode("utf-8"))
+            digest.update(b"\0")
+        return digest.hexdigest()[:24]
 
 
 class ScheduleSourcePlanProvider:

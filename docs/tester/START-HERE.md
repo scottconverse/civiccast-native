@@ -32,9 +32,11 @@ available, check
 may not have been updated yet.**
 
 A first-time install on a station with no prior CivicCast install needs the
-USB model bundle even with `v1.0.0-beta.4` published -- the GitHub download
-alone is the setup executable and runtime packs, not the ~21 GB model
-bundle. **Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit
+complete signed native station bundle. The current bundle is about 21 GB and
+includes the signed runtime and model payloads; the installer verifies and
+stages those packs, then composes the local Ollama model store. Do not assume
+the installer will fetch models later in the background. **Upgrading from
+`v1.0.0-beta.1`:** copy the whole `beta.3` kit
 (`setup.exe` plus the `station\` folder beside it) to the station and run
 `setup.exe` over the existing install -- recordings, settings, database, and
 AI models are kept and the schema migrates. Do not run `setup.exe` alone
@@ -87,14 +89,11 @@ before clicking through it.
 
 1. Verify the release Windows proof kit or setup executable against its
    matching manifest, sidecar, and checksum (`SHA256SUMS.txt`).
-2. Run the Windows setup app. Keep at least **5 GB free** for the base
-   install; recordings, media, backups, and downloaded caption models need
-   additional storage. The local AI models (Ollama summary and translation
-   models) add roughly 15-20 GB on top of that for a first install using the
-   USB bundle -- CivicCast ensures the same three AI model versions (the
-   fixed summary/translation model set) are present and downloads only the
-   ones still missing, automatically in the background after the base
-   install finishes, not before.
+2. Run the Windows setup app. Plan enough disk space for the exact downloaded
+   station bundle and the installed runtime/model copy it produces, plus the
+   recordings, media, and backups used by the station. The installer verifies
+   the signed model packs and composes the local Ollama model store; it does
+   not automatically download missing models in the background after setup.
 3. Let it prepare local storage, runtime dependencies, and the CivicCast
    service when your handoff names a gate-cleared package (a package your
    tester handoff confirms has passed release review). Also provisions the

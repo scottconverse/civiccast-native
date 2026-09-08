@@ -594,44 +594,25 @@ def _embed_captions_default() -> bool:
     return os.environ.get("CIVICCAST_EGRESS_EMBED_CAPTIONS", "").strip().lower() in _TRUTHY
 
 
-#: Item 3 (beta.5 gate): the env var that re-enables the GStreamer engine's
-#: seamless in-place program content-reload. Off by DEFAULT for beta.5.
-#:
-#: MEASURED on real hardware (2026-09-06, clean install of 609273d, three
-#: GStreamer channels): the first seamless plan rollover
-#: (``daemon._try_content_reload`` -> ``strategy.reload_content`` -> the D2
-#: worker-pipe seam -> ``engine.reload_program``) was followed by
-#: ``CTRL stall: no output for 10s`` worker relaunches every ~30s on every
-#: channel. Root cause (H1, see ``engine.py``'s ``_make``/``_build_playlist``/
-#: ``_source_leg_seq`` comments): every ``PlaylistLeg`` build named its ``concat``
-#: aggregators with the bare leg label (``vconcat_program``/``aconcat_program``),
-#: so a reload's rebuilt aggregators collided with the still-live outgoing leg's
-#: same-named aggregators -- GStreamer's ``bin.add()`` silently REFUSED the
-#: duplicate, the reload's new leg never actually joined the pipeline, its
-#: readiness probes never fired, and the worker's ``reload_program`` call ack'd
-#: "applied" before the reload had committed (worker.py's premature-ack defect,
-#: also fixed in this change) -- so automation believed every rollover had
-#: landed and kept re-triggering it every cadence tick while the channel bounced
-#: on the stall watchdog forever.
-#:
-#: This same change fixes the concat-naming collision (``_source_leg_seq``), the
-#: silent ``pipeline.add()`` failure (``_make`` now raises), and the premature
-#: ack (``reload_program(..., on_settled=...)``) -- but the seamless path has not
-#: yet been RE-PROVEN on real hardware since those fixes, so it stays off by
-#: default for the beta.5 candidate. Set ``CIVICCAST_EGRESS_SEAMLESS_RELOAD=1``
-#: to opt back in once a fresh soak confirms the fix; a channel with it off
-#: falls back to the daemon's existing terminate+restart reload path at every
-#: plan rollover (one encoder restart per rollover -- a rounding error for
-#: 10-40 minute program items, roughly every ~30s for a rapid 30-second-item
-#: test/demo schedule).
+#: Beta.5 uses in-place content reload by default (owner decision 2026-09-06).
+#: The engine's unique source-leg names and asynchronous settlement protocol
+#: prevent the former duplicate-bin and premature-ack failures. The daemon
+#: retains bounded restart recovery if a reload fails or never settles.
+#: An operator may explicitly opt out with 0/false/no/off for diagnosis;
+#: this fallback restarts the encoder at plan rollover and may interrupt output.
+#: Installed-candidate soaks must prove the default path before publication.
 _SEAMLESS_RELOAD_ENV_VAR = "CIVICCAST_EGRESS_SEAMLESS_RELOAD"
 
 
 def _seamless_content_reload_default() -> bool:
     """Whether ``GstPlayoutStrategy.supports_content_reload`` defaults on, from the
-    environment. See ``_SEAMLESS_RELOAD_ENV_VAR`` above for why this defaults OFF
-    for beta.5 and what opting back in costs when the seamless path is disabled."""
-    return os.environ.get(_SEAMLESS_RELOAD_ENV_VAR, "").strip().lower() in _TRUTHY
+    environment. An explicit false value disables the beta.5 default."""
+    return os.environ.get(_SEAMLESS_RELOAD_ENV_VAR, "").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
 
 
 #: Set once the first time ``_live_captions_enabled_or_default`` swallows an
@@ -783,8 +764,8 @@ class GstPlayoutStrategy:
     # the class rather than an instance. Every real instance overrides this in
     # __init__ with the environment-gated, DI-overridable value -- see
     # ``_SEAMLESS_RELOAD_ENV_VAR``/``_seamless_content_reload_default`` above for
-    # why this defaults False (beta.5 gate, unproven-since-fix seamless rollover).
-    supports_content_reload = False
+    # why this defaults True and how to opt out for diagnosis.
+    supports_content_reload = True
     # selector index per source role — matches graph_from_config leg order
     # (program leg = pad 0, always-hot black slate = pad 1). There is deliberately
     # NO 'live' pad: CivicCast airs a single pre-switched live feed (S16 delegates

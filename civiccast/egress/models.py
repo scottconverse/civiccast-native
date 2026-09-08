@@ -656,13 +656,11 @@ class ChannelAutomationRollup(BaseModel):
 #: playing a truncated slice of a plan the rest of the system still
 #: believes is the full size.
 #:
-#: NOT universal: ``source_plan.SlateSourceGenerator`` and
-#: ``bulletin_filler._plan_with_cycle`` intentionally build "slate"/"cg"
-#: plans that repeat one pre-conformed file well past this cap by design
-#: (CA-8 -- a short single-segment plan relaunched the encoder, resetting
-#: the TS session, every few seconds), and are deliberately NOT clamped to
-#: it; for those, ``graph_from_config`` truncating the pipeline (a WARNING,
-#: not an error) is the accepted, tested trade-off, not a bypass.
+#: Filler producers also respect this limit: slate repeats cached media
+#: within the cap, and large bulletin rotations concatenate groups before
+#: planning. Automation refreshes their finite horizons before EOS. The
+#: bridge retains a warning/truncation compatibility path for oversized
+#: legacy slate/cg callers, not a shape the built-in producers emit.
 MAX_PLAYLIST_SUBCHAINS = 12
 
 

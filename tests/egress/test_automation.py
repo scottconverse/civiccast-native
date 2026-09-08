@@ -292,7 +292,6 @@ class TestSlateReplan:
 
         service.run_once(now=_NOW)
         assert _pending_actions(store, "public") == ["reload"]
-
         # Latched while still on slate: no reload storm.
         service.run_once(now=_NOW)
         assert _pending_actions(store, "public") == []
@@ -347,6 +346,48 @@ class TestPlanRollover:
                 updated_at=_NOW,
             )
         )
+
+    def test_finite_fallback_plan_rolls_over_before_eos(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        store.write_state(
+            EgressStateRow(
+                channel_id="public",
+                state="FALLBACK_SLATE",
+                current_source_label="CivicCast filler",
+                current_proof_event_id="fallback-1",
+                updated_at=_NOW,
+            )
+        )
+
+        class _FallbackDaemon(_HorizonAwareDaemon):
+            def __init__(self) -> None:
+                super().__init__(live_channels={"public"})
+                self.dispatched["public"] = ("fallback-1", (30.0, 30.0), False)
+                self.force_fallback: list[bool] = []
+
+            def record_rollover_plan_end(
+                self,
+                _channel_id: str,
+                _plan_end_at: datetime,
+                *,
+                command_id: str | None,
+                force_fallback: bool = False,
+            ) -> None:
+                assert command_id is not None
+                self.force_fallback.append(force_fallback)
+
+        daemon = _FallbackDaemon()
+        service = ChannelAutomationService(
+            store, daemon, lambda _cid: None, settings=ChannelAutomationSettings()
+        )
+
+        service.run_once(now=_NOW)
+        assert _pending_actions(store, "public") == []
+        service.run_once(now=_NOW + timedelta(seconds=31))
+
+        assert _pending_actions(store, "public") == ["reload"]
+        assert daemon.force_fallback == [True]
 
     def test_no_rollover_while_plan_has_plenty_of_runway(self) -> None:
         store = InMemoryEgressStore()
@@ -422,7 +463,12 @@ class TestPlanRollover:
                 self.recorded: list[tuple[str, datetime, str | None]] = []
 
             def record_rollover_plan_end(
-                self, channel_id: str, plan_end_at: datetime, *, command_id: str | None
+                self,
+                channel_id: str,
+                plan_end_at: datetime,
+                *,
+                command_id: str | None,
+                force_fallback: bool = False,
             ) -> None:
                 self.recorded.append((channel_id, plan_end_at, command_id))
 
@@ -451,11 +497,28 @@ class TestPlanRollover:
         assert recorded_command_id is not None
         assert recorded_command_id == pending[0].command_id
 
-    def test_no_rollover_when_schedule_has_nothing_further(self) -> None:
+    def test_terminal_schedule_rolls_to_filler_before_eos(self) -> None:
         store = InMemoryEgressStore()
         store.upsert_config(_config("public"))
         self._on_air_state(store, "public", proof_event_id="ev-1")
-        daemon = _FakeDaemon(live_channels={"public"})
+
+        class _TerminalDaemon(_FakeDaemon):
+            def __init__(self) -> None:
+                super().__init__(live_channels={"public"})
+                self.force_fallback: list[bool] = []
+
+            def record_rollover_plan_end(
+                self,
+                _channel_id: str,
+                _plan_end_at: datetime,
+                *,
+                command_id: str | None,
+                force_fallback: bool = False,
+            ) -> None:
+                assert command_id is not None
+                self.force_fallback.append(force_fallback)
+
+        daemon = _TerminalDaemon()
         # The schedule genuinely has nothing published beyond the item
         # already airing: every call reflects the SAME fixed end time, just
         # re-anchored (join-in-progress) at whatever "now" it is asked from
@@ -476,9 +539,8 @@ class TestPlanRollover:
         clock["now"] = _NOW + timedelta(seconds=15)
         service.run_once(now=clock["now"])
 
-        # No reload -- there is nothing to roll onto; the plan is left to
-        # reach its own natural end (the existing, unchanged EOS path).
-        assert _pending_actions(store, "public") == []
+        assert _pending_actions(store, "public") == ["reload"]
+        assert daemon.force_fallback == [True]
 
     def test_rollover_re_establishes_horizon_once_the_reload_lands(self) -> None:
         store = InMemoryEgressStore()
