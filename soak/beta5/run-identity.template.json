@@ -1,0 +1,31 @@
+{
+  "schema": "civiccast-native-tester-run-identity-v3",
+  "mission": "beta5-sep8-__CANDIDATE_SHA12__",
+  "candidate_source_sha": "__CANDIDATE_SHA_40__",
+  "build_source_sha": "__BUILD_SOURCE_SHA_40__",
+  "gate_a_source_sha": "__GATE_A_SOURCE_SHA_40__",
+  "expected_manifest_sha256": "__MANIFEST_SHA256_64__",
+  "actual_manifest_sha256": null,
+  "expected_installer_sha256": "__INSTALLER_SHA256_64__",
+  "actual_installer_sha256": null,
+  "expected_version": "1.0.0-beta.5",
+  "build_run_id": "__BUILD_RUN_ID__",
+  "build_conclusion": "success",
+  "gate_a_run_id": "__GATE_A_RUN_ID__",
+  "gate_a_verdict": "PENDING",
+  "kit_base_url": "__KIT_BASE_URL_ENDING_IN_FULL_SHA__/",
+  "return_repository_url": "https://github.com/scottconverse/civiccast-native.git",
+  "return_branch": "tester/soak8-e1acfe6-DESKTOP-VBMA6O5",
+  "hostname": "DESKTOP-VBMA6O5",
+  "expected_hostname": "DESKTOP-VBMA6O5",
+  "tester_root": "C:\\CivicCastSoak",
+  "mission_state_root": "C:\\CivicCastSoak\\missions\\beta5-sep8-__CANDIDATE_SHA12__",
+  "return_repo_path": "C:\\CivicCastSoak\\missions\\beta5-sep8-__CANDIDATE_SHA12__\\return-repo",
+  "planned_seconds": 7200,
+  "sample_interval_seconds": 60,
+  "channels": [
+    {"channel_id": "public", "udp_port": 9001},
+    {"channel_id": "education", "udp_port": 9002},
+    {"channel_id": "government", "udp_port": 9003}
+  ]
+}

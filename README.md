@@ -1,5 +1,13 @@
 # CivicCast
 
+> **Dedicated tester-control branch.** This branch carries executable test
+> directives, not the current product release. Its inherited product text below
+> is a historical snapshot. Use the [main README](https://github.com/scottconverse/civiccast-native/blob/main/README.md)
+> and [GitHub Releases](https://github.com/scottconverse/civiccast-native/releases)
+> for current software/download status. The reviewed
+> [beta.5 tester package](soak/beta5/README.md) is inert until a separate,
+> candidate-bound wrapper is added to `soak/autorun`.
+
 **CivicCast is an open-source, self-hostable civic broadcast platform for
 PEG/local-government stations** — record a meeting, generate offline
 captions, let an operator review and approve the recording, get an
