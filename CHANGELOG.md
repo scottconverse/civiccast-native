@@ -62,6 +62,9 @@ below.
   storage resolution. A rebuilt artifact still receives the new commit's
   source identity and hashes. The native collection-count contract includes
   both new success/failure regression cases; CI minimum floors are unchanged.
+  The builder tests load the source under its fully qualified module name so
+  mutation-test trampoline hits map to the builder's actual mutant keys,
+  rather than aborting without mutation data under a bare module alias.
 - **Finite program and filler plans roll over before running out.** The
   end of scheduled media arms the configured filler, and finite filler
   refreshes without a planned worker restart. Due programs still interrupt

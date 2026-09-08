@@ -35,7 +35,7 @@ def _load(mod_name: str, filename: str) -> object:
     return module
 
 
-builder = _load("build_native_app_payload", "build_native_app_payload.py")
+builder = _load("scripts.build_native_app_payload", "build_native_app_payload.py")
 verifier = _load("verify_native_app_payload", "verify_native_app_payload.py")
 
 _APP_SHELL_TARGETS = (
@@ -840,6 +840,10 @@ def test_external_license_file_is_attributed_to_its_distribution(tmp_path: Path)
 
 
 def test_payload_runtime_probe_requires_mandatory_imports_and_decode() -> None:
+    # Mutmut keys use the source-relative module path. A bare loader alias
+    # records trampoline hits under a different name and tests no mutants.
+    assert builder.__name__ == "scripts.build_native_app_payload"
+    assert builder.run_payload_runtime_probe.__module__ == builder.__name__
     report = {
         "imports": sorted(builder.REQUIRED_RUNTIME_IMPORTS),
         "decoded_frames": 16,
