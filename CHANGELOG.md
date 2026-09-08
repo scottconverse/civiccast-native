@@ -35,7 +35,31 @@ below.
   deliberately not true, so no environment value can re-enable captions
   against the operator's switch.
 
+### Changed
+
+- **In-place schedule rollover is enabled by default for beta.5.**
+  `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` (also `false`, `no`, or `off`) opts
+  into the diagnostic terminate/restart fallback. Explicit constructor
+  overrides still win. Candidate installation and soak evidence are required
+  before publication; the older default-off notes below describe history.
+
 ### Fixed
+
+- **Finite program and filler plans roll over before running out.** The
+  end of scheduled media arms the configured filler, and finite filler
+  refreshes without a planned worker restart. Due programs still interrupt
+  filler immediately; manual overrides and live sources keep their existing
+  behavior. Reload settlement records the actual program or filler state.
+- **Filler horizons match the playable decoder-chain limit.** Slate uses
+  immutable cached media and at most 12 segments. Larger bulletin rotations
+  concatenate groups into at most 12 files without dropping later slides.
+  A real FFmpeg regression verifies all 13 slides decode even when their
+  directory contains an apostrophe.
+- **The PDF manual header preserves the full beta version.** The renderer
+  now reads `v1.0.0-beta.5` without truncating it to `v1.0.0`; parser tests
+  cover release, RC and beta versions. Regenerated PDF, Word and in-app
+  manuals include the beta.5 rollover behavior and current documentation date.
+  CI uses the same renderer and checks its generated artifact version.
 
 - **Windows release-baseline tests no longer assume distinct clock ticks.**
   The orphaned Spanish-caption test selects the retained translation by cue
@@ -771,7 +795,7 @@ below.
     consequence, not a bug**: while a reload is armed but genuinely still
     settling, the channel's state row stays at whatever it was before the
     reload (honest -- the physical output has not switched yet either); with
-    the seamless path OFF (the beta.5 default below), a plan rollover instead
+    the seamless path explicitly OFF, a plan rollover instead
     shows `TRANSITIONING` from the moment automation triggers the rollover
     check (well before the current item's natural end, by design -- see
     `reload_policy.rollover_trigger_at`) until the item actually ends and the
@@ -790,11 +814,11 @@ below.
     operator stop), and a plan whose every segment never triggers a local
     write (all-live, or every segment a `playout_trim_supported` cache hit)
     leaves no directory behind at all.
-  - **Known issue: the seamless in-place rollover is disabled by default in
-    beta.5, pending a fresh hardware soak.** All fixes above are
-    unit-tested, but the seamless path itself has not yet been RE-PROVEN on
-    real hardware since they landed. `GstPlayoutStrategy.supports_content_reload`
-    now defaults to `False` (env `CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` to opt
+  - **Historical default-off state, superseded by the beta.5 default-on
+    change above.** At this point in development, the fixes above were
+    unit-tested, but the seamless path had not yet been re-proven on
+    real hardware. `GstPlayoutStrategy.supports_content_reload`
+    then defaulted to `False` (env `CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` to opt
     back in); a channel with it off falls back to the daemon's existing
     terminate+restart reload path at every plan rollover instead of the
     in-place swap. Cost of the fallback: one encoder restart per plan

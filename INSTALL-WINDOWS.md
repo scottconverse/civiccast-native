@@ -38,11 +38,12 @@ install.
 
 **First install vs. upgrade:**
 
-- **First-time install on a station with no prior CivicCast install** still
-  needs the USB/LAN-delivered model bundle (~21 GB of AI models). The
-  GitHub download alone is not enough for a first install -- it ships the
-  setup executable and runtime packs, not the model bundle, because that
-  bundle is too large for a GitHub Release asset.
+- **First-time install on a station with no prior CivicCast install** needs the
+  complete signed station bundle delivered by the approved handoff. The
+  current native bundle is about 21 GB and includes the signed runtime and
+  model payloads; the installer verifies and stages those packs, then composes
+  the Ollama model store it uses. Do not assume the installer will fetch these
+  models later in the background.
 - **Upgrade of an already-installed station** can be download-only starting
   with `v1.0.0-beta.3`: it reuses the AI models already on the machine. An
   upgrade keeps the station's existing recordings, database, and AI models --
@@ -93,8 +94,8 @@ checksum, or expected next step, stop and report the mismatch before installing.
   exact tagged GitHub Release at
   <https://github.com/scottconverse/civiccast-native/releases> -- never a
   draft, an older prerelease, or a generic "latest" link. A first-time
-  install on that station also needs the USB model bundle. An upgrade of an
-  already-installed `beta.3`-or-later station does not need the USB bundle --
+  install on that station also needs the complete signed station bundle. An upgrade of an
+  already-installed `beta.3`-or-later station does not need the station bundle --
   but a `beta.1` station upgrading to `beta.3` is the one exception: see
   "Upgrading from `v1.0.0-beta.1`" above, it needs the full `beta.3` kit
   (`setup.exe` plus the `station\` folder) run over the existing install,
@@ -111,11 +112,11 @@ before running any downloaded installer. Verify `setup.exe` against
 `SHA256SUMS.txt` and its sidecar `.sidecar.json` file first -- the trust
 page has the exact PowerShell steps.
 
-Leave at least **5 GB of free disk space** for the base installation. This
-does not include station recordings, media, backups, or the AI model
-bundle; plan those separately. The local AI models (Ollama summary and
-translation models) are large on top of that -- roughly 15-20 GB combined
-for a first install using the USB bundle.
+Plan disk space for the exact downloaded station bundle and the installed
+runtime/model copy it produces, plus the recordings, media, and backups the
+station will retain. The installer composes the signed model components into
+the station's local Ollama store; it does not provide an automatic background
+model download after the base install.
 
 Windows may show a blue **Windows protected your PC** screen. Do not infer a
 signature from that screen. The approved handoff must state the exact file's

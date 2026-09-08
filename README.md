@@ -39,6 +39,15 @@ for the publish record.
 (unpublished; no installer asset) -- it does not change the install story
 above, which still targets `v1.0.0-beta.4`.
 
+The beta.5 development build enables in-place schedule rollover by default.
+This lets the playout worker load the next plan without a planned encoder
+restart, including refreshing filler between programs. Bulletin rotations
+retain all approved, currently airable slides within the decoder-chain limit.
+Setting `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` explicitly selects the
+restart fallback for diagnosis and can interrupt output. Installed-candidate
+soaks remain required before beta.5 publication; see the
+[recovery record](docs/releases/beta5-recovery-2026-09-08.md).
+
 ![CivicCast system architecture](docs/assets/architecture/civiccast-system-architecture.svg)
 
 ## What's proven in this candidate

@@ -1,9 +1,7 @@
 # Windows Release Trust And Verification
 
-> **Historical: retired WSL2 release-trust guide, applies only to the
-> appendix below.** `civiccast-native` has no public installer asset yet.
-> The rc-numbered instructions in the "Historical" appendix at the bottom of
-> this page are preserved as historical evidence only; a native release must
+> **The rc-numbered instructions in the "Historical" appendix at the bottom of
+> this page are preserved as historical evidence only.** A native release must
 > bind its own exact installer, SHA-256, signature, and proof, using the
 > steps in this page's current sections.
 

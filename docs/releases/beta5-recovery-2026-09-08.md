@@ -42,12 +42,64 @@ Ruff checks passed for the changed test files. Independent Sol review found
 the stale protocol test/references and ineffective original import poison;
 both findings were addressed before pushing.
 
+## Continuous playout and operator documentation
+
+The runtime slice enables in-place reload by default, bounds slate plans to
+the engine's 12-chain limit, and concatenates larger bulletin rotations so
+no approved slide is discarded. Slate media is cache-addressed and published
+atomically rather than overwritten while a worker may still be reading it.
+
+Finite program and filler horizons now refresh before EOS. A terminal program
+can arm filler without restarting the worker; a newly due program still cuts
+into filler immediately. Reload settlement records ON_AIR or FALLBACK_SLATE
+only after the worker reports application of that specific reload. Late
+schedule changes are compared by projected horizon, not asset identity: a
+repeated asset can be a new occurrence, whereas a shrinking suffix is not
+an extension. The provider clock is sampled before the query, with a 250 ms
+rounding tolerance. Filler-render failure leaves current output running for
+the existing retry path, rather than initiating an avoidable restart.
+
+The default Sandbox run now grades the strict seamless contract without
+setting the opt-in environment variable. It records explicit override and
+effective expectation separately; planned restarts, reload aborts and armed
+reloads that never commit cannot pass under beta.5's default behavior.
+
+README, landing page, installation/trust instructions and the user manual
+describe this behavior without claiming installed-candidate proof. The PDF
+parser preserves the full beta version; CI and native Windows use the same
+renderer. First-install documentation now describes the signed model bundle,
+not an assumed post-install internet model download.
+
+### Verification before the runtime slice push
+
+- Full egress suite: 1,298 passed, 34 skipped in 108.69 seconds. Skips include
+  installed-GStreamer, TSDuck and POSIX-only checks; this is not installed
+  runtime proof. After the final late-schedule correction, the daemon,
+  automation and reload-policy suites passed again: 211 in 6.32 seconds.
+- Control-room, CG and public-documentation suites: 450 passed in 34.03 seconds.
+  The first run used an output folder outside the lab's permitted artifact
+  roots and hit three intentional cleanup refusals. Rerunning under repo
+  artifacts resolved those without changing cleanup policy. A fourth failure
+  exposed a raw-Markdown landing-page link; it was corrected to GitHub's
+  rendered document page before this rerun.
+- Independent Sol source review ran 117 source tests (6 platform skips) and
+  109 reload/engine/pipe tests (24 skips). A real FFmpeg exercise decoded all
+  13 input slides across 7 concatenated rotations. Host FFmpeg's fontconfig
+  failure caused image-only fallback during its text-render exercise;
+  candidate-bundled fonts/text remain an installed-runtime check.
+- Sandbox verdict tests: 70/70 under both PowerShell 5.1 and PowerShell 7;
+  all eight lane-unit suites passed. Review found and repaired the previous
+  mismatch between default-on runtime and opt-in-only strict grading.
+- Type checking: all 674 service modules passed. Release identity check
+  passed for v1.0.0-beta.5. Full regression/remote CI remain separate from
+  these scoped proofs and must finish before merge/publication.
+
 ## Remaining release work
 
-1. Reconcile fill-plan length with the engine's subchain limit and truthful
-   rollover timing. Preserve later main's asynchronous reload settlement.
-2. Enable seamless rollover by default and verify opt-out and explicit
-   constructor overrides. Prove continuous output in the installed runtime.
+1. Prove continuous program and filler output in the installed runtime,
+   including text rendering with the candidate's bundled FFmpeg/fonts.
+2. Review the integrated physical-tester dispatch package and verify its
+   actual-media checks, candidate binding and fresh-run counters.
 3. Run the affected suites, full regression suite, UI checks and CI.
 4. Build and sign one candidate; require clean, cross-version upgrade and
    download-only Gate A PASS verdicts for that same source SHA.

@@ -83,16 +83,13 @@ param(
     # this file. Recorded in SOAK-START.json/VERDICT.json alongside
     # everything else the ON_AIR poll already carries.
     [int]$OnAirBoundMinutes = 12,
-    # Round-6 item 1: when set, the guest exports
+    # Compatibility/reproduction override: when set, the guest exports
     # CIVICCAST_EGRESS_SEAMLESS_RELOAD=1 at MACHINE scope before starting the
-    # CivicCastSupervisor service, so the service and its control-plane
-    # child inherit it (civiccast/egress/gst/strategy.py:627-634 on PR #176,
-    # head 20f316f, reads it with a truthy check -- that PR is unmerged as
-    # of this writing, so this lane cannot independently verify the exact
-    # line numbers/behavior against ITS OWN checkout; the env var name and
-    # contract are taken as given from the coordinator). Recorded as
-    # seamless_reload=<bool> in the header log line, SOAK-START.json, and
-    # VERDICT.json regardless of whether verification below succeeds.
+    # CivicCastSupervisor service, so the service and its control-plane child
+    # inherit an explicit opt-in. Beta.5 now enables seamless reload when the
+    # variable is absent, so an ordinary run deliberately does NOT set it.
+    # The override request and the effective default-on expectation are
+    # recorded separately; both paths are graded by the same strict verdict.
     [switch]$SeamlessReload,
 
     # sandbox-soak lane follow-up A, item 1: when set, right after
@@ -786,9 +783,16 @@ function Add-CivicCastFirewallAllowRule {
 # --------------------------------------------------------------------------
 # 1. Locate and run the installer silently, bounded to $InstallBoundMinutes.
 # --------------------------------------------------------------------------
+$seamlessReloadOverrideRequested = [bool]$SeamlessReload
+$seamlessReloadExpected = $true
+
 $summary = [ordered]@{
     run_start_utc = $RunStart.ToUniversalTime().ToString('o')
+    # Legacy field retained so older evidence readers keep its original
+    # meaning: whether -SeamlessReload explicitly wrote env=1 for this run.
     seamless_reload = [bool]$SeamlessReload
+    seamless_reload_override_requested = $seamlessReloadOverrideRequested
+    seamless_reload_expected = $seamlessReloadExpected
     seamless_reload_verified = $null
     installer_found = $null
     installer_exit_code = $null
@@ -804,7 +808,7 @@ $summary = [ordered]@{
     soak_start_utc = $null
     error = $null
 }
-Write-SoakLog "run header: minutes=$Minutes seamless_reload=$([bool]$SeamlessReload) install_bound_minutes=$InstallBoundMinutes health_bound_minutes=$HealthBoundMinutes"
+Write-SoakLog "run header: minutes=$Minutes seamless_reload_override_requested=$seamlessReloadOverrideRequested seamless_reload_expected=$seamlessReloadExpected install_bound_minutes=$InstallBoundMinutes health_bound_minutes=$HealthBoundMinutes"
 
 $installerExe = Get-ChildItem -Path $KitDir -Filter '*setup.exe' -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $installerExe) {
@@ -1635,7 +1639,11 @@ Write-PhaseMarker -Name 'SOAK-START.json' -Obj ([ordered]@{
     # Round-15 finding (a): the ON_AIR bound actually in force for this run
     # -- was a hardcoded 12, now -OnAirBoundMinutes (still defaults to 12).
     on_air_bound_minutes = $OnAirBoundMinutes
+    # Keep seamless_reload as the historical explicit-override field and add
+    # the beta.5 effective expectation separately.
     seamless_reload = [bool]$SeamlessReload
+    seamless_reload_override_requested = $seamlessReloadOverrideRequested
+    seamless_reload_expected = $seamlessReloadExpected
     seamless_reload_verified = $summary.seamless_reload_verified
     # sandbox-lab lane follow-up A, item 1.
     captions_off_requested = [bool]$CaptionsOff
@@ -1842,7 +1850,7 @@ try {
     $script:daemonLogOffsetBytes = 0
 }
 $script:daemonLogFirstLineText = $null
-# sandbox-lab lane follow-up A, item 2's -SeamlessReload cross-check:
+# Seamless-reload settlement cross-check:
 # channel ids the daemon log confirmed "Seamless content-reload armed" for
 # at least once (populated in Update-DaemonLogRing below via
 # DaemonLogPatterns.ps1's $DaemonReloadArmedRegex). Only ever read at the
@@ -2597,19 +2605,19 @@ Write-SoakLog "poll loop complete: $cycleN cycles recorded, $($restartEventsArra
 # --------------------------------------------------------------------------
 . (Join-Path 'C:\CivicCastSoakScripts' 'SoakVerdict.ps1')
 
-# sandbox-lab lane follow-up A, item 2's -SeamlessReload cross-check:
+# Seamless-reload settlement cross-check:
 # any channel the daemon log confirmed "Seamless content-reload armed"
 # for, whose own worker-stdout reload_committed_count stayed 0 for the
-# whole soak. Computed regardless of -SeamlessReload (cheap, and visible
-# in VERDICT.json either way); Get-SoakVerdict itself only acts on this
-# list under -SeamlessReload (see SoakVerdict.ps1's own header). Round-2
+# whole soak. Computed regardless of the explicit override (cheap, and visible
+# in VERDICT.json either way); beta.5's default-on contract always acts on this
+# list. Round-2
 # finding 2: the filter itself lives in Get-ReloadArmedNeverCommittedChannels
 # (DaemonLogPatterns.ps1) so it is directly unit-testable. Round-follow-up-B
 # finding 2d: the final per-channel worker-stdout drain (up to one whole
 # cycle period, ~60-75s, stale by the time the poll loop exits -- a reload
 # committed in that final gap would otherwise leave
 # $script:workerStdoutCountsByChannel stale for both this computation, a
-# false reload_armed_never_committed FAIL under -SeamlessReload, and
+# false reload_armed_never_committed FAIL under the strict default-on contract, and
 # VERDICT.json's own worker_stdout_by_channel snapshot further down) and
 # this computation are now both driven through
 # Invoke-FinalWorkerStdoutDrainAndComputeArmedNeverCommitted
@@ -2625,7 +2633,7 @@ if ($reloadArmedNeverCommittedChannels.Count -gt 0) {
     Write-SoakLog "reload_armed_never_committed: $($reloadArmedNeverCommittedChannels -join ', ') (daemon log confirmed armed, worker stdout never logged a commit)"
 }
 
-$verdictResult = Get-SoakVerdict -Cycles $allCycles -StartUtc $SoakStartUtc -WarmupSeconds 180 -RestartEvents $restartEventsArray -SeamlessReload ([bool]$SeamlessReload) -ReloadAbortEvents $reloadAbortEventsArray -ReloadArmedNeverCommittedChannels $reloadArmedNeverCommittedChannels
+$verdictResult = Get-SoakVerdict -Cycles $allCycles -StartUtc $SoakStartUtc -WarmupSeconds 180 -RestartEvents $restartEventsArray -SeamlessReload ([bool]$SeamlessReload) -SeamlessReloadExpected $seamlessReloadExpected -ReloadAbortEvents $reloadAbortEventsArray -ReloadArmedNeverCommittedChannels $reloadArmedNeverCommittedChannels
 
 $verdict = [ordered]@{
     schema_version       = 1
@@ -2644,7 +2652,7 @@ $verdict = [ordered]@{
     # the soak window (never had a fair chance to recover -- excluded from
     # the recovery-timeout FAIL rule, still visible here) and seamless
     # content-reload aborts (a distinct daemon.py WARNING-line event class
-    # -- FAILs the run only under -SeamlessReload).
+    # -- FAILs every beta.5 run because seamless reload is expected by default).
     incomplete_restart_count = $verdictResult.incomplete_restart_count
     reload_aborted_count     = $verdictResult.reload_aborted_count
     reload_abort_events      = $reloadAbortEventsArray
@@ -2666,8 +2674,11 @@ $verdict = [ordered]@{
     station_healthy      = $summary.station_healthy
     samples_found        = $summary.samples_found
     assets_uploaded      = $summary.assets_uploaded
-    # Round-6 item 1: seamless-reload flag + verification status.
+    # Legacy explicit-override flag + verification status, followed by the
+    # effective beta.5 expectation used by the verdict.
     seamless_reload          = [bool]$SeamlessReload
+    seamless_reload_override_requested = $seamlessReloadOverrideRequested
+    seamless_reload_expected = $seamlessReloadExpected
     seamless_reload_verified = $summary.seamless_reload_verified
     # Round-5 item 2: product metrics (item 59), carried from SOAK-START.json
     # into the final verdict too so a single file has both the pass/fail

@@ -10,7 +10,7 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, NamedTuple, Protocol, cast
 
@@ -213,11 +213,12 @@ _SLOW_START_EXIT_CODES = frozenset(
 # a legitimate deferred switch always settles well within this window; past it,
 # treat the reload as lost and fall back to restart rather than wait forever.
 _PENDING_RELOAD_SETTLE_DEADLINE_S = 960.0
+_ROLLOVER_EXTENSION_TOLERANCE_S = 0.25
 
 
 class _PendingReloadSettlement(NamedTuple):
     """F1 redesign: everything ``_poll_reload_settlement`` needs to either
-    finish the ON_AIR bookkeeping (on "applied") or fall back to restart (on
+    finish the target-state bookkeeping (on "applied") or fall back to restart (on
     "aborted:<reason>" or a deadline lapse) for one armed-but-not-yet-settled
     content-reload. Constructed by ``_try_content_reload``, consumed and
     cleared by ``_poll_reload_settlement``."""
@@ -230,6 +231,7 @@ class _PendingReloadSettlement(NamedTuple):
     switch_at_end_of_current: bool
     previous_state: str | None
     previous_source_label: str | None
+    target_state: EgressState
     plan_dir: Path | None
 
 
@@ -571,7 +573,7 @@ class EgressDaemon:
         # ordinary equality now, not a special-cased wildcard. See
         # ``record_rollover_plan_end`` and ``_request_reload``'s docstrings
         # for the exact matching rule.
-        self._rollover_plan_end_at: dict[str, tuple[str | None, datetime]] = {}
+        self._rollover_plan_end_at: dict[str, tuple[str | None, datetime, bool]] = {}
         # S9-5 crash-relaunch back-off: a latch paces rapid repeat relaunches, a
         # per-channel streak counts consecutive rapid crashes (for escalation +
         # reset on healthy uptime), and _backoff_relaunch holds a deferred relaunch
@@ -2268,7 +2270,12 @@ class EgressDaemon:
         )
 
     def record_rollover_plan_end(
-        self, channel_id: str, plan_end_at: datetime, *, command_id: str | None
+        self,
+        channel_id: str,
+        plan_end_at: datetime,
+        *,
+        command_id: str | None,
+        force_fallback: bool = False,
     ) -> None:
         """Public capability ``ChannelAutomationService`` calls (mirrors the
         ``dispatched_plan_horizon``/``has_manual_override`` getattr-probed
@@ -2298,7 +2305,7 @@ class EgressDaemon:
         it matches a drain whose own ``command_id`` is also ``None`` by
         ordinary equality (see ``_request_reload``'s docstring), not by a
         wildcard carve-out."""
-        self._rollover_plan_end_at[channel_id] = (command_id, plan_end_at)
+        self._rollover_plan_end_at[channel_id] = (command_id, plan_end_at, force_fallback)
 
     def has_pending_reload_settlement(self, channel_id: str) -> bool:
         """Public capability ``ChannelAutomationService`` probes (via
@@ -2315,6 +2322,7 @@ class EgressDaemon:
         process: object,
         *,
         rollover_plan_end_at: datetime | None,
+        force_fallback: bool = False,
     ) -> bool:
         """Seamless program content-reload for a content-reload-capable strategy.
 
@@ -2368,10 +2376,48 @@ class EgressDaemon:
             config = self._ts_relay.apply(config)
         if self._hls_relay is not None:
             config = self._hls_relay.apply(config)
-        try:
-            source_plan = self._source_plan_provider(channel_id)
-        except SourcePrepareError:
-            return False  # let terminate+restart resolve the slate fallback
+        source_plan = None
+        target_state: EgressState = "ON_AIR"
+        if not force_fallback:
+            try:
+                source_plan = self._source_plan_provider(channel_id)
+            except SourcePrepareError:
+                return False  # let terminate+restart resolve the slate fallback
+        else:
+            # The automation decision is bound to this command so the terminal
+            # item cannot be re-selected forever at EOS. Still honor a schedule
+            # published while the durable command was waiting to drain when it
+            # now reaches beyond the boundary this rollover protects.
+            provider_sampled_at = datetime.now(UTC)
+            try:
+                late_plan = self._source_plan_provider(channel_id)
+            except SourcePrepareError:
+                late_plan = None
+            late_plan_seconds = (
+                sum(segment.duration_seconds for segment in late_plan.segments)
+                if late_plan is not None and late_plan.channel_id == channel_id
+                else 0.0
+            )
+            if (
+                late_plan is not None
+                and rollover_plan_end_at is not None
+                and provider_sampled_at
+                + timedelta(seconds=late_plan_seconds - _ROLLOVER_EXTENSION_TOLERANCE_S)
+                > rollover_plan_end_at
+            ):
+                source_plan = late_plan
+            elif self._fallback_source_provider is not None:
+                try:
+                    source_plan = self._fallback_source_provider(config)
+                except SourcePrepareError as exc:
+                    _LOG.warning(
+                        "Could not prepare rollover filler for %s; keeping the current "
+                        "output on air for the next automation retry: %s",
+                        channel_id,
+                        exc,
+                    )
+                    return True
+                target_state = "FALLBACK_SLATE"
         if source_plan is None or source_plan.channel_id != channel_id:
             return False
         # F3: None unless the preparer actually reports a discrete per-plan
@@ -2437,10 +2483,9 @@ class EgressDaemon:
             ),
             audio_tap_plan=build_audio_tap_plan(channel_id),
             ffmpeg_starter=self._ffmpeg_starter,
-            # B3 fix: only an automation-driven extension of an already-ON_AIR plan
-            # (never a FALLBACK_SLATE gap-replan, never while an operator override
-            # is active) may defer the selector switch to the outgoing leg's own
-            # EOS -- see reload_policy.should_defer_switch's docstring.
+            # Only a horizon-bound automation rollover of an ON_AIR or finite
+            # FALLBACK_SLATE plan may defer to the outgoing leg's EOS. A no-horizon
+            # slate gap-replan and every operator override still cut immediately.
             #
             # Item 78 fix 3: ``rollover_plan_end_at`` is this method's
             # keyword-only parameter, sourced by ``_request_reload`` popping
@@ -2458,11 +2503,10 @@ class EgressDaemon:
             # end_at`` now stores ``(command_id, plan_end_at)``, and
             # ``_request_reload`` only forwards ``plan_end_at`` down to this
             # method (as ``rollover_plan_end_at=``) when the command
-            # actually draining matches the recorded ``command_id`` (or the
-            # recorded id is the ``None`` wildcard). A value that reaches
-            # this parameter has therefore always either been confirmed to
-            # belong to the reload command now being processed, or was never
-            # scoped by its recorder in the first place -- never handed down
+            # actually draining matches the recorded ``command_id``. An explicit
+            # ``None`` matches only a direct, likewise-unscoped reload; it is not
+            # a wildcard. A value that reaches this parameter therefore belongs
+            # to the reload command now being processed -- never handed down
             # from a mismatched command. See ``_rollover_plan_end_at`` and
             # ``_request_reload``'s docstrings for the exact matching rule.
             switch_at_end_of_current=should_defer_switch(
@@ -2574,7 +2618,7 @@ class EgressDaemon:
                 channel_id, reason="superseded by a newer reload attempt"
             )
         # Armed, not yet settled: record it and return. _poll_reload_settlement
-        # finishes the ON_AIR bookkeeping once reload-status.json confirms
+        # finishes the target-state bookkeeping once reload-status.json confirms
         # "applied" (or falls back to restart on "aborted:<reason>"/deadline).
         self._pending_reload_settle[channel_id] = _PendingReloadSettlement(
             reload_id=reload_id,
@@ -2585,6 +2629,7 @@ class EgressDaemon:
             switch_at_end_of_current=bool(request.switch_at_end_of_current),
             previous_state=state.state if state else None,
             previous_source_label=state.current_source_label if state else None,
+            target_state=target_state,
             plan_dir=prepared_plan_dir,
         )
         _LOG.info(
@@ -2597,7 +2642,7 @@ class EgressDaemon:
         return True
 
     def _commit_reload_settlement(self, channel_id: str, pending: _PendingReloadSettlement) -> None:
-        """F1 redesign: the ON_AIR proof-event/state bookkeeping ``_try_content_
+        """F1 redesign: the target proof-event/state bookkeeping ``_try_content_
         reload`` used to do immediately -- now run only once
         ``_poll_reload_settlement`` observes ``reload-status.json`` reporting
         ``"applied"`` for ``pending.reload_id``. Also releases the PREVIOUS
@@ -2620,7 +2665,7 @@ class EgressDaemon:
             self._store.append_proof_event(transition_event)
         proof_event = self._build_proof_event(
             channel_id=channel_id,
-            state="ON_AIR",
+            state=pending.target_state,
             source_plan=source_plan,
             previous_state=previous_state,
             previous_source_label=previous_source_label,
@@ -2630,13 +2675,13 @@ class EgressDaemon:
         # stays ON_AIR but the source actually changed, so it IS an as-run boundary.
         self._record_as_run_transition(
             channel_id=channel_id,
-            running_state="ON_AIR",
+            running_state=pending.target_state,
             source_plan=source_plan,
             proof_event=proof_event,
         )
         self._write_state(
             channel_id,
-            "ON_AIR",
+            pending.target_state,
             current_source_label=source_plan.segments[0].label,
             current_proof_event_id=proof_event.event_id,
             pid=_process_pid(pending.process),
@@ -2880,10 +2925,12 @@ class EgressDaemon:
         # entry left here still cannot outlive the channel going off-air.
         recorded = self._rollover_plan_end_at.get(channel_id)
         rollover_plan_end_at: datetime | None = None
+        force_fallback = False
         if recorded is not None:
-            recorded_command_id, recorded_plan_end_at = recorded
+            recorded_command_id, recorded_plan_end_at, recorded_force_fallback = recorded
             if recorded_command_id == command_id:
                 rollover_plan_end_at = recorded_plan_end_at
+                force_fallback = recorded_force_fallback
                 self._rollover_plan_end_at.pop(channel_id, None)
         state = self._store.read_state(channel_id)
         process = self._processes.get(channel_id)
@@ -2904,7 +2951,11 @@ class EgressDaemon:
             state is not None
             and getattr(self._encoder_strategy, "supports_content_reload", False)
             and self._try_content_reload(
-                channel_id, state, process, rollover_plan_end_at=rollover_plan_end_at
+                channel_id,
+                state,
+                process,
+                rollover_plan_end_at=rollover_plan_end_at,
+                force_fallback=force_fallback,
             )
         ):
             # F1 redesign: True means ARMED, not settled -- _poll_reload_

@@ -34,13 +34,15 @@ relying on this page -- it is the single source of truth for which tag is
 current, and this handoff may lag it.**
 
 A first-time install on a station with no prior CivicCast install needs the
-USB model bundle even with `v1.0.0-beta.4` published -- the GitHub download
-alone is the setup executable and runtime packs, not the ~21 GB model
-bundle. An upgrade of an already-installed `v1.0.0-beta.3`-or-later station
+complete signed native station bundle. The current bundle is about 21 GB and
+includes the signed runtime and model payloads; the installer verifies and
+stages those packs, then composes the local Ollama model store. Do not assume
+the installer will fetch models later in the background. An upgrade of an
+already-installed `v1.0.0-beta.3`-or-later station
 is download-only (`setup.exe` plus the runtime packs, no `station\` folder
 needed) and keeps the station's existing recordings, database, and AI
 models -- this is how a `beta.3` station upgrades to `beta.4`; there is no
-need to re-fetch the ~21 GB model bundle for that step.
+need to re-fetch the complete station bundle for that step.
 
 **Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit -- `setup.exe`
 plus the `station\` folder beside it (USB or a LAN copy) -- to the station
@@ -122,12 +124,11 @@ Before starting:
 - Plug the machine into reliable power.
 - Disable sleep during the acceptance run.
 - Make sure outbound HTTPS is allowed to GitHub.
-- Leave at least **5 GB free for installation**, plus separate capacity for the
-  short sample media and recordings used in the test. The local AI models
-  (Ollama summary and translation models) add roughly 15-20 GB more for a
-  first install using the USB bundle -- CivicCast ensures the same
-  three-tag target set and downloads only the tags still missing,
-  automatically in the background after the base install finishes.
+- Plan disk space for the exact downloaded station bundle and the installed
+  runtime/model copy it produces, plus the short sample media, recordings, and
+  backups used in the test. The installer verifies the signed model packs and
+  composes the local Ollama model store; do not assume it will download missing
+  models automatically in the background after the base install.
 - Have a place to save the recovery kit that is not a public folder.
 - Decide who is allowed to know the beta admin password.
 - Decide how LPM will send reports privately to Scott.

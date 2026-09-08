@@ -11,6 +11,7 @@ re-rendering an unchanged board on every gap.
 from __future__ import annotations
 
 import logging
+import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -21,12 +22,24 @@ from civiccast.cg.models import CgBulletinSubmission
 from civiccast.egress.bulletin_filler import (
     BulletinFillerSourceGenerator,
     FillerSourceProvider,
+    _escape_concat_path,
     build_bulletin_slide_args,
 )
 from civiccast.egress.errors import SourcePrepareError
-from civiccast.egress.models import CanonicalProfile, EgressConfig, EgressSinkSpec
+from civiccast.egress.models import (
+    MAX_PLAYLIST_SUBCHAINS,
+    CanonicalProfile,
+    EgressConfig,
+    EgressSinkSpec,
+    EgressSourceSegment,
+)
 from civiccast.egress.source_plan import SlateSourceGenerator
-from civiccast.stream._ffmpeg import FfmpegNotFoundError, FfmpegResult
+from civiccast.stream._ffmpeg import (
+    FfmpegNotFoundError,
+    FfmpegResult,
+    probe_media_duration_seconds,
+    run_ffmpeg,
+)
 
 
 def _config(*, fill_policy: str = "bulletins") -> EgressConfig:
@@ -313,10 +326,10 @@ class TestFillerSourceProvider:
         assert slate_plan.segments[0].kind == "slate"
 
 
-def test_bulletin_plan_cycles_slides_to_span_the_fill_target(tmp_path: Path) -> None:
-    # CA-8 finding: one ~30s bulletin cycle per plan reset the TS session
-    # every cycle. The rotation now repeats to span the fill target with
-    # each slide still rendered exactly once.
+def test_bulletin_plan_is_capped_to_the_playable_fill_horizon(tmp_path: Path) -> None:
+    # The plan producer, not the bridge, owns the decoder-chain cap. Its
+    # shorter truthful horizon prevents the bridge from silently dropping
+    # trailing slides.
     rendered: list[list[str]] = []
 
     def runner(args: list[str]) -> FfmpegResult:
@@ -339,10 +352,12 @@ def test_bulletin_plan_cycles_slides_to_span_the_fill_target(tmp_path: Path) -> 
     plan = generator(_config())
 
     assert len(rendered) == 2  # each slide rendered once
-    # 2 slides x 10s = 20s cycle; 600s target -> 30 cycles -> 60 segments.
-    assert len(plan.segments) == 60
+    # 2 slides x 10s = 20s cycle; the 600s requested target would need 60
+    # segments, but the playable pipeline horizon is 12.
+    assert len(plan.segments) == MAX_PLAYLIST_SUBCHAINS
     total = sum(segment.duration_seconds for segment in plan.segments)
-    assert total >= 600
+    assert total == MAX_PLAYLIST_SUBCHAINS * 10
+    assert total < 600
     # Rotation order is preserved within every cycle.
     assert [s.source_ref for s in plan.segments[:4]] == [
         "bulletin-cgb_1",
@@ -350,6 +365,117 @@ def test_bulletin_plan_cycles_slides_to_span_the_fill_target(tmp_path: Path) -> 
         "bulletin-cgb_1",
         "bulletin-cgb_2",
     ]
+
+
+@pytest.mark.parametrize("count", [13, 145])
+def test_large_bulletin_rotation_concatenates_every_slide_into_at_most_twelve_files(
+    tmp_path: Path, count: int
+) -> None:
+    concat_manifests: list[str] = []
+
+    def runner(args: list[str]) -> FfmpegResult:
+        if args[:2] == ["-f", "concat"]:
+            concat_manifests.append(Path(args[args.index("-i") + 1]).read_text(encoding="utf-8"))
+        out = Path(args[-1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"ts")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    generator = BulletinFillerSourceGenerator(
+        work_dir=tmp_path,
+        bulletins_provider=lambda _cid: [_bulletin(f"cgb-{i}") for i in range(count)],
+        ffmpeg_runner=runner,
+    )
+    plan = generator(_config())
+
+    assert len(plan.segments) <= MAX_PLAYLIST_SUBCHAINS
+    assert len(concat_manifests) == len(plan.segments)
+    manifest_lines = [line for manifest in concat_manifests for line in manifest.splitlines()]
+    assert len(manifest_lines) == count
+    assert all(line.startswith("file '") and line.endswith("'") for line in manifest_lines)
+
+
+def test_concat_path_escapes_an_apostrophe() -> None:
+    assert _escape_concat_path("C:/station/Mayor's update.ts").endswith("Mayor'\\''s update.ts")
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="real bulletin rotation proof requires ffmpeg and ffprobe",
+)
+def test_large_rotation_with_apostrophe_paths_decodes_all_media(tmp_path: Path) -> None:
+    media_dir = tmp_path / "Mayor's bulletins"
+    media_dir.mkdir()
+    source = media_dir / "source.ts"
+    rendered = run_ffmpeg(
+        [
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=blue:s=160x90:r=30:d=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=48000:cl=stereo",
+            "-t",
+            "1",
+            "-c:v",
+            "mpeg2video",
+            "-c:a",
+            "mp2",
+            str(source),
+        ]
+    )
+    assert rendered.returncode == 0, rendered.stderr
+    segments = []
+    for index in range(13):
+        slide = media_dir / f"slide-{index}.ts"
+        shutil.copyfile(source, slide)
+        segments.append(
+            EgressSourceSegment(
+                label=f"Slide {index}",
+                path=str(slide),
+                duration_seconds=1,
+                kind="cg",
+                source_ref=f"bulletin-{index}",
+            )
+        )
+    generator = BulletinFillerSourceGenerator(
+        work_dir=tmp_path,
+        bulletins_provider=lambda _cid: [],
+        slide_seconds=1,
+    )
+    plan = generator._plan_with_cycle(_config(), segments)
+    assert len(plan.segments) <= MAX_PLAYLIST_SUBCHAINS
+    assert sum(segment.duration_seconds for segment in plan.segments) == 13
+    for segment in plan.segments:
+        decoded = run_ffmpeg(["-i", segment.path, "-f", "null", "-"])
+        assert decoded.returncode == 0, decoded.stderr
+        assert probe_media_duration_seconds(Path(segment.path)) == pytest.approx(
+            segment.duration_seconds, abs=0.2
+        )
+
+
+def test_failed_rotation_concat_leaves_no_poisoned_cache(tmp_path: Path) -> None:
+    def runner(args: list[str]) -> FfmpegResult:
+        out = Path(args[-1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"partial")
+        return FfmpegResult(
+            returncode=1 if args[:2] == ["-f", "concat"] else 0, stdout="", stderr="bad"
+        )
+
+    generator = BulletinFillerSourceGenerator(
+        work_dir=tmp_path,
+        bulletins_provider=lambda _cid: [_bulletin(f"cgb-{i}") for i in range(13)],
+        ffmpeg_runner=runner,
+    )
+
+    with pytest.raises(SourcePrepareError):
+        generator(_config())
+    rotation_dir = tmp_path / "public" / "rotations"
+    assert list(rotation_dir.glob("*.ts")) == []
+    assert list(rotation_dir.glob("*.concat.txt")) == []
 
 
 class TestDefaultImageResolver:

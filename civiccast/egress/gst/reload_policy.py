@@ -31,14 +31,14 @@ nothing extended a live (ON_AIR) plan before it ran out.
    built from the same wall-clock join-in-progress offset) and lets the airing
    item finish naturally, with no re-decode and no jump.
 
-   Deferring is safe ONLY for an automation-driven extension of an already-ON_AIR
-   plan with no operator override in effect. An operator-initiated live takeover or
+   Deferring is safe ONLY for an automation-driven extension of a finite ON_AIR or
+   FALLBACK_SLATE plan with no operator override in effect. An operator-initiated live takeover or
    forced slate is a deliberate "now" request -- see ``PlayoutSupervisor.
    request_live_takeover``/``request_fallback_slate`` (civiccast/egress/
    supervisor.py) -- and must still cut immediately, so ``should_defer_switch``
-   returns False whenever a manual override is active, or the channel was not
-   already ON_AIR (e.g. the FALLBACK_SLATE gap-replan reload, which issue #157
-   requires to interrupt filler immediately, never wait for it to end).
+   returns False whenever a manual override is active. A FALLBACK_SLATE gap-replan
+   has no tracked ``plan_end_at`` and still interrupts filler immediately; a finite
+   filler-horizon rollover has one and defers to that boundary.
 """
 
 from __future__ import annotations
@@ -123,10 +123,10 @@ def should_defer_switch(
     """True when a content-reload should defer its selector switch to the
     outgoing leg's own EOS rather than cutting the instant the new leg is ready.
 
-    Only an automation-driven extension of an already-ON_AIR plan qualifies:
-    a FALLBACK_SLATE gap-replan (``previous_state != "ON_AIR"``) and any reload
-    issued while an operator override is active (live takeover / forced slate --
-    ``manual_override_active``) must always cut in immediately.
+    Only an automation-driven extension of an already-ON_AIR plan, or a finite
+    FALLBACK_SLATE plan carrying its tracked horizon, qualifies. A slate gap-replan
+    without a horizon and any reload issued while an operator override is active
+    (live takeover / forced slate -- ``manual_override_active``) cut immediately.
 
     Item 78 fix: ``plan_end_at``/``now`` are an optional pair (both default
     ``None`` and are ignored unless both are given, so every pre-existing
@@ -144,7 +144,10 @@ def should_defer_switch(
 
     if plan_end_at is not None and now is not None and plan_end_at <= now:
         return False
-    return previous_state == "ON_AIR" and not manual_override_active
+    return not manual_override_active and (
+        previous_state == "ON_AIR"
+        or (previous_state == "FALLBACK_SLATE" and plan_end_at is not None)
+    )
 
 
 def rollover_trigger_at(

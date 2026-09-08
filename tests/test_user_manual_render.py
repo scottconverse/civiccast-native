@@ -127,9 +127,20 @@ class TestUserManualVersionHeaderConsistency:
     by the subtitle) had already moved to `v1.0.0-rc18`, and nothing checked
     the two against each other."""
 
-    def test_source_version_token_reads_the_subtitle(self) -> None:
+    @pytest.mark.parametrize(
+        ("version", "expected"),
+        (
+            ("v1.0.0", "v1.0.0"),
+            ("v1.0.0-rc18", "v1.0.0-rc18"),
+            ("v1.0.0-beta.5", "v1.0.0-beta.5"),
+        ),
+    )
+    def test_source_version_token_reads_supported_versions(
+        self, version: str, expected: str
+    ) -> None:
         text = "---\ntitle: X\nsubtitle: For ops - v1.0.0-rc18 public beta\n---\n"
-        assert render_user_manual._source_version_token(text) == "v1.0.0-rc18"
+        text = text.replace("v1.0.0-rc18", version)
+        assert render_user_manual._source_version_token(text) == expected
 
     def test_source_version_token_rejects_a_subtitle_without_a_version(self) -> None:
         with pytest.raises(RuntimeError):
