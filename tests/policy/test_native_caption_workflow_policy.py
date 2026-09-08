@@ -1167,7 +1167,12 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # monkeypatch env only), so both lanes advance by six. Re-derived by an
     # actual `--collect-only` run on this tree, not by arithmetic:
     # (1798, 1999) -> (1804, 2005).
-    assert (collect("not windows_only"), collect()) == (1804, 2005)
+    # 2026-09-08 build-probe profile isolation: two platform-independent
+    # success/failure cases in tests/native/test_app_payload_builder.py.
+    # Actual collect-only runs on this tree returned (1806, 2007), including
+    # the CI failure and the local red reproduction of this exact assertion.
+    # The workflow's minimum floors and allowed margin remain unchanged.
+    assert (collect("not windows_only"), collect()) == (1806, 2007)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

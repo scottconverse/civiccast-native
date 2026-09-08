@@ -108,6 +108,22 @@ importing vcvars leaves the ambient `uv` on PATH, and the build then dies four
 stages later with `uv executable SHA-256 68a22cba... != pinned d4ffe0b7...`,
 which does not obviously mean "your PATH got clobbered".
 
+During the application-payload stage, the embedded Python runtime probe starts
+the complete app lifespan to verify mandatory imports, audio decoding, and both
+packaged portal deep links. The builder removes inherited `DATABASE_URL` and
+`CIVICCAST_*` values for that child and points its profile and application-state
+resolvers at a fresh temporary directory beside the payload build. That
+directory is removed whether the probe passes or fails. This prevents the
+current app factory's environment- and profile-resolved stores from adopting
+the build operator's real station database, CivicCast configuration,
+`%LOCALAPPDATA%`, `%PROGRAMDATA%`, or home-directory state. It is environment
+routing, not an operating-system sandbox; probe code would still be able to
+access an explicitly named path outside the temporary root. This changes the
+build-time validation process only: it does not change the source files
+selected for the shipped application, installer behavior, or installed-station
+storage resolution. A rebuild from the fix commit still carries that commit's
+new source identity and artifact hashes.
+
 ### Useful flags
 
 * `--stage-only` — stop after staging and verifying both payloads; skip Tauri.
