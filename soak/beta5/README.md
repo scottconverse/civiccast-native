@@ -1,16 +1,20 @@
 # CivicCast beta.5 tester deployment package
 
-This package is executable but intentionally not dispatched. The only missing
-inputs are the successful signed build, assigned Gate A run, and signed-kit facts in
-`AUTORUN-SEP8-BETA5.ps1`. Its placeholders make the wrapper fail before any
-write or product action.
+The dedicated tester dispatch is
+`soak/autorun/AUTORUN-SEP8-BETA5-BE1260-R1.ps1`, bound to candidate
+`be1260bd0630261c571e3adf5aac6a6cbebd9e3a`, successful signed build34237280539,
+and Gate A34242157263 with immutable kickoff status `PENDING`. The signed
+installer and the complete 20-entry delivery manifest were independently hashed.
+This is a dispatch record, not a successful installation or soak result.
+The placeholder file `AUTORUN-SEP8-BETA5.ps1` in this support directory remains
+an inert template for comparison, not an additional executable directive.
 
 ## Control-branch layout
 
 Place exactly one new file in the existing poller's executable directory:
 
 ```text
-soak/autorun/AUTORUN-SEP8-BETA5.ps1
+soak/autorun/AUTORUN-SEP8-BETA5-BE1260-R1.ps1
 ```
 
 Place the support package where the poller will not execute each step as a

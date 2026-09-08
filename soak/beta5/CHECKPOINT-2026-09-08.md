@@ -1,5 +1,30 @@
 # Beta.5 tester support checkpoint
 
+## Current dispatch: 2026-09-08, 15:04 UTC
+
+The exact-candidate wrapper `soak/autorun/AUTORUN-SEP8-BETA5-BE1260-R1.ps1`
+is prepared for the dedicated tester poller. Candidate
+`be1260bd0630261c571e3adf5aac6a6cbebd9e3a` has successful signed build34237280539.
+New full Gate A34242157263 has resolved that build and entered its clean-install
+step. The prior Gate A34240734122 was externally canceled before producing a
+verdict; it is not acceptance evidence. The new kickoff truth is `PENDING`.
+
+Installer signature is Valid, signer Scott Converse, ProductVersion beta.5;
+app-pack manifest binds the exact clean candidate. Four existing LPM samples
+were checked against the preserved kit's historical manifest before copying.
+The delivery kit contains the unchanged signed installer/packs, full station
+bundle, samples, and a generated complete 20-entry SHA256 manifest.
+
+- Installer SHA256: `5b3fec96cac6bd76cfc88fc7993f5e731d9b945d6606dd4c28f9a256c2c8b7e0`
+- Manifest SHA256: `97fe8a28fcbadf92abe31d7ae747fa6ef7fe905bff5c72cc99ff9fa6bf1be43a`
+- Mission: `beta5-sep8-be1260bd0630`
+- Host: `DESKTOP-VBMA6O5`
+
+Tester installation, first real-media cycle, two-hour verdict, and post-soak
+filler transitions are still unproven. No LPM production cutover is requested.
+
+## Historical support-only checkpoint
+
 This support-only change does not dispatch a test, install software, restart a
 station or create a scheduled task. The unresolved wrapper template is stored
 under `soak/beta5`, outside the poller's executable `soak/autorun` directory.

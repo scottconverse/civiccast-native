@@ -5,8 +5,9 @@
 > is a historical snapshot. Use the [main README](https://github.com/scottconverse/civiccast-native/blob/main/README.md)
 > and [GitHub Releases](https://github.com/scottconverse/civiccast-native/releases)
 > for current software/download status. The reviewed
-> [beta.5 tester package](soak/beta5/README.md) is inert until a separate,
-> candidate-bound wrapper is added to `soak/autorun`.
+> [beta.5 tester package](soak/beta5/README.md) now has an exact-candidate
+> dispatch wrapper for the dedicated tester under `soak/autorun`.
+> Dispatch is not evidence of installation or a completed two-hour soak.
 
 **CivicCast is an open-source, self-hostable civic broadcast platform for
 PEG/local-government stations** — record a meeting, generate offline
