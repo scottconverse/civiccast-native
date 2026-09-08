@@ -83,6 +83,8 @@ param(
     # this file. Recorded in SOAK-START.json/VERDICT.json alongside
     # everything else the ON_AIR poll already carries.
     [int]$OnAirBoundMinutes = 12,
+    [ValidateRange(1, 180)][int]$InstallBoundMinutes = 20,
+    [ValidateRange(1, 180)][int]$HealthBoundMinutes = 10,
     # Compatibility/reproduction override: when set, the guest exports
     # CIVICCAST_EGRESS_SEAMLESS_RELOAD=1 at MACHINE scope before starting the
     # CivicCastSupervisor service, so the service and its control-plane child
@@ -156,8 +158,6 @@ $script:EgressWorkDirCandidates = @('C:\ProgramData\CivicCast\data\egress')
 # Bounds (minutes). The host's Run-SandboxSoak.ps1 uses the SAME defaults
 # for its own phase deadlines -- keep these two files in sync if either
 # changes; see that script's -InstallBoundMinutes/-HealthBoundMinutes.
-$InstallBoundMinutes = 20
-$HealthBoundMinutes  = 10
 # Generous setup-phase grace (first-admin + asset upload + schedule/commit +
 # channel config/start + ON_AIR poll) folded into the watchdog's pre-soak
 # bound below; not separately enforced against the host since the host's
@@ -1639,6 +1639,12 @@ Write-PhaseMarker -Name 'SOAK-START.json' -Obj ([ordered]@{
     # Round-15 finding (a): the ON_AIR bound actually in force for this run
     # -- was a hardcoded 12, now -OnAirBoundMinutes (still defaults to 12).
     on_air_bound_minutes = $OnAirBoundMinutes
+    # These phase bounds arrive from Run-SandboxSoak.ps1 through the .wsb
+    # LogonCommand.  Record the effective guest values, rather than merely
+    # the host request, so the evidence can prove the two watchdogs shared
+    # the same budgets for this particular run.
+    install_bound_minutes = $InstallBoundMinutes
+    health_bound_minutes = $HealthBoundMinutes
     # Keep seamless_reload as the historical explicit-override field and add
     # the beta.5 effective expectation separately.
     seamless_reload = [bool]$SeamlessReload
@@ -2669,6 +2675,10 @@ $verdict = [ordered]@{
     minutes_requested    = $Minutes
     # Round-15 finding (a): the ON_AIR bound actually in force for this run.
     on_air_bound_minutes = $OnAirBoundMinutes
+    # Effective values received by this guest, matching the host phase
+    # bounds that were used to supervise this run.
+    install_bound_minutes = $InstallBoundMinutes
+    health_bound_minutes = $HealthBoundMinutes
     installer_exit_code  = $summary.installer_exit_code
     installer_elapsed_seconds = $summary.installer_elapsed_seconds
     station_healthy      = $summary.station_healthy

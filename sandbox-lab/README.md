@@ -132,7 +132,8 @@ this box — `-DryRun` is exempt) and refuses (exit 2) if the kit's
 `SHA256SUMS.txt` is missing or any listed file fails verification. Separate
 stall bounds apply per phase — a boot bound (default 5 min: absence of any
 main-thread file before this is normal, not staleness), installer (default
-20 min from launch), station-healthy (default 10 min after install),
+20 min from launch, `-InstallBoundMinutes`), station-healthy (default
+10 min after install, `-HealthBoundMinutes`),
 rollup-stall (default 6 min once the soak clock has started) — plus a
 generic 15-minute main-thread quiet-liveness backstop (newest mtime among
 `soak-log.txt`/`summary.json`/phase markers, classified via the shipper's
@@ -149,6 +150,13 @@ HARNESS_ERROR when its own schedule-coverage sizing check fails).
 `Access is denied`) — the host waits up to 3 minutes for it to exit on its
 own and reports it as lingering rather than retrying a kill that can only
 fail.
+
+`-InstallBoundMinutes` and `-HealthBoundMinutes` are positive bounded host
+parameters (defaults 20 and 10, respectively). The host writes both into the
+rendered Windows Sandbox LogonCommand; the guest receives the same values for
+its independent watchdog and records the effective values in
+`SOAK-START.json` and `VERDICT.json`. Thus a widened host install budget is
+not silently narrowed back to the guest default.
 
 Evidence lands under `soak-output/soak-<shortsha>-<UTC stamp>/` — a
 separate per-run root from Gate A's own `output/` above (which
