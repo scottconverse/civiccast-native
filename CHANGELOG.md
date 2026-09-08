@@ -51,6 +51,16 @@ below.
 
 ### Fixed
 
+- **The native app-payload runtime probe now redirects its profile-backed
+  application state.** The build-only embedded-Python smoke test removes
+  inherited `DATABASE_URL` and `CIVICCAST_*` overrides from its child
+  environment, points the app's known profile and storage resolvers at a fresh
+  temporary directory, and removes that directory after either success or
+  failure. Its mandatory imports, audio decode, and packaged portal checks are
+  unchanged. This changes build-time validation only: it does not change the
+  files selected for the shipped runtime, installer behavior, or station
+  storage resolution. A rebuilt artifact still receives the new commit's
+  source identity and hashes.
 - **Finite program and filler plans roll over before running out.** The
   end of scheduled media arms the configured filler, and finite filler
   refreshes without a planned worker restart. Due programs still interrupt
