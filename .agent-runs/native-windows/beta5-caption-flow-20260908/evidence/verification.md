@@ -78,6 +78,46 @@ upgrade was performed and no freshness check was relaxed.
 
 ## Remaining release work
 
+The c080 runtime also passed approved-LPM-sample exec 23475 in 65.02s:
+three workers x six program changes using only the two podcast samples,
+captions, TS/PCR, audio taps, applied receipts and shutdown. Raw evidence is
+retained locally outside this checkout, not as a tracked evidence bundle:
+`C:\Users\scott\Documents\Codex\2026-09-01\is-this-tool-plugin-real-https\native-c0809dff-approved-lpm-samples-20260908a\test_repeated_deferred_rollove0`.
+It contains six `cycle-*.defer-eos.json` plans and each of three channels'
+`graph.json`, `reload-status.json`, `worker.log`, and captured transport media.
+The pytest PASS and elapsed time were reported by exec 23475; the raw files
+alone do not establish that verdict. Runtime hashes above are unchanged.
+
+PR 199 randomized CI 34288005346/job 102268003537 failed 14 registry tests
+(9,857 passed/67 skipped) because this release manager missed the engine/test blob
+refresh and caption_flow.py dependency registration. The registry correction
+keeps unconditional D2 checks and adds individual drift tests for all seven
+modules. Historical July 17 observations are explicitly separate from current
+source-level proof; no new boot/pre-login or installed-service result is claimed.
+No verifier, schema, control, skip predicate, runtime or acceptance threshold is
+changed by this correction. Native proof anchor c080 is distinct from the later
+metadata-correction commit and eventual signed-candidate identity. The complete
+corrected claims suite passed: 125 tests in 106.45s, exec 63005. The verifier,
+schema and executable controls are unchanged.
+
+The full local c080 run (exec 66141) finished with 11,785 passed, 138 skipped,
+and 22 failed in 1,551.36s. Fourteen failures were the registry drift above.
+Five cleanup-contract tests were invoked with a basetemp outside their permitted
+artifact roots. Two collection checks inherited disabled plugin autoload but
+not the parent's explicit async plugin. One scheduling property hit Hypothesis's
+slow-input health check, not a counterexample. With a fresh repo-artifacts
+basetemp and `PYTEST_PLUGINS=pytest_asyncio.plugin` inherited by child processes,
+the affected modules/nodes passed unchanged: 31 tests in 29.68s, exec 25956.
+No health check, test count, cleanup protection or product code was altered.
+The complete suite still needs a fresh all-green result on the integrated head.
+
+Independent Terra review verified all role blobs and seven-module coverage.
+Its two documentation findings were corrected: inert-control explanations now
+name all seven paths, and the LPM raw evidence location is explicitly external
+to the checkout. README, manual and landing-page runtime descriptions remain
+unchanged by this metadata-only slice; no new capability or release claim is
+being introduced.
+
 New exact-head CI, source-bound signed candidate, installer lifecycle acceptance,
 Sandbox media soak, dedicated-tester installed-media verification and two-hour
 soak, then prepared filler/caption/browser operator acceptance and publication.

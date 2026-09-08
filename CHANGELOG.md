@@ -85,6 +85,12 @@ below.
 
 ### Fixed
 
+- **Playback evidence bindings include the new caption helper.** The current
+  engine, test and historical-evidence annotations are hash-bound in both
+  registry entries. All seven runtime modules have individual drift tests.
+  July17 service/boot observations remain historical; current native tests
+  do not claim a new pre-login, installed-service or field acceptance result.
+
 - **Live-caption heartbeat admission is now explicitly bounded at its source.**
   The integrated guard isolates heartbeat GAP events from caption
   conversion, permits only one pending heartbeat reservation, and protects
