@@ -31,7 +31,7 @@ The helper is parsed by the host and loaded by the actual guest driver.
   CI must pass before merge; local success is not a remote-CI claim.
 
 The mutation workspace fixture-copy correction matches the independently
-reviewed PR197 correction: policy tests require `sandbox-lab` in that copy.
+reviewed PR197 correction: policy tests require `sandbox-lab` and `gate-b` in that copy.
 No tests are skipped to accommodate its absence.
 
 ## Scope review

@@ -6,9 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DRIVER = (ROOT / "sandbox-lab/scripts/In-Sandbox-Soak.ps1").read_text(encoding="utf-8")
-CLASSIFIER = (ROOT / "sandbox-lab/scripts/TSDuckReportClassifier.ps1").read_text(
-    encoding="utf-8"
-)
+CLASSIFIER = (ROOT / "sandbox-lab/scripts/TSDuckReportClassifier.ps1").read_text(encoding="utf-8")
 RUNNER = (ROOT / "sandbox-lab/Run-SandboxSoak.ps1").read_text(encoding="utf-8")
 
 
@@ -29,6 +27,10 @@ def test_tsduck_nested_packet_schema_is_strict_and_wired() -> None:
 
 def test_tsduck_timeouts_remain_failed_probes() -> None:
     start = DRIVER.index("function Test-TsProof")
-    block = DRIVER[start : DRIVER.index("# ----------------------------------------------------------------", start)]
+    block = DRIVER[
+        start : DRIVER.index(
+            "# ----------------------------------------------------------------", start
+        )
+    ]
     assert "'fail-timed-out'" in block
     assert "Stop-Process -Id $proc.Id" in block
