@@ -71,6 +71,10 @@ be distributed as a public beta.
 
 ## Verify The Download With PowerShell
 
+The native release chain carries no Sigstore/cosign step. Do not look for or
+download a Sigstore bundle; verify the actual executable's Authenticode
+signature and matching checksum metadata as described below.
+
 1. From the exact tagged GitHub Release, obtain these matching files and
    keep them together in one folder (these are the exact asset names the
    publisher uploads -- there is no version number in the filename):
