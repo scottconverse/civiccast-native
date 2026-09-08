@@ -82,12 +82,12 @@ GATE_A_ARTIFACT_NAMES: dict[str, str] = {
 }
 
 SMARTSCREEN_NOTE = (
-    'Windows may show a blue "Windows protected your PC" SmartScreen prompt '
-    "on a freshly published installer. This is reputation, not the signature: "
-    "a newly issued certificate has no SmartScreen download history yet. The "
-    "prompt shows the verified publisher (Scott Converse) and fades as "
-    "download volume accrues. See docs/tester/SMARTSCREEN-WALKTHROUGH.md for "
-    "the click-through and how to verify the signature yourself first."
+    'Before responding to any blue "Windows protected your PC" SmartScreen '
+    "warning, verify the exact SHA-256 and that Get-AuthenticodeSignature "
+    "reports Status Valid for publisher Scott Converse. A warning alone proves "
+    "neither signature failure nor a valid publisher; if the expected More info "
+    "or Run anyway options are missing, or the publisher/hash differs, stop. "
+    "SmartScreen reputation is separate from Authenticode validity and may vary."
 )
 
 

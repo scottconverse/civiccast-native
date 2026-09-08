@@ -19,6 +19,12 @@ below.
 
 ### External field documentation
 
+- **Publisher-generated SmartScreen guidance now states the verification order.**
+  Release notes require the exact SHA-256 and valid Authenticode publisher
+  before any conditional SmartScreen action; a warning alone is not proof of a
+  failed signature or valid publisher, and missing options or mismatched
+  publisher/hash remain stop conditions.
+
 - **Field-installation guidance now separates installation, trust and cutover.**
   The external quickstart and tester guides require the actual installer hash
   and Authenticode publisher checks before running it, distinguish USB/LAN

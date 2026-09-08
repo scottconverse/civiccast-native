@@ -642,6 +642,9 @@ def test_dry_run_produces_expected_artifacts(tmp_path, monkeypatch):
     assert m.sha256_file(out_dir / f"{setup.name}.sidecar.json") in notes
     assert "beta candidate, not a production release" in notes.lower()
     assert "download setup.exe" in notes.lower() or "download `setup.exe`" in notes.lower()
+    assert "verify the exact sha-256" in notes.lower()
+    assert "warning alone proves neither signature failure nor a valid publisher" in notes.lower()
+    assert "missing, or the publisher/hash differs, stop" in notes.lower()
 
     # dry run must not have touched the real release-truth.yaml on disk
     # (only via update_release_truth called on a scratch copy for the summary)

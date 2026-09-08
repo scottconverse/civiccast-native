@@ -142,6 +142,10 @@ for the correct signer. SmartScreen reputation is a separate, slower-moving
 signal from Authenticode validity; do not treat the absence of a SmartScreen
 warning as proof of anything, and do not treat the presence of one as proof
 the file is untrustworthy if Authenticode already reports `Valid`.
+Before responding to the warning, verify the exact SHA-256 and the expected
+publisher; a warning alone proves neither signature failure nor a valid
+publisher. If the expected **More info** or **Run anyway** options are missing,
+or the publisher/hash differs, stop.
 
 ## Operator Rule
 
