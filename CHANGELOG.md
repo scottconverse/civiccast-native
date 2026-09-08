@@ -85,6 +85,13 @@ below.
 
 ### Fixed
 
+- **Sandbox TSDuck analysis now reads the current nested JSON schema.** The
+  soak sampler reads packet totals, invalid syncs, and transport errors from
+  `ts.packets`, rejects absent or malformed fields instead of converting them
+  to zero, and records the explicit aggregate of per-PID discontinuity
+  counters. TSDuck timeouts remain failed probes; this is harness parsing
+  maintenance, not a change to playout or verdict thresholds.
+
 - **Sandbox-soak install and health deadlines now remain consistent across
   the host and guest.** `Run-SandboxSoak.ps1 -InstallBoundMinutes` and
   `-HealthBoundMinutes` are rendered into the Windows Sandbox LogonCommand
