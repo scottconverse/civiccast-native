@@ -2,7 +2,10 @@
 
 ## Release State
 
-`v1.0.0-beta.4` is the current release, a download-only upgrade for
+`v1.0.0-beta.4` is the current published release. Native beta.5 is an
+unpublished candidate until the release owner publishes it and updates
+`release-truth.yaml`; use only the exact candidate named in the handoff.
+The published beta.4 release is a download-only upgrade for
 stations already on `v1.0.0-beta.3` (the first downloadable release, now
 superseded):
 `setup.exe` + `.ccpack` runtime packs + `SHA256SUMS.txt`, published as a
@@ -22,12 +25,14 @@ after the release gates and soak evidence are complete.
 
 ## Package Acquisition
 
-1. **If you were given a USB-delivered `v1.0.0-beta.1` station:** there is no
-   GitHub download for it; follow the handoff you were given.
-2. **If you were given a downloadable `v1.0.0-beta.3` (or later) candidate:**
-   use the exact `setup.exe`, `SHA256SUMS.txt`, and `setup.exe.sidecar.json`
-   from that release, plus any `.ccpack` runtime packs the install needs.
-3. Verify the SHA-256 value against the active handoff or checksum asset.
+1. For a first install, use the complete signed USB/LAN kit named in the
+   handoff, including its `station\` model bundle. For an in-place upgrade,
+   use the exact installer and runtime packs named by the handoff.
+2. For a GitHub download, use the exact `setup.exe`, `SHA256SUMS.txt`, and
+   `setup.exe.sidecar.json` from the published release. For USB/LAN, use its
+   hash-pinned delivery manifest instead; it need not contain the GitHub sidecar.
+3. Verify the SHA-256 and Authenticode publisher against the applicable handoff
+   and manifest.
 4. Do not use repository source ZIPs, tester handoff binaries, or Git LFS-backed
    files for normal installer acquisition.
 5. Record the CivicCast version or commit SHA in your notes.

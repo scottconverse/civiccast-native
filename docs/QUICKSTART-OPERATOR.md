@@ -1,114 +1,97 @@
-# CivicCast — Quick Start
+# CivicCast beta.5 - Field-Test Quick Start
 
-**For the person setting up a new CivicCast station.** No computer experience
-required. Follow the numbered steps in order. Everything CivicCast needs is on
-the USB kit — no internet connection is required.
+This is a field-test guide for the native Windows beta. It is not a production
+cutover instruction. Use the exact beta release named in your tester handoff;
+the public release page and `release-truth.yaml` decide which version is
+currently available.
 
-Set aside about **45 minutes**. Most of that is the computer working on its own.
+## Before you begin
 
----
+1. Read the exact tester handoff and the Windows release-trust instructions.
+2. Use the complete signed beta.5 USB/LAN kit for a first install. The kit
+   includes the installer, runtime packs, and the signed `station\` model
+   bundle (about 21 GB). A GitHub download by itself does not provide the model
+   bundle needed by a new station.
+3. If this is an upgrade from an already-installed beta.3-or-later station,
+   use only the exact release assets the handoff names. Existing recordings,
+   database data, settings, and cached AI models are retained by the supported
+   in-place upgrade path.
+4. Have your technical lead verify the exact installer filename and SHA-256
+   against the trusted handoff and `SHA256SUMS.txt`, plus a `Valid`
+   Authenticode signature whose publisher is **Scott Converse**. For a GitHub
+   download, also verify the release's `setup.exe.sidecar.json`. The complete
+   USB/LAN kit uses its own delivery manifest; do not assume it contains that
+   GitHub sidecar. A matching hash alone is not proof of publisher identity.
+   If any value differs, stop and report the mismatch.
 
-## 1. Plug in the USB kit
+## Install
 
-Plug the CivicCast USB stick into the station computer.
+1. On the station computer, open the signed USB/LAN kit and run its branded
+   `CivicCast (Native)_1.0.0-beta.5_x64-setup.exe` installer. A GitHub download
+   uses the name `setup.exe`; its hash must identify the same approved release.
+   Do not substitute a source ZIP, an older release, or a generic "latest"
+   download.
+2. If Windows shows **Windows protected your PC**, choose **More info** and
+   verify that the publisher is Scott Converse. If the publisher, filename, or
+   hash is wrong, choose **Don't run** and contact your technical lead. If the
+   checks match the approved test kit, choose **Run anyway** to continue.
+3. Leave the installer open while it works. It should show changing progress
+   details. Do not restart, close the window, or run a second installer during
+   this step.
+4. Complete the installation wizard using the **Next** or **Finish** buttons
+   it shows. If the separate **CivicCast Installer** window opens, follow
+   **Checking This Computer** and **What CivicCast Needs**, using **Continue**
+   when offered. Local components should be marked **Found locally - verified**
+   with a check mark. Wait for the setup steps to complete. The operator
+   console may open automatically; if it does not, select **Open operator
+   console** or use the **CivicCast Operator Console** shortcut.
 
-## 2. Open the USB drive and double-click the setup program
+## First setup and recovery
 
-It has a CivicCast icon and a name like `CivicCast (Native)_1.0.0-beta.3_x64-setup.exe`.
+1. On the station itself, open **First setup** from the **CivicCast Operator
+   Console** shortcut or the installer handoff URL.
+2. Enter the station name and create the first administrator account.
+3. When CivicCast shows the one-time recovery codes, select **Print kit** or
+   **Save kit** and store the result away from the computer. Do not put codes
+   or passwords in a report. Continue to the console only after the recovery
+   kit is safely stored.
+4. Confirm **System Health** is green. This is an installation check, not yet a
+   beta release or production-readiness claim.
 
-Windows asks one question before setup starts:
+## Field-test boundary
 
-- **"Do you want to allow this app to make changes to your device?"** — click
-  **Yes**. (Setup needs this to install the station.) The box names
-  **Scott Converse** as the verified publisher; CivicCast is signed software.
+Keep the station private while testing. Run the assigned rehearsal and tester
+checks, record the exact candidate SHA and installed version, and wait for the
+station owner's cutover decision. Routine steps within the assigned field
+test do not need a new approval at every screen. Do not treat reaching the operator console,
+an installer exit code of zero, or a version number as proof that the station
+is ready for public cutover.
 
-## 3. Step through the first three setup screens
+## If the installer or setup window appears stuck
 
-Setup opens a small window. Click the button at the bottom right each time:
+- If a step is taking a long time, first read the current status text and leave
+  the window open. A long-running step is not proof of success or failure.
+- Do **not** assume that **Waiting** means everything is installed. Do not
+  select **Stop downloading** merely to continue. Inspect the installer log,
+  verify **System Health**, and contact your technical lead if the state does not
+  advance.
+- In the installer window select **Open installer log**. If the window has
+  closed, collect:
 
-1. A welcome page — click **Next**.
-2. A page showing where CivicCast will be installed — leave it as it is and
-   click **Next**.
-3. Setup installs. **This takes about 30 minutes.** A progress bar moves and the
-   text changes as it works. Leave it alone; don't close it, don't restart the
-   computer.
-4. When it says **Installation Complete**, click **Next**, then click
-   **Finish** (leave both checkboxes ticked).
+  `C:\ProgramData\CivicCast\install-progress.log`
 
-## 4. Let the CivicCast Installer finish the setup
+  Also record the exact visible status, timestamp, candidate filename, and the
+  last completed step. Do not retry repeatedly; a second run can obscure the
+  first failure.
+- If **System Health** is not green, the operator console cannot be reached,
+  the service is missing, or any item is red, stop and report the evidence.
+  Do not call the station installed or publish recordings from that failed
+  setup. Preserve the logs and consult your technical lead before retrying or
+  rebooting to clear an unexplained failure.
 
-Clicking Finish opens a second, larger window called **CivicCast Installer**.
-This one does the last few steps:
+## After a successful field test
 
-1. **Checking This Computer** — it lists what it found and recommends a caption
-   engine. Click **Continue**.
-2. **What CivicCast Needs** — a list of the large pieces. Click **Continue**.
-3. **Setting Up** — each item should say **"Found locally — verified ✓"**
-   because everything came from your USB kit. Wait for it to finish.
-4. When it's done, click **Open operator console**.
-
-## 5. Follow First Setup
-
-A page called **First setup** opens in your browser. Fill it in from top to
-bottom:
-
-- **Station name** — what your station is called.
-- **Your admin account** — a display name, a username, and a password for
-  yourself. This is the login you'll use from now on.
-- **SAVE THE RECOVERY KIT.** Near the end, CivicCast shows a one-time set of
-  recovery codes. Click **Print kit** or **Save kit** and put the codes
-  somewhere safe **away from this computer** (a locked drawer or a safe — not a
-  sticky note on the monitor). These codes are the *only* way back in if the
-  admin password is ever lost, and CivicCast can never show them again. Once
-  they're stored, tick the box and click **Continue to the console**.
-
-## 6. You're live
-
-You're signed in at the operator console — where you run meetings, manage
-recordings, and check on the station.
-
-**To get back here later**, use the **CivicCast Operator Console** shortcut on
-the desktop or in the Start menu. You never need to run setup again.
-
-The public page residents visit is at:
-
-```
-http://<this computer>:8000/
-```
-
-Ask your IT person for this computer's name or address to use in place of
-`<this computer>` — for example `http://station-1:8000/`.
-
----
-
-## If something looks wrong
-
-- **A blue "Windows protected your PC" screen appears.** Uncommon — CivicCast
-  is signed, but a computer that has never seen this publisher before can still
-  show it once. Click **More info**, then **Run anyway**. Check that it names
-  **Scott Converse** as the publisher; if it names anyone else, stop and call
-  your IT person.
-
-- **A step is taking a long time.** Installing takes about 30 minutes and the
-  final setup a few more. As long as the window is on screen, it's working.
-  It's safe to leave it and come back.
-
-- **An item says "Waiting" and never starts.** Everything you need is already
-  installed at that point — the station is running even if that screen looks
-  stuck. Click **Stop downloading**, then **Open operator console** and carry
-  on with Step 5.
-
-- **You see "First setup can only be done from the station computer itself."**
-  You're looking at the console from a different computer. First setup has to be
-  done sitting at the station computer — open the **CivicCast Operator Console**
-  shortcut on that machine and start again from Step 5. (Once setup is finished,
-  the public page can be viewed from anywhere on the network.)
-
-- **Anything shows up red, or an error you don't understand.** Stop and call
-  your IT person. Don't guess. In the installer window, click **Open installer
-  log** to hand them the exact record. If setup already closed, the same log is
-  saved at:
-
-  ```
-  C:\ProgramData\CivicCast\install-progress.log
-  ```
+Keep the signed kit, hash manifest, installer log, recovery-kit confirmation,
+and candidate-bound tester evidence together. A successful local installation
+or soak is evidence for the named candidate only; it does not by itself make
+beta.5 the public current release.

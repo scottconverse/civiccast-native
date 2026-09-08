@@ -2,10 +2,12 @@
 
 ## Current Release
 
-`v1.0.0-beta.4` is the current release, a download-only upgrade for
-stations already on `v1.0.0-beta.3`:
+`v1.0.0-beta.4` is the current published release. The native beta.5 package is
+an unpublished candidate until the release owner publishes it and updates
+`release-truth.yaml`; do not treat a tester handoff or USB kit as a public
+release. For the current published beta.4 release,
 `setup.exe`, the five per-pack runtime `.ccpack` assets, a
-`SHA256SUMS.txt` checksum file, and a signed `setup.exe.sidecar.json` are
+`SHA256SUMS.txt` checksum file, and `setup.exe.sidecar.json` metadata are
 attached to the
 [`v1.0.0-beta.4` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4)
 as a **prerelease** -- watch
@@ -57,17 +59,18 @@ download-only upgrade in place: your recordings, settings, and AI models are
 kept. Details:
 [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](../releases/2026-09-02-beta1-to-beta2-fresh-install-only.md).
 
-Last updated: 2026-09-04.
+Last updated: 2026-09-08.
 
 Audience: Longmont Public Media beta testers, station operators, technical
 staff, and anyone observing the first real station-side CivicCast runs.
 
 ## Plain-English Summary
 
-Use only the release-matched installer, sidecar, and checksum file for
-whichever release you were actually handed (USB for `v1.0.0-beta.1`, or the
-exact tagged GitHub download once `v1.0.0-beta.3` or later publishes --
-`v1.0.0-beta.2` is never handed to a tester).
+Use only the release-matched installer and manifest for the package you were
+actually handed. For a GitHub release, also use its sidecar and checksum; a
+USB/LAN kit may have only its own hash-pinned delivery manifest and need not contain
+the GitHub sidecar. Beta.5 remains unpublished until the release owner says it
+is public (`v1.0.0-beta.2` is never handed to a tester).
 Preserve all logs and report any failure.
 
 ## What This Beta Is Meant To Exercise
@@ -87,12 +90,13 @@ The run is meant to answer:
 
 ## Release Build To Use
 
-**Use the exact release named in your active handoff -- either the
-USB-delivered `v1.0.0-beta.1` station or the exact tagged GitHub download
-once a `v1.0.0-beta.3`-or-later candidate is published.**
+**Use the exact package named in your active handoff.** A USB/LAN field kit is
+verified against its own hash-pinned delivery manifest. A GitHub package is used
+only after its exact beta tag is published and is verified against that
+release's sidecar and checksum assets. Beta.5 remains an unpublished
+candidate until the release owner publishes it.
 
-Expected SHA-256 and byte size must match that release's own sidecar and
-`SHA256SUMS.txt`.
+Expected SHA-256 and byte size must match the applicable package manifest.
 
 LPM release candidate artifact details (once a downloadable candidate is
 published; a USB-delivered station has no GitHub artifacts to check):
@@ -105,7 +109,7 @@ published; a USB-delivered station has no GitHub artifacts to check):
 | Checksum file | `SHA256SUMS.txt` |
 | Installer sidecar | `setup.exe.sidecar.json` |
 | Runtime packs (if applicable) | `*.ccpack` |
-| Installer size / SHA-256 | Verify against `SHA256SUMS.txt` and the sidecar; never reuse a copied hash from another candidate |
+| Installer size / SHA-256 | Verify against `SHA256SUMS.txt` and the sidecar for GitHub, or the hash-pinned delivery manifest for USB/LAN; never reuse a copied hash |
 | Signature | Valid Authenticode signature from Scott Converse (Azure Trusted Signing; this release chain carries no Sigstore step) |
 
 Optional reference files (proof kit, manifest, PDF, DOCX) must come from that
@@ -138,20 +142,30 @@ content, or resident data into bug reports.
 
 ## Verify The Installer
 
-A downloadable release includes a `setup.exe.sidecar.json` file next to
-`setup.exe`, and a `SHA256SUMS.txt` listing every asset's hash. Always
-verify against the sidecar and checksum file from the exact package you
+A downloadable GitHub release includes a `setup.exe.sidecar.json` file next to
+`setup.exe`, and a `SHA256SUMS.txt` listing every asset's hash. A USB/LAN kit
+uses its own hash-pinned delivery manifest instead and need not contain the GitHub
+sidecar. Always verify against the manifest belonging to the exact package you
 received; do not trust a hash copied from anywhere else.
 
-1. Open `setup.exe.sidecar.json` and note its `sha256` value.
-2. In PowerShell, in your download folder, run:
+1. For a GitHub download, open `setup.exe.sidecar.json` and note its `sha256`
+   value. For USB/LAN, use the kit's hash-pinned delivery manifest.
+2. In PowerShell, in the package folder, hash the actual installer. For a
+   GitHub download, run:
 
    ```powershell
    Get-FileHash .\setup.exe -Algorithm SHA256
    ```
 
-3. Compare against both the sidecar's `sha256` value and `setup.exe`'s own
-   line in `SHA256SUMS.txt`. All must match exactly. If they do not, do not
+   For the named beta.5 USB/LAN kit, run:
+
+   ```powershell
+   Get-FileHash '.\CivicCast (Native)_1.0.0-beta.5_x64-setup.exe' -Algorithm SHA256
+   ```
+
+3. Compare against the trusted handoff and that exact filename's line in the
+   package's `SHA256SUMS.txt`. For GitHub, also compare the sidecar's `sha256`.
+   All must match exactly. If they do not, do not
    run the installer. Quarantine the package and ask Scott for a replacement
    proof bundle.
 
@@ -164,8 +178,10 @@ signature checks.
 
 ## Install And First Setup
 
-1. Run `setup.exe` (or the USB-delivered installer, for a `v1.0.0-beta.1`
-   station) named in the active LPM handoff.
+1. Run the exact installer filename named in the active LPM handoff after
+   completing its hash and signature checks: GitHub downloads use `setup.exe`;
+   the beta.5 USB/LAN delivery uses
+   `CivicCast (Native)_1.0.0-beta.5_x64-setup.exe`.
 2. Approve expected Windows prompts.
 3. Let the installer prepare CivicCast. This step can take several minutes,
    but the screen must keep showing the current phase, step, elapsed time,

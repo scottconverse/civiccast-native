@@ -35,9 +35,12 @@ anything:
 2. [Install CivicCast On Windows](../../INSTALL-WINDOWS.md)
 3. This trust and verification page
 
-Download only the asset attached to the exact tagged GitHub Release you were
-told to use, and verify it against `SHA256SUMS.txt` and its sidecar before
-installation.
+For GitHub downloads, use the exact tagged release named by the handoff and
+verify `SHA256SUMS.txt`, installer sidecar metadata and the executable's actual
+Authenticode signature before installation. A first-install USB/LAN kit is a
+different delivery set: use its own hash-pinned delivery manifest and the
+installer signature, plus the signed station and runtime-pack manifests.
+Do not require a GitHub sidecar that is not part of the USB/LAN kit.
 
 Record that these documents were opened and read in the proof report. If the
 approved package source, manifest, sidecar, installer UI, or docs disagree about the
@@ -51,16 +54,26 @@ A CivicCast release can provide three different kinds of trust evidence:
 | Evidence | What it proves | What it does not prove |
 | --- | --- | --- |
 | SHA-256 checksum | The file on your machine matches the owner-approved package or published release. | It does not identify the publisher by itself. |
-| Release sidecar or manifest | The package, service metadata, and expected hash belong to the same release artifact set. | It does not replace checking the downloaded file hash. |
-| Signature | The artifact was Authenticode-signed by the stated release process (Azure Trusted Signing). See [CODE_SIGNING_POLICY.md](../../CODE_SIGNING_POLICY.md) -- this release chain carries no Sigstore/cosign step; Authenticode is the only code signature a Windows release asset carries. | It is not the same as Microsoft SmartScreen reputation unless Authenticode signing is explicitly present. |
+| Release sidecar or delivery manifest | Records the expected files and hashes for the named artifact set; compare these with the trusted handoff and actual downloaded bytes. | Plain checksum metadata is not a publisher signature or a separately signed attestation. |
+| Installer signature | A valid Authenticode verification identifies the signer and detects changes to the signed executable. See [CODE_SIGNING_POLICY.md](../../CODE_SIGNING_POLICY.md). | It does not establish SmartScreen reputation, successful installation or operational acceptance. |
+
+The generated `setup.exe.sidecar.json` is plain checksum/signature-status
+metadata, with `attestation: null`. It is not separately signed. The installer
+has the Authenticode signature; station indexes and runtime packs have their
+own signed-manifest verification. Do not call the root delivery checksum file
+a signed manifest merely because it lists signed files.
 
 Do not assume a candidate is Authenticode-signed. The active handoff and exact
-artifact sidecar must state its actual signature status. A public beta should
+artifact metadata must state its actual signature status. A public beta must
 report `Valid` and the approved publisher; a local `NotSigned` engineering build
 is suitable only for an explicitly authorized local acceptance run and must not
 be distributed as a public beta.
 
 ## Verify The Download With PowerShell
+
+The native release chain carries no Sigstore/cosign step. Do not look for or
+download a Sigstore bundle; verify the actual executable's Authenticode
+signature and matching checksum metadata as described below.
 
 1. From the exact tagged GitHub Release, obtain these matching files and
    keep them together in one folder (these are the exact asset names the
@@ -132,10 +145,13 @@ the file is untrustworthy if Authenticode already reports `Valid`.
 
 ## Operator Rule
 
-Install only the exact tagged release you were told to use, verified against
-its own `SHA256SUMS.txt` and sidecar. Approved sources include:
+Install only the exact release or field candidate named in the active handoff.
+Verify its actual installer signature and delivery-specific checksum set. Use
+the sidecar for a GitHub release download, or the complete delivery manifest
+for an authorized USB/LAN kit. Approved sources include:
 
 - the official CivicCast GitHub Release,
+- a complete USB/LAN kit explicitly identified by the field handoff,
 - a release artifact set built by your organization from source, or
 - an internal package repository your organization controls.
 
