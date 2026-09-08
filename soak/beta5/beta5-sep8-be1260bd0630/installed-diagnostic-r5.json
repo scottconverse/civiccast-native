@@ -1,0 +1,347 @@
+﻿{
+    "schema":  "civiccast-native-beta5-r5-receipt-v1",
+    "host":  "DESKTOP-VBMA6O5",
+    "mission":  "beta5-sep8-be1260bd0630",
+    "candidate_source_sha":  "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+    "observed_utc":  "2026-09-08T20:26:13.3107071Z",
+    "report_kind":  "bounded diagnostic only; not an installation, media, or terminal acceptance verdict",
+    "identity":  {
+                     "path":  "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\run-identity.json",
+                     "present":  true,
+                     "valid_json":  true,
+                     "fields":  {
+                                    "mission":  "beta5-sep8-be1260bd0630",
+                                    "candidate_source_sha":  "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+                                    "build_source_sha":  "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+                                    "gate_a_source_sha":  "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+                                    "build_run_id":  "34237280539",
+                                    "expected_version":  "1.0.0-beta.5",
+                                    "expected_hostname":  "DESKTOP-VBMA6O5",
+                                    "hostname":  "DESKTOP-VBMA6O5",
+                                    "expected_manifest_sha256":  "97fe8a28fcbadf92abe31d7ae747fa6ef7fe905bff5c72cc99ff9fa6bf1be43a",
+                                    "actual_manifest_sha256":  "97fe8a28fcbadf92abe31d7ae747fa6ef7fe905bff5c72cc99ff9fa6bf1be43a",
+                                    "expected_installer_sha256":  "5b3fec96cac6bd76cfc88fc7993f5e731d9b945d6606dd4c28f9a256c2c8b7e0",
+                                    "actual_installer_sha256":  "5b3fec96cac6bd76cfc88fc7993f5e731d9b945d6606dd4c28f9a256c2c8b7e0",
+                                    "artifacts_verified_utc":  "2026-09-08T19:25:28.6968162Z",
+                                    "installed_utc":  "2026-09-08T19:35:03.0495331Z",
+                                    "installed_service_process_id":  "32036",
+                                    "retry_install_started_utc":  "2026-09-08T19:25:28.7125835Z",
+                                    "installed_service_path":  "\"C:\\CivicCastHostStore\\install\\runtime\\pythonservice.exe\"",
+                                    "installed_service_started_utc":  null,
+                                    "approved_assets":  null,
+                                    "verdict":  null,
+                                    "reason":  null,
+                                    "status":  null,
+                                    "error_type":  null,
+                                    "pid_change_count":  null,
+                                    "nonzero_pid_change_count":  null,
+                                    "installed_version":  "1.0.0-beta.5",
+                                    "installer_product_version":  "1.0.0-beta.5",
+                                    "installer_authenticode_status":  "Valid",
+                                    "installer_signer":  "Scott Converse",
+                                    "native_app_payload_source_sha":  "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+                                    "native_app_payload_sha256":  "403669012e7e3857c8b97171a5837d72c6006a2dda526893aa30acdc692f2fa4",
+                                    "installed_service_process_started_utc":  "2026-09-08T19:34:11.8277466Z",
+                                    "expected_runtime_file_sha256":  {
+                                                                         "Lib/site-packages/civiccast/egress/daemon.py":  "a8e967de4a64115a60a1288447ce119f4f2b18f9451e0fff56e958b915036419",
+                                                                         "Lib/site-packages/civiccast/egress/gst/strategy.py":  "74bb7a8f7a67037bce7a7066e0af01b85b8c36430d0f034a5c564ab3989ede3e"
+                                                                     },
+                                    "actual_runtime_file_sha256":  {
+                                                                       "Lib/site-packages/civiccast/egress/daemon.py":  "a8e967de4a64115a60a1288447ce119f4f2b18f9451e0fff56e958b915036419",
+                                                                       "Lib/site-packages/civiccast/egress/gst/strategy.py":  "74bb7a8f7a67037bce7a7066e0af01b85b8c36430d0f034a5c564ab3989ede3e"
+                                                                   },
+                                    "approved_asset_count":  2
+                                }
+                 },
+    "retry_dispatch":  {
+                           "path":  "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\install-retry-r1-dispatch\\install-retry-r1.json",
+                           "present":  true,
+                           "valid_json":  true,
+                           "fields":  {
+                                          "mission":  "beta5-sep8-be1260bd0630",
+                                          "candidate_source_sha":  "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+                                          "build_source_sha":  null,
+                                          "gate_a_source_sha":  null,
+                                          "build_run_id":  null,
+                                          "expected_version":  null,
+                                          "expected_hostname":  null,
+                                          "hostname":  "DESKTOP-VBMA6O5",
+                                          "expected_manifest_sha256":  null,
+                                          "actual_manifest_sha256":  null,
+                                          "expected_installer_sha256":  null,
+                                          "actual_installer_sha256":  null,
+                                          "artifacts_verified_utc":  null,
+                                          "installed_utc":  null,
+                                          "installed_service_process_id":  null,
+                                          "retry_install_started_utc":  null,
+                                          "installed_service_path":  null,
+                                          "installed_service_started_utc":  null,
+                                          "approved_assets":  null,
+                                          "verdict":  null,
+                                          "reason":  null,
+                                          "status":  "FAILED",
+                                          "error_type":  null,
+                                          "pid_change_count":  null,
+                                          "nonzero_pid_change_count":  null,
+                                          "installed_version":  null,
+                                          "installer_product_version":  null,
+                                          "installer_authenticode_status":  null,
+                                          "installer_signer":  null,
+                                          "native_app_payload_source_sha":  null,
+                                          "native_app_payload_sha256":  null,
+                                          "installed_service_process_started_utc":  null,
+                                          "expected_runtime_file_sha256":  {
+                                                                               "Lib/site-packages/civiccast/egress/daemon.py":  null,
+                                                                               "Lib/site-packages/civiccast/egress/gst/strategy.py":  null
+                                                                           },
+                                          "actual_runtime_file_sha256":  {
+                                                                             "Lib/site-packages/civiccast/egress/daemon.py":  null,
+                                                                             "Lib/site-packages/civiccast/egress/gst/strategy.py":  null
+                                                                         },
+                                          "approved_asset_count":  null
+                                      }
+                       },
+    "retry_journal":  {
+                          "path":  "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\install-retry-r1\\retry-journal.json",
+                          "present":  true,
+                          "valid_json":  true,
+                          "last_stage":  "04-SOAK-CYCLE",
+                          "status":  "FAILED_REQUIRES_RECONCILIATION",
+                          "error_type":  "System.Management.Automation.RuntimeException",
+                          "history_available":  false,
+                          "note":  "Single retry-journal.json is last-state-only; it does not prove every prior step transition."
+                      },
+    "final_verdict":  {
+                          "path":  "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\return-repo\\soak\\beta5\\beta5-sep8-be1260bd0630\\final-verdict.json",
+                          "present":  true,
+                          "valid_json":  true,
+                          "fields":  {
+                                         "mission":  "beta5-sep8-be1260bd0630",
+                                         "candidate_source_sha":  "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+                                         "build_source_sha":  null,
+                                         "gate_a_source_sha":  null,
+                                         "build_run_id":  null,
+                                         "expected_version":  null,
+                                         "expected_hostname":  null,
+                                         "hostname":  null,
+                                         "expected_manifest_sha256":  null,
+                                         "actual_manifest_sha256":  null,
+                                         "expected_installer_sha256":  null,
+                                         "actual_installer_sha256":  null,
+                                         "artifacts_verified_utc":  null,
+                                         "installed_utc":  null,
+                                         "installed_service_process_id":  null,
+                                         "retry_install_started_utc":  null,
+                                         "installed_service_path":  null,
+                                         "installed_service_started_utc":  null,
+                                         "approved_assets":  null,
+                                         "verdict":  "FAIL",
+                                         "reason":  "nonzero or missing pid_change_count",
+                                         "status":  null,
+                                         "error_type":  null,
+                                         "pid_change_count":  null,
+                                         "nonzero_pid_change_count":  null,
+                                         "installed_version":  null,
+                                         "installer_product_version":  null,
+                                         "installer_authenticode_status":  null,
+                                         "installer_signer":  null,
+                                         "native_app_payload_source_sha":  null,
+                                         "native_app_payload_sha256":  null,
+                                         "installed_service_process_started_utc":  null,
+                                         "expected_runtime_file_sha256":  {
+                                                                              "Lib/site-packages/civiccast/egress/daemon.py":  null,
+                                                                              "Lib/site-packages/civiccast/egress/gst/strategy.py":  null
+                                                                          },
+                                         "actual_runtime_file_sha256":  {
+                                                                            "Lib/site-packages/civiccast/egress/daemon.py":  null,
+                                                                            "Lib/site-packages/civiccast/egress/gst/strategy.py":  null
+                                                                        },
+                                         "approved_asset_count":  null
+                                     }
+                      },
+    "log_signals":  [
+                        {
+                            "path":  "C:\\CivicCastSoak\\reports\\AUTORUN-SEP8-BETA5-BE1260-R1-20260908T151611Z.log",
+                            "present":  true,
+                            "bounded_read":  true,
+                            "skipped_oversize":  false,
+                            "error_type":  null,
+                            "stage_counts":  {
+                                                 "selector":  0,
+                                                 "hold":  0,
+                                                 "dispose":  0,
+                                                 "commit":  0
+                                             },
+                            "stack_frames":  [
+
+                                             ],
+                            "raw_text_exported":  false
+                        }
+                    ],
+    "raw_contents_exported":  false,
+    "command_lines_exported":  false,
+    "secrets_exported":  false,
+    "path_guards":  [
+                        "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\run-identity.json",
+                        "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\install-retry-r1-dispatch\\install-retry-r1.json",
+                        "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\install-retry-r1\\retry-journal.json",
+                        "C:\\CivicCastSoak\\missions\\beta5-sep8-be1260bd0630\\return-repo\\soak\\beta5\\beta5-sep8-be1260bd0630\\final-verdict.json",
+                        "C:\\CivicCastSoak\\reports"
+                    ],
+    "processes":  [
+                      {
+                          "name":  "powershell.exe",
+                          "process_id":  8100,
+                          "parent_process_id":  6084,
+                          "creation_time":  "08/28/2026 17:27:50"
+                      },
+                      {
+                          "name":  "pwsh.exe",
+                          "process_id":  17140,
+                          "parent_process_id":  7724,
+                          "creation_time":  "09/03/2026 02:13:57"
+                      },
+                      {
+                          "name":  "powershell.exe",
+                          "process_id":  46832,
+                          "parent_process_id":  2476,
+                          "creation_time":  "09/08/2026 14:26:11"
+                      },
+                      {
+                          "name":  "powershell.exe",
+                          "process_id":  21720,
+                          "parent_process_id":  46832,
+                          "creation_time":  "09/08/2026 14:26:12"
+                      }
+                  ],
+    "service":  {
+                    "present":  true,
+                    "name":  "CivicCastSupervisor",
+                    "status":  "Running",
+                    "process_id":  32036,
+                    "executable_path":  "C:\\CivicCastHostStore\\install\\runtime\\pythonservice.exe"
+                },
+    "current_runtime_file_sha256":  {
+                                        "Lib/site-packages/civiccast/egress/daemon.py":  "a8e967de4a64115a60a1288447ce119f4f2b18f9451e0fff56e958b915036419",
+                                        "Lib/site-packages/civiccast/egress/gst/strategy.py":  "74bb7a8f7a67037bce7a7066e0af01b85b8c36430d0f034a5c564ab3989ede3e"
+                                    },
+    "worker_log_signals":  [
+                               {
+                                   "path":  "C:\\ProgramData\\CivicCast\\data\\egress\\public\\logs\\gst-worker.stdout.log",
+                                   "present":  true,
+                                   "bounded_read":  true,
+                                   "skipped_oversize":  false,
+                                   "error_type":  null,
+                                   "stage_counts":  {
+                                                        "selector":  0,
+                                                        "hold":  0,
+                                                        "dispose":  0,
+                                                        "commit":  0
+                                                    },
+                                   "stack_frames":  [
+
+                                                    ],
+                                   "raw_text_exported":  false
+                               },
+                               {
+                                   "path":  "C:\\ProgramData\\CivicCast\\data\\egress\\public\\logs\\gst-worker.stderr.log",
+                                   "present":  true,
+                                   "bounded_read":  true,
+                                   "skipped_oversize":  false,
+                                   "error_type":  null,
+                                   "stage_counts":  {
+                                                        "selector":  0,
+                                                        "hold":  0,
+                                                        "dispose":  0,
+                                                        "commit":  0
+                                                    },
+                                   "stack_frames":  [
+
+                                                    ],
+                                   "raw_text_exported":  false
+                               },
+                               {
+                                   "path":  "C:\\ProgramData\\CivicCast\\data\\egress\\education\\logs\\gst-worker.stdout.log",
+                                   "present":  true,
+                                   "bounded_read":  true,
+                                   "skipped_oversize":  false,
+                                   "error_type":  null,
+                                   "stage_counts":  {
+                                                        "selector":  2,
+                                                        "hold":  2,
+                                                        "dispose":  0,
+                                                        "commit":  0
+                                                    },
+                                   "stack_frames":  [
+
+                                                    ],
+                                   "raw_text_exported":  false
+                               },
+                               {
+                                   "path":  "C:\\ProgramData\\CivicCast\\data\\egress\\education\\logs\\gst-worker.stderr.log",
+                                   "present":  true,
+                                   "bounded_read":  true,
+                                   "skipped_oversize":  false,
+                                   "error_type":  null,
+                                   "stage_counts":  {
+                                                        "selector":  0,
+                                                        "hold":  0,
+                                                        "dispose":  0,
+                                                        "commit":  0
+                                                    },
+                                   "stack_frames":  [
+                                                        {
+                                                            "function":  "_dispose_source_leg",
+                                                            "line":  2730
+                                                        }
+                                                    ],
+                                   "raw_text_exported":  false
+                               },
+                               {
+                                   "path":  "C:\\ProgramData\\CivicCast\\data\\egress\\government\\logs\\gst-worker.stdout.log",
+                                   "present":  true,
+                                   "bounded_read":  true,
+                                   "skipped_oversize":  false,
+                                   "error_type":  null,
+                                   "stage_counts":  {
+                                                        "selector":  3,
+                                                        "hold":  3,
+                                                        "dispose":  3,
+                                                        "commit":  3
+                                                    },
+                                   "stack_frames":  [
+
+                                                    ],
+                                   "raw_text_exported":  false
+                               },
+                               {
+                                   "path":  "C:\\ProgramData\\CivicCast\\data\\egress\\government\\logs\\gst-worker.stderr.log",
+                                   "present":  true,
+                                   "bounded_read":  true,
+                                   "skipped_oversize":  false,
+                                   "error_type":  null,
+                                   "stage_counts":  {
+                                                        "selector":  0,
+                                                        "hold":  0,
+                                                        "dispose":  0,
+                                                        "commit":  0
+                                                    },
+                                   "stack_frames":  [
+
+                                                    ],
+                                   "raw_text_exported":  false
+                               }
+                           ],
+    "process_command_lines_exported":  false,
+    "diagnostic_status":  "COLLECTED",
+    "support_files":  [
+                          {
+                              "name":  "Beta5Tester.Common.ps1",
+                              "sha256":  "fc06d3199a6983799e9b02050890b0a0c4467c8970411d5c76bf3db7810abc90"
+                          },
+                          {
+                              "name":  "BETA5-R5-RECEIPT-DRAFT.ps1",
+                              "sha256":  "3f86b320572e638ef0f73c3a01e21863c4ce0953c778cd4e960256c115424c5e"
+                          }
+                      ]
+}
