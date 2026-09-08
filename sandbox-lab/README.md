@@ -126,6 +126,13 @@ had a parameter accidentally named `$Pid` (PowerShell's read-only `$PID`
 automatic variable), which silently no-opped every ring write with no
 crash and no product/host visible signal until this review caught it.
 
+TSDuck's current JSON stores packet totals and sync/transport errors under
+`ts.packets`; the sampler rejects missing or malformed nested counters rather
+than treating them as zero. It reports discontinuities as the explicit sum of
+each PID row's `packets.discontinuities` counter, not as an invented
+TS-level or PCR-only field. A timed-out `tsp` probe remains a failed probe;
+this parsing rule does not turn missing analysis into transport success.
+
 Refuses to start (exit 3) if Windows Sandbox is already running (it's a
 single-instance-per-machine resource shared with Gate A and other agents on
 this box — `-DryRun` is exempt) and refuses (exit 2) if the kit's

@@ -351,7 +351,8 @@ $scriptsToCheck = @(
     # its own Test-*.ps1.
     (Join-Path $scriptsDir 'CaptionsOffCheck.ps1'),
     (Join-Path $scriptsDir 'WorkerStdoutParser.ps1'),
-    (Join-Path $scriptsDir 'CpuSampler.ps1')
+    (Join-Path $scriptsDir 'CpuSampler.ps1'),
+    (Join-Path $scriptsDir 'TSDuckReportClassifier.ps1')
 )
 $parseResults = @($scriptsToCheck | ForEach-Object { Test-ScriptParses -Path $_ })
 $parseOk = -not @($parseResults | Where-Object { -not $_.ok }).Count

@@ -910,6 +910,7 @@ if ($SeamlessReload) {
 . (Join-Path 'C:\CivicCastSoakScripts' 'CaptionsOffCheck.ps1')
 . (Join-Path 'C:\CivicCastSoakScripts' 'WorkerStdoutParser.ps1')
 . (Join-Path 'C:\CivicCastSoakScripts' 'CpuSampler.ps1')
+. (Join-Path 'C:\CivicCastSoakScripts' 'TSDuckReportClassifier.ps1')
 
 $startServiceOk = $false
 $startServiceExceptionText = $null
@@ -1702,13 +1703,12 @@ function Test-TsProof {
         try { $j = Get-Content $report -Raw | ConvertFrom-Json } catch { $result.verdict = 'fail-unparsable-report'; return $result }
         $ts = $j.ts
         if (-not $ts) { $result.verdict = 'fail-no-ts-section'; return $result }
-        $result.packets_total = $ts.packets
-        $result.invalid_syncs = $ts.invalid_syncs
-        $result.transport_errors = $ts.transport_errors
-        $result.discontinuities = $(if ($null -ne $ts.pcr_discontinuities) { $ts.pcr_discontinuities } else { $ts.discontinuities })
-        if (-not $result.packets_total -or [int]$result.packets_total -le 0) { $result.verdict = 'fail-zero-packets'; return $result }
-        $clean = ([int]$result.invalid_syncs -eq 0) -and ([int]$result.transport_errors -eq 0) -and ([int]$result.discontinuities -eq 0)
-        $result.verdict = $(if ($clean) { 'pass' } else { 'fail-stream-errors' })
+        try { $metrics = Get-TSDuckReportMetrics $j } catch { $result.verdict = 'fail-unparsable-report'; return $result }
+        $result.packets_total = $metrics.packets_total
+        $result.invalid_syncs = $metrics.invalid_syncs
+        $result.transport_errors = $metrics.transport_errors
+        $result.discontinuities = $metrics.pid_discontinuities
+        $result.verdict = Get-TSDuckMetricsVerdict $metrics
         return $result
     } finally {
         if ($result.verdict -ne 'pass') {

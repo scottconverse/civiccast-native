@@ -68,7 +68,8 @@ def test_mutation_job_uses_real_event_base_and_full_history() -> None:
     assert "keep_existing()" in text
     assert 'SOURCE_PATHS="$(keep_existing civiccast scripts prototype tools alembic)"' in text
     assert 'ALSO_COPY="$(keep_existing .agent-runs .github .pipelines deploy docker ' in text
-    assert "docs security tester-handoff tests alembic.ini" in text
+    # Gate B's static contract reads both harness trees inside the mutation copy.
+    assert "docs gate-b sandbox-lab security tester-handoff tests alembic.ini" in text
     assert "native-windows-build-toolchain.lock.json" in text
     assert "native-windows-runtime-dependencies.lock.json" in text
     assert 'if [ -e "$name" ]; then' in text
