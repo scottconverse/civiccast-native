@@ -25,6 +25,10 @@ try {
     Assert-InventoryAdapter ($nativeSignal.script_locations.Count -eq 1 -and $nativeSignal.script_locations[0].line -eq 70) 'only known script location retained'
     Assert-InventoryAdapter ($nativeSignal.powershell_error_categories -contains 'NotSpecified') 'only bounded PowerShell category retained'
     Assert-InventoryAdapter (-not (($nativeSignal | ConvertTo-Json -Depth 8) -match 'SECRET|FullyQualifiedErrorId|RemoteException')) 'arbitrary error text excluded'
+    "The property 'sha256' cannot be found on this object.`r`nAt C:\CivicCastSoak\missions\beta5-sep8-be1260bd0630\bin\AUTORUN-SEP8-BETA5-02-`r`nFETCH-INSTALL.ps1:80 char:44" | Set-Content -LiteralPath $log
+    $wrappedSignal = Get-Beta5KnownInstallLogSignals $log
+    Assert-InventoryAdapter ($wrappedSignal.script_locations.Count -eq 1 -and $wrappedSignal.script_locations[0].line -eq 80) 'wrapped original script location parsed'
+    Assert-InventoryAdapter ($wrappedSignal.known_failure_categories -contains 'sha256_property_missing') 'exact known sha256 property classified'
     'FETCH/VERIFY/UPGRADE PASS: 1.0.0-beta.5, manifest+installer hashes independent, signer Scott Converse, service running from C:\CivicCastHostStore\install.' | Set-Content -LiteralPath $log
     $signal = Get-Beta5KnownInstallLogSignals $log
     Assert-InventoryAdapter ($signal.fetch_verify_upgrade_pass -and -not $signal.ffprobe_lookup_failure) 'actual exact success phrase distinguished'

@@ -1,5 +1,12 @@
 # Exact beta.5 tester installation diagnostic
 
+R2 returned18:36:13UTC with a property-missing error and no completed install.
+PowerShell wrapped the long script path in its log, so the initial location
+parser found no line. R3 preserves R1/R2 and recognizes whitespace-wrapped
+known script names, plus the exact known `sha256` property-error phrase.
+Only known filename/line/character and fixed category values are exported.
+Actual filesystem classifier tests18PASS perPowerShell engine.
+
 R1 returned successfully at18:26:13UTC. It showed the initial identity had no
 verified-artifact or installed receipt, no soak state, and the older installed
 service still running. Its original autorun log stopped at16:06:39UTC. The

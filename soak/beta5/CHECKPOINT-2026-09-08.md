@@ -1,5 +1,20 @@
 # Beta.5 tester support checkpoint
 
+## Pre-install source defect isolated; final location diagnostic
+
+R2 collected18:36:13UTC: known property_missing/NativeCommandError, oldservice,
+no installedreceipt. Source location was not extracted from wrapped PowerShell
+output. Root and Terra reproduced the actual original runtime-manifest loop:
+local `$matches` is overwritten by PowerShell's automatic `$Matches` during
+the hashregex, then `$matches[0].sha256` fails underStrictMode before install.
+The isolated rename to `$runtimeEntries` passesactualbe manifestPS5/7 and
+binds both expectedruntimehashes. No signedbytes changed.
+
+R3 is another read-only diagnostic in a new root/report; it parses wrapped
+knownscriptlocations and exactsha256propertyphrase.18adapterassertionsPASS
+PS5/7. It does not install anything. Retry will use reviewed separate scripts
+and refuse active/progressed state; originalscriptfiles remain preserved.
+
 ## Actual tester diagnosis and R2 follow-up: 18:30 UTC
 
 R1 returned on4cb241d5883602820a57c74ffdbbecab4f45859b at18:26:13Z.

@@ -120,13 +120,15 @@ function Get-Beta5KnownInstallLogSignals {
             installer_version_mismatch = 'Installer ProductVersion'
             native_archive_member_missing = 'Not found in archive'
             property_missing = 'cannot be found on this object'
+            sha256_property_missing = "The property 'sha256' cannot be found"
             variable_unset = 'has not been set'
             native_command_error = 'NativeCommandError'
         }
         foreach ($key in $phrases.Keys) {
             if ($content.Contains($phrases[$key])) { $result.known_failure_categories += $key }
         }
-        foreach ($match in [regex]::Matches($content, '(AUTORUN-SEP8-BETA5-(?:01-PREFLIGHT|02-FETCH-INSTALL|03-START-SOAK)\.ps1):(\d+)\s+char:(\d+)')) {
+        $compactLocationText = [regex]::Replace($content, '\s+', '')
+        foreach ($match in [regex]::Matches($compactLocationText, '(AUTORUN-SEP8-BETA5-(?:01-PREFLIGHT|02-FETCH-INSTALL|03-START-SOAK)\.ps1):(\d+)char:(\d+)')) {
             $result.script_locations += [pscustomobject]@{ script = $match.Groups[1].Value; line = [int]$match.Groups[2].Value; character = [int]$match.Groups[3].Value }
         }
         foreach ($match in [regex]::Matches($content, '(?m)^\s*\+?\s*CategoryInfo\s*:\s*([A-Za-z]+)\s*:')) {
