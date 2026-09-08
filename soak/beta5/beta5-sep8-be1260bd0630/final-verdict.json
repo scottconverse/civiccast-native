@@ -1,0 +1,8 @@
+﻿{
+    "schema":  "civiccast-native-beta5-media-verdict-v3",
+    "mission":  "beta5-sep8-be1260bd0630",
+    "candidate_source_sha":  "be1260bd0630261c571e3adf5aac6a6cbebd9e3a",
+    "verdict":  "FAIL",
+    "reason":  "nonzero or missing pid_change_count",
+    "completed_utc":  "2026-09-08T19:41:33.6769561Z"
+}
