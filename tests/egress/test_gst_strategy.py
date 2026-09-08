@@ -965,6 +965,36 @@ class _ImmediateAckServer:
         self.closed = True
 
 
+def test_windows_pipe_channel_surfaces_reload_commit_busy_error() -> None:
+    """The real strategy channel maps the worker's busy error to False + detail."""
+
+    class _BusyAckServer(_ImmediateAckServer):
+        def write_line(self, text: str) -> bool:
+            obj = json.loads(text)
+            self.written_cmds.append(str(obj["cmd"]))
+            self.written_ids.append(str(obj["id"]))
+            self._inbox.append(
+                json.dumps(
+                    {
+                        "v": 1,
+                        "id": str(obj["id"]),
+                        "result": "error",
+                        "detail": "RuntimeError('reload commit already in progress')",
+                    }
+                )
+            )
+            return True
+
+    server = _BusyAckServer()
+    channel = _WindowsPipeChannel("ch1", server=cast("object", server), ack_timeout_s=0.1)  # type: ignore[arg-type]
+    channel._connected_event.set()
+
+    assert channel.send_and_wait("reload", "reload C:/work/new.json") is False
+    assert channel.last_failure_reason == (
+        "worker acked 'error' (RuntimeError('reload commit already in progress'))"
+    )
+
+
 def _real_channel_factory(servers: list[_ImmediateAckServer]):
     from civiccast.egress.gst.strategy import _WindowsPipeChannel as _Chan
 

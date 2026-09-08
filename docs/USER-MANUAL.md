@@ -399,6 +399,16 @@ on an already-live channel.
 Station bug/logo placement is not yet operator-controllable from this
 panel; only the lower-third text layer is.
 
+**What happens during a program change?** CivicCast prepares the next program
+while the current feed continues. An accepted reload request means preparation
+has started, not that the new program is already on air. If another request
+arrives while the previous change is finishing, CivicCast declines that
+in-place request and the supervisor uses its existing channel-restart recovery
+to load the current plan. A restart can briefly interrupt the feed. Check the
+channel status and player to confirm the new program is running; do not treat
+the initial request acknowledgement as confirmation of the picture on air.
+The existing timeout and recovery safeguards remain active.
+
 ### Common Operator Questions {#common-operator-questions}
 
 **What happens if Wi-Fi drops mid-meeting?** The stock build does not claim automatic

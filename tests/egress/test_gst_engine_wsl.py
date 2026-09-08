@@ -46,6 +46,7 @@ import base64
 import contextlib
 import errno
 import faulthandler
+import json
 import os
 import re
 import socket
@@ -217,6 +218,7 @@ import reload_policy as reloadpolicy  # noqa: E402
 
 _E = graphmod.ElementSpec
 _CAPS = "video/x-raw,width=640,height=360,framerate=30/1"
+_PRODUCTION_CAPS = "video/x-raw,width=1280,height=720,framerate=30/1"
 _ACAPS = "audio/x-raw,rate=48000,channels=2"
 _H264_ENCODER = os.environ.get("CIVICCAST_GST_TEST_H264_ENCODER", "openh264enc")
 
@@ -2175,7 +2177,61 @@ def _write_short_av_clip(path: Path, *, seconds: float = 0.4, pattern: int = 0) 
         raise RuntimeError(f"test-clip encoder for {path} produced no (or an empty) file")
 
 
-def _multi_segment_playlist_reload_graph(clip_paths: list[Path]):
+def _write_short_av_ts_clip(
+    path: Path,
+    *,
+    seconds: float = 0.6,
+    pattern: int = 0,
+    video_caps: str = _CAPS,
+) -> None:
+    """Encode one prepared MPEG-TS playlist segment with separate A/V ends.
+
+    This is the installed preparer's production input shape (``segment-0001.ts``),
+    not the Matroska fixture used by the older single-rollover test.  The audio
+    source deliberately rounds up to a complete AAC input buffer, so its EOS can
+    arrive a beat after video -- the exact sibling-stream window in which the
+    physical beta.5 soak blocked while retiring the outgoing leg.
+    """
+    import gi
+
+    gi.require_version("Gst", "1.0")
+    from gi.repository import Gst
+
+    video_buffers = max(1, int(seconds * 30))
+    audio_buffers = max(1, int(seconds * 48000 / 1024) + 1)
+    # openh264enc's property is bits/sec while x264enc's is kbit/sec.
+    bitrate = 6_000_000 if _H264_ENCODER == "openh264enc" else 6_000
+    encoder = " ".join(_h264_sender_encoder_args(bitrate_kbps=bitrate))
+    desc = (
+        f"videotestsrc is-live=false pattern={pattern} num-buffers={video_buffers} ! "
+        f"{video_caps} ! {encoder} mux. "
+        f"audiotestsrc is-live=false wave=0 num-buffers={audio_buffers} ! {_ACAPS} ! "
+        "audioconvert ! audioresample ! avenc_aac bitrate=128000 ! aacparse ! mux. "
+        "mpegtsmux name=mux ! filesink name=sink"
+    )
+    pipeline = Gst.parse_launch(desc)
+    pipeline.get_by_name("sink").set_property("location", str(path))
+    bus = pipeline.get_bus()
+    if pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
+        pipeline.set_state(Gst.State.NULL)
+        raise RuntimeError(f"failed to start the TS test-clip encoder pipeline for {path}")
+    try:
+        msg = bus.timed_pop_filtered(
+            int(15 * Gst.SECOND), Gst.MessageType.EOS | Gst.MessageType.ERROR
+        )
+        if msg is None:
+            raise RuntimeError(f"TS test-clip encoder for {path} produced no EOS within 15s")
+        if msg.type == Gst.MessageType.ERROR:
+            err, debug = msg.parse_error()
+            raise RuntimeError(f"TS test-clip encoder for {path} errored: {err} ({debug})")
+    finally:
+        pipeline.set_state(Gst.State.NULL)
+        pipeline.get_state(int(5 * Gst.SECOND))
+    if not path.exists() or path.stat().st_size == 0:
+        raise RuntimeError(f"TS test-clip encoder for {path} produced no (or an empty) file")
+
+
+def _multi_segment_playlist_reload_graph(clip_paths: list[Path], *, video_caps: str = _CAPS):
     """A reload payload whose PROGRAM leg is a real ``concat`` ``PlaylistLeg`` of
     ``len(clip_paths)`` (>=4 in the test below) short, REAL A/V segments -- the
     exact production shape ``bridge.graph_from_config`` builds for a real
@@ -2196,7 +2252,7 @@ def _multi_segment_playlist_reload_graph(clip_paths: list[Path]):
                 _E("videoconvert"),
                 _E("videoscale"),
                 _E("videorate"),
-                _E("capsfilter", props={"caps": _CAPS}),
+                _E("capsfilter", props={"caps": video_caps}),
             )
             for clip in clip_paths
         ),
@@ -2213,6 +2269,44 @@ def _multi_segment_playlist_reload_graph(clip_paths: list[Path]):
         audio_encoder=base.audio_encoder,
         mux=base.mux,
         sinks=base.sinks,
+    )
+
+
+def _production_pressure_playlist_graph(
+    clip_paths: list[Path], *, out_ts: Path, audio_tap_dir: Path
+):
+    """Captured beta.5 station topology with a test-local filesystem sink.
+
+    Source, 720p conform, 6 Mbit/s H.264, 192 kbit/s AAC, live caption embed,
+    and the rolling caption-audio tap match the failed three-channel soak. The
+    only deliberate substitution is ``identity sync=true ! filesink`` for the
+    station's ``udpsink`` so each isolated worker remains clock-paced and its TS
+    can be checked without binding a station port.
+    """
+    source_graph = _multi_segment_playlist_reload_graph(clip_paths, video_caps=_PRODUCTION_CAPS)
+    return graphmod.PlayoutGraph(
+        sources=source_graph.sources,
+        encoder=(
+            _E("videoconvert"),
+            _E("videoscale"),
+            _E("videorate"),
+            _E("capsfilter", props={"caps": _PRODUCTION_CAPS}),
+            _E("openh264enc", props={"bitrate": 6_000_000}),
+            _E("h264parse", props={"config-interval": -1}),
+        ),
+        audio_encoder=graphmod.audio_encode_specs(
+            codec="avenc_aac", bitrate_kbps=192, sample_rate=48_000
+        ),
+        audio_tap=graphmod.AudioTapLeg(tap_dir=str(audio_tap_dir), segment_seconds=5.0),
+        captions=graphmod.caption_embed_leg_live(),
+        mux=_E("mpegtsmux", name="mux"),
+        sinks=(
+            (
+                _E("queue"),
+                _E("identity", props={"sync": True}),
+                _E("filesink", props={"location": str(out_ts)}),
+            ),
+        ),
     )
 
 
@@ -2257,24 +2351,22 @@ def test_deferred_rollover_commits_with_a_multi_segment_concat_playlist_reload(
         _send(control, f"reload {reload_path}")
         _wait_for_log(log, "CTRL reload committed", timeout=program_seconds + 30.0)
         text = log.read_text(encoding="utf-8", errors="replace")
-        # The item 85 staged commit prints, in order -- proves the commit ran
-        # main's own ordering (switching announced, THEN the active-pad switch
-        # + hold-probe release actually happen, THEN the old leg is disposed)
-        # rather than just happening to still reach "committed" some other way.
+        # The staged commit prints prove the lock-safe order: request the switch,
+        # retire the old leg while the replacement remains held, release it, settle.
         for marker in (
             "CTRL reload: switching selector",
-            "CTRL reload: holds released",
             "CTRL reload: old leg disposed",
+            "CTRL reload: holds released",
             "CTRL reload committed",
         ):
             assert marker in text, f"missing staged commit log line {marker!r};\n{text}"
         assert text.index("CTRL reload: switching selector") < text.index(
-            "CTRL reload: holds released"
-        )
-        assert text.index("CTRL reload: holds released") < text.index(
             "CTRL reload: old leg disposed"
         )
-        assert text.index("CTRL reload: old leg disposed") < text.index("CTRL reload committed")
+        assert text.index("CTRL reload: old leg disposed") < text.index(
+            "CTRL reload: holds released"
+        )
+        assert text.index("CTRL reload: holds released") < text.index("CTRL reload committed")
         # Regression assertion (mirrors the single-segment test above): the
         # worker must still be alive a full second past the boundary, not
         # freshly wedged with the commit log line printed just before it hung.
@@ -2290,3 +2382,129 @@ def test_deferred_rollover_commits_with_a_multi_segment_concat_playlist_reload(
     assert returncode == 0, (
         f"unclean teardown after a multi-segment concat-playlist reload (rc={returncode})"
     )
+
+
+@pytest.mark.skipif(
+    not (_wsl_gi_available() and _cc_embed_elements_available()),
+    reason="production-pressure rollover needs the shipped caption embed elements",
+)
+def test_repeated_deferred_rollovers_retire_complete_ts_av_playlist_legs(
+    tmp_path: Path,
+) -> None:
+    """Three production-shaped workers survive repeated Windows-pipe rollovers.
+
+    The physical beta.5 soak armed the replacement successfully, switched the
+    selectors, released its holds, and then blocked in old-leg disposal on all
+    three channels. A single 360p synthetic-to-short-clip worker passed unchanged
+    beta.5 and therefore was not a useful reproducer. This test runs three 720p
+    workers concurrently, each with the captured caption-embed and audio-tap
+    topology, starts on a prepared MPEG-TS concat playlist, and alternates between
+    two four-segment/~10-second playlists for six boundary-aligned reloads over
+    real worker pipes. Every worker must commit every reload without replacement,
+    commit watchdog, stall, or transport discontinuity.
+    """
+    playlists: list[list[Path]] = []
+    for playlist_index in range(2):
+        clips = [
+            tmp_path / f"playlist-{playlist_index}-segment-{segment_index:04d}.ts"
+            for segment_index in range(1, 5)
+        ]
+        for segment_index, clip in enumerate(clips):
+            _write_short_av_ts_clip(
+                clip,
+                seconds=2.5,
+                # Avoid videotestsrc pattern=1 (random snow): at 720p/6 Mbit/s,
+                # three parallel OpenH264 encoders can report return-code 3
+                # (allocation/bitstream/VLC overflow class) on that synthetic
+                # worst case. SMPTE + moving ball remain changing, realistic test
+                # content without introducing an encoder-stress confounder.
+                pattern=(0, 18)[(playlist_index + segment_index) % 2],
+                video_caps=_PRODUCTION_CAPS,
+            )
+        playlists.append(clips)
+
+    reload_paths: list[Path] = []
+    for cycle in range(6):
+        playlist_index = (cycle + 1) % 2
+        path = tmp_path / f"cycle-{cycle + 1}{reloadpolicy.DEFERRED_SWITCH_SUFFIX}"
+        path.write_text(
+            graphmod.graph_to_json(
+                _multi_segment_playlist_reload_graph(
+                    playlists[playlist_index], video_caps=_PRODUCTION_CAPS
+                )
+            ),
+            encoding="utf-8",
+        )
+        reload_paths.append(path)
+        assert reloadpolicy.reload_switch_is_deferred(str(path))
+
+    workers: list[tuple[object, object, Path, Path, Path, Path]] = []
+    for channel_index in range(3):
+        channel_dir = tmp_path / f"channel-{channel_index + 1}"
+        channel_dir.mkdir()
+        out_ts = channel_dir / "output.ts"
+        tap_dir = channel_dir / "caption-tap"
+        graph = _production_pressure_playlist_graph(
+            playlists[0], out_ts=out_ts, audio_tap_dir=tap_dir
+        )
+        proc, control, log = _launch_worker(channel_dir, graph, out_ts)
+        workers.append((proc, control, log, out_ts, tap_dir, channel_dir))
+
+    committed = 0
+    try:
+        for _proc, _control, log, _out_ts, _tap_dir, _channel_dir in workers:
+            _wait_for_log(log, "CTRL first-output:", timeout=25.0)
+        for cycle in range(6):
+            # worker.py consumes and unlinks each reload graph after dispatch;
+            # each worker therefore needs its own fresh payload copy per cycle. Put
+            # that file in the worker's own channel directory too: production uses
+            # its parent as the reload-settlement receipt directory, so sharing the
+            # outer pytest tmp root makes three workers race one status file.
+            for _proc, control, _log, _out_ts, _tap_dir, channel_dir in workers:
+                worker_reload = (
+                    channel_dir / f"cycle-{cycle + 1}{reloadpolicy.DEFERRED_SWITCH_SUFFIX}"
+                )
+                worker_reload.write_bytes(reload_paths[cycle].read_bytes())
+                _send(control, f"reload {worker_reload}")
+                # Exercise the real live-caption command path while the reload is
+                # armed, not only an idle GAP source. PTS=0 is intentionally stale:
+                # production rebases late ASR cues to the current live edge.
+                cue = base64.b64encode(f"CIVICCAST ROLLOVER {cycle + 1}".encode()).decode("ascii")
+                _send(control, f"caption 0 1000 {cue}")
+            committed += 1
+            for proc, _control, log, _out_ts, _tap_dir, _channel_dir in workers:
+                # Thirty seconds lets the unchanged 15s production commit watchdog
+                # emit its stack/exit evidence after a boundary near 10s. It does not
+                # relax the worker's own bound: a late commit cannot survive that
+                # watchdog and therefore still cannot satisfy this marker wait.
+                _wait_for_log(log, "CTRL reload committed", count=committed, timeout=30.0)
+                assert proc.poll() is None, (
+                    f"worker exited during repeated TS-playlist rollover {cycle + 1};\n"
+                    + log.read_text(encoding="utf-8", errors="replace")
+                )
+        for _proc, control, _log, _out_ts, _tap_dir, _channel_dir in workers:
+            _send(control, "stop")
+        returncodes = [proc.wait(timeout=25) for proc, *_rest in workers]
+    finally:
+        for proc, *_rest in workers:
+            _reap(proc)
+
+    assert returncodes == [0, 0, 0], f"unclean worker teardown(s): {returncodes}"
+    for _proc, _control, log, out_ts, tap_dir, channel_dir in workers:
+        text = log.read_text(encoding="utf-8", errors="replace")
+        assert text.count("CTRL reload committed") == 6, text
+        assert "CTRL reload: commit did not finish" not in text, text
+        assert "CTRL stall:" not in text, text
+        assert "CTRL caption dropped:" not in text, text
+        assert "CTRL caption failed:" not in text, text
+        _assert_continuous(out_ts, text, require_audio_pid=True)
+        assert list(tap_dir.glob("chunk-*.wav")), f"audio tap produced no chunks;\n{text}"
+        assert not list(tap_dir.glob("*.partial")), f"audio tap left partial files;\n{text}"
+        settlement = json.loads((channel_dir / "reload-status.json").read_text(encoding="utf-8"))
+        assert settlement["result"] == "applied", settlement
+        assert isinstance(settlement["id"], str) and settlement["id"], settlement
+        assert (
+            isinstance(settlement["ts"], (int, float))
+            and not isinstance(settlement["ts"], bool)
+            and settlement["ts"] > 0
+        ), settlement

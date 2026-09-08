@@ -1,37 +1,32 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""Item 85: gi-free tests for ``GstPlayoutEngine._commit_reload`` /
-``_dispose_source_leg`` / the reload-commit watchdog thread.
+"""GI-free reload-commit ordering, stale-callback, logging, and watchdog tests.
 
-Status (sandbox runs 12/14/15, hostile-review round 1): seven soaked workers
-wedged permanently at reload commit -- ``CTRL reload committed`` never
-appeared, the last line each ever printed was ``CTRL reload: boundary switch
-rebased...``. Round 1 shipped a REORDERING of ``_commit_reload``/
-``_dispose_source_leg`` as a hypothesized root-cause fix; hostile review
-rejected that hypothesis (releasing a hold before the selector switch
-deterministically DROPS the new leg's first buffer at the default
-non-caching input-selector sink pad; unlinking/releasing a retiring leg's
-selector pad before NULLing its own elements races that leg's still-live
-streaming thread into ``GST_FLOW_NOT_LINKED``, a fatal error, not a benign
-no-op) and reverted the reorder. The ordering these tests assert is
-therefore main's ORIGINAL ordering, unchanged by this item -- these tests
-exist to prove that reversion actually landed and stays landed, and to
-cover the two things this item DOES add: the four staged diagnostic log
-lines, and the commit-watchdog thread (the actual localization tool for
-whichever future soak reproduces the wedge).
+Physical beta.5 and native production-shaped traces localized the reload
+wedge to synchronous old-leg disposal after the selector switch and new-leg
+hold release. GStreamer 1.28.5 holds input-selector's active-pad reader lock
+across a downstream push while request-pad release needs its writer lock.
+Holding the replacement through synchronous main-loop retirement was also
+disproven: the old audio concat then blocks because the main loop cannot
+advance downstream caption flow. Native diagnostics verified a combination
+that inserts bounded post-selector queues, keeps the GLib loop available while
+a retirement thread cleans the old leg, and releases replacement holds only
+after cleanup. The tests cover that production phase order, transaction
+ownership, and diagnostics.
+Releasing before selecting would lose the replacement's first buffers at a
+non-caching selector; unlinking before NULL risks ``GST_FLOW_NOT_LINKED``.
 
-These tests load ``civiccast.egress.gst.engine`` fresh against a small FAKE
-``gi``/``Gst`` (same technique as
-``test_gst_engine_reload_concat_naming.py``) so the ordering can be proven
-without a real GStreamer/gi install, a real pipeline, or a main loop -- only
-``GstPlayoutEngine._commit_reload_body``/``_dispose_source_leg`` are
-exercised, against pad/selector/element doubles that record every call into
-one shared, ordered list."""
+These tests load ``civiccast.egress.gst.engine`` fresh against a small fake
+``gi``/``Gst`` (the same technique as the concat-naming tests). They exercise
+the commit/dispose/EOS helpers without a real pipeline or main loop, covering
+the lock-safe ordering, superseded/stale EOS containment, staged diagnostics,
+and the independent commit-watchdog thread."""
 
 from __future__ import annotations
 
 import importlib
 import sys
+import threading
 import types
 from typing import Any
 
@@ -50,6 +45,17 @@ class _Recorder:
 
 class _FakeState:
     NULL = "NULL"
+
+
+class _FakeStateChangeReturn:
+    SUCCESS = "SUCCESS"
+    FAILURE = "FAILURE"
+    ASYNC = "ASYNC"
+
+
+class _FakeMessageType:
+    ERROR = "ERROR"
+    EOS = "EOS"
 
 
 class _FakeIteratorResult:
@@ -116,7 +122,7 @@ class _FakePeer:
 class _FakeOldPad:
     """The RETIRING leg's own selector-side request pad -- what
     ``_dispose_source_leg`` unlinks and releases. NOT expected to see any
-    ``send_event`` call in the current (reverted-to-main) design -- see
+    ``send_event`` call in the current design -- see
     ``test_dispose_source_leg_never_sends_flush_events``."""
 
     def __init__(self, name: str, recorder: _Recorder, peer: _FakePeer | None) -> None:
@@ -139,14 +145,24 @@ class _FakeOldElement:
         self.name = name
         self.recorder = recorder
 
-    def set_state(self, state: Any) -> None:
+    def get_name(self) -> str:
+        return self.name
+
+    def get_factory(self) -> Any:
+        return types.SimpleNamespace(get_name=lambda: "fake-element")
+
+    def set_state(self, state: Any) -> str:
         self.recorder.calls.append(f"set_state:{self.name}:{state}")
+        return _FakeStateChangeReturn.SUCCESS
 
 
 def _install_fake_gst() -> types.ModuleType:
     fake_gst = types.ModuleType("gi.repository.Gst")
     fake_gst.State = _FakeState  # type: ignore[attr-defined]
+    fake_gst.StateChangeReturn = _FakeStateChangeReturn  # type: ignore[attr-defined]
+    fake_gst.MessageType = _FakeMessageType  # type: ignore[attr-defined]
     fake_gst.IteratorResult = _FakeIteratorResult  # type: ignore[attr-defined]
+    fake_gst.SECOND = 1  # type: ignore[attr-defined]
     return fake_gst
 
 
@@ -161,6 +177,7 @@ def engine_module():
     fake_repository = types.ModuleType("gi.repository")
     fake_glib = types.ModuleType("gi.repository.GLib")
     fake_glib.source_remove = lambda *_a, **_k: None  # type: ignore[attr-defined]
+    fake_glib.idle_add = lambda function, *args: function(*args)  # type: ignore[attr-defined]
     fake_gst = _install_fake_gst()
     fake_repository.GLib = fake_glib  # type: ignore[attr-defined]
     fake_repository.Gst = fake_gst  # type: ignore[attr-defined]
@@ -196,7 +213,26 @@ def _bare_engine_for_commit(module: types.ModuleType, recorder: _Recorder) -> An
     engine._source_leg_elements = [None]
     engine.pipeline = _FakePipeline(recorder)
     engine._pending_reload = None
+    engine._reload_commit_thread = None
+    engine._stopping = False
+    engine._error = None
+    engine._loop = None
+    engine._pending_overlay_swaps = {}
     return engine
+
+
+def _complete_commit_for_test(engine: Any, pending: dict[str, Any]) -> bool:
+    """Run the three production phases serially while retaining their exact order."""
+    pending.setdefault("commit_in_progress", True)
+    pending.setdefault("commit_watchdog", None)
+    pending.setdefault("commit_completed", None)
+    pending.setdefault("retirement_result", None)
+    engine._pending_reload = pending
+    engine._begin_reload_commit(pending)
+    pending["retirement_result"] = engine._dispose_source_leg(
+        pending["old_video_pad"], pending["old_audio_pad"], pending["old_elements"]
+    )
+    return engine._finish_reload_commit(pending)
 
 
 def _index_of(calls: list[str], prefix: str) -> int:
@@ -206,19 +242,111 @@ def _index_of(calls: list[str], prefix: str) -> int:
     raise AssertionError(f"{prefix!r} never called; calls={calls}")
 
 
-# --- (1) commit ordering, reverted to main: switch THEN release; NULL THEN unlink ---
+# --- (1) settle only the current reload's first A/V boundary --------------------
 
 
-def test_commit_switches_active_pad_before_releasing_hold_probes(engine_module) -> None:
-    """Main's ordering (unchanged by this item -- round 1's reorder here was
-    REVERTED, see module docstring): the selector's ``active-pad`` switch
-    happens BEFORE the new leg's hold probes are released, not after. Releasing
-    first would let the leg's streaming thread push its already-decoded first
-    buffer into a sink pad the selector does not yet consider active, and the
-    default (``cache-buffers=False``) input-selector drops a buffer that
-    arrives on an inactive pad -- deterministically losing that buffer (and,
-    with it, the running-time-rebase SEGMENT it carries) on every reload, not
-    just a wedged one."""
+def test_deferred_commit_uses_first_current_outgoing_stream_eos(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The first A/V EOS is the boundary; waiting for both can stop the mux."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    video_pad = _FakeOldPad("old-video", recorder, peer=None)
+    audio_pad = _FakeOldPad("old-audio", recorder, peer=None)
+    commits: list[str] = []
+
+    def _commit() -> None:
+        commits.append("commit")
+        engine._pending_reload = None
+
+    engine._commit_reload = _commit  # type: ignore[method-assign]
+    engine._pending_reload = {
+        "boundary_probes": [(video_pad, "video-probe"), (audio_pad, "audio-probe")],
+        "outgoing_eos_pads": set(),
+        "old_video_pad": video_pad,
+        "old_audio_pad": audio_pad,
+        "old_leg_eos": False,
+        "new_leg_ready": True,
+    }
+
+    assert engine._on_old_leg_eos(video_pad) is False
+    assert commits == ["commit"]
+    # Queued sibling/duplicate callbacks arrive after the real commit cleared the
+    # transaction and cannot settle anything a second time.
+    assert engine._on_old_leg_eos(video_pad) is False
+    assert engine._on_old_leg_eos(audio_pad) is False
+    assert commits == ["commit"]
+    stderr = capsys.readouterr().err
+    assert "CTRL reload: outgoing EOS observed stream=video (1/2 stream(s))" in stderr
+    assert "stream=audio" not in stderr
+
+
+def test_deferred_video_only_commit_still_settles_on_its_only_eos(engine_module) -> None:
+    """The first-boundary trigger also supports legitimate video-only legs."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    video_pad = _FakeOldPad("old-video", recorder, peer=None)
+    commits: list[str] = []
+    engine._commit_reload = lambda: commits.append("commit")  # type: ignore[method-assign]
+    engine._pending_reload = {
+        "boundary_probes": [(video_pad, "video-probe")],
+        "outgoing_eos_pads": set(),
+        "old_video_pad": video_pad,
+        "old_audio_pad": None,
+        "old_leg_eos": False,
+        "new_leg_ready": True,
+    }
+
+    assert engine._on_old_leg_eos(video_pad) is False
+    assert commits == ["commit"]
+    assert engine._pending_reload["old_leg_eos"] is True
+
+
+def test_stale_outgoing_eos_cannot_settle_a_superseding_reload(engine_module) -> None:
+    """An idle callback queued by an older leg is ignored after supersession."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    stale_pad = _FakeOldPad("superseded-video", recorder, peer=None)
+    current_pad = _FakeOldPad("current-video", recorder, peer=None)
+    commits: list[str] = []
+    engine._commit_reload = lambda: commits.append("commit")  # type: ignore[method-assign]
+    engine._pending_reload = {
+        "boundary_probes": [(current_pad, "current-probe")],
+        "outgoing_eos_pads": set(),
+        "old_leg_eos": False,
+        "new_leg_ready": True,
+    }
+
+    assert engine._on_old_leg_eos(stale_pad) is False
+    assert commits == []
+    assert engine._pending_reload["outgoing_eos_pads"] == set()
+    assert engine._pending_reload["old_leg_eos"] is False
+
+
+def test_stale_outgoing_eos_cannot_settle_an_immediate_reload(engine_module) -> None:
+    """An immediate reload has no boundary pads and rejects an older EOS callback."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    stale_pad = _FakeOldPad("superseded-video", recorder, peer=None)
+    commits: list[str] = []
+    engine._commit_reload = lambda: commits.append("commit")  # type: ignore[method-assign]
+    engine._pending_reload = {
+        "boundary_probes": [],
+        "outgoing_eos_pads": set(),
+        "old_leg_eos": True,
+        "new_leg_ready": True,
+    }
+
+    assert engine._on_old_leg_eos(stale_pad) is False
+    assert commits == []
+    assert engine._pending_reload["outgoing_eos_pads"] == set()
+
+
+# --- (2) select, retire old leg with replacement held, then release --------------
+
+
+def test_commit_retires_old_leg_before_releasing_replacement(engine_module) -> None:
+    """Queues let old retirement finish while new selector pushes remain held."""
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)
 
@@ -226,8 +354,9 @@ def test_commit_switches_active_pad_before_releasing_hold_probes(engine_module) 
     new_audio_pad = object()
     hold_video = _FakeHoldPad("hold-video", recorder)
     hold_audio = _FakeHoldPad("hold-audio", recorder)
-    old_video_pad = _FakeOldPad("old-video", recorder, peer=None)
-    old_audio_pad = _FakeOldPad("old-audio", recorder, peer=None)
+    old_video_pad = _FakeOldPad("old-video", recorder, peer=_FakePeer("old-video-peer", recorder))
+    old_audio_pad = _FakeOldPad("old-audio", recorder, peer=_FakePeer("old-audio-peer", recorder))
+    old_element = _FakeOldElement("old-elem", recorder)
 
     pending: dict[str, Any] = {
         "timeout_id": None,
@@ -239,31 +368,30 @@ def test_commit_switches_active_pad_before_releasing_hold_probes(engine_module) 
         "boundary_probes": [],
         "old_video_pad": old_video_pad,
         "old_audio_pad": old_audio_pad,
-        "old_elements": [],
+        "old_elements": [old_element],
         "new_elements": [],
         "on_settled": None,
     }
 
-    result = engine._commit_reload_body(pending)
+    result = _complete_commit_for_test(engine, pending)
 
     assert result is False  # one-shot GLib-source contract
     calls = recorder.calls
 
     switch_video = _index_of(calls, "video_sel.set_property:active-pad")
     switch_audio = _index_of(calls, "audio_sel.set_property:active-pad")
+    old_null = _index_of(calls, "set_state:old-elem:NULL")
+    release_video = _index_of(calls, "video_sel.release_request_pad:old-video")
+    release_audio = _index_of(calls, "audio_sel.release_request_pad:old-audio")
     remove_video = _index_of(calls, "remove_probe:hold-video")
     remove_audio = _index_of(calls, "remove_probe:hold-audio")
 
-    assert switch_video < remove_video, (
-        f"active-pad switch happened AFTER releasing the video hold; calls={calls}"
-    )
-    assert switch_audio < remove_audio, (
-        f"active-pad switch happened AFTER releasing the audio hold; calls={calls}"
-    )
+    assert switch_video < old_null < release_video < remove_video, calls
+    assert switch_audio < old_null < release_audio < remove_audio, calls
 
 
 def test_commit_disposes_old_leg_by_nulling_before_unlinking(engine_module) -> None:
-    """Main's ordering (unchanged by this item): the retiring leg's elements
+    """The retiring leg's elements
     are told ``set_state(NULL)`` BEFORE the selector unlinks/releases that
     leg's request pad, not after. Unlinking/releasing FIRST (round 1's
     reverted hypothesis) races the leg's still-live streaming thread into
@@ -295,7 +423,7 @@ def test_commit_disposes_old_leg_by_nulling_before_unlinking(engine_module) -> N
         "on_settled": None,
     }
 
-    engine._commit_reload_body(pending)
+    _complete_commit_for_test(engine, pending)
     calls = recorder.calls
 
     null_1 = _index_of(calls, "set_state:old-elem-1")
@@ -353,20 +481,25 @@ def test_dispose_source_leg_is_best_effort_on_a_disposal_hiccup(engine_module) -
     engine.selector = None
     engine.audio_selector = None
 
-    # Must not raise.
-    engine._dispose_source_leg(None, None, [_RaisingElement()])
+    # Must not raise, but must also not misreport the partial cleanup as success.
+    ok, reason = engine._dispose_source_leg(None, None, [_RaisingElement()])
+    assert ok is False
+    assert reason is not None and "element-null-error:1" in reason
 
 
-# --- (2) the four staged diagnostic log lines fire, in order --------------------
+# --- (3) the four staged diagnostic log lines fire, in order --------------------
 
 
 def test_commit_prints_the_four_staged_log_lines_in_order(
     engine_module, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Item 85's instrumentation: four staged stderr/stdout prints -- "CTRL
-    reload: switching selector" / "holds released" / "old leg disposed" /
-    "committed (elements=N)" -- so the NEXT soak that reproduces the wedge
-    shows exactly which of these four steps it stalled inside."""
+    """Keep stdout's settlement contract and mirror distinct stages to stderr.
+
+    Sandbox verdict parsing consumes ``CTRL reload committed`` from stdout.  The
+    daemon captures stderr independently, so distinct diagnostic stages go there
+    without moving or duplicating the settlement marker that existing evidence
+    consumers count.
+    """
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)
 
@@ -385,20 +518,355 @@ def test_commit_prints_the_four_staged_log_lines_in_order(
         "on_settled": None,
     }
 
-    engine._commit_reload_body(pending)
-    out = capsys.readouterr().out
+    _complete_commit_for_test(engine, pending)
+    captured = capsys.readouterr()
+    out = captured.out
 
     markers = (
         "CTRL reload: switching selector",
-        "CTRL reload: holds released",
         "CTRL reload: old leg disposed",
+        "CTRL reload: holds released",
         "CTRL reload committed",
     )
     positions = [out.index(marker) for marker in markers]
     assert positions == sorted(positions), f"staged log lines out of order; output={out!r}"
+    diagnostic_markers = (
+        "CTRL reload diagnostic: stage=switching-selector",
+        "CTRL reload diagnostic: stage=old-leg-disposed",
+        "CTRL reload diagnostic: stage=holds-released",
+        "CTRL reload diagnostic: stage=committed elements=0",
+    )
+    diagnostic_positions = [captured.err.index(marker) for marker in diagnostic_markers]
+    assert diagnostic_positions == sorted(diagnostic_positions), captured.err
+    assert "CTRL reload committed" not in captured.err
 
 
-# --- (3) the commit watchdog THREAD escapes a commit that never returns ---------
+# --- (4) asynchronous transaction ownership and failure settlement --------------
+
+
+def test_selector_isolation_queue_uses_explicit_bounded_nonleaky_defaults(engine_module) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+
+    class _Queue:
+        def set_property(self, key: str, value: object) -> None:
+            recorder.calls.append(f"{key}={value}")
+
+    queue = _Queue()
+    engine._make = lambda _spec: queue  # type: ignore[method-assign]
+
+    assert engine._make_selector_isolation_queue("isolation") is queue
+    assert recorder.calls == [
+        "max-size-buffers=200",
+        "max-size-bytes=10485760",
+        "max-size-time=1000000000",
+        "leaky=0",
+    ]
+
+
+def test_finalizer_ignores_a_stale_transaction_identity(engine_module) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    callbacks: list[tuple[bool, str | None]] = []
+    stale = {
+        "commit_in_progress": True,
+        "retirement_result": (True, None),
+        "on_settled": lambda committed, reason: callbacks.append((committed, reason)),
+    }
+    current = {"commit_in_progress": False}
+    engine._pending_reload = current
+
+    assert engine._finish_reload_commit(stale) is False
+    assert engine._pending_reload is current
+    assert callbacks == []
+    assert recorder.calls == []
+
+
+def test_reload_during_commit_is_rejected_before_any_graph_mutation(engine_module) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    current = {"commit_in_progress": True}
+    engine._pending_reload = current
+    observed: list[tuple[bool, str | None]] = []
+    build_calls: list[object] = []
+    engine._instantiate_source_leg = lambda leg: build_calls.append(leg)  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="reload commit already in progress"):
+        engine.reload_program(
+            object(), on_settled=lambda committed, reason: observed.append((committed, reason))
+        )
+
+    assert engine._pending_reload is current
+    assert build_calls == []
+    assert observed == []
+    assert recorder.calls == []
+
+
+def test_success_callback_reentry_can_start_a_new_reload(engine_module) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    current_results: list[tuple[bool, str | None]] = []
+
+    def _current_settled(committed: bool, reason: str | None) -> None:
+        current_results.append((committed, reason))
+        engine._pending_reload = {"newer": True}
+
+    pending = {
+        "commit_in_progress": True,
+        "retirement_result": (True, None),
+        "boundary_probes": [],
+        "hold_probes": [],
+        "on_settled": _current_settled,
+        "commit_completed": None,
+        "commit_watchdog": None,
+    }
+    engine._pending_reload = pending
+    assert engine._finish_reload_commit(pending) is False
+    assert current_results == [(True, None)]
+    assert engine._pending_reload == {"newer": True}
+
+
+def test_disposal_state_failure_is_not_a_successful_cleanup(engine_module) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+
+    class _FailedElement(_FakeOldElement):
+        def set_state(self, state: Any) -> str:
+            super().set_state(state)
+            return _FakeStateChangeReturn.FAILURE
+
+    ok, reason = engine._dispose_source_leg(
+        _FakeOldPad("old-video", recorder, peer=None), None, [_FailedElement("bad", recorder)]
+    )
+
+    assert ok is False
+    assert reason is not None and "element-null-incomplete:1:FAILURE" in reason
+    assert "pipeline.remove:bad" in recorder.calls
+
+
+def test_disposal_async_state_is_not_misreported_as_complete(engine_module) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+
+    class _AsyncElement(_FakeOldElement):
+        def set_state(self, state: Any) -> str:
+            super().set_state(state)
+            return _FakeStateChangeReturn.ASYNC
+
+    ok, reason = engine._dispose_source_leg(None, None, [_AsyncElement("async", recorder)])
+
+    assert ok is False
+    assert reason is not None and "element-null-incomplete:1:ASYNC" in reason
+
+
+def test_cleanup_failure_settles_false_and_quits_channel(engine_module) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    results: list[tuple[bool, str | None]] = []
+
+    class _Loop:
+        quit_called = False
+
+        def quit(self) -> None:
+            self.quit_called = True
+
+    loop = _Loop()
+    engine._loop = loop
+    pending = {
+        "commit_in_progress": True,
+        "retirement_result": (False, "element-null-failed:2"),
+        "boundary_probes": [],
+        "hold_probes": [],
+        "on_settled": lambda committed, reason: results.append((committed, reason)),
+        "commit_completed": None,
+        "commit_watchdog": None,
+    }
+    engine._pending_reload = pending
+
+    assert engine._finish_reload_commit(pending) is False
+    assert results == [(False, "cleanup-failed")]
+    assert engine._pending_reload is None
+    assert engine._stopping is True
+    assert engine._error == ("reload-commit", "element-null-failed:2")
+    assert loop.quit_called is True
+
+
+def test_new_active_leg_bus_error_during_retirement_is_fatal(engine_module) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    source = object()
+    engine._pending_reload = {
+        "commit_in_progress": True,
+        "new_elements": [source],
+    }
+
+    class _Loop:
+        quit_called = False
+
+        def quit(self) -> None:
+            self.quit_called = True
+
+    class _Message:
+        type = _FakeMessageType.ERROR
+        src = source
+
+        @staticmethod
+        def parse_error() -> tuple[str, str]:
+            return "active failure", "debug"
+
+    engine._loop = _Loop()
+    engine._abort_pending_reload = lambda _reason: pytest.fail(  # type: ignore[method-assign]
+        "already-selected replacement must not be aborted as uncommitted"
+    )
+
+    assert engine._on_bus(None, _Message()) is True
+    assert engine._error == ("active failure", "debug")
+    assert engine._loop.quit_called is True
+
+
+def test_retirement_thread_start_failure_aborts_before_selector_switch(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.teardown_timeout_s = 0.1
+    results: list[tuple[bool, str | None]] = []
+    new_pad = _FakeOldPad("new-video", recorder, peer=None)
+    engine._pending_reload = {
+        "timeout_id": None,
+        "defer_timeout_id": None,
+        "probe_id": None,
+        "new_video_pad": new_pad,
+        "new_audio_pad": None,
+        "new_elements": [],
+        "hold_probes": [],
+        "boundary_probes": [],
+        "on_settled": lambda committed, reason: results.append((committed, reason)),
+        "commit_in_progress": False,
+    }
+
+    class _NoStartThread:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        def start(self) -> None:
+            raise RuntimeError("thread unavailable")
+
+    monkeypatch.setattr(engine_module.threading, "Thread", _NoStartThread)
+
+    assert engine._commit_reload() is False
+    assert results == [(False, "commit-thread-start")]
+    assert engine._pending_reload is None
+    assert not any(call.startswith("video_sel.set_property") for call in recorder.calls)
+
+
+def test_commit_watchdog_start_failure_cancels_retirement_and_aborts_before_switch(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.teardown_timeout_s = 0.1
+    results: list[tuple[bool, str | None]] = []
+    new_pad = _FakeOldPad("new-video", recorder, peer=None)
+    engine._pending_reload = {
+        "timeout_id": None,
+        "defer_timeout_id": None,
+        "probe_id": None,
+        "new_video_pad": new_pad,
+        "new_audio_pad": None,
+        "new_elements": [],
+        "hold_probes": [],
+        "boundary_probes": [],
+        "on_settled": lambda committed, reason: results.append((committed, reason)),
+        "commit_in_progress": False,
+    }
+    monkeypatch.setattr(
+        engine,
+        "_arm_commit_watchdog",
+        lambda: (_ for _ in ()).throw(RuntimeError("timer unavailable")),
+    )
+
+    assert engine._commit_reload() is False
+    assert results == [(False, "commit-watchdog-start")]
+    assert engine._pending_reload is None
+    assert engine._reload_commit_thread is None
+    assert not any(call.startswith("video_sel.set_property") for call in recorder.calls)
+
+
+def test_stop_settles_current_callback_once(engine_module) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.teardown_timeout_s = 0.1
+    engine.audio_tap_writer = None
+    current: list[tuple[bool, str | None]] = []
+
+    class _StoppedThread:
+        def join(self, timeout: float) -> None:
+            assert 0 <= timeout <= 0.1
+
+        @staticmethod
+        def is_alive() -> bool:
+            return False
+
+    class _StopPipeline(_FakePipeline):
+        def set_state(self, state: Any) -> str:
+            assert state == _FakeState.NULL
+            return _FakeStateChangeReturn.SUCCESS
+
+        def get_state(self, _timeout: int) -> tuple[str, None, None]:
+            return _FakeStateChangeReturn.SUCCESS, None, None
+
+    engine.pipeline = _StopPipeline(recorder)
+    engine._reload_commit_thread = _StoppedThread()
+    engine._pending_reload = {
+        "commit_in_progress": True,
+        "retirement_result": (True, None),
+        "boundary_probes": [],
+        "hold_probes": [],
+        "on_settled": lambda committed, reason: current.append((committed, reason)),
+        "commit_completed": None,
+        "commit_watchdog": None,
+    }
+    assert engine.stop(force_exit_on_hang=False) is True
+    assert current == [(False, "stopped")]
+    assert engine._pending_reload is None
+
+
+def test_stop_bounds_a_pipeline_set_state_null_call_that_blocks(engine_module) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.teardown_timeout_s = 0.02
+    engine.audio_tap_writer = None
+    entered = threading.Event()
+    release = threading.Event()
+    returned: list[bool] = []
+
+    class _BlockingStopPipeline(_FakePipeline):
+        def set_state(self, state: Any) -> str:
+            assert state == _FakeState.NULL
+            entered.set()
+            release.wait(1.0)
+            return _FakeStateChangeReturn.SUCCESS
+
+        def get_state(self, _timeout: int) -> tuple[str, None, None]:
+            return _FakeStateChangeReturn.SUCCESS, None, None
+
+    engine.pipeline = _BlockingStopPipeline(recorder)
+    caller = threading.Thread(
+        target=lambda: returned.append(engine.stop(force_exit_on_hang=False)), daemon=True
+    )
+    caller.start()
+    try:
+        assert entered.wait(0.2)
+        caller.join(0.2)
+        assert not caller.is_alive(), "stop() exceeded its bound inside set_state(NULL)"
+        assert returned == [False]
+    finally:
+        release.set()
+        caller.join(0.2)
+
+
+# --- (5) the commit watchdog THREAD escapes a commit that never returns ---------
 
 
 def test_commit_watchdog_force_exits_when_the_commit_never_returns(
@@ -487,8 +955,13 @@ def test_commit_watchdog_is_a_no_op_when_the_commit_finishes_in_time(
     )
 
     result = engine._commit_reload()
+    retirement = engine._reload_commit_thread
+    if retirement is not None:
+        retirement.join(timeout=1.0)
 
     assert result is False
+    assert retirement is None or not retirement.is_alive()
+    assert engine._pending_reload is None
     assert exit_calls == [], "a commit that finished in time must never force-exit"
     assert dump_calls == [], "a commit that finished in time must never dump a stack trace"
 
@@ -535,7 +1008,7 @@ def test_commit_watchdog_completion_flag_wins_a_cancel_race(engine_module, monke
     )
 
 
-# --- (4) commit_timeout_s validation/clamping -----------------------------------
+# --- (6) commit_timeout_s validation/clamping -----------------------------------
 
 
 def test_resolve_commit_timeout_s_clamps_and_warns_on_an_out_of_range_value(

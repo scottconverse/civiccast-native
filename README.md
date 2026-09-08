@@ -54,6 +54,15 @@ The bundled beta.5 manual describes operation without freezing a mutable
 publication status into the installer. Use this page and the exact GitHub
 Release for current download and verification status.
 
+**Reload repair status (2026-09-08):** a local native diagnostic run completed
+three workers through six in-place replacements with clean transport checks and
+clean stop. The repaired path keeps persistent bounded A/V queues, holds the
+replacement until the outgoing leg retires, and leaves the existing watchdog
+bounds unchanged. An overlapping commit request is explicitly declined and
+uses the existing full-graph restart recovery path; there is no latest-request
+queue and no capability is disabled. This is source/diagnostic evidence only:
+the beta.5 installer remains unaccepted and has no two-hour physical soak pass.
+
 ![CivicCast system architecture](docs/assets/architecture/civiccast-system-architecture.svg)
 
 ## What's proven in this candidate

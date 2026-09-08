@@ -66,6 +66,15 @@ below.
 
 ### Fixed
 
+- **Native in-place reload retirement is now bounded and serialized.** The
+  repaired path keeps persistent bounded A/V queues, holds a replacement until
+  the outgoing leg retires, and preserves the existing watchdog bounds. An
+  overlapping commit request is explicitly declined into the existing
+  full-graph restart recovery path rather than queued as latest-wins. A local
+  three-worker/six-replacement diagnostic passed clean transport checks and
+  clean stop; this does not claim installer acceptance or a two-hour physical
+  soak, and no station capability is disabled.
+
 - **Sandbox-soak install and health deadlines now remain consistent across
   the host and guest.** `Run-SandboxSoak.ps1 -InstallBoundMinutes` and
   `-HealthBoundMinutes` are rendered into the Windows Sandbox LogonCommand

@@ -39,6 +39,17 @@ The egress proof path does not by itself prove:
 
 ## Operator Checklist
 
+### Native reload status
+
+The current native repair has a local diagnostic covering three workers and six
+in-place replacements with clean transport checks and clean stop. A normal
+replacement keeps output while the new leg is prepared and holds the switch
+until the outgoing leg retires. An overlapping commit request is explicitly
+declined and uses the existing full-graph restart recovery path; it is not
+queued as a latest-request-wins operation. Existing watchdog time bounds and
+station capabilities are unchanged. This diagnostic does not establish beta.5
+installer acceptance or a two-hour physical soak.
+
 1. Open the operator console.
 2. Open **System Health** or **Channels**.
 3. Find **Outgoing channel feed**.

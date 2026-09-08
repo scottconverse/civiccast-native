@@ -230,6 +230,85 @@ def test_child_stderr_tail_redacts_userinfo_credentials_mid_line(tmp_path: Path)
     assert "refused after 3 tries" in tail, "the diagnostic text must survive"
 
 
+def test_child_stderr_tail_preserves_compact_reload_wedge_frame(tmp_path: Path) -> None:
+    """The watchdog's useful disposal frame sits above the ordinary 8-line tail.
+
+    Preserve that frame without persisting the absolute install path.  The current
+    watchdog marker must itself be in the tail so an old dump cannot contaminate a
+    later, unrelated child failure.
+    """
+    daemon = EgressDaemon(
+        InMemoryEgressStore(),
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+    )
+    log_path = tmp_path / "err.log"
+    log_path.write_text(
+        "Current thread (most recent call first):\n"
+        '  File "C:\\Private\\CivicCast\\engine.py", line 2730 in _dispose_source_leg\n'
+        '  File "C:\\Private\\CivicCast\\engine.py", line 2579 in _commit_reload_body\n'
+        + "\n".join(f"caller frame {index}" for index in range(7))
+        + "\nCTRL reload: commit did not finish within 15s - quitting for daemon restart\n",
+        encoding="utf-8",
+    )
+    daemon._stderr_logs["gov"] = log_path
+
+    tail = daemon._child_stderr_tail("gov")
+
+    assert tail is not None
+    assert "CTRL reload blocked at engine.py:2730 in _dispose_source_leg" in tail
+    assert "C:\\Private" not in tail
+    assert "CTRL reload: commit did not finish" in tail
+    assert len(tail) <= 600
+
+
+def test_child_stderr_tail_does_not_replay_a_stale_reload_wedge_frame(tmp_path: Path) -> None:
+    """A later unrelated child failure must not inherit an older watchdog frame."""
+    daemon = EgressDaemon(
+        InMemoryEgressStore(),
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+    )
+    log_path = tmp_path / "err.log"
+    log_path.write_text(
+        'File "C:\\CivicCast\\engine.py", line 2720 in _dispose_source_leg\n'
+        "CTRL reload: commit did not finish within 15s - quitting for daemon restart\n"
+        + "\n".join(f"new child line {index}" for index in range(9))
+        + "\nERROR current child failed for another reason\n",
+        encoding="utf-8",
+    )
+    daemon._stderr_logs["gov"] = log_path
+
+    tail = daemon._child_stderr_tail("gov")
+
+    assert tail is not None
+    assert "CTRL reload blocked at" not in tail
+    assert "ERROR current child failed for another reason" in tail
+
+
+def test_child_stderr_tail_recognizes_current_async_retirement_frame(tmp_path: Path) -> None:
+    """The compact clue follows the repaired async helper names, not only beta.5."""
+    daemon = EgressDaemon(
+        InMemoryEgressStore(),
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+    )
+    log_path = tmp_path / "err.log"
+    log_path.write_text(
+        '  File "C:\\CivicCast\\engine.py", line 2721 in _retire_reload_old_leg\n'
+        + "\n".join(f"caller frame {index}" for index in range(8))
+        + "\nCTRL reload: commit did not finish within 15s - quitting for daemon restart\n",
+        encoding="utf-8",
+    )
+    daemon._stderr_logs["gov"] = log_path
+
+    tail = daemon._child_stderr_tail("gov")
+
+    assert tail is not None
+    assert "CTRL reload blocked at engine.py:2721 in _retire_reload_old_leg" in tail
+    assert "C:\\CivicCast" not in tail
+
+
 def test_child_exit_error_still_says_ffmpeg_for_the_ffmpeg_strategy(tmp_path: Path) -> None:
     """Naming the engine must not rename the ffmpeg path -- that message is correct
     there and operators/runbooks match on it."""
