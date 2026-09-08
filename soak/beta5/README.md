@@ -17,6 +17,15 @@ an inert template for comparison, not an additional executable directive.
 
 ## Control-branch layout
 
+`browser-proof/` contains a separately reviewed, inert post-soak resident
+playback helper. It requires explicit already-installed Node, Playwright Core
+and Edge/Chrome paths; it does not install tooling or run from the poller.
+Its parent must bind the exact host, successful two-hour mission, approved
+sample asset, fresh runtime hashes and unchanged service identity first.
+Actual video decoding and English/Spanish active timed TextTracks must match
+same-language browser-fetched VTT. Hermetic tests do not count as live browser
+acceptance. See [browser-proof/README.md](browser-proof/README.md).
+
 Place exactly one new file in the existing poller's executable directory:
 
 ```text

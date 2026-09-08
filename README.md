@@ -8,7 +8,9 @@
 > [beta.5 tester package](soak/beta5/README.md) now has an exact-candidate
 > dispatch wrapper for the dedicated tester under `soak/autorun`.
 > Its follow-up browser inventory reads only known tool paths and mission-stage
-> presence. Caption acceptance remains an inert post-soak helper, not an autorun.
+> presence. Caption acceptance and resident-browser playback proof remain inert
+> post-soak helpers, not autoruns. The browser helper requires actual active
+> English/Spanish timed captions, not merely selected buttons.
 > Dispatch is not evidence of installation or a completed two-hour soak.
 
 **CivicCast is an open-source, self-hostable civic broadcast platform for

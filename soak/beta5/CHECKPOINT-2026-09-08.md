@@ -1,5 +1,33 @@
 # Beta.5 tester support checkpoint
 
+## Inert browser support: 2026-09-08, 17:39 UTC
+
+Seven new browser-proof files, plus these support docs and README banner.
+No new autorun, remote browser launch, installed-service change or original
+stable mission-bin edit. The physical tester has not returned its newcandidate
+install receipt or two-hour verdict. Its 17:06 heartbeat reflects the older
+running service, not proof of this candidate. The inventory autorun remains
+queued behind the existing poller; do not replay installation blindly.
+
+Root and independent Terra both executed the Node contracts/full fake runner
+and PS5.1/PS7 inert-plan tests successfully. The initial cosmetic button gap
+was corrected: each language must transition from all text tracks disabled
+to the sole showing language with an active timed cue bound to a same-language
+browser-fetched VTT. Previously fetched same-context responses are accepted
+because real browsers may prefetch/cache subtitles. One deadline includes
+browser cleanup; failure to remove the temporary profile forces FAIL.
+
+Privacy proof is scoped to page requests after route registration, not an OS
+network audit of browser-engine startup. Explicit installed tooling only;
+no downloads, staff token, staff API or outgoing provider publication.
+Fake-browser tests are proof of harness logic, not installed playback.
+
+Gate A retry34248734841 clean lane PASSED and both evidence/verdict uploaded.
+Cross-version upgrade is running; download-only remains pending. Signedbuild
+34237280539/sourcebe1260bd0630261c571e3adf5aac6a6cbebd9e3a unchanged.
+Original kickoff Gate34242157263/PENDING remains an immutable historical
+dispatch fact. Public beta.4 remains current; no beta.5 tag/publication.
+
 ## Support and inventory update: 2026-09-08, 16:32 UTC
 
 The candidate, signed kit, delivery manifest and original install dispatch are
