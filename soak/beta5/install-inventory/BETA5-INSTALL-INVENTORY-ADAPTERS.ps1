@@ -100,6 +100,7 @@ function Get-Beta5KnownInstallLogSignals {
         ffprobe_lookup_failure = $false; fetch_verify_upgrade_pass = $false
         exact_signature_rejection = $false; raw_log_exported = $false
         known_failure_categories = @(); script_locations = @(); powershell_error_categories = @()
+        missing_property_names = @(); mentioned_script_filenames = @(); line_character_locations = @()
     }
     if ($null -eq $item) { return [pscustomobject] $result }
     if ($item.Length -gt 4MB) { $result.skipped_oversize = $true; return [pscustomobject] $result }
@@ -128,6 +129,13 @@ function Get-Beta5KnownInstallLogSignals {
             if ($content.Contains($phrases[$key])) { $result.known_failure_categories += $key }
         }
         $compactLocationText = [regex]::Replace($content, '\s+', '')
+        foreach ($propertyMatch in [regex]::Matches($content, '(?i)property\s+[''"‘’]([A-Za-z_][A-Za-z0-9_]{0,63})[''"‘’]')) {
+            $result.missing_property_names += $propertyMatch.Groups[1].Value
+        }
+        $result.mentioned_script_filenames = @([regex]::Matches($compactLocationText, '(?i)[A-Za-z][A-Za-z0-9_.-]+\.ps1') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+        foreach ($locationMatch in [regex]::Matches($compactLocationText, '(?:line:|:)(\d+)char:(\d+)')) {
+            $result.line_character_locations += [pscustomobject]@{line=[int]$locationMatch.Groups[1].Value;character=[int]$locationMatch.Groups[2].Value}
+        }
         foreach ($match in [regex]::Matches($compactLocationText, '(AUTORUN-SEP8-BETA5-(?:01-PREFLIGHT|02-FETCH-INSTALL|03-START-SOAK)\.ps1):(\d+)char:(\d+)')) {
             $result.script_locations += [pscustomobject]@{ script = $match.Groups[1].Value; line = [int]$match.Groups[2].Value; character = [int]$match.Groups[3].Value }
         }

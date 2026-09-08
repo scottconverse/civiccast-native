@@ -29,6 +29,9 @@ try {
     $wrappedSignal = Get-Beta5KnownInstallLogSignals $log
     Assert-InventoryAdapter ($wrappedSignal.script_locations.Count -eq 1 -and $wrappedSignal.script_locations[0].line -eq 80) 'wrapped original script location parsed'
     Assert-InventoryAdapter ($wrappedSignal.known_failure_categories -contains 'sha256_property_missing') 'exact known sha256 property classified'
+    Assert-InventoryAdapter ($wrappedSignal.missing_property_names -contains 'sha256') 'bounded property identifier captured'
+    Assert-InventoryAdapter ($wrappedSignal.mentioned_script_filenames -contains 'AUTORUN-SEP8-BETA5-02-FETCH-INSTALL.ps1') 'basename without private path captured'
+    Assert-InventoryAdapter ($wrappedSignal.line_character_locations[0].line -eq 80) 'numeric error location independently captured'
     'FETCH/VERIFY/UPGRADE PASS: 1.0.0-beta.5, manifest+installer hashes independent, signer Scott Converse, service running from C:\CivicCastHostStore\install.' | Set-Content -LiteralPath $log
     $signal = Get-Beta5KnownInstallLogSignals $log
     Assert-InventoryAdapter ($signal.fetch_verify_upgrade_pass -and -not $signal.ffprobe_lookup_failure) 'actual exact success phrase distinguished'

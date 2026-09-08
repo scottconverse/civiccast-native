@@ -1,5 +1,13 @@
 # Exact beta.5 tester installation diagnostic
 
+R3 returned18:46:14UTC, but only the generic property-missing category was
+identified; no source line or exact `sha256` phrase was extracted. The local
+`$Matches` bug is proven, but must not yet be labeled the exact remote failure.
+R4 adds bounded missing-property identifiers, script basenames, and numeric
+line/character locations. It still does not export log text, arguments,
+credentials or arbitrary exception messages.21actualadapterassertionsPASS
+perPowerShell engine. The install retry remains undispatched pending diagnosis.
+
 R2 returned18:36:13UTC with a property-missing error and no completed install.
 PowerShell wrapped the long script path in its log, so the initial location
 parser found no line. R3 preserves R1/R2 and recognizes whitespace-wrapped

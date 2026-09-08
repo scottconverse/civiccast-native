@@ -1,5 +1,14 @@
 # Beta.5 tester support checkpoint
 
+## Remote error attribution remains incomplete
+
+R3 actually returned18:46:14Z, same genericproperty_missing but no exact
+propertyname/source line. The localMatchesbug is reproducible; do not conflate
+that with confirmed remote attribution. R4 returns bounded propertyidentifiers,
+scriptbasenames andnumericlocations only.21adapterassertionsPS5/7PASS.
+No installer retry dispatched. Preparedretry files are still localuncommitted
+work until actualfailurematchesits preflightguard. Originalinstallationuntouched.
+
 ## Pre-install source defect isolated; final location diagnostic
 
 R2 collected18:36:13UTC: known property_missing/NativeCommandError, oldservice,
