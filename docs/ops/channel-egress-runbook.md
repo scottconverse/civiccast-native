@@ -50,6 +50,13 @@ queued as a latest-request-wins operation. Existing watchdog time bounds and
 station capabilities are unchanged. This diagnostic does not establish beta.5
 installer acceptance or a two-hour physical soak.
 
+A caption heartbeat is a timing signal for an interval without caption text.
+Its guard is separate from caption conversion: it admits one
+heartbeat reservation at a time and prevents an older send/probe callback from
+clearing a newer reservation. Queue capacity settings alone are not the event
+bound. Actual caption cue buffers are unchanged and are not counted by this
+heartbeat guard.
+
 1. Open the operator console.
 2. Open **System Health** or **Channels**.
 3. Find **Outgoing channel feed**.

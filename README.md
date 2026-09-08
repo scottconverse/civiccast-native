@@ -63,6 +63,12 @@ uses the existing full-graph restart recovery path; there is no latest-request
 queue and no capability is disabled. This is source/diagnostic evidence only:
 the beta.5 installer remains unaccepted and has no two-hour physical soak pass.
 
+Live-caption timing now uses a separate forwarding queue. During intervals
+without text, CivicCast sends small timing signals; at most one can wait behind
+the signal currently being processed. This prevents an unlimited heartbeat
+backlog. It does not change how actual caption cues are handled or impose a
+new limit on their text buffers.
+
 ![CivicCast system architecture](docs/assets/architecture/civiccast-system-architecture.svg)
 
 ## What's proven in this candidate

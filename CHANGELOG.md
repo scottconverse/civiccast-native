@@ -85,6 +85,15 @@ below.
 
 ### Fixed
 
+- **Live-caption heartbeat admission is now explicitly bounded at its source.**
+  The integrated guard isolates heartbeat GAP events from caption
+  conversion, permits only one pending heartbeat reservation, and protects
+  newer reservations from stale send/probe callbacks. Existing cue-buffer flow
+  is unchanged and not counted by this guard; queue caps alone are not treated
+  as an event bound. Native stress coverage includes real sequence assignment,
+  A/V packet spans, transport/PCR checks, caption taps, and clean stop. The
+  full native suite and field acceptance remain separate evidence.
+
 - **Native in-place reload retirement is now bounded and serialized.** The
   repaired path keeps persistent bounded A/V queues, holds a replacement until
   the outgoing leg retires, and preserves the existing watchdog bounds. An

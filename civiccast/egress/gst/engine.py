@@ -67,6 +67,7 @@ try:  # package context — the native Windows line reaches this branch too:
     # package path or the two halves bind two distinct copies of `PlaylistLeg`
     # (see worker.py's import note — that mismatch was the Gate A T4 defect).
     from civiccast.egress.gst.audio_tap import RollingWavSegmentWriter
+    from civiccast.egress.gst.caption_flow import CaptionGapGate
     from civiccast.egress.gst.graph import (
         AudioTapLeg,
         CaptionEmbedLeg,
@@ -85,6 +86,7 @@ except (
     ImportError
 ):  # standalone context: the POSIX/Windows GStreamer test adds the gst dir to sys.path
     from audio_tap import RollingWavSegmentWriter  # type: ignore[import-not-found,no-redef]
+    from caption_flow import CaptionGapGate  # type: ignore[import-not-found,no-redef]
     from graph import (  # type: ignore[import-not-found,no-redef]
         AudioTapLeg,
         CaptionEmbedLeg,
@@ -633,6 +635,9 @@ class GstPlayoutEngine:
         # leg) the daemon pushes timed-text cues into via the ``caption`` control command.
         self.caption_appsrc: Gst.Element | None = None
         self._caption_stream_position_ms = 0
+        self._caption_gap_gate = CaptionGapGate()
+        self._caption_gap_probe: tuple[Any, int] | None = None
+        self._caption_gap_heartbeat_id: int | None = None
         self.selector_sink_pads: list[Gst.Pad] = []
         self.audio_selector: Gst.Element | None = None
         self.audio_sink_pads: list[Gst.Pad] = []
@@ -930,9 +935,44 @@ class GstPlayoutEngine:
         self._link(video_prev, combiner)  # encoded H.264 → cccombiner 'sink' (video) pad
 
         # Caption text chain → cccombiner's request 'caption' pad.
-        cap_first, cap_last = self._build_chain(leg.caption_source)
+        caption_specs = leg.caption_source
+        if caption_specs[0].factory == "appsrc":
+            # Separate serialized GAP forwarding from appsrc's source task.
+            # Queue limits count buffers, NOT serialized events; the admission
+            # gate below separately bounds heartbeat GAPs to current + one queued.
+            caption_specs = (
+                caption_specs[0],
+                ElementSpec(
+                    "queue",
+                    "caption_flow_queue",
+                    {
+                        "max-size-buffers": 200,
+                        "max-size-bytes": 10_485_760,
+                        "max-size-time": 1_000_000_000,
+                        "leaky": 0,
+                    },
+                ),
+                *caption_specs[1:],
+            )
+        cap_first, cap_last = self._build_chain(caption_specs)
         if cap_first.get_factory().get_name() == "appsrc":
             self.caption_appsrc = cap_first  # daemon pushes cues here (push_caption_cue)
+            queue = self.pipeline.get_by_name("caption_flow_queue")
+            if queue is None:
+                raise RuntimeError("live caption forwarding queue was not built")
+            pad = queue.get_static_pad("src")
+            gate = self._caption_gap_gate
+
+            def _entered_caption_downstream(_pad: Any, info: Any) -> Any:
+                event = info.get_event()
+                if event.type == Gst.EventType.GAP:
+                    # This means entered the push, NOT consumed downstream. If
+                    # that push blocks, only one additional GAP can wait behind it.
+                    gate.entered_downstream(int(event.get_seqnum()))
+                return Gst.PadProbeReturn.OK
+
+            probe_id = pad.add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, _entered_caption_downstream)
+            self._caption_gap_probe = (pad, probe_id)
         caption_pad = combiner.request_pad_simple("caption")
         if (
             caption_pad is None
@@ -994,21 +1034,42 @@ class GstPlayoutEngine:
         appsrc = self.caption_appsrc
         if appsrc is None:
             return
-        self._caption_stream_position_ms = LIVE_CAPTION_LEAD_MS
-        if not appsrc.send_event(
-            Gst.Event.new_gap(
-                0,
-                LIVE_CAPTION_LEAD_MS * Gst.MSECOND,
-            )
-        ):
+        if self._send_live_caption_gap(0, LIVE_CAPTION_LEAD_MS) is not True:
             raise RuntimeError("failed to prime the live caption stream")
+        self._caption_stream_position_ms = LIVE_CAPTION_LEAD_MS
+
+    def _send_live_caption_gap(self, start_ms: int, duration_ms: int) -> bool | None:
+        """Reserve before enqueue; None means a heartbeat is already waiting.
+
+        appsrc.send_event accepts serialized GAPs into a private queue; True is
+        not proof of delivery. Use Gst's assigned seqnum so a fast queue probe
+        or a late send failure cannot clear a different heartbeat reservation.
+        Cue buffers retain their existing path and are not counted by this gate.
+        """
+        appsrc = self.caption_appsrc
+        if appsrc is None:
+            return False
+        event = Gst.Event.new_gap(start_ms * Gst.MSECOND, duration_ms * Gst.MSECOND)
+        seqnum = int(event.get_seqnum())
+        if not self._caption_gap_gate.reserve(seqnum):
+            return None
+        try:
+            accepted = bool(appsrc.send_event(event))
+        except Exception:
+            self._caption_gap_gate.cancel(seqnum)
+            raise
+        if not accepted:
+            self._caption_gap_gate.cancel(seqnum)
+        return accepted
 
     def _advance_live_caption_gap(self) -> bool:
         """Keep sparse caption time moving when no caption buffer is present."""
 
         appsrc = self.caption_appsrc
-        if appsrc is None:
+        if appsrc is None or self._stopping:
             return False
+        if self._caption_gap_gate.pending is not None:
+            return True
         window = caption_gap_window_ms(
             stream_position_ms=self._caption_stream_position_ms,
             running_time_ms=self._pipeline_running_time_ms(),
@@ -1016,12 +1077,14 @@ class GstPlayoutEngine:
         if window is None:
             return True
         start_ms, duration_ms = window
-        if not appsrc.send_event(
-            Gst.Event.new_gap(
-                start_ms * Gst.MSECOND,
-                duration_ms * Gst.MSECOND,
-            )
-        ):
+        try:
+            accepted = self._send_live_caption_gap(start_ms, duration_ms)
+        except Exception as exc:
+            accepted = False
+            print(f"WARN: live caption GAP enqueue failed: {exc!r}", file=sys.stderr, flush=True)
+        if accepted is None:
+            return True
+        if not accepted:
             self._error = ("caption-gap", "failed to advance live caption stream")
             if self._loop is not None:
                 self._loop.quit()
@@ -1030,8 +1093,8 @@ class GstPlayoutEngine:
         return True
 
     def _arm_live_caption_gap_heartbeat(self) -> None:
-        if self.caption_appsrc is not None:
-            GLib.timeout_add(100, self._advance_live_caption_gap)
+        if self.caption_appsrc is not None and self._caption_gap_heartbeat_id is None:
+            self._caption_gap_heartbeat_id = GLib.timeout_add(100, self._advance_live_caption_gap)
 
     def _build_graphics_overlay(
         self, leg: GraphicsOverlayLeg, video_prev: Gst.Element
@@ -3231,6 +3294,23 @@ class GstPlayoutEngine:
         blocking ``close()`` could have."""
         self._stopping = True
         deadline = time.monotonic() + self.teardown_timeout_s
+
+        # Stop admissions before removing the downstream probe: a late probe
+        # cannot reopen the terminal gate. The callback itself holds only gate,
+        # not engine state or a lock across any GStreamer call.
+        gate = getattr(self, "_caption_gap_gate", None)
+        if gate is not None:
+            gate.close()
+        heartbeat_id = getattr(self, "_caption_gap_heartbeat_id", None)
+        if heartbeat_id is not None:
+            with contextlib.suppress(Exception):
+                GLib.source_remove(heartbeat_id)
+            self._caption_gap_heartbeat_id = None
+        probe = getattr(self, "_caption_gap_probe", None)
+        if probe is not None:
+            with contextlib.suppress(Exception):
+                probe[0].remove_probe(probe[1])
+            self._caption_gap_probe = None
 
         pending = self._pending_reload
         if pending is not None and not pending.get("commit_in_progress", False):
