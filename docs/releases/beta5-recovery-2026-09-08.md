@@ -96,6 +96,30 @@ not an assumed post-install internet model download.
 
 ## Remaining release work
 
+### Packaged publication-status correction
+
+Independent documentation review found that the immutable in-product handbook
+would continue calling beta.5 unpublished after publication. Its introduction
+now describes beta.5 operation and directs readers to the exact signed release
+and current release record, without claiming unfinished acceptance. PDF, DOCX
+and in-product JSON are regenerated together. A new regression first failed on
+the old unpublished banner. Build34234158877 on `9bf38833` was cancelled so the
+final signed candidate will carry the corrected handbook rather than shipping
+a known contradiction. README and landing-page download banners remain beta.4
+until beta.5 actually publishes.
+
+The second full local run finished with 11,753 passed, 135 skipped, six failures
+and four teardown errors in 1,743.56 seconds. Its temporary directory inside
+the checkout contaminated Git-discovery fixtures; those modules passed all
+12 tests in an external system temporary directory. The four teardown errors
+detected real local application-state writes during the run. Their writer is
+under investigation; they are not waived or attributed to the named tests
+without process-level evidence. No all-green local-suite claim is made.
+The two affected API modules subsequently passed all 21 tests in a serialized
+run with an additional Python audit hook refusing real-profile file/database
+writes. The real files retained their earlier timestamps throughout that run.
+This rules out a reproduced write in that rerun, not every concurrent writer.
+
 ### Integrated review follow-up
 
 Baseline PR192 passed all required CI and merged as
@@ -131,8 +155,10 @@ These proofs do not replace installation/soak of the final signed candidate.
 3. Run the affected suites, full regression suite, UI checks and CI.
 4. Build and sign one candidate; require clean, cross-version upgrade and
    download-only Gate A PASS verdicts for that same source SHA.
-5. Run local Sandbox soak, then fresh two-hour physical tester soak with
-   candidate identity and counters reset for that run.
+5. Run local Sandbox soak and a fresh two-hour physical tester soak with
+   candidate identity and counters reset for that run. Dedicated tester
+   operation may run alongside Gate A after a successful signed build;
+   publication still requires all three Gate A lanes and the soak to pass.
 6. Align README, installation guide, user manual, landing page, release notes,
    verification record and release truth. Publish verified beta.5 assets/tag.
 

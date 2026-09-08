@@ -49,6 +49,9 @@ Setting `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` explicitly selects the
 restart fallback for diagnosis and can interrupt output. Installed-candidate
 soaks remain required before beta.5 publication; see the
 [recovery record](docs/releases/beta5-recovery-2026-09-08.md).
+The bundled beta.5 manual describes operation without freezing a mutable
+publication status into the installer. Use this page and the exact GitHub
+Release for current download and verification status.
 
 ![CivicCast system architecture](docs/assets/architecture/civiccast-system-architecture.svg)
 

@@ -43,21 +43,24 @@ work (see
 [Comparative Capability Status](#comparative-capability-status) in
 Section C). These source capabilities and their lab evidence are not stock
 acceptance claims and do not establish station-device, provider, app-store, or
-production proof. `v1.0.0-beta.2` was never published -- it exists only as an
-internal Gate A upgrade-baseline kit. `v1.0.0-beta.4` is the current
-published release described in this manual, a download-only upgrade for
-stations already on `v1.0.0-beta.3` (CivicCast's first downloadable
-release, now superseded -- see
-[`docs/releases/release-truth.yaml`](releases/release-truth.yaml)).
-`v1.0.0-beta.5` is the next candidate and the current native-Windows
-development candidate (an owner-held unpublished candidate) described in
-this manual; it does not change the beta.4 install story. It is a fresh,
-from-scratch native Windows product line — its
+production proof. This manual describes the `v1.0.0-beta.5` native-Windows
+software. A bundled manual does not itself establish publication or installation acceptance.
+Before installing, check the exact
+[GitHub Release](https://github.com/scottconverse/civiccast-native/releases),
+its signed installer, checksums and candidate-specific verification record;
+the current recommendation is recorded in
+[`release-truth.yaml`](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/release-truth.yaml).
+That release record can change after this immutable installer/manual is built.
+Downloadable upgrades preserve a beta.3-or-later station's cached AI models;
+first-time installations also require the approximately 21 GB `station` model
+bundle delivered by USB or LAN. See the Windows installation section below.
+`v1.0.0-beta.2` was never published; it is an internal upgrade-baseline kit.
+This is a fresh, from-scratch native Windows product line -- its
 version numbers do not continue from, and are not comparable to, the older
 `v1.0.0-rcNN` line documented for a retired WSL2-based product in a separate,
 private repository.
 
-In the beta.5 development build, schedule rollover uses an in-place reload
+In beta.5, schedule rollover uses an in-place reload
 by default: the playout worker prepares the next plan while the current plan
 airs. When scheduled media ends, the channel switches to its configured
 bulletins or slate; that filler refreshes until another program is due.
@@ -68,8 +71,9 @@ Operators do not need to enable an environment flag. For troubleshooting,
 IT may set `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` (also `false`, `no`, or `off`)
 in the service environment and restart the service during a maintenance
 window. This opts into encoder restarts at plan rollover and may interrupt
-output. Remove that override to restore the default. Installed-candidate
-soak results are required before this development candidate is published.
+output. Remove that override to restore the default. Each published beta
+requires its own signed-candidate installation and soak evidence; a version
+number or this manual is not a substitute for that evidence.
 
 ![CivicCast system architecture](assets/architecture/civiccast-system-architecture.png)
 

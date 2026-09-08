@@ -37,6 +37,12 @@ below.
 
 ### Changed
 
+- **The packaged manual no longer freezes publication status.** It describes
+  beta.5 operation and directs installers to the exact signed GitHub Release
+  and live release record for availability and candidate acceptance. The PDF,
+  DOCX and in-product handbook are regenerated together; a source regression
+  prevents reintroducing an unpublished/current banner into the immutable manual.
+
 - **In-place schedule rollover is enabled by default for beta.5.**
   `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` (also `false`, `no`, or `off`) opts
   into the diagnostic terminate/restart fallback. Explicit constructor
