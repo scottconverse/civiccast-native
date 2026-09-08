@@ -6,6 +6,12 @@ The dedicated tester dispatch is
 and Gate A34242157263 with immutable kickoff status `PENDING`. The signed
 installer and the complete 20-entry delivery manifest were independently hashed.
 This is a dispatch record, not a successful installation or soak result.
+The original dispatch's stable scripts remain unchanged on the tester. The
+control copy now recognizes the signed installer's actual ffprobe location,
+`dependencies\ffmpeg\bin\ffprobe.exe`, before its older-layout fallbacks.
+If the original setup stops at that discovery step, inspect its installed
+receipt and mission state before dispatching a source-bound continuation.
+Do not reinstall or replace stable scripts while a mission is active.
 The placeholder file `AUTORUN-SEP8-BETA5.ps1` in this support directory remains
 an inert template for comparison, not an additional executable directive.
 
@@ -146,3 +152,18 @@ After the three-channel soak passes, the separate
 [installed filler probe](filler-probe/README.md) can verify program-to-bulletin
 and bulletin-to-program handoffs on a new loopback-only test channel. It is
 not automatically dispatched by this support package.
+
+The [caption acceptance package](caption-proof/README.md) is also inert until
+an explicit post-soak invocation. It requires the exact candidate's terminal
+PASS, fresh installed runtime hashes and mission-owned sample assets. It tests
+English/Spanish approval and anonymous VTT delivery, not editorial accuracy or
+resident browser playback.
+
+The separate `AUTORUN-SEP8-BETA5-BROWSER-INVENTORY-R1.ps1` directive performs
+only an exact-host inventory of known Node/npm/browser/Playwright paths and
+mission-stage file presence. It reads no operator token, calls no station API,
+starts no browser and changes no service, channel, schedule or installation.
+It publishes one JSON report through a separate checkout of the established
+tester return branch, leaving the active sampler checkout alone. The normal
+poller's non-overlap rule determines when it can run; a queued inventory is
+not proof that the tester has executed it.

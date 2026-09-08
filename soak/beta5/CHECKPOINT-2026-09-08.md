@@ -1,5 +1,40 @@
 # Beta.5 tester support checkpoint
 
+## Support and inventory update: 2026-09-08, 16:32 UTC
+
+The candidate, signed kit, delivery manifest and original install dispatch are
+unchanged. Gate A34242157263 produced an authoritative clean PASS, but its
+separate GitHub evidence attachment failed with HTTP403; both upgrade lanes
+were skipped. All98 local files were preserved with matching hashes. A normal
+full retry34248734841 targets the same signed build34237280539. The original
+tester's kickoff34242157263/PENDING is immutable, not rewritten to imply PASS.
+
+Three scoped support changes are prepared:
+
+1. The control START-SOAK copy now finds ffprobe in the actual signed install
+   location, dependencies/ffmpeg/bin, before its two compatibility fallbacks.
+   Both old candidate locations were absent in the verified local installation.
+   The new regression was red before the resolver was added; complete support
+   integration tests then passed in Windows PowerShell5.1 and PowerShell7.
+   The installed tester's stable script is NOT changed by this control edit.
+   Inspect the actual install receipt and absence of an active/terminal soak
+   before deciding whether a continuation is needed. Do not reinstall blindly.
+2. The inert caption-proof package adds exact-asset EN/ES review, current
+   runtime-file hashing before/after, anonymous HLS/VTT delivery, durable
+   pre-approval intent events and service/channel continuity. Core, actual
+   HTTP construction and non-executing planning tests pass in PS5.1 and PS7.
+   These are hermetic tests, not installed caption or resident-browser proof.
+3. A unique BROWSER-INVENTORY-R1 autorun reads only known browser/tool paths
+   and mission-stage file presence. It reads no token and calls no station
+   API. It publishes one JSON result from its own separate shallow checkout,
+   leaving the active sampler checkout alone. Its dry-run passes. Actual
+   pickup still depends on the existing poller finishing any running task.
+
+No caption approval or browser playback is dispatched by this update. The
+physical installation, two-hour media verdict and post-soak acceptance remain
+pending. The control branch is not a product branch and must not be merged
+over current main.
+
 ## Current dispatch: 2026-09-08, 15:04 UTC
 
 The exact-candidate wrapper `soak/autorun/AUTORUN-SEP8-BETA5-BE1260-R1.ps1`

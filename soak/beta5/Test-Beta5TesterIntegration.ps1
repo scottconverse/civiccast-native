@@ -83,6 +83,13 @@ try {
     foreach ($invalidDuration in 'NaN', 'Infinity', '0.9', '-2', 'not-a-duration', '2147483648') {
         Assert-Throws "invalid duration rejected: $invalidDuration" { ConvertTo-Beta5ScheduleDuration $invalidDuration }
     }
+    $actualSignedLayout = 'C:\CivicCastHostStore\install\dependencies\ffmpeg\bin\ffprobe.exe'
+    $resolvedFfprobe = Resolve-Beta5Ffprobe -TestPathInvoker { param($Path) $Path -eq $actualSignedLayout }
+    Assert-True 'signed kit dependencies ffprobe layout is selected' ($resolvedFfprobe -eq $actualSignedLayout)
+    $legacyFfprobe = 'C:\CivicCastHostStore\install\ffmpeg\bin\ffprobe.exe'
+    $resolvedLegacyFfprobe = Resolve-Beta5Ffprobe -TestPathInvoker { param($Path) $Path -eq $legacyFfprobe }
+    Assert-True 'legacy ffprobe layout remains a fallback' ($resolvedLegacyFfprobe -eq $legacyFfprobe)
+    Assert-True 'missing ffprobe resolves null' ($null -eq (Resolve-Beta5Ffprobe -TestPathInvoker { param($Path) $false }))
     $receiptAssets = @(
         [pscustomobject]@{ id = 'asset-first'; duration_seconds = 60; title = 'Mission first sample' },
         [pscustomobject]@{ id = 'asset-second'; duration_seconds = 61; title = 'Mission second sample' }

@@ -62,6 +62,24 @@ function Get-Beta5MediaDuration {
     return ConvertTo-Beta5ScheduleDuration "$($output[0])"
 }
 
+function Resolve-Beta5Ffprobe {
+    <#
+      The signed beta.5 kit installs ffprobe under dependencies\ffmpeg\bin.
+      Keep the earlier layouts as compatibility fallbacks for older kits.
+      TestPathInvoker makes this resolver hermetic-testable without a live kit.
+    #>
+    param([scriptblock] $TestPathInvoker = { param($Path) Test-Path -LiteralPath $Path -PathType Leaf })
+    $candidates = @(
+        'C:\CivicCastHostStore\install\dependencies\ffmpeg\bin\ffprobe.exe',
+        'C:\CivicCastHostStore\install\packs\native-server-binaries\payload\ffmpeg\bin\ffprobe.exe',
+        'C:\CivicCastHostStore\install\ffmpeg\bin\ffprobe.exe'
+    )
+    foreach ($candidate in $candidates) {
+        if (& $TestPathInvoker $candidate) { return $candidate }
+    }
+    return $null
+}
+
 function Set-Beta5ApprovedAssetsReceipt {
     param(
         [Parameter(Mandatory)] $Identity,
@@ -176,7 +194,7 @@ $manifestEntries = @(Read-Beta5Manifest -ManifestPath (Join-Path $kit 'SHA256SUM
 $clips = @($manifestEntries | Where-Object { $_.relative_path -match '^samples\\[^\\]+\.mp4$' } | Select-Object -First 2)
 if ($clips.Count -ne 2) { throw 'The verified kit manifest must contain at least two MP4 samples.' }
 foreach ($clip in $clips) { if ((Get-FileHash -LiteralPath $clip.local_path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $clip.sha256) { throw "Sample hash changed: $($clip.relative_path)" } }
-$ffprobe = @('C:\CivicCastHostStore\install\packs\native-server-binaries\payload\ffmpeg\bin\ffprobe.exe', 'C:\CivicCastHostStore\install\ffmpeg\bin\ffprobe.exe') | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+$ffprobe = Resolve-Beta5Ffprobe
 if (-not $ffprobe) { throw 'Installed ffprobe.exe is required for gap-free schedule durations.' }
 
 $upload = ${function:Invoke-Beta5Upload}; $assets = @()
