@@ -37,6 +37,18 @@ below.
 
 ### Fixed
 
+- **Windows release-baseline tests no longer assume distinct clock ticks.**
+  The orphaned Spanish-caption test selects the retained translation by cue
+  identity and forces equal creation timestamps; the migration history test
+  supplies explicit timestamps. The sidecar entrypoint test uses a controlled
+  checkout and also proves that a missing signed installer is rejected.
+  Production caption publication and signing validation are unchanged.
+
+- **Removed the obsolete cross-agent audit protocol and its instruction
+  references** at the owner's request. The beta.5 release manager has explicit
+  authority to complete fixes, documentation, verification, merges, tagging,
+  and publication without additional stage approvals.
+
 - **The caption audio tap can no longer take a channel off air, and the
   `CTRL first-output` marker now measures real post-PLAYING output instead of
   a tautology (items 88, 84c).** MEASURED in the sandbox on

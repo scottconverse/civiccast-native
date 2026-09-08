@@ -114,7 +114,7 @@ for both paths.
    - DCO sign-off on every commit
 4. **PR description:** Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md). Name the branch/line and target, the spec section(s) touched, the 5-lens self-audit result (see below), and what was actually run to verify the change.
 5. **Conversation resolution.** On the native line, GitHub branch protection blocks merge while any PR review thread is unresolved (`required_conversation_resolution`), independent of approval count. Resolve every thread, don't just reply to it.
-6. **Merging is owner-only.** CI green (and, on the native line, all threads resolved) makes a PR mergeable, not merged — Scott merges every PR to `main` and to the native release branch himself.
+6. **Merge authority follows the owner's current assignment.** For beta.5, Scott has authorized the release manager to merge after green CI and resolved review findings, and to tag and publish the verified beta. See `AGENTS.md`.
 
 ## The verification that actually gates this repo
 
@@ -122,9 +122,9 @@ Per [CLAUDE.md](CLAUDE.md), every contribution runs the same verification CLAUDE
 
 - **Per-change careful-coding** ([docs/templates/careful-coding.md](docs/templates/careful-coding.md)) — read callers, trace runtime context, fan-out grep, name the data contract and blast radius before editing; re-read end-to-end and prove the render/data path after.
 - **Hostile 5-lens self-audit before every push** ([docs/process/5-lens-self-audit.md](docs/process/5-lens-self-audit.md)) — engineering, UX, tests, docs, QA, reported in the fixed format that doc defines. Mandatory, no "it's a small change" exception.
-- **Cross-agent review on the PR** — a reviewer that did not write the change re-runs the proofs rather than reading claims about them; see [docs/process/CIVICCAST_AUDIT_PROTOCOL.md](docs/process/CIVICCAST_AUDIT_PROTOCOL.md) for the evidence and status-language rules that review is held to.
+- **Cross-agent review on the PR** — a reviewer that did not write the change checks the implementation and relevant proofs. Report findings and verification limits against the reviewed commit.
 - **Claims-evidence binding** ([docs/claims/](docs/claims/), enforced by [scripts/policy/check_claims_evidence.py](scripts/policy/check_claims_evidence.py)) for any change touching the governed doc/claim set — a capability claim needs bound, executed evidence, not prose.
-- **Clean-box e2e proof** before anything is described as release-candidate ready — and there is **no automated clean-box lane in this repository** to lean on. `ci-cleanroom-e2e.yml` was the Docker/Linux full-install gate and did not come across with the retired lane; nothing replaced it. `vm-cleanroom-release.yml` is `workflow_dispatch`-only, targets a `self-hosted, linux` runner, and computes an install plan rather than performing an install — it has never run here. So the proof is a real install on a clean Windows box, recorded. Never cite a cleanroom run as having happened for a native SHA.
+- **Windows installation proof** — the current [release-candidate runbook](docs/ops/release-candidates.md) requires Gate A clean-install, cross-version upgrade, and download-only verdicts for the candidate SHA. Separate runtime soaks and station-device acceptance establish operational evidence beyond installation.
 
 Each layer's trigger is different — careful-coding and the 5-lens self-audit are per-change/per-push discipline the contributor runs themselves (not CI jobs); claims-evidence and the cleanroom workflows are CI-enforced but scoped to the diff and event type above; cross-agent review and the clean-box VM proof are protocol-driven, not automatic. There is no version-number cadence (no "runs every rung" or "runs every 1.0"), but "runs on every change" is not true of every layer either — check each one's actual trigger before citing it as having run.
 
@@ -140,7 +140,7 @@ Each layer's trigger is different — careful-coding and the 5-lens self-audit a
 
 - **Stay in scope.** Adjacent issues that you notice get reported (open an issue, label appropriately), not fixed in the same PR.
 - **Don't reopen closed architectural decisions.** See [CLAUDE.md](CLAUDE.md) for the closed list. If you believe a closed decision needs revisiting, open an RFC issue first.
-- **Don't silently expand a PR's scope.** If a finding emerges mid-PR, classify it by the severity language in [docs/process/CIVICCAST_AUDIT_PROTOCOL.md](docs/process/CIVICCAST_AUDIT_PROTOCOL.md) (Blocker / Critical / Major / Minor / Nit) and say explicitly whether you're fixing it in this PR or filing it separately — never fold it in without saying so.
+- **Don't silently expand a PR's scope.** If a finding emerges mid-PR, explain its impact and whether it belongs in the current change or separate work.
 
 ## Binary artifacts never get committed
 

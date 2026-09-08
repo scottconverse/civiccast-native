@@ -1587,13 +1587,26 @@ class TestTruncatedSpanishTrackNeverPublishes:
         english_rows = review_store.list(asset_id=_ASSET_ID, language="en")
         review_store.reject(english_rows[1].review_item_id, CaptionReviewDecision())
         # Only the FIRST Spanish cue is decided; the orphan stays pending.
+        # Windows clock ticks can give both translations the same created_at.
+        # Queue order then follows hashed review IDs, not the English timeline.
+        # Force that case and select the translation by its source identity.
+        for item in review_store._items.values():
+            item.created_at = datetime(2026, 9, 8, tzinfo=UTC)
         spanish_rows = review_store.list(asset_id=_ASSET_ID, language="es")
-        review_store.approve(spanish_rows[0].review_item_id, CaptionReviewDecision())
+        retained_id = translated_cue_id(
+            english_rows[0].cue.cue_id, "es", source_text=english_rows[0].cue.text
+        )
+        retained_row = next(row for row in spanish_rows if row.cue.cue_id == retained_id)
+        orphan_row = next(row for row in spanish_rows if row.cue.cue_id != retained_id)
+        review_store.approve(retained_row.review_item_id, CaptionReviewDecision())
 
         done = worker.run_once()[0]
 
         # The still-pending orphan did not gate the publish.
         assert done.state == OFFLINE_CAPTION_JOB_STATE_COMPLETE
+        pending_orphan = review_store.get(orphan_row.review_item_id)
+        assert pending_orphan is not None
+        assert pending_orphan.status == "pending"
         spanish_body = published_spanish_caption_sidecar(package_dir).read_text(encoding="utf-8")
         assert spanish_body.count("-->") == 1
         assert "comentario publico" not in spanish_body
