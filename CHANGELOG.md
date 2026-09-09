@@ -71,6 +71,24 @@ below.
 
 ### Changed
 
+- **Self-hosted candidate builds no longer upload the signed installer and
+  `.ccpack` files by default.** `native-beta-candidate-artifacts.yml`'s
+  `build_target: self-hosted` lane already lands those exact bytes on the
+  sandbox-lab box at `C:\CivicCastTester\candidates\<sha>\candidate\`, and
+  `assemble-native-beta-kit`'s self-hosted path reads them from that local
+  mirror, never from a downloaded artifact — so re-uploading ~3.4 GB nobody
+  downloads was dead weight against the 10 GB/month GitHub Actions
+  artifact-storage cap this repo shares with five other projects. A new
+  `upload_candidate_binaries` workflow-dispatch input (default `false`,
+  self-hosted only) forces the upload anyway. Only the small evidence set
+  (`*-report.json`, `SHA256SUMS.txt`, `candidate-receipt.json`) still
+  uploads unconditionally, under the unchanged `native-beta-candidate-<sha>`
+  artifact name; the binaries moved to their own
+  `native-beta-candidate-binaries-<sha>` artifact. Hosted (`windows-latest`)
+  builds are unaffected — they always upload everything, exactly as before,
+  since there is no persistent local box for anything to read from. Owner
+  decision 2026-09-09.
+
 - **The packaged manual no longer freezes publication status.** It describes
   beta.5 operation and directs installers to the exact signed GitHub Release
   and live release record for availability and candidate acceptance. The PDF,

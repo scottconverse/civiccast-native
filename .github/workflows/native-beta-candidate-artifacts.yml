@@ -22,8 +22,8 @@ name: native-beta-candidate-artifacts
 # (the same machine gate-a-station-acceptance.yml runs Gate A on) instead of a
 # hosted windows-latest runner. Every release-candidate cycle was dominated by
 # transfer, not work: the hosted lane uploads ~43 GB (kit 21 GB + bundle 18 GB
-# + candidate 3 GB) and Gate A then re-downloads the 21 GB kit at a measured
-# ~1-2 MB/s (~2.5-3h before the sandbox even starts). build_target:
+# + candidate binaries 3.4 GB) and Gate A then re-downloads the 21 GB kit at a
+# measured ~1-2 MB/s (~2.5-3h before the sandbox even starts). build_target:
 # self-hosted keeps intermediate mirrors under
 # C:\CivicCastTester\candidates\<sha>\ and writes the FINAL flat kit
 # (setup.exe + packs\ + station\) straight to
@@ -32,6 +32,21 @@ name: native-beta-candidate-artifacts
 # then an NTFS junction, never a download). The default stays "hosted":
 # push-triggered candidate builds on the release branch are never affected by
 # this input.
+#
+# ARTIFACT-STORAGE CAP (owner decision 2026-09-09): this repo's GitHub
+# Actions artifact storage is a 10 GB/month cap SHARED with five other
+# projects. On the self-hosted lane, the kit already lands on the box at
+# C:\CivicCastTester\kit-staging\<sha>\ and gate-a-station-acceptance.yml
+# reads it from local disk first (see that workflow's "LOCAL-FIRST KIT"
+# comment) -- so on self-hosted, the large binary uploads (station bundle,
+# assembled kit, and now also the signed installer + .ccpack files in the
+# candidate artifact) are dead weight by default. upload_large_artifacts
+# gates the bundle and kit; the newer upload_candidate_binaries gates the
+# installer + packs. Both default false on self-hosted and are ignored
+# (always-upload) on hosted, which has no local box for anything to read
+# from. Small evidence (reports, checksums, the signing receipt, and the
+# tiny installer-embed artifact) always uploads on every lane regardless of
+# either flag -- none of that is large enough to matter against the cap.
 on:
   workflow_dispatch:
     inputs:
@@ -41,8 +56,9 @@ on:
           exactly as before this input existed. "self-hosted" runs on this
           repo's self-hosted sandbox-lab runner, writes the kit/bundle/
           candidate to a local artifact root on that box, and by default
-          skips the two large (~18 GB / ~21 GB) artifact uploads so Gate A --
-          which runs on the SAME box -- reads the kit from local disk. Only
+          skips the large (~18 GB bundle / ~21 GB kit / ~3.4 GB candidate
+          binaries) artifact uploads so Gate A -- which runs on the SAME box
+          -- reads the kit from local disk. Only
           dispatch self-hosted when Gate A is not currently running against
           another candidate; the shared "sandbox-lab" concurrency group below
           queues them rather than running them at once, but a shorter wait is
@@ -59,6 +75,13 @@ on:
           let a different machine run Gate A against this candidate). Ignored
           when build_target is "hosted" -- hosted builds always upload, since
           there is no persistent local box for Gate A to read from.
+        type: boolean
+        default: false
+      upload_candidate_binaries:
+        description: >-
+          Self-hosted only. Also upload the signed installer and .ccpack
+          files (~3.4 GB against the shared Actions storage cap). Hosted
+          builds always upload.
         type: boolean
         default: false
   push:
@@ -108,11 +131,13 @@ jobs:
           $buildTarget = "${{ (github.event_name == 'workflow_dispatch' && inputs.build_target) || 'hosted' }}"
           if ($buildTarget -notin @("hosted", "self-hosted")) { $buildTarget = "hosted" }
           $uploadLarge = "${{ (github.event_name == 'workflow_dispatch' && inputs.upload_large_artifacts) || 'false' }}"
+          $uploadCandidateBinaries = "${{ (github.event_name == 'workflow_dispatch' && inputs.upload_candidate_binaries) || 'false' }}"
           $candidateRoot = "C:\CivicCastTester\candidates\${{ github.sha }}"
           "BUILD_TARGET=$buildTarget" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "UPLOAD_LARGE_ARTIFACTS=$uploadLarge" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "UPLOAD_CANDIDATE_BINARIES=$uploadCandidateBinaries" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CANDIDATE_ROOT=$candidateRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Write-Host "build_target=$buildTarget upload_large_artifacts=$uploadLarge candidate_root=$candidateRoot"
+          Write-Host "build_target=$buildTarget upload_large_artifacts=$uploadLarge upload_candidate_binaries=$uploadCandidateBinaries candidate_root=$candidateRoot"
 
       - name: Prune stale local candidate builds (self-hosted only, keep this sha)
         if: env.BUILD_TARGET == 'self-hosted'
@@ -896,11 +921,47 @@ jobs:
           Copy-Item -Path "artifacts/native-beta/*" -Destination $destination -Recurse -Force
           Write-Host "Mirrored candidate build outputs to $destination"
 
-      - name: Upload the native-beta candidate artifact
+      # Small evidence set (reports, checksums, the signing receipt): no
+      # consumer needs any of this to be big, and nothing downloads it in
+      # the self-hosted lane -- assemble-native-beta-kit's self-hosted path
+      # reads the signed installer and packs from the local mirror the step
+      # above just wrote, never from this artifact (see that job's
+      # "Co-locate the installer and station bundle into one kit" step).
+      # Unconditional on every lane, same reasoning as the tiny station-
+      # embed artifact below in build-native-station-bundle.
+      - name: Upload native-beta candidate evidence
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 10
+        with:
+          name: native-beta-candidate-${{ github.sha }}
+          path: |
+            artifacts/native-beta/*-report.json
+            artifacts/native-beta/SHA256SUMS.txt
+            artifacts/native-beta/candidate-receipt.json
+          if-no-files-found: error
+          retention-days: 1
+
+      # The signed installer and every .ccpack (~3.4 GB, including the 1.9
+      # GB ollama and 1.9 GB cuda packs) -- gated the same way as the ~18 GB
+      # station bundle and ~21 GB kit below. Owner decision 2026-09-09: the
+      # self-hosted lane already lands these exact bytes on this box at
+      # C:\CivicCastTester\candidates\<sha>\candidate\ (the mirror step
+      # above) and assemble-native-beta-kit's self-hosted path reads them
+      # from there, never from a downloaded artifact -- so re-uploading
+      # ~3.4 GB nobody downloads was dead weight against the 10 GB/month
+      # Actions artifact-storage cap this repo shares with five other
+      # projects. Hosted builds have no persistent local box, so they
+      # always upload (the condition is always true when BUILD_TARGET is
+      # "hosted"); self-hosted only uploads when upload_candidate_binaries
+      # is explicitly set true (e.g. to let a different machine inspect
+      # this candidate's signed installer without disk access to the
+      # sandbox-lab box).
+      - name: Upload native-beta candidate binaries
+        if: env.BUILD_TARGET != 'self-hosted' || env.UPLOAD_CANDIDATE_BINARIES == 'true'
         uses: actions/upload-artifact@v4
         timeout-minutes: 45
         with:
-          name: native-beta-candidate-${{ github.sha }}
+          name: native-beta-candidate-binaries-${{ github.sha }}
           path: |
             artifacts/native-beta/CivicCast (Native)_*_x64-setup.exe
             artifacts/native-beta/packs/native-app-payload.ccpack
@@ -908,9 +969,6 @@ jobs:
             artifacts/native-beta/packs/native-ffmpeg-runtime.ccpack
             artifacts/native-beta/packs/native-ollama-runtime.ccpack
             artifacts/native-beta/packs/native-cuda-runtime.ccpack
-            artifacts/native-beta/*-report.json
-            artifacts/native-beta/SHA256SUMS.txt
-            artifacts/native-beta/candidate-receipt.json
           if-no-files-found: error
           retention-days: 1
 
@@ -1288,7 +1346,12 @@ jobs:
         timeout-minutes: 15
         uses: actions/download-artifact@v4
         with:
-          name: native-beta-candidate-${{ github.sha }}
+          # The binaries artifact, not the small evidence one -- hosted
+          # builds always upload it (build-native-beta's "Upload
+          # native-beta candidate binaries" step condition is always true
+          # when BUILD_TARGET is "hosted"), so this download is unaffected
+          # by the self-hosted upload_candidate_binaries gate.
+          name: native-beta-candidate-binaries-${{ github.sha }}
           path: candidate
 
       - name: Download the signed native station bundle

@@ -103,7 +103,8 @@ def _assert_embedded_closure_smoke_contract(text: str, job: dict[str, object]) -
     assert names.index(smoke_name) < names.index(
         "Sign the native bootstrap (Azure Artifact Signing)"
     )
-    assert names.index(smoke_name) < names.index("Upload the native-beta candidate artifact")
+    assert names.index(smoke_name) < names.index("Upload native-beta candidate evidence")
+    assert names.index(smoke_name) < names.index("Upload native-beta candidate binaries")
 
 
 def _assert_msvc_install_path_binding(job: dict[str, object]) -> None:
@@ -245,8 +246,30 @@ def test_native_beta_candidate_workflow_builds_signed_artifacts_without_publishi
     assert 'Get-Item "artifacts/native-beta/packs/native-cuda-runtime.ccpack"' in checksums
     assert "GetRelativePath($artifactRoot, $asset.FullName)" in checksums
 
-    upload = steps["Upload the native-beta candidate artifact"]
+    evidence_upload = steps["Upload native-beta candidate evidence"]
+    assert evidence_upload["uses"] == "actions/upload-artifact@v4"
+    assert evidence_upload["with"]["name"] == "native-beta-candidate-${{ github.sha }}"
+    assert "*-report.json" in evidence_upload["with"]["path"]
+    assert "SHA256SUMS.txt" in evidence_upload["with"]["path"]
+    assert "candidate-receipt.json" in evidence_upload["with"]["path"]
+    assert "CivicCast (Native)_*_x64-setup.exe" not in evidence_upload["with"]["path"]
+    assert ".ccpack" not in evidence_upload["with"]["path"]
+    # Small evidence is never lane-gated -- it must upload on every build,
+    # same reasoning as the tiny station-embed artifact.
+    assert "if" not in evidence_upload, (
+        "the small evidence artifact must upload on every lane"
+    )
+
+    upload = steps["Upload native-beta candidate binaries"]
     assert upload["uses"] == "actions/upload-artifact@v4"
+    assert upload["with"]["name"] == "native-beta-candidate-binaries-${{ github.sha }}"
+    # Gated the same way as the ~18 GB station bundle and ~21 GB kit: always
+    # true on hosted (no local box to read from), skippable on self-hosted
+    # by default (owner decision 2026-09-09, shared 10 GB/month Actions
+    # artifact-storage cap) unless upload_candidate_binaries forces it.
+    assert upload["if"] == (
+        "env.BUILD_TARGET != 'self-hosted' || env.UPLOAD_CANDIDATE_BINARIES == 'true'"
+    )
     assert "native-app-payload.ccpack" in upload["with"]["path"]
     assert "native-server-binaries.ccpack" in upload["with"]["path"]
     assert "native-ffmpeg-runtime.ccpack" in upload["with"]["path"]
@@ -335,7 +358,8 @@ def test_native_beta_candidate_workflow_keeps_build_scratch_out_of_the_source_tr
 
     upload_paths = [
         line.strip()
-        for line in steps["Upload the native-beta candidate artifact"]["with"]["path"].splitlines()
+        for step_name in ("Upload native-beta candidate evidence", "Upload native-beta candidate binaries")
+        for line in steps[step_name]["with"]["path"].splitlines()
         if line.strip()
     ]
     assert all(path.startswith("artifacts/native-beta/") for path in upload_paths)
