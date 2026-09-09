@@ -100,6 +100,17 @@ below.
   into the diagnostic terminate/restart fallback. Explicit constructor
   overrides still win. Candidate installation and soak evidence are required
   before publication; the older default-off notes below describe history.
+  The default is now also proven end-to-end through the daemon, not just in
+  isolation: `tests/egress/test_daemon.py::test_real_strategy_default_takes_the_seamless_reload_path_env_unset`
+  drives a plan rollover through `EgressDaemon` with a REAL
+  `GstPlayoutStrategy` and the env var unset, and asserts the rollover
+  reaches the worker-pipe `reload` verb with no second worker spawned (no
+  terminate+restart). The installer and the service's registry `Environment`
+  (REG_MULTI_SZ) set no value for this variable, so an installed station
+  runs the default-on path; the sandbox-lab soak's optional explicit `=1`
+  injection (`-SeamlessReload`) is a redundant confirmation, not a requirement. Two stale `daemon.py`
+  comments that still described default-off as "the shipped default" were
+  corrected.
 
 ### Fixed
 
