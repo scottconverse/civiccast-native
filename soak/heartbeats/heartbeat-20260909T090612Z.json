@@ -1,0 +1,93 @@
+﻿{
+    "schema":  "civiccast-native-fleet-heartbeat-v1",
+    "mission":  "soak8-e1acfe6",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "utc":  "20260909T090612Z",
+    "health":  {
+                   "status":  "healthy",
+                   "version":  "1.0.0-beta.5",
+                   "schema":  "current",
+                   "schema_db_revision":  "0087_retention_terms",
+                   "schema_expected_head":  "0087_retention_terms",
+                   "mode":  "normal"
+               },
+    "db_revision":  null,
+    "service":  "Running",
+    "cpu_pct":  11.7,
+    "mem_free_mb":  9775,
+    "disk_free_gb":  176,
+    "uptime_min":  283,
+    "processes":  [
+                      {
+                          "ProcessName":  "ffmpeg",
+                          "Id":  17392,
+                          "rss_mb":  16,
+                          "cpu_s":  0
+                      },
+                      {
+                          "ProcessName":  "python",
+                          "Id":  7292,
+                          "rss_mb":  1012,
+                          "cpu_s":  11515.9
+                      },
+                      {
+                          "ProcessName":  "python",
+                          "Id":  9640,
+                          "rss_mb":  774,
+                          "cpu_s":  1.9
+                      },
+                      {
+                          "ProcessName":  "python",
+                          "Id":  20024,
+                          "rss_mb":  772,
+                          "cpu_s":  15.8
+                      },
+                      {
+                          "ProcessName":  "pythonservice",
+                          "Id":  4824,
+                          "rss_mb":  75,
+                          "cpu_s":  36.3
+                      }
+                  ],
+    "engine_observed":  {
+                            "gst_launch_processes":  0,
+                            "ffmpeg_processes":  1,
+                            "inferred":  "ffmpeg-fallback"
+                        },
+    "egress_channels":  [
+                            {
+                                "channel_id":  "public",
+                                "state":  "ON_AIR",
+                                "engine":  null,
+                                "last_error":  null,
+                                "sink_connected":  {
+                                                       "beta5-sep8-be1260bd0630-public":  false
+                                                   },
+                                "worker_processes":  null,
+                                "error":  null
+                            },
+                            {
+                                "channel_id":  "education",
+                                "state":  "STARTING",
+                                "engine":  null,
+                                "last_error":  "GStreamer playout worker child exited non-zero; relaunching encoder. Last child stderr: CTRL output: 429 buffers (+428) since PLAYING | CTRL output: 891 buffers (+890) since PLAYING | CTRL output: 1352 buffers (+1351) since PLAYING | CTRL output: 1734 buffers (+1733) since PLAYING | CTRL output: 2200 buffers (+2199) since PLAYING | CTRL output: 3769 buffers (+3768) since PLAYING | CTRL output: 3769 buffers (+3768) since PLAYING | CTRL stall: no output for 10s - quitting for daemon restart",
+                                "sink_connected":  {
+
+                                                   },
+                                "worker_processes":  null,
+                                "error":  null
+                            },
+                            {
+                                "channel_id":  "government",
+                                "state":  "ON_AIR",
+                                "engine":  null,
+                                "last_error":  null,
+                                "sink_connected":  {
+                                                       "beta5-sep8-be1260bd0630-government":  false
+                                                   },
+                                "worker_processes":  null,
+                                "error":  null
+                            }
+                        ],
+    "soak_started":  false
+}
