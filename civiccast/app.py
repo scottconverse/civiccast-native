@@ -1471,11 +1471,24 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         "on",
     )
     if embed_captions:
+        # Second gate, re-read on EVERY scan by both workers below (not once
+        # here): the operator's live-captions switch
+        # (``StationProfile.live_captions_enabled``; off by default in beta.5).
+        # With it off no channel builds an embed leg and the tap blanks every
+        # sidecar, so the feed would poll every 2 s for nothing and the proof
+        # would spend a 6 s ffmpeg capture per channel every 30 s to write a
+        # guaranteed FAIL row. Re-reading per scan (rather than gating the
+        # supervisors) means flipping the switch ON later resumes both loops
+        # without restarting a control plane that is on air -- the same shape
+        # as the caption tap worker's ``is_enabled`` above.
+        from civiccast.installer.station_state import resolve_live_captions_enabled
+
         # The FEED: push each ON_AIR channel's caption cues into the live appsrc (the
         # production caller of send_caption_cue) so captions actually reach the encoder.
         caption_feed_worker = build_caption_feed_worker(
             session_factory,
             send_caption_cue=channel_automation.daemon.send_caption_cue,
+            is_enabled=resolve_live_captions_enabled,
         )
         app.state.background_supervisors.append(
             ThreadSupervisor(
@@ -1486,7 +1499,10 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
             )
         )
         # The PROOF: sample the emitted stream + flip caption_status on a fresh PASS.
-        caption_proof_worker = build_caption_proof_worker(session_factory)
+        caption_proof_worker = build_caption_proof_worker(
+            session_factory,
+            is_enabled=resolve_live_captions_enabled,
+        )
         app.state.background_supervisors.append(
             ThreadSupervisor(
                 name="civiccast-caption-proof",

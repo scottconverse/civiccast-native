@@ -29,6 +29,7 @@ from civiccast.captions.review import InMemoryCaptionReviewStore
 from civiccast.captions.tap import TAP_SAMPLE_RATE_HZ
 from civiccast.captions.tap_backoff import CaptionBackoffPolicy
 from civiccast.captions.tap_worker import (
+    CaptionTapScanResult,
     CaptionTapWorker,
     CaptionTapWorkerSettings,
     build_tap_worker,
@@ -1003,6 +1004,52 @@ class TestCaptionTapPlayoutProtection:
 
         assert result.channels == ()  # no tap directory for this channel at all
         assert load_caption_cues_from_timed_text(stale, source_id="education") == []
+
+    def test_switching_captions_off_clears_a_stale_sidecar_when_the_tap_root_is_missing(
+        self, tmp_path: Path
+    ) -> None:
+        """Round-2 review MAJOR 3: the enabled check must run BEFORE the
+        tap-directory check. With the old order, a station whose tap root was
+        never created (or was swept) returned early with live captions off,
+        ``_run_disabled`` never ran, the stale ``active.vtt`` was never blanked,
+        and the caption feed kept re-sending every cue in it every 2 s."""
+
+        tap_root = tmp_path / "tap-not-created"
+        assert not tap_root.exists()
+        stale = _active_vtt(tap_root, "government")
+        stale.parent.mkdir(parents=True)
+        stale.write_text(
+            "WEBVTT\n\nold\n00:00:00.000 --> 00:00:01.000\nstale caption\n",
+            encoding="utf-8",
+        )
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            is_enabled=lambda: False,
+        )
+
+        result = worker.run_once()
+
+        assert result.channels == ()
+        assert not tap_root.exists()  # never created as a side effect
+        assert load_caption_cues_from_timed_text(stale, source_id="government") == []
+
+    def test_a_missing_tap_root_still_idles_cleanly_when_captions_are_on(
+        self, tmp_path: Path
+    ) -> None:
+        tap_root = tmp_path / "tap-not-created"
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            is_enabled=lambda: True,
+        )
+
+        result = worker.run_once()
+
+        assert result == CaptionTapScanResult()
+        assert not tap_root.exists()
 
 
 class TestCaptionTapWorkerSettings:

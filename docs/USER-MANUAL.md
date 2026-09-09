@@ -359,9 +359,22 @@ for the computer — hard enough that on a station without a suitable graphics
 card it can compete with the broadcast itself for the processor.
 
 **The switch:** *Setup → Station Profile → **Show live captions on air***.
-It is on when the station is installed. Only a setup admin can change it.
-The change takes effect within a few seconds; you do not need to restart
-anything and you can do it during a live meeting.
+It is **off** when the station is installed in this beta (see the known
+issue below); turn it on there if your station can keep up. Only a setup
+admin can change it. Turning it *off* stops captions within a few seconds,
+but the part of the broadcast path that writes captions into the video is
+only removed the next time each channel goes on air (or the next time the
+station restarts) — so if you are turning it off because of the freeze
+described below, expect the freeze to stop after that, not immediately.
+Turning it *on* likewise takes effect at each channel's next start. You do
+not need to restart anything and you can do it during a live meeting.
+
+**Known issue in this beta (why it starts off):** with live captions on,
+the picture can freeze for 25–30 seconds and then catch up in a burst every
+minute or two; rarely, the station's 10-second stall watchdog restarts the
+channel (about a 30-second gap on air). The cause is under investigation
+and is somewhere in the live-caption path; the fix is planned for the next
+update.
 
 **Turn it off if the picture is stuttering, or channels keep restarting
 themselves.** The picture and sound always come first. Nothing else about the
@@ -876,14 +889,24 @@ station needs.
   rolling WAV segments) kept running regardless. `off` now stops the fork leg
   itself — no tap directory is created, no segment is written, and no tap
   worker thread starts. The operator-facing `live_captions_enabled`
-  station-profile switch (Staff → Station Profile) also now stops the fork
-  leg, WITHOUT a control-plane restart — but only at a channel's next
-  **start** (going off air and back on, or a supervisor restart), same as
-  the graphics-overlay honest limit above: a content reload on an
+  station-profile switch (Staff → Station Profile; **off by default in
+  beta.5**, see the "Live Captions" section of the Meeting Operator Guide)
+  also stops the fork leg AND the CEA-708 caption embed leg (`cccombiner`
+  between the encoder and the mux, plus its caption source), WITHOUT a
+  control-plane restart — but only at a channel's next **start** (going
+  off air and back on, or a supervisor restart), same as the
+  graphics-overlay honest limit above: a content reload on an
   already-running channel does not pick up a profile change made in
-  between, because the reload path never touches the audio-tap leg either
-  way (only the program source and the graphics overlay are re-applied on
-  reload).
+  between, because the reload path never touches the audio-tap or the
+  embed leg either way (only the program source and the graphics overlay
+  are re-applied on reload). The reload path does *read* the profile
+  switch, for one reason only: an HEVC channel cannot embed captions, and
+  a reload on a running HEVC channel after the switch was turned on logs a
+  warning and keeps the running pipeline as it is, instead of refusing the
+  content change; the H.264-only restriction is enforced at the channel's
+  next start. `CIVICCAST_EGRESS_EMBED_CAPTIONS=1` alone (set
+  unconditionally on an activated native station) no longer builds the
+  embed leg; the profile switch must also be on.
 - **`CIVICCAST_CAPTION_TAP_DIR`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_POLL_SECONDS`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`** — Live caption tap configuration.

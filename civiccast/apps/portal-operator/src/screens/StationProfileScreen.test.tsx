@@ -298,15 +298,16 @@ describe('StationProfileScreen', () => {
   })
 
   describe('Live captions switch', () => {
-    it('is on by default and saves an operator turning it off', async () => {
+    it('shows the server value (off on a fresh beta.5 station) and saves an operator turning it on', async () => {
       vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+      vi.mocked(getStationProfile).mockResolvedValue(profile({ live_captions_enabled: false }))
       vi.mocked(updateStationProfile).mockResolvedValue(
-        profile({ live_captions_enabled: false }),
+        profile({ live_captions_enabled: true }),
       )
       const { findByLabelText } = renderScreen()
 
       const toggle = (await findByLabelText(/show live captions on air/i)) as HTMLInputElement
-      expect(toggle.checked).toBe(true)
+      expect(toggle.checked).toBe(false)
       expect(toggle.disabled).toBe(false)
 
       fireEvent.click(toggle)
@@ -314,14 +315,24 @@ describe('StationProfileScreen', () => {
 
       await waitFor(() =>
         expect(vi.mocked(updateStationProfile)).toHaveBeenCalledWith(
-          expect.objectContaining({ live_captions_enabled: false }),
+          expect.objectContaining({ live_captions_enabled: true }),
         ),
       )
     })
 
-    it('reads a profile saved before the setting existed as ON, never as off', async () => {
-      // An absent key must not read as "the operator turned captions off":
-      // live captions are an accessibility feature, so the safe default is on.
+    it('shows an operator who turned live captions on as ON', async () => {
+      vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+      vi.mocked(getStationProfile).mockResolvedValue(profile({ live_captions_enabled: true }))
+      const { findByLabelText } = renderScreen()
+
+      expect(((await findByLabelText(/show live captions on air/i)) as HTMLInputElement).checked).toBe(
+        true,
+      )
+    })
+
+    it('reads a profile from a control plane older than the setting as OFF (the beta.5 default)', async () => {
+      // An absent key is the server's own beta.5 default: OFF, because the
+      // live caption embed leg held video 25-30 s at a time in the sandbox soak.
       vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
       const before = profile()
       delete (before as unknown as Record<string, unknown>).live_captions_enabled
@@ -329,7 +340,7 @@ describe('StationProfileScreen', () => {
       const { findByLabelText } = renderScreen()
 
       expect(((await findByLabelText(/show live captions on air/i)) as HTMLInputElement).checked).toBe(
-        true,
+        false,
       )
     })
 

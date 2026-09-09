@@ -71,6 +71,14 @@ class CaptionProofWorker:
     * ``expected_cues_provider`` — the cues the channel is embedding (the channel
       caption pipeline: review queue / ASR tap / sidecar). Empty → the sample is a
       FAIL with ``NO_EXPECTED_CUES`` (we never fabricate a PASS).
+    * ``is_enabled`` — the operator's live-captions switch
+      (``StationProfile.live_captions_enabled`` via
+      ``resolve_live_captions_enabled``), consulted on EVERY scan. With live
+      captions off no embed leg is built and the tap blanks every sidecar, so a
+      scan would only spend a 6 s ffmpeg capture per channel every 30 s to write
+      a guaranteed ``NO_EXPECTED_CUES`` FAIL row (round-2 review MAJOR 3). The
+      scan short-circuits instead; flipping the switch on later resumes proofs
+      on the next cycle with no control-plane restart. Default: always enabled.
     """
 
     def __init__(
@@ -83,6 +91,7 @@ class CaptionProofWorker:
         mode: CaptionMode = "cea-708",
         runner: FfmpegRunner = run_ffmpeg,
         clock: Clock = lambda: datetime.now(UTC),
+        is_enabled: Callable[[], bool] | None = None,
     ) -> None:
         self._store = store
         self._on_air_channels = on_air_channels
@@ -91,6 +100,8 @@ class CaptionProofWorker:
         self._mode = mode
         self._runner = runner
         self._clock = clock
+        self._is_enabled = is_enabled or (lambda: True)
+        self._disabled_announced = False
 
     def run_forever(
         self,
@@ -110,7 +121,20 @@ class CaptionProofWorker:
                 stop_event.wait(poll_seconds)
 
     def run_once(self) -> CaptionProofScanResult:
-        """Sample every ON_AIR channel once and persist each proof sample."""
+        """Sample every ON_AIR channel once and persist each proof sample.
+
+        Returns an empty result -- no capture, no DB row -- while the operator
+        has live captions switched off (see ``is_enabled``)."""
+        if not self._is_enabled():
+            if not self._disabled_announced:
+                _LOG.info(
+                    "Live captions are switched off for this station "
+                    "(StationProfile.live_captions_enabled); the caption decode-back "
+                    "proof is idle until they are switched on."
+                )
+                self._disabled_announced = True
+            return CaptionProofScanResult()
+        self._disabled_announced = False
         passed = 0
         failed = 0
         skipped = 0
@@ -212,6 +236,7 @@ def build_caption_proof_worker(
     mode: CaptionMode = "cea-708",
     caption_sidecar_for: Callable[[str], Path] | None = None,
     runner: FfmpegRunner = run_ffmpeg,
+    is_enabled: Callable[[], bool] | None = None,
 ) -> CaptionProofWorker:
     """Wire the production caption proof worker (Postgres store + live providers).
 
@@ -219,8 +244,10 @@ def build_caption_proof_worker(
     stream (live edge); ``expected_cues_provider`` loads the channel's embedded cues
     from its caption sidecar (``<work_dir>/<channel>/captions/active.vtt`` by default,
     overridable via ``caption_sidecar_for``). Absent sidecar → no expected cues → the
-    sample fails closed (caption_status stays not-verified). The capture + the sidecar's
-    production by the captions pipeline are WSL/LPM-validated."""
+    sample fails closed (caption_status stays not-verified). ``is_enabled`` is the
+    operator's live-captions switch, re-read every scan (``civiccast.app`` passes
+    ``resolve_live_captions_enabled``). The capture + the sidecar's production by the
+    captions pipeline are WSL/LPM-validated."""
     from civiccast.egress.automation import default_egress_work_dir
     from civiccast.egress.store import PostgresEgressStore
 
@@ -261,4 +288,5 @@ def build_caption_proof_worker(
         expected_cues_provider=_expected,
         mode=mode,
         runner=runner,
+        is_enabled=is_enabled,
     )

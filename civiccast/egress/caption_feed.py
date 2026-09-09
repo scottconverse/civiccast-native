@@ -107,11 +107,21 @@ class CaptionFeedWorker:
         on_air_channels: OnAirChannelsProvider,
         caption_cue_provider: CaptionCueProvider,
         send_caption_cue: SendCaptionCue,
+        is_enabled: Callable[[], bool] | None = None,
     ) -> None:
         self._work_dir = work_dir
         self._on_air_channels = on_air_channels
         self._caption_cue_provider = caption_cue_provider
         self._send_caption_cue = send_caption_cue
+        # The operator's live-captions switch (``StationProfile.live_captions_
+        # enabled`` via ``resolve_live_captions_enabled``), consulted on EVERY
+        # scan: with live captions off there is no caption appsrc to feed, so a
+        # scan would only poll sidecars every 2 s and retry every cue forever
+        # (round-2 review MAJOR 3). Flipping the switch on later resumes the
+        # feed on the next cycle with no control-plane restart. Default: always
+        # enabled, so an injected worker in a test behaves as before.
+        self._is_enabled = is_enabled or (lambda: True)
+        self._disabled_announced = False
         # Per-channel set of already-pushed cue ids (so a re-scan never double-sends).
         self._sent: dict[str, set[str]] = {}
         # A multi-page cue can be only partly acknowledged. Retain each page's
@@ -134,6 +144,20 @@ class CaptionFeedWorker:
                 stop_event.wait(poll_seconds)
 
     def run_once(self) -> CaptionFeedScanResult:
+        if not self._is_enabled():
+            # Forget everything sent so far: the pipeline built after the switch
+            # comes back on has a fresh appsrc, and must be fed from scratch.
+            self._sent.clear()
+            self._acknowledged_pages.clear()
+            if not self._disabled_announced:
+                _LOG.info(
+                    "Live captions are switched off for this station "
+                    "(StationProfile.live_captions_enabled); the caption feed is idle "
+                    "until they are switched on."
+                )
+                self._disabled_announced = True
+            return CaptionFeedScanResult()
+        self._disabled_announced = False
         on_air = self._on_air_channels()
         # Forget channels that went off air so a later return re-sends from scratch.
         self._sent = {cid: seen for cid, seen in self._sent.items() if cid in on_air}
@@ -192,14 +216,17 @@ def build_caption_feed_worker(
     send_caption_cue: SendCaptionCue,
     work_dir: Path | None = None,
     caption_sidecar_for: Callable[[str], Path] | None = None,
+    is_enabled: Callable[[], bool] | None = None,
 ) -> CaptionFeedWorker:
     """Wire the production caption feed worker.
 
     ``on_air_channels`` reads channel state; ``caption_cue_provider`` loads the channel's
     active caption cues from its sidecar (``<work_dir>/<channel>/captions/active.vtt`` by
     default — the same file the decode-back proof reads); ``send_caption_cue`` is the gst
-    strategy's FIFO command (a no-op drop on the ffmpeg engine). The sidecar's production
-    by the captions pipeline + the live PTS alignment are WSL/LPM-validated."""
+    strategy's FIFO command (a no-op drop on the ffmpeg engine); ``is_enabled`` is the
+    operator's live-captions switch, re-read every scan (``civiccast.app`` passes
+    ``resolve_live_captions_enabled``). The sidecar's production by the captions
+    pipeline + the live PTS alignment are WSL/LPM-validated."""
     from civiccast.egress.automation import default_egress_work_dir
     from civiccast.egress.store import PostgresEgressStore
 
@@ -229,4 +256,5 @@ def build_caption_feed_worker(
         on_air_channels=_on_air,
         caption_cue_provider=_cues,
         send_caption_cue=send_caption_cue,
+        is_enabled=is_enabled,
     )

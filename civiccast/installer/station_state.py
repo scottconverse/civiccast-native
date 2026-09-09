@@ -25,6 +25,7 @@ from civiccast.ai_models.models import detect_summary_model_default
 from civiccast.auth.models import OperatorIdentity
 from civiccast.cable.channel import default_channel_profiles
 from civiccast.installer.models import (
+    LIVE_CAPTIONS_DEFAULT,
     FirstAdminSetupRequest,
     FirstAdminSetupResponse,
     RecoveryKit,
@@ -273,7 +274,8 @@ def read_live_captions_enabled() -> bool | None:
 
 
 def resolve_live_captions_enabled() -> bool:
-    """Whether the LIVE caption tap may run: env override > persisted > on.
+    """Whether the LIVE caption tap may run: env override > persisted >
+    ``LIVE_CAPTIONS_DEFAULT`` (off in beta.5).
 
     Precedence is deliberately asymmetric, and only in the SAFE direction:
     ``CIVICCAST_CAPTION_TAP=off`` in the environment turns live captioning off
@@ -289,18 +291,24 @@ def resolve_live_captions_enabled() -> bool:
     that need it, and the asymmetric-safe direction chosen here still applies
     when both are in play.
 
-    Defaults to on: live captions are an accessibility feature, and a station
-    that can run them should. The caption tap's own overload backoff
-    (:mod:`civiccast.captions.tap_backoff`) is what keeps "on" safe on a
-    station that cannot keep up; this switch is the operator's explicit "do
-    not even try".
+    Defaults to OFF for beta.5 (temporary, owner decision 2026-09-09): with
+    live captions on, the CEA-708 caption embed leg (``cccombiner`` between
+    the encoder and the mux, ``civiccast/egress/gst/engine.py``
+    ``_build_caption_embed``) held video for 25-30 s and then released a
+    burst of ~900 frames every 1-2 minutes on every channel in the
+    2026-09-09 sandbox soak, twice outlasting the 10 s stall watchdog. An
+    absent key -- a fresh
+    install, or a station commissioned before the switch existed -- therefore
+    reads as off; an explicitly persisted ``true`` (an operator who turned
+    them on) is honoured as before. The root-cause fix (beta.5.1) is what
+    flips this default back.
     """
 
     if os.environ.get("CIVICCAST_CAPTION_TAP", "").strip().lower() == "off":
         return False
     persisted = read_live_captions_enabled()
     if persisted is None:
-        return True
+        return LIVE_CAPTIONS_DEFAULT
     return persisted
 
 
@@ -670,6 +678,10 @@ def complete_first_admin_setup(
             "channel_profiles": [channel.model_dump() for channel in profile.channel_profiles],
             "sample_content_enabled": profile.sample_content_enabled,
             "initial_schedule_enabled": profile.initial_schedule_enabled,
+            # Persisted explicitly at commissioning so a fresh install carries
+            # the beta.5 default (off) as a stored value, and a later default
+            # flip cannot silently change a station that already exists.
+            "live_captions_enabled": profile.live_captions_enabled,
             "default_roles": profile.default_roles,
             "operation_mode": profile.operation_mode,
             "dashboard_ready_state": profile.dashboard_ready_state,
@@ -1027,10 +1039,11 @@ def _profile_from_state(raw: dict[str, Any]) -> StationProfile | None:
             ),
             sample_content_enabled=bool(station.get("sample_content_enabled", True)),
             initial_schedule_enabled=bool(station.get("initial_schedule_enabled", True)),
-            # Default TRUE for a station commissioned before this switch
-            # existed: live captions are an accessibility feature, so an
-            # absent key must not read as "the operator turned them off".
-            live_captions_enabled=bool(station.get("live_captions_enabled", True)),
+            # An absent key (a station commissioned before this switch
+            # existed, or one that never touched it) reads as the beta.5
+            # default -- OFF -- for the reason on ``LIVE_CAPTIONS_DEFAULT``;
+            # an explicitly persisted value is honoured either way.
+            live_captions_enabled=bool(station.get("live_captions_enabled", LIVE_CAPTIONS_DEFAULT)),
             default_roles=[
                 str(role)
                 for role in station.get("default_roles", _DEFAULT_ROLES)
