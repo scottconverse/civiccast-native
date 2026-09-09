@@ -8,7 +8,7 @@ modifications** — the exact files WSL production runs.
 
 ## Current interpretation (2026-09-08)
 
-The July17 experiment and its original verdict below are historical, not a
+The July 17 experiment and its original verdict below are historical, not a
 statement about the current runtime or release. Later native caption/reload
 tests are recorded separately in
 [the beta.5 source-level record](../../.agent-runs/native-windows/beta5-caption-flow-20260908/evidence/verification.md).

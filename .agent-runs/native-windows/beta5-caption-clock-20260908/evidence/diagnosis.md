@@ -288,10 +288,13 @@ mechanism was that releasing the errored leg's hold probes pushed it into the
 `sync-streams=True` input-selector on an INACTIVE pad and starved the leg that
 was still on air.
 
-**This round did not reproduce that failure.** Ten instrumented runs of that
-test, with per-worker stderr captured and normal logging, were 10/10 clean
-(68.11 s, 68.44 s, 69.04 s, 67.52 s, 69.26 s, 69.96 s, 68.99 s, 68.00 s,
-67.88 s, 68.91 s, 68.05 s, 68.54 s across the two loops). A negative result
+**This round did not reproduce that failure.** Twelve instrumented runs of that
+test, with per-worker stderr captured and normal logging, were 12/12 clean --
+round-3 review finding 8: the count said ten while the timing list below has
+twelve entries, because the runs were split across two concurrent loops and only
+one loop's count was written down. The twelve timings are the record:
+68.11 s, 68.44 s, 69.04 s, 67.52 s, 69.26 s, 69.96 s, 68.99 s, 68.00 s,
+67.88 s, 68.91 s, 68.05 s, 68.54 s. A negative result
 here is a probe, not a conclusion: the abort in question requires the
 replacement leg to hit an internal data stream error, which is load dependent
 and did not occur in any of those runs.
@@ -347,6 +350,16 @@ and neither could this round; the next occurrence will say which.
 
 ### Round-2 verification (normal logging, real GStreamer runtime)
 
+Load condition for every tally in this section: an otherwise idle box, no
+concurrent CPU load generator. The counts below do not transfer to a loaded
+box -- the round-2 review measured the same three-worker rollover test under a
+synthetic 100% CPU load at 0 of 3 clean on the pre-round-2 base and 20 of 24
+clean on the round-2 source, and every one of the four loaded failures was the
+commit watchdog force-exiting a worker (``commit did not finish within 15s``)
+while the outgoing leg was still in ``set_state(NULL)``. Round 3 reorders the
+commit so that teardown runs behind a replacement that is already on air; its
+loaded-run tally is a later measurement and is not claimed here.
+
 Each native file ten times against the final source:
 
 - `tests/egress/test_gst_engine_wsl.py` -- 10/10, 25 passed per run,
@@ -356,9 +369,11 @@ Each native file ten times against the final source:
 - `tests/egress/test_gst_engine_caption_gap_admission.py` -- 10/10, 5 passed per
   run, 1.13 s to 1.26 s.
 
-Across the 350 captured worker logs: 320 `CTRL reload committed` lines and zero
-occurrences of `not-linked`, `commit did not finish`, `did not retire cleanly`,
-`still retiring at stop`, `disposal incomplete`, or `did not reach NULL`.
+Across the 350 captured worker logs from those idle-box runs: 320 `CTRL reload
+committed` lines and zero occurrences of `not-linked`, `commit did not finish`,
+`did not retire cleanly`, `still retiring at stop`, `disposal incomplete`, or
+`did not reach NULL` -- an idle-box tally only; the loaded runs above did
+produce `commit did not finish` (4 of 24).
 `CTRL reload aborted` appears in exactly ten logs and `CTRL stall` in exactly
 ten -- one per run, in `test_reload_never_buffers_recovers` and
 `test_stall_watchdog_fires_when_output_stops` respectively, both of which exist

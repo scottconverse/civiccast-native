@@ -1252,15 +1252,19 @@ def test_repeated_reloads_no_leak(tmp_path: Path) -> None:
                 graphmod.graph_to_json(_reload_graph(18 if n % 2 else 1)), encoding="utf-8"
             )
             _send(control, f"reload {rg}")
-            _wait_for_log(log, "CTRL reload committed", count=n + 1)
+            # Round-3 finding 1: the commit publishes BEFORE the outgoing leg is
+            # retired, so the element count -- the actual leak signal -- is
+            # reported on the retirement line, which lands a moment later.
+            _wait_for_log(log, "CTRL reload: old leg disposed", count=n + 1)
         _send(control, "stop")
         proc.wait(timeout=25)
     finally:
         _reap(proc)
-    counts = [
-        int(m) for m in re.findall(r"CTRL reload committed \(elements=(\d+)\)", log.read_text())
-    ]
-    assert len(counts) == cycles, f"expected {cycles} commits, got {counts}"
+    text = log.read_text()
+    committed = re.findall(r"CTRL reload committed", text)
+    counts = [int(m) for m in re.findall(r"CTRL reload: old leg disposed \(elements=(\d+)\)", text)]
+    assert len(committed) == cycles, f"expected {cycles} commits, got {len(committed)}"
+    assert len(counts) == cycles, f"expected {cycles} retirements, got {counts}"
     assert len(set(counts)) == 1, f"element count not flat across reloads: {counts} (leak)"
 
 
@@ -2351,22 +2355,24 @@ def test_deferred_rollover_commits_with_a_multi_segment_concat_playlist_reload(
         _send(control, f"reload {reload_path}")
         _wait_for_log(log, "CTRL reload committed", timeout=program_seconds + 30.0)
         text = log.read_text(encoding="utf-8", errors="replace")
-        # The staged commit prints prove the lock-safe order: request the switch,
-        # retire the old leg while the replacement remains held, release it, settle.
+        # The staged commit prints prove the on-air-first order (round-3 finding
+        # 1): request the switch, release the replacement, settle -- and only
+        # THEN retire the old leg, behind a replacement that is already flowing.
         for marker in (
             "CTRL reload: switching selector",
-            "CTRL reload: old leg disposed",
             "CTRL reload: holds released",
             "CTRL reload committed",
         ):
             assert marker in text, f"missing staged commit log line {marker!r};\n{text}"
         assert text.index("CTRL reload: switching selector") < text.index(
-            "CTRL reload: old leg disposed"
-        )
-        assert text.index("CTRL reload: old leg disposed") < text.index(
             "CTRL reload: holds released"
         )
         assert text.index("CTRL reload: holds released") < text.index("CTRL reload committed")
+        # Retirement runs on a worker thread after the commit publishes; its line
+        # lands a moment later and must follow the commit, never precede it.
+        _wait_for_log(log, "CTRL reload: old leg disposed", timeout=15.0)
+        text = log.read_text(encoding="utf-8", errors="replace")
+        assert text.index("CTRL reload committed") < text.index("CTRL reload: old leg disposed")
         # Regression assertion (mirrors the single-segment test above): the
         # worker must still be alive a full second past the boundary, not
         # freshly wedged with the commit log line printed just before it hung.

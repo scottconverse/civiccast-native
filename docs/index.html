@@ -2182,14 +2182,19 @@
               approved, currently airable slide.
               Channel status and health reporting distinguish programs from
               filler when a handoff completes.
-              The native engine suite now completes ten runs out of ten with
-              normal logging, each covering three workers through six in-place
-              replacements with clean transport checks and clean stop.
-              Overlapping commit requests are declined into the existing
-              full-graph restart recovery path; watchdog bounds and capabilities
-              are unchanged. Ten clean runs bounds the failure rate rather than
-              proving absence, and this is diagnostic evidence only, not beta.5
-              field acceptance or a two-hour physical soak.
+              Measured with the load condition stated: on an otherwise idle
+              box with normal logging the native engine suite ran clean 10 of
+              10 times, each covering three workers through six in-place
+              replacements with clean transport checks and clean stop; under a
+              synthetic 100% CPU load the same rollover test was 0 of 3 clean
+              before the round-2 repair and 20 of 24 clean after it. Round 3
+              puts the replacement on air before the outgoing program is torn
+              down; its loaded-run tally is not yet measured. Overlapping
+              commit requests are declined into the existing full-graph restart
+              recovery path; the 10 s stall bound is never stood down, and
+              capabilities are unchanged. These tallies bound the failure rate
+              rather than proving absence, and this is diagnostic evidence only,
+              not beta.5 field acceptance or a two-hour physical soak.
               Live-caption timing is also isolated: at most one no-text timing
               signal can wait behind the signal currently being processed.
               Actual caption cues keep their existing path.

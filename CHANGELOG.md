@@ -218,7 +218,7 @@ below.
 - **Playback evidence bindings include the new caption helper.** The current
   engine, test and historical-evidence annotations are hash-bound in both
   registry entries. All seven runtime modules have individual drift tests.
-  July17 service/boot observations remain historical; current native tests
+  July 17 service/boot observations remain historical; current native tests
   do not claim a new pre-login, installed-service or field acceptance result.
 
 - **Live-caption heartbeat admission is now explicitly bounded at its source.**
@@ -230,29 +230,88 @@ below.
   A/V packet spans, transport/PCR checks, caption taps, and clean stop. The
   full native suite and field acceptance remain separate evidence.
 
-- **Native in-place reload retirement is now bounded and serialized.** The
-  repaired path keeps persistent bounded A/V queues, holds a replacement until
-  the outgoing leg retires, and preserves the existing watchdog bounds. An
-  overlapping commit request is explicitly declined into the existing
-  full-graph restart recovery path rather than queued as latest-wins. The
-  native engine suite runs clean ten times out of ten with normal logging, each
-  run covering three workers and six in-place replacements with clean transport
-  checks and clean stop (320 committed replacements in total, no stalls and no
-  unfinished commits). Ten clean runs bounds the failure rate rather than
-  proving absence; this does not claim installer acceptance or a two-hour
-  physical soak, and no station capability is disabled.
+- **A replacement program now goes on air before the outgoing one is torn
+  down (round 3 of the reload repair).** The previous ordering switched to the
+  replacement, tore the outgoing program down, and only then let the
+  replacement flow -- so output was dark for the whole teardown, and under a
+  box pinned at 100% CPU that teardown outran the 15 s commit watchdog in 4 of
+  24 measured runs and force-exited a worker whose replacement was ready. The
+  commit now releases the replacement and reports success first; the outgoing
+  program is torn down afterwards on a worker thread, bounded at 12 s for the
+  whole leg (8 s plus one 4 s retry sweep, no longer 2 s per element), and its
+  slowness, its errors, or an element it cannot shut down are logged by name
+  and never end a run on their own. The stall watchdog is no longer stood down
+  during a commit, so the worst-case dead air a viewer can see is back to 10 s
+  rather than 15 s. A new program change waits, bounded at 2 s, for an earlier
+  teardown to finish releasing the switch's input pads before requesting new
+  ones on the same switch, and refuses cleanly instead of racing it. Found
+  while verifying this ordering on the live native runtime: the pipeline can
+  set an already shut-down element of the outgoing program back to PLAYING
+  behind the teardown (a bin re-applies its state to every child when a
+  concurrently added overlay layer finishes loading), which then crashed the
+  worker at stop in 2 of 3 batch runs; every retiring element's state is now
+  locked before it is shut down, and 3 of 3 batch runs since exited clean.
+  Loaded-run tally for this ordering is not yet measured; the idle-box and
+  round-2 loaded tallies are in the README.
+
+- **Round-3 review follow-ups on the off-air retirement (same PR).** Five
+  findings against the ordering above, all in the engine, none measured under
+  load yet. (1) An element a retirement could not shut down was left
+  state-locked inside the pipeline, and a locked element is skipped by the
+  pipeline's own shutdown -- so `stop()` reported a clean teardown with a
+  running element still inside. `stop()` now unlocks every such orphan before
+  the whole-pipeline shutdown, shuts each one down directly inside the same
+  bounded step, and reports the teardown unclean (the worker's
+  `teardown_clean` receipt) if any is still running. The build-failure cleanup
+  had the same gap the other way round -- it removed elements without
+  confirming they had shut down (removal does not shut a child down; disposing
+  one still running is the crash measured above) -- and now removes only what
+  it has confirmed. (2) A retirement whose thread never returns held its claim
+  on the input-pad gate forever, so every later program change would have
+  been refused at that gate -- silent dead air at the next rollover on the
+  FIFO path, a worker restart on the Windows path. A claim older than the leg's
+  whole budget plus margin (13 s) is now abandoned: its elements are recorded
+  as orphans and named in an ERROR line, and later changes proceed. A refusal
+  at that gate also now settles the request as `aborted:selector-busy` and
+  prints the `CTRL reload aborted:` marker before raising, instead of leaving
+  the daemon on its 960 s settle deadline. (3) The gate's own bound was 2 s,
+  sized against a healthy 0.08 s teardown, while a teardown is allowed 12 s;
+  a merely slow teardown therefore turned the next rollover into a restart.
+  The bound is now derived from the teardown budgets (8 s + 4 s + 1 s margin).
+  (4) Instrument: the `old-leg-disposed` diagnostic and the incomplete-
+  retirement ERROR now carry `elapsed=<s>`, and every `CTRL` line on stderr
+  ends with a UTC `t=HH:MM:SS.mmm` stamp (appended at the end; `CTRL` stays at
+  column 0, so the sandbox lane's parsers, `health.py`'s markers and the
+  daemon's `last_error` fold are unchanged -- the lane's 12 parser suites and
+  the engine's two GI-free suites pass). (5) Retirement thread construction
+  moved inside its guard on both paths, and old-leg retirement starts only
+  behind a commit that actually published. Eight new GI-free tests (and two
+  extended ones) cover each finding against the fake-Gst harness; the loaded-run tally for the round-3
+  ordering remains unmeasured.
+
+- **Native in-place reload retirement is bounded and serialized.** The
+  repaired path keeps persistent bounded A/V queues. An overlapping commit
+  request is explicitly declined into the existing full-graph restart recovery
+  path rather than queued as latest-wins. Measured with the load condition
+  stated: on an otherwise idle box with normal logging the native engine suite
+  ran clean 10 of 10 times, each run covering three workers and six in-place
+  replacements with clean transport checks and clean stop; under a synthetic
+  100% CPU load the same three-worker rollover test was 0 of 3 clean before
+  this change and 20 of 24 clean after it. Those tallies bound the failure rate
+  rather than proving absence; this does not claim installer acceptance or a
+  two-hour physical soak, and no station capability is disabled.
 
 - **Aborting a prepared replacement can no longer disturb the program on air.**
   A replacement that is abandoned before it goes live -- superseded, timed out,
   or failed -- is now cut off at its own outputs before it is released, so it
   cannot push anything into the live switch, and it is cleaned up on a worker
   thread instead of on the control loop. Its error message now also names the
-  element that failed. The two replacement watchdogs no longer overlap: the
-  stall bound stands down while a replacement is being committed so the commit
-  watchdog owns that window and can record its diagnostic, and the stall bound
-  restarts from full afterwards. A replacement whose old program is slow to
-  release is now waited out and retried once rather than being treated as a
-  failure that takes a channel that is still broadcasting off air.
+  element that failed. The stall bound restarts from full once a replacement
+  is committed, so the new program is measured on its own budget. (The round-2
+  stand-down of the stall bound during a commit was withdrawn in round 3; see
+  the entry above.) A replacement whose old program is slow to release is
+  waited out, bounded, rather than being treated as a failure that takes a
+  channel that is still broadcasting off air.
 
 - **The final caption audio file is no longer lost on shutdown.** The caption
   audio writer is given its own short closing budget instead of whatever

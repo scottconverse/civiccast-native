@@ -432,7 +432,7 @@ entries:
     inputs:
       prose:
         path: docs/evidence/native-engine-gate.md
-        blob: ce6c0d9cf146ef6ec84031d08a7412fa99e6ffc6
+        blob: a62fcc7a52ceea82637d723a0fbb20aa027f12f8
       # CC-WS3-005 (round 3): the evidence doc's own header states "Engine
       # code: civiccast/egress/gst/ worker.py + engine.py + graph.py at
       # integration-branch HEAD, zero modifications — the exact files WSL
@@ -1032,15 +1032,55 @@ entries:
       # 10/10 (25 PASS each), caption flow 10/10 (2 PASS each), caption gap
       # admission 10/10 (5 PASS each); 320 committed reloads across the
       # captured worker logs with zero stalls or unfinished commits outside
-      # the tests that produce those lines deliberately. Exact hashes and limits are in the linked
+      # the tests that produce those lines deliberately -- on an otherwise
+      # idle box. Exact hashes and limits are in the linked
       # beta5-caption-flow evidence record. These ordinary-user native runs
       # are NOT installed-service or boot/pre-login acceptance. This update
       # also adds caption_flow.py to D2 and every-module drift falsification.
+      # PR 199 round 3 (2026-09-09, follow-up against merged main): the
+      # round-2 hostile review measured the same three-worker rollover test
+      # under a synthetic 100% CPU load at 0/3 clean on the pre-round-2 base
+      # and 20/24 clean on round 2; all four loaded failures were the commit
+      # watchdog force-exiting a worker still inside the OLD leg's
+      # set_state(NULL) while its replacement was held dark. engine.py is
+      # re-hashed below: a commit now releases the replacement and publishes
+      # BEFORE old-leg retirement, which runs on a worker thread behind an
+      # already-on-air leg and can no longer fail or darken the channel; the
+      # round-2 stall-watchdog stand-down during a commit is WITHDRAWN (worst
+      # case dead air is stall_timeout_s again); leg disposal is bounded by
+      # one 8s leg-wide deadline plus a 4s orphan sweep instead of 2s per
+      # element; elements still above NULL are tracked as orphans and never
+      # passed to pipeline.remove; a retirement is announced (selector-pad
+      # gate + bus-error containment) before its thread starts, and
+      # reload_program waits, bounded at 2s, for that gate before requesting
+      # selector pads. test_gst_engine_wsl.py is re-hashed: the leak test
+      # now reads the element count from the retirement line. The loaded
+      # tally of the round-3 ordering is a LATER measurement, not claimed
+      # here; the 10/10 idle-box tallies above are unchanged and unrepeated.
+      # PR 202 round-3 review follow-ups (2026-09-09): engine.py is re-hashed
+      # below (`git hash-object --path <file> <file>`), worker.py and
+      # test_gst_engine_wsl.py are unchanged. engine.py: stop() unlocks every
+      # orphaned retiring element before the whole-pipeline NULL, NULLs each
+      # directly inside the same bounded step, and folds any still above NULL
+      # into teardown_clean; build-failure cleanup removes only elements it
+      # confirmed at NULL; a retirement claim on the selector-pad gate older
+      # than 13s is abandoned (elements recorded as orphans, ERROR by name) so
+      # later reloads proceed, and a gate refusal settles aborted:selector-busy
+      # and prints the stdout aborted marker before raising; the gate bound is
+      # derived from the leg budgets (8s + 4s + 1s) instead of 2s; retirement
+      # lines carry elapsed= and every CTRL stderr line ends with a UTC t=
+      # stamp (CTRL stays at column 0 -- the lane parsers, health.py markers
+      # and the daemon's last_error fold are unchanged and their suites pass);
+      # retirement thread construction is inside its guard and old-leg
+      # retirement starts only behind a published commit. Verified ONLY by the
+      # two GI-free engine suites (84 PASS) and the lane's 12 parser suites on
+      # this box while Gate A occupied the sandbox; no native-runtime run and
+      # NO loaded tally is claimed for this round.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: e5baeb27dd7c053233407286085e2b0f594d4b64
         - path: civiccast/egress/gst/engine.py
-          blob: 472f6ec66b28d2d22d91ac25aad8e9c76c3bdd6f
+          blob: 7cfa01d1269127e336618e651b391c71951f07c3
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -1053,7 +1093,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: e285ee64790f3d8152c0a679285a5451b9bd8ed0
+        blob: bd0d8ffcf042a80d78f0d4e55c67d174f4b9983e
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -1166,7 +1206,7 @@ entries:
     inputs:
       prose:
         path: docs/evidence/session0-service-broadcast.md
-        blob: d40cb8262fb72e3f26d388c3b8a56cf4869d4c3e
+        blob: 30d6163260be8f553c53fa6533e2f214a4155a30
       # CC-WS3-005 (round 3): the evidence doc's own header states "Engine
       # code: civiccast/egress/gst/{worker,engine,graph,control}.py copied
       # unmodified from program/native-windows @ 3b4b245...". All four are
@@ -1919,15 +1959,55 @@ entries:
       # 10/10 (25 PASS each), caption flow 10/10 (2 PASS each), caption gap
       # admission 10/10 (5 PASS each); 320 committed reloads across the
       # captured worker logs with zero stalls or unfinished commits outside
-      # the tests that produce those lines deliberately. Exact hashes and limits are in the linked
+      # the tests that produce those lines deliberately -- on an otherwise
+      # idle box. Exact hashes and limits are in the linked
       # beta5-caption-flow evidence record. These ordinary-user native runs
       # are NOT installed-service or boot/pre-login acceptance. This update
       # also adds caption_flow.py to D2 and every-module drift falsification.
+      # PR 199 round 3 (2026-09-09, follow-up against merged main): the
+      # round-2 hostile review measured the same three-worker rollover test
+      # under a synthetic 100% CPU load at 0/3 clean on the pre-round-2 base
+      # and 20/24 clean on round 2; all four loaded failures were the commit
+      # watchdog force-exiting a worker still inside the OLD leg's
+      # set_state(NULL) while its replacement was held dark. engine.py is
+      # re-hashed below: a commit now releases the replacement and publishes
+      # BEFORE old-leg retirement, which runs on a worker thread behind an
+      # already-on-air leg and can no longer fail or darken the channel; the
+      # round-2 stall-watchdog stand-down during a commit is WITHDRAWN (worst
+      # case dead air is stall_timeout_s again); leg disposal is bounded by
+      # one 8s leg-wide deadline plus a 4s orphan sweep instead of 2s per
+      # element; elements still above NULL are tracked as orphans and never
+      # passed to pipeline.remove; a retirement is announced (selector-pad
+      # gate + bus-error containment) before its thread starts, and
+      # reload_program waits, bounded at 2s, for that gate before requesting
+      # selector pads. test_gst_engine_wsl.py is re-hashed: the leak test
+      # now reads the element count from the retirement line. The loaded
+      # tally of the round-3 ordering is a LATER measurement, not claimed
+      # here; the 10/10 idle-box tallies above are unchanged and unrepeated.
+      # PR 202 round-3 review follow-ups (2026-09-09): engine.py is re-hashed
+      # below (`git hash-object --path <file> <file>`), worker.py and
+      # test_gst_engine_wsl.py are unchanged. engine.py: stop() unlocks every
+      # orphaned retiring element before the whole-pipeline NULL, NULLs each
+      # directly inside the same bounded step, and folds any still above NULL
+      # into teardown_clean; build-failure cleanup removes only elements it
+      # confirmed at NULL; a retirement claim on the selector-pad gate older
+      # than 13s is abandoned (elements recorded as orphans, ERROR by name) so
+      # later reloads proceed, and a gate refusal settles aborted:selector-busy
+      # and prints the stdout aborted marker before raising; the gate bound is
+      # derived from the leg budgets (8s + 4s + 1s) instead of 2s; retirement
+      # lines carry elapsed= and every CTRL stderr line ends with a UTC t=
+      # stamp (CTRL stays at column 0 -- the lane parsers, health.py markers
+      # and the daemon's last_error fold are unchanged and their suites pass);
+      # retirement thread construction is inside its guard and old-leg
+      # retirement starts only behind a published commit. Verified ONLY by the
+      # two GI-free engine suites (84 PASS) and the lane's 12 parser suites on
+      # this box while Gate A occupied the sandbox; no native-runtime run and
+      # NO loaded tally is claimed for this round.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: e5baeb27dd7c053233407286085e2b0f594d4b64
         - path: civiccast/egress/gst/engine.py
-          blob: 472f6ec66b28d2d22d91ac25aad8e9c76c3bdd6f
+          blob: 7cfa01d1269127e336618e651b391c71951f07c3
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -1940,7 +2020,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: e285ee64790f3d8152c0a679285a5451b9bd8ed0
+        blob: bd0d8ffcf042a80d78f0d4e55c67d174f4b9983e
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
