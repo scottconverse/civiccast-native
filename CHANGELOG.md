@@ -85,6 +85,26 @@ below.
 
 ### Fixed
 
+- **Caption review queue `list()` now returns creation order even when two
+  rows share the identical microsecond `created_at`** (item 92). On a fast
+  Windows box, two rows created in a tight loop (e.g. queueing every cue of
+  a job in one pass) can read the same `datetime.now(UTC)` value; the
+  in-memory store's tie-break used to fall back to `review_item_id`, a
+  lexical string comparison that does not track creation order and could
+  silently swap adjacent rows (e.g. sorting a cue's `-02:` suffixed id
+  before its `:`-suffixed sibling). `InMemoryCaptionReviewStore` now records
+  a monotonic insertion sequence per row at create time and sorts by
+  `(created_at, sequence)`, so `list()` order equals creation order on
+  every tie, deterministically. The regression this masked was a flaky
+  test (`test_an_orphaned_spanish_row_neither_gates_nor_reaches_the_track`)
+  that has since been hardened to look up rows by source cue identity
+  rather than list position; a new store-level regression test forces the
+  tie via a frozen clock and asserts creation order directly.
+  `PostgresCaptionReviewStore.list()` keeps its existing
+  `(created_at, review_item_id)` ordering — a durable equivalent of the
+  in-memory counter would need a new migration and is documented as a
+  known, narrower-risk contract difference rather than changed here.
+
 - **Sandbox TSDuck analysis now reads the current nested JSON schema.** The
   soak sampler reads packet totals, invalid syncs, and transport errors from
   `ts.packets`, rejects absent or malformed fields instead of converting them
