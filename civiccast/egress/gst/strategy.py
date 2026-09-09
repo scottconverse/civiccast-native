@@ -641,17 +641,18 @@ def _live_captions_enabled_or_default(channel_id: str) -> bool:
     is exactly backwards: whether live captions are enabled must never be
     able to take playout down.
 
-    Defaults to the SAME "on" ``resolve_live_captions_enabled`` itself
-    defaults to when nothing is persisted -- live captions are an
-    accessibility feature, and a station that can run them should, so a
-    read failure is treated as "the switch could not be read" rather than
-    "the operator asked for it off." Imported lazily, matching the existing
-    lazy import in ``civiccast.app`` for the same function --
-    ``civiccast.installer`` is not otherwise a dependency of the egress
-    graph-building path and this keeps it that way for every caller that
-    never hits a read failure.
+    Defaults to the SAME value ``resolve_live_captions_enabled`` itself
+    defaults to when nothing is persisted (``LIVE_CAPTIONS_DEFAULT`` in
+    ``civiccast.installer.models`` -- OFF for beta.5, see that constant), so
+    a read failure is treated as "the switch could not be read" and lands on
+    the shipped default rather than on either operator choice. Imported
+    lazily, matching the existing lazy import in ``civiccast.app`` for the
+    same function -- ``civiccast.installer`` is not otherwise a dependency
+    of the egress graph-building path and this keeps it that way for every
+    caller that never hits a read failure.
     """
 
+    from civiccast.installer.models import LIVE_CAPTIONS_DEFAULT
     from civiccast.installer.station_state import resolve_live_captions_enabled
 
     global _live_captions_read_failure_announced
@@ -662,16 +663,17 @@ def _live_captions_enabled_or_default(channel_id: str) -> bool:
             logger.warning(
                 "channel %s: could not read the live-captions station-profile "
                 "switch (station-state.json unreadable or locked); defaulting "
-                "to ENABLED rather than blocking playout on an unrelated "
-                "accessibility-feature switch. This channel and every other "
-                "channel will keep defaulting to enabled until the file "
-                "becomes readable again; this warning is logged once per "
+                "to the shipped default (%s) rather than blocking playout on "
+                "an unrelated accessibility-feature switch. This channel and "
+                "every other channel will keep using that default until the "
+                "file becomes readable again; this warning is logged once per "
                 "process, not once per channel.",
                 channel_id,
+                "enabled" if LIVE_CAPTIONS_DEFAULT else "disabled",
                 exc_info=True,
             )
             _live_captions_read_failure_announced = True
-        return True
+        return LIVE_CAPTIONS_DEFAULT
 
 
 def _write_graph_file(path: Path, text: str) -> None:
@@ -825,9 +827,31 @@ class GstPlayoutStrategy:
         # ``last_send_command_failure_reason``.
         self._last_send_command_failure: dict[str, str] = {}
 
-    def _caption_embed(self) -> CaptionEmbedRequest | None:
-        """The caption-embed request for graph assembly (None = embedding off)."""
-        return CaptionEmbedRequest(mode="live") if self._embed_captions else None
+    def _caption_embed(self, channel_id: str) -> CaptionEmbedRequest | None:
+        """The caption-embed request for graph assembly (None = embedding off).
+
+        Two gates, both required. ``self._embed_captions`` is the deployment
+        opt-in (``CIVICCAST_EGRESS_EMBED_CAPTIONS``, which an activated native
+        station sets to ``1`` unconditionally in
+        ``civiccast.native.station_runtime``). The operator's station-profile
+        switch (``StationProfile.live_captions_enabled``, read through
+        ``_live_captions_enabled_or_default``) is the second: before beta.5
+        it stopped only the audio TAP leg (``_with_audio_tap``) and the ASR,
+        while the CEA-708 EMBED leg -- ``cccombiner`` between the encoder
+        and the mux plus the appsrc/heartbeat caption source
+        (``engine._build_caption_embed``) -- was still built on every native
+        channel. The 2026-09-09 sandbox soak measured that leg holding video
+        for 25-30 s and burst-releasing it every 1-2 minutes on every
+        channel, so with the switch off NO caption element is built at all:
+        ``graph.captions`` is ``None`` and ``engine.py`` never calls
+        ``_build_caption_embed``. Same start-only latency as the tap leg: a
+        content reload does not rebuild the embed leg either way.
+        """
+        if not self._embed_captions:
+            return None
+        if not _live_captions_enabled_or_default(channel_id):
+            return None
+        return CaptionEmbedRequest(mode="live")
 
     def _audio_tracks(self, channel_id: str) -> list[Any] | None:
         """The channel's secondary audio tracks for graph assembly (None = single PID)."""
@@ -907,7 +931,7 @@ class GstPlayoutStrategy:
         if (
             decision.encoder_override
             and "265" in decision.encoder_override
-            and self._caption_embed() is not None
+            and self._caption_embed(request.channel_id) is not None
         ):
             raise EncoderUnavailableError(
                 "HEVC/H.265 cannot embed captions on native Windows -- the caption inserter "
@@ -938,7 +962,7 @@ class GstPlayoutStrategy:
             request.config,
             request.source_plan,
             request.resolve_secret,
-            caption_embed=self._caption_embed(),
+            caption_embed=self._caption_embed(request.channel_id),
             audio_tracks=self._audio_tracks(request.channel_id),
             encoder_override=encoder_override,
             cg_overlay_image=self._cg_overlay_image(request, warn=True),
@@ -1150,7 +1174,7 @@ class GstPlayoutStrategy:
             request.config,
             request.source_plan,
             request.resolve_secret,
-            caption_embed=self._caption_embed(),
+            caption_embed=self._caption_embed(channel_id),
             audio_tracks=self._audio_tracks(channel_id),
             encoder_override=encoder_override,
             cg_overlay_image=self._cg_overlay_image(request, warn=False),

@@ -55,7 +55,8 @@ below.
 
 - **An operator switch for live captions: `Show live captions on air` on
   Setup > Station Profile** (`StationProfile.live_captions_enabled`, default
-  on, `GET`/`PUT /api/staff/station/profile`, `setup_admin` to change). An
+  on when introduced -- **now off by default for beta.5**, see "Changed"
+  below, `GET`/`PUT /api/staff/station/profile`, `setup_admin` to change). An
   activated native station sets `CIVICCAST_CAPTION_TAP=inline`
   unconditionally, so until now there was no way for an operator to stop live
   captioning on a box where it could not keep up. The switch is read on every
@@ -70,6 +71,45 @@ below.
   against the operator's switch.
 
 ### Changed
+
+- **Live captions are OFF by default for beta.5 (temporary).** The
+  2026-09-09 15-minute sandbox soak of the beta.5 kit (captions on, seamless
+  reload on, four real clips) showed, on every channel, a recurring 25-30 s
+  video hold followed by a burst of ~900 frames every 1-2 minutes; twice the
+  hold outlasted the 10 s stall watchdog and restarted the `government`
+  worker (self-healed in ~30 s). Captions-off runs have never shown the
+  hold. The diagnosis points at the live caption **embed** leg on the video
+  path: `_build_caption_embed` (`civiccast/egress/gst/engine.py`) inserts
+  `cccombiner` between `h264parse` and the mux, fed by an appsrc whose
+  supply is a 100 ms heartbeat GAP gated by `CaptionGapGate`
+  (`civiccast/egress/gst/caption_flow.py`); when that pad's supply stalls,
+  `cccombiner` holds video while audio flows. The root-cause fix is
+  deferred to beta.5.1. Until then:
+  - `StationProfile.live_captions_enabled` defaults to `false`
+    (`LIVE_CAPTIONS_DEFAULT`, `civiccast/installer/models.py`); first-admin
+    setup now persists the value explicitly; a station-state file without
+    the key (commissioned on beta.4) reads as off; an explicitly stored
+    `true` is kept across the upgrade (nothing rewrites a stored value).
+  - The switch now also gates the **embed leg**, not just the audio tap and
+    the ASR: `GstPlayoutStrategy._caption_embed` returns no
+    `CaptionEmbedRequest` when the switch is off, so `graph.captions` is
+    `None`, no `cccombiner`/`h264ccinserter`/`tttocea608`/`ccconverter`
+    element is built, and the engine never arms the caption heartbeat.
+    `CIVICCAST_EGRESS_EMBED_CAPTIONS=1` (set unconditionally on an activated
+    native station) is no longer sufficient on its own. A read failure on
+    `station-state.json` now falls back to the shipped default (off)
+    instead of on.
+  - **To turn live captions on:** operator console -> Setup > Station
+    Profile -> *Show live captions on air* (`setup_admin`), or
+    `PUT /api/staff/station/profile {"live_captions_enabled": true}`. Turning
+    them on takes effect at each channel's next start; turning them off
+    stops the ASR within one caption-tap poll, but the embed leg itself is
+    only removed at the channel's next start.
+  - The operator console reads a profile without the key as off, and the
+    setting's help text names the known issue.
+  - **Known issue (beta.5, with live captions ON):** video can freeze
+    25-30 s and catch up in a burst every 1-2 min; rarely the 10 s stall
+    watchdog restarts the channel (30 s gap).
 
 - **Self-hosted candidate builds no longer upload the signed installer and
   `.ccpack` files by default.** `native-beta-candidate-artifacts.yml`'s

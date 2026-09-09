@@ -144,10 +144,20 @@ kill the scan.
 ### Turning live captions off
 
 `PUT /api/staff/station/profile` with `{"live_captions_enabled": false}`
-(role: `setup_admin`). It is **on by default**, persisted in station-state,
-returned by `GET /api/staff/station/profile`, and read on **every scan** — so
-it takes effect within one poll interval on a station that is on air, with no
-control-plane restart.
+(role: `setup_admin`), or `true` to turn them on. It is **off by default in
+beta.5** (temporary: with it on, the CEA-708 caption embed leg on the video
+path held video for 25-30 s and burst-released it every 1-2 minutes on every
+channel in the 2026-09-09 sandbox soak; `LIVE_CAPTIONS_DEFAULT` in
+`civiccast/installer/models.py`), persisted in station-state explicitly at
+first-admin setup, returned by `GET /api/staff/station/profile`, and read on
+**every scan** — so turning it off stops the ASR within one poll interval on a
+station that is on air, with no control-plane restart (the audio-tap and
+caption-embed legs already built into a running channel's pipeline are only
+removed at that channel's next start). A station-state file
+without the key (commissioned before the switch existed) reads as off; an
+explicitly stored `true` is kept across the upgrade. Turning it **on** takes
+effect at each channel's next start, because the audio-tap and caption-embed
+legs are built only when a channel's pipeline is constructed.
 
 While it is off the tap transcribes nothing, blanks every channel's live
 caption file, reports `"state": "disabled"`, and *deletes* the forked audio

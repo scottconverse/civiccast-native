@@ -261,6 +261,16 @@ class StationChannelProfile(BaseModel):
     purpose: Annotated[str, Field(min_length=1, max_length=160)]
 
 
+#: Fresh-install default for ``StationProfile.live_captions_enabled`` and the
+#: value ``resolve_live_captions_enabled`` (``station_state.py``) reports when
+#: the key is absent. ``False`` for beta.5 (temporary, owner decision
+#: 2026-09-09): the live caption embed leg held video for 25-30 s and then
+#: burst-released it every 1-2 minutes on every channel in the sandbox soak.
+#: One constant so the model default, the resolver's absent-key default and
+#: the profile rehydration default cannot drift apart.
+LIVE_CAPTIONS_DEFAULT = False
+
+
 class StationProfile(BaseModel):
     """Operator-facing station identity created during first-admin setup."""
 
@@ -278,17 +288,19 @@ class StationProfile(BaseModel):
     sample_content_enabled: bool = True
     initial_schedule_enabled: bool = True
     live_captions_enabled: bool = Field(
-        default=True,
+        default=LIVE_CAPTIONS_DEFAULT,
         description=(
-            "Operator switch for the LIVE caption tap (real-time ASR on the "
-            "broadcast audio of every ON_AIR channel). On by default -- live "
-            "captions are an accessibility feature and a station that can run "
-            "them should. Turn it OFF on a station whose caption tap cannot "
-            "keep up: an activated native station enables the tap "
-            "unconditionally in its environment, so before this switch existed "
-            "there was no way for an operator to stop it. Turning it off does "
-            "NOT affect captions on published recordings (the offline caption "
-            "job), which is the legal requirement; this is the live one."
+            "Operator switch for LIVE captions: the real-time ASR tap on the "
+            "broadcast audio of every ON_AIR channel AND the CEA-708 caption "
+            "embed leg on the video path. OFF by default in beta.5 "
+            "(temporary): with the embed leg built, the 2026-09-09 sandbox "
+            "soak measured a recurring 25-30 s video hold followed by a burst "
+            "of frames every 1-2 minutes on every channel, and twice the 10 s "
+            "stall watchdog restarted a channel. Turn it ON from the operator "
+            "console (Setup > Station Profile > Show live captions on air) on "
+            "a station that can keep up. Turning it off does NOT affect "
+            "captions on published recordings (the offline caption job), "
+            "which is the legal requirement; this is the live one."
         ),
     )
     default_roles: list[Annotated[str, Field(min_length=1, max_length=80)]] = Field(
