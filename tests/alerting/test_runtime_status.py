@@ -277,3 +277,136 @@ class TestRuntimeSafeToAir:
         )
         r = compute_runtime_safe_to_air(store, [], now=_NOW)
         assert r.color == "yellow"
+
+
+# ---------------------------------------------------------------------------
+# Live captions switched OFF by the operator (beta.5 default)
+# ---------------------------------------------------------------------------
+
+
+class TestCaptionGateFollowsTheOperatorSwitch:
+    """Round-2 review BLOCKER 1: with live captions off, no embed leg is built
+    and the tap blanks every sidecar, so the decode-back proof can never PASS.
+    The caption readiness gate must therefore follow the operator's switch --
+    otherwise every auto_start channel's banner is pinned red forever."""
+
+    def test_captions_off_with_healthy_sinks_is_green(self) -> None:
+        c = compute_channel_runtime_status(
+            _config(),
+            _state("public", "ON_AIR"),
+            _sample("public", "ON_AIR", caption_status="not-verified"),
+            now=_NOW,
+            expect_captions=False,
+        )
+        assert c.color == "green"
+        assert c.captions_expected is False
+        assert c.captions_verified is False
+
+    def test_captions_off_still_reports_sink_and_loudness_degradation(self) -> None:
+        c = compute_channel_runtime_status(
+            _config(),
+            _state("public", "ON_AIR"),
+            _sample(
+                "public", "ON_AIR", sinks={"Cable headend": False}, caption_status="not-verified"
+            ),
+            now=_NOW,
+            expect_captions=False,
+        )
+        assert c.color == "yellow"
+
+    def test_captions_off_healthy_slate_is_green_and_flagged(self) -> None:
+        c = compute_channel_runtime_status(
+            _config(),
+            _state("public", "FALLBACK_SLATE"),
+            _sample(
+                "public", "FALLBACK_SLATE", fps=0.0, bitrate=0.0, caption_status="not-verified"
+            ),
+            now=_NOW,
+            expect_captions=False,
+        )
+        assert c.color == "green"
+        assert c.on_healthy_slate is True
+
+    def test_captions_on_and_unverified_is_still_red(self) -> None:
+        c = compute_channel_runtime_status(
+            _config(),
+            _state("public", "ON_AIR"),
+            _sample("public", "ON_AIR", caption_status="not-verified"),
+            now=_NOW,
+            expect_captions=True,
+        )
+        assert c.color == "red"
+        assert c.captions_expected is True
+
+    def test_captions_on_and_verified_reports_verified(self) -> None:
+        c = compute_channel_runtime_status(
+            _config(),
+            _state("public", "ON_AIR"),
+            _sample("public", "ON_AIR", caption_status="on"),
+            now=_NOW,
+            expect_captions=True,
+        )
+        assert c.color == "green"
+        assert c.captions_verified is True
+
+    def _unverified_store(self) -> _FakeStore:
+        return _FakeStore(
+            [_config("public"), _config("edu")],
+            {"public": _state("public", "ON_AIR"), "edu": _state("edu", "ON_AIR")},
+            {
+                "public": _sample("public", "ON_AIR", caption_status="not-verified"),
+                "edu": _sample("edu", "ON_AIR", caption_status="not-verified"),
+            },
+        )
+
+    def test_safe_to_air_reads_the_operator_switch_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reads: list[int] = []
+
+        def _resolver() -> bool:
+            reads.append(1)
+            return False
+
+        monkeypatch.setattr(
+            "civiccast.installer.station_state.resolve_live_captions_enabled", _resolver
+        )
+        r = compute_runtime_safe_to_air(self._unverified_store(), [], now=_NOW)
+        assert r.color == "green"
+        assert len(reads) == 1  # once per computation, not once per channel
+        assert all(c.captions_expected is False for c in r.channels)
+
+    def test_safe_to_air_stays_red_when_captions_are_on_and_unverified(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "civiccast.installer.station_state.resolve_live_captions_enabled", lambda: True
+        )
+        r = compute_runtime_safe_to_air(self._unverified_store(), [], now=_NOW)
+        assert r.color == "red"
+        assert all(c.captions_expected is True for c in r.channels)
+
+    def test_explicit_expect_captions_overrides_the_resolver(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "civiccast.installer.station_state.resolve_live_captions_enabled", lambda: True
+        )
+        r = compute_runtime_safe_to_air(
+            self._unverified_store(), [], now=_NOW, expect_captions=False
+        )
+        assert r.color == "green"
+
+    def test_an_unreadable_switch_never_takes_the_banner_down(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from civiccast.installer.models import LIVE_CAPTIONS_DEFAULT
+
+        def _boom() -> bool:
+            raise PermissionError("station-state.json is locked")
+
+        monkeypatch.setattr(
+            "civiccast.installer.station_state.resolve_live_captions_enabled", _boom
+        )
+        r = compute_runtime_safe_to_air(self._unverified_store(), [], now=_NOW)
+        assert all(c.captions_expected is LIVE_CAPTIONS_DEFAULT for c in r.channels)

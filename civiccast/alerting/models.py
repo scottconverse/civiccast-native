@@ -294,6 +294,13 @@ class ChannelRuntimeStatus(BaseModel):
     last_loudness_lufs: float | None = None
     seconds_in_state: Annotated[int, Field(ge=0)] = 0
     last_proof_event_id: Annotated[str | None, Field(default=None, max_length=120)] = None
+    # Whether the operator's live-captions switch is ON (captions are a
+    # readiness requirement and gate ``color``) or OFF (no embed leg is built,
+    # the proof cannot PASS, and the caption gate is not applied). Lets the
+    # dashboard say "off by operator" instead of "not confirmed".
+    captions_expected: bool = True
+    # The latest health sample's decode-back proof read ``on``.
+    captions_verified: bool = False
     color: SafeToAirColor
 
 

@@ -19,13 +19,19 @@ export function CaptionStatusView({
   proofs,
   loading,
   error,
+  liveCaptionsEnabled,
 }: {
   status: CaptionStatusResponse | undefined
   proofs: EgressCaptionProofSample[] | undefined
   loading?: boolean
   error?: unknown
+  // Station-profile live-captions switch; undefined until it loads. Off means
+  // no caption is written into the picture, so "not verified" would read as a
+  // failure waiting to clear when nothing is being checked at all.
+  liveCaptionsEnabled?: boolean
 }) {
   const on = status?.caption_status === 'on'
+  const switchedOff = !on && liveCaptionsEnabled === false
   return (
     <section
       aria-label="Captions"
@@ -38,9 +44,16 @@ export function CaptionStatusView({
           className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase"
           style={{ background: on ? 'var(--cc-ok-soft)' : 'var(--cc-surface-3)', color: 'var(--cc-ink)' }}
         >
-          {loading ? 'Checking…' : on ? 'Captions on' : 'Not verified'}
+          {loading ? 'Checking…' : on ? 'Captions on' : switchedOff ? 'Captions off' : 'Not verified'}
         </span>
       </div>
+      {switchedOff && (
+        <p className="m-0 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
+          Live captions are switched off in the station profile (Setup &rarr; Station Profile), so
+          nothing is written into the picture and there is nothing for the on-air check to
+          confirm. Captions on published recordings are unaffected.
+        </p>
+      )}
       <p className="m-0 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
         Captions show as <strong>on</strong> only after CivicCast decodes them back from the
         emitted stream and they match. This proves carriage at the egress boundary; it is not a
@@ -119,7 +132,13 @@ export function CaptionStatusView({
   )
 }
 
-export function CaptionStatusCard({ channelId }: { channelId: string }) {
+export function CaptionStatusCard({
+  channelId,
+  liveCaptionsEnabled,
+}: {
+  channelId: string
+  liveCaptionsEnabled?: boolean
+}) {
   const statusQuery = useQuery({
     queryKey: ['caption-status', channelId],
     queryFn: () => getCaptionStatus(channelId),
@@ -136,6 +155,7 @@ export function CaptionStatusCard({ channelId }: { channelId: string }) {
       proofs={proofsQuery.data}
       loading={statusQuery.isLoading}
       error={statusQuery.error}
+      liveCaptionsEnabled={liveCaptionsEnabled}
     />
   )
 }

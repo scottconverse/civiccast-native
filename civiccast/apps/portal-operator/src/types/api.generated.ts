@@ -1096,6 +1096,8 @@ export interface ChannelRuntimeStatus {
   last_loudness_lufs?: number | null
   seconds_in_state?: number
   last_proof_event_id?: string | null
+  captions_expected?: boolean
+  captions_verified?: boolean
   color: 'green' | 'yellow' | 'red'
 }
 

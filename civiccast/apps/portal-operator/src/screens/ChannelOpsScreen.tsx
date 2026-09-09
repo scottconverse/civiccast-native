@@ -18,6 +18,7 @@ import {
   getGraphicsOverlay,
   listEgressChannels,
   getStaffIdentity,
+  getStationProfile,
   listChannelProfiles,
   listHeadendProfiles,
   queueEgressCommand,
@@ -55,7 +56,7 @@ import type {
   StationAppConfig,
   StationAppConfigUpdate,
 } from '../types/api.generated'
-import { stateLabel, toneForEgressState } from './status-language'
+import { captionsRowLabel, stateLabel, toneForEgressState } from './status-language'
 
 const POLL_MS = 30_000
 
@@ -557,6 +558,7 @@ export function EgressControlPanel({
   canControl,
   error,
   onCommand,
+  liveCaptionsEnabled,
 }: {
   channelId: string | undefined
   state: EgressStateRow | null | undefined
@@ -565,6 +567,8 @@ export function EgressControlPanel({
   canControl: boolean
   error: unknown
   onCommand: (action: EgressCommandAction) => void
+  // Station-profile live-captions switch; undefined until it loads.
+  liveCaptionsEnabled?: boolean
 }) {
   const latestHealth = health[0]
   const sending = pendingCommand !== null
@@ -625,9 +629,7 @@ export function EgressControlPanel({
             </div>
             <div>
               <dt className="font-semibold">Captions</dt>
-              <dd className="m-0">
-                {latestHealth.caption_status === 'on' ? 'On' : 'Not yet confirmed (waiting for the on-air check)'}
-              </dd>
+              <dd className="m-0">{captionsRowLabel(latestHealth.caption_status, liveCaptionsEnabled)}</dd>
             </div>
           </dl>
         )}
@@ -1599,6 +1601,16 @@ export function ChannelOpsScreen() {
     refetchInterval: POLL_MS,
     retry: false,
   })
+  // The live-captions switch, so the "Captions" row and the caption card can
+  // say "off" instead of "not yet confirmed" when the operator switched it
+  // off. 404 before first-admin setup is fine: undefined keeps the
+  // fail-closed copy.
+  const stationProfileQuery = useQuery({
+    queryKey: ['station-profile'],
+    queryFn: getStationProfile,
+    retry: false,
+  })
+  const liveCaptionsEnabled = stationProfileQuery.data?.live_captions_enabled
   const egressConfigured = useMemo(() => {
     return Boolean(
       channelId &&
@@ -1742,6 +1754,7 @@ export function ChannelOpsScreen() {
             pendingCommand={egressCommandMutation.isPending ? (egressCommandMutation.variables ?? null) : null}
             canControl={canControlEgress}
             error={egressCommandMutation.error}
+            liveCaptionsEnabled={liveCaptionsEnabled}
             onCommand={(action) => {
               if (!channelId) return
               const channelName = selectedChannel?.branding.display_name ?? channelId
@@ -1758,7 +1771,7 @@ export function ChannelOpsScreen() {
           />
           <CableVerificationCard />
           {channelId && <LoudnessPlanCard channelId={channelId} enabled={egressConfigured} />}
-          {channelId && <CaptionStatusCard channelId={channelId} />}
+          {channelId && <CaptionStatusCard channelId={channelId} liveCaptionsEnabled={liveCaptionsEnabled} />}
           {channelId && <AudioTracksCard channelId={channelId} />}
           <HeadendDeliveryPanel
             key={`headend-${channelId ?? 'no-channel'}`}

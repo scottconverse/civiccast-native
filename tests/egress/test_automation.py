@@ -11,6 +11,7 @@ state rows.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
@@ -2088,6 +2089,335 @@ class TestStaleRolloverHorizonIsReestablishedNotDispatchedAgainst:
         far_future = _NOW + timedelta(seconds=5000)
         service.run_once(now=far_future)
 
+        assert _pending_actions(store, "public") == []
+
+
+class _SettlingHorizonAwareDaemon(_HorizonAwareDaemon):
+    """A daemon double with BOTH real-daemon capabilities the rollover pass
+    consults: ``dispatched_plan_horizon`` and ``has_pending_reload_settlement``."""
+
+    def __init__(self, *, live_channels: set[str] | None = None) -> None:
+        super().__init__(live_channels=live_channels)
+        self.pending_channels: set[str] = set()
+
+    def has_pending_reload_settlement(self, channel_id: str) -> bool:
+        return channel_id in self.pending_channels
+
+
+class TestStaleHorizonWaitsForASettlingSeamlessReload:
+    """Sandbox soak 39d852e (2026-09-09): the stale-horizon branch fired on
+    every government-channel rollover 5-17s after the OUTGOING plan's
+    projected end while a boundary-aligned seamless reload was still ARMED
+    and settling (the dispatched durations sum underestimates real playout,
+    and the daemon observes the engine's boundary commit a few seconds after
+    the fact). Re-establishing there read the daemon's dispatch record --
+    still the OLD plan, since ``_record_dispatched_plan`` runs at settlement
+    -- and dated it from "now", so the tuple ended one old plan-length in the
+    future. When the settlement landed, that poisoned ``previous_end_at`` fed
+    the deferred-start rule and dated the INCOMING plan's horizon a whole
+    plan too late: no rollover was issued for it, the plan ran to EOS, and
+    the channel took the 20s planned restart on every rollover.
+
+    Fix: while the daemon reports a pending settlement -- whoever issued the
+    reload: this pass's own rollover, a slate replan, or an operator reload
+    (hostile review round 2, finding 1: ``should_defer_switch`` defers ANY
+    ON_AIR reload, so they all share the overrun window) -- a past
+    ``plan_end_at`` is a settling switch, not the frozen-horizon lie: leave
+    the tuple alone and wait, logging the wait once per
+    ``_ROLLOVER_RETRY_WARN_INTERVAL_SECONDS`` (finding 3). Belt: the
+    deferred-start anchor is only honoured within the OUTGOING plan's own
+    scaled rollover lead (``_rollover_min_lead_seconds``, finding 2) of
+    ``now``, so a poisoned ``previous_end_at`` -- which sits about one
+    outgoing-plan-length ahead -- can never push a horizon a whole plan out,
+    however short the plan.
+
+    The outgoing plan is (500, 100): ends _NOW+600, trigger at _NOW+480. The
+    incoming rollover plan is (200, 100). The SHORT cases use a (60, 40)
+    outgoing plan (100s, under the flat 120s lead) and the same shape
+    incoming."""
+
+    _OUTGOING = (500.0, 100.0)
+    _INCOMING = (200.0, 100.0)
+    _SHORT = (60.0, 40.0)
+
+    def _on_air(self, store: InMemoryEgressStore, channel_id: str, proof_event_id: str) -> None:
+        store.write_state(
+            EgressStateRow(
+                channel_id=channel_id,
+                state="ON_AIR",
+                current_source_label="Council Meeting",
+                current_proof_event_id=proof_event_id,
+                updated_at=_NOW,
+            )
+        )
+
+    def _armed_and_settling(
+        self,
+    ) -> tuple[
+        InMemoryEgressStore, _SettlingHorizonAwareDaemon, ChannelAutomationService, dict[str, float]
+    ]:
+        """Establish the outgoing plan, fire its boundary-aligned rollover, and
+        have the daemon report that reload as armed and still settling. The
+        returned ``clock`` is the service's injected monotonic reading, in
+        seconds since ``_NOW``; advance it alongside ``now`` so the dispatch
+        cadence floor sees real elapsed time."""
+        clock = {"now": 0.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", "ev-1")
+        daemon = _SettlingHorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", self._OUTGOING, False)
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_segments(cid, self._INCOMING),
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+        )
+        service.run_once(now=_NOW)
+        assert service._plan_horizon["public"][1] == _NOW + timedelta(seconds=600)
+        clock["now"] = 480.0
+        service.run_once(now=_NOW + timedelta(seconds=480))
+        assert _pending_actions(store, "public") == ["reload"]
+        store.pop_pending_commands("public")
+        assert "public" in service._rollover_issued
+        daemon.pending_channels.add("public")
+        return store, daemon, service, clock
+
+    def test_a_past_horizon_is_left_alone_while_the_daemon_is_still_settling(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        store, _daemon, service, clock = self._armed_and_settling()
+        before = service._plan_horizon["public"]
+
+        # 10s past the projected end (soak: 5-17s), reload still settling.
+        clock["now"] = 610.0
+        with caplog.at_level(logging.WARNING, logger="civiccast.egress.automation"):
+            service.run_once(now=_NOW + timedelta(seconds=610))
+
+        assert service._plan_horizon["public"] == before  # tuple untouched
+        assert "public" in service._rollover_issued
+        assert _pending_actions(store, "public") == []
+        assert not [r for r in caplog.records if "was stale" in r.getMessage()]
+
+    def test_the_incoming_plan_is_then_dated_from_now_not_from_the_poisoned_end(
+        self,
+    ) -> None:
+        store, daemon, service, clock = self._armed_and_settling()
+        clock["now"] = 610.0
+        service.run_once(now=_NOW + timedelta(seconds=610))
+
+        # The settlement commits: the daemon drops the pending flag, the proof
+        # event changes, and the dispatch record now describes the incoming
+        # deferred plan (as EgressDaemon._commit_reload_settlement does).
+        daemon.pending_channels.discard("public")
+        self._on_air(store, "public", "ev-2")
+        daemon.dispatched["public"] = ("ev-2", self._INCOMING, True)
+        settled_at = _NOW + timedelta(seconds=612)
+        clock["now"] = 612.0
+        service.run_once(now=settled_at)
+
+        proof_id, plan_end_at, last_segment_start_at, planned_seconds = service._plan_horizon[
+            "public"
+        ]
+        assert proof_id == "ev-2"
+        assert planned_seconds == 300.0
+        assert plan_end_at == settled_at + timedelta(seconds=300)  # NOT previous_end + 300
+        assert last_segment_start_at == settled_at + timedelta(seconds=200)
+        assert "public" not in service._rollover_issued
+        assert _pending_actions(store, "public") == []
+
+        # And the incoming plan's own rollover fires at its real trigger
+        # (min(_NOW+812, _NOW+912-120) = _NOW+792), not a plan-length late.
+        clock["now"] = 791.0
+        service.run_once(now=_NOW + timedelta(seconds=791))
+        assert _pending_actions(store, "public") == []
+        clock["now"] = 793.0
+        service.run_once(now=_NOW + timedelta(seconds=793))
+        assert _pending_actions(store, "public") == ["reload"]
+
+    def test_the_stale_branch_still_runs_once_the_settlement_is_discarded_without_a_commit(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        store, daemon, service, clock = self._armed_and_settling()
+        clock["now"] = 610.0
+        service.run_once(now=_NOW + timedelta(seconds=610))
+
+        # The worker exits: the daemon discards the pending settlement with no
+        # proof-event change (``_discard_pending_reload_settlement``). The
+        # tuple is now a genuinely stale horizon again -- item 78 fix 2
+        # applies exactly as before.
+        daemon.pending_channels.discard("public")
+        clock["now"] = 614.0
+        with caplog.at_level(logging.WARNING, logger="civiccast.egress.automation"):
+            service.run_once(now=_NOW + timedelta(seconds=614))
+
+        assert [r for r in caplog.records if "was stale" in r.getMessage()]
+        assert "public" not in service._rollover_issued
+        # Re-established from the (still old) dispatch record, dated from now.
+        assert service._plan_horizon["public"][1] == _NOW + timedelta(seconds=614 + 600)
+        assert _pending_actions(store, "public") == []
+
+    def test_a_deferred_anchor_more_than_a_lead_time_ahead_is_not_honoured(self) -> None:
+        """Belt: even if a poisoned ``previous_end_at`` reaches the deferred-start
+        rule, it is ignored unless it lies within ``_ROLLOVER_MIN_LEAD_SECONDS``
+        of ``now`` -- the horizon is dated from ``now`` instead."""
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", "ev-1")
+        daemon = _SettlingHorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", self._OUTGOING, False)  # ends _NOW+600
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_segments(cid, self._INCOMING),
+            settings=ChannelAutomationSettings(),
+        )
+        service.run_once(now=_NOW)
+
+        # A deferred plan takes air while the tracked end is 500s ahead --
+        # more than the 120s lead floor, so not a boundary this switch could
+        # have been aligned to.
+        self._on_air(store, "public", "ev-2")
+        daemon.dispatched["public"] = ("ev-2", self._INCOMING, True)
+        now = _NOW + timedelta(seconds=100)
+        service.run_once(now=now)
+
+        assert service._plan_horizon["public"][1] == now + timedelta(seconds=300)
+
+    def test_a_short_plan_operator_reload_overrun_is_left_alone_while_settling(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Hostile review round 2, finding 1 (the reviewer's reproduction):
+        a 100s outgoing plan, a reload this pass did NOT issue
+        (``_rollover_issued`` is empty -- an operator-queued or slate reload,
+        both deferred to the boundary by ``should_defer_switch``), and the
+        outgoing leg overrunning its projected end while the daemon reports
+        the reload still settling. With the ``_rollover_issued`` conjunct in
+        the guard the stale branch fired here, re-read the OLD dispatch
+        record, and poisoned the horizon exactly as in the soak."""
+        clock = {"now": 0.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", "ev-1")
+        daemon = _SettlingHorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", self._SHORT, False)
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_segments(cid, self._SHORT),
+            settings=ChannelAutomationSettings(),
+            monotonic=lambda: clock["now"],
+        )
+        service.run_once(now=_NOW)
+        before = service._plan_horizon["public"]
+        assert before[1] == _NOW + timedelta(seconds=100)
+        assert "public" not in service._rollover_issued
+
+        # An operator reload is armed and settling; the outgoing leg runs 10s
+        # past its projected end.
+        daemon.pending_channels.add("public")
+        clock["now"] = 110.0
+        with caplog.at_level(logging.INFO, logger="civiccast.egress.automation"):
+            service.run_once(now=_NOW + timedelta(seconds=110))
+
+        assert service._plan_horizon["public"] == before  # tuple untouched
+        assert "public" not in service._rollover_issued
+        assert _pending_actions(store, "public") == []
+        assert not [r for r in caplog.records if "was stale" in r.getMessage()]
+        assert [r for r in caplog.records if "still settling; waiting" in r.getMessage()]
+
+        # The settlement commits: the incoming deferred plan is dated from
+        # now, and its own rollover fires at its real trigger
+        # (min(settled+60, settled+100-50) = settled+50), not a plan late.
+        daemon.pending_channels.discard("public")
+        self._on_air(store, "public", "ev-2")
+        daemon.dispatched["public"] = ("ev-2", self._SHORT, True)
+        settled_at = _NOW + timedelta(seconds=112)
+        clock["now"] = 112.0
+        service.run_once(now=settled_at)
+        proof_id, plan_end_at, last_segment_start_at, planned_seconds = service._plan_horizon[
+            "public"
+        ]
+        assert proof_id == "ev-2"
+        assert planned_seconds == 100.0
+        assert plan_end_at == settled_at + timedelta(seconds=100)
+        assert last_segment_start_at == settled_at + timedelta(seconds=60)
+        assert _pending_actions(store, "public") == []
+        clock["now"] = 161.0
+        service.run_once(now=_NOW + timedelta(seconds=161))
+        assert _pending_actions(store, "public") == []
+        clock["now"] = 163.0
+        service.run_once(now=_NOW + timedelta(seconds=163))
+        assert _pending_actions(store, "public") == ["reload"]
+
+    def test_a_short_plan_deferred_anchor_is_bounded_by_the_outgoing_plans_own_lead(
+        self,
+    ) -> None:
+        """Hostile review round 2, finding 2: the belt must scale with the
+        OUTGOING plan. A poisoned anchor sits about one outgoing-plan-length
+        ahead -- 98s here for a 100s plan -- which the flat 120s bound
+        honoured (belt inert for every plan under 120s). The bound is now
+        ``_rollover_min_lead_seconds(100) = 50s``: the poison is rejected and
+        a genuine boundary a few seconds ahead is still honoured."""
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air(store, "public", "ev-1")
+        daemon = _SettlingHorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", self._SHORT, False)  # ends _NOW+100
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_segments(cid, self._SHORT),
+            settings=ChannelAutomationSettings(),
+        )
+        service.run_once(now=_NOW)
+
+        # Poisoned: a deferred plan takes air with the tracked end 98s ahead
+        # (under the flat 120s, over the plan's own 50s lead).
+        self._on_air(store, "public", "ev-2")
+        daemon.dispatched["public"] = ("ev-2", self._SHORT, True)
+        now = _NOW + timedelta(seconds=2)
+        service.run_once(now=now)
+        assert service._plan_horizon["public"][1] == now + timedelta(seconds=100)
+
+        # Genuine: the next deferred plan is observed 5s before the tracked
+        # end (a boundary this switch really was aligned to) -- honoured.
+        self._on_air(store, "public", "ev-3")
+        daemon.dispatched["public"] = ("ev-3", self._SHORT, True)
+        tracked_end = service._plan_horizon["public"][1]
+        service.run_once(now=tracked_end - timedelta(seconds=5))
+        assert service._plan_horizon["public"][1] == tracked_end + timedelta(seconds=100)
+
+    def test_the_settling_wait_is_logged_once_per_interval_not_once_per_tick(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Hostile review round 2, finding 3: the wait is visible in the log
+        (the old "was stale" WARNING is how the soak bug was found) but
+        rate-limited per ``_ROLLOVER_RETRY_WARN_INTERVAL_SECONDS`` (60s), not
+        emitted on every ~2s poll tick."""
+        store, _daemon, service, clock = self._armed_and_settling()
+
+        def waiting_lines() -> list[logging.LogRecord]:
+            return [
+                r
+                for r in caplog.records
+                if r.levelno >= logging.INFO and "still settling; waiting" in r.getMessage()
+            ]
+
+        with caplog.at_level(logging.DEBUG, logger="civiccast.egress.automation"):
+            for elapsed in range(610, 670, 2):  # 30 ticks inside one interval
+                clock["now"] = float(elapsed)
+                service.run_once(now=_NOW + timedelta(seconds=elapsed))
+            assert len(waiting_lines()) == 1
+            assert "past due by 10s" in waiting_lines()[0].getMessage()
+            # The next tick past the interval logs once more, then goes quiet.
+            clock["now"] = 671.0
+            service.run_once(now=_NOW + timedelta(seconds=671))
+            clock["now"] = 673.0
+            service.run_once(now=_NOW + timedelta(seconds=673))
+        assert len(waiting_lines()) == 2
+        assert service._plan_horizon["public"][1] == _NOW + timedelta(seconds=600)
         assert _pending_actions(store, "public") == []
 
 

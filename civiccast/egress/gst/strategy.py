@@ -615,65 +615,6 @@ def _seamless_content_reload_default() -> bool:
     }
 
 
-#: Set once the first time ``_live_captions_enabled_or_default`` swallows an
-#: exception, so a station whose ``station-state.json`` is permanently
-#: corrupt/locked logs ONE WARNING instead of one per channel start/reload
-#: for as long as the station runs -- matching the "logged once" shape of
-#: every other best-effort degrade in this codebase
-#: (``CaptionTapWorker._disabled_announced`` is the sibling pattern on the
-#: caption-tap side).
-_live_captions_read_failure_announced = False
-
-
-def _live_captions_enabled_or_default(channel_id: str) -> bool:
-    """``resolve_live_captions_enabled()``, but never fatal to a channel start.
-
-    Item 91 follow-up review: ``resolve_live_captions_enabled``
-    (`civiccast.installer.station_state`) reads ``station-state.json`` via
-    ``_load_raw_state``, which only ever suppresses ``FileNotFoundError`` and
-    ``json.JSONDecodeError``. A byte that is not valid UTF-8 (``read_text``'s
-    strict decode) or a Windows sharing violation while another process holds
-    the file (``PermissionError``/``OSError``) both raise straight through --
-    and before this guard, that exception propagated out of
-    ``GstPlayoutStrategy.start()``/``reload_content()`` and stopped the
-    channel going to air over a corrupt or momentarily-locked STATUS file for
-    an entirely unrelated, best-effort, optional accessibility feature. That
-    is exactly backwards: whether live captions are enabled must never be
-    able to take playout down.
-
-    Defaults to the SAME "on" ``resolve_live_captions_enabled`` itself
-    defaults to when nothing is persisted -- live captions are an
-    accessibility feature, and a station that can run them should, so a
-    read failure is treated as "the switch could not be read" rather than
-    "the operator asked for it off." Imported lazily, matching the existing
-    lazy import in ``civiccast.app`` for the same function --
-    ``civiccast.installer`` is not otherwise a dependency of the egress
-    graph-building path and this keeps it that way for every caller that
-    never hits a read failure.
-    """
-
-    from civiccast.installer.station_state import resolve_live_captions_enabled
-
-    global _live_captions_read_failure_announced
-    try:
-        return resolve_live_captions_enabled()
-    except Exception:
-        if not _live_captions_read_failure_announced:
-            logger.warning(
-                "channel %s: could not read the live-captions station-profile "
-                "switch (station-state.json unreadable or locked); defaulting "
-                "to ENABLED rather than blocking playout on an unrelated "
-                "accessibility-feature switch. This channel and every other "
-                "channel will keep defaulting to enabled until the file "
-                "becomes readable again; this warning is logged once per "
-                "process, not once per channel.",
-                channel_id,
-                exc_info=True,
-            )
-            _live_captions_read_failure_announced = True
-        return True
-
-
 def _write_graph_file(path: Path, text: str) -> None:
     """Write a serialized graph, restricting it to 0600. The graph can embed a
     resolved SRT-sink passphrase (ENG-007), so it must not be world-readable in the
@@ -824,10 +765,47 @@ class GstPlayoutStrategy:
         # WHY instead of silently falling back to restart. See
         # ``last_send_command_failure_reason``.
         self._last_send_command_failure: dict[str, str] = {}
+        # Channels that have already been told, since their last start(), that
+        # live captions were flipped on while they run on HEVC. ``reload_content``
+        # runs on every content change (plan rollover, every few minutes on a
+        # busy channel), so without this latch the same warning would repeat
+        # for as long as the switch stays on -- the sibling of
+        # ``CaptionTapWorker._disabled_announced``. Cleared by ``start()``.
+        self._hevc_caption_warning_announced: set[str] = set()
 
-    def _caption_embed(self) -> CaptionEmbedRequest | None:
-        """The caption-embed request for graph assembly (None = embedding off)."""
-        return CaptionEmbedRequest(mode="live") if self._embed_captions else None
+    def _caption_embed(self, channel_id: str) -> CaptionEmbedRequest | None:
+        """The caption-embed request for graph assembly (None = embedding off).
+
+        Two gates, both required. ``self._embed_captions`` is the deployment
+        opt-in (``CIVICCAST_EGRESS_EMBED_CAPTIONS``, which an activated native
+        station sets to ``1`` unconditionally in
+        ``civiccast.native.station_runtime``). The operator's station-profile
+        switch (``StationProfile.live_captions_enabled``, read through
+        ``resolve_live_captions_enabled_or_default``, which never raises: a
+        corrupt or momentarily-locked ``station-state.json`` must not stop a
+        channel going to air over an unrelated accessibility feature, so a
+        read failure lands on the shipped default and is logged once per
+        process) is the second: before beta.5
+        it stopped only the audio TAP leg (``_with_audio_tap``) and the ASR,
+        while the CEA-708 EMBED leg -- ``cccombiner`` between the encoder
+        and the mux plus the appsrc/heartbeat caption source
+        (``engine._build_caption_embed``) -- was still built on every native
+        channel. The 2026-09-09 sandbox soak measured that leg holding video
+        for 25-30 s and burst-releasing it every 1-2 minutes on every
+        channel, so with the switch off NO caption element is built at all:
+        ``graph.captions`` is ``None`` and ``engine.py`` never calls
+        ``_build_caption_embed``. Same start-only latency as the tap leg: a
+        content reload does not rebuild the embed leg either way.
+        """
+        if not self._embed_captions:
+            return None
+        # Imported lazily: ``civiccast.installer`` is not otherwise a
+        # dependency of the egress graph-building path.
+        from civiccast.installer.station_state import resolve_live_captions_enabled_or_default
+
+        if not resolve_live_captions_enabled_or_default():
+            return None
+        return CaptionEmbedRequest(mode="live")
 
     def _audio_tracks(self, channel_id: str) -> list[Any] | None:
         """The channel's secondary audio tracks for graph assembly (None = single PID)."""
@@ -867,10 +845,12 @@ class GstPlayoutStrategy:
         # (env override > persisted profile > default-on), so this one check
         # covers both item 91 switches: the ops/experiment env override and
         # the operator-facing profile toggle. Read through
-        # ``_live_captions_enabled_or_default`` (module-level, below), which
-        # defaults to enabled and logs once rather than raising, if the
-        # underlying state-file read ever fails.
-        if not _live_captions_enabled_or_default(channel_id):
+        # ``resolve_live_captions_enabled_or_default``, which lands on the
+        # shipped default and logs once per process rather than raising, if
+        # the underlying state-file read ever fails.
+        from civiccast.installer.station_state import resolve_live_captions_enabled_or_default
+
+        if not resolve_live_captions_enabled_or_default():
             return graph
         plan = build_audio_tap_plan(channel_id)
         if plan is None:
@@ -901,19 +881,17 @@ class GstPlayoutStrategy:
         )
         if warn and decision.warning:
             logger.warning("channel %s: %s", request.channel_id, decision.warning)
-        # HEVC cannot embed captions: the caption inserter (h264ccinserter) is H.264-only,
-        # so feeding H.265 into it would break the pipeline. decision.encoder_override is
-        # only set on Windows (decide_encoder no-ops on POSIX), so this is Windows-scoped.
-        if (
-            decision.encoder_override
-            and "265" in decision.encoder_override
-            and self._caption_embed() is not None
-        ):
-            raise EncoderUnavailableError(
-                "HEVC/H.265 cannot embed captions on native Windows -- the caption inserter "
-                "is H.264-only. Use H.264 for this channel, or turn off caption embedding."
-            )
         return decision.encoder_override
+
+    @staticmethod
+    def _hevc_caption_conflict(
+        encoder_override: str | None, caption_embed: CaptionEmbedRequest | None
+    ) -> bool:
+        """HEVC cannot embed captions: the caption inserter (h264ccinserter) is
+        H.264-only, so feeding H.265 into it would break the pipeline.
+        ``encoder_override`` is only set on Windows (``decide_encoder`` no-ops on
+        POSIX), so this is Windows-scoped."""
+        return bool(encoder_override and "265" in encoder_override and caption_embed is not None)
 
     def _cg_overlay_image(self, request: EncoderStartRequest, *, warn: bool) -> Path | None:
         """S15 §5 CG-lite gate: only composite the board raster when the overlay
@@ -932,13 +910,24 @@ class GstPlayoutStrategy:
         return None
 
     def start(self, request: EncoderStartRequest) -> EncoderStartResult:
+        # A fresh run gets a fresh HEVC/captions warning if the conflict recurs.
+        self._hevc_caption_warning_announced.discard(request.channel_id)
         encoder_override = self._resolve_encoder_override(request, warn=True)
+        caption_embed = self._caption_embed(request.channel_id)
+        # Refused on the START path only: a channel must not go to air on a
+        # pipeline that cannot be built. The reload path below downgrades the
+        # same conflict to a warning instead (round-2 review MEDIUM 4).
+        if self._hevc_caption_conflict(encoder_override, caption_embed):
+            raise EncoderUnavailableError(
+                "HEVC/H.265 cannot embed captions on native Windows -- the caption inserter "
+                "is H.264-only. Use H.264 for this channel, or turn off caption embedding."
+            )
         channel_dir = request.work_dir / request.channel_id
         graph = graph_from_config(
             request.config,
             request.source_plan,
             request.resolve_secret,
-            caption_embed=self._caption_embed(),
+            caption_embed=caption_embed,
             audio_tracks=self._audio_tracks(request.channel_id),
             encoder_override=encoder_override,
             cg_overlay_image=self._cg_overlay_image(request, warn=True),
@@ -1145,12 +1134,35 @@ class GstPlayoutStrategy:
         # after a software fallback (adversarial-review BLOCKER). warn=False: the
         # fallback was already announced at start(); don't re-log every content swap.
         encoder_override = self._resolve_encoder_override(request, warn=False)
+        caption_embed = self._caption_embed(channel_id)
+        if self._hevc_caption_conflict(encoder_override, caption_embed):
+            # The operator flipped live captions ON while this HEVC channel was
+            # already running (it started with captions off, or the switch was
+            # thrown mid-run). The running pipeline has no embed leg and a reload
+            # never rebuilds one (``engine.py`` applies only the program source
+            # and the graphics overlay from the reload graph), so refusing here
+            # would only break the next content change on a channel that is on
+            # air. Keep the running encoder decision, drop the caption leg from
+            # the reload graph, and say so; the conflict is enforced at the
+            # channel's next START (round-2 review MEDIUM 4). Said ONCE per
+            # channel per run, not on every content reload.
+            if channel_id not in self._hevc_caption_warning_announced:
+                logger.warning(
+                    "channel %s: live captions were switched on while this channel runs on "
+                    "HEVC/H.265, which cannot embed captions (the caption inserter is "
+                    "H.264-only); keeping the running encoder for this content reload and "
+                    "leaving captions off. Use H.264 for this channel, or turn live captions "
+                    "off, before its next start. This is logged once per channel run.",
+                    channel_id,
+                )
+                self._hevc_caption_warning_announced.add(channel_id)
+            caption_embed = None
         channel_dir = work_dir / channel_id
         graph = graph_from_config(
             request.config,
             request.source_plan,
             request.resolve_secret,
-            caption_embed=self._caption_embed(),
+            caption_embed=caption_embed,
             audio_tracks=self._audio_tracks(channel_id),
             encoder_override=encoder_override,
             cg_overlay_image=self._cg_overlay_image(request, warn=False),

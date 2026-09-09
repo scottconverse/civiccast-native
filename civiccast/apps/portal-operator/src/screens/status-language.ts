@@ -258,3 +258,20 @@ export function stateLabel(state: string | null | undefined, fallback = 'Unknown
   if (!words) return fallback
   return words.slice(0, 1).toUpperCase() + words.slice(1)
 }
+
+// The per-channel "Captions" row on System Health (Outgoing channel feed) and
+// Channel Ops (feed control) share this so the two screens cannot disagree.
+// `liveCaptionsEnabled` is the station-profile switch
+// (StationProfile.live_captions_enabled); undefined means it has not loaded
+// (or could not), in which case the fail-closed "not yet confirmed" wording
+// stands. With the switch off no caption is written into the picture and the
+// on-air decode-back check can never confirm one, so "off" is the honest
+// state -- not a failure waiting to clear.
+export function captionsRowLabel(
+  captionStatus: 'not-verified' | 'on' | undefined,
+  liveCaptionsEnabled: boolean | undefined,
+): string {
+  if (captionStatus === 'on') return 'On'
+  if (liveCaptionsEnabled === false) return 'Off (switched off in the station profile)'
+  return 'Not yet confirmed (waiting for the on-air check)'
+}

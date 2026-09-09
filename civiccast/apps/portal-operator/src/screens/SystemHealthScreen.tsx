@@ -15,6 +15,7 @@ import {
   getEgressState,
   getRuntimeSafeToAir,
   getStaffIdentity,
+  getStationProfile,
   getRestoreStatus,
   getSystemHealth,
   getUpdateRollbackStatus,
@@ -35,7 +36,7 @@ import { hasOperatorRole } from '../auth/roles'
 import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { humanizeDuration } from '../format'
 import { feedCommandConfirmCopy } from './feed-command-confirm'
-import { readinessLabel, stateLabel, toneForEgressState, toneForReadiness } from './status-language'
+import { captionsRowLabel, readinessLabel, stateLabel, toneForEgressState, toneForReadiness } from './status-language'
 import type {
   ChannelRuntimeStatus,
   DiagnosticBundleResponse,
@@ -266,6 +267,7 @@ export function RuntimeSafeToAirBanner({
                 <div className="text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
                   {stateLabel(channel.egress_state)}
                   {channel.on_healthy_slate ? ' · on safety slate' : ''}
+                  {channel.captions_expected === false ? ' · live captions off' : ''}
                 </div>
               </div>
               <StatusPill label={runtimeChannelLabel(channel)} tone={runtimeChannelTone(channel.color)} />
@@ -530,6 +532,7 @@ export function EgressReadinessPanel({
   pendingCommand,
   canControl,
   onCommand,
+  liveCaptionsEnabled,
 }: {
   channels: ChannelProfile[]
   states: Map<string, EgressStateRow | null>
@@ -542,6 +545,8 @@ export function EgressReadinessPanel({
   pendingCommand: { channelId: string; action: EgressCommandAction } | null
   canControl: boolean
   onCommand: (channelId: string, action: EgressCommandAction) => void
+  // Station-profile live-captions switch; undefined until it loads.
+  liveCaptionsEnabled?: boolean
 }) {
   const sending = pendingCommand !== null
   return (
@@ -577,7 +582,7 @@ export function EgressReadinessPanel({
           const state = states.get(channel.channel_id)
           const samples = health.get(channel.channel_id) ?? []
           const latestHealth = samples[0]
-          const captionStatus = latestHealth?.caption_status ?? 'not-verified'
+          const captionStatus = latestHealth?.caption_status
           const sinkEntries = latestHealth ? Object.entries(latestHealth.sink_connected) : []
           const schema = currency.get(channel.channel_id)
           const commandDisabled = sending || !canControl
@@ -603,11 +608,7 @@ export function EgressReadinessPanel({
                 </div>
                 <div>
                   <dt className="font-semibold">Captions</dt>
-                  <dd className="m-0">
-                    {captionStatus === 'on'
-                      ? 'On'
-                      : 'Not yet confirmed (waiting for the on-air check)'}
-                  </dd>
+                  <dd className="m-0">{captionsRowLabel(captionStatus, liveCaptionsEnabled)}</dd>
                 </div>
                 <div>
                   <dt className="font-semibold">On air</dt>
@@ -1281,6 +1282,14 @@ export function SystemHealthScreen() {
     queryFn: getStaffIdentity,
     retry: false,
   })
+  // The live-captions switch, so the per-channel "Captions" row can say
+  // "off" instead of "not yet confirmed" when the operator switched it off.
+  // 404 before first-admin setup is fine: undefined keeps the fail-closed copy.
+  const stationProfileQuery = useQuery({
+    queryKey: ['station-profile'],
+    queryFn: getStationProfile,
+    retry: false,
+  })
   const rehearsal = useMutation({
     mutationFn: startFirstBroadcastRehearsal,
     onSuccess: () => {
@@ -1492,6 +1501,7 @@ export function SystemHealthScreen() {
             error={channelsQuery.error ?? egressStatusQuery.error ?? egressCommandMutation.error}
             pendingCommand={egressCommandMutation.isPending ? (egressCommandMutation.variables ?? null) : null}
             canControl={canRunMeetingRehearsal}
+            liveCaptionsEnabled={stationProfileQuery.data?.live_captions_enabled}
             onCommand={(channelId, action) => {
               const channelName =
                 channelsQuery.data?.find((channel) => channel.channel_id === channelId)?.branding

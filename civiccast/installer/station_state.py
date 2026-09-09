@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import stat
@@ -25,6 +26,7 @@ from civiccast.ai_models.models import detect_summary_model_default
 from civiccast.auth.models import OperatorIdentity
 from civiccast.cable.channel import default_channel_profiles
 from civiccast.installer.models import (
+    LIVE_CAPTIONS_DEFAULT,
     FirstAdminSetupRequest,
     FirstAdminSetupResponse,
     RecoveryKit,
@@ -47,6 +49,8 @@ if TYPE_CHECKING:
         CommissioningReport,
         CommissioningState,
     )
+
+_LOG = logging.getLogger(__name__)
 
 _SCHEMA_VERSION = 1
 _PASSWORD_ITERATIONS = 210_000
@@ -273,7 +277,8 @@ def read_live_captions_enabled() -> bool | None:
 
 
 def resolve_live_captions_enabled() -> bool:
-    """Whether the LIVE caption tap may run: env override > persisted > on.
+    """Whether the LIVE caption tap may run: env override > persisted >
+    ``LIVE_CAPTIONS_DEFAULT`` (off in beta.5).
 
     Precedence is deliberately asymmetric, and only in the SAFE direction:
     ``CIVICCAST_CAPTION_TAP=off`` in the environment turns live captioning off
@@ -289,19 +294,71 @@ def resolve_live_captions_enabled() -> bool:
     that need it, and the asymmetric-safe direction chosen here still applies
     when both are in play.
 
-    Defaults to on: live captions are an accessibility feature, and a station
-    that can run them should. The caption tap's own overload backoff
-    (:mod:`civiccast.captions.tap_backoff`) is what keeps "on" safe on a
-    station that cannot keep up; this switch is the operator's explicit "do
-    not even try".
+    Defaults to OFF for beta.5 (temporary, owner decision 2026-09-09): with
+    live captions on, the CEA-708 caption embed leg (``cccombiner`` between
+    the encoder and the mux, ``civiccast/egress/gst/engine.py``
+    ``_build_caption_embed``) held video for 25-30 s and then released a
+    burst of ~900 frames every 1-2 minutes on every channel in the
+    2026-09-09 sandbox soak, twice outlasting the 10 s stall watchdog. An
+    absent key -- a fresh
+    install, or a station commissioned before the switch existed -- therefore
+    reads as off; an explicitly persisted ``true`` (an operator who turned
+    them on) is honoured as before. The root-cause fix (beta.5.1) is what
+    flips this default back.
     """
 
     if os.environ.get("CIVICCAST_CAPTION_TAP", "").strip().lower() == "off":
         return False
     persisted = read_live_captions_enabled()
     if persisted is None:
-        return True
+        return LIVE_CAPTIONS_DEFAULT
     return persisted
+
+
+#: Set once the first time ``resolve_live_captions_enabled_or_default`` swallows
+#: an exception, so a station whose ``station-state.json`` is permanently
+#: corrupt/locked logs ONE WARNING per process instead of one per channel
+#: start/reload, per safe-to-air computation, or per worker scan (the caption
+#: feed polls every 2 s) for as long as the station runs -- matching the
+#: "announced once" shape of ``CaptionTapWorker._disabled_announced``.
+_live_captions_read_failure_announced = False
+
+
+def resolve_live_captions_enabled_or_default() -> bool:
+    """``resolve_live_captions_enabled()``, but never raises.
+
+    ``_load_raw_state`` only suppresses ``FileNotFoundError`` and
+    ``json.JSONDecodeError``. A byte that is not valid UTF-8 (``read_text``'s
+    strict decode) or a Windows sharing violation while another process holds
+    ``station-state.json`` (``PermissionError``/``OSError``) raise straight
+    through the plain resolver. Every runtime reader of the switch -- the
+    egress strategy deciding whether to build the embed leg, the safe-to-air
+    banner, and the ``is_enabled`` callbacks of the caption tap, feed and proof
+    workers -- is a best-effort accessibility path that must never take
+    playout, the on-air banner, or a worker's ``run_once`` down over it. They
+    all read through this helper so a read failure lands on the SAME value
+    everywhere: the shipped default (``LIVE_CAPTIONS_DEFAULT``), i.e. "the
+    switch could not be read", rather than on either operator choice. The
+    failure is logged once per process, not once per call.
+    """
+
+    global _live_captions_read_failure_announced
+    try:
+        return resolve_live_captions_enabled()
+    except Exception:
+        if not _live_captions_read_failure_announced:
+            _LOG.warning(
+                "could not read the live-captions station-profile switch "
+                "(station-state.json unreadable or locked); using the shipped "
+                "default (%s) rather than blocking playout, the on-air banner, or "
+                "the caption workers on an unrelated accessibility-feature switch. "
+                "Every reader keeps using that default until the file becomes "
+                "readable again; this warning is logged once per process.",
+                "enabled" if LIVE_CAPTIONS_DEFAULT else "disabled",
+                exc_info=True,
+            )
+            _live_captions_read_failure_announced = True
+        return LIVE_CAPTIONS_DEFAULT
 
 
 def resolve_station_display_name() -> str:
@@ -670,6 +727,10 @@ def complete_first_admin_setup(
             "channel_profiles": [channel.model_dump() for channel in profile.channel_profiles],
             "sample_content_enabled": profile.sample_content_enabled,
             "initial_schedule_enabled": profile.initial_schedule_enabled,
+            # Persisted explicitly at commissioning so a fresh install carries
+            # the beta.5 default (off) as a stored value, and a later default
+            # flip cannot silently change a station that already exists.
+            "live_captions_enabled": profile.live_captions_enabled,
             "default_roles": profile.default_roles,
             "operation_mode": profile.operation_mode,
             "dashboard_ready_state": profile.dashboard_ready_state,
@@ -1027,10 +1088,11 @@ def _profile_from_state(raw: dict[str, Any]) -> StationProfile | None:
             ),
             sample_content_enabled=bool(station.get("sample_content_enabled", True)),
             initial_schedule_enabled=bool(station.get("initial_schedule_enabled", True)),
-            # Default TRUE for a station commissioned before this switch
-            # existed: live captions are an accessibility feature, so an
-            # absent key must not read as "the operator turned them off".
-            live_captions_enabled=bool(station.get("live_captions_enabled", True)),
+            # An absent key (a station commissioned before this switch
+            # existed, or one that never touched it) reads as the beta.5
+            # default -- OFF -- for the reason on ``LIVE_CAPTIONS_DEFAULT``;
+            # an explicitly persisted value is honoured either way.
+            live_captions_enabled=bool(station.get("live_captions_enabled", LIVE_CAPTIONS_DEFAULT)),
             default_roles=[
                 str(role)
                 for role in station.get("default_roles", _DEFAULT_ROLES)

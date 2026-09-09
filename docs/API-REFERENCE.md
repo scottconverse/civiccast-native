@@ -5552,6 +5552,8 @@ Read CivicCast local federation metadata.
 
 ### `ChannelRuntimeStatus`
 
+- `captions_expected` (optional): `boolean`
+- `captions_verified` (optional): `boolean`
 - `channel_id` (required): `string`
 - `color` (required): `'green' | 'yellow' | 'red'`
 - `egress_state` (required): `string`
@@ -8835,7 +8837,7 @@ rule (S13 §5.1).
 - `default_channel_id` (optional): `string`
 - `default_roles` (optional): `Array<string>`
 - `initial_schedule_enabled` (optional): `boolean`
-- `live_captions_enabled` (optional): `boolean` -- Operator switch for the LIVE caption tap (real-time ASR on the broadcast audio of every ON_AIR channel). On by default -- live captions are an accessibility feature and a station that can run them should. Turn it OFF on a station whose caption tap cannot keep up: an activated native station enables the tap unconditionally in its environment, so before this switch existed there was no way for an operator to stop it. Turning it off does NOT affect captions on published recordings (the offline caption job), which is the legal requirement; this is the live one.
+- `live_captions_enabled` (optional): `boolean` -- Operator switch for LIVE captions: the real-time ASR tap on the broadcast audio of every ON_AIR channel AND the CEA-708 caption embed leg on the video path. OFF by default in beta.5 (temporary): with the embed leg built, the 2026-09-09 sandbox soak measured a recurring 25-30 s video hold followed by a burst of frames every 1-2 minutes on every channel, and twice the 10 s stall watchdog restarted a channel. Turn it ON from the operator console (Setup > Station Profile > Show live captions on air) on a station that can keep up. Turning it off does NOT affect captions on published recordings (the offline caption job), which is the legal requirement; this is the live one.
 - `operation_mode` (optional): `'test' | 'on_air'`
 - `public_base_url` (optional): `string | null`
 - `recovery_kit_generated_at` (required): `string`

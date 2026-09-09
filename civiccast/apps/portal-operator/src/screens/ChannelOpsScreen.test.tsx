@@ -9,6 +9,7 @@ import type {
   EgressStateRow,
   GraphicsOverlayStateResponse,
 } from '../types/api.generated'
+import type { EgressHealthSample } from '../api/client'
 import { EgressControlPanel, GraphicsOverlayPanel, PlayoutPlanPanel } from './ChannelOpsScreen'
 
 afterEach(cleanup)
@@ -249,5 +250,44 @@ describe('GraphicsOverlayPanel', () => {
     expect(getByText(/requires the meeting operator or setup admin role/)).toBeTruthy()
     const button = getByText('Put on air') as HTMLButtonElement
     expect(button.disabled).toBe(true)
+  })
+})
+
+describe('EgressControlPanel captions row', () => {
+  const sample: EgressHealthSample = {
+    channel_id: 'public',
+    sampled_at: '2026-06-15T12:00:00Z',
+    state: 'ON_AIR',
+    sink_connected: { head: true },
+            dropped_frames: 0,
+            seconds_on_air: 30,
+    caption_status: 'not-verified',
+  }
+
+  function renderCaptions(liveCaptionsEnabled: boolean | undefined) {
+    return render(
+      <EgressControlPanel
+        channelId="public"
+        state={egressState('ON_AIR')}
+        health={[sample]}
+        pendingCommand={null}
+        canControl={false}
+        error={null}
+        onCommand={() => {}}
+        liveCaptionsEnabled={liveCaptionsEnabled}
+      />,
+    )
+  }
+
+  it('says the switch is off instead of waiting for a check that cannot pass', () => {
+    const { container } = renderCaptions(false)
+    expect(container.textContent).toContain('Off (switched off in the station profile)')
+    expect(container.textContent).not.toContain('Not yet confirmed')
+  })
+
+  it('keeps the fail-closed wording while the switch is on or unknown', () => {
+    expect(renderCaptions(true).container.textContent).toContain('Not yet confirmed (waiting for the on-air check)')
+    cleanup()
+    expect(renderCaptions(undefined).container.textContent).toContain('Not yet confirmed (waiting for the on-air check)')
   })
 })

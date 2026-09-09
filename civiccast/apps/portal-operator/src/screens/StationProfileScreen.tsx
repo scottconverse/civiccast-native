@@ -163,10 +163,12 @@ function fieldsFromProfile(profile: StationProfile): EditableFields {
     media_library: profile.storage_locations.media_library,
     recordings: profile.storage_locations.recordings,
     backups: profile.storage_locations.backups,
-    // Absent on a station profile saved before this setting shipped; live
-    // captions are an accessibility feature, so a missing value must read as
-    // ON, never as "the operator turned them off".
-    live_captions_enabled: profile.live_captions_enabled ?? true,
+    // Absent only when talking to a control plane older than this setting.
+    // beta.5 ships live captions OFF by default (the caption embed leg held
+    // video for 25-30 s and burst-released it every 1-2 minutes in the
+    // 2026-09-09 sandbox soak), so a missing value reads as OFF -- the same
+    // default the server itself reports for a profile without the key.
+    live_captions_enabled: profile.live_captions_enabled ?? false,
   }
 }
 
@@ -407,11 +409,13 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
           <span style={{ color: 'var(--cc-ink)' }}>Show live captions on air</span>
         </label>
         <p id="live-captions-help" className="text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-          When this is on, CivicCast writes captions in real time — but one channel at a time. On a
-          station with more than one channel on air, the others are paused most of the time, with
-          no live captions showing and their audio discarded. It is useful, and it is hard work for
-          this computer. If playout is stuttering or channels are restarting, turn it off: the
-          picture and sound always come first, and
+          Off when the station is installed in this beta: with live captions on, the picture can
+          freeze for 25–30 seconds and then catch up in a burst every minute or two, and rarely a
+          channel restarts itself. When this is on, CivicCast writes captions in real time — but
+          one channel at a time. On a station with more than one channel on air, the others are
+          paused most of the time, with no live captions showing and their audio discarded. It is
+          useful, and it is hard work for this computer. If playout is stuttering or channels are
+          restarting, turn it off: the picture and sound always come first, and
           nothing else about the broadcast changes. Captions on recordings you publish are
           produced separately and are <strong>not</strong> affected by this setting.{' '}
           {/* Deliberately NOT another "Read more in the manual": this screen

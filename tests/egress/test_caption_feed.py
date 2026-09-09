@@ -221,3 +221,50 @@ def test_production_builder_uses_the_running_encoder_strategy() -> None:
     )
 
     assert worker._send_caption_cue.__self__ is strategy
+
+
+def test_feed_is_idle_while_live_captions_are_switched_off() -> None:
+    # Round-2 review MAJOR 3: with the operator switch off there is no caption appsrc
+    # to feed, so the loop must not read sidecars or retry cues every 2 s.
+    sender = _Sender()
+    reads: list[str] = []
+
+    def _cues(channel_id: str) -> list[CaptionCue]:
+        reads.append(channel_id)
+        return [_cue(1, "hello")]
+
+    worker = CaptionFeedWorker(
+        work_dir=Path("/tmp/wd"),
+        on_air_channels=lambda: ["gov"],
+        caption_cue_provider=_cues,
+        send_caption_cue=sender,
+        is_enabled=lambda: False,
+    )
+
+    result = worker.run_once()
+
+    assert result.channels == 0
+    assert result.cues_sent == 0
+    assert reads == []
+    assert sender.calls == []
+
+
+def test_feed_resumes_from_scratch_when_live_captions_are_switched_on() -> None:
+    sender = _Sender()
+    enabled = [True]
+    worker = CaptionFeedWorker(
+        work_dir=Path("/tmp/wd"),
+        on_air_channels=lambda: ["gov"],
+        caption_cue_provider=lambda _ch: [_cue(1, "hello")],
+        send_caption_cue=sender,
+        is_enabled=lambda: enabled[0],
+    )
+    assert worker.run_once().cues_sent == 1
+    assert worker.run_once().cues_sent == 0  # deduped while on
+
+    enabled[0] = False
+    assert worker.run_once().cues_sent == 0
+    enabled[0] = True  # a fresh pipeline after the switch: re-send from scratch
+
+    assert worker.run_once().cues_sent == 1
+    assert len(sender.calls) == 2

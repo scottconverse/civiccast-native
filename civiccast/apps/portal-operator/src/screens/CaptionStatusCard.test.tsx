@@ -66,3 +66,31 @@ describe('CaptionStatusView', () => {
     expect(getByRole('alert').textContent).toContain('boom')
   })
 })
+
+describe('CaptionStatusView with live captions switched off', () => {
+  it('says Captions off, not Not verified, and explains why', () => {
+    // Round-2 review BLOCKER 1: with the station-profile switch off nothing is
+    // written into the picture, so "Not verified" read as a failure waiting to
+    // clear on every channel forever.
+    const { container } = render(
+      <CaptionStatusView status={NOT_VERIFIED} proofs={[]} liveCaptionsEnabled={false} />,
+    )
+    const text = container.textContent ?? ''
+    expect(text).toContain('Captions off')
+    expect(text).not.toContain('Not verified')
+    expect(text).toContain('switched off in the station profile')
+  })
+
+  it('keeps the fail-closed Not verified wording while the switch is unknown or on', () => {
+    const unknown = render(<CaptionStatusView status={NOT_VERIFIED} proofs={[]} />)
+    expect(unknown.container.textContent).toContain('Not verified')
+    unknown.unmount()
+    const on = render(<CaptionStatusView status={NOT_VERIFIED} proofs={[]} liveCaptionsEnabled />)
+    expect(on.container.textContent).toContain('Not verified')
+  })
+
+  it('a proven channel says Captions on regardless of the switch', () => {
+    const { container } = render(<CaptionStatusView status={ON} proofs={[proof()]} liveCaptionsEnabled={false} />)
+    expect(container.textContent).toContain('Captions on')
+  })
+})

@@ -16,6 +16,7 @@ color semantics.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -29,6 +30,8 @@ if TYPE_CHECKING:
     from civiccast.alerting.models import AlertEvent
     from civiccast.egress.models import EgressConfig, EgressHealthSample, EgressStateRow
     from civiccast.egress.store import EgressStore
+
+_LOG = logging.getLogger(__name__)
 
 # Loudness target (ATSC A/85): -24 LUFS, ±2 LU healthy band.
 _LOUDNESS_TARGET_LUFS = -24.0
@@ -72,8 +75,21 @@ def compute_channel_runtime_status(
     latest_sample: EgressHealthSample | None,
     *,
     now: datetime,
+    expect_captions: bool = True,
 ) -> ChannelRuntimeStatus:
-    """Build the runtime status for one channel from its state + latest sample."""
+    """Build the runtime status for one channel from its state + latest sample.
+
+    ``expect_captions`` is the operator's live-captions switch
+    (``StationProfile.live_captions_enabled`` via
+    ``resolve_live_captions_enabled``). When it is on, an unverified caption
+    proof fails the channel closed (red) -- captions are a legal readiness
+    requirement, not a health decoration. When the operator has switched live
+    captions OFF (the beta.5 default), no embed leg is built and the tap
+    blanks every live sidecar, so the decode-back proof can never PASS; the
+    caption gate is then not applied and the color comes from the sinks and
+    loudness alone. ``captions_expected``/``captions_verified`` on the result
+    let the dashboard say "off by operator" rather than "not confirmed".
+    """
     state = state_row.state if state_row is not None else "STOPPED"
     sink_health = dict(latest_sample.sink_connected) if latest_sample is not None else {}
     all_sinks_ok = bool(sink_health) and all(sink_health.values())
@@ -82,9 +98,10 @@ def compute_channel_runtime_status(
         latest_sample is not None
         and getattr(latest_sample, "caption_status", "not-verified") == "on"
     )
+    captions_ready = captions_verified or not expect_captions
 
     on_air = state == "ON_AIR"
-    on_healthy_slate = state == "FALLBACK_SLATE" and all_sinks_ok and captions_verified
+    on_healthy_slate = state == "FALLBACK_SLATE" and all_sinks_ok and captions_ready
 
     fps = latest_sample.encoder_fps if latest_sample is not None else None
     bitrate = latest_sample.encoder_bitrate_kbps if latest_sample is not None else None
@@ -108,8 +125,11 @@ def compute_channel_runtime_status(
 
     # Captions are a legal readiness requirement, not an optional health
     # decoration. Any missing, stale, failed, or otherwise unverified proof
-    # fails closed even when transport and audio are otherwise healthy.
-    if not captions_verified:
+    # fails closed even when transport and audio are otherwise healthy --
+    # but only while the operator expects live captions at all. With the
+    # switch off there is no embed leg to prove, so the gate would pin every
+    # channel red forever (round-2 review BLOCKER 1).
+    if expect_captions and not captions_verified:
         color = "red"
 
     return ChannelRuntimeStatus(
@@ -123,6 +143,8 @@ def compute_channel_runtime_status(
         last_loudness_lufs=loudness,
         seconds_in_state=_seconds_in_state(state_row, now),
         last_proof_event_id=(state_row.current_proof_event_id if state_row is not None else None),
+        captions_expected=expect_captions,
+        captions_verified=captions_verified,
         color=color,
     )
 
@@ -132,14 +154,25 @@ def compute_runtime_safe_to_air(
     firing_alerts: list[AlertEvent],
     *,
     now: datetime | None = None,
+    expect_captions: bool | None = None,
 ) -> RuntimeSafeToAirStatus:
     """Compute the continuous runtime safe-to-air signal over auto_start channels.
 
     ``firing_alerts`` is the current set of ``state="firing"`` alert events
     (the caller reads them once from the alert store). Overall color = worst
     channel color, escalated to red if any critical alert is firing.
+    ``expect_captions`` defaults to the operator's live-captions switch, read
+    ONCE here (not per channel) via ``resolve_live_captions_enabled_or_default``.
     """
     now = now or datetime.now(tz=UTC)
+    if expect_captions is None:
+        # Never fatal: a momentarily locked or unreadable station-state.json
+        # must not take the on-air banner down; the read failure lands on the
+        # shipped default, the same value the egress strategy and the caption
+        # workers use, so the banner and the pipeline agree.
+        from civiccast.installer.station_state import resolve_live_captions_enabled_or_default
+
+        expect_captions = resolve_live_captions_enabled_or_default()
 
     channels: list[ChannelRuntimeStatus] = []
     for config in store.list_configs():
@@ -148,7 +181,15 @@ def compute_runtime_safe_to_air(
         state_row = store.read_state(config.channel_id)
         recent = store.recent_health(config.channel_id, 1)
         latest_sample = recent[0] if recent else None
-        channels.append(compute_channel_runtime_status(config, state_row, latest_sample, now=now))
+        channels.append(
+            compute_channel_runtime_status(
+                config,
+                state_row,
+                latest_sample,
+                now=now,
+                expect_captions=expect_captions,
+            )
+        )
 
     active_critical = sum(1 for a in firing_alerts if a.severity == "critical")
     active_warning = sum(1 for a in firing_alerts if a.severity == "warning")
