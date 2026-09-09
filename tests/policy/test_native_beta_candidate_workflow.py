@@ -256,9 +256,7 @@ def test_native_beta_candidate_workflow_builds_signed_artifacts_without_publishi
     assert ".ccpack" not in evidence_upload["with"]["path"]
     # Small evidence is never lane-gated -- it must upload on every build,
     # same reasoning as the tiny station-embed artifact.
-    assert "if" not in evidence_upload, (
-        "the small evidence artifact must upload on every lane"
-    )
+    assert "if" not in evidence_upload, "the small evidence artifact must upload on every lane"
 
     upload = steps["Upload native-beta candidate binaries"]
     assert upload["uses"] == "actions/upload-artifact@v4"
@@ -358,7 +356,10 @@ def test_native_beta_candidate_workflow_keeps_build_scratch_out_of_the_source_tr
 
     upload_paths = [
         line.strip()
-        for step_name in ("Upload native-beta candidate evidence", "Upload native-beta candidate binaries")
+        for step_name in (
+            "Upload native-beta candidate evidence",
+            "Upload native-beta candidate binaries",
+        )
         for line in steps[step_name]["with"]["path"].splitlines()
         if line.strip()
     ]
