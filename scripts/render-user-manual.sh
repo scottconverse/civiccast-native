@@ -13,34 +13,14 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SOURCE="$REPO_ROOT/docs/USER-MANUAL.md"
 OUT_DIR="${OUT_DIR:-$REPO_ROOT/artifacts}"
 
-if [[ ! -f "$SOURCE" ]]; then
-  echo "ERROR: $SOURCE not found." >&2
-  exit 1
-fi
-
-mkdir -p "$OUT_DIR"
-
-if ! command -v pandoc >/dev/null 2>&1; then
-  echo "ERROR: pandoc is not installed. See ADR 0005 for required packages." >&2
-  exit 1
-fi
-
-# Layout, fonts, and colours come from the shared defaults file so this script
-# and scripts/render_user_manual.py cannot drift apart. Its relative paths
-# resolve from the repository root, so run pandoc from there.
+# Use the same renderer as native Windows, including its source-derived
+# version header and artifact verification. Direct Pandoc invocation omitted
+# the version-header override and emitted v0.0.0-unset in CI's PDF artifact.
 cd "$REPO_ROOT"
-DEFAULTS="docs/assets/manual.pandoc.yaml"
-
-if command -v xelatex >/dev/null 2>&1; then
-  pandoc "$SOURCE" --defaults "$DEFAULTS" -o "$OUT_DIR/USER-MANUAL.pdf"
-  echo "Rendered $OUT_DIR/USER-MANUAL.pdf"
+if command -v uv >/dev/null 2>&1; then
+  exec uv run python scripts/render_user_manual.py --out-dir "$OUT_DIR"
 else
-  echo "INFO: xelatex not found; skipping PDF render. Install texlive-xetex to enable."
+  exec python scripts/render_user_manual.py --out-dir "$OUT_DIR"
 fi
-
-# DOCX has no LaTeX preamble; render it with the table of contents only.
-pandoc "$SOURCE" --resource-path docs --toc --toc-depth=2 -o "$OUT_DIR/USER-MANUAL.docx"
-echo "Rendered $OUT_DIR/USER-MANUAL.docx"

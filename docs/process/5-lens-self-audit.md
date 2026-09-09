@@ -1,11 +1,8 @@
 # 5-lens self-audit (before every push)
 
-This is the implementation-side counterpart to the verification-side audit
-protocol at `docs/process/CIVICCAST_AUDIT_PROTOCOL.md`.
-The verification protocol governs how an auditor (Codex, Scott independent
-audit, audit-team) audits work that has already landed. This document
-governs how the implementing agent audits its own work *before* a push,
-so the verification turn finds less to fix.
+This repository checklist covers review of the implementing agent's work
+before a push. The former cross-agent audit protocol was removed by the
+owner on 2026-09-08; it is no longer a prerequisite for this checklist.
 
 Both Claude and Codex read this file. The rule body, the artifact-state
 checklist, and the report format below are shared. The implementing-agent-
@@ -72,9 +69,8 @@ otherwise.
    the next agent walking in cold. Are there contradictions across
    files? Does the README say one thing while the ops doc says another?
    Does the ledger top-totals row reconcile with the row count? Are
-   status words used per the audit protocol (`Closed` / `Implemented` /
-   `Open` / `Deferred by Scott` / `Blocked`, never `done` / `ready` /
-   `taggable` / `shippable`)? Hostile means: assume drift until cross-
+   status words supported by the actual tests and release evidence?
+   Hostile means: assume drift until cross-
    file reading proves there is none.
 
 ## Artifact-state checklist
@@ -148,8 +144,8 @@ Separate post-push pass, not optional. After `git push` succeeds:
    them as historical proof anchors. Either is defensible. What is NOT
    defensible: mixing without an explanation. Cite the policy in the
    ledger preamble.
-6. Re-run the verification grep from the audit protocol against the new
-   state, not the pre-push state.
+6. Verify referenced files, commits, and run results against the new state,
+   not the pre-push state.
 
 The previous push's report cannot honestly say "Artifact-state: pass"
 until this post-push pass completes.
@@ -190,8 +186,5 @@ strengthen it.
 
 ## Cross-references
 
-- `docs/process/CIVICCAST_AUDIT_PROTOCOL.md` - the verification-side audit
-  protocol. The mandatory output shape and verifier evidence-pass rules live
-  there.
 - Project-level (CivicCast `CLAUDE.md`) - names this file as the
   before-every-push discipline.

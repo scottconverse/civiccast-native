@@ -17,6 +17,40 @@ came across and what deliberately did not.
 candidate; it does not change the `v1.0.0-beta.4` install story documented
 below.
 
+### External field documentation
+
+- **Publisher-generated SmartScreen guidance now states the verification order.**
+  Release notes require the exact SHA-256 and valid Authenticode publisher
+  before any conditional SmartScreen action; a warning alone is not proof of a
+  failed signature or valid publisher, and missing options or mismatched
+  publisher/hash remain stop conditions.
+
+- **Publisher PowerShell preflight isolates `PSModulePath`.** The child uses
+  Windows PowerShell's own default module paths, preventing the observed
+  inherited-PowerShell-7 type-data import failure before signature checking.
+  The parent process environment and actual signature checks remain unchanged.
+
+- **Gate A preflight downloads use fresh archived attempts.** Repeated dry-run
+  and live preparation cannot overwrite or silently reuse an older verdict
+  directory.
+
+- **Mutation collection includes the Sandbox harness fixtures.** The isolated
+  mutation workspace now copies `sandbox-lab` and `gate-b`, which the harness
+  policy tests read. This repairs collection without skipping those tests.
+
+- **Field-installation guidance now separates installation, trust and cutover.**
+  The external quickstart and tester guides require the actual installer hash
+  and Authenticode publisher checks before running it, distinguish USB/LAN
+  delivery manifests from GitHub sidecar metadata, and no longer describe a
+  waiting setup screen or an accessible console as an operating station.
+  The JSON sidecar is not a separately signed attestation. The landing-page
+  download question now explicitly describes a Windows beta, not a production
+  installer. Regression tests reject the prior false signing and completion
+  claims. The README also identifies the already-merged caption repairs rather
+  than calling their PR pending, without treating a merge as installed soak
+  acceptance. These are external-documentation corrections made after the signed
+  beta.5 candidate was built; the preserved kit and packaged manual are unchanged.
+
 ### Added
 
 - **An operator switch for live captions: `Show live captions on air` on
@@ -35,8 +69,319 @@ below.
   deliberately not true, so no environment value can re-enable captions
   against the operator's switch.
 
+### Changed
+
+- **The packaged manual no longer freezes publication status.** It describes
+  beta.5 operation and directs installers to the exact signed GitHub Release
+  and live release record for availability and candidate acceptance. The PDF,
+  DOCX and in-product handbook are regenerated together; a source regression
+  prevents reintroducing an unpublished/current banner into the immutable manual.
+
+- **In-place schedule rollover is enabled by default for beta.5.**
+  `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` (also `false`, `no`, or `off`) opts
+  into the diagnostic terminate/restart fallback. Explicit constructor
+  overrides still win. Candidate installation and soak evidence are required
+  before publication; the older default-off notes below describe history.
+
 ### Fixed
 
+- **Sandbox TSDuck analysis now reads the current nested JSON schema.** The
+  soak sampler reads packet totals, invalid syncs, and transport errors from
+  `ts.packets`, rejects absent or malformed fields instead of converting them
+  to zero, and records the explicit aggregate of per-PID discontinuity
+  counters. TSDuck timeouts remain failed probes; this is harness parsing
+  maintenance, not a change to playout or verdict thresholds.
+
+- **Sandbox-soak install and health deadlines now remain consistent across
+  the host and guest.** `Run-SandboxSoak.ps1 -InstallBoundMinutes` and
+  `-HealthBoundMinutes` are rendered into the Windows Sandbox LogonCommand
+  and accepted by `In-Sandbox-Soak.ps1`, rather than letting the guest
+  silently revert to its 20/10-minute defaults. The effective values are
+  retained in `SOAK-START.json` and `VERDICT.json`; defaults and all product
+  verdict criteria are unchanged. This is test-harness maintenance after the
+  signed beta.5 candidate was built; its installer and runtime bytes are unchanged.
+
+- **The native app-payload runtime probe now redirects its profile-backed
+  application state.** The build-only embedded-Python smoke test removes
+  inherited `DATABASE_URL` and `CIVICCAST_*` overrides from its child
+  environment, points the app's known profile and storage resolvers at a fresh
+  temporary directory, and removes that directory after either success or
+  failure. Its mandatory imports, audio decode, and packaged portal checks are
+  unchanged. This changes build-time validation only: it does not change the
+  files selected for the shipped runtime, installer behavior, or station
+  storage resolution. A rebuilt artifact still receives the new commit's
+  source identity and hashes. The native collection-count contract includes
+  both new success/failure regression cases; CI minimum floors are unchanged.
+  The builder tests load the source under its fully qualified module name so
+  mutation-test trampoline hits map to the builder's actual mutant keys,
+  rather than aborting without mutation data under a bare module alias.
+
+- **Finite program and filler plans roll over before running out.** The
+  end of scheduled media arms the configured filler, and finite filler
+  refreshes without a planned worker restart. Due programs still interrupt
+  filler immediately; manual overrides and live sources keep their existing
+  behavior. Reload settlement records the actual program or filler state
+  consistently in channel status, immediate health samples, sink evaluation
+  and alert evaluation. A regression observes the settlement itself before
+  an ordinary poll can mask an inconsistent health sample.
+- **Filler horizons match the playable decoder-chain limit.** Slate uses
+  immutable cached media and at most 12 segments. Larger bulletin rotations
+  concatenate groups into at most 12 files without dropping later slides.
+  A real FFmpeg regression verifies all 13 slides decode even when their
+  directory contains an apostrophe.
+- **The PDF manual header preserves the full beta version.** The renderer
+  now reads `v1.0.0-beta.5` without truncating it to `v1.0.0`; parser tests
+  cover release, RC and beta versions. Regenerated PDF, Word and in-app
+  manuals include the beta.5 rollover behavior and current documentation date.
+  CI uses the same renderer and checks its generated artifact version.
+
+- **Windows release-baseline tests no longer assume distinct clock ticks.**
+  The orphaned Spanish-caption test selects the retained translation by cue
+  identity and forces equal creation timestamps; the migration history test
+  supplies explicit timestamps. The sidecar entrypoint test uses a controlled
+  checkout and also proves that a missing signed installer is rejected.
+  Production caption publication and signing validation are unchanged.
+
+- **Removed the obsolete cross-agent audit protocol and its instruction
+  references** at the owner's request. The beta.5 release manager has explicit
+  authority to complete fixes, documentation, verification, merges, tagging,
+  and publication without additional stage approvals.
+
+- **The caption audio tap can no longer take a channel off air, and the
+  `CTRL first-output` marker now measures real post-PLAYING output instead of
+  a tautology (items 88, 84c).** MEASURED in the sandbox on
+  soak-a6d7871-20260906-213332Z (run 17, Opus diagnosis): every worker
+  reached PLAYING, pushed real TS output at ~3.2 Mbps for 26-100s, then
+  output silently stopped and the 10s stall watchdog killed the worker.
+  Root cause: the caption-audio-tap appsink's `_on_new_sample` callback ran
+  its blocking I/O (WAV close, `flush`, `os.fsync`, atomic
+  `partial.replace(target)`) directly on the GStreamer STREAMING thread.
+  Once that I/O fell behind (two ffmpeg jobs plus a Whisper ASR pass sharing
+  the box), the tap's plain (default, non-leaky) `queue` backed up, the tee
+  it forks from stalled, and the mux's audio pad — fed by the SAME tee —
+  starved, stopping real TS output. A caption side-channel was able to take
+  the CHANNEL off air. Fixed on both the graph and writer sides, in
+  `civiccast/egress/gst/engine.py` and `civiccast/egress/gst/audio_tap.py`,
+  so no single layer removal re-opens the hole: the caption-audio-tap
+  `queue` element is now `leaky=2` (`GST_QUEUE_LEAK_DOWNSTREAM` — drop the
+  OLDEST buffered data rather than ever block upstream) with a much deeper
+  buffer cap, and the appsink is `drop=True` (was `False`). More
+  importantly, `RollingWavSegmentWriter.write_pcm_s16le` no longer does ANY
+  blocking I/O itself — it only appends PCM to an in-memory buffer under a
+  lock that guards ONLY that bookkeeping, and hands finished segments to a
+  new `SegmentWriterThread`, a dedicated background thread that owns all
+  the blocking I/O. The hand-off never blocks: a bounded queue (8 segments
+  by default) drops the OLDEST pending segment — never the newest, never by
+  waiting — when full, logging the drop at most once a minute.
+  `RollingWavSegmentWriter.close()` still blocks until the writer thread
+  drains (the publish boundary callers already rely on), but ordinary
+  writes during live playout never can.
+
+  Separately, item 84's own `CTRL first-output: first buffer after 0.0s`
+  marker turned out to be a TAUTOLOGY, not evidence: the persistent output
+  half's `queue -> udpsink` sink chain is async, so the pipeline cannot even
+  reach PLAYING before at least one buffer (PAT/PMT/SDT tables plus the
+  first media buffer) has already prerolled through the mux —
+  `_arm_stall_watchdog` latching `_first_output_seen = self._output_buffers
+  > 0` at arm time was therefore true for essentially every worker that ever
+  reached PLAYING, real media flow or not, defeating the exact
+  escalation-cliff guard item 84 (round-2) existed to close. Fixed:
+  `_arm_stall_watchdog` now snapshots the output-buffer count at arm time
+  (`_output_buffers_at_arm`) instead of crediting it, and `_check_stall`
+  requires the count to exceed that snapshot by at least 2 buffers observed
+  STRICTLY AFTER arming (one alone could still be a table-refresh
+  coincidence) before crediting real first output. The marker text is
+  unchanged, so `civiccast.egress.health.worker_produced_output` and the
+  daemon's on-air evidence check needed no change. Addendum: `_check_stall`
+  now also prints a bounded, at-most-one-line-per-5s `CTRL output: <N>
+  buffers (+<delta>) since PLAYING` progress line (both while advancing and
+  while flat) so the next soak shows exactly when real output stops instead
+  of only the eventual stall-kill line. Item 89 (daemon reaps a dead child
+  only on the 30s automation tick, so a worker that exits ~20ms after
+  `issued start` can report ON_AIR with a dead pid for up to 30s) is a
+  known, deliberately deferred follow-up — not fixed here.
+
+- **`CIVICCAST_CAPTION_TAP=off` now actually disables the live caption audio
+  tap leg on an activated native station (item 91).** Found in review of PR
+  #189/#190: `civiccast.native.station_runtime.load_native_station_environment`
+  unconditionally forced `CIVICCAST_CAPTION_TAP=inline` and injected
+  `CIVICCAST_CAPTION_TAP_DIR` into every activated station's child
+  environment, and `civiccast/native/supervisor/service.py` applies that spec
+  environment LAST over the service's own `os.environ` -- so an operator (or
+  a tester) who set `CIVICCAST_CAPTION_TAP=off` in the Windows service's
+  registry `Environment` could never reach the child at all: the native
+  runtime always overwrote it back to `inline` with a real tap directory,
+  and `build_audio_tap_plan` (`civiccast/captions/tap.py`) only ever
+  consulted the directory, not the mode. There was no shipped way to turn
+  the tap off on a native station short of uninstalling the caption model.
+  Fixed at three layers: (1) `load_native_station_environment` now passes
+  `CIVICCAST_CAPTION_TAP=off` THROUGH instead of overwriting it, and sets
+  `CIVICCAST_CAPTION_TAP_DIR` to the empty string (never merely omitted --
+  see the round-2 correction below) when the service environment already
+  carries the literal `off`; any other value (unset, `inline`, a typo) keeps
+  prior behavior byte-for-byte; (2) `build_audio_tap_plan` itself now checks
+  the mode and returns `None` under `off` even if a directory is still
+  configured, so it stays the single place deciding whether a channel's
+  audio is forked regardless of caller; (3) `GstPlayoutStrategy._with_audio_tap`
+  (`civiccast/egress/gst/strategy.py`) now also consults
+  `resolve_live_captions_enabled()` before building the tap, so the
+  **operator-facing** `live_captions_enabled` station-profile switch (added
+  above) now stops the audio-fork leg itself at the channel's next **start**
+  -- previously it stopped only ASR transcription (`CaptionTapWorker._run_disabled`
+  discarded and deleted what the still-running fork wrote); the
+  tee/appsink/WAV writer kept running regardless of the switch. A content
+  reload does NOT pick this up: `engine.py`'s `_dispatch_control` and
+  `worker.py`'s D2-pipe reload branch both read the reloaded graph back with
+  `graph_from_json` and re-apply only `new_graph.sources[0]`
+  (`reload_program`) and `new_graph.graphics_overlay`
+  (`reload_graphics_overlay`) -- `new_graph.audio_tap` is read into memory
+  and discarded, because the tee/appsink is built exactly once, at initial
+  pipeline construction, and nothing on the reload path can touch it either
+  way. Neither `civiccast/egress/gst/engine.py`'s
+  `_build_audio_tap`/`_audio_tap_element_specs` nor
+  `civiccast/egress/gst/audio_tap.py` (PR #190, merged as `66e02c4` -- see the
+  items 88/84c entry above) were touched --
+  the graph builder there already only builds the tee when
+  `graph.audio_tap is not None`, which is exactly the signal this fix now
+  controls correctly upstream. New coverage: `tests/native/test_station_runtime.py`
+  (env composition: `off` passthrough + dir set to `""`, every non-`off`
+  value unchanged), `tests/captions/test_audio_tap.py` (`build_audio_tap_plan`
+  returns `None` under `off` even with a dir configured),
+  `tests/captions/test_caption_tap_worker.py` (`off` with no dir parses
+  without raising; a scan against a not-yet-created tap directory idles
+  cleanly rather than raising), and `tests/egress/test_gst_strategy.py`
+  (the built graph carries no `audio_tap` when live captions are disabled,
+  and still carries one when they are not).
+
+  **Review round 2 found two real defects in the round-1 fix, both corrected
+  here:**
+  - **BLOCKER, uncaught exception could stop a channel going to air.**
+    `GstPlayoutStrategy._with_audio_tap` calling `resolve_live_captions_enabled()`
+    means a corrupt or momentarily-locked `station-state.json` now raised
+    straight out of `GstPlayoutStrategy.start()`/`reload_content()`:
+    `_load_raw_state` (`civiccast/installer/station_state.py`) only ever
+    suppresses `FileNotFoundError`/`json.JSONDecodeError`, so a byte that is
+    not valid UTF-8 (measured: `UnicodeDecodeError`) or a Windows sharing
+    violation (`PermissionError`) propagated through and stopped an
+    unrelated, best-effort, optional accessibility feature from taking a
+    channel off air. Fixed by a new `_live_captions_enabled_or_default`
+    wrapper in `strategy.py` that catches any exception from the read,
+    logs one WARNING per process (not per channel/reload), and defaults to
+    the documented "on" -- exactly what `resolve_live_captions_enabled`
+    itself already defaults to when nothing is persisted. New coverage:
+    `tests/egress/test_gst_strategy.py::test_strategy_start_survives_a_corrupt_station_state_file`
+    (a real 0xFF byte written to a real file) and
+    `::test_strategy_start_survives_a_locked_station_state_file`
+    (a stubbed `PermissionError`).
+  - **The "or content reload" claim in the round-1 text was FALSE**, per the
+    reload-path trace above -- corrected throughout this entry,
+    `civiccast/egress/gst/strategy.py`'s `_with_audio_tap` docstring,
+    `docs/ops/background-workers.md`, and `docs/USER-MANUAL.md`: the profile
+    switch (and the env switch) take effect at the channel's next **start**
+    only.
+  - **The "removing any stray leftover" claim was also FALSE** against the
+    real child environment: `civiccast/native/supervisor/service.py` composes
+    `env = {**os.environ, **spec.env}`, so merely omitting
+    `CIVICCAST_CAPTION_TAP_DIR` from `spec.env` (this function's return
+    value) left an inherited stray value in `os.environ` free to win the
+    merge unopposed. Fixed by setting the key to the empty string in
+    `spec.env` instead of omitting it -- `build_audio_tap_plan`'s `.strip()`
+    check treats `""` exactly like unset, and `spec.env` is applied LAST, so
+    it always wins regardless of what `os.environ` inherited. New coverage:
+    `test_station_environment_caption_tap_off_switch_disables_the_tap_leg`
+    now drives the actual `{**os.environ, **spec.env}` merge (not just this
+    function's return value) and feeds the merged result through
+    `build_audio_tap_plan` to prove the tee is not built.
+  - A stale file citation (`installer/supervisor/service.py` instead of
+    `civiccast/native/supervisor/service.py`) was also corrected, and
+    `CAPABILITIES.md`'s caption-transcription-worker row (governed,
+    `enforced: false`) updated to match.
+
+- **Reload-commit wedge: diagnostic instrumentation, a commit watchdog with a
+  stack-dump, and wedged-worker termination (item 85). The wedge itself is
+  NOT YET LOCALIZED** -- this is not the fix, it is the tooling that finds
+  it. MEASURED in sandbox runs 12/14/15: `CTRL reload committed` never
+  appeared in seven soaked workers' logs; the last line either ever printed
+  was `CTRL reload: boundary switch rebased to running time Ns`, then the
+  process sat alive but permanently unresponsive -- the pipe control reader
+  stopped answering, and the daemon logged `Seamless content-reload
+  declined... ack timeout after 5.0s (reissue_desired_state); falling back
+  to restart` every retry while rewriting `TRANSITIONING` every ~2s for
+  minutes, because the wedged pid never actually exited.
+
+  Round 1 of this item hypothesized a root cause in
+  `civiccast/egress/gst/engine.py`'s `_commit_reload`/`_dispose_source_leg`
+  (switching the selector's `active-pad` before releasing the new leg's hold
+  probes; NULLing a retiring leg's elements before unlinking its selector
+  pad) and shipped a REORDERING as the fix. Hostile review (10 real-GStreamer
+  runs of the extended test against that reordering: 4 failures, 0 on main,
+  every one `gst_base_src_loop ... streaming stopped, reason not-linked`
+  right after `CTRL reload committed`) found that reorder introduced a NEW,
+  deterministic defect: unlinking/releasing a retiring leg's selector
+  request pad BEFORE that leg's own elements reach `NULL` races its
+  still-live streaming thread into pushing a buffer through a pad with no
+  peer -- `GST_FLOW_NOT_LINKED`, a fatal flow error, not a benign no-op --
+  and releasing a new leg's hold probes before the selector switch
+  deterministically drops that leg's first buffer at the default
+  (`cache-buffers=False`) input-selector sink pad. **The reorder is
+  REVERTED**; `_commit_reload`/`_dispose_source_leg` keep main's original
+  ordering unchanged. What ships instead:
+
+  1. Four staged stdout lines in `_commit_reload` (`CTRL reload: switching
+     selector` / `holds released` / `old leg disposed` / `committed
+     (elements=N)`) so the next soak that reproduces the wedge shows exactly
+     which of these four steps it stalled inside.
+  2. `_commit_reload` is wrapped by `_arm_commit_watchdog`, a real OS
+     `threading.Timer` -- not a `GLib` timeout source, which could never fire
+     if the wedge is the SAME thread that would run it -- that, on
+     expiry, dumps every live thread's Python stack
+     (`faulthandler.dump_traceback(all_threads=True)`) to stderr FIRST (the
+     actual localization tool for whichever future soak reproduces the
+     wedge), then force-exits IMMEDIATELY with a new, distinct
+     `civiccast.egress.gst.exit_codes.GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE`
+     (`5` -- `4` is reserved by item 84's first-output watchdog). Deliberately
+     attempts NO pipeline teardown first: a downward `set_state` transition
+     takes the same `STREAM_LOCK` a genuinely wedged thread already holds, so
+     attempting one here would either do nothing or wedge this watchdog
+     thread too. This path emits no `WORKER_RESULT` receipt, by design --
+     `os._exit` bypasses the remaining Python that would print one.
+     `commit_timeout_s` (worker.py: `CIVICCAST_RELOAD_COMMIT_TIMEOUT_S` env
+     override, default 15s) is validated/clamped to `[3, 120]`s with a
+     stderr warning on an out-of-range or non-finite value -- never silently
+     floored.
+  3. Daemon side (`civiccast/egress/daemon.py`): a reload ack timeout while
+     the worker's own pid is confirmed still alive now terminates that
+     worker (bounded terminate -> wait -> kill, escalating to `kill()` if
+     `terminate()` is never observed) instead of leaving it running while
+     `_fall_back_to_restart_reload` pins `TRANSITIONING` forever -- the
+     `_pending_reloads` fallback entry is set BEFORE terminating (not after)
+     so a concurrent exit observation can never miss it. The next poll tick
+     restarts the channel cleanly. A `GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE`
+     exit is classified as `reload-commit-timeout` in the relaunch log line
+     and, unlike a genuine slow-start exit code, is deliberately NOT
+     exempted from the crash-loop streak -- every occurrence counts as an
+     ordinary crash toward fallback-slate escalation.
+
+  New gi-free coverage in `tests/egress/test_gst_engine_reload_commit_ordering.py`
+  (main's ordering is unchanged: `active-pad` switch before hold-probe
+  release, `NULL` before unlink/`release_request_pad`, no `FLUSH_START`/
+  `FLUSH_STOP` events sent at all; the four staged log lines print in order;
+  the commit-watchdog thread dumps all-threads then force-exits with no
+  pipeline teardown when a commit never returns, and is a no-op when it
+  finishes in time; `commit_timeout_s` clamps with a warning). Extended
+  real-GStreamer coverage in `tests/egress/test_gst_engine_wsl.py` (a
+  deferred rollover whose payload is a real multi-segment concat
+  `PlaylistLeg` of 4 short real A/V clips, each decoded via
+  `filesrc ! decodebin` -- the production shape a real schedule-derived
+  program leg takes -- committing within bound, run 10x directly against a
+  bundled native GStreamer runtime on this box, not skipped: 0 `not-linked`
+  errors across all 10 runs). New daemon coverage in `tests/egress/
+  test_daemon.py` (the ack-timeout-on-a-live-pid termination including a
+  `kill()` escalation case, and that a decline for any other reason does not
+  terminate a healthy worker) and `tests/egress/
+  test_daemon_reload_commit_timeout_relaunch.py` (the relaunch log line's
+  classification, and that this exit code counts toward the crash-loop
+  streak on every occurrence, unlike a genuine slow-start code).
 - **Live caption tap knob hardening: one channel at a time, bounded live ASR
   threads, a longer first pause after an overload (item 79).** MEASURED in
   the sandbox on candidate 3b: 10 "Caption tap overload" events, with
@@ -524,7 +869,7 @@ below.
     consequence, not a bug**: while a reload is armed but genuinely still
     settling, the channel's state row stays at whatever it was before the
     reload (honest -- the physical output has not switched yet either); with
-    the seamless path OFF (the beta.5 default below), a plan rollover instead
+    the seamless path explicitly OFF, a plan rollover instead
     shows `TRANSITIONING` from the moment automation triggers the rollover
     check (well before the current item's natural end, by design -- see
     `reload_policy.rollover_trigger_at`) until the item actually ends and the
@@ -543,11 +888,11 @@ below.
     operator stop), and a plan whose every segment never triggers a local
     write (all-live, or every segment a `playout_trim_supported` cache hit)
     leaves no directory behind at all.
-  - **Known issue: the seamless in-place rollover is disabled by default in
-    beta.5, pending a fresh hardware soak.** All fixes above are
-    unit-tested, but the seamless path itself has not yet been RE-PROVEN on
-    real hardware since they landed. `GstPlayoutStrategy.supports_content_reload`
-    now defaults to `False` (env `CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` to opt
+  - **Historical default-off state, superseded by the beta.5 default-on
+    change above.** At this point in development, the fixes above were
+    unit-tested, but the seamless path had not yet been re-proven on
+    real hardware. `GstPlayoutStrategy.supports_content_reload`
+    then defaulted to `False` (env `CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` to opt
     back in); a channel with it off falls back to the daemon's existing
     terminate+restart reload path at every plan rollover instead of the
     in-place swap. Cost of the fallback: one encoder restart per plan

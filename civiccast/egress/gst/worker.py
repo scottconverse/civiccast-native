@@ -512,8 +512,15 @@ def main() -> int:
         os.mkfifo(control_fifo)
     reload_timeout = float(os.environ.get("CIVICCAST_RELOAD_TIMEOUT_S", "10"))
     stall_timeout = float(os.environ.get("CIVICCAST_STALL_TIMEOUT_S", "10"))
+    # Item 85: bounds GstPlayoutEngine._commit_reload itself (see its own
+    # docstring / _arm_commit_watchdog) -- separate from reload_timeout above,
+    # which only bounds waiting for the NEW leg's first buffer, not the commit.
+    commit_timeout = float(os.environ.get("CIVICCAST_RELOAD_COMMIT_TIMEOUT_S", "15"))
     engine_instance = enginemod.GstPlayoutEngine(
-        playout, reload_timeout_s=reload_timeout, stall_timeout_s=stall_timeout
+        playout,
+        reload_timeout_s=reload_timeout,
+        stall_timeout_s=stall_timeout,
+        commit_timeout_s=commit_timeout,
     )
     swaps = int(os.environ.get("SWAPS", "0"))
     try:

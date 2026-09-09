@@ -69,8 +69,8 @@ param(
     # own $InstallBoundMinutes/$HealthBoundMinutes -- the in-sandbox
     # watchdog is a second, independent backstop using the same numbers,
     # not a substitute for this host-side guard.
-    [int]$InstallBoundMinutes = 20,
-    [int]$HealthBoundMinutes = 10,
+    [ValidateRange(1, 180)][int]$InstallBoundMinutes = 20,
+    [ValidateRange(1, 180)][int]$HealthBoundMinutes = 10,
 
     # Minutes with no new rollup file under output\rollups\ once the soak
     # clock has started (SOAK-START.json present) before this script
@@ -97,12 +97,11 @@ param(
     # as staleness from t=0, firing ~40s after launch).
     [int]$BootBoundMinutes = 5,
 
-    # Round-6 item 1: passed through to In-Sandbox-Soak.ps1's own
-    # -SeamlessReload switch, which exports
-    # CIVICCAST_EGRESS_SEAMLESS_RELOAD=1 at machine scope before starting
-    # the station service (PR #176, head 20f316f -- unmerged as of this
-    # writing; the env var name/contract is taken as given from the
-    # coordinator, not independently verified against this checkout).
+    # Compatibility/reproduction override passed through to the guest. It
+    # explicitly exports CIVICCAST_EGRESS_SEAMLESS_RELOAD=1 before service
+    # start. Beta.5 already defaults seamless reload on, so an ordinary run
+    # does not need this switch and deliberately leaves the environment unset.
+    # Both paths are judged by the same strict default-on verdict contract.
     [switch]$SeamlessReload,
 
     # Round-15 finding (a): threaded through to In-Sandbox-Soak.ps1's own
@@ -165,7 +164,7 @@ function Exit-HarnessError {
 
 if (-not $Root) { $Root = $PSScriptRoot }
 if (-not $Root) { $Root = (Get-Location).Path }
-Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), OnAirBoundMinutes: $OnAirBoundMinutes, KitRoot: $KitRoot, SeamlessReload: $($SeamlessReload.IsPresent), CaptionsOff: $($CaptionsOff.IsPresent), WorkerEnv: $($WorkerEnv -join '; '), DryRun: $($DryRun.IsPresent)"
+Write-Step "Root: $Root, Sha: $Sha, Minutes: $Minutes (SOAK minutes), InstallBoundMinutes: $InstallBoundMinutes, HealthBoundMinutes: $HealthBoundMinutes, OnAirBoundMinutes: $OnAirBoundMinutes, KitRoot: $KitRoot, SeamlessReloadOverrideRequested: $($SeamlessReload.IsPresent), SeamlessReloadExpected: True, CaptionsOff: $($CaptionsOff.IsPresent), WorkerEnv: $($WorkerEnv -join '; '), DryRun: $($DryRun.IsPresent)"
 
 $hostLivenessPath = Join-Path $Root 'scripts\HostLiveness.ps1'
 if (-not (Test-Path $hostLivenessPath)) {
@@ -329,6 +328,8 @@ $rendered = $template `
     -replace [regex]::Escape('{{OUTPUT_DIR}}'), $outputDir `
     -replace [regex]::Escape('{{SCRIPTS_DIR}}'), $scriptsDir `
     -replace [regex]::Escape('{{MINUTES}}'), "$Minutes" `
+    -replace [regex]::Escape('{{INSTALL_BOUND_MINUTES}}'), "$InstallBoundMinutes" `
+    -replace [regex]::Escape('{{HEALTH_BOUND_MINUTES}}'), "$HealthBoundMinutes" `
     -replace [regex]::Escape('{{ON_AIR_BOUND_MINUTES}}'), "$OnAirBoundMinutes" `
     -replace [regex]::Escape('{{SEAMLESS_RELOAD_ARG}}'), $seamlessReloadArg `
     -replace [regex]::Escape('{{CAPTIONS_OFF_ARG}}'), $captionsOffArg `
@@ -338,7 +339,7 @@ $wsbPath = Join-Path $Root "CivicCastSandboxSoak-$runName.wsb"
 Set-Content -Path $wsbPath -Value $rendered -Encoding UTF8
 Write-Step "Rendered $wsbPath"
 
-$logonCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes $Minutes -OnAirBoundMinutes $OnAirBoundMinutes $seamlessReloadArg $captionsOffArg $workerEnvArg"
+$logonCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastSoakScripts\In-Sandbox-Soak.ps1 -Minutes $Minutes -InstallBoundMinutes $InstallBoundMinutes -HealthBoundMinutes $HealthBoundMinutes -OnAirBoundMinutes $OnAirBoundMinutes $seamlessReloadArg $captionsOffArg $workerEnvArg"
 Write-Step "LogonCommand: $logonCommand"
 
 # sandbox-lab lane follow-up D: round-trip the rendered LogonCommand
@@ -408,7 +409,10 @@ $scriptsToCheck = @(
     (Join-Path $scriptsDir 'WorkerEnv.ps1'),
     # sandbox-lab lane follow-up D, item 2 (round-3 review): GstDebugTail.ps1
     # -- dot-sourced by In-Sandbox-Soak.ps1 in the guest, same pattern.
-    (Join-Path $scriptsDir 'GstDebugTail.ps1')
+    (Join-Path $scriptsDir 'GstDebugTail.ps1'),
+    # PR #198: TSDuckReportClassifier.ps1 -- dot-sourced by In-Sandbox-
+    # Soak.ps1 in the guest for fail-closed TSDuck report counter parsing.
+    (Join-Path $scriptsDir 'TSDuckReportClassifier.ps1')
 )
 $parseResults = @($scriptsToCheck | ForEach-Object { Test-ScriptParses -Path $_ })
 $parseOk = -not @($parseResults | Where-Object { -not $_.ok }).Count
@@ -450,7 +454,7 @@ if ($httpCheckOutStr -match '^OK') {
 }
 
 if ($DryRun) {
-    Write-Step "DRY RUN complete. Kit verified ($verifiedCount files), .wsb rendered at $wsbPath, all in-sandbox scripts parse cleanly, HttpClientHandler self-check OK. SeamlessReload=$($SeamlessReload.IsPresent) CaptionsOff=$($CaptionsOff.IsPresent) WorkerEnv=$(if ($workerEnvCanonical) { $workerEnvCanonical } else { '(none)' }) (WorkerEnv round-trip: OK) (LogonCommand: $logonCommand)"
+    Write-Step "DRY RUN complete. Kit verified ($verifiedCount files), .wsb rendered at $wsbPath, all in-sandbox scripts parse cleanly, HttpClientHandler self-check OK. SeamlessReloadOverrideRequested=$($SeamlessReload.IsPresent) SeamlessReloadExpected=True CaptionsOff=$($CaptionsOff.IsPresent) WorkerEnv=$(if ($workerEnvCanonical) { $workerEnvCanonical } else { '(none)' }) (WorkerEnv round-trip: OK) (LogonCommand: $logonCommand)"
     Write-Step "Would launch: Start-Process -FilePath 'C:\Windows\System32\WindowsSandbox.exe' -ArgumentList `"$wsbPath`""
     Write-Step "Would poll for: $outputDir\VERDICT.txt (phase bounds: install=${InstallBoundMinutes}m, health=${HealthBoundMinutes}m after install, rollup-stall=${RollupStallMinutes}m once soak_start_utc is set, generic quiet-bound=${QuietMinutes}m throughout)"
     Write-Step "Output directory prepared at: $outputDir (empty -- no sandbox launched)"

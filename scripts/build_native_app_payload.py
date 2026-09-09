@@ -59,7 +59,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from shutil import copy2, copytree, rmtree, which
-from tempfile import mkdtemp
+from tempfile import TemporaryDirectory, mkdtemp
 from typing import Final, NoReturn
 
 from packaging.utils import InvalidWheelFilename, parse_wheel_filename
@@ -569,17 +569,93 @@ def assert_payload_runtime_probe(report: Mapping[str, object]) -> None:
         _fail(f"payload runtime probe portal deep-link result {deep_links!r} != {expected_links!r}")
 
 
+def _isolated_payload_runtime_probe_environment(state_root: Path) -> dict[str, str]:
+    """Build a clean-station environment rooted in disposable build state.
+
+    The embedded probe starts the complete app lifespan.  It must retain the
+    build machine's ordinary runtime environment (PATH, SystemRoot, TLS
+    settings, and DLL lookup), but it must never adopt an operator's database,
+    CivicCast overrides, or profile-backed durable state.
+    """
+
+    profile_names = {
+        "APPDATA",
+        "HOME",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "LOCALAPPDATA",
+        "PROGRAMDATA",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "USERPROFILE",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "XDG_STATE_HOME",
+    }
+    environment = {
+        name: value
+        for name, value in os.environ.items()
+        if name.upper() != "DATABASE_URL"
+        and not name.upper().startswith("CIVICCAST_")
+        and name.upper() not in profile_names
+    }
+
+    directories = {
+        "APPDATA": state_root / "app-data",
+        "HOME": state_root / "profile",
+        "LOCALAPPDATA": state_root / "local-app-data",
+        "PROGRAMDATA": state_root / "program-data",
+        "TEMP": state_root / "temp",
+        "XDG_CACHE_HOME": state_root / "xdg" / "cache",
+        "XDG_CONFIG_HOME": state_root / "xdg" / "config",
+        "XDG_DATA_HOME": state_root / "xdg" / "data",
+        "XDG_STATE_HOME": state_root / "xdg" / "state",
+    }
+    for directory in directories.values():
+        directory.mkdir(parents=True, exist_ok=True)
+    environment.update({name: str(path) for name, path in directories.items()})
+    environment["USERPROFILE"] = environment["HOME"]
+    environment["TMP"] = environment["TEMP"]
+    environment["TMPDIR"] = environment["TEMP"]
+
+    # These are the app factory's durable path resolvers.  Supplying fresh
+    # locations makes the build-time probe explicit even if a future resolver
+    # stops using LOCALAPPDATA/Path.home as its default.
+    environment.update(
+        {
+            "CIVICCAST_CONFIG_DIR": str(state_root / "config"),
+            "CIVICCAST_CONTRIBUTOR_STORE_PATH": str(state_root / "contributor-submissions.json"),
+            "CIVICCAST_CONTRIBUTOR_UPLOAD_DIR": str(state_root / "contributor-uploads"),
+            "CIVICCAST_EGRESS_WORK_DIR": str(state_root / "egress"),
+            "CIVICCAST_MANAGED_STORAGE_DIR": str(state_root / "managed-storage"),
+            "CIVICCAST_PLAYBACK_POLICY_STATE_PATH": str(state_root / "playback-policy.json"),
+            "CIVICCAST_REPORTING_WORK_DIR": str(state_root / "reporting"),
+            "CIVICCAST_STATION_STATE_PATH": str(state_root / "station-state.json"),
+            "CIVICCAST_STATION_STORAGE_ROOT": str(state_root / "station-storage"),
+            "CIVICCAST_TESTER_OPS_STATE_PATH": str(state_root / "tester-ops-state.json"),
+            "CIVICCAST_UPLOAD_DIR": str(state_root / "uploads"),
+            "CIVICCAST_VOD_PACKAGE_DIR": str(state_root / "vod-packages"),
+        }
+    )
+    return environment
+
+
 def run_payload_runtime_probe(out: Path) -> dict[str, object]:
-    """Import every mandatory feature family and decode audio with embedded Python."""
+    """Run the embedded smoke test against disposable, profile-isolated state."""
 
     python = out / "python.exe"
-    result = subprocess.run(
-        [str(python), "-I", "-B", "-c", _PAYLOAD_RUNTIME_PROBE],
-        cwd=out,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    with TemporaryDirectory(prefix="cc-app-runtime-probe-", dir=out.parent) as temporary:
+        environment = _isolated_payload_runtime_probe_environment(Path(temporary))
+        result = subprocess.run(
+            [str(python), "-I", "-B", "-c", _PAYLOAD_RUNTIME_PROBE],
+            cwd=out,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
     report = json.loads(result.stdout)
     if not isinstance(report, dict):
         _fail("payload runtime probe did not return a JSON object")

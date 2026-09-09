@@ -594,44 +594,84 @@ def _embed_captions_default() -> bool:
     return os.environ.get("CIVICCAST_EGRESS_EMBED_CAPTIONS", "").strip().lower() in _TRUTHY
 
 
-#: Item 3 (beta.5 gate): the env var that re-enables the GStreamer engine's
-#: seamless in-place program content-reload. Off by DEFAULT for beta.5.
-#:
-#: MEASURED on real hardware (2026-09-06, clean install of 609273d, three
-#: GStreamer channels): the first seamless plan rollover
-#: (``daemon._try_content_reload`` -> ``strategy.reload_content`` -> the D2
-#: worker-pipe seam -> ``engine.reload_program``) was followed by
-#: ``CTRL stall: no output for 10s`` worker relaunches every ~30s on every
-#: channel. Root cause (H1, see ``engine.py``'s ``_make``/``_build_playlist``/
-#: ``_source_leg_seq`` comments): every ``PlaylistLeg`` build named its ``concat``
-#: aggregators with the bare leg label (``vconcat_program``/``aconcat_program``),
-#: so a reload's rebuilt aggregators collided with the still-live outgoing leg's
-#: same-named aggregators -- GStreamer's ``bin.add()`` silently REFUSED the
-#: duplicate, the reload's new leg never actually joined the pipeline, its
-#: readiness probes never fired, and the worker's ``reload_program`` call ack'd
-#: "applied" before the reload had committed (worker.py's premature-ack defect,
-#: also fixed in this change) -- so automation believed every rollover had
-#: landed and kept re-triggering it every cadence tick while the channel bounced
-#: on the stall watchdog forever.
-#:
-#: This same change fixes the concat-naming collision (``_source_leg_seq``), the
-#: silent ``pipeline.add()`` failure (``_make`` now raises), and the premature
-#: ack (``reload_program(..., on_settled=...)``) -- but the seamless path has not
-#: yet been RE-PROVEN on real hardware since those fixes, so it stays off by
-#: default for the beta.5 candidate. Set ``CIVICCAST_EGRESS_SEAMLESS_RELOAD=1``
-#: to opt back in once a fresh soak confirms the fix; a channel with it off
-#: falls back to the daemon's existing terminate+restart reload path at every
-#: plan rollover (one encoder restart per rollover -- a rounding error for
-#: 10-40 minute program items, roughly every ~30s for a rapid 30-second-item
-#: test/demo schedule).
+#: Beta.5 uses in-place content reload by default (owner decision 2026-09-06).
+#: The engine's unique source-leg names and asynchronous settlement protocol
+#: prevent the former duplicate-bin and premature-ack failures. The daemon
+#: retains bounded restart recovery if a reload fails or never settles.
+#: An operator may explicitly opt out with 0/false/no/off for diagnosis;
+#: this fallback restarts the encoder at plan rollover and may interrupt output.
+#: Installed-candidate soaks must prove the default path before publication.
 _SEAMLESS_RELOAD_ENV_VAR = "CIVICCAST_EGRESS_SEAMLESS_RELOAD"
 
 
 def _seamless_content_reload_default() -> bool:
     """Whether ``GstPlayoutStrategy.supports_content_reload`` defaults on, from the
-    environment. See ``_SEAMLESS_RELOAD_ENV_VAR`` above for why this defaults OFF
-    for beta.5 and what opting back in costs when the seamless path is disabled."""
-    return os.environ.get(_SEAMLESS_RELOAD_ENV_VAR, "").strip().lower() in _TRUTHY
+    environment. An explicit false value disables the beta.5 default."""
+    return os.environ.get(_SEAMLESS_RELOAD_ENV_VAR, "").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
+
+
+#: Set once the first time ``_live_captions_enabled_or_default`` swallows an
+#: exception, so a station whose ``station-state.json`` is permanently
+#: corrupt/locked logs ONE WARNING instead of one per channel start/reload
+#: for as long as the station runs -- matching the "logged once" shape of
+#: every other best-effort degrade in this codebase
+#: (``CaptionTapWorker._disabled_announced`` is the sibling pattern on the
+#: caption-tap side).
+_live_captions_read_failure_announced = False
+
+
+def _live_captions_enabled_or_default(channel_id: str) -> bool:
+    """``resolve_live_captions_enabled()``, but never fatal to a channel start.
+
+    Item 91 follow-up review: ``resolve_live_captions_enabled``
+    (`civiccast.installer.station_state`) reads ``station-state.json`` via
+    ``_load_raw_state``, which only ever suppresses ``FileNotFoundError`` and
+    ``json.JSONDecodeError``. A byte that is not valid UTF-8 (``read_text``'s
+    strict decode) or a Windows sharing violation while another process holds
+    the file (``PermissionError``/``OSError``) both raise straight through --
+    and before this guard, that exception propagated out of
+    ``GstPlayoutStrategy.start()``/``reload_content()`` and stopped the
+    channel going to air over a corrupt or momentarily-locked STATUS file for
+    an entirely unrelated, best-effort, optional accessibility feature. That
+    is exactly backwards: whether live captions are enabled must never be
+    able to take playout down.
+
+    Defaults to the SAME "on" ``resolve_live_captions_enabled`` itself
+    defaults to when nothing is persisted -- live captions are an
+    accessibility feature, and a station that can run them should, so a
+    read failure is treated as "the switch could not be read" rather than
+    "the operator asked for it off." Imported lazily, matching the existing
+    lazy import in ``civiccast.app`` for the same function --
+    ``civiccast.installer`` is not otherwise a dependency of the egress
+    graph-building path and this keeps it that way for every caller that
+    never hits a read failure.
+    """
+
+    from civiccast.installer.station_state import resolve_live_captions_enabled
+
+    global _live_captions_read_failure_announced
+    try:
+        return resolve_live_captions_enabled()
+    except Exception:
+        if not _live_captions_read_failure_announced:
+            logger.warning(
+                "channel %s: could not read the live-captions station-profile "
+                "switch (station-state.json unreadable or locked); defaulting "
+                "to ENABLED rather than blocking playout on an unrelated "
+                "accessibility-feature switch. This channel and every other "
+                "channel will keep defaulting to enabled until the file "
+                "becomes readable again; this warning is logged once per "
+                "process, not once per channel.",
+                channel_id,
+                exc_info=True,
+            )
+            _live_captions_read_failure_announced = True
+        return True
 
 
 def _write_graph_file(path: Path, text: str) -> None:
@@ -724,8 +764,8 @@ class GstPlayoutStrategy:
     # the class rather than an instance. Every real instance overrides this in
     # __init__ with the environment-gated, DI-overridable value -- see
     # ``_SEAMLESS_RELOAD_ENV_VAR``/``_seamless_content_reload_default`` above for
-    # why this defaults False (beta.5 gate, unproven-since-fix seamless rollover).
-    supports_content_reload = False
+    # why this defaults True and how to opt out for diagnosis.
+    supports_content_reload = True
     # selector index per source role — matches graph_from_config leg order
     # (program leg = pad 0, always-hot black slate = pad 1). There is deliberately
     # NO 'live' pad: CivicCast airs a single pre-switched live feed (S16 delegates
@@ -797,6 +837,41 @@ class GstPlayoutStrategy:
 
     @staticmethod
     def _with_audio_tap(graph: PlayoutGraph, channel_id: str) -> PlayoutGraph:
+        # Item 91 follow-up: the operator-facing switch
+        # (``StationProfile.live_captions_enabled``, ``PUT /staff/profile``)
+        # only ever stopped TRANSCRIPTION before this -- the in-app tap
+        # worker's ``is_enabled`` check (``civiccast.app``'s
+        # ``resolve_live_captions_enabled`` wiring) discards what it reads
+        # and deletes settled segments (``CaptionTapWorker._run_disabled``),
+        # but the egress tee/appsink/WAV writer this graph builds kept
+        # running regardless -- the audio tap LEG never stopped, only what
+        # consumed it.
+        #
+        # This is consulted only when a NEW ``PlayoutGraph`` is being built,
+        # which is ``GstPlayoutStrategy.start()`` alone -- NOT a content
+        # reload. ``reload_content()`` writes a reload sidecar that
+        # ``engine.py``'s ``_dispatch_control``/``worker.py``'s reload branch
+        # both read back with ``graph_from_json`` and then apply by hand,
+        # consuming only ``new_graph.sources[0]`` (via ``reload_program``) and
+        # ``new_graph.graphics_overlay`` (via ``reload_graphics_overlay``);
+        # ``new_graph.audio_tap`` on that reloaded graph is read into memory
+        # and then discarded -- the tee/appsink is built exactly once, at
+        # initial pipeline construction, and a reload cannot touch it either
+        # way. So this switch takes effect at the channel's next START only
+        # (a fresh `.start()` after the channel goes off air and back on, or
+        # a supervisor restart) -- a content reload on an already-running
+        # channel does NOT pick up a profile change made in between.
+        #
+        # ``resolve_live_captions_enabled`` (`civiccast.installer.station_state`)
+        # already folds in the ``CIVICCAST_CAPTION_TAP=off`` env switch too
+        # (env override > persisted profile > default-on), so this one check
+        # covers both item 91 switches: the ops/experiment env override and
+        # the operator-facing profile toggle. Read through
+        # ``_live_captions_enabled_or_default`` (module-level, below), which
+        # defaults to enabled and logs once rather than raising, if the
+        # underlying state-file read ever fails.
+        if not _live_captions_enabled_or_default(channel_id):
+            return graph
         plan = build_audio_tap_plan(channel_id)
         if plan is None:
             return graph

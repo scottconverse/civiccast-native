@@ -49,8 +49,8 @@ two artifact classes that ship (the installer exe and the native packs).
 carried into this decision: docs and tests described Sigstore as present or required while no
 code produced it (`verify_package_artifact` even blocked verification on a bundle no workflow
 ever writes). Rejected — a requirement nothing implements is not a lighter version of the
-requirement, it is a false claim; `docs/process/CIVICCAST_AUDIT_PROTOCOL.md` treats unverified
-claims and doc/code drift as defects to fix, not states to document around.
+requirement, it is a false claim. Unverified signing claims and doc/code drift
+are defects to fix, not states to document around.
 
 **Option C — Azure certs only (chosen).** Authenticode via Azure Trusted Signing for the one
 artifact that needs publisher-identity trust on end-user machines (the Windows installer, where

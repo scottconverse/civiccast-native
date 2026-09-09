@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tomllib
@@ -34,7 +35,7 @@ def _load(mod_name: str, filename: str) -> object:
     return module
 
 
-builder = _load("build_native_app_payload", "build_native_app_payload.py")
+builder = _load("scripts.build_native_app_payload", "build_native_app_payload.py")
 verifier = _load("verify_native_app_payload", "verify_native_app_payload.py")
 
 _APP_SHELL_TARGETS = (
@@ -839,6 +840,10 @@ def test_external_license_file_is_attributed_to_its_distribution(tmp_path: Path)
 
 
 def test_payload_runtime_probe_requires_mandatory_imports_and_decode() -> None:
+    # Mutmut keys use the source-relative module path. A bare loader alias
+    # records trampoline hits under a different name and tests no mutants.
+    assert builder.__name__ == "scripts.build_native_app_payload"
+    assert builder.run_payload_runtime_probe.__module__ == builder.__name__
     report = {
         "imports": sorted(builder.REQUIRED_RUNTIME_IMPORTS),
         "decoded_frames": 16,
@@ -889,6 +894,87 @@ def test_payload_runtime_probe_disables_bytecode_writes(
 
     assert builder.run_payload_runtime_probe(out) == report
     assert seen[:4] == [str(out / "python.exe"), "-I", "-B", "-c"]
+
+
+@pytest.mark.parametrize("probe_fails", [False, True], ids=["success", "failure"])
+def test_payload_runtime_probe_isolates_parent_profile_and_cleans_temporary_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    probe_fails: bool,
+) -> None:
+    out = tmp_path / "payload"
+    out.mkdir()
+    (out / "python.exe").write_bytes(b"python")
+    parent_profile = tmp_path / "real-user-profile"
+    poisoned = {
+        "DATABASE_URL": "postgresql://real-station.invalid/civiccast",
+        "CIVICCAST_STATION_STATE_PATH": str(parent_profile / "station-state.json"),
+        "CIVICCAST_MANAGED_STORAGE_DIR": str(parent_profile / "managed-storage"),
+        "CIVICCAST_CONFIG_DIR": str(parent_profile / "config"),
+        "CIVICCAST_UPLOAD_DIR": str(parent_profile / "uploads"),
+        "CIVICCAST_OPERATOR_CONSOLE_DIST": str(parent_profile / "operator"),
+        "LOCALAPPDATA": str(parent_profile / "AppData" / "Local"),
+        "APPDATA": str(parent_profile / "AppData" / "Roaming"),
+        "USERPROFILE": str(parent_profile),
+        "PROGRAMDATA": str(parent_profile / "ProgramData"),
+        "HOME": str(parent_profile),
+    }
+    for name, value in poisoned.items():
+        monkeypatch.setenv(name, value)
+    report = {
+        "imports": sorted(builder.REQUIRED_RUNTIME_IMPORTS),
+        "decoded_frames": 16,
+        "portal_deep_links": {
+            "/operator/setup": 200,
+            "/meetings/example": 200,
+        },
+    }
+    seen: dict[str, object] = {}
+
+    def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        child_env = kwargs["env"]
+        assert isinstance(child_env, dict)
+        probe_root = Path(child_env["LOCALAPPDATA"]).parent
+        seen["probe_root"] = probe_root
+        seen["command"] = command
+        assert probe_root.is_dir()
+        assert Path(child_env["LOCALAPPDATA"]).is_dir()
+        assert Path(child_env["PROGRAMDATA"]).is_dir()
+        assert Path(child_env["TEMP"]).is_dir()
+        assert "DATABASE_URL" not in child_env
+        assert not any(str(parent_profile) in value for value in child_env.values())
+        for name in poisoned:
+            if name.startswith("CIVICCAST_"):
+                assert child_env.get(name) != poisoned[name]
+        for name in (
+            "CIVICCAST_CONFIG_DIR",
+            "CIVICCAST_MANAGED_STORAGE_DIR",
+            "CIVICCAST_STATION_STATE_PATH",
+            "CIVICCAST_STATION_STORAGE_ROOT",
+        ):
+            assert Path(child_env[name]).is_relative_to(probe_root)
+        (Path(child_env["LOCALAPPDATA"]) / "probe-write.txt").write_text(
+            "isolated", encoding="utf-8"
+        )
+        if probe_fails:
+            raise subprocess.CalledProcessError(1, command, stderr="expected failure")
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(report), stderr="")
+
+    monkeypatch.setattr(builder.subprocess, "run", fake_run)
+
+    if probe_fails:
+        with pytest.raises(subprocess.CalledProcessError):
+            builder.run_payload_runtime_probe(out)
+    else:
+        assert builder.run_payload_runtime_probe(out) == report
+    assert seen["command"] == [
+        str(out / "python.exe"),
+        "-I",
+        "-B",
+        "-c",
+        builder._PAYLOAD_RUNTIME_PROBE,
+    ]
+    assert not Path(os.fspath(seen["probe_root"])).exists()
 
 
 def test_place_msvc_runtime_requires_the_exact_reviewed_dll(tmp_path: Path) -> None:

@@ -35,23 +35,29 @@ handoff; do not click through an identity or status that differs from it.
 
 ### What you'll see, and exactly what to click
 
-1. You double-click the CivicCast installer (`setup.exe`).
-2. A blue screen appears titled **"Windows protected your PC."**
+1. Verify the exact installer named in the handoff, then open it. A GitHub
+   release calls it `setup.exe`; a USB/LAN kit may use the branded filename.
+2. If a screen appears titled **"Windows protected your PC,"** follow the
+   checks below. Its presence or absence is not acceptance evidence.
 3. Click the small text link that says **More info**.
 4. Compare the Publisher field with the exact signature status and publisher in
    the active handoff. If they differ, stop. Click **Run anyway** only when the
    handoff explicitly authorizes that exact publisher and signature status for
    that exact SHA-256 — the hash must match too, not just the publisher name.
-5. The real CivicCast Installer window opens, and setup continues normally from here. Windows will
-   ask for admin approval later in setup, at **Set up Windows helper**.
+5. Continue through the Windows installation wizard. If Windows requests
+   administrator approval, check the publisher again before approving it.
+   Then follow the [field quickstart](../QUICKSTART-OPERATOR.md). Do not assume
+   installation succeeded merely because a window opened.
 
-That's it — two clicks past the warning screen, and you've confirmed it's really from us.
+The hash and valid Authenticode checks establish installer identity. Clicking
+through SmartScreen is not itself a signature or operational check.
 
 ### Want to be extra sure before you click "Run anyway"?
 
-The strongest check is a SHA-256 hash match against the sidecar file published
-with the release — a hash match is mandatory before running the installer,
-and signature expectations are candidate-specific. Computing that hash needs
+Both checksum and signature verification are required. For GitHub, compare
+against the exact release's checksum file and installer sidecar metadata.
+For USB/LAN, use the complete kit's own hash-pinned delivery manifest and
+trusted handoff; a GitHub sidecar need not be present. Computing the hash needs
 a command (`Get-FileHash`, shown in the **For IT / technical verification**
 section below). If that's not something you're set up to run yourself, ask
 your IT contact to run it for you before you click "Run anyway."
@@ -68,20 +74,24 @@ Use these checks against the exact candidate handoff:
 Get-AuthenticodeSignature .\setup.exe | Format-List Status, SignerCertificate
 ```
 
-If the handoff says signed, expect `Status: Valid` and the exact named signer.
+For a USB/LAN kit, substitute the exact branded installer filename from the
+handoff in both PowerShell commands on this page. For the public beta, require
+`Status: Valid` and the exact named signer, Scott Converse.
 If it says `NotSigned`, that file is local-acceptance-only and must never be
 treated as a public beta download.
 
-### 2. Confirm the SHA-256 hash matches the handed-off sidecar
+### 2. Confirm the SHA-256 hash matches the handed-off package
 
 ```powershell
 Get-FileHash .\setup.exe -Algorithm SHA256
 ```
 
-Compare against the `sha256` value in `setup.exe.sidecar.json` published
+For GitHub, compare against the `sha256` value in `setup.exe.sidecar.json` published
 alongside the installer in the exact release, and against `setup.exe`'s own
 line in `SHA256SUMS.txt`. They must match. Do not use a generic "latest"
-link, an older prerelease, or a detached sidecar.
+link, an older prerelease, or a detached sidecar. For USB/LAN, compare the
+actual filename's entry in that kit's `SHA256SUMS.txt` and the trusted handoff.
+The checksum file and sidecar are metadata, not separately signed attestations.
 
 ### 3. Allowlist by publisher or hash
 
@@ -90,8 +100,7 @@ approved build by exact hash, according to local policy.
 
 ### Why SmartScreen still warns on a signed installer
 
-SmartScreen reputation is per-file and accrues with download volume; a newly issued certificate has
-none yet, and Microsoft's 2026 Trusted-Signing certificate-authority changes reset reputation for
-new signers industry-wide (extended-validation certificates no longer bypass this either). The
-warning shows the verified publisher and diminishes as reputation builds. See `CODE_SIGNING_POLICY.md`
-for the signing posture.
+A valid Authenticode signature does not guarantee that Windows will omit a
+SmartScreen warning. Do not promise that the warning will disappear after a
+particular number of downloads. See [CODE_SIGNING_POLICY.md](../../CODE_SIGNING_POLICY.md)
+for the signing posture, and verify the actual downloaded executable.

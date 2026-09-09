@@ -1,11 +1,18 @@
 # CivicCast — Instructions for Codex
 
-Read `CLAUDE.md` first: it carries the repo's protocols (audit protocol,
-5-lens self-audit, layered audit pattern, closed decisions, non-negotiables).
+Read `CLAUDE.md` first: it carries the repo's review practices,
+closed decisions, and non-negotiables.
 Those apply to every agent working in this repo, not only Claude.
 
-For any audit, verification, release-gate, or status work, the mandatory
-repo-local protocol is `docs/process/CIVICCAST_AUDIT_PROTOCOL.md`.
+The outdated cross-agent audit protocol was removed at Scott's direction
+on 2026-09-08. Do not restore it or use its historical approval gates.
+Scott has authorized the current beta.5 release manager to implement, test,
+document, push, merge on green CI, and tag and publish the completed beta
+for LPM field installation. Continue unblocked work without per-stage approval.
+This authorization does not authorize station production cutover or spending.
+Do not use staged-build, Workflowwright, GauntletGate, Proof Gate, or Audit
+Team skills for this release. Direct engineering and independent agent review
+remain appropriate; the release manager owns integration and evidence.
 
 ---
 
@@ -45,9 +52,8 @@ Rules of the role (summary; audit-control is authoritative):
 5. Report directly to Scott or on the PR. No canonical path, separate
    repository record, exact-SHA authorization token, or per-slice review is
    required.
-6. **Severity and status language** follow
-   `docs/process/CIVICCAST_AUDIT_PROTOCOL.md` — no `done`/`ready`/`green`
-   beyond what current evidence supports.
+6. **Severity and status language** must reflect current evidence, including
+   which candidate was tested and what remains unverified.
 7. **Security-sensitive findings** use the embargo lane defined in
    audit-control (private until fixed).
 8. **Disagreements between coder and auditor escalate to Scott Converse**

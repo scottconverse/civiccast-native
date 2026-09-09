@@ -39,3 +39,29 @@ GST_PREROLL_TIMEOUT_EXIT_CODE = 3
 # error reason) and ``EgressDaemon._relaunch_after_crash``, which rate-limits
 # this exit the same way it already does ``GST_PREROLL_TIMEOUT_EXIT_CODE``.
 GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE = 4
+
+# Item 85 (sandbox runs 12/14/15): ``GstPlayoutEngine._commit_reload`` did not
+# finish within its own watchdog bound (``_arm_commit_watchdog``,
+# ``commit_timeout_s``). The wedge this item was opened against is NOT yet
+# localized to a specific line inside ``_commit_reload``/``_dispose_source_
+# leg`` -- see those methods' own docstrings for round 1's reordering
+# hypothesis and why hostile review reverted it. What IS proven: a
+# ``GLib.timeout_add`` source could never fire if the wedge is the SAME
+# GLib main-loop thread that would run it, so only a real OS thread
+# (``threading.Timer``) can escape it; that thread dumps every live Python
+# stack (``faulthandler.dump_traceback``) before force-exiting via
+# ``os._exit`` with this distinct code -- the localization tool for whichever
+# future soak reproduces the wedge. UNLIKE ``GST_PREROLL_TIMEOUT_EXIT_CODE``
+# and ``GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE`` above (both genuine "slow start,
+# not a crash" cases), this exit is deliberately treated as an ORDINARY CRASH
+# by the daemon's relaunch path (counts toward the crash-loop streak on every
+# occurrence, no rate-limited exemption) -- a reload-commit wedge is a real
+# failure of an already-running channel, not a slow-but-progressing start.
+# Also unlike every other exit path in this worker: this one emits NO
+# ``WORKER_RESULT`` receipt, by design -- ``os._exit`` bypasses every
+# remaining line of Python on this process, including whatever would have
+# built and printed that receipt, so a caller reading this exit (e.g.
+# ``civiccast.native.installed_gstreamer_smoke.require_clean_worker_result``)
+# must treat this code as its own distinct, receipt-less signal rather than a
+# missing-receipt failure of some other kind.
+GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE = 5

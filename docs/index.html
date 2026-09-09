@@ -1159,7 +1159,7 @@
         outline-offset: 4px;
       }
     </style>
-    <!-- The WSL/mainline version identity is fully retired: v1.0.0-beta.4 is now the single version across the product, installer and docs. It is the current published release, a download-only upgrade for stations already on v1.0.0-beta.3 -- setup.exe and the runtime packs are attached to its GitHub Release, verified by SHA256SUMS.txt and a signed sidecar. v1.0.0-beta.3 (the first downloadable release) is now superseded. v1.0.0-beta.1 (USB-delivered, no downloadable assets) is also superseded. v1.0.0-beta.2 was never published -- it exists only as an internal Gate A upgrade-baseline kit. v1.0.0-beta.5 is the next candidate and the current owner-held unpublished candidate; it does not change the beta.4 install story. -->
+    <!-- The WSL/mainline version identity is fully retired. v1.0.0-beta.4 is the current published release, a download-only upgrade for stations already on v1.0.0-beta.3. Its GitHub Release carries setup.exe and runtime packs, SHA256SUMS.txt and installer sidecar metadata. The installer is Authenticode-signed; the JSON sidecar is not a separately signed attestation. v1.0.0-beta.3 (the first downloadable release) and v1.0.0-beta.1 (USB-delivered, no downloadable assets) are superseded. v1.0.0-beta.2 was never published and remains only an internal Gate A upgrade-baseline kit. The product source and unpublished candidate are v1.0.0-beta.5; that does not change the beta.4 install target. -->
   </head>
   <body>
     <a class="skip-link" href="#top">Skip to content</a>
@@ -2150,14 +2150,15 @@
             </p>
           </details>
           <details>
-            <summary>Can we download a production installer today?</summary>
+            <summary>Can we download a Windows beta installer today?</summary>
             <p>
               Yes. <code>v1.0.0-beta.4</code> is the current release, a
               download-only upgrade for stations already on
               <code>v1.0.0-beta.3</code>: <code>setup.exe</code> and the
               runtime packs are attached to the
               <a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4">v1.0.0-beta.4 GitHub Release</a>,
-              verified by <code>SHA256SUMS.txt</code> and a signed sidecar --
+              with <code>SHA256SUMS.txt</code> and installer sidecar metadata.
+              Verify the installer's Authenticode signature separately --
               see the
               <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.4-verification.md">release verification record</a>
               for the Gate A run and the asset/hash/signature checks.
@@ -2173,6 +2174,18 @@
               current owner-held unpublished candidate (unpublished; no
               installer asset) -- it does not change the install story
               above, which still targets <code>v1.0.0-beta.4</code>.
+            </p>
+            <p>
+              Beta.5 development enables in-place schedule rollover by default,
+              allowing the next plan and between-program filler to load without
+              a planned encoder restart. Large bulletin rotations retain every
+              approved, currently airable slide.
+              Channel status and health reporting distinguish programs from
+              filler when a handoff completes.
+              Installed-candidate soak verification is still pending. See the
+              <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/beta5-recovery-2026-09-08.md">recovery record</a>.
+              The bundled manual describes beta.5 operation; this page and the
+              exact GitHub Release provide current download and verification status.
             </p>
           </details>
         </div>

@@ -22,8 +22,8 @@
 #   }
 #
 # ROUND-6 CHANGE: relaunch/restart classification moved OUT of the per-cycle
-# check entirely. With CIVICCAST_EGRESS_SEAMLESS_RELOAD off (beta.5 default),
-# EVERY schedule-plan rollover is a PLANNED worker restart: the daemon writes
+# check entirely. Historical flag-off runs treated every schedule-plan rollover
+# as a PLANNED worker restart: the daemon writes
 # state=TRANSITIONING, drains to EOS, then starts a new worker (new pid) --
 # a pid change alone was never evidence of a crash. In-Sandbox-Soak.ps1 now
 # samples state+pid+updated_at every 15s (a 12-sample/3-minute ring per
@@ -205,24 +205,28 @@ function Get-SoakVerdict {
       window is still classified and still counted.
 
       .PARAMETER SeamlessReload
-      Round-11 finding 4 (MEDIUM): whether this run was launched with
-      -SeamlessReload. Under this flag the PASS contract is STRICTER than
-      the normal (flag-off) one: zero unplanned_relaunch, zero
+      Historical compatibility input: whether this run was launched with the
+      explicit -SeamlessReload override. When SeamlessReloadExpected is not
+      supplied, this retains the old contract for prior callers and tests.
+
+      .PARAMETER SeamlessReloadExpected
+      The effective product behavior this run is required to prove. When true,
+      the PASS contract is strict: zero unplanned_relaunch, zero
       reload_aborted (see -ReloadAbortEvents), planned_restart_count MUST
-      be zero (a classified planned_restart under this flag means the
+      be zero (a classified planned_restart means the
       seamless content-reload path did NOT run at all -- it fell back to
-      an actual worker restart, which is exactly the failure mode this
-      flag exists to prove absent), and tsp pass every cycle (already
+      an actual worker restart), and tsp pass every cycle (already
       enforced unconditionally by Test-SoakCycle, restated here as part of
-      the documented contract). Default $false (the normal contract).
+      the documented contract). The beta.5 in-sandbox caller supplies true
+      even when -SeamlessReload was not requested because seamless reload now
+      defaults on. Null preserves SeamlessReload's historical meaning.
 
       .PARAMETER ReloadAbortEvents
       Round-11 finding 4: array of @{ channel_id; reason } -- daemon.py
       WARNING lines (main 250026b:1946/2132/2143/2156, all ending
       "...falling back to restart.") indicating a seamless content-reload
-      attempt was aborted. These are never a FAIL under the normal
-      (flag-off) contract (a fallback-to-restart is exactly what flag-off
-      operation is), but ANY of them under -SeamlessReload is a FAIL.
+      attempt was aborted. These are never a FAIL when seamless reload is not
+      expected, but ANY of them when it is expected is a FAIL.
 
       .PARAMETER ReloadArmedNeverCommittedChannels
       Round-16 finding (item 2, worker-stdout cross-check): channel ids for
@@ -232,7 +236,7 @@ function Get-SoakVerdict {
       $DaemonReloadArmedRegex) but whose own gst-worker.stdout.log never
       logged a single "CTRL reload committed" for the whole soak
       (WorkerStdoutParser.ps1's reload_committed_count stayed 0). Only
-      meaningful -- and only checked -- under -SeamlessReload: a reload
+      meaningful -- and only checked -- when seamless reload is expected: a reload
       that was armed but never committed is exactly the silent
       fallback-to-restart failure mode that flag exists to prove absent,
       a PRODUCT finding, never a harness note. Default empty (no channels
@@ -261,10 +265,19 @@ function Get-SoakVerdict {
         [AllowEmptyCollection()]
         [array]$RestartEvents = @(),
         [bool]$SeamlessReload = $false,
+        [Nullable[bool]]$SeamlessReloadExpected = $null,
         [AllowEmptyCollection()]
         [array]$ReloadAbortEvents = @(),
         [AllowEmptyCollection()]
         [array]$ReloadArmedNeverCommittedChannels = @()
+    )
+
+    # Preserve old direct callers: absent SeamlessReloadExpected, the legacy
+    # -SeamlessReload value still selects the strict contract. The beta.5 soak
+    # caller passes the effective default-on expectation explicitly.
+    $strictSeamlessReload = $(
+        if ($null -eq $SeamlessReloadExpected) { [bool]$SeamlessReload }
+        else { [bool]$SeamlessReloadExpected }
     )
 
     $restartEvents = @($RestartEvents)
@@ -293,7 +306,7 @@ function Get-SoakVerdict {
     # Round-11 finding 6: a harness-SHAPE condition (this read-failure
     # streak, OR Test-SoakCycle's own tsp-tooling-defect flag) must NEVER
     # pre-empt a CONFIRMED product finding (an unplanned relaunch, a slow/
-    # missing planned recovery, a -SeamlessReload contract violation, or a
+    # missing planned recovery, a seamless-reload contract violation, or a
     # real per-cycle ON_AIR/tsp FAIL) -- a run that both crash-looped AND
     # happened to also hit a flaky read/tsp probe must report FAIL, not
     # quietly wave the crash away as HARNESS_ERROR. So this is now ONE pass
@@ -359,26 +372,26 @@ function Get-SoakVerdict {
         }
     }
 
-    # Round-11 finding 4 (MEDIUM): under -SeamlessReload the contract is
+    # When seamless reload is expected, the contract is
     # STRICTER -- zero reload_aborted (a seamless content-reload that fell
     # back to a real restart) AND planned_restart_count MUST be zero (a
     # classified planned_restart under this flag means the seamless path
     # never ran at all, whether or not the daemon logged an explicit abort
     # line for it). Checked before the normal recovery-timeout rule below
     # since it can fail a run that would otherwise look like a clean PASS
-    # (fast, fully-recovered restarts are still restarts the flag promised
+    # (fast, fully-recovered restarts are still restarts the product promised
     # would not happen).
-    if (-not $restartFailResult -and $SeamlessReload) {
+    if (-not $restartFailResult -and $strictSeamlessReload) {
         if ($reloadAbortedCount -gt 0) {
             $firstAbort = $reloadAbortEvents | Select-Object -First 1
             $restartFailResult = [pscustomobject]@{
-                reason = "-SeamlessReload requested but a seamless content-reload aborted on channel=$($firstAbort.channel_id) ($($firstAbort.reason)) -- fell back to a restart"
+                reason = "seamless reload was expected but a content-reload aborted on channel=$($firstAbort.channel_id) ($($firstAbort.reason)) -- fell back to a restart"
                 cycle_utc = $null
             }
         } elseif ($plannedCount -gt 0) {
             $firstPlanned = $plannedEvents | Sort-Object { [datetime]$_.detected_utc } | Select-Object -First 1
             $restartFailResult = [pscustomobject]@{
-                reason = "-SeamlessReload requested but channel=$($firstPlanned.channel_id) had a classified planned_restart at $($firstPlanned.detected_utc) -- the seamless content-reload path did not run"
+                reason = "seamless reload was expected but channel=$($firstPlanned.channel_id) had a classified planned_restart at $($firstPlanned.detected_utc) -- the seamless content-reload path did not run"
                 cycle_utc = "$($firstPlanned.detected_utc)"
             }
         } elseif (@($ReloadArmedNeverCommittedChannels).Count -gt 0) {
@@ -386,7 +399,7 @@ function Get-SoakVerdict {
             # ARMED a seamless content-reload for, but whose own
             # gst-worker.stdout.log never logged "CTRL reload committed"
             # for the whole soak -- the reload silently never landed. A
-            # PRODUCT finding under -SeamlessReload, not a harness note.
+            # PRODUCT finding when seamless reload is expected, not a harness note.
             $restartFailResult = [pscustomobject]@{
                 reason = "seamless reload never committed on channel(s): $(( @($ReloadArmedNeverCommittedChannels) | Sort-Object) -join ', ') (daemon log confirmed 'Seamless content-reload armed' but reload_committed_count stayed 0 for the whole soak)"
                 cycle_utc = $null

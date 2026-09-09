@@ -134,19 +134,23 @@ class TestEscapeDrawtext:
 
 def test_slate_source_generator_returns_source_plan(tmp_path: Path) -> None:
     captured: dict[str, list[str]] = {}
+
+    def runner(args: list[str]) -> FfmpegResult:
+        captured["args"] = args
+        Path(args[-1]).write_bytes(b"ts")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
     generator = SlateSourceGenerator(
         work_dir=tmp_path,
-        ffmpeg_runner=lambda args: (
-            captured.setdefault("args", args) and FfmpegResult(returncode=0, stdout="", stderr="")
-        ),
+        ffmpeg_runner=runner,
     )
 
     plan = generator(_config())
 
     assert plan.channel_id == "gov"
     assert plan.segments[0].label == "CivicCast slate"
-    assert plan.segments[0].path.endswith("slate.ts")
-    assert captured["args"][-1].endswith("slate.ts")
+    assert Path(plan.segments[0].path).name.startswith("slate-")
+    assert Path(captured["args"][-1]).name.startswith(".")
 
 
 def test_slate_source_generator_falls_back_to_plain_color(tmp_path: Path) -> None:
@@ -154,7 +158,10 @@ def test_slate_source_generator_falls_back_to_plain_color(tmp_path: Path) -> Non
 
     def runner(args: list[str]) -> FfmpegResult:
         calls.append(args)
-        return FfmpegResult(returncode=1 if len(calls) == 1 else 0, stdout="", stderr="")
+        if len(calls) == 1:
+            return FfmpegResult(returncode=1, stdout="", stderr="")
+        Path(args[-1]).write_bytes(b"ts")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
 
     generator = SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=runner)
 
@@ -439,15 +446,15 @@ def test_resolver_module_exports_source_plan_contracts() -> None:
     assert resolver.build_slate_source_args is build_slate_source_args
 
 
-def test_slate_plan_spans_the_fill_target_with_one_rendered_file(tmp_path: Path) -> None:
-    # CA-8 finding: a 30s single-segment plan made the encoder relaunch (and
-    # reset the TS session) every 30s during slate periods. The plan now
-    # repeats the one rendered slate file to span the fill target; the
-    # automation reload still interrupts it the moment a program is due.
+def test_slate_plan_is_capped_to_the_playable_fill_horizon(tmp_path: Path) -> None:
+    # The bridge can build at most MAX_PLAYLIST_SUBCHAINS decoder chains. The
+    # producer must expose that same shorter horizon rather than claim a
+    # one-hour plan that the bridge silently truncates after six minutes.
     calls: list[list[str]] = []
 
     def runner(args: list[str]) -> FfmpegResult:
         calls.append(args)
+        Path(args[-1]).write_bytes(b"ts")
         return FfmpegResult(returncode=0, stdout="", stderr="")
 
     generator = SlateSourceGenerator(
@@ -456,11 +463,34 @@ def test_slate_plan_spans_the_fill_target_with_one_rendered_file(tmp_path: Path)
 
     plan = generator(_config())
 
-    assert len(calls) == 1  # one render, many repeats
-    assert len(plan.segments) == 120  # 3600 / 30
+    assert len(calls) == 1  # one render, bounded repeats
+    assert len(plan.segments) == MAX_PLAYLIST_SUBCHAINS
     assert len({segment.path for segment in plan.segments}) == 1
     total = sum(segment.duration_seconds for segment in plan.segments)
-    assert total >= 3600
+    assert total == MAX_PLAYLIST_SUBCHAINS * 30
+    assert total < 3600
+
+
+def test_slate_cache_is_immutable_across_changed_content(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def runner(args: list[str]) -> FfmpegResult:
+        calls.append(args)
+        Path(args[-1]).write_bytes(b"ts")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    generator = SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=runner)
+    first = generator(_config())
+    again = generator(_config())
+    changed = generator(
+        _config().model_copy(update={"slate_message": "Scheduled programming resumes shortly."})
+    )
+
+    assert len(calls) == 2
+    assert first.segments[0].path == again.segments[0].path
+    assert changed.segments[0].path != first.segments[0].path
+    assert Path(first.segments[0].path).exists()
+    assert Path(changed.segments[0].path).exists()
 
 
 def _asset_of(

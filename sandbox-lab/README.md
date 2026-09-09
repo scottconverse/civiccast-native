@@ -36,15 +36,19 @@ PowerShell 5.1 engine, not `pwsh`), and parse-check both in-sandbox scripts
 without ever launching Windows Sandbox — a dry run is exempt from the busy
 guard below since it never launches anything.
 
-`-SeamlessReload` exports `CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` at MACHINE
-scope inside the guest before the station service starts (PR #176, head
-20f316f — unmerged as of this writing; taken as given from the coordinator,
-not independently verified against this checkout). Recorded as
-`seamless_reload`/`seamless_reload_verified` in `SOAK-START.json` and
-`VERDICT.json`; verification can only ever be "confirmed via a control-plane
-log line" or honestly "unverified" — neither `Get-Process` nor
-`Win32_Process` can read another process's real environment block from
-outside it.
+Beta.5 enables seamless content reload by default when
+`CIVICCAST_EGRESS_SEAMLESS_RELOAD` is absent. An ordinary invocation therefore
+leaves the environment unset and still applies the strict seamless verdict:
+zero planned worker restarts, zero reload aborts, and no armed reload left
+without a commit. `-SeamlessReload` remains as a compatibility/reproduction
+override that explicitly exports `CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` at
+MACHINE scope before service start. Evidence records the override request and
+effective expectation separately as `seamless_reload_override_requested` and
+`seamless_reload_expected`; the legacy `seamless_reload` field retains its
+original explicit-override meaning for older evidence readers. The
+`seamless_reload_verified` field applies only to that explicit environment
+override because neither `Get-Process` nor `Win32_Process` can read another
+process's real environment block from outside it.
 
 `-CaptionsOff` PUTs `{"live_captions_enabled": false}` to
 `/api/staff/station/profile` right after first-admin succeeds, using the
@@ -253,24 +257,21 @@ timer.
 
 **PASS** requires: every cycle after a 3-minute warm-up grace has all three
 channels `ON_AIR` on an OS-process-verified GStreamer engine (never a
-software fallback) UNLESS a channel is inside an active, classified
-planned-restart window; a passing TSDuck (`tsp.exe`) egress probe on every
+software fallback); a passing TSDuck (`tsp.exe`) egress probe on every
 channel every cycle (no restart-window exception — a genuinely seamless
 reload should not drop packets either; a tsp result of `not-run` or
 `error:...` — the TOOL is missing or failed to launch — is `HARNESS_ERROR`
 instead, since a broken probe proves nothing about the product); **zero
-unplanned relaunches**; and **every planned restart returns to `ON_AIR` on
-GStreamer within 60 seconds** (a fixed PASS bound, unrelated to the
-in-flight EXEMPTION window below). A worker pid change is classified
+unplanned relaunches; zero planned restarts; zero reload aborts; and no
+armed reload without a commit**. A worker pid change is classified
 `planned_restart` if the channel's own sample ring shows `TRANSITIONING`
-in the preceding 3 minutes (a normal schedule-plan rollover, expected with
-`CIVICCAST_EGRESS_SEAMLESS_RELOAD` off, the beta.5 default) and
+in the preceding 3 minutes and
 `unplanned_relaunch` otherwise (a crash); while a planned restart is in
-flight, the channel is excused from the ON_AIR check for
+flight, the channel is temporarily excused from the ON_AIR check for
 max(60s, 2x the measured cycle period) — a separate, more generous number
-than the 60s PASS bound, sized so a ~75s real cycle period can't flag a
-correctly-classified restart before its own recovery clock has even been
-checked once. `VERDICT.json` reports `unplanned_relaunch_count`,
+used only to avoid a false per-cycle outage while classification settles;
+the final beta.5 verdict still fails any planned restart. `VERDICT.json`
+reports `unplanned_relaunch_count`,
 `planned_restart_count`, `max_restart_gap_seconds`, and the full
 `restart_events` list; otherwise **FAIL**, naming the first failing
 cycle/event and why. This classification logic lives in
@@ -281,13 +282,21 @@ had a parameter accidentally named `$Pid` (PowerShell's read-only `$PID`
 automatic variable), which silently no-opped every ring write with no
 crash and no product/host visible signal until this review caught it.
 
+TSDuck's current JSON stores packet totals and sync/transport errors under
+`ts.packets`; the sampler rejects missing or malformed nested counters rather
+than treating them as zero. It reports discontinuities as the explicit sum of
+each PID row's `packets.discontinuities` counter, not as an invented
+TS-level or PCR-only field. A timed-out `tsp` probe remains a failed probe;
+this parsing rule does not turn missing analysis into transport success.
+
 Refuses to start (exit 3) if Windows Sandbox is already running (it's a
 single-instance-per-machine resource shared with Gate A and other agents on
 this box — `-DryRun` is exempt) and refuses (exit 2) if the kit's
 `SHA256SUMS.txt` is missing or any listed file fails verification. Separate
 stall bounds apply per phase — a boot bound (default 5 min: absence of any
 main-thread file before this is normal, not staleness), installer (default
-20 min from launch), station-healthy (default 10 min after install),
+20 min from launch, `-InstallBoundMinutes`), station-healthy (default
+10 min after install, `-HealthBoundMinutes`),
 rollup-stall (default 6 min once the soak clock has started) — plus a
 generic 15-minute main-thread quiet-liveness backstop (newest mtime among
 `soak-log.txt`/`summary.json`/phase markers, classified via the shipper's
@@ -304,6 +313,13 @@ HARNESS_ERROR when its own schedule-coverage sizing check fails).
 `Access is denied`) — the host waits up to 3 minutes for it to exit on its
 own and reports it as lingering rather than retrying a kill that can only
 fail.
+
+`-InstallBoundMinutes` and `-HealthBoundMinutes` are positive bounded host
+parameters (defaults 20 and 10, respectively). The host writes both into the
+rendered Windows Sandbox LogonCommand; the guest receives the same values for
+its independent watchdog and records the effective values in
+`SOAK-START.json` and `VERDICT.json`. Thus a widened host install budget is
+not silently narrowed back to the guest default.
 
 Evidence lands under `soak-output/soak-<shortsha>-<UTC stamp>/` — a
 separate per-run root from Gate A's own `output/` above (which
@@ -347,8 +363,8 @@ below), per-channel egress worker logs (`logs/<label>/egress-per-channel/
 <channel>/`, plus a `prepared/` directory LISTING, never a copy) alongside
 the daemon-level logs at each checkpoint and on every FAIL, and a final
 `VERDICT.json` / `VERDICT.txt` (verdict one of `PASS`, `FAIL`,
-`HARNESS_ERROR`) — under `-SeamlessReload`, a channel the daemon log
-confirmed armed a seamless content-reload for but whose worker stdout
+`HARNESS_ERROR`) — on every beta.5 run, a channel the daemon log confirmed
+armed a seamless content-reload for but whose worker stdout
 never logged a commit for the whole soak is reported `FAIL` ("seamless
 reload never committed"), a product finding, not a harness note (see
 `scripts/WorkerStdoutParser.ps1` and `scripts/DaemonLogPatterns.ps1`'s

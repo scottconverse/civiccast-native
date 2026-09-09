@@ -15,12 +15,14 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import faulthandler
 import json
 import math
 import os
 import re
 import signal
 import sys
+import threading
 import time
 from collections.abc import Callable
 from itertools import pairwise
@@ -124,6 +126,96 @@ except ImportError:
     from reload_policy import (  # type: ignore[import-not-found,no-redef]
         reload_id_from_sidecar_path,
         reload_switch_is_deferred,
+    )
+
+# Item 85: gi-free exit-code contract with the daemon (same reasoning as the
+# reload_policy/decode_policy siblings above -- this module must stay
+# importable both in package form and by-path, see worker.py's docstring).
+try:
+    from civiccast.egress.gst.exit_codes import GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE
+except ImportError:
+    from exit_codes import (  # type: ignore[import-not-found,no-redef]
+        GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE,
+    )
+
+
+# Item 88 (measured in sandbox run 17, soak-a6d7871-20260906-213332Z, Opus
+# diagnosis): the caption-audio-tap fork must NEVER be able to take the
+# channel off air. ``caption_audio_tap_queue`` used to be a plain (default,
+# NON-leaky) queue: once the appsink callback's own blocking I/O (fixed in
+# ``audio_tap.py`` -- see that module's docstring) fell behind, this queue
+# filled, backpressure propagated upstream through the tee it forks from,
+# and the mux's audio pad -- fed by the SAME tee -- starved, stopping real
+# TS output. ``leaky=2`` (``GST_QUEUE_LEAK_DOWNSTREAM``) makes the queue
+# drop its OLDEST buffered data instead of ever blocking the tee once it
+# fills.
+#
+# Round-2 review correction: ``max-size-buffers=200`` below is NOT a
+# "deeper" cap -- it is GStreamer's own stock ``queue`` default, kept
+# explicit only for clarity and so the unit test in
+# ``test_gst_engine_audio_tap_specs.py`` has a concrete value to assert
+# against. The actual load-bearing change is ``max-size-time=0`` (disabling
+# the stock 1-SECOND default): this tap's audio format (F32LE, 44.1 kHz,
+# stereo, 8192-byte buffers measured live) takes ~4.6s to fill 200 buffers
+# (~1.6 MB) -- comfortably under the stock 10 MB ``max-size-bytes`` default,
+# which is INTENTIONALLY left untouched below as a memory guard of last
+# resort (a future format change to much larger buffers should still leak
+# rather than grow this queue unbounded). Left at its 1s stock default,
+# ``max-size-time`` -- not buffer count or bytes -- would have been the
+# FIRST limit reached (1s of buffering, not 4.6s), making the queue leak
+# far sooner than intended and defeating the "real headroom for a
+# slow-but-recovering consumer" this fix exists to provide. This queue
+# should never actually leak in normal operation; it exists as the backstop
+# of last resort once the writer-side fix (bounded, drop-oldest queue +
+# off-streaming-thread I/O, see ``audio_tap.py``) is already in place.
+_CAPTION_AUDIO_TAP_QUEUE_LEAK_DOWNSTREAM = 2
+_CAPTION_AUDIO_TAP_QUEUE_MAX_SIZE_BUFFERS = 200  # GStreamer's own stock default
+_CAPTION_AUDIO_TAP_QUEUE_MAX_SIZE_TIME = 0  # disables the stock 1s default -- the real fix
+_CAPTION_AUDIO_TAP_QUEUE_MAX_SIZE_BYTES = 10_485_760  # GStreamer's own stock 10 MB default
+_CAPTION_AUDIO_TAP_APPSINK_MAX_BUFFERS = 32
+
+
+def _audio_tap_element_specs() -> tuple[ElementSpec, ...]:
+    """The caption-audio-tap fork's element chain, source-tee to appsink.
+
+    Pulled out as a pure, gi-free function (no ``Gst`` element is actually
+    constructed here -- ``ElementSpec`` is a plain dataclass) so its element
+    ordering and leaky/drop properties are unit-testable without a real
+    GStreamer install. See the module-level comment above this function and
+    ``audio_tap.py``'s docstring for why every property here is load-bearing
+    for item 88."""
+    return (
+        ElementSpec(
+            "queue",
+            "caption_audio_tap_queue",
+            props={
+                "leaky": _CAPTION_AUDIO_TAP_QUEUE_LEAK_DOWNSTREAM,
+                "max-size-buffers": _CAPTION_AUDIO_TAP_QUEUE_MAX_SIZE_BUFFERS,
+                "max-size-time": _CAPTION_AUDIO_TAP_QUEUE_MAX_SIZE_TIME,
+                "max-size-bytes": _CAPTION_AUDIO_TAP_QUEUE_MAX_SIZE_BYTES,
+            },
+        ),
+        ElementSpec("audioconvert", "caption_audio_tap_convert"),
+        ElementSpec("audioresample", "caption_audio_tap_resample"),
+        ElementSpec(
+            "capsfilter",
+            "caption_audio_tap_caps",
+            props={"caps": ("audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved")},
+        ),
+        ElementSpec(
+            "appsink",
+            "caption_audio_tap_sink",
+            props={
+                "emit-signals": True,
+                "sync": False,
+                "max-buffers": _CAPTION_AUDIO_TAP_APPSINK_MAX_BUFFERS,
+                # Item 88: was ``False`` -- a non-dropping appsink is exactly
+                # as capable of backing up the tee as the non-leaky queue
+                # above was. ``drop=True`` bounds this sink's own contribution
+                # to the same failure mode the queue fix addresses.
+                "drop": True,
+            },
+        ),
     )
 
 
@@ -248,6 +340,38 @@ _MIN_FIRST_OUTPUT_TIMEOUT_S = 10.0
 _MAX_FIRST_OUTPUT_TIMEOUT_S = 120.0
 _FIRST_OUTPUT_TIMEOUT_ENV_VAR = "CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S"
 
+# Item 84c (measured in sandbox run 17, soak-a6d7871-20260906-213332Z, Opus
+# diagnosis): the ``CTRL first-output: first buffer after 0.0s`` marker was a
+# TAUTOLOGY, not evidence. The persistent output half's ``queue -> udpsink``
+# sink chain is ASYNC (``sync=False``/async sink semantics on the UDP leg),
+# so the pipeline cannot reach PLAYING at all before at least one buffer --
+# typically PAT/PMT/SDT table buffers plus the very first media buffer --
+# has already prerolled through the mux. ``_arm_stall_watchdog`` used to
+# latch ``_first_output_seen = self._output_buffers > 0`` at arm time, which
+# is true for essentially every worker that ever reaches PLAYING, marker
+# text and all -- exactly the escalation-defeating symptom item 84c exists
+# to close (a worker whose REAL media output later stalls still printed
+# "first buffer after 0.0s" and looked like on-air evidence to the daemon).
+#
+# Fix: snapshot the counter at arm time (``_output_buffers_at_arm``) and
+# require the count to exceed that snapshot by at least this many buffers,
+# observed strictly AFTER arming, before crediting real first output. 2
+# rather than 1 -- a single post-arm buffer could still be a trailing
+# PAT/PMT/SDT table refresh (mpegtsmux re-emits them periodically,
+# independent of media content) rather than genuine media flow; requiring a
+# SECOND post-arm buffer is cheap insurance against exactly that coincidence
+# without meaningfully delaying real on-air detection (media buffers advance
+# far more often than table refreshes once a source is actually flowing).
+_FIRST_OUTPUT_MIN_BUFFERS_AFTER_ARM = 2
+
+# Item 84c addendum: how often ``_check_stall`` prints the
+# ``CTRL output: <N> buffers (+<delta>) since PLAYING`` progress line -- a
+# bounded, one-line-per-interval breadcrumb so the NEXT soak shows exactly
+# when output stopped (sandbox run 17 had no such signal; the only evidence
+# of the item 88 stall was TSDuck's after-the-fact silence and the eventual
+# watchdog kill 10s later).
+_OUTPUT_PROGRESS_INTERVAL_S = 5.0
+
 
 def _resolve_first_output_timeout_s(explicit: float | None) -> float:
     """Resolve the time-to-FIRST-output bound: an explicit constructor value
@@ -339,6 +463,48 @@ def _resolve_preroll_timeout_s(explicit: float | None) -> float:
     return _DEFAULT_PREROLL_TIMEOUT_S
 
 
+# Item 85: bounds for the reload-commit watchdog (_arm_commit_watchdog). 3s
+# floor -- below that the watchdog would fire on ordinary GStreamer scheduling
+# jitter, not a real wedge; 120s ceiling -- an operator-configured value this
+# item's own worker.py env override (CIVICCAST_RELOAD_COMMIT_TIMEOUT_S) could
+# otherwise set arbitrarily high must still bound how long a genuinely wedged
+# worker can sit unresponsive before the daemon ever finds out.
+_DEFAULT_COMMIT_TIMEOUT_S = 15.0
+_MIN_COMMIT_TIMEOUT_S = 3.0
+_MAX_COMMIT_TIMEOUT_S = 120.0
+
+
+def _resolve_commit_timeout_s(explicit: float) -> float:
+    """Validate/clamp the reload-commit watchdog bound to
+    ``[_MIN_COMMIT_TIMEOUT_S, _MAX_COMMIT_TIMEOUT_S]``, WARNING on stderr
+    whenever the clamp actually changes the configured value -- unlike an
+    earlier draft's ``max(1.0, self.commit_timeout_s)`` inline in
+    ``_arm_commit_watchdog``, which silently floored an unreasonably low value
+    with no operator-visible signal at all. Mirrors
+    ``_resolve_preroll_timeout_s``'s non-finite guard (``math.isfinite``):
+    Python's ``min``/``max`` do not clamp NaN (every comparison against NaN is
+    False, so both keep their first argument), so a NaN here would otherwise
+    reach ``threading.Timer`` as its ``interval`` and either raise or silently
+    never fire, defeating the watchdog entirely."""
+    if not math.isfinite(explicit):
+        print(
+            f"CTRL reload: ignoring non-finite commit_timeout_s={explicit!r}; "
+            f"using default {_DEFAULT_COMMIT_TIMEOUT_S}s",
+            file=sys.stderr,
+            flush=True,
+        )
+        return _DEFAULT_COMMIT_TIMEOUT_S
+    clamped = min(max(explicit, _MIN_COMMIT_TIMEOUT_S), _MAX_COMMIT_TIMEOUT_S)
+    if clamped != explicit:
+        print(
+            f"CTRL reload: commit_timeout_s={explicit!r} out of bounds "
+            f"[{_MIN_COMMIT_TIMEOUT_S}, {_MAX_COMMIT_TIMEOUT_S}]; clamped to {clamped}s",
+            file=sys.stderr,
+            flush=True,
+        )
+    return clamped
+
+
 class SwapController:
     """Pluggable hot-swap mechanism. Lets GstInterpipe drop in later (S15 §9)."""
 
@@ -395,6 +561,7 @@ class GstPlayoutEngine:
         defer_switch_timeout_s: float = 900.0,
         preroll_timeout_s: float | None = None,
         first_output_timeout_s: float | None = None,
+        commit_timeout_s: float = 15.0,
     ) -> None:
         prefer_cpu_decoders_by_default()
         Gst.init([])
@@ -449,6 +616,12 @@ class GstPlayoutEngine:
         # one run, independent of ``_first_output_seen``'s own re-arm-per-call
         # semantics (see ``_arm_stall_watchdog``).
         self._first_output_marker_printed = False
+        # Item 85: bounds ``_commit_reload`` itself -- see ``_arm_commit_watchdog``
+        # for why a plain ``GLib.timeout_add`` cannot do this job alone (the
+        # measured wedge blocks the very thread that would run it). Validated/
+        # clamped (with a stderr warning on an out-of-bounds or non-finite
+        # value) by ``_resolve_commit_timeout_s`` -- never silently floored.
+        self.commit_timeout_s = _resolve_commit_timeout_s(commit_timeout_s)
         # Item 82: bounded PLAYING-preroll wait (see ``_await_playing`` / the
         # module-level ``_resolve_preroll_timeout_s`` for the constructor-arg /
         # env-var / default resolution and clamp).
@@ -471,6 +644,17 @@ class GstPlayoutEngine:
         self._output_buffers = 0
         self._stall_last_count = 0
         self._stall_last_advance_t = 0.0
+        # Item 84c (measured in sandbox run 17, soak-a6d7871-20260906-213332Z):
+        # the count of output buffers already observed AT ARM TIME -- see
+        # ``_arm_stall_watchdog``/``_check_stall`` for why "first output" must
+        # be measured against this snapshot, not against zero.
+        self._output_buffers_at_arm = 0
+        # Item 84c: last time ``_check_stall`` printed the
+        # ``CTRL output: ...`` progress line (see ``_maybe_print_output_progress``).
+        # 0.0 (never printed) rather than ``None`` so the first tick's
+        # ``now - self._last_output_progress_print_t`` comparison is a plain
+        # float subtraction with no None-guard needed.
+        self._last_output_progress_print_t = 0.0
         # Per-leg element lists (index-aligned with ``selector_sink_pads``) so a
         # content-reload can dispose the leg it replaces. ``_collecting`` captures the
         # elements built for the current leg; ``_pending_reload`` holds the in-flight
@@ -976,28 +1160,7 @@ class GstPlayoutEngine:
             leg.tap_dir,
             segment_seconds=leg.segment_seconds,
         )
-        specs = (
-            ElementSpec("queue", "caption_audio_tap_queue"),
-            ElementSpec("audioconvert", "caption_audio_tap_convert"),
-            ElementSpec("audioresample", "caption_audio_tap_resample"),
-            ElementSpec(
-                "capsfilter",
-                "caption_audio_tap_caps",
-                props={
-                    "caps": ("audio/x-raw,format=S16LE,rate=16000,channels=1,layout=interleaved")
-                },
-            ),
-            ElementSpec(
-                "appsink",
-                "caption_audio_tap_sink",
-                props={
-                    "emit-signals": True,
-                    "sync": False,
-                    "max-buffers": 32,
-                    "drop": False,
-                },
-            ),
-        )
+        specs = _audio_tap_element_specs()
         elements = [self._make(spec) for spec in specs]
         self._link(source, elements[0])
         for upstream, downstream in pairwise(elements):
@@ -1348,18 +1511,19 @@ class GstPlayoutEngine:
             return
         self._stall_last_count = self._output_buffers
         self._stall_last_advance_t = time.monotonic()
-        # Item 84 Round-2 review item 4: a buffer can cross the mux DURING
-        # preroll/PLAYING, before ``run_forever`` gets around to calling this
-        # (``_install_output_counter`` is installed before ``set_state
-        # (PLAYING)``, well before this arm call) -- hardcoding
-        # ``_first_output_seen = False`` here would wrongly re-open the
-        # first-output budget for output that already happened, and could
-        # let a genuinely-producing pipeline that goes quiet right after arm
-        # get the wrong (more generous) budget applied to what is actually a
-        # post-first-buffer stall.
-        self._first_output_seen = self._output_buffers > 0
-        if self._first_output_seen:
-            self._maybe_print_first_output_marker()
+        # Item 84c (measured in sandbox run 17): a buffer WILL already have
+        # crossed the mux by arm time on essentially every worker -- the
+        # persistent output half's async sink chain means the pipeline
+        # cannot even reach PLAYING before at least one buffer (PAT/PMT/SDT
+        # tables + preroll) has prerolled through it. Treating "buffers > 0
+        # at arm" as first-output evidence (the pre-84c behavior) was
+        # therefore a TAUTOLOGY, not a real signal -- see the module-level
+        # comment above ``_FIRST_OUTPUT_MIN_BUFFERS_AFTER_ARM``. Snapshot the
+        # count instead of latching evidence from it: real first output is
+        # measured strictly AFTER this point, in ``_check_stall``.
+        self._output_buffers_at_arm = self._output_buffers
+        self._first_output_seen = False
+        self._last_output_progress_print_t = self._stall_last_advance_t
         GLib.timeout_add_seconds(1, self._check_stall)
 
     def _maybe_print_first_output_marker(self) -> None:
@@ -1401,6 +1565,24 @@ class GstPlayoutEngine:
             flush=True,
         )
 
+    def _maybe_print_output_progress(self, now: float) -> None:
+        """Item 84c addendum: a bounded, at-most-one-line-per-5s progress
+        breadcrumb -- the total output-buffer count and the delta observed
+        since arm (PLAYING) time -- so the NEXT soak shows exactly when real
+        output stops, instead of only the eventual stall-kill line 10s (or
+        45s, before first output) later. Sandbox run 17 had no such signal:
+        the only evidence of the item 88 stall was TSDuck's after-the-fact
+        silence plus the watchdog kill."""
+        if now - self._last_output_progress_print_t < _OUTPUT_PROGRESS_INTERVAL_S:
+            return
+        self._last_output_progress_print_t = now
+        delta = self._output_buffers - self._output_buffers_at_arm
+        print(
+            f"CTRL output: {self._output_buffers} buffers (+{delta}) since PLAYING",
+            file=sys.stderr,
+            flush=True,
+        )
+
     def _check_stall(self) -> bool:
         """Quit the run loop on either of two DISTINCT budgets, measured from
         PLAYING (see ``_arm_stall_watchdog``, called immediately after
@@ -1412,21 +1594,37 @@ class GstPlayoutEngine:
           ``_DEFAULT_FIRST_OUTPUT_TIMEOUT_S``). PLAYING (even NO_PREROLL) is
           NOT evidence a buffer actually crossed the mux, so this is a
           separate, later piece of evidence than ``_await_playing`` ever had.
-        * Once the first buffer IS observed, fall back to the original S9-5
-          behavior unchanged: bound against ``stall_timeout_s`` (10s default)
-          from the last observed advance, for a pipeline that aired fine and
-          then silently stopped.
+        * Once the first REAL buffer IS observed, fall back to the original
+          S9-5 behavior unchanged: bound against ``stall_timeout_s`` (10s
+          default) from the last observed advance, for a pipeline that aired
+          fine and then silently stopped.
+
+        Item 84c: "the first buffer IS observed" is no longer "any buffer
+        past the arm-time snapshot" -- see ``_FIRST_OUTPUT_MIN_BUFFERS_AFTER_
+        ARM`` and ``_arm_stall_watchdog`` for why a raw ``> 0`` check there
+        was a tautology (the async output sink chain always prerolls at
+        least one buffer before PLAYING is even reached). Real first output
+        now requires the count to exceed the arm-time snapshot by at least
+        ``_FIRST_OUTPUT_MIN_BUFFERS_AFTER_ARM`` buffers, all observed AFTER
+        arming.
 
         A no-op while output is flowing either way (it resets the timer on
         every advance). The worker exits non-zero on either budget and the
         daemon restarts it to a known state."""
         now = time.monotonic()
         if self._output_buffers != self._stall_last_count:
-            self._first_output_seen = True
-            self._maybe_print_first_output_marker()
             self._stall_last_count = self._output_buffers
             self._stall_last_advance_t = now
+            if (
+                not self._first_output_seen
+                and self._output_buffers - self._output_buffers_at_arm
+                >= _FIRST_OUTPUT_MIN_BUFFERS_AFTER_ARM
+            ):
+                self._first_output_seen = True
+                self._maybe_print_first_output_marker()
+            self._maybe_print_output_progress(now)
             return True  # output advancing — keep watching
+        self._maybe_print_output_progress(now)
         elapsed = now - self._stall_last_advance_t
         if not self._first_output_seen:
             if self.first_output_timeout_s <= 0 or elapsed < self.first_output_timeout_s:
@@ -2187,14 +2385,133 @@ class GstPlayoutEngine:
         self._commit_reload()
         return False  # one-shot
 
+    def _arm_commit_watchdog(self) -> tuple[threading.Timer, threading.Event]:
+        """Item 85 (sandbox runs 12/14/15): ``_commit_reload`` must never be able to
+        hang the worker forever. Seven soaks recorded the SAME wedge: the last line
+        either worker ever printed was "boundary switch rebased...", then nothing --
+        the process stayed alive but the pipe control reader stopped answering. The
+        wedge is NOT yet localized to a specific GStreamer call (see
+        ``_commit_reload``'s own docstring for round 1's reordering hypothesis and
+        why it was reverted); THIS watchdog is the localization tool for whichever
+        future soak reproduces it -- see the ``faulthandler.dump_traceback`` call
+        below.
+
+        A ``GLib.timeout_add_seconds`` source is USELESS as the sole guard here: if
+        the wedge is (as measured) the GLib main-loop thread itself blocked inside a
+        synchronous GStreamer call, the main loop never gets a turn to run ANY of
+        its own timeout sources -- the same thread is stuck. Only a real OS-level
+        thread, independent of the GLib loop, is guaranteed to fire regardless of
+        what the main-loop thread is doing. Cancelled by the caller once
+        ``_commit_reload`` actually returns; a commit that finishes in time never
+        prints anything from this thread and never calls ``os._exit``.
+
+        Returns ``(timer, completed)``: ``completed`` is a ``threading.Event`` the
+        caller sets (in its ``finally``, BEFORE calling ``timer.cancel()``) the
+        moment the commit genuinely finishes. ``Timer.cancel()`` alone cannot
+        close the race where the timer's own thread has ALREADY started running
+        ``_on_commit_wedged`` (past the cancel-event check inside ``Timer.run``)
+        at the exact moment the commit finishes -- cancelling at that point is a
+        no-op, and without this second flag the watchdog would still dump a stack
+        and force-exit a worker that had, in fact, just committed cleanly.
+        ``_on_commit_wedged`` re-checks ``completed`` as its very first action and
+        returns immediately, exiting nothing, if it is set.
+
+        Deliberately does NOT attempt ANY pipeline teardown before exiting (no
+        ``set_state(Gst.State.NULL)``, unlike a graceful ``stop()``): a downward
+        state transition takes GStreamer's internal per-element ``STREAM_LOCK``,
+        which is exactly the lock a genuinely wedged streaming thread already
+        holds -- attempting it here would either do nothing (if the lock is free,
+        in which case it wasn't a real wedge) or itself block this watchdog
+        thread indefinitely, defeating the one guarantee this method exists to
+        provide. ``os._exit`` is called unconditionally (in a ``finally``)
+        immediately after the diagnostic dump, with no attempt at a clean exit in
+        between -- the exit must fire even if the dump or the print themselves
+        raise (e.g. a closed/unusable stderr).
+
+        No ``WORKER_RESULT`` receipt is ever emitted on this path, BY DESIGN: the
+        whole reason this watchdog exists is that the main thread that would
+        normally build and print that receipt is presumed stuck forever, and
+        ``os._exit`` bypasses every remaining line of Python on this process,
+        including the one that would print it. A caller reading this worker's
+        exit (e.g. ``civiccast.native.installed_gstreamer_smoke.
+        require_clean_worker_result``) must treat
+        ``GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE`` as its own distinct, receipt-less
+        signal, not as a missing-receipt failure of some other kind."""
+        completed = threading.Event()
+
+        def _on_commit_wedged() -> None:
+            if completed.is_set():
+                return  # the commit finished; cancel() lost the race, this didn't
+            try:
+                # FIRST: dump every thread's live Python stack to stderr -- this
+                # is the actual deliverable that localizes the wedge on the next
+                # soak that reproduces it (round 1 of this item shipped a
+                # hypothesis about where it was without this proof; review
+                # rejected that hypothesis and asked for the instrument instead
+                # of another guess).
+                faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
+                print(
+                    "CTRL reload: commit did not finish within "
+                    f"{self.commit_timeout_s:.0f}s - quitting for daemon restart",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            finally:
+                # Unconditional: the exit must happen even if stderr itself is
+                # unusable (a closed fd, a broken pipe) and the dump/print above
+                # raised -- this watchdog's one job is to guarantee the process
+                # goes away, not to guarantee a clean diagnostic first.
+                os._exit(int(GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE))
+
+        # self.commit_timeout_s is already validated/clamped by
+        # _resolve_commit_timeout_s in __init__ -- no inline floor needed here.
+        timer = threading.Timer(self.commit_timeout_s, _on_commit_wedged)
+        timer.daemon = True
+        timer.start()
+        return timer, completed
+
     def _commit_reload(self) -> bool:
         """Main-loop commit of a reload: switch the selector(s) to the prerolled new
         leg, repoint role index 0 at it, then dispose the old leg. A no-op if the
         reload was aborted/superseded before this fired. ``return False`` so a GLib
-        timeout/idle source that calls this directly runs once."""
+        timeout/idle source that calls this directly runs once.
+
+        Item 85 status (sandbox runs 12/14/15, hostile review round 1): the wedge
+        this item was opened against is NOT yet localized to a specific line in
+        this method. Round 1 hypothesized the ordering below (switch active-pad,
+        THEN release the new leg's hold probes, THEN dispose the old leg) as the
+        root cause and reordered it (release before switch); that reorder was
+        REVERTED after review found it would introduce a NEW, deterministic
+        defect of its own -- input-selector's default (``cache-buffers=False``)
+        sink pad silently drops a buffer that arrives on a still-inactive pad, so
+        releasing the hold before the switch drops the new leg's first buffer(s)
+        (and, with them, the re-sent SEGMENT carrying the running-time-rebase
+        offset) on every single reload, not just the wedged ones. The ordering
+        below is therefore UNCHANGED from main. What this method now carries
+        instead: four staged stderr prints ("switching selector" / "holds
+        released" / "old leg disposed" / "committed (elements=N)") so the NEXT
+        soak that reproduces the wedge shows exactly which of these four steps
+        it stalled inside, plus a real-OS-thread commit watchdog
+        (``_arm_commit_watchdog``) that dumps every thread's live Python stack
+        (``faulthandler.dump_traceback``) the moment a commit exceeds
+        ``commit_timeout_s`` and then force-exits -- the actual localization
+        tool for whichever GStreamer call is holding the GIL/thread when a
+        future soak reproduces this."""
         pending = self._pending_reload
         if pending is None:
             return False  # aborted or superseded before the first buffer landed
+        watchdog, completed = self._arm_commit_watchdog()
+        try:
+            return self._commit_reload_body(pending)
+        finally:
+            # Set BEFORE cancel(): closes the race where the watchdog thread has
+            # already started running (past Timer.cancel()'s own check) at the
+            # exact moment the commit finishes -- see _arm_commit_watchdog's
+            # docstring for why cancel() alone is not sufficient.
+            completed.set()
+            watchdog.cancel()
+
+    def _commit_reload_body(self, pending: dict[str, Any]) -> bool:
         for timeout_key in ("timeout_id", "defer_timeout_id"):
             if pending[timeout_key] is not None:
                 with contextlib.suppress(Exception):
@@ -2239,14 +2556,19 @@ class GstPlayoutEngine:
                 f"{switch_running_time / Gst.SECOND:.3f}s",
                 flush=True,
             )
+        print("CTRL reload: switching selector", flush=True)
         selector.set_property("active-pad", new_video_pad)
         audio_selector = self.audio_selector
         if new_audio_pad is not None and audio_selector is not None:
             audio_selector.set_property("active-pad", new_audio_pad)
-        # Release the hold LAST: the new leg's first buffer (and, with it, the
-        # re-sent SEGMENT carrying the offset above) may only flow once the
-        # selector is already pointing at it.
+        # Release the hold LAST (unchanged from main -- item 85 review round 1's
+        # reorder here was REVERTED, see this method's docstring): the new leg's
+        # first buffer (and, with it, the re-sent SEGMENT carrying the offset
+        # above) may only flow once the selector is already pointing at it.
+        # Releasing before the switch deterministically drops the new leg's
+        # first buffer(s) at the (default) non-caching input-selector sink pad.
         self._release_hold_probes(pending)
+        print("CTRL reload: holds released", flush=True)
         # Role index 0 (program) now points at the new leg. The swap controller shares
         # these list objects by reference, so an operator role-swap stays correct.
         self.selector_sink_pads[0] = new_video_pad
@@ -2257,6 +2579,7 @@ class GstPlayoutEngine:
         self._dispose_source_leg(
             pending["old_video_pad"], pending["old_audio_pad"], pending["old_elements"]
         )
+        print("CTRL reload: old leg disposed", flush=True)
         # Only NOW may the outgoing pads' EOS-drop probes go: the retiring leg can
         # still emit an EOS (the audio stream typically ends a beat after video)
         # right up until it is unlinked and NULLed, and one that escaped between
@@ -2374,7 +2697,24 @@ class GstPlayoutEngine:
         """Tear down a now-inactive source leg: unlink from the selector(s), release
         the request pad(s), then NULL + remove its elements. Best-effort — a disposal
         hiccup is logged, never raised, so it can't kill a live channel. (Without this
-        a 24/7 channel would leak a leg's elements on every program change.)"""
+        a 24/7 channel would leak a leg's elements on every program change.)
+
+        Item 85 status (hostile review round 1): a round-1 hypothesis reordered this
+        to unlink/release BEFORE ``set_state(Gst.State.NULL)``, with FLUSH_START/
+        FLUSH_STOP bracketing the unlink, on the theory that a streaming thread
+        parked inside input-selector's own wait needed waking before its element
+        could be safely NULLed. REVERTED after review: releasing/unlinking the
+        selector's request pad before the retiring leg's OWN elements reach NULL
+        races that leg's still-live streaming thread into pushing into a pad that
+        no longer has a peer -- ``GST_FLOW_NOT_LINKED``, a FATAL flow error on this
+        leg's own source pad, not a benign no-op. And ``FLUSH_START`` sent directly
+        to the selector's sink pad does not reach (and cannot unblock) a thread
+        blocked further upstream in this leg's OWN elements; ``flush_stop(True)``
+        immediately after re-opens the exact race window it was meant to close.
+        The ordering below is therefore UNCHANGED from main -- this item has not
+        yet localized the wedge to this method; see ``_commit_reload``'s and
+        ``_arm_commit_watchdog``'s docstrings for what this item ships instead
+        (staged log lines + a stack-dumping commit watchdog)."""
         try:
             for element in elements:
                 element.set_state(Gst.State.NULL)
@@ -2654,14 +2994,29 @@ class GstPlayoutEngine:
         ``teardown_timeout_s``. With ``force_exit_on_hang`` (worker-process model),
         an incomplete transition triggers ``os._exit(70)`` (nonzero = forced kill, so
         the supervisor doesn't read it as a clean exit) so the process can never hang
-        on stuck live-source streaming threads (the Stage-0 lesson)."""
+        on stuck live-source streaming threads (the Stage-0 lesson).
+
+        Item 88 Round-2 review BLOCKER: ``RollingWavSegmentWriter.close()`` is
+        itself bounded now (a wedged disk cannot make IT hang forever either --
+        see ``audio_tap.py``'s own docstring), so calling it here, BEFORE the
+        ``force_exit_on_hang`` escape below, can no longer defeat this method's
+        own bounded-teardown contract the way an earlier, unconditionally-
+        blocking ``close()`` could have."""
         self.pipeline.set_state(Gst.State.NULL)
         result, _current, _pending = self.pipeline.get_state(
             int(self.teardown_timeout_s * Gst.SECOND)
         )
         clean = bool(result == Gst.StateChangeReturn.SUCCESS)
         if self.audio_tap_writer is not None:
-            self.audio_tap_writer.close()
+            tap_status = self.audio_tap_writer.close(timeout=self.teardown_timeout_s)
+            if tap_status == "abandoned":
+                print(
+                    "WARN: caption audio tap writer did not drain before teardown "
+                    f"({self.teardown_timeout_s}s bound); abandoning it in the "
+                    "background -- a trailing caption segment may be lost",
+                    file=sys.stderr,
+                    flush=True,
+                )
             self.audio_tap_writer = None
         if not clean and force_exit_on_hang:
             os._exit(70)  # nonzero: a forced kill, not a clean exit (audit MINOR)
