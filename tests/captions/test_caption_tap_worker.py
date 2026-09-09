@@ -1005,7 +1005,6 @@ class TestCaptionTapPlayoutProtection:
         assert result.channels == ()  # no tap directory for this channel at all
         assert load_caption_cues_from_timed_text(stale, source_id="education") == []
 
-
     def test_switching_captions_off_clears_a_stale_sidecar_when_the_tap_root_is_missing(
         self, tmp_path: Path
     ) -> None:

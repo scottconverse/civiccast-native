@@ -306,7 +306,9 @@ class TestCaptionGateFollowsTheOperatorSwitch:
         c = compute_channel_runtime_status(
             _config(),
             _state("public", "ON_AIR"),
-            _sample("public", "ON_AIR", sinks={"Cable headend": False}, caption_status="not-verified"),
+            _sample(
+                "public", "ON_AIR", sinks={"Cable headend": False}, caption_status="not-verified"
+            ),
             now=_NOW,
             expect_captions=False,
         )
@@ -316,7 +318,9 @@ class TestCaptionGateFollowsTheOperatorSwitch:
         c = compute_channel_runtime_status(
             _config(),
             _state("public", "FALLBACK_SLATE"),
-            _sample("public", "FALLBACK_SLATE", fps=0.0, bitrate=0.0, caption_status="not-verified"),
+            _sample(
+                "public", "FALLBACK_SLATE", fps=0.0, bitrate=0.0, caption_status="not-verified"
+            ),
             now=_NOW,
             expect_captions=False,
         )
