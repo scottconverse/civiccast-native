@@ -7,6 +7,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -179,6 +180,21 @@ _LIVE_SOURCE_FAILURE_FALLBACK_STREAK = _RESTART_ESCALATION_STREAK
 # Bound on the child-stderr tail folded into ``last_error`` -- the state row is an
 # operator-facing string, not a log sink.
 _STDERR_TAIL_MAX_CHARS = 600
+_RELOAD_COMMIT_TIMEOUT_MARKER = "CTRL reload: commit did not finish"
+_RELOAD_FRAME_RE = re.compile(
+    r'^\s*File ".*[\\/]engine\.py", line (?P<line>\d+) in '
+    r"(?P<function>_dispose_source_leg|_retire_reload_old_leg|"
+    r"_finish_reload_commit|_begin_reload_commit|_commit_reload|_commit_reload_body)\s*$"
+)
+_RELOAD_FRAME_PRIORITY = (
+    "_dispose_source_leg",
+    "_retire_reload_old_leg",
+    "_finish_reload_commit",
+    "_begin_reload_commit",
+    "_commit_reload",
+    # Historical beta.5 evidence used the pre-repair synchronous helper name.
+    "_commit_reload_body",
+)
 
 # Item 82: a GST_PREROLL_TIMEOUT_EXIT_CODE exit (a slow-but-progressing preroll
 # under CPU load) still relaunches through _relaunch_after_crash's normal
@@ -1530,7 +1546,30 @@ class EgressDaemon:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         if not lines:
             return None
-        tail = " | ".join(redact_uris_in_text(line) for line in lines[-max_lines:])
+        tail_lines = lines[-max_lines:]
+        # A reload-commit watchdog dump puts the most useful current frame just
+        # outside the ordinary eight-line tail: faulthandler prints that frame,
+        # then its callers, then the watchdog marker.  Preserve a compact,
+        # path-free frame when (and only when) this child's current tail contains
+        # that marker.  Full logs remain authoritative; this is the bounded clue
+        # operators need in the state row to distinguish selector switching from
+        # old-leg disposal without exposing install paths or expanding the field.
+        if any(_RELOAD_COMMIT_TIMEOUT_MARKER in line for line in tail_lines):
+            frame: str | None = None
+            for function in _RELOAD_FRAME_PRIORITY:
+                for line in reversed(lines):
+                    match = _RELOAD_FRAME_RE.match(line)
+                    if match is not None and match.group("function") == function:
+                        frame = (
+                            "CTRL reload blocked at "
+                            f"engine.py:{match.group('line')} in {match.group('function')}"
+                        )
+                        break
+                if frame is not None:
+                    break
+            if frame is not None and frame not in tail_lines:
+                tail_lines = [frame, *tail_lines]
+        tail = " | ".join(redact_uris_in_text(line) for line in tail_lines)
         return _ascii_safe(tail)[:_STDERR_TAIL_MAX_CHARS]
 
     def _child_exit_error(self, channel_id: str, *, suffix: str) -> str:

@@ -410,8 +410,15 @@ entries:
       mechanism. This claim does NOT assert that the current engine files
       still exhibit the spike's zero-porting-cost behavior; it asserts only
       that the spike happened as the evidence doc records, and that the
-      five code files below are the exact, unmodified-since-narrowing files
-      that spike exercised (D2 blob-drift, still enforced). This claim does
+      historical observation has not been reclassified as current acceptance.
+      The seven code files below are a current-source review tripwire (D2
+      blob-drift, still enforced), not the original spike's exact files.
+      Separate current-source external evidence for the caption/reload changes
+      is recorded at .agent-runs/native-windows/beta5-caption-flow-20260908/evidence/verification.md
+      against runtime proof anchor c0809dffa6bfb702afa1ed19189eb79aaece9bdb.
+      It is not boot/pre-login or installed-service evidence. Those current
+      acceptance results remain pending; no historical result supplies them.
+      This claim does
       NOT assert a specific bound graph-configuration artifact: the
       evidence doc's own correction note states no graph JSON was
       committed alongside this spike's evidence (the run used
@@ -425,7 +432,7 @@ entries:
     inputs:
       prose:
         path: docs/evidence/native-engine-gate.md
-        blob: cfabddd3b3045006af1c4b995277aeaa42f4b4ff
+        blob: ce6c0d9cf146ef6ec84031d08a7412fa99e6ffc6
       # CC-WS3-005 (round 3): the evidence doc's own header states "Engine
       # code: civiccast/egress/gst/ worker.py + engine.py + graph.py at
       # integration-branch HEAD, zero modifications — the exact files WSL
@@ -433,7 +440,8 @@ entries:
       # Current-source narrowing: 28053a94 added mandatory caption transport
       # across the shared engine graph and made audio_tap.py a direct engine
       # dependency. All current runtime inputs are bound; any further change
-      # goes red and requires another current-source external proof.
+      # goes red and requires an explicit current-source review and a truthful
+      # claim/evidence update. It does not transfer the historic spike result.
       # Re-provisioned (WP-07, observed live-source readiness): engine.py and
       # graph.py drifted again -- ElementSpec gained secret_props so an SRT
       # source's resolved credential handle (never the secret) reaches
@@ -1003,11 +1011,38 @@ entries:
       # set, proving the function itself -- not just ``Timer.cancel()`` --
       # refuses to exit once the commit is known to have finished). Blob IDs
       # re-hashed with `git hash-object --path <file> <file>`.
+      # Current review (2026-09-08, runtime anchor c0809dff): native engine
+      # run 76966 had 24 PASS/zero SKIP; caption/probe 52541 had 2 PASS;
+      # approved LPM samples 23475 had 1 PASS.
+      # PR 199 round 2 (2026-09-09): engine.py, worker.py and
+      # test_gst_engine_wsl.py drifted again and are re-hashed below with
+      # `git hash-object --path <file> <file>`. engine.py: the abort path now
+      # drops an abandoned replacement leg at its own src pads BEFORE lifting
+      # its hold probes and retires it off the GLib loop; the stall watchdog
+      # stands down while a commit is in progress (so the 15s commit watchdog
+      # owns that window) and the stall reference resets when the commit
+      # settles; leg disposal treats ASYNC on a bin's downward transition as
+      # legitimate, retries a genuinely failed NULL once, and no longer quits
+      # a producing channel over incomplete cleanup; each reload transaction
+      # carries an id so a superseded transaction's queued EOS cannot settle
+      # its successor on the shared outgoing pad; the audio tap writer gets its
+      # own close budget on stop. worker.py: comment only, recording that the
+      # reload payload is unlinked BEFORE dispatch by design. Verified with
+      # each native test file run ten times under normal logging: engine suite
+      # 10/10 (25 PASS each), caption flow 10/10 (2 PASS each), caption gap
+      # admission 10/10 (5 PASS each); 320 committed reloads across the
+      # captured worker logs with zero stalls or unfinished commits outside
+      # the tests that produce those lines deliberately. Exact hashes and limits are in the linked
+      # beta5-caption-flow evidence record. These ordinary-user native runs
+      # are NOT installed-service or boot/pre-login acceptance. This update
+      # also adds caption_flow.py to D2 and every-module drift falsification.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 8b4696f803df606acaa4e6754e87a82d19afed44
+          blob: e5baeb27dd7c053233407286085e2b0f594d4b64
         - path: civiccast/egress/gst/engine.py
-          blob: 46ae29cc60414aee7f0879986ed336f3b0f7738b
+          blob: 472f6ec66b28d2d22d91ac25aad8e9c76c3bdd6f
+        - path: civiccast/egress/gst/caption_flow.py
+          blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -1018,7 +1053,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: dde875813952e46d4706f4d831c0b67de0bbdc76
+        blob: e285ee64790f3d8152c0a679285a5451b9bd8ed0
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -1064,14 +1099,14 @@ entries:
           control so this entry still parses as a valid external_evidence
           registry entry; it is never evaluated by same-run mode and there
           is no other mode. The only automated guarantee this claim now
-          carries is D2 blob-drift on worker.py, engine.py, graph.py,
-          control.py, and audio_tap.py (no separate graph-configuration
+          carries is D2 blob-drift on worker.py, engine.py, caption_flow.py,
+          decode_policy.py, graph.py, control.py, and audio_tap.py (no separate graph-configuration
           artifact is asserted — none was committed with this spike's
           evidence).
         expected_red_when: >-
           Never — this control cannot fail or pass; it is not evaluated by
           any code path. Blob drift on any of
-          worker.py/engine.py/graph.py/control.py/audio_tap.py is instead
+          worker.py/engine.py/caption_flow.py/decode_policy.py/graph.py/control.py/audio_tap.py is instead
           caught, unconditionally, by the D2 blob_drift_violations check
           that runs against every registered claim regardless of
           resolution — see that check's own violation for the actual
@@ -1115,9 +1150,15 @@ entries:
       not replaced by any other automated mechanism. This claim does NOT
       assert that the current engine files still exhibit the spike's
       behavior; it asserts only that the spike happened as the evidence
-      doc records, and that the five code files below are the exact,
-      unmodified-since-narrowing files that spike exercised (D2
-      blob-drift, still enforced).
+      doc records, and that the historical observation has not been reclassified
+      as current acceptance. The seven code files below are a current-source
+      review tripwire (D2 blob-drift, still enforced), not the original spike's
+      exact files. Separate current-source external evidence for the
+      caption/reload changes is recorded at
+      .agent-runs/native-windows/beta5-caption-flow-20260908/evidence/verification.md
+      against runtime proof anchor c0809dffa6bfb702afa1ed19189eb79aaece9bdb.
+      It is not boot/pre-login or installed-service evidence. Those current
+      acceptance results remain pending; no historical result supplies them.
     where:
       file: docs/evidence/session0-service-broadcast.md
       anchor: "session-0 pre-login broadcast is verified"
@@ -1125,7 +1166,7 @@ entries:
     inputs:
       prose:
         path: docs/evidence/session0-service-broadcast.md
-        blob: d18c4203a072ac388cf4b1769d36ac75e0fd692a
+        blob: d40cb8262fb72e3f26d388c3b8a56cf4869d4c3e
       # CC-WS3-005 (round 3): the evidence doc's own header states "Engine
       # code: civiccast/egress/gst/{worker,engine,graph,control}.py copied
       # unmodified from program/native-windows @ 3b4b245...". All four are
@@ -1133,7 +1174,9 @@ entries:
       # Current-source narrowing: 28053a94 added mandatory caption transport
       # across the shared engine graph and made audio_tap.py a direct engine
       # dependency. All current runtime inputs are bound; any further change
-      # goes red and requires another current-source session-0 proof.
+      # goes red and requires an explicit current-source review and a truthful
+      # claim/evidence update. Current boot/pre-login acceptance requires its
+      # own evidence; rebinding hashes does not supply or assert that result.
       # Re-provisioned (WP-07, observed live-source readiness): engine.py and
       # graph.py drifted again -- ElementSpec gained secret_props so an SRT
       # source's resolved credential handle (never the secret) reaches
@@ -1855,11 +1898,38 @@ entries:
       # set, proving the function itself -- not just ``Timer.cancel()`` --
       # refuses to exit once the commit is known to have finished). Blob IDs
       # re-hashed with `git hash-object --path <file> <file>`.
+      # Current review (2026-09-08, runtime anchor c0809dff): native engine
+      # run 76966 had 24 PASS/zero SKIP; caption/probe 52541 had 2 PASS;
+      # approved LPM samples 23475 had 1 PASS.
+      # PR 199 round 2 (2026-09-09): engine.py, worker.py and
+      # test_gst_engine_wsl.py drifted again and are re-hashed below with
+      # `git hash-object --path <file> <file>`. engine.py: the abort path now
+      # drops an abandoned replacement leg at its own src pads BEFORE lifting
+      # its hold probes and retires it off the GLib loop; the stall watchdog
+      # stands down while a commit is in progress (so the 15s commit watchdog
+      # owns that window) and the stall reference resets when the commit
+      # settles; leg disposal treats ASYNC on a bin's downward transition as
+      # legitimate, retries a genuinely failed NULL once, and no longer quits
+      # a producing channel over incomplete cleanup; each reload transaction
+      # carries an id so a superseded transaction's queued EOS cannot settle
+      # its successor on the shared outgoing pad; the audio tap writer gets its
+      # own close budget on stop. worker.py: comment only, recording that the
+      # reload payload is unlinked BEFORE dispatch by design. Verified with
+      # each native test file run ten times under normal logging: engine suite
+      # 10/10 (25 PASS each), caption flow 10/10 (2 PASS each), caption gap
+      # admission 10/10 (5 PASS each); 320 committed reloads across the
+      # captured worker logs with zero stalls or unfinished commits outside
+      # the tests that produce those lines deliberately. Exact hashes and limits are in the linked
+      # beta5-caption-flow evidence record. These ordinary-user native runs
+      # are NOT installed-service or boot/pre-login acceptance. This update
+      # also adds caption_flow.py to D2 and every-module drift falsification.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 8b4696f803df606acaa4e6754e87a82d19afed44
+          blob: e5baeb27dd7c053233407286085e2b0f594d4b64
         - path: civiccast/egress/gst/engine.py
-          blob: 46ae29cc60414aee7f0879986ed336f3b0f7738b
+          blob: 472f6ec66b28d2d22d91ac25aad8e9c76c3bdd6f
+        - path: civiccast/egress/gst/caption_flow.py
+          blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
@@ -1870,7 +1940,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: dde875813952e46d4706f4d831c0b67de0bbdc76
+        blob: e285ee64790f3d8152c0a679285a5451b9bd8ed0
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -1911,11 +1981,12 @@ entries:
           still parses as a valid external_evidence registry entry; it is
           never evaluated by same-run mode and there is no other mode. The
           only automated guarantee this claim now carries is D2 blob-drift
-          on worker.py, engine.py, graph.py, control.py, and audio_tap.py.
+          on worker.py, engine.py, caption_flow.py, decode_policy.py,
+          graph.py, control.py, and audio_tap.py.
         expected_red_when: >-
           Never — this control cannot fail or pass; it is not evaluated by
           any code path. Blob drift on any of
-          worker.py/engine.py/graph.py/control.py/audio_tap.py is instead
+          worker.py/engine.py/caption_flow.py/decode_policy.py/graph.py/control.py/audio_tap.py is instead
           caught, unconditionally, by the D2 blob_drift_violations check
           that runs against every registered claim regardless of
           resolution — see that check's own violation for the actual

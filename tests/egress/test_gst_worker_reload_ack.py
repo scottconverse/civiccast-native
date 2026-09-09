@@ -217,6 +217,31 @@ def test_a_synchronous_build_failure_acks_error_and_settles_nothing(
     assert not (graph_path.parent / "reload-status.json").exists()
 
 
+def test_reload_commit_busy_error_does_not_apply_the_graphs_overlay(
+    worker_module, tmp_path: Path
+) -> None:
+    """An overlap rejected by the engine fails the whole worker graph dispatch.
+
+    In particular the worker must not continue to the graph's overlay call or
+    produce an eventual ``applied`` settlement for a program leg it never armed.
+    The strategy receives this explicit error and the daemon can restart from the
+    complete newest graph.
+    """
+    graph_path = _write_graph(tmp_path)
+    engine = _FakeEngine()
+    engine.reload_program_should_raise = RuntimeError("reload commit already in progress")
+
+    result, detail = worker_module._dispatch_control_with_ack(
+        engine, f"reload {graph_path}", command_id="cmd-overlap"
+    )
+
+    assert result == "error"
+    assert "reload commit already in progress" in (detail or "")
+    assert engine.reload_calls == []
+    assert engine.graphics_overlay_calls == []
+    assert not (graph_path.parent / "reload-status.json").exists()
+
+
 def test_a_graphics_overlay_reapply_failure_does_not_affect_the_program_reload_ack(
     worker_module, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

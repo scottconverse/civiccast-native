@@ -6,6 +6,17 @@
 worker.py + engine.py + graph.py at integration-branch HEAD, **zero
 modifications** — the exact files WSL production runs.
 
+## Current interpretation (2026-09-08)
+
+The July17 experiment and its original verdict below are historical, not a
+statement about the current runtime or release. Later native caption/reload
+tests are recorded separately in
+[the beta.5 source-level record](../../.agent-runs/native-windows/beta5-caption-flow-20260908/evidence/verification.md).
+Those tests are not installed-service, boot/pre-login, or field acceptance.
+The registry's current code hashes are change-detection inputs for source
+review; they do not identify the original spike's bytes. The historical D6
+trust-root language below is not an active owner-approval requirement.
+
 ## Gate behaviors (charter: switching, recovery, multichannel)
 
 1. **Hot source-swapping** — `SWAPS=4 INTERVAL=2 python worker.py demo-graph.json`

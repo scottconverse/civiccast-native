@@ -1311,6 +1311,7 @@ def test_ws3r3_005_blob_drift_flags_each_code_module_independently(repo: Path) -
 _CURRENT_ENGINE_DEPENDENCY_MODULES = {
     "civiccast/egress/gst/worker.py",
     "civiccast/egress/gst/engine.py",
+    "civiccast/egress/gst/caption_flow.py",
     "civiccast/egress/gst/decode_policy.py",
     "civiccast/egress/gst/graph.py",
     "civiccast/egress/gst/control.py",
@@ -1353,6 +1354,11 @@ def test_current_external_claims_do_not_describe_changed_files_as_unmodified_or_
         assert "remain unmodified" not in claim
         assert "pending owner trust-root acceptance" not in claim
         assert "current-source external evidence" in claim
+        assert "unmodified-since-narrowing" not in claim
+        assert "historical observation" in claim
+        assert "current-source review tripwire" in claim
+        assert "not boot/pre-login or installed-service evidence" in claim
+        assert "acceptance results remain pending" in claim
 
 
 def test_ws3r3_005_native_decision_gate_no_longer_binds_uncommitted_exact_config() -> None:
@@ -1385,16 +1391,9 @@ def test_ws3r3_005_session0_still_binds_its_committed_demo_graph() -> None:
 @pytest.mark.parametrize(
     "claim_id, module_path",
     [
-        ("native-decision-gate", "civiccast/egress/gst/worker.py"),
-        ("native-decision-gate", "civiccast/egress/gst/engine.py"),
-        ("native-decision-gate", "civiccast/egress/gst/graph.py"),
-        ("native-decision-gate", "civiccast/egress/gst/control.py"),
-        ("native-decision-gate", "civiccast/egress/gst/audio_tap.py"),
-        ("session0-service-broadcast", "civiccast/egress/gst/worker.py"),
-        ("session0-service-broadcast", "civiccast/egress/gst/engine.py"),
-        ("session0-service-broadcast", "civiccast/egress/gst/graph.py"),
-        ("session0-service-broadcast", "civiccast/egress/gst/control.py"),
-        ("session0-service-broadcast", "civiccast/egress/gst/audio_tap.py"),
+        (claim_id, module_path)
+        for claim_id in ("native-decision-gate", "session0-service-broadcast")
+        for module_path in sorted(_CURRENT_ENGINE_DEPENDENCY_MODULES)
     ],
 )
 def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim(

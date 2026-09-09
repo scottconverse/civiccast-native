@@ -2443,10 +2443,15 @@ def test_content_reload_never_defers_switch_during_a_manual_override(tmp_path: P
     assert strategy.switch_at_end_of_current_calls == [False]
 
 
-def test_content_reload_falls_back_to_restart_when_worker_not_ready(tmp_path: Path) -> None:
-    """If the seamless reload can't be applied (reload_content returns False — e.g.
-    the worker control channel isn't ready), the daemon falls through to the existing
-    terminate+restart reload path so the program change still lands."""
+def test_content_reload_commit_busy_falls_back_to_restart_with_newest_graph(
+    tmp_path: Path,
+) -> None:
+    """An explicitly rejected overlap restarts onto the complete newest graph."""
+
+    class _CommitBusyStrategy(_FakeContentReloadStrategy):
+        def last_send_command_failure_reason(self, channel_id: str) -> str | None:
+            return "worker acked 'error' (RuntimeError('reload commit already in progress'))"
+
     store = InMemoryEgressStore()
     store.upsert_config(_config())
     store.enqueue_command(_command())
@@ -2457,7 +2462,7 @@ def test_content_reload_falls_back_to_restart_when_worker_not_ready(tmp_path: Pa
     def source_provider(_channel_id: str) -> EgressSourcePlan:
         return _source_plan_with_label(tmp_path, current_label)
 
-    strategy = _FakeContentReloadStrategy(processes, started, reload_ok=False)
+    strategy = _CommitBusyStrategy(processes, started, reload_ok=False)
     daemon = EgressDaemon(
         store,
         work_dir=tmp_path,
