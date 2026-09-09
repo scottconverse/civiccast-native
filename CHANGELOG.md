@@ -71,6 +71,24 @@ below.
 
 ### Changed
 
+- **Self-hosted candidate builds no longer upload the signed installer and
+  `.ccpack` files by default.** `native-beta-candidate-artifacts.yml`'s
+  `build_target: self-hosted` lane already lands those exact bytes on the
+  sandbox-lab box at `C:\CivicCastTester\candidates\<sha>\candidate\`, and
+  `assemble-native-beta-kit`'s self-hosted path reads them from that local
+  mirror, never from a downloaded artifact — so re-uploading ~3.4 GB nobody
+  downloads was dead weight against the 10 GB/month GitHub Actions
+  artifact-storage cap this repo shares with five other projects. A new
+  `upload_candidate_binaries` workflow-dispatch input (default `false`,
+  self-hosted only) forces the upload anyway. Only the small evidence set
+  (`*-report.json`, `SHA256SUMS.txt`, `candidate-receipt.json`) still
+  uploads unconditionally, under the unchanged `native-beta-candidate-<sha>`
+  artifact name; the binaries moved to their own
+  `native-beta-candidate-binaries-<sha>` artifact. Hosted (`windows-latest`)
+  builds are unaffected — they always upload everything, exactly as before,
+  since there is no persistent local box for anything to read from. Owner
+  decision 2026-09-09.
+
 - **The packaged manual no longer freezes publication status.** It describes
   beta.5 operation and directs installers to the exact signed GitHub Release
   and live release record for availability and candidate acceptance. The PDF,
@@ -127,6 +145,26 @@ below.
 - **The final caption audio file is no longer lost on shutdown.** The caption
   audio writer is given its own short closing budget instead of whatever
   remained of the overall shutdown deadline, which in practice was often none.
+
+- **Caption review queue `list()` now returns creation order even when two
+  rows share the identical microsecond `created_at`** (item 92). On a fast
+  Windows box, two rows created in a tight loop (e.g. queueing every cue of
+  a job in one pass) can read the same `datetime.now(UTC)` value; the
+  in-memory store's tie-break used to fall back to `review_item_id`, a
+  lexical string comparison that does not track creation order and could
+  silently swap adjacent rows (e.g. sorting a cue's `-02:` suffixed id
+  before its `:`-suffixed sibling). `InMemoryCaptionReviewStore` now records
+  a monotonic insertion sequence per row at create time and sorts by
+  `(created_at, sequence)`, so `list()` order equals creation order on
+  every tie, deterministically. The regression this masked was a flaky
+  test (`test_an_orphaned_spanish_row_neither_gates_nor_reaches_the_track`)
+  that has since been hardened to look up rows by source cue identity
+  rather than list position; a new store-level regression test forces the
+  tie via a frozen clock and asserts creation order directly.
+  `PostgresCaptionReviewStore.list()` keeps its existing
+  `(created_at, review_item_id)` ordering — a durable equivalent of the
+  in-memory counter would need a new migration and is documented as a
+  known, narrower-risk contract difference rather than changed here.
 
 - **Sandbox TSDuck analysis now reads the current nested JSON schema.** The
   soak sampler reads packet totals, invalid syncs, and transport errors from
