@@ -1008,6 +1008,34 @@ class ChannelAutomationService:
             # re-establish it from the CURRENT proof event/dispatch instead of
             # dispatching against a lie -- the same logic the "fresh plan just
             # took air" branch above already uses.
+            if channel_id in self._rollover_issued and self._daemon_has_pending_reload_settlement(
+                channel_id
+            ):
+                # Sandbox soak 39d852e (2026-09-09, government + education
+                # channels): a boundary-aligned seamless rollover was ARMED
+                # (``switch_at_end_of_current=True``) and the OUTGOING leg ran
+                # 5-17s past its projected end -- the dispatched durations sum
+                # underestimates real playout, and the daemon observes the
+                # engine's boundary commit 4-13s after the fact -- so this
+                # stale check fired on a perfectly healthy, still-settling
+                # rollover BEFORE the "already issued / daemon still settling"
+                # guard below could see it. Re-establishing here read the
+                # daemon's dispatch record, which is still the OLD plan
+                # (``_record_dispatched_plan`` runs at settlement, not at
+                # dispatch), and dated it from ``now``: a tuple one old
+                # plan-length in the future. When the settlement then landed,
+                # the "fresh plan just took air" branch fed that poisoned
+                # ``previous_end_at`` to the deferred-start rule in
+                # ``_establish_horizon_from_dispatch`` and dated the INCOMING
+                # plan's horizon a whole plan too late -- no rollover was ever
+                # issued for it, the plan ran to EOS, and the channel took the
+                # 20s planned restart on every rollover. A tuple that is a few
+                # seconds behind a settling switch is not the frozen-horizon
+                # lie item 78 guards against; leave it alone and wait for the
+                # daemon, whose own settlement deadline
+                # (``_PENDING_RELOAD_SETTLE_DEADLINE_S``) or worker-exit
+                # discard bounds this wait and then lets the branch run.
+                return
             _LOG.warning(
                 "Channel automation rollover horizon for %s was stale (plan_end_at "
                 "%s <= now %s); re-establishing instead of dispatching.",
@@ -1380,7 +1408,18 @@ class ChannelAutomationService:
             # what is on air right now.
             return False
         starts_at = now
-        if switch_deferred and previous_end_at is not None and previous_end_at > now:
+        if (
+            switch_deferred
+            and previous_end_at is not None
+            and now < previous_end_at <= now + timedelta(seconds=self._ROLLOVER_MIN_LEAD_SECONDS)
+        ):
+            # A deferred switch is observed at (or a few seconds after) the
+            # outgoing leg's boundary, so a trustworthy ``previous_end_at`` is
+            # at most a rollover lead time ahead of ``now``. Anything further
+            # out is a poisoned tuple (sandbox soak 39d852e: a stale-horizon
+            # re-establishment during settlement dated the OLD plan from
+            # "now", one plan-length ahead) and must not push this horizon a
+            # whole plan into the future -- date from ``now`` instead.
             starts_at = previous_end_at
         planned_seconds = sum(durations)
         plan_end_at = starts_at + timedelta(seconds=planned_seconds)

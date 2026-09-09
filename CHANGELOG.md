@@ -114,6 +114,27 @@ below.
 
 ### Fixed
 
+- **Seamless rollover no longer runs to EOS when the outgoing leg overruns its
+  projected end.** Sandbox soak 39d852e (2026-09-09) showed every government
+  channel rollover taking the 20s planned restart: with a boundary-aligned
+  seamless reload armed (`switch_at_end_of_current=True`), the outgoing plan
+  ran 5-17s past its projected end (the dispatched durations sum
+  underestimates real playout and the daemon observes the engine's boundary
+  commit a few seconds later), so `ChannelAutomationService`'s stale-horizon
+  branch fired before the "already issued / daemon still settling" guard. It
+  re-established the horizon from the daemon's dispatch record, which is
+  still the OLD plan until settlement, dated from "now" -- one old plan-length
+  ahead. When the settlement then landed, the "fresh plan just took air"
+  branch fed that poisoned end to the deferred-start rule, dated the incoming
+  plan's horizon a whole plan too late, and no rollover was ever issued for
+  it. The stale branch now returns and waits while the channel's rollover is
+  issued and `EgressDaemon.has_pending_reload_settlement` reports it settling
+  (the daemon's own settlement deadline and worker-exit discard bound the
+  wait), and the deferred-start anchor is only honoured when it lies within
+  `_ROLLOVER_MIN_LEAD_SECONDS` of "now". Covered by
+  `tests/egress/test_automation.py::TestStaleHorizonWaitsForASettlingSeamlessReload`;
+  all four cases fail against the previous code.
+
 - **Playback evidence bindings include the new caption helper.** The current
   engine, test and historical-evidence annotations are hash-bound in both
   registry entries. All seven runtime modules have individual drift tests.
