@@ -157,7 +157,21 @@ removed at that channel's next start). A station-state file
 without the key (commissioned before the switch existed) reads as off; an
 explicitly stored `true` is kept across the upgrade. Turning it **on** takes
 effect at each channel's next start, because the audio-tap and caption-embed
-legs are built only when a channel's pipeline is constructed.
+legs are built only when a channel's pipeline is constructed. Until each
+channel next goes on air, those channels show red on *On air right now*
+because the station is looking for captions it cannot see yet: the
+safe-to-air caption gate (`compute_channel_runtime_status`,
+`civiccast/alerting/runtime_status.py`) arms as soon as the switch reads on,
+while a running channel has no embed leg to prove until it restarts. Restart
+each channel to clear it.
+
+Every runtime reader of the switch -- the egress strategy, the safe-to-air
+banner, and the `is_enabled` callbacks of the caption tap, feed, and proof
+workers -- goes through `resolve_live_captions_enabled_or_default()`
+(`civiccast/installer/station_state.py`): a locked or corrupt
+`station-state.json` lands on the shipped default (`LIVE_CAPTIONS_DEFAULT`)
+and is logged once per process, rather than aborting a worker's scan with a
+traceback every poll.
 
 While it is off the tap transcribes nothing, blanks every channel's live
 caption file, reports `"state": "disabled"`, and *deletes* the forked audio

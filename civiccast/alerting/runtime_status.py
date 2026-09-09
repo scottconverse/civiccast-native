@@ -149,30 +149,6 @@ def compute_channel_runtime_status(
     )
 
 
-def _resolve_expect_captions() -> bool:
-    """Read the operator's live-captions switch once per safe-to-air computation.
-
-    Never fatal: the switch lives in ``station-state.json``, and a momentarily
-    locked or unreadable file must not take the on-air banner down with it. A
-    read failure lands on the shipped default (``LIVE_CAPTIONS_DEFAULT``) --
-    the same fallback ``civiccast.egress.gst.strategy`` uses when it decides
-    whether to build the embed leg, so the banner and the pipeline agree.
-    """
-    from civiccast.installer.models import LIVE_CAPTIONS_DEFAULT
-    from civiccast.installer.station_state import resolve_live_captions_enabled
-
-    try:
-        return resolve_live_captions_enabled()
-    except Exception:
-        _LOG.warning(
-            "could not read the live-captions station-profile switch for the "
-            "safe-to-air signal; assuming the shipped default (%s)",
-            "on" if LIVE_CAPTIONS_DEFAULT else "off",
-            exc_info=True,
-        )
-        return LIVE_CAPTIONS_DEFAULT
-
-
 def compute_runtime_safe_to_air(
     store: EgressStore,
     firing_alerts: list[AlertEvent],
@@ -186,11 +162,17 @@ def compute_runtime_safe_to_air(
     (the caller reads them once from the alert store). Overall color = worst
     channel color, escalated to red if any critical alert is firing.
     ``expect_captions`` defaults to the operator's live-captions switch, read
-    ONCE here (not per channel) via ``resolve_live_captions_enabled``.
+    ONCE here (not per channel) via ``resolve_live_captions_enabled_or_default``.
     """
     now = now or datetime.now(tz=UTC)
     if expect_captions is None:
-        expect_captions = _resolve_expect_captions()
+        # Never fatal: a momentarily locked or unreadable station-state.json
+        # must not take the on-air banner down; the read failure lands on the
+        # shipped default, the same value the egress strategy and the caption
+        # workers use, so the banner and the pipeline agree.
+        from civiccast.installer.station_state import resolve_live_captions_enabled_or_default
+
+        expect_captions = resolve_live_captions_enabled_or_default()
 
     channels: list[ChannelRuntimeStatus] = []
     for config in store.list_configs():

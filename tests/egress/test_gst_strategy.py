@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import subprocess
@@ -42,6 +43,7 @@ from civiccast.egress.models import (
     EgressSourcePlan,
     EgressSourceSegment,
 )
+from civiccast.installer import station_state as station_state_module
 
 # The D2 seam gave GstPlayoutStrategy.start() a real os.name=='nt' branch that
 # opens a Win32 named pipe. Two disjoint groups of tests below react to that:
@@ -813,11 +815,12 @@ def test_strategy_start_survives_a_corrupt_station_state_file(
     MEASURED before this test's fix landed: that exception propagated out of
     ``GstPlayoutStrategy.start()`` and stopped the channel going to air over
     a corrupt status file for an entirely unrelated, best-effort,
-    accessibility feature. ``_live_captions_enabled_or_default`` must catch
-    this, log once, and fall back to the shipped default
-    (``LIVE_CAPTIONS_DEFAULT``, off for beta.5) instead."""
+    accessibility feature. ``resolve_live_captions_enabled_or_default``
+    (``civiccast.installer.station_state``, shared with the safe-to-air
+    banner and the caption workers) must catch this, log once, and fall back
+    to the shipped default (``LIVE_CAPTIONS_DEFAULT``, off for beta.5)."""
 
-    strategy_module._live_captions_read_failure_announced = False
+    station_state_module._live_captions_read_failure_announced = False
     state_path = tmp_path / "station-state.json"
     # A byte that is not valid UTF-8 anywhere (0xFF is invalid in every UTF-8
     # continuation/lead position) -- guarantees UnicodeDecodeError, not a
@@ -833,7 +836,7 @@ def test_strategy_start_survives_a_corrupt_station_state_file(
         pipe_channel_factory=_fake_pipe_channel_factory,
     )
 
-    with caplog.at_level("WARNING", logger="civiccast.egress.gst.strategy"):
+    with caplog.at_level("WARNING", logger="civiccast.installer.station_state"):
         result = strategy.start(_start_request(tmp_path))  # must not raise
 
     assert "could not read the live-captions station-profile switch" in caplog.text
@@ -854,7 +857,7 @@ def test_strategy_start_survives_a_locked_station_state_file(
     is awkward to arrange portably in a unit test) to prove the SAME guard
     catches an ``OSError`` family member, not just ``UnicodeDecodeError``."""
 
-    strategy_module._live_captions_read_failure_announced = False
+    station_state_module._live_captions_read_failure_announced = False
 
     def _raise_permission_error() -> bool:
         raise PermissionError(
@@ -875,7 +878,7 @@ def test_strategy_start_survives_a_locked_station_state_file(
         pipe_channel_factory=_fake_pipe_channel_factory,
     )
 
-    with caplog.at_level("WARNING", logger="civiccast.egress.gst.strategy"):
+    with caplog.at_level("WARNING", logger="civiccast.installer.station_state"):
         result = strategy.start(_start_request(tmp_path))  # must not raise
 
     assert "could not read the live-captions station-profile switch" in caplog.text
@@ -1324,6 +1327,75 @@ def test_hevc_channel_survives_live_captions_flipped_on_mid_run(
     # The next START still refuses the unsupported combination.
     with pytest.raises(EncoderUnavailableError):
         strategy.start(request)
+
+
+def test_hevc_captions_reload_warning_is_logged_once_per_channel_run(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Follow-up to the round-2 fix above: ``reload_content`` runs on every content
+    # change, so the HEVC/captions warning must be latched per channel (the sibling
+    # of ``CaptionTapWorker._disabled_announced``), not repeated every reload for
+    # as long as the switch stays on. A fresh start() re-arms it.
+    enabled = [False]
+    monkeypatch.setattr(
+        "civiccast.installer.station_state.resolve_live_captions_enabled",
+        lambda: enabled[0],
+    )
+    strategy = GstPlayoutStrategy(
+        worker_launcher=_preflight_launcher,
+        python_executable="python3",
+        pipe_channel_factory=_fake_pipe_channel_factory,
+        encoder_probe=lambda name: True,
+        is_windows=True,
+        embed_captions=True,
+    )
+    request = _hw_codec_request(tmp_path, codec="hevc_vaapi", allow_software_fallback=False)
+    strategy.start(request)
+    enabled[0] = True
+
+    needle = "live captions were switched on while this channel runs on HEVC/H.265"
+    with caplog.at_level("WARNING", logger="civiccast.egress.gst.strategy"):
+        assert strategy.reload_content("ch1", tmp_path, request) is True
+        assert strategy.reload_content("ch1", tmp_path, request) is True
+        assert strategy.reload_content("ch1", tmp_path, request) is True
+    assert caplog.text.count(needle) == 1  # three reloads, one warning
+    assert "ch1" in strategy._hevc_caption_warning_announced
+
+    # A second channel gets its own warning: the latch is per channel_id.
+    caplog.clear()
+    base = _hw_codec_request(tmp_path, codec="hevc_vaapi", allow_software_fallback=False)
+    request2 = dataclasses.replace(
+        base,
+        channel_id="ch2",
+        config=base.config.model_copy(update={"channel_id": "ch2"}),
+        source_plan=base.source_plan.model_copy(update={"channel_id": "ch2"}),
+    )
+    enabled[0] = False
+    strategy.start(request2)
+    enabled[0] = True
+    with caplog.at_level("WARNING", logger="civiccast.egress.gst.strategy"):
+        assert strategy.reload_content("ch2", tmp_path, request2) is True
+    assert caplog.text.count(needle) == 1
+
+    # start() re-arms the latch for that channel, so a restarted channel that
+    # hits the conflict again is told again (once). Seeded directly: the fake
+    # pipe channel here cannot carry state across a same-channel relaunch.
+    caplog.clear()
+    request3 = dataclasses.replace(
+        base,
+        channel_id="ch3",
+        config=base.config.model_copy(update={"channel_id": "ch3"}),
+        source_plan=base.source_plan.model_copy(update={"channel_id": "ch3"}),
+    )
+    strategy._hevc_caption_warning_announced.add("ch3")
+    enabled[0] = False
+    strategy.start(request3)
+    assert "ch3" not in strategy._hevc_caption_warning_announced
+    enabled[0] = True
+    with caplog.at_level("WARNING", logger="civiccast.egress.gst.strategy"):
+        assert strategy.reload_content("ch3", tmp_path, request3) is True
+        assert strategy.reload_content("ch3", tmp_path, request3) is True
+    assert caplog.text.count(needle) == 1
 
 
 def test_preflight_reload_content_preserves_software_fallback(tmp_path) -> None:
