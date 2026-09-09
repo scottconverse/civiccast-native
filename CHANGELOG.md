@@ -2306,6 +2306,18 @@ across repeated runs.
 
 ### Known issues in beta.5
 
+**Status reconciliation, 2026-09-09.** The numbered list below is kept as
+written when each item was found; items 6 (48), 11 (60), 12 (61), 16 (78),
+17 (79), 18 (80), and 19 (82) now carry a `FIXED on main` marker naming the
+PR that closed them (#173, #176, #181, #182/#190, #184-#189, #183). What is
+actually carried into the beta.5 candidate -- the reload commit that can
+still wedge under extreme CPU load and is bounded by the #188/#199 watchdogs
+rather than proven gone (20 of 24 clean at 100% CPU on the #199 head vs 0 of
+3 before it), item 89, the open no-reload caption stress case in the 09-08
+diagnostic record, and the operator-facing items 47, 54/55/57, 56, 62, 81 --
+is listed with sources in `docs/releases/2026-09-04-beta5-release-notes.md`,
+"Known issues carried forward into beta.5".
+
 1. **Seamless rollover has a residual freeze case (#162).** If the next leg
    is not ready before the outgoing clip ends, the output freezes until it
    becomes ready or the existing 10-second stall watchdog restarts the
@@ -2343,7 +2355,7 @@ across repeated runs.
    turn on "Start automatically" for it. Gate A's cross-version-upgrade
    lane does not assert on-air state after install-over, so this gap is
    not caught by that lane.
-6. **Installing a kit over a station that already reports the same version
+6. **(item 48, FIXED on `main` by #173, 2026-09-05 -- history below) Installing a kit over a station that already reports the same version
    string does not replace the app -- it silently does nothing.** The
    installer's pack staging
    (`civiccast/apps/installer/src-tauri/src/native_pack_staging.rs`,
@@ -2416,7 +2428,7 @@ across repeated runs.
     pending:** the sandbox/harness gap that let the baseline install
     itself crash before phase 1 started; re-run in progress as Gate A
     `34004354641`.
-11. **(item 60) When the planner extends a running plan, the in-place
+11. **(item 60, FIXED on `main` by #176, 2026-09-06; reload path further repaired by #188/#199 -- history below) When the planner extends a running plan, the in-place
     reload starves live playback and can fail silently -- present since
     #162, previously masked by item 51.** Tester-proven 2026-09-06
     (`tester-soak5-609273d-20260906`): (a) the reload's prepare step
@@ -2447,7 +2459,7 @@ across repeated runs.
     for the GStreamer engine in beta.5
     (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` opts out). Not part of
     candidate 2; will be part of candidate 3.
-12. **(item 61, targeted for beta.6) A worker's reload acknowledgement
+12. **(item 61, the concat-collision ack made honest by #176; the general ack-after-commit guarantee is what #199's applied-receipt settlement now provides -- targeted for beta.6 only if a soak shows otherwise) A worker's reload acknowledgement
     reports success before the reload actually commits.** The same defect
     underlying item 60's masking: the control-pipe reload ack is sent once
     a reload is attempted, not once GStreamer confirms the new elements
@@ -2477,7 +2489,7 @@ across repeated runs.
     reached the worker is indistinguishable, from the logs, from one
     that was never attempted. Fix: `fix/gst-reload-concat-collision`
     (logged, honest reload failure).
-16. **(item 78, BETA.5 BLOCKER on candidate 3b, fix in review) A stale
+16. **(item 78, FIXED on `main` by #181, 2026-09-06 -- history below; was: BETA.5 BLOCKER on candidate 3b, fix in review) A stale
     rollover horizon crash-loops every channel once a slow start already
     leaves the plan in the past.** Sandbox soak run 12 (candidate 3b,
     seamless rollover ON) measured a first-`ON_AIR` of 915-930 seconds
@@ -2505,7 +2517,7 @@ across repeated runs.
     yet merged: round 2 of review (2026-09-06) found the clock still has
     to be read after, not before, the blocking `process_once` call, or a
     slow-starting channel is measured stale regardless.
-17. **(item 79, BETA.5 BLOCKER on candidate 3b, fix in review, isolation
+17. **(item 79, FIXED on `main` by #182 (caps) and #190 (tap can never block air), 2026-09-06 -- history below; was: BETA.5 BLOCKER on candidate 3b, fix in review, isolation
     runs pending) The live caption tap still starves playout inside the
     sandbox VM even with #172's backoff.** Run 12 (candidate 3b) logged 10
     "Caption tap overload" events, and worker stalls clustered inside those
@@ -2526,7 +2538,7 @@ across repeated runs.
     **Isolation runs pending:** a captions-ON vs captions-OFF run on the
     same candidate, decisive for whether captions are necessary or merely
     contributing, is queued behind item 78's fix landing.
-18. **(item 80, harness, fix in progress) The sandbox lane's restart
+18. **(item 80, harness, FIXED on `main` by the sandbox-lab follow-ups #184-#186/#189 -- history below; was: fix in progress) The sandbox lane's restart
     classifier ignored the playout worker's own stdout, undercounting
     aborted reloads.** The worker's `CTRL reload aborted`/`CTRL reload
     committed` progress lines are written to stdout only; the classifier
@@ -2536,7 +2548,7 @@ across repeated runs.
     branch (after PR #177) -- not yet merged as of this writing; the same
     follow-up also carries worker-stdout capture into evidence bundles and
     a captions-off isolation switch for item 79's isolation runs.
-19. **(item 82, beta.5 candidate, PR pending) A 5-second preroll timeout
+19. **(item 82, FIXED on `main` by #183, 2026-09-06 -- history below; was: PR pending) A 5-second preroll timeout
     guarantees a relaunch storm on a CPU-starved box.** `engine.py`'s
     `_await_playing` gives a worker 5 seconds to reach GStreamer's
     `PLAYING` state; run 13's (candidate 3b, seamless OFF) first crash was

@@ -8,6 +8,387 @@ fill-in-the-placeholders-and-run operation rather than a from-scratch write.
 `current` and `v1.0.0-beta.5` as `staging` -- neither this document nor any
 other surface in this PR flips that.
 
+## Update 2026-09-09: what `main` actually carries for tonight's beta.5 (read this first)
+
+**This section supersedes the dated "Update" paragraphs below wherever they
+disagree.** Those paragraphs are kept as the honest history of candidates 1,
+2, and 3b (each cut, soaked, and rejected); they still say "fix pending" or
+"not yet merged" about fixes that have since merged. As of `main` at
+`39d852e5` (PR #199 merged 2026-09-09T17:24Z), every fix that section names
+as pending is on `main`, and the beta.5 candidate to be built and gated
+tonight is cut from that head (or a later docs-only head on top of it).
+The candidate goes to a live install at LPM the next day, so the
+"Verification (tonight)" subsection below is the record the publish must
+complete before `v1.0.0-beta.5` is tagged.
+
+### Candidate status, in one table
+
+| candidate | source | what happened | publishable |
+| --- | --- | --- | --- |
+| 1 | `91caebc` (build `33971258093`, Gate A `33972726431`) | Gate A PASS x3; hardware soak #3 FAIL (item 51, #170 decoder pileup) | no |
+| 2 | `609273d` (build `33997406150`, Gate A `33998901590`) | Gate A clean PASS, cross-version harness gap (item 58); hardware soak #5 FAIL (item 60, prepare clobber + silent reload failure) | no |
+| 3 / 3b | post-#176 sandbox candidates | sandbox runs 11-13 crash-looped (items 78, 79, 82); reload-commit wedge (item 85) found in runs 12/14/15 | no |
+| `66e02c4` (post-#190) | built; Gate A `34069809445` cancelled without a verdict | no verdict either way | no |
+| `be1260b` / `9bf3883` (Codex 09-08) | signed builds `34231404699` / `34234158877` cancelled so the final candidate carries #193's settlement fix and the corrected handbook; the installed `be1260` kit reproduced the program-change deadlock on the tester and in the sandbox | no |
+| **final** | `TBD-EVIDENCE-SOURCE-SHA` (cut from `39d852e5` or later) | see "Verification (tonight)" | pending |
+
+### What changed since `v1.0.0-beta.4` (every merged PR, `git log v1.0.0-beta.4..main`)
+
+Full mechanism-level detail for each item is in the `[1.0.0-beta.5]`
+section of `CHANGELOG.md`; this list is the map.
+
+**Playout engine, plan rollover, and in-place reload**
+
+- **#162** -- seamless source-plan rollover: a channel with more schedule
+  ahead extends onto the next plan in place instead of restarting its
+  worker at every plan end.
+- **#170** -- the planner honours the schedule slot (a 30-second slot of
+  long media no longer airs for hours), sizes the plan window by duration,
+  and the health poll tail-reads the worker log instead of re-reading it
+  whole every 2 seconds.
+- **#169** -- persisted free text is folded for non-UTF-8 code pages, fixing
+  the `UnicodeEncodeError` that skipped channel supervision on every restart
+  (beta.4 known issue 1b).
+- **#174** -- item 51: the decoder-pipeline shape is bounded
+  (`MAX_PLAYLIST_SUBCHAINS` = 12, `max_segments` = 8) instead of the plan's
+  wall clock; the 30-minute plan window that built ~1,200 decoder threads on
+  candidate 1 is gone. Confirmed fixed on hardware by soak #5.
+- **#176** -- item 60 (and its sub-items 61/64/65): each plan prepares into
+  its own directory with atomic writes and cleanup of superseded plans, a
+  failed reload is logged instead of silently falling through to drain,
+  concat element names are unique per rollover, the worker's reload
+  acknowledgement is honest, and seamless rollover is gated by
+  `CIVICCAST_EGRESS_SEAMLESS_RELOAD`.
+- **#179** -- the gst-python `Bin.add` contract is normalised (candidate 3's
+  installed-GStreamer smoke regression).
+- **#180** -- item 66: first `ON_AIR` no longer waits for a whole-clip
+  single-threaded conform (measured 8.5-15 minutes to first air on a fresh
+  station across candidates 2 and 3b); synchronous conforms get a foreground thread cap of
+  `max(1, cpu_count // 2)`, warm-behind conforms stay at one thread.
+- **#181** -- item 78: the rollover horizon re-anchors per channel after a
+  slow start, the 45-second retry path respects a real floor plus a
+  worker-age guard, and a boundary that has already passed cuts immediately
+  instead of arming a rollover onto the past.
+- **#183** -- item 82: preroll timeout raised from 5 s to a dedicated 30 s
+  bound (`CIVICCAST_GST_PREROLL_TIMEOUT_S`, clamped 5-45 s), a distinct
+  `PrerollTimeoutError`/exit code, and a slow-start relaunch path that is
+  exempt from the crash-loop streak.
+- **#187** -- item 84: the first-output watchdog budget is separate from the
+  10-second stall bound, so a cold worker is not killed for being slow to
+  produce its first buffer.
+- **#188** -- item 85: staged `CTRL reload:` progress lines, a real
+  OS-thread commit watchdog that dumps every thread's stack and force-exits
+  with a distinct exit code, and daemon-side termination of a worker whose
+  reload ack timed out while its pid is still alive (previously it sat in
+  `TRANSITIONING` forever). The round-1 commit reordering was reverted after
+  hostile review measured it introducing `not-linked` flow errors.
+- **#193** -- continuous playout across program and filler boundaries: the
+  end of scheduled media arms the configured filler without a planned
+  worker restart, finite filler refreshes before EOS, a due program still
+  cuts into filler immediately, slate plans are bounded to the engine's
+  12-chain limit and published atomically, larger bulletin rotations are
+  concatenated so no approved slide is dropped, and reload settlement
+  records `ON_AIR`/`FALLBACK_SLATE` in channel status, health, sink and
+  alert evaluation only after the worker reports that specific reload
+  applied. Also flips `CIVICCAST_EGRESS_SEAMLESS_RELOAD` to **on by
+  default** (owner requirement; `0`/`false`/`no`/`off` opts out).
+- **#199** -- the native program-change deadlock reproduced on the installed
+  `be1260` candidate (tester and sandbox): persistent bounded non-leaky A/V
+  queues after the selectors, the replacement held until the outgoing leg
+  retires off the GLib control loop, overlapping commit requests declined
+  into the existing full-graph restart path (no latest-wins queue), a
+  bounded pipeline `NULL` call at shutdown, an aborted replacement detached
+  at its own src pads before its holds are released and disposed on a
+  worker thread, the stall watchdog standing down while a commit is in
+  progress so the commit watchdog can actually fire first, a per-transaction
+  reload id so a superseded transaction's queued EOS is ignored, and a
+  compact worker diagnosis that keeps the useful disposal frames.
+
+**Live captions**
+
+- **#172** -- the live caption tap backs off under overload instead of
+  driving the control plane to ~2.5 cores and starving playout (the real
+  cause of beta.4's periodic on-air blips, measured on the tester
+  2026-09-05).
+- **#182** -- item 79: one channel's ASR call in flight station-wide,
+  live-tap CPU threads capped at 1-2, first pause after an overload 120 s.
+- **#190** -- items 88/84c: the caption audio tap can never block air (leaky
+  queue, `drop=True` appsink, all blocking WAV I/O moved off the GStreamer
+  streaming thread onto a dedicated writer thread with a bounded
+  drop-oldest hand-off); the `CTRL first-output` marker now measures real
+  post-PLAYING output instead of a tautology; a bounded `CTRL output:`
+  progress line shows when real output stops.
+- **#191** -- item 91: `CIVICCAST_CAPTION_TAP=off` actually disables the
+  live caption tap leg on an activated native station, and a new operator
+  switch, **Setup > Station Profile > "Show live captions on air"**
+  (`live_captions_enabled`, default on), stops the audio-fork leg itself at
+  the channel's next start. Round 2 of review fixed a blocker where a
+  corrupt or locked `station-state.json` could stop a channel going to air.
+- **#199** (caption half) -- the no-reload caption stall: non-leaky
+  forwarding after the live appsrc plus exact-seqnum one-pending GAP
+  admission, so live-caption heartbeats are bounded at their source and
+  cannot back the caption branch up into the mux. The final caption WAV is
+  no longer lost on shutdown (its writer gets its own 2 s budget).
+- **#200** -- item 92: the caption review queue's in-memory `list()` returns
+  creation order on same-microsecond ties (a monotonic per-row sequence);
+  the Postgres store keeps `(created_at, review_item_id)` as a documented,
+  narrower-risk contract difference.
+
+**Installer and kit**
+
+- **#173** -- install-over compares pack *content* identity, not just the
+  version string, before deciding a pack is already satisfied; re-installing
+  a rebuilt kit under the same version string no longer silently keeps the
+  old payload (known issue 6 below, item 48).
+- **#192** -- the Windows beta test baseline is repaired (three
+  fixture-only failures: equal clock ticks in caption/migration tests; a
+  sidecar test that depended on an ignored local beta.4 sidecar) and the
+  obsolete cross-agent audit protocol is retired.
+- **#194** -- the native app-payload build probe redirects its
+  profile-backed state to a temp directory and strips inherited
+  `DATABASE_URL`/`CIVICCAST_*` overrides (build-time validation only; no
+  change to shipped files).
+- **#201** -- self-hosted candidate builds no longer upload the ~3.4 GB of
+  signed installer/`.ccpack` bytes by default (they are read from the
+  sandbox-lab box's local mirror); `upload_candidate_binaries=true` forces
+  it. Hosted builds unchanged.
+- **#164 / #166** -- product identity bumped to `1.0.0-beta.5` on every
+  `check_release_identity.py`-bound surface; `sandbox-lab/upgrade-baseline.json`
+  repinned to the published beta.4 kit so Gate A's cross-version and
+  download-only lanes upgrade from the real current release.
+
+**Gate A, sandbox lane, and CI**
+
+- **#160 / #161 / #163** -- the independent post-upgrade schema proof now
+  actually executes: reads `DatabaseUrl` from
+  `HKLM\SOFTWARE\CivicCast\Native`, passes the `psql -c` SQL as one quoted
+  argument, and tries `civiccast.alembic_version` then
+  `public.alembic_version` as separate statements.
+- **#177** -- `sandbox-lab/Run-SandboxSoak.ps1`: the 15-minute disposable
+  Windows Sandbox soak with restart classification (planned vs unplanned,
+  from the daemon's own state-log lines), TSDuck packet proof, a seamless
+  reload switch, and a `PASS`/`FAIL`/`HARNESS_ERROR` verdict contract.
+- **#184 / #185 / #186 / #189** -- lane follow-ups A-D: worker-stdout
+  capture into evidence bundles (item 80/63), a captions-off isolation
+  switch, backstop-marker grace wait, `CpuSampler` branch order, a config
+  drift guard, worker env injection, and `GST_DEBUG` capture.
+- **#196** -- `-InstallBoundMinutes`/`-HealthBoundMinutes` are forwarded
+  into the sandbox guest instead of silently reverting to 20/10-minute
+  defaults; effective values recorded in `SOAK-START.json`/`VERDICT.json`.
+- **#198** -- the soak sampler reads TSDuck's current nested JSON schema
+  (`ts.packets`), rejects absent/malformed counters instead of zeroing them,
+  and records the aggregate of per-PID discontinuities. (The strict
+  seamless contract is graded by default: planned restarts, reload aborts,
+  and armed-but-never-committed reloads cannot pass under beta.5's
+  default-on behaviour -- #193.)
+- **#197** -- publisher preflight isolates `PSModulePath`, Gate A preflight
+  downloads use fresh archived attempts, and mutation collection includes
+  the `sandbox-lab`/`gate-b` fixtures.
+
+**Documentation**
+
+- **#157 / #168 / #171** -- beta.4 publish record, then two corrections of
+  beta.4 known issue 1 (the restarts were stall-watchdog exits driven by the
+  caption tap, not plan-boundary exits).
+- **#193 / #195 / #197** -- README, `INSTALL-WINDOWS.md`, landing page,
+  tester guides, and the packaged manual: field installation separates
+  install, trust (exact SHA-256 + Authenticode publisher before running
+  `setup.exe`), and cutover; the JSON sidecar is not a signed attestation;
+  first-install guidance names the signed USB model bundle rather than an
+  assumed post-install download; the bundled manual no longer freezes a
+  publication status into the installer; the PDF header keeps the full
+  `v1.0.0-beta.5` string. `docs/releases/beta5-recovery-2026-09-08.md`
+  records the 09-08 recovery pass.
+- **#165** (this PR) -- this document and
+  `docs/releases/v1.0.0-beta.5-verification.md`.
+
+### Upgrade / install for LPM (download-only is the floor; USB is optional)
+
+LPM is on `v1.0.0-beta.4`. The supported path is exactly the one Gate A's
+`download-only` lane proves, and it needs nothing but the GitHub Release:
+
+1. Download `setup.exe` (and, if you want them cached locally for a
+   second machine, the five `.ccpack` runtime packs plus `SHA256SUMS.txt`)
+   from the `v1.0.0-beta.5` GitHub Release page. Do not run anything yet.
+2. Verify before running -- both checks are required, in this order:
+   - `Get-FileHash .\setup.exe -Algorithm SHA256` must equal the
+     `setup.exe` line in `SHA256SUMS.txt` **and** the "Assets" table in
+     the GitHub Release body (`TBD-EVIDENCE-INSTALLER-SHA256` below).
+   - `Get-AuthenticodeSignature .\setup.exe` must report `Valid` with
+     signer `Scott Converse`. A SmartScreen "Windows protected your PC"
+     prompt on a fresh certificate is reputation, not a signature failure
+     -- see `docs/tester/SMARTSCREEN-WALKTHROUGH.md`. A mismatched hash or
+     a publisher other than `Scott Converse` is a stop condition.
+3. Run `setup.exe` **over** the existing beta.4 install. Do not uninstall
+   first. Recordings, settings, the database, and the ~21 GB AI-model
+   bundle already on the machine are kept; the schema is migrated in place.
+   The
+   `station\` folder is **not** needed for this upgrade.
+4. When the operator console comes back, check each channel. A channel the
+   operator started by hand (without "Start automatically") does not come
+   back on its own after an upgrade -- press Start on it, or turn on "Start
+   automatically" (known issue 47 below).
+5. Confirm the on-screen version reads `1.0.0-beta.5` and `/health`
+   reports healthy.
+
+**USB bundle (optional, first-time installs only).** A machine that has
+never had CivicCast needs the signed `station\` model bundle beside
+`setup.exe` (USB or LAN kit, verified against the kit's own manifest --
+see `INSTALL-WINDOWS.md`). A station already on beta.3 or beta.4 does not.
+
+**If the upgraded station will not come up.** Stop; do not uninstall or
+wipe anything. Collect `%ProgramData%\CivicCast\logs\` and
+`installer-state.json` and hand them to the coordinator. A downgrade to
+beta.4 is not a path Gate A proves, so it is not offered here as one.
+
+**Operator-facing behaviour change to expect.** Seamless in-place rollover
+is now on by default: a channel with continuous scheduled content no
+longer restarts its encoder at each plan end, and finite filler refreshes
+without a restart. With live captions on, a three-channel CPU-only station
+will see captions *pause* under load rather than playout suffer (known
+issue below); an operator who needs the CPU can turn live captions off at
+Setup > Station Profile ("Show live captions on air"), which takes effect
+at each channel's next start.
+
+### Known issues carried forward into beta.5 (honest list, with sources)
+
+Numbering follows the batch-fix item list used throughout `CHANGELOG.md`;
+"[source]" names where the evidence for the statement lives.
+
+1. **The in-place reload commit can still wedge under extreme CPU load;
+   when it does, the commit watchdog (or the daemon) kills the worker and
+   restarts the channel -- a brief on-air blip, not a hang.** #188 and #199
+   bounded the wedge (a 15 s commit watchdog that dumps every thread's
+   stack and force-exits; daemon termination of a worker whose reload ack
+   timed out on a live pid; `TRANSITIONING` can no longer be pinned
+   forever). They did not prove it gone: the round-1 review of #199 saw
+   one errored-leg abort in four runs that starved the on-air leg, round 2
+   could not reproduce it in ten runs and closed both halves of the
+   proposed mechanism by construction instead ("ten clean runs is a bound
+   on the failure rate, not proof of absence"). [source:
+   `.agent-runs/native-windows/beta5-caption-clock-20260908/evidence/diagnosis.md`,
+   "PR 199 round-2 review" and "Round-2 verification".] **Round-2 load
+   measurement (coordinator, 2026-09-09, not yet filed in the repo):** with
+   the box driven to 100% CPU, **20 of 24** program-change runs committed
+   cleanly on the #199 head, against **0 of 3** on the head before #199;
+   the remaining 4 wedged and were terminated and relaunched by the
+   daemon (a blip, not a stuck channel). Evidence path: `TBD-EVIDENCE-ROUND2-LOAD-RUNS`.
+2. **A no-reload caption stress case remains open in the diagnostic
+   record.** The 09-08 controlled experiments include one configuration
+   (`native-playlist-independent-gap-control-20260908a`: a diagnostic
+   independent GAP thread, the original snow clips, no reload, captions and
+   tap on) whose workers exited `[1,1,1]`, stalling at 283 buffers, and the
+   record says plainly "separate stress case remains unresolved." #199's
+   production fix (bounded GAP admission after the live appsrc) targets the
+   same no-reload caption stall, and its own native caption-flow suite ran
+   10/10 clean afterwards, but that specific diagnostic configuration was
+   not re-run under the merged source. [source: `diagnosis.md` above,
+   "Native controlled experiments" table, row
+   `native-playlist-independent-gap-control-20260908a`; PR #199 body.]
+   *Note: the 09-08 chronology's phrase "initial-playlist bug" does not
+   appear under that name anywhere in this repository's `.agent-runs/` or
+   `docs/`; this row and item 1 are the nearest documented open findings.
+   If the coordinator means a different defect, name it here:
+   `TBD-EVIDENCE-INITIAL-PLAYLIST-BUG`.*
+3. **Item 89 -- a worker that dies ~20 ms after `issued start` can report
+   `ON_AIR` with a dead pid for up to 30 s**, because the daemon reaps a
+   dead child only on the 30-second automation tick. Deliberately deferred
+   in #190. [source: `CHANGELOG.md`, items 88/84c entry.]
+4. **Captions are best-effort and, on a three-channel CPU-only station,
+   paused most of the time.** With one ASR call in flight station-wide
+   (#182), a channel whose backlog exceeds
+   `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` has its stale audio
+   discarded and is paused under exponential backoff. Playout always wins.
+   The operator switch and `CIVICCAST_CAPTION_TAP=off` take effect at a
+   channel's next **start** only, never on a content reload (#191 round 2).
+   [source: `CHANGELOG.md`, items 79 and 91 entries.]
+5. **Item 47 / known issue 5 -- a hand-started channel stays dark after an
+   upgrade install or service restart** until the operator presses Start or
+   turns on "Start automatically" (`civiccast/egress/automation.py`,
+   `auto_start` only). Gate A's cross-version lane does not assert on-air
+   state after install-over. [source: `CHANGELOG.md` known issue 5.]
+6. **Items 54/55/57 -- a designed graceful drain is indistinguishable from
+   a hang in the operator console** (no label, no time-in-state, health
+   clock reset on every write), automation bookkeeping stops during a
+   drain, and after a fallback to slate the rollover accounting can compute
+   a negative plan-end. #188/#199 removed the *permanent* `TRANSITIONING`
+   pin; the visibility rework (PR #175) is still targeted for beta.6.
+   [source: `CHANGELOG.md` known issues 8, 9, and "carried to beta.6".]
+7. **Known issue 1 -- residual freeze if the next leg is not ready before
+   the outgoing clip ends** (#162 follow-on): the output freezes until the
+   leg is ready or the 10-second stall watchdog restarts the channel. #180
+   makes the first leg ready far sooner and #199 holds the replacement
+   until the outgoing leg retires, but no PR claims this case closed.
+   [source: `CHANGELOG.md` known issue 1.]
+8. **Item 62 -- the decoder-chain cap is enforced per plan, not per
+   pipeline**, so a rollover can briefly carry both plans' chains. **Item
+   56 -- slate/fill plans are truncated to 12 sub-chains**, so a station
+   sitting on slate restarts its slate encoder roughly every 6 minutes
+   (#193 bounds and atomically publishes slate but keeps the 12-chain
+   limit). [source: `CHANGELOG.md`, "carried to beta.6".]
+9. **Item 81 -- the offline caption job transcribes published assets
+   in-process with every core** while channels are on air; not a factor in
+   any soak so far (the lane never publishes), but a real-station publish
+   during heavy schedule activity could compete with playout. [source:
+   `CHANGELOG.md`, "carried to beta.6".]
+10. **Harness and test-only gaps carried to beta.6** -- items 46, 49, 50,
+    52, 53, 58, 63, 67, 68, 69, 71, 72 (mutation-lane baseline; no Gate A
+    lane for same-version different-content install-over; a claims test
+    that writes the real `installer-state.json`; `ffprobe` not found on
+    the tester so every item defaulted to 30 s; `avdec_h264` threads not
+    bounded per sub-chain; no forensics/retry when the Gate A baseline
+    install itself crashes in phase 1; `null` state for minutes after
+    start; `ON_AIR` persisted before the worker exists; redundant state
+    rows nulling the proof-event id; `gst-python` pad-link raise vs boolean;
+    Gate A scripts under Windows PowerShell 5.1). [source: `CHANGELOG.md`,
+    "Known issues carried to beta.6".]
+11. **Gate A harness self-test lane (batch 27) still not added** (known
+    issue 2), and **planner defects tracked under #170's follow-ups**
+    (known issue 4) remain as listed below.
+12. **Item 92 (narrow) -- `PostgresCaptionReviewStore.list()` still orders
+    by `(created_at, review_item_id)`**; only the in-memory store got the
+    monotonic tie-break in #200. [source: `CHANGELOG.md`, item 92 entry.]
+13. **The 09-08 full local test runs were not all-green** (11,753 passed /
+    135 skipped / 6 failures / 4 teardown errors; the failures were
+    fixture-root and landing-link problems fixed since, the teardown errors
+    were real local application-state writes whose writer was not
+    identified). No all-green local full-suite claim is made for beta.5;
+    the CI required checks on `main` are the gate. [source:
+    `docs/releases/beta5-recovery-2026-09-08.md`, "Packaged
+    publication-status correction".]
+
+### Verification (tonight) -- the coordinator fills every `TBD-EVIDENCE` token
+
+Nothing below is done until its token is replaced with a measured value and
+an evidence path. The publish command must not run while any token remains.
+
+| what | value | evidence |
+| --- | --- | --- |
+| Source SHA (candidate cut) | `TBD-EVIDENCE-SOURCE-SHA` | `git rev-parse` on the tagged commit |
+| Build run (`native-beta-candidate-artifacts`) | `TBD-EVIDENCE-BUILD-RUN-ID` | Actions run URL, conclusion `success` |
+| Kit SHA (kit-staging directory name = source SHA) and `station_index_sha256` | `TBD-EVIDENCE-KIT-SHA` / `TBD-EVIDENCE-STATION-INDEX-SHA256` | `C:\CivicCastTester\kit-staging\<sha>\` (copied to `kit-safe` before any build prunes it) |
+| `setup.exe` SHA-256 | `TBD-EVIDENCE-INSTALLER-SHA256` | `Get-FileHash` on the kit's `setup.exe`; must match `SHA256SUMS.txt` and the sidecar |
+| `setup.exe` Authenticode | `TBD-EVIDENCE-AUTHENTICODE-STATUS` (`Valid`, signer `Scott Converse`) | `Get-AuthenticodeSignature` |
+| Sandbox 15-min soak, seamless ON, captions ON, the 4 real LPM sample clips, normal logging -- run 1 | `TBD-EVIDENCE-SANDBOX-SOAK-1-VERDICT` (PASS/FAIL/HARNESS_ERROR; unplanned relaunches; reload arms/commits/aborts; TSDuck packets/invalid syncs/transport errors) | `sandbox-lab` evidence dir `TBD-EVIDENCE-SANDBOX-SOAK-1-DIR` |
+| Sandbox 15-min soak, same configuration -- run 2 | `TBD-EVIDENCE-SANDBOX-SOAK-2-VERDICT` | `TBD-EVIDENCE-SANDBOX-SOAK-2-DIR` |
+| Sandbox 15-min soak, same configuration -- run 3 | `TBD-EVIDENCE-SANDBOX-SOAK-3-VERDICT` | `TBD-EVIDENCE-SANDBOX-SOAK-3-DIR` |
+| Gate A run id | `TBD-EVIDENCE-GATE-A-RUN-ID` | Actions run URL |
+| Gate A `clean` lane | `TBD-EVIDENCE-GATE-A-CLEAN` (incl. `T4_RESULT`) | `gate-a-verdict-<build>\gate-a-verdict.json` |
+| Gate A `dirty` (cross-version upgrade over the beta.4 baseline) lane | `TBD-EVIDENCE-GATE-A-XVER` | `gate-a-dirty-verdict-<build>\gate-a-verdict.json` |
+| Gate A `download-only` lane | `TBD-EVIDENCE-GATE-A-DLONLY` | `gate-a-download-only-verdict-<build>\gate-a-verdict.json` |
+| Tester 2-hour soak (`DESKTOP-VBMA6O5`, fresh run identity, counters reset) | `TBD-EVIDENCE-TESTER-SOAK-VERDICT` (clock, unplanned relaunches, caption overload events) | tester branch `tester/...` + local evidence copy |
+| Release | `TBD-EVIDENCE-RELEASE-URL` | `gh release view v1.0.0-beta.5 --json isDraft,assets,targetCommitish,tagName` |
+| Assets table (8 assets, sizes, SHA-256) | `TBD-EVIDENCE-ASSETS-TABLE` | `SHA256SUMS.txt` cross-checked by `scripts/download_windows_release_artifacts.ps1 -AssetSet NativeCandidate` |
+
+**Pass rule (unchanged from "How this release was proven" below):** three
+consecutive sandbox soaks PASS with the seamless flag ON, then Gate A PASS
+on all three lanes for the *same* source SHA, then the tester soak. A
+`HARNESS_ERROR` is re-run, never counted either way. If the tester soak
+cannot complete before the LPM install, the release notes must say so in
+the "Verification" section and the 24-hour post-publish soak becomes the
+binding follow-up.
+
+
 **Update 2026-09-05: kit `91caebc` was NOT the beta.5 release candidate.**
 Its clean-install hardware soak (soak #3, below) FAILED: every GStreamer
 playout worker relaunched roughly every 30 seconds per channel. Root cause
@@ -57,9 +438,9 @@ owner's explicit requirement, seamless in-place rollover ON by default
 for the GStreamer engine in beta.5,
 `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` opts out) will cut **candidate
 3**. Candidate 3's identity is pending: source SHA
-`<BETA5_FINAL_SHA>`, build run `<BETA5_FINAL_BUILD_RUN>`, Gate A run
-`<GATE_A_FINAL_RUN_ID>`, hardware soak clock `<SOAK6_START_UTC>`, verdict
-`<SOAK6_VERDICT>`, relaunches `<SOAK6_RELAUNCHES>`.
+`TBD-EVIDENCE-SOURCE-SHA`, build run `TBD-EVIDENCE-BUILD-RUN-ID`, Gate A run
+`TBD-EVIDENCE-GATE-A-RUN-ID`, hardware soak clock `TBD-EVIDENCE-TESTER-SOAK-START-UTC`, verdict
+`TBD-EVIDENCE-TESTER-SOAK-VERDICT`, relaunches `TBD-EVIDENCE-TESTER-SOAK-RELAUNCHES`.
 
 **Update 2026-09-06 (process change): beta.5 now proves itself in a
 sandbox loop before it goes back to the tester.** After candidate 2's
@@ -180,7 +561,7 @@ below records what each candidate's publish command and Gate A run were, as
 history, not as a live plan.** `v1.0.0-beta.5`
 will publish as a GitHub prerelease on
 [`scottconverse/civiccast-native`](https://github.com/scottconverse/civiccast-native/releases),
-targeting source SHA `<BETA5_FINAL_SHA>` once candidate 3 (cut after
+targeting source SHA `TBD-EVIDENCE-SOURCE-SHA` once candidate 3 (cut after
 `fix/gst-reload-concat-collision` merges) passes its own Gate A and
 hardware soak. Like beta.3/beta.4, it will be
 downloadable: `setup.exe` and the runtime `.ccpack` packs as release assets,
@@ -200,13 +581,13 @@ Candidate 1 would have published via `python scripts/release/publish_beta_candid
 command likewise never ran (its own hardware soak, soak #5, also failed):
 `--source-sha 609273da22b968b8ed9320dfc158d67b01eb30b3 --build-run-id
 33997406150 --gate-a-run-id 33998901590`. Candidate 3's command, once its
-own Gate A run and hardware soak pass, uses `<BETA5_FINAL_SHA>`,
-`<BETA5_FINAL_BUILD_RUN>`, and `<GATE_A_FINAL_RUN_ID>`. The publisher's
+own Gate A run and hardware soak pass, uses `TBD-EVIDENCE-SOURCE-SHA`,
+`TBD-EVIDENCE-BUILD-RUN-ID`, and `TBD-EVIDENCE-GATE-A-RUN-ID`. The publisher's
 fail-closed checks must all pass before any GitHub state is touched:
 version identity agreeing across `setup.exe` ProductVersion,
 `civiccast._native_version.__version__`, and the tag (already
 `1.0.0-beta.5` as of PR #164's version bump); Authenticode signature status
-`Valid`; Gate A run `<GATE_A_FINAL_RUN_ID>` showing `PASS` on all three required
+`Valid`; Gate A run `TBD-EVIDENCE-GATE-A-RUN-ID` showing `PASS` on all three required
 lanes.
 
 ## Headline: the real cause of the playout-worker restarts, found on real station hardware (#172, merged)
@@ -632,7 +1013,7 @@ path, only the independent proof that checks it from the outside.
    air, or turn on "Start automatically" for it so this is not needed
    again. Gate A's cross-version-upgrade lane does not assert on-air state
    after install-over, so this gap is not caught by that lane.
-6. **Installing a kit over a station that already reports the same version
+6. **(item 48, FIXED on `main` by #173, 2026-09-05 -- history below) Installing a kit over a station that already reports the same version
    string does not replace the app -- it silently does nothing.** The
    installer's pack staging
    (`civiccast/apps/installer/src-tauri/src/native_pack_staging.rs`,
@@ -715,7 +1096,7 @@ path, only the independent proof that checks it from the outside.
     pending:** the sandbox/harness gap that let the baseline install
     itself crash before phase 1 started; re-run in progress as Gate A
     `34004354641`.
-11. **(item 60) When the planner extends a running plan, the in-place
+11. **(item 60, FIXED on `main` by #176, 2026-09-06; reload path further repaired by #188/#199 -- history below) When the planner extends a running plan, the in-place
     reload starves live playback and can fail silently -- present since
     #162, previously masked by item 51.** Tester-proven 2026-09-06
     (`tester-soak5-609273d-20260906`): (a) the reload's prepare step
@@ -746,7 +1127,7 @@ path, only the independent proof that checks it from the outside.
     rollover ON by default for the GStreamer engine in beta.5
     (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` opts out). Not part of
     candidate 2; will be part of candidate 3.
-12. **(item 61, targeted for beta.6) A worker's reload acknowledgement
+12. **(item 61, the concat-collision ack made honest by #176; the general ack-after-commit guarantee is what #199's applied-receipt settlement now provides -- targeted for beta.6 only if a soak shows otherwise) A worker's reload acknowledgement
     reports success before the reload actually commits.** The same defect
     underlying item 60's masking: the control-pipe reload ack is sent once
     a reload is attempted, not once GStreamer confirms the new elements
@@ -776,7 +1157,7 @@ path, only the independent proof that checks it from the outside.
     reached the worker is indistinguishable, from the logs, from one that
     was never attempted. Fix: `fix/gst-reload-concat-collision` (logged,
     honest reload failure).
-16. **(item 78, BETA.5 BLOCKER on candidate 3b, fix in review) A stale
+16. **(item 78, FIXED on `main` by #181, 2026-09-06 -- history below; was: BETA.5 BLOCKER on candidate 3b, fix in review) A stale
     rollover horizon crash-loops every channel once a slow start already
     leaves the plan in the past.** Sandbox soak run 12 (candidate 3b,
     seamless rollover ON) measured a first-`ON_AIR` of 915-930 seconds
@@ -804,7 +1185,7 @@ path, only the independent proof that checks it from the outside.
     yet merged: round 2 of review (2026-09-06) found the clock still has
     to be read after, not before, the blocking `process_once` call, or a
     slow-starting channel is measured stale regardless.
-17. **(item 79, BETA.5 BLOCKER on candidate 3b, fix in review, isolation
+17. **(item 79, FIXED on `main` by #182 (caps) and #190 (tap can never block air), 2026-09-06 -- history below; was: BETA.5 BLOCKER on candidate 3b, fix in review, isolation
     runs pending) The live caption tap still starves playout inside the
     sandbox VM even with #172's backoff.** Run 12 (candidate 3b) logged 10
     "Caption tap overload" events, and worker stalls clustered inside those
@@ -825,7 +1206,7 @@ path, only the independent proof that checks it from the outside.
     **Isolation runs pending:** a captions-ON vs captions-OFF run on the
     same candidate, decisive for whether captions are necessary or merely
     contributing, is queued behind item 78's fix landing.
-18. **(item 80, harness, fix in progress) The sandbox lane's restart
+18. **(item 80, harness, FIXED on `main` by the sandbox-lab follow-ups #184-#186/#189 -- history below; was: fix in progress) The sandbox lane's restart
     classifier ignored the playout worker's own stdout, undercounting
     aborted reloads.** The worker's `CTRL reload aborted`/`CTRL reload
     committed` progress lines are written to stdout only; the classifier
@@ -835,7 +1216,7 @@ path, only the independent proof that checks it from the outside.
     branch (after PR #177) -- not yet merged as of this writing; the same
     follow-up also carries worker-stdout capture into evidence bundles and
     a captions-off isolation switch for item 79's isolation runs.
-19. **(item 82, beta.5 candidate, PR pending) A 5-second preroll timeout
+19. **(item 82, FIXED on `main` by #183, 2026-09-06 -- history below; was: PR pending) A 5-second preroll timeout
     guarantees a relaunch storm on a CPU-starved box.** `engine.py`'s
     `_await_playing` gives a worker 5 seconds to reach GStreamer's
     `PLAYING` state; run 13's (candidate 3b, seamless OFF) first crash was
@@ -1014,12 +1395,12 @@ hardware soak FAIL (item 60). Not publishable.**
 - **Hash + signature, verified from the outside:**
   `scripts/download_windows_release_artifacts.ps1 -AssetSet NativeCandidate`,
   cross-verified against `SHA256SUMS.txt` and `Get-AuthenticodeSignature`.
-- **Source SHA:** `<BETA5_FINAL_SHA>`. **Build run:**
-  `<BETA5_FINAL_BUILD_RUN>`.
-- **Gate A:** run `<GATE_A_FINAL_RUN_ID>`. Lanes pending: clean, cross-version,
+- **Source SHA:** `TBD-EVIDENCE-SOURCE-SHA`. **Build run:**
+  `TBD-EVIDENCE-BUILD-RUN-ID`.
+- **Gate A:** run `TBD-EVIDENCE-GATE-A-RUN-ID`. Lanes pending: clean, cross-version,
   download-only.
-- **Clean-install hardware soak:** clock `<SOAK6_START_UTC>`, verdict
-  `<SOAK6_VERDICT>`, relaunches `<SOAK6_RELAUNCHES>`.
+- **Clean-install hardware soak:** clock `TBD-EVIDENCE-TESTER-SOAK-START-UTC`, verdict
+  `TBD-EVIDENCE-TESTER-SOAK-VERDICT`, relaunches `TBD-EVIDENCE-TESTER-SOAK-RELAUNCHES`.
 - **Test suite:** `uv run pytest tests/docs tests/policy -q` re-run for this
   publish; see the commit history on this branch for the result.
 
