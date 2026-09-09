@@ -2422,13 +2422,23 @@ across repeated runs.
 written when each item was found; items 6 (48), 11 (60), 12 (61), 16 (78),
 17 (79), 18 (80), and 19 (82) now carry a `FIXED on main` marker naming the
 PR that closed them (#173, #176, #181, #182/#190, #184-#189, #183). What is
-actually carried into the beta.5 candidate -- the reload commit that can
-still wedge under extreme CPU load and is bounded by the #188/#199 watchdogs
-rather than proven gone (20 of 24 clean at 100% CPU on the #199 head vs 0 of
-3 before it), item 89, the open no-reload caption stress case in the 09-08
-diagnostic record, and the operator-facing items 47, 54/55/57, 56, 62, 81 --
-is listed with sources in `docs/releases/2026-09-04-beta5-release-notes.md`,
-"Known issues carried forward into beta.5".
+actually carried into the beta.5 candidate (`main` at `148c8d21`) -- live
+captions OFF by default (#203; with them ON, a 25-30 s video hold and
+catch-up burst every 1-2 min, the occasional 10 s stall-watchdog channel
+restart, and a red *On air right now* after turning them on until each
+channel restarts, #205; root cause under investigation in the live-caption
+path, fix planned for beta.5.1); the reload commit that can still wedge
+under extreme CPU load and is bounded by the #188/#199 watchdogs and daemon
+self-heal rather than proven gone (20 of 24 clean at 100% CPU on the #199
+head vs 0 of 3 before it; follow-up draft PR #202); the playout worker
+crash at channel stop found by #202's builder (`0xC0000005`, the `GstBin`
+cascade re-`PLAY`s NULLed old-leg elements; fix in #202, not in beta.5);
+item 89; the open no-reload caption stress case in the 09-08 diagnostic
+record; and the operator-facing items 47, 54/55/57, 56, 62, 81 -- is listed
+with sources in `docs/releases/2026-09-04-beta5-release-notes.md`, "Known
+issues carried forward into beta.5". The "initial-playlist bug" from
+Codex's 09-08 chronology was never located in this repository and is not
+carried.
 
 1. **Seamless rollover has a residual freeze case (#162).** If the next leg
    is not ready before the outgoing clip ends, the output freezes until it
