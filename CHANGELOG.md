@@ -104,7 +104,11 @@ below.
     `PUT /api/staff/station/profile {"live_captions_enabled": true}`. Turning
     them on takes effect at each channel's next start; turning them off
     stops the ASR within one caption-tap poll, but the embed leg itself is
-    only removed at the channel's next start.
+    only removed at the channel's next start. Until each channel next goes
+    on air, those channels show red on *On air right now* because the
+    station is looking for captions it cannot see yet (the safe-to-air
+    caption gate arms as soon as the switch is on, but a running channel
+    has no embed leg until it restarts). Restart each channel to clear it.
   - The operator console reads a profile without the key as off, and the
     setting's help text names the known issue.
   - **Known issue (beta.5, with live captions ON):** video can freeze

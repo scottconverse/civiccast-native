@@ -367,7 +367,10 @@ only removed the next time each channel goes on air (or the next time the
 station restarts) — so if you are turning it off because of the freeze
 described below, expect the freeze to stop after that, not immediately.
 Turning it *on* likewise takes effect at each channel's next start. You do
-not need to restart anything and you can do it during a live meeting.
+not need to restart anything and you can do it during a live meeting. Until
+each channel next goes on air, those channels show red on *On air right now*
+because the station is looking for captions it cannot see yet. Restart each
+channel to clear it.
 
 **Known issue in this beta (why it starts off):** with live captions on,
 the picture can freeze for 25–30 seconds and then catch up in a burst every

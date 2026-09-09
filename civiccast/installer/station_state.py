@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import stat
@@ -48,6 +49,8 @@ if TYPE_CHECKING:
         CommissioningReport,
         CommissioningState,
     )
+
+_LOG = logging.getLogger(__name__)
 
 _SCHEMA_VERSION = 1
 _PASSWORD_ITERATIONS = 210_000
@@ -310,6 +313,52 @@ def resolve_live_captions_enabled() -> bool:
     if persisted is None:
         return LIVE_CAPTIONS_DEFAULT
     return persisted
+
+
+#: Set once the first time ``resolve_live_captions_enabled_or_default`` swallows
+#: an exception, so a station whose ``station-state.json`` is permanently
+#: corrupt/locked logs ONE WARNING per process instead of one per channel
+#: start/reload, per safe-to-air computation, or per worker scan (the caption
+#: feed polls every 2 s) for as long as the station runs -- matching the
+#: "announced once" shape of ``CaptionTapWorker._disabled_announced``.
+_live_captions_read_failure_announced = False
+
+
+def resolve_live_captions_enabled_or_default() -> bool:
+    """``resolve_live_captions_enabled()``, but never raises.
+
+    ``_load_raw_state`` only suppresses ``FileNotFoundError`` and
+    ``json.JSONDecodeError``. A byte that is not valid UTF-8 (``read_text``'s
+    strict decode) or a Windows sharing violation while another process holds
+    ``station-state.json`` (``PermissionError``/``OSError``) raise straight
+    through the plain resolver. Every runtime reader of the switch -- the
+    egress strategy deciding whether to build the embed leg, the safe-to-air
+    banner, and the ``is_enabled`` callbacks of the caption tap, feed and proof
+    workers -- is a best-effort accessibility path that must never take
+    playout, the on-air banner, or a worker's ``run_once`` down over it. They
+    all read through this helper so a read failure lands on the SAME value
+    everywhere: the shipped default (``LIVE_CAPTIONS_DEFAULT``), i.e. "the
+    switch could not be read", rather than on either operator choice. The
+    failure is logged once per process, not once per call.
+    """
+
+    global _live_captions_read_failure_announced
+    try:
+        return resolve_live_captions_enabled()
+    except Exception:
+        if not _live_captions_read_failure_announced:
+            _LOG.warning(
+                "could not read the live-captions station-profile switch "
+                "(station-state.json unreadable or locked); using the shipped "
+                "default (%s) rather than blocking playout, the on-air banner, or "
+                "the caption workers on an unrelated accessibility-feature switch. "
+                "Every reader keeps using that default until the file becomes "
+                "readable again; this warning is logged once per process.",
+                "enabled" if LIVE_CAPTIONS_DEFAULT else "disabled",
+                exc_info=True,
+            )
+            _live_captions_read_failure_announced = True
+        return LIVE_CAPTIONS_DEFAULT
 
 
 def resolve_station_display_name() -> str:

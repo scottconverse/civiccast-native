@@ -11,9 +11,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from civiccast.app import create_app
+from civiccast.installer import station_state as station_state_module
 from civiccast.installer.models import FirstAdminSetupRequest
 from civiccast.installer.service import complete_first_admin_setup
-from civiccast.installer.station_state import resolve_live_captions_enabled
+from civiccast.installer.station_state import (
+    resolve_live_captions_enabled,
+    resolve_live_captions_enabled_or_default,
+)
 
 _OPERATOR_HEADERS = {"Authorization": "Bearer operator-token-a"}
 
@@ -328,3 +332,44 @@ class TestLiveCaptionSwitchRehydration:
 
         assert profile.live_captions_enabled is True
         assert resolve_live_captions_enabled() is True
+
+
+class TestTolerantLiveCaptionResolver:
+    """``resolve_live_captions_enabled_or_default`` is what every runtime reader
+    of the switch (egress strategy, safe-to-air banner, caption tap/feed/proof
+    ``is_enabled``) calls: a locked or corrupt ``station-state.json`` must
+    land on the shipped default and be logged once per process, never abort a
+    worker's ``run_once`` every 2-30 s with a traceback."""
+
+    def test_a_read_failure_lands_on_the_default_and_logs_once(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from civiccast.installer.models import LIVE_CAPTIONS_DEFAULT
+
+        station_state_module._live_captions_read_failure_announced = False
+        calls: list[int] = []
+
+        def _locked() -> bool:
+            calls.append(1)
+            raise PermissionError(
+                13, "The process cannot access the file because it is being used by another process"
+            )
+
+        monkeypatch.setattr(station_state_module, "resolve_live_captions_enabled", _locked)
+        needle = "could not read the live-captions station-profile switch"
+        with caplog.at_level("WARNING", logger="civiccast.installer.station_state"):
+            for _ in range(5):
+                assert resolve_live_captions_enabled_or_default() is LIVE_CAPTIONS_DEFAULT
+        assert len(calls) == 5  # every call still tries the real read
+        assert caplog.text.count(needle) == 1  # ...but the failure is announced once
+        assert station_state_module._live_captions_read_failure_announced is True
+
+    def test_a_successful_read_passes_through_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        station_state_module._live_captions_read_failure_announced = False
+        monkeypatch.setattr(station_state_module, "resolve_live_captions_enabled", lambda: True)
+        with caplog.at_level("WARNING", logger="civiccast.installer.station_state"):
+            assert resolve_live_captions_enabled_or_default() is True
+        assert "could not read the live-captions" not in caplog.text
+        assert station_state_module._live_captions_read_failure_announced is False

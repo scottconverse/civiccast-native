@@ -1361,7 +1361,7 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         # keeps the batch sizing -- it runs against a published file, not
         # against the air signal.
         caption_runtime = build_caption_runtime(ai_model_service, live=True)
-        from civiccast.installer.station_state import resolve_live_captions_enabled
+        from civiccast.installer.station_state import resolve_live_captions_enabled_or_default
 
         tap_worker = build_tap_worker(
             tap_settings,
@@ -1374,7 +1374,7 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
             # forces ``CIVICCAST_CAPTION_TAP=inline`` into its environment, so
             # this is the only way an operator can stop live captioning -- and
             # it has to work without restarting a control plane that is on air.
-            is_enabled=resolve_live_captions_enabled,
+            is_enabled=resolve_live_captions_enabled_or_default,
         )
         # Exposed so app-factory wiring tests can assert the operator-selected
         # translation/caption models reached the running worker (T3/T4).
@@ -1481,14 +1481,14 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         # supervisors) means flipping the switch ON later resumes both loops
         # without restarting a control plane that is on air -- the same shape
         # as the caption tap worker's ``is_enabled`` above.
-        from civiccast.installer.station_state import resolve_live_captions_enabled
+        from civiccast.installer.station_state import resolve_live_captions_enabled_or_default
 
         # The FEED: push each ON_AIR channel's caption cues into the live appsrc (the
         # production caller of send_caption_cue) so captions actually reach the encoder.
         caption_feed_worker = build_caption_feed_worker(
             session_factory,
             send_caption_cue=channel_automation.daemon.send_caption_cue,
-            is_enabled=resolve_live_captions_enabled,
+            is_enabled=resolve_live_captions_enabled_or_default,
         )
         app.state.background_supervisors.append(
             ThreadSupervisor(
@@ -1501,7 +1501,7 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         # The PROOF: sample the emitted stream + flip caption_status on a fresh PASS.
         caption_proof_worker = build_caption_proof_worker(
             session_factory,
-            is_enabled=resolve_live_captions_enabled,
+            is_enabled=resolve_live_captions_enabled_or_default,
         )
         app.state.background_supervisors.append(
             ThreadSupervisor(
