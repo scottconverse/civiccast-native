@@ -5552,6 +5552,8 @@ Read CivicCast local federation metadata.
 
 ### `ChannelRuntimeStatus`
 
+- `captions_expected` (optional): `boolean`
+- `captions_verified` (optional): `boolean`
 - `channel_id` (required): `string`
 - `color` (required): `'green' | 'yellow' | 'red'`
 - `egress_state` (required): `string`

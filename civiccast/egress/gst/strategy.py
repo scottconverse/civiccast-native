@@ -925,19 +925,17 @@ class GstPlayoutStrategy:
         )
         if warn and decision.warning:
             logger.warning("channel %s: %s", request.channel_id, decision.warning)
-        # HEVC cannot embed captions: the caption inserter (h264ccinserter) is H.264-only,
-        # so feeding H.265 into it would break the pipeline. decision.encoder_override is
-        # only set on Windows (decide_encoder no-ops on POSIX), so this is Windows-scoped.
-        if (
-            decision.encoder_override
-            and "265" in decision.encoder_override
-            and self._caption_embed(request.channel_id) is not None
-        ):
-            raise EncoderUnavailableError(
-                "HEVC/H.265 cannot embed captions on native Windows -- the caption inserter "
-                "is H.264-only. Use H.264 for this channel, or turn off caption embedding."
-            )
         return decision.encoder_override
+
+    @staticmethod
+    def _hevc_caption_conflict(
+        encoder_override: str | None, caption_embed: CaptionEmbedRequest | None
+    ) -> bool:
+        """HEVC cannot embed captions: the caption inserter (h264ccinserter) is
+        H.264-only, so feeding H.265 into it would break the pipeline.
+        ``encoder_override`` is only set on Windows (``decide_encoder`` no-ops on
+        POSIX), so this is Windows-scoped."""
+        return bool(encoder_override and "265" in encoder_override and caption_embed is not None)
 
     def _cg_overlay_image(self, request: EncoderStartRequest, *, warn: bool) -> Path | None:
         """S15 §5 CG-lite gate: only composite the board raster when the overlay
@@ -957,12 +955,21 @@ class GstPlayoutStrategy:
 
     def start(self, request: EncoderStartRequest) -> EncoderStartResult:
         encoder_override = self._resolve_encoder_override(request, warn=True)
+        caption_embed = self._caption_embed(request.channel_id)
+        # Refused on the START path only: a channel must not go to air on a
+        # pipeline that cannot be built. The reload path below downgrades the
+        # same conflict to a warning instead (round-2 review MEDIUM 4).
+        if self._hevc_caption_conflict(encoder_override, caption_embed):
+            raise EncoderUnavailableError(
+                "HEVC/H.265 cannot embed captions on native Windows -- the caption inserter "
+                "is H.264-only. Use H.264 for this channel, or turn off caption embedding."
+            )
         channel_dir = request.work_dir / request.channel_id
         graph = graph_from_config(
             request.config,
             request.source_plan,
             request.resolve_secret,
-            caption_embed=self._caption_embed(request.channel_id),
+            caption_embed=caption_embed,
             audio_tracks=self._audio_tracks(request.channel_id),
             encoder_override=encoder_override,
             cg_overlay_image=self._cg_overlay_image(request, warn=True),
@@ -1169,12 +1176,32 @@ class GstPlayoutStrategy:
         # after a software fallback (adversarial-review BLOCKER). warn=False: the
         # fallback was already announced at start(); don't re-log every content swap.
         encoder_override = self._resolve_encoder_override(request, warn=False)
+        caption_embed = self._caption_embed(channel_id)
+        if self._hevc_caption_conflict(encoder_override, caption_embed):
+            # The operator flipped live captions ON while this HEVC channel was
+            # already running (it started with captions off, or the switch was
+            # thrown mid-run). The running pipeline has no embed leg and a reload
+            # never rebuilds one (``engine.py`` applies only the program source
+            # and the graphics overlay from the reload graph), so refusing here
+            # would only break the next content change on a channel that is on
+            # air. Keep the running encoder decision, drop the caption leg from
+            # the reload graph, and say so; the conflict is enforced at the
+            # channel's next START (round-2 review MEDIUM 4).
+            logger.warning(
+                "channel %s: live captions were switched on while this channel runs on "
+                "HEVC/H.265, which cannot embed captions (the caption inserter is "
+                "H.264-only); keeping the running encoder for this content reload and "
+                "leaving captions off. Use H.264 for this channel, or turn live captions "
+                "off, before its next start.",
+                channel_id,
+            )
+            caption_embed = None
         channel_dir = work_dir / channel_id
         graph = graph_from_config(
             request.config,
             request.source_plan,
             request.resolve_secret,
-            caption_embed=self._caption_embed(channel_id),
+            caption_embed=caption_embed,
             audio_tracks=self._audio_tracks(channel_id),
             encoder_override=encoder_override,
             cg_overlay_image=self._cg_overlay_image(request, warn=False),

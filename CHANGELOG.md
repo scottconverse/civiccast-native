@@ -77,8 +77,8 @@ below.
   reload on, four real clips) showed, on every channel, a recurring 25-30 s
   video hold followed by a burst of ~900 frames every 1-2 minutes; twice the
   hold outlasted the 10 s stall watchdog and restarted the `government`
-  worker (self-healed in ~30 s). Captions-off runs have never shown the
-  hold. The diagnosis points at the live caption **embed** leg on the video
+  worker (self-healed in ~30 s). The diagnosis points at the live caption
+  **embed** leg on the video
   path: `_build_caption_embed` (`civiccast/egress/gst/engine.py`) inserts
   `cccombiner` between `h264parse` and the mux, fed by an appsrc whose
   supply is a 100 ms heartbeat GAP gated by `CaptionGapGate`
@@ -110,6 +110,36 @@ below.
   - **Known issue (beta.5, with live captions ON):** video can freeze
     25-30 s and catch up in a burst every 1-2 min; rarely the 10 s stall
     watchdog restarts the channel (30 s gap).
+  - **The safe-to-air caption gate follows the switch.** With live captions
+    off no embed leg is built and the tap blanks every live sidecar, so the
+    decode-back proof can never PASS; before this round
+    `compute_channel_runtime_status` (`civiccast/alerting/runtime_status.py`)
+    still failed every unverified channel closed, pinning the *On air right
+    now* banner red on every auto_start channel for as long as the switch
+    was off. The gate now applies only while live captions are ON
+    (`expect_captions`, read once per computation from
+    `resolve_live_captions_enabled`); off, the color comes from the sinks and
+    loudness alone, and `ChannelRuntimeStatus` carries
+    `captions_expected`/`captions_verified` so System Health and Channel Ops
+    say *Off (switched off in the station profile)* rather than *Not yet
+    confirmed*. Captions on and unverified is still red.
+  - **The caption feed and decode-back proof workers idle while the switch
+    is off.** Both re-read `resolve_live_captions_enabled` on every scan
+    (`CaptionFeedWorker`/`CaptionProofWorker` `is_enabled`, wired in
+    `civiccast/app.py`), so with captions off there is no 2 s sidecar poll,
+    no 6 s ffmpeg capture per channel every 30 s, and no guaranteed
+    `NO_EXPECTED_CUES` FAIL row; flipping the switch on resumes both loops
+    on the next cycle without a control-plane restart. The caption tap
+    worker now runs its disabled-state clear (blank every live sidecar,
+    discard forked audio) *before* its tap-directory check, so a station
+    whose tap root was never created no longer serves a stale `active.vtt`
+    forever with the switch off.
+  - **Flipping live captions on mid-run no longer breaks a running HEVC
+    channel's next content reload.** HEVC cannot embed captions (the caption
+    inserter is H.264-only); that conflict is refused at channel *start*
+    only. On `reload_content` it is now a warning: the running encoder
+    decision is kept and the reload graph carries no caption leg (the
+    running pipeline has none and a reload never rebuilds one).
 
 - **Self-hosted candidate builds no longer upload the signed installer and
   `.ccpack` files by default.** `native-beta-candidate-artifacts.yml`'s

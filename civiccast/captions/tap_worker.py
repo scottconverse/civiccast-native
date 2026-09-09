@@ -539,8 +539,6 @@ class CaptionTapWorker:
         channels: list[str] = []
         overloaded_channels: list[str] = []
         paused_channels: list[str] = []
-        if not self._tap_root.is_dir():
-            return CaptionTapScanResult()
         # Retention runs BEFORE the enabled check, deliberately and in this
         # order. It prunes audio this station has ALREADY recorded --
         # `<channel>/processed/` and the review evidence -- under the station's
@@ -549,11 +547,23 @@ class CaptionTapWorker:
         # deleting what is already on disk: gating pruning behind the switch
         # would freeze every retention clock for as long as the switch is off,
         # which is the exact opposite of what an operator turning captions off
-        # is asking for.
+        # is asking for. (``enforce_discovered`` tolerates a tap root that does
+        # not exist yet, so this needs no directory guard.)
         self._sweep_retention()
+        # The enabled check runs BEFORE the tap-directory check (round-2 review
+        # MAJOR 3). With live captions off on a station whose tap root was
+        # never created -- or was swept by an operator cleaning up -- the old
+        # order returned here without ever reaching ``_run_disabled``, so a
+        # stale ``active.vtt`` from before the switch was thrown was never
+        # blanked, and the caption feed kept re-reading and re-sending every
+        # cue in it every 2 s forever (``caption_feed`` only marks a cue seen
+        # on a successful push, and with no embed leg there is nothing to
+        # push into).
         if not self._is_enabled():
             return self._run_disabled()
         self._disabled_announced = False
+        if not self._tap_root.is_dir():
+            return CaptionTapScanResult()
         if not self._retention_ready:
             channels = sorted(path.name for path in self._tap_root.iterdir() if path.is_dir())
             for channel_id in channels:
@@ -768,7 +778,15 @@ class CaptionTapWorker:
 
         channels: list[str] = []
         discarded = 0
-        for channel_dir in sorted(p for p in self._tap_root.iterdir() if p.is_dir()):
+        # The tap root may not exist (never created, or swept): the sidecar
+        # clear above already ran by the channel set, and there is then no
+        # forked audio to discard.
+        tap_dirs = (
+            sorted(p for p in self._tap_root.iterdir() if p.is_dir())
+            if self._tap_root.is_dir()
+            else []
+        )
+        for channel_dir in tap_dirs:
             channel_id = channel_dir.name
             channels.append(channel_id)
             if not self._disabled_announced:

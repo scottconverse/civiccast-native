@@ -161,7 +161,15 @@ legs are built only when a channel's pipeline is constructed.
 
 While it is off the tap transcribes nothing, blanks every channel's live
 caption file, reports `"state": "disabled"`, and *deletes* the forked audio
-rather than filing it as evidence. Captions on **published recordings** (the
+rather than filing it as evidence. The caption feed and the caption
+decode-back proof workers (`civiccast/egress/caption_feed.py`,
+`civiccast/egress/caption_proof_worker.py`; both only built when
+`CIVICCAST_EGRESS_EMBED_CAPTIONS` is on) also re-read the switch on every
+scan and idle while it is off -- no sidecar poll, no ffmpeg capture, no FAIL
+proof row -- and resume on their next cycle once it is on. The runtime
+safe-to-air signal (`GET /api/staff/runtime-safe-to-air`) does not apply its
+caption-readiness gate while the switch is off; each channel reports
+`captions_expected: false`. Captions on **published recordings** (the
 offline caption job below) are unaffected — that is the legal requirement;
 this switch is the live/accessibility one.
 

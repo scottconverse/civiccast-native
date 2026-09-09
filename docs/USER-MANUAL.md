@@ -372,10 +372,9 @@ not need to restart anything and you can do it during a live meeting.
 **Known issue in this beta (why it starts off):** with live captions on,
 the picture can freeze for 25–30 seconds and then catch up in a burst every
 minute or two; rarely, the station's 10-second stall watchdog restarts the
-channel (about a 30-second gap on air). The cause is the part of the
-broadcast path that writes captions into the video, and the fix is planned
-for the next update. Runs with live captions off have never shown the
-freeze.
+channel (about a 30-second gap on air). The cause is under investigation
+and is somewhere in the live-caption path; the fix is planned for the next
+update.
 
 **Turn it off if the picture is stuttering, or channels keep restarting
 themselves.** The picture and sound always come first. Nothing else about the
@@ -900,7 +899,12 @@ station needs.
   already-running channel does not pick up a profile change made in
   between, because the reload path never touches the audio-tap or the
   embed leg either way (only the program source and the graphics overlay
-  are re-applied on reload). `CIVICCAST_EGRESS_EMBED_CAPTIONS=1` alone (set
+  are re-applied on reload). The reload path does *read* the profile
+  switch, for one reason only: an HEVC channel cannot embed captions, and
+  a reload on a running HEVC channel after the switch was turned on logs a
+  warning and keeps the running pipeline as it is, instead of refusing the
+  content change; the H.264-only restriction is enforced at the channel's
+  next start. `CIVICCAST_EGRESS_EMBED_CAPTIONS=1` alone (set
   unconditionally on an activated native station) no longer builds the
   embed leg; the profile switch must also be on.
 - **`CIVICCAST_CAPTION_TAP_DIR`** — Live caption tap configuration.

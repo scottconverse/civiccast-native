@@ -37905,6 +37905,16 @@
             ],
             "title": "Last Proof Event Id"
           },
+          "captions_expected": {
+            "type": "boolean",
+            "title": "Captions Expected",
+            "default": true
+          },
+          "captions_verified": {
+            "type": "boolean",
+            "title": "Captions Verified",
+            "default": false
+          },
           "color": {
             "type": "string",
             "enum": [

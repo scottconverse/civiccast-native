@@ -1290,6 +1290,42 @@ def test_preflight_hevc_with_captions_refused(tmp_path, monkeypatch: pytest.Monk
     assert "caption" in str(exc.value).lower()
 
 
+def test_hevc_channel_survives_live_captions_flipped_on_mid_run(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Round-2 review MEDIUM 4: an HEVC channel started with live captions OFF must not
+    # have its next content reload refused when the operator flips captions ON mid-run.
+    # The running pipeline has no embed leg and a reload never rebuilds one, so the
+    # conflict is a warning on the reload path and a refusal only at the next start.
+    enabled = [False]
+    monkeypatch.setattr(
+        "civiccast.installer.station_state.resolve_live_captions_enabled",
+        lambda: enabled[0],
+    )
+    strategy = GstPlayoutStrategy(
+        worker_launcher=_preflight_launcher,
+        python_executable="python3",
+        pipe_channel_factory=_fake_pipe_channel_factory,
+        encoder_probe=lambda name: True,  # HEVC hardware present
+        is_windows=True,
+        embed_captions=True,
+    )
+    request = _hw_codec_request(tmp_path, codec="hevc_vaapi", allow_software_fallback=False)
+    result = strategy.start(request)  # captions off -> HEVC starts fine
+    assert "mfh265enc" in result.concat_plan_path.read_text(encoding="utf-8")
+
+    enabled[0] = True  # operator flips live captions on while the channel runs
+    assert strategy.reload_content("ch1", tmp_path, request) is True
+    reload_graph = next((tmp_path / "ch1").glob("playout-graph.reload.*.json"))
+    text = reload_graph.read_text(encoding="utf-8")
+    assert "mfh265enc" in text  # the running encoder decision is kept
+    assert "cccombiner" not in text  # and no caption leg is smuggled into the reload
+
+    # The next START still refuses the unsupported combination.
+    with pytest.raises(EncoderUnavailableError):
+        strategy.start(request)
+
+
 def test_preflight_reload_content_preserves_software_fallback(tmp_path) -> None:
     # BLOCKER regression (adversarial review): a channel that fell back to software must
     # NOT rebuild its live pipeline on the absent hardware encoder during a content

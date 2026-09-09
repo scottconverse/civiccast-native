@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 
 import type { ChannelProfile, RuntimeSafeToAirStatus, SystemResourceSample, SystemSelfTest } from '../types/api.generated'
-import type { EgressStateRow } from '../api/client'
+import type { EgressHealthSample, EgressStateRow } from '../api/client'
 import { EgressReadinessPanel, ResourceSnapshotPanel, RuntimeSafeToAirBanner, SelfTestPanel } from './SystemHealthScreen'
 
 // No global afterEach in vitest config → register testing-library cleanup
@@ -223,5 +223,92 @@ describe('ResourceSnapshotPanel', () => {
     expect(container.textContent).toContain('6.0 / 16.0 GB used')
     expect(container.textContent).toContain('120.5 GB free')
     expect(container.textContent).toContain('Reachable')
+  })
+})
+
+describe('live captions switched off (round-2 review BLOCKER 1)', () => {
+  const CHANNEL = {
+    channel_id: 'public',
+    slug: 'public',
+    kind: 'public',
+    branding: { display_name: 'Public Channel' } as ChannelProfile['branding'],
+    fallback_behavior: 'slate',
+  } as ChannelProfile
+
+  it('the banner card notes the switch instead of flagging the channel', () => {
+    const { container, getByText } = render(
+      <RuntimeSafeToAirBanner
+        status={{
+          ...greenStatus,
+          channels: [
+            {
+              channel_id: 'public',
+              egress_state: 'ON_AIR',
+              on_air: true,
+              on_healthy_slate: false,
+              captions_expected: false,
+              captions_verified: false,
+              color: 'green',
+            },
+          ],
+        }}
+      />,
+    )
+    expect(container.textContent).toContain('live captions off')
+    expect(getByText('On air')).toBeTruthy()
+  })
+
+  it('the Outgoing channel feed captions row says off, not not-yet-confirmed', () => {
+    const health = new Map<string, EgressHealthSample[]>([
+      [
+        'public',
+        [
+          {
+            channel_id: 'public',
+            sampled_at: '2026-06-15T12:00:00Z',
+            state: 'ON_AIR',
+            sink_connected: { head: true },
+            dropped_frames: 0,
+            seconds_on_air: 30,
+            caption_status: 'not-verified',
+          },
+        ],
+      ],
+    ])
+    const states = new Map<string, EgressStateRow | null>([
+      ['public', { channel_id: 'public', state: 'ON_AIR', updated_at: '2026-06-15T12:00:00Z' }],
+    ])
+    const off = render(
+      <EgressReadinessPanel
+        channels={[CHANNEL]}
+        states={states}
+        health={health}
+        currency={new Map()}
+        loading={false}
+        error={null}
+        pendingCommand={null}
+        canControl={false}
+        onCommand={vi.fn()}
+        liveCaptionsEnabled={false}
+      />,
+    )
+    expect(off.container.textContent).toContain('Off (switched off in the station profile)')
+    expect(off.container.textContent).not.toContain('Not yet confirmed')
+    off.unmount()
+    const on = render(
+      <EgressReadinessPanel
+        channels={[CHANNEL]}
+        states={states}
+        health={health}
+        currency={new Map()}
+        loading={false}
+        error={null}
+        pendingCommand={null}
+        canControl={false}
+        onCommand={vi.fn()}
+        liveCaptionsEnabled
+      />,
+    )
+    expect(on.container.textContent).toContain('Not yet confirmed (waiting for the on-air check)')
   })
 })

@@ -164,3 +164,59 @@ def test_on_air_filter_via_store_state() -> None:
         if (row := store.read_state(c.channel_id)) is not None and row.state == "ON_AIR"
     ]
     assert on_air == []
+
+
+def test_worker_is_idle_while_live_captions_are_switched_off(tmp_path) -> None:
+    # Round-2 review MAJOR 3: with the operator switch off there is no embed leg to
+    # prove, so the loop must neither capture (a 6 s ffmpeg run per channel) nor
+    # persist a guaranteed NO_EXPECTED_CUES FAIL row every 30 s.
+    store = InMemoryEgressStore()
+    captures: list[str] = []
+    seg = tmp_path / "seg.ts"
+    seg.write_bytes(b"x")
+
+    def _capture(channel_id: str) -> Path:
+        captures.append(channel_id)
+        return seg
+
+    worker = CaptionProofWorker(
+        store=store,
+        on_air_channels=lambda: ["gov"],
+        capture_segment=_capture,
+        expected_cues_provider=lambda _ch: [],
+        runner=_runner(""),
+        clock=_clock,
+        is_enabled=lambda: False,
+    )
+
+    result = worker.run_once()
+
+    assert result.scanned == 0
+    assert captures == []
+    assert store.latest_caption_proof_sample("gov") is None
+
+
+def test_worker_resumes_when_live_captions_are_switched_on_without_a_restart(
+    tmp_path,
+) -> None:
+    store = InMemoryEgressStore()
+    seg = tmp_path / "seg.ts"
+    seg.write_bytes(b"x")
+    enabled = [False]
+    worker = CaptionProofWorker(
+        store=store,
+        on_air_channels=lambda: ["gov"],
+        capture_segment=lambda _ch: seg,
+        expected_cues_provider=lambda _ch: [_cue()],
+        runner=_runner(_SRT),
+        clock=_clock,
+        is_enabled=lambda: enabled[0],
+    )
+    assert worker.run_once().scanned == 0
+
+    enabled[0] = True  # the switch is re-read every scan
+    result = worker.run_once()
+
+    assert result.passed == 1
+    sample = store.latest_caption_proof_sample("gov")
+    assert sample is not None and sample.status == "PASS"

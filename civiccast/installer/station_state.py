@@ -274,7 +274,8 @@ def read_live_captions_enabled() -> bool | None:
 
 
 def resolve_live_captions_enabled() -> bool:
-    """Whether the LIVE caption tap may run: env override > persisted > on.
+    """Whether the LIVE caption tap may run: env override > persisted >
+    ``LIVE_CAPTIONS_DEFAULT`` (off in beta.5).
 
     Precedence is deliberately asymmetric, and only in the SAFE direction:
     ``CIVICCAST_CAPTION_TAP=off`` in the environment turns live captioning off
@@ -295,8 +296,8 @@ def resolve_live_captions_enabled() -> bool:
     the encoder and the mux, ``civiccast/egress/gst/engine.py``
     ``_build_caption_embed``) held video for 25-30 s and then released a
     burst of ~900 frames every 1-2 minutes on every channel in the
-    2026-09-09 sandbox soak, twice outlasting the 10 s stall watchdog.
-    Captions-off runs never showed the hold. An absent key -- a fresh
+    2026-09-09 sandbox soak, twice outlasting the 10 s stall watchdog. An
+    absent key -- a fresh
     install, or a station commissioned before the switch existed -- therefore
     reads as off; an explicitly persisted ``true`` (an operator who turned
     them on) is honoured as before. The root-cause fix (beta.5.1) is what
