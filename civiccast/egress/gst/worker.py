@@ -242,7 +242,14 @@ def _dispatch_control_with_ack(
                 new_graph = graphmod.graph_from_json(handle.read())
             switch_at_end_of_current = reload_policy_mod.reload_switch_is_deferred(command[1])
             with contextlib.suppress(OSError):
-                reload_path.unlink()  # one-shot graph file: consumed after read
+                # One-shot graph file: consumed after read, and deliberately
+                # unlinked BEFORE ``reload_program`` below decides anything. A
+                # rejected payload is therefore destroyed rather than left on
+                # disk, so recovery is always "the daemon re-prepares the plan
+                # and dispatches a fresh file", never "retry this file". Keep
+                # that ordering: leaving the file behind on rejection would
+                # invite a retry loop over a payload the engine already refused.
+                reload_path.unlink()
 
             reload_id = command_id or uuid.uuid4().hex
 

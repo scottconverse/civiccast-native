@@ -51,6 +51,18 @@ class _FakeStateChangeReturn:
     SUCCESS = "SUCCESS"
     FAILURE = "FAILURE"
     ASYNC = "ASYNC"
+    NO_PREROLL = "NO_PREROLL"
+
+
+class _FakePadProbeType:
+    BUFFER = 1
+    BUFFER_LIST = 2
+    EVENT_DOWNSTREAM = 4
+
+
+class _FakePadProbeReturn:
+    OK = "OK"
+    DROP = "DROP"
 
 
 class _FakeMessageType:
@@ -92,6 +104,12 @@ class _FakeHoldPad:
 
     def remove_probe(self, probe_id: Any) -> None:
         self.recorder.calls.append(f"remove_probe:{self.name}:{probe_id}")
+
+    def add_probe(self, mask: Any, callback: Any) -> str:
+        """Round-2 finding 1: the abort path installs a DROP probe here BEFORE it
+        lifts the hold, so the aborted leg never pushes into the selector."""
+        self.recorder.calls.append(f"add_probe:{self.name}:{mask}:{callback.__name__}")
+        return f"{self.name}-drop-probe"
 
 
 class _FakeSelector:
@@ -155,6 +173,11 @@ class _FakeOldElement:
         self.recorder.calls.append(f"set_state:{self.name}:{state}")
         return _FakeStateChangeReturn.SUCCESS
 
+    def get_state(self, timeout: Any) -> tuple[str, str, str]:
+        """A bin that answered ASYNC settles to NULL within the bounded wait."""
+        self.recorder.calls.append(f"get_state:{self.name}:{timeout}")
+        return (_FakeStateChangeReturn.SUCCESS, _FakeState.NULL, _FakeState.NULL)
+
 
 def _install_fake_gst() -> types.ModuleType:
     fake_gst = types.ModuleType("gi.repository.Gst")
@@ -163,6 +186,8 @@ def _install_fake_gst() -> types.ModuleType:
     fake_gst.MessageType = _FakeMessageType  # type: ignore[attr-defined]
     fake_gst.IteratorResult = _FakeIteratorResult  # type: ignore[attr-defined]
     fake_gst.SECOND = 1  # type: ignore[attr-defined]
+    fake_gst.PadProbeType = _FakePadProbeType  # type: ignore[attr-defined]
+    fake_gst.PadProbeReturn = _FakePadProbeReturn  # type: ignore[attr-defined]
     return fake_gst
 
 
@@ -213,6 +238,7 @@ def _bare_engine_for_commit(module: types.ModuleType, recorder: _Recorder) -> An
     engine._source_leg_elements = [None]
     engine.pipeline = _FakePipeline(recorder)
     engine._pending_reload = None
+    engine._abort_retire_threads = []
     engine._reload_commit_thread = None
     engine._stopping = False
     engine._error = None
@@ -263,18 +289,19 @@ def test_deferred_commit_uses_first_current_outgoing_stream_eos(
     engine._pending_reload = {
         "boundary_probes": [(video_pad, "video-probe"), (audio_pad, "audio-probe")],
         "outgoing_eos_pads": set(),
+        "txn_id": 1,
         "old_video_pad": video_pad,
         "old_audio_pad": audio_pad,
         "old_leg_eos": False,
         "new_leg_ready": True,
     }
 
-    assert engine._on_old_leg_eos(video_pad) is False
+    assert engine._on_old_leg_eos(video_pad, 1) is False
     assert commits == ["commit"]
     # Queued sibling/duplicate callbacks arrive after the real commit cleared the
     # transaction and cannot settle anything a second time.
-    assert engine._on_old_leg_eos(video_pad) is False
-    assert engine._on_old_leg_eos(audio_pad) is False
+    assert engine._on_old_leg_eos(video_pad, 1) is False
+    assert engine._on_old_leg_eos(audio_pad, 1) is False
     assert commits == ["commit"]
     stderr = capsys.readouterr().err
     assert "CTRL reload: outgoing EOS observed stream=video (1/2 stream(s))" in stderr
@@ -291,13 +318,14 @@ def test_deferred_video_only_commit_still_settles_on_its_only_eos(engine_module)
     engine._pending_reload = {
         "boundary_probes": [(video_pad, "video-probe")],
         "outgoing_eos_pads": set(),
+        "txn_id": 1,
         "old_video_pad": video_pad,
         "old_audio_pad": None,
         "old_leg_eos": False,
         "new_leg_ready": True,
     }
 
-    assert engine._on_old_leg_eos(video_pad) is False
+    assert engine._on_old_leg_eos(video_pad, 1) is False
     assert commits == ["commit"]
     assert engine._pending_reload["old_leg_eos"] is True
 
@@ -313,11 +341,12 @@ def test_stale_outgoing_eos_cannot_settle_a_superseding_reload(engine_module) ->
     engine._pending_reload = {
         "boundary_probes": [(current_pad, "current-probe")],
         "outgoing_eos_pads": set(),
+        "txn_id": 1,
         "old_leg_eos": False,
         "new_leg_ready": True,
     }
 
-    assert engine._on_old_leg_eos(stale_pad) is False
+    assert engine._on_old_leg_eos(stale_pad, 1) is False
     assert commits == []
     assert engine._pending_reload["outgoing_eos_pads"] == set()
     assert engine._pending_reload["old_leg_eos"] is False
@@ -333,13 +362,51 @@ def test_stale_outgoing_eos_cannot_settle_an_immediate_reload(engine_module) -> 
     engine._pending_reload = {
         "boundary_probes": [],
         "outgoing_eos_pads": set(),
+        "txn_id": 1,
         "old_leg_eos": True,
         "new_leg_ready": True,
     }
 
-    assert engine._on_old_leg_eos(stale_pad) is False
+    assert engine._on_old_leg_eos(stale_pad, 1) is False
     assert commits == []
     assert engine._pending_reload["outgoing_eos_pads"] == set()
+
+
+def test_stale_outgoing_eos_on_the_same_pad_cannot_settle_a_superseding_reload(
+    engine_module,
+) -> None:
+    """Round-2 finding 5: pad identity alone was not enough to reject a stale EOS.
+
+    The boundary probes live on the OUTGOING selector sink pads, and a superseded
+    transaction and the one that replaced it watch the SAME pad object. The old
+    ``pad in expected`` guard therefore admitted a stale ``idle_add`` EOS queued by
+    the superseded transaction and let it settle -- and commit -- its successor.
+    The transaction id the probe captured at install time is what distinguishes
+    them."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    shared_pad = _FakeOldPad("outgoing-video", recorder, peer=None)
+    commits: list[str] = []
+    engine._commit_reload = lambda: commits.append("commit")  # type: ignore[method-assign]
+    engine._pending_reload = {
+        "boundary_probes": [(shared_pad, "current-probe")],
+        "outgoing_eos_pads": set(),
+        "txn_id": 7,
+        "old_video_pad": shared_pad,
+        "old_audio_pad": None,
+        "old_leg_eos": False,
+        "new_leg_ready": True,
+    }
+
+    # Queued by transaction 6, delivered after 7 replaced it, on the same pad.
+    assert engine._on_old_leg_eos(shared_pad, 6) is False
+    assert commits == []
+    assert engine._pending_reload["outgoing_eos_pads"] == set()
+    assert engine._pending_reload["old_leg_eos"] is False
+
+    # The current transaction's own EOS on that very same pad still settles it.
+    assert engine._on_old_leg_eos(shared_pad, 7) is False
+    assert commits == ["commit"]
 
 
 # --- (2) select, retire old leg with replacement held, then release --------------
@@ -644,7 +711,13 @@ def test_disposal_state_failure_is_not_a_successful_cleanup(engine_module) -> No
     assert "pipeline.remove:bad" in recorder.calls
 
 
-def test_disposal_async_state_is_not_misreported_as_complete(engine_module) -> None:
+def test_disposal_async_that_settles_to_null_is_a_successful_retirement(engine_module) -> None:
+    """Round-2 finding 3: ASYNC on a downward transition is legitimate, not a failure.
+
+    Source legs are bins, and a bin winding its children down answers ASYNC by
+    GStreamer contract. Reporting that as "incomplete cleanup" is what made an
+    ordinary retirement look fatal to the commit path. The bounded ``get_state``
+    wait is the correct reading; only a leg that never reaches NULL fails."""
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)
 
@@ -655,11 +728,62 @@ def test_disposal_async_state_is_not_misreported_as_complete(engine_module) -> N
 
     ok, reason = engine._dispose_source_leg(None, None, [_AsyncElement("async", recorder)])
 
+    assert ok is True
+    assert reason is None
+    assert any(call.startswith("get_state:async:") for call in recorder.calls), recorder.calls
+
+
+def test_disposal_async_that_never_settles_is_retried_once_then_reported(engine_module) -> None:
+    """The bounded wait is bounded: a leg still not at NULL after a retry fails."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+
+    class _WedgedElement(_FakeOldElement):
+        def set_state(self, state: Any) -> str:
+            super().set_state(state)
+            return _FakeStateChangeReturn.ASYNC
+
+        def get_state(self, timeout: Any) -> tuple[str, str, str]:
+            self.recorder.calls.append(f"get_state:{self.name}:{timeout}")
+            return (_FakeStateChangeReturn.ASYNC, "PAUSED", _FakeState.NULL)
+
+    ok, reason = engine._dispose_source_leg(None, None, [_WedgedElement("wedged", recorder)])
+
     assert ok is False
-    assert reason is not None and "element-null-incomplete:1:ASYNC" in reason
+    assert reason is not None and "element-null-incomplete:1:async-unsettled:ASYNC" in reason
+    # One retry, not an unbounded loop: two set_state attempts, two bounded waits.
+    assert sum(call.startswith("set_state:wedged:") for call in recorder.calls) == 2
+    assert sum(call.startswith("get_state:wedged:") for call in recorder.calls) == 2
 
 
-def test_cleanup_failure_settles_false_and_quits_channel(engine_module) -> None:
+def test_disposal_unlink_and_remove_problems_are_warnings_not_failures(engine_module) -> None:
+    """Round-2 finding 3: by the time unlink/remove runs the leg is already at NULL
+    and off air, so a hiccup there costs bookkeeping, not airtime. It must not be
+    escalated into a retirement failure that takes a producing channel down."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+
+    class _RefusingPipeline(_FakePipeline):
+        def remove(self, element: Any) -> bool:
+            super().remove(element)
+            return False
+
+    engine.pipeline = _RefusingPipeline(recorder)
+
+    ok, reason = engine._dispose_source_leg(None, None, [_FakeOldElement("leg", recorder)])
+
+    assert ok is True
+    assert reason is None
+
+
+def test_cleanup_failure_settles_false_but_keeps_a_producing_channel_on_air(
+    engine_module,
+) -> None:
+    """Round-2 finding 3: an incomplete retirement is reported honestly on the
+    receipt, but it no longer quits the loop. The replacement leg is already
+    selected and feeding the mux; killing the channel over a leftover element took
+    a PRODUCING channel off air. A retirement problem that genuinely stops output
+    is the stall watchdog's to escalate, with far better evidence."""
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)
     results: list[tuple[bool, str | None]] = []
@@ -686,9 +810,9 @@ def test_cleanup_failure_settles_false_and_quits_channel(engine_module) -> None:
     assert engine._finish_reload_commit(pending) is False
     assert results == [(False, "cleanup-failed")]
     assert engine._pending_reload is None
-    assert engine._stopping is True
-    assert engine._error == ("reload-commit", "element-null-failed:2")
-    assert loop.quit_called is True
+    assert engine._stopping is False
+    assert engine._error is None
+    assert loop.quit_called is False
 
 
 def test_new_active_leg_bus_error_during_retirement_is_fatal(engine_module) -> None:
@@ -1043,3 +1167,107 @@ def test_resolve_commit_timeout_s_falls_back_to_default_on_nan(
     out = captured.out + captured.err
     assert resolved == engine_module._DEFAULT_COMMIT_TIMEOUT_S
     assert "non-finite" in out
+
+
+# --- (5) round-2 finding 1: the abort path's contract ---------------------------
+
+
+def _abort_pending(recorder: _Recorder, pads: list[Any], elements: list[Any]) -> dict[str, Any]:
+    return {
+        "txn_id": 1,
+        "probe_id": None,
+        "timeout_id": None,
+        "defer_timeout_id": None,
+        "boundary_probes": [],
+        "hold_probes": [(pad, f"{pad.name}-hold") for pad in pads],
+        "new_src_pads": list(pads),
+        "new_video_pad": None,
+        "new_audio_pad": None,
+        "new_elements": elements,
+        "commit_in_progress": False,
+        "on_settled": None,
+    }
+
+
+def test_abort_drops_the_leg_at_its_own_pads_before_lifting_the_hold(engine_module) -> None:
+    """Round-2 finding 1: DETACH BEFORE RELEASE.
+
+    Lifting a held leg's blocking probes frees its streaming threads. Until this
+    fix those threads ran straight into the input-selector on a pad that was still
+    INACTIVE -- a state ``_SELECTOR_PROPS`` explicitly documents the deferred
+    switch as never producing ("pushes nothing at all while inactive"). The DROP
+    probe must therefore be installed on the leg's own src pads FIRST, so the
+    ordering is structural and not a race."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = [_FakeHoldPad("new-video", recorder), _FakeHoldPad("new-audio", recorder)]
+    pending = _abort_pending(recorder, pads, [_FakeOldElement("aborted", recorder)])
+    engine._pending_reload = pending
+
+    engine._abort_pending_reload("error")
+    for thread in engine._abort_retire_threads:
+        thread.join(timeout=5.0)
+
+    drops = [i for i, call in enumerate(recorder.calls) if call.startswith("add_probe:")]
+    releases = [i for i, call in enumerate(recorder.calls) if call.startswith("remove_probe:")]
+    assert len(drops) == 2, recorder.calls
+    assert len(releases) == 2, recorder.calls
+    assert max(drops) < min(releases), recorder.calls
+    # The probe installed is the drop-everything one, not some other callback.
+    assert all("_drop_everything_probe" in recorder.calls[i] for i in drops), recorder.calls
+    assert engine._pending_reload is None
+
+
+def test_abort_retires_the_leg_off_the_main_loop(engine_module) -> None:
+    """Round-2 finding 1: ``set_state(NULL)`` blocks until the leg's streaming
+    threads join. ``_abort_pending_reload`` runs ON the GLib main loop, so an
+    errored leg that will not go down would take the loop -- and with it both
+    watchdogs and the control-plane reader -- off a channel that is still on air.
+    Retirement therefore happens on a worker thread, and its result is reported
+    rather than discarded."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    main_thread = threading.current_thread()
+    disposing_threads: list[Any] = []
+
+    class _ThreadRecordingElement(_FakeOldElement):
+        def set_state(self, state: Any) -> str:
+            disposing_threads.append(threading.current_thread())
+            return super().set_state(state)
+
+    pending = _abort_pending(
+        recorder,
+        [_FakeHoldPad("new-video", recorder)],
+        [_ThreadRecordingElement("aborted", recorder)],
+    )
+    engine._pending_reload = pending
+
+    engine._abort_pending_reload("error")
+    assert len(engine._abort_retire_threads) == 1
+    for thread in engine._abort_retire_threads:
+        thread.join(timeout=5.0)
+        assert not thread.is_alive(), "abort retirement thread did not finish"
+
+    assert disposing_threads, "the leg was never disposed"
+    assert all(thread is not main_thread for thread in disposing_threads), (
+        "abort disposal ran on the main loop"
+    )
+
+
+def test_abort_settles_the_caller_without_waiting_for_retirement(engine_module) -> None:
+    """The honest ack (item 4) reports the reload's OUTCOME, which is already
+    decided; it is not held behind cleanup."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    results: list[tuple[bool, str | None]] = []
+    pending = _abort_pending(
+        recorder, [_FakeHoldPad("new-video", recorder)], [_FakeOldElement("aborted", recorder)]
+    )
+    pending["on_settled"] = lambda committed, reason: results.append((committed, reason))
+    engine._pending_reload = pending
+
+    engine._abort_pending_reload("timeout")
+    for thread in engine._abort_retire_threads:
+        thread.join(timeout=5.0)
+
+    assert results == [(False, "timeout")]

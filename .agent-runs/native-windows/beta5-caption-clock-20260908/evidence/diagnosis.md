@@ -173,8 +173,8 @@ proven fix. A reorder-only experiment is next; its outcome is not yet known.
   The installed Halo service was not replaced or restarted.
 - Native named-pipe tests required normal signed-in-user execution. A separate
   provider-sandbox pipe timeout is not counted as a product media failure.
-- Workspace evidence root:
-  `C:\Users\scott\Documents\Codex\2026-09-01\is-this-tool-plugin-real-https`.
+- Workspace evidence root: a per-session working directory in the release
+  manager's local workspace, outside this checkout and not tracked here.
 
 ## Installed failures, independently corroborated
 
@@ -270,3 +270,118 @@ upstream plugin defect yet.
    media run, physical tester two-hour soak and operator/browser acceptance.
 5. Only then release/tag the accepted candidate. The old signed baseline must
    not inherit acceptance from a modified local worker.
+
+## PR 199 round-2 review: reload-abort finding (2026-09-09)
+
+Source-level verification on a normal signed-in user session with normal
+(non-debug) logging. Not installed-service, boot/pre-login, or field acceptance.
+
+### What round 1 recorded, and what this round could and could not confirm
+
+The round-1 review recorded one failing run in four of
+`tests/egress/test_gst_engine_wsl.py::test_repeated_deferred_rollovers_retire_
+complete_ts_av_playlist_legs`: on channel 2, cycle 5, the worker printed
+`CTRL reload aborted: new program errored before commit: gst-stream-error-quark:
+Internal data stream error. (1)`, the mux output counter then repeated the same
+value (3778, 3778), and the 10 s stall watchdog killed the worker. The proposed
+mechanism was that releasing the errored leg's hold probes pushed it into the
+`sync-streams=True` input-selector on an INACTIVE pad and starved the leg that
+was still on air.
+
+**This round did not reproduce that failure.** Ten instrumented runs of that
+test, with per-worker stderr captured and normal logging, were 10/10 clean
+(68.11 s, 68.44 s, 69.04 s, 67.52 s, 69.26 s, 69.96 s, 68.99 s, 68.00 s,
+67.88 s, 68.91 s, 68.05 s, 68.54 s across the two loops). A negative result
+here is a probe, not a conclusion: the abort in question requires the
+replacement leg to hit an internal data stream error, which is load dependent
+and did not occur in any of those runs.
+
+### Deterministic reproducer of the abort path itself
+
+Because supersession reaches `_abort_pending_reload` through exactly the same
+code as the error path -- with hold probes installed and released while the
+new leg's selector pad is still inactive -- it makes that path reachable on
+purpose. `test_superseding_a_held_deferred_reload_keeps_the_current_program_
+on_air` (new, in `tests/egress/test_gst_engine_wsl.py`) sends a deferred reload,
+lets it preroll and park on its hold probe, then supersedes it.
+
+Temporary instrumentation inside the abort measured that path directly:
+
+```
+DIAG abort/superseded/pre-release   out=257 v.active=sink_0 sink_1 active=False linked=True
+DIAG abort/superseded release_hold_probes took 0.000s
+DIAG abort/superseded/post-release  out=257 v.active=sink_0
+DIAG abort/superseded dispose took 0.078s result=(True, None)
+DIAG abort/superseded/post-dispose  out=264 v.active=sink_0
+```
+
+Releasing the holds was instantaneous, disposal took 78 ms, the active pad
+never moved, and the mux output counter ADVANCED across the abort (257 -> 264).
+So on a healthy-but-superseded leg the proposed starvation does not occur. The
+instrumentation was removed after measurement; the reproducer was kept.
+
+### What was changed anyway, and why
+
+The distinguishing feature of the round-1 trace is that the leg had ERRORED,
+and this round has no way to force that state deterministically. Rather than
+leave a mechanism the review named as merely unreproduced, both halves of it
+were closed by construction:
+
+1. **Detach before release.** `_abort_pending_reload` now installs a
+   drop-everything probe on the aborted leg's OWN src pads before lifting its
+   holds, so nothing from that leg can reach the input-selector at all. This
+   removes the entire class the review described, without depending on which
+   selector state was at fault. The engine's own `_SELECTOR_PROPS` docstring
+   already asserted that a deferred leg "pushes nothing at all while inactive";
+   that was true on the commit path (which activates the pad first) and false
+   on the abort path. It is now true on both.
+2. **Retire off the loop.** Abort disposal now runs on a worker thread, as the
+   commit path already did. `set_state(NULL)` blocks until a leg's streaming
+   threads join; on the main loop that would have taken both watchdogs and the
+   control-plane reader down with it on a channel still on air.
+
+The abort's error log also now names the element that failed
+(`source=<name>`). Round 1 could not tell an errored new leg apart from a
+shared element that `_belongs_to_pending_reload` merely attributed to the leg,
+and neither could this round; the next occurrence will say which.
+
+### Round-2 verification (normal logging, real GStreamer runtime)
+
+Each native file ten times against the final source:
+
+- `tests/egress/test_gst_engine_wsl.py` -- 10/10, 25 passed per run,
+  161.87 s to 168.02 s.
+- `tests/egress/test_gst_engine_caption_flow_native.py` -- 10/10, 2 passed per
+  run, 53.77 s to 57.67 s.
+- `tests/egress/test_gst_engine_caption_gap_admission.py` -- 10/10, 5 passed per
+  run, 1.13 s to 1.26 s.
+
+Across the 350 captured worker logs: 320 `CTRL reload committed` lines and zero
+occurrences of `not-linked`, `commit did not finish`, `did not retire cleanly`,
+`still retiring at stop`, `disposal incomplete`, or `did not reach NULL`.
+`CTRL reload aborted` appears in exactly ten logs and `CTRL stall` in exactly
+ten -- one per run, in `test_reload_never_buffers_recovers` and
+`test_stall_watchdog_fires_when_output_stops` respectively, both of which exist
+to produce those lines.
+
+Ten clean runs is a bound on the failure rate, not proof of absence. If the
+round-1 rate of one in four still held, ten clean runs would happen about 6% of
+the time; that is evidence the path is healthier, and it is not the same claim
+as "the errored-leg abort is fixed", which no run in this round observed.
+
+### Other round-2 findings
+
+- Watchdog ordering: `stall_timeout_s` (10 s) fired before `commit_timeout_s`
+  (15 s), so the commit watchdog's faulthandler dump could never be emitted in
+  production. `_check_stall` now suspends itself while a commit is in progress
+  and `_reset_stall_reference` hands the channel a full fresh budget when the
+  commit settles.
+- Disposal policy: `set_state(NULL)` answering ASYNC on a bin is legitimate and
+  is now waited out (bounded, one retry) instead of being reported as failed
+  cleanup that killed a producing channel. Unlink/remove problems are warnings.
+- `stop()` gives the audio tap writer its own 2 s budget instead of the leftover
+  of the pipeline teardown deadline, which was routinely 0.0 s and lost the
+  final caption WAV.
+- Stale-EOS guard: each reload transaction now carries an id, because the
+  boundary probes sit on pad objects shared across transactions and pad
+  identity alone admitted a superseded transaction's queued EOS.

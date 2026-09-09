@@ -2508,3 +2508,73 @@ def test_repeated_deferred_rollovers_retire_complete_ts_av_playlist_legs(
             and not isinstance(settlement["ts"], bool)
             and settlement["ts"] > 0
         ), settlement
+
+
+def test_superseding_a_held_deferred_reload_keeps_the_current_program_on_air(
+    tmp_path: Path,
+) -> None:
+    """Round-2 finding 1: aborting a HELD deferred reload must not starve the leg
+    that is still on air.
+
+    ``_abort_pending_reload`` promises the current program keeps playing. The
+    round-1 review recorded a run where it did not: a deferred replacement errored
+    before commit, the abort released that leg's hold probes, and the mux output
+    counter then flatlined until the stall watchdog killed the worker.
+
+    An error is a rare, load-dependent way to reach that abort. Supersession is a
+    deterministic one: a second deferred reload arriving while the first is still
+    held aborts the first through the SAME path, with its hold probes released
+    into the input-selector on a pad that is still INACTIVE. This test drives that
+    path on purpose and asserts what the abort contract actually promises -- the
+    channel stays up, output keeps advancing, and a later reload still commits.
+    """
+    clips = [tmp_path / f"segment-{index:04d}.ts" for index in range(1, 5)]
+    for index, clip in enumerate(clips):
+        _write_short_av_ts_clip(
+            clip, seconds=2.5, pattern=(0, 18)[index % 2], video_caps=_PRODUCTION_CAPS
+        )
+
+    payloads: list[Path] = []
+    for name in ("first", "second"):
+        path = tmp_path / f"{name}{reloadpolicy.DEFERRED_SWITCH_SUFFIX}"
+        path.write_text(
+            graphmod.graph_to_json(
+                _multi_segment_playlist_reload_graph(clips, video_caps=_PRODUCTION_CAPS)
+            ),
+            encoding="utf-8",
+        )
+        payloads.append(path)
+
+    out_ts = tmp_path / "output.ts"
+    tap_dir = tmp_path / "caption-tap"
+    graph = _production_pressure_playlist_graph(clips, out_ts=out_ts, audio_tap_dir=tap_dir)
+    proc, control, log = _launch_worker(tmp_path, graph, out_ts)
+    try:
+        _wait_for_log(log, "CTRL first-output:", timeout=25.0)
+        _send(control, f"reload {payloads[0]}")
+        # Let the first replacement finish prerolling and PARK on its hold probe.
+        # It is now built, playing, and blocked at its own first buffer, waiting
+        # for the outgoing leg's boundary -- the exact state the round-1 abort
+        # was observed in.
+        time.sleep(2.0)
+        _send(control, f"reload {payloads[1]}")  # supersedes and aborts the held leg
+        _wait_for_log(log, "superseding a still-settling reload", timeout=10.0)
+        # The whole point: the abort must not take the channel down. If the
+        # released-but-inactive leg starves the active one, the stall watchdog
+        # kills the worker here instead.
+        _wait_for_log(log, "CTRL reload committed", timeout=40.0)
+        assert proc.poll() is None, (
+            "worker exited after a superseded deferred reload;\n"
+            + log.read_text(encoding="utf-8", errors="replace")
+        )
+        _send(control, "stop")
+        returncode = proc.wait(timeout=25)
+    finally:
+        _reap(proc)
+
+    text = log.read_text(encoding="utf-8", errors="replace")
+    assert returncode == 0, f"unclean teardown ({returncode});\n{text}"
+    assert "CTRL stall:" not in text, text
+    assert "CTRL reload: commit did not finish" not in text, text
+    assert "not-linked" not in text, text
+    _assert_continuous(out_ts, text, require_audio_pid=True)

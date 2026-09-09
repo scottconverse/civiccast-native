@@ -41,14 +41,20 @@ The egress proof path does not by itself prove:
 
 ### Native reload status
 
-The current native repair has a local diagnostic covering three workers and six
-in-place replacements with clean transport checks and clean stop. A normal
-replacement keeps output while the new leg is prepared and holds the switch
-until the outgoing leg retires. An overlapping commit request is explicitly
-declined and uses the existing full-graph restart recovery path; it is not
-queued as a latest-request-wins operation. Existing watchdog time bounds and
-station capabilities are unchanged. This diagnostic does not establish beta.5
-installer acceptance or a two-hour physical soak.
+The current native repair runs clean ten times out of ten with normal logging,
+each run covering three workers and six in-place replacements with clean
+transport checks and clean stop. A normal replacement keeps output while the new
+leg is prepared and holds the switch until the outgoing leg retires. An
+overlapping commit request is explicitly declined and uses the existing
+full-graph restart recovery path; it is not queued as a latest-request-wins
+operation. Existing watchdog time bounds and station capabilities are unchanged.
+
+Two watchdogs cover a replacement and they no longer overlap: while a commit is
+in progress the stall bound stands down so the commit watchdog owns that window
+and can emit its stack dump, and the stall bound restarts from full once the
+commit settles. Ten clean runs bounds the failure rate rather than proving
+absence, and this diagnostic does not establish beta.5 installer acceptance or a
+two-hour physical soak.
 
 A caption heartbeat is a timing signal for an interval without caption text.
 Its guard is separate from caption conversion: it admits one

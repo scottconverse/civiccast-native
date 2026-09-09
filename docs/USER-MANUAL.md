@@ -401,13 +401,18 @@ panel; only the lower-third text layer is.
 
 **What happens during a program change?** CivicCast prepares the next program
 while the current feed continues. An accepted reload request means preparation
-has started, not that the new program is already on air. If another request
-arrives while the previous change is finishing, CivicCast declines that
-in-place request and the supervisor uses its existing channel-restart recovery
-to load the current plan. A restart can briefly interrupt the feed. Check the
-channel status and player to confirm the new program is running; do not treat
-the initial request acknowledgement as confirmation of the picture on air.
-The existing timeout and recovery safeguards remain active.
+has started, not that the new program is already on air. Check the channel
+status and player to confirm the new program is running; do not treat the
+initial request acknowledgement as confirmation of the picture on air. The
+existing timeout and recovery safeguards remain active.
+
+A program change normally completes in well under a second, so back-to-back
+requests are not something you need to pace by hand. In the rare case where a
+change is still finishing when the next one arrives, CivicCast declines the
+second in-place request and the supervisor falls back to its existing
+channel-restart recovery to load the current plan, which can briefly interrupt
+the feed. Seeing that repeatedly is a fault worth reporting, not normal
+operation.
 
 ### Common Operator Questions {#common-operator-questions}
 

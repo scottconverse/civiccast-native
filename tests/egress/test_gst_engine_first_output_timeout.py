@@ -97,6 +97,11 @@ def _bare_engine(
     # check is measured against, and the progress-line throttle state.
     engine._output_buffers_at_arm = 0
     engine._last_output_progress_print_t = 0.0
+    # Round-2 finding 2 additions -- the post-first-output stall bound now yields
+    # its window to the commit watchdog while a reload commit is in flight, so
+    # ``_check_stall`` reads the pending transaction and the commit bound too.
+    engine._pending_reload = None
+    engine.commit_timeout_s = 15.0
     return engine
 
 
@@ -556,3 +561,95 @@ def test_output_progress_line_delta_is_relative_to_the_arm_time_snapshot(
     assert engine._check_stall() is True
     err = capsys.readouterr().err
     assert "CTRL output: 1003 buffers (+3) since PLAYING" in err
+
+
+# --- round-2 finding 2: the stall bound yields to the commit watchdog ---------------
+
+
+def _stall_engine_at_the_bound(engine_module, monkeypatch: pytest.MonkeyPatch, clock: dict) -> Any:
+    """An engine that has seen real output and has then been stalled for exactly
+    ``stall_timeout_s``, i.e. sitting on the trigger."""
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine._loop = _FakeLoop()
+    engine._first_output_seen = True
+    engine._output_buffers = 100
+    engine._stall_last_count = 100
+    engine._stall_last_advance_t = clock["t"]
+    clock["t"] += 10.0
+    return engine
+
+
+def test_stall_bound_does_not_kill_the_worker_while_a_commit_is_in_progress(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round-2 finding 2: the two watchdogs were racing and the wrong one won.
+
+    A commit holds the replacement leg (producing nothing) while the old leg is
+    retired, and the isolation queues drain in well under a second, so output
+    legitimately stops advancing for the length of the retirement. With
+    ``stall_timeout_s`` at 10s and ``commit_timeout_s`` at 15s the stall watchdog
+    therefore always fired FIRST -- five seconds before the commit watchdog could
+    dump the faulthandler stacks that exist precisely to localise a wedged
+    retirement, which is why that dump was never seen in production."""
+    clock = {"t": 0.0}
+    engine = _stall_engine_at_the_bound(engine_module, monkeypatch, clock)
+    engine._pending_reload = {"commit_in_progress": True}
+
+    assert engine._check_stall() is True  # suspended, not fatal
+    assert engine._loop.quit_calls == 0
+    assert engine._error is None
+
+
+def test_stall_bound_still_kills_the_worker_outside_a_commit(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The suspension is scoped to commits; the ordinary bound is unchanged."""
+    clock = {"t": 0.0}
+    engine = _stall_engine_at_the_bound(engine_module, monkeypatch, clock)
+
+    assert engine._check_stall() is False
+    assert engine._loop.quit_calls == 1
+    assert engine._error == ("stall", "output stalled")
+
+
+def test_a_reload_armed_but_not_committing_does_not_suspend_the_stall_bound(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only an IN-FLIGHT commit owns the window. A reload that is merely armed --
+    prepared, held, waiting for its boundary -- leaves the current program on air
+    and must not buy it an exemption from the stall bound."""
+    clock = {"t": 0.0}
+    engine = _stall_engine_at_the_bound(engine_module, monkeypatch, clock)
+    engine._pending_reload = {"commit_in_progress": False}
+
+    assert engine._check_stall() is False
+    assert engine._loop.quit_calls == 1
+
+
+def test_a_commit_that_finishes_gets_a_full_fresh_stall_budget(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The suspension pushes the stall reference forward rather than skipping one
+    tick, so a commit that completes cleanly is measured against a FULL budget
+    instead of the backlog it accumulated while suspended -- otherwise the first
+    post-commit tick would fire immediately on a healthy channel."""
+    clock = {"t": 0.0}
+    engine = _stall_engine_at_the_bound(engine_module, monkeypatch, clock)
+    engine._pending_reload = {"commit_in_progress": True}
+
+    for _ in range(5):  # five seconds of retirement
+        assert engine._check_stall() is True
+        clock["t"] += 1.0
+
+    # Commit finished. ``_finish_reload_commit`` calls ``_reset_stall_reference``
+    # on both its exits; do the same here, since this test drives ``_check_stall``
+    # directly rather than through a real commit.
+    engine._pending_reload = None
+    engine._reset_stall_reference()
+    for _ in range(10):  # a full fresh 10s budget, none of it already spent
+        assert engine._check_stall() is True, "post-commit budget was not reset"
+        clock["t"] += 1.0
+
+    assert engine._check_stall() is False  # and the bound still bites at 10s
+    assert engine._loop.quit_calls == 1

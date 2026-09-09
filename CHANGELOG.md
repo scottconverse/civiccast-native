@@ -104,10 +104,29 @@ below.
   repaired path keeps persistent bounded A/V queues, holds a replacement until
   the outgoing leg retires, and preserves the existing watchdog bounds. An
   overlapping commit request is explicitly declined into the existing
-  full-graph restart recovery path rather than queued as latest-wins. A local
-  three-worker/six-replacement diagnostic passed clean transport checks and
-  clean stop; this does not claim installer acceptance or a two-hour physical
-  soak, and no station capability is disabled.
+  full-graph restart recovery path rather than queued as latest-wins. The
+  native engine suite runs clean ten times out of ten with normal logging, each
+  run covering three workers and six in-place replacements with clean transport
+  checks and clean stop (320 committed replacements in total, no stalls and no
+  unfinished commits). Ten clean runs bounds the failure rate rather than
+  proving absence; this does not claim installer acceptance or a two-hour
+  physical soak, and no station capability is disabled.
+
+- **Aborting a prepared replacement can no longer disturb the program on air.**
+  A replacement that is abandoned before it goes live -- superseded, timed out,
+  or failed -- is now cut off at its own outputs before it is released, so it
+  cannot push anything into the live switch, and it is cleaned up on a worker
+  thread instead of on the control loop. Its error message now also names the
+  element that failed. The two replacement watchdogs no longer overlap: the
+  stall bound stands down while a replacement is being committed so the commit
+  watchdog owns that window and can record its diagnostic, and the stall bound
+  restarts from full afterwards. A replacement whose old program is slow to
+  release is now waited out and retried once rather than being treated as a
+  failure that takes a channel that is still broadcasting off air.
+
+- **The final caption audio file is no longer lost on shutdown.** The caption
+  audio writer is given its own short closing budget instead of whatever
+  remained of the overall shutdown deadline, which in practice was often none.
 
 - **Sandbox TSDuck analysis now reads the current nested JSON schema.** The
   soak sampler reads packet totals, invalid syncs, and transport errors from
