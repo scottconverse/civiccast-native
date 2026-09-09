@@ -24,6 +24,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from civiccast.captions import review as review_module
 from civiccast.captions.models import CaptionCue
 from civiccast.captions.persistence import PostgresCaptionReviewStore
 from civiccast.captions.review import (
@@ -35,6 +36,7 @@ from civiccast.captions.review import (
     CaptionReviewItemCreate,
     CaptionReviewItemNotFoundError,
     CaptionReviewLowConfidenceAcknowledgementRequiredError,
+    InMemoryCaptionReviewStore,
 )
 from civiccast.db import Base
 
@@ -340,6 +342,60 @@ class TestContract:
                 store.edit("missing", CaptionReviewEdit(text="x", reviewer_note=None))
             else:
                 getattr(store, action)("missing", CaptionReviewDecision(reviewer_note=None))
+
+
+class TestInMemoryStoreListOrderOnSameMicrosecondTie:
+    """Item 92: ``list()`` order must match creation order even when two
+    rows land on the *identical* microsecond ``created_at``.
+
+    Two rows created in a tight loop (e.g. queueing every cue of a job in
+    one pass) can get the same ``datetime.now(UTC)`` reading on a host whose
+    wall-clock resolution is coarser than the loop -- observed on a fast
+    Windows box. Before item 92, ``list()`` broke that tie with
+    ``review_item_id`` (a lexical string comparison), which does not track
+    creation order: cue id ``asset:cue-000000-02:es:...`` sorts before
+    ``asset:cue-000000:es:...`` because ``-`` (0x2D) < ``:`` (0x3A), silently
+    reordering rows a caller reads by list index.
+    """
+
+    def test_tied_created_at_still_lists_in_creation_order(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = InMemoryCaptionReviewStore()
+
+        class _FrozenDateTime(review_module.datetime):  # type: ignore[misc, name-defined]
+            @classmethod
+            def now(cls, tz=None):  # type: ignore[override]
+                return review_module.datetime(2026, 9, 8, 12, 0, 0, tzinfo=review_module.UTC)
+
+        monkeypatch.setattr(review_module, "datetime", _FrozenDateTime)
+
+        # Ids are chosen so the OLD (review_item_id) tie-break would sort the
+        # second-created row first: "-02:" sorts before the bare ":" of the
+        # first id.
+        first_id = "asset-1:cue-000000:es:hash-a"
+        second_id = "asset-1:cue-000000-02:es:hash-b"
+        store.create(
+            CaptionReviewItemCreate(
+                review_item_id=first_id,
+                asset_id="asset-1",
+                cue=_cue("cue-000000"),
+                language="es",
+            )
+        )
+        store.create(
+            CaptionReviewItemCreate(
+                review_item_id=second_id,
+                asset_id="asset-1",
+                cue=_cue("cue-000000-02"),
+                language="es",
+            )
+        )
+
+        rows = store.list(asset_id="asset-1", language="es")
+
+        assert rows[0].created_at == rows[1].created_at, "test setup must force the tie"
+        assert [row.review_item_id for row in rows] == [first_id, second_id]
 
 
 class TestDurability:

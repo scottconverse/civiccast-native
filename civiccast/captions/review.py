@@ -231,6 +231,20 @@ class InMemoryCaptionReviewStore:
     def __init__(self) -> None:
         self._items: dict[str, CaptionReviewItemResponse] = {}
         self._audio_evidence: dict[str, CaptionReviewAudioEvidence] = {}
+        # Insertion order, independent of ``created_at``. Two rows created in
+        # the same tight loop (e.g. queueing every cue of a job in one pass)
+        # can get the *identical* microsecond from ``datetime.now(UTC)`` --
+        # timer resolution on some hosts is coarser than the loop -- and
+        # ``created_at`` alone can no longer tell them apart. ``list()``
+        # falls back to ``review_item_id`` on such ties, which sorts
+        # lexically rather than by creation order (e.g. cue id
+        # ``...:cue-000000-02:es:...`` sorts before ``...:cue-000000:es:...``
+        # because ``-`` (0x2D) < ``:`` (0x3A)) and silently reorders rows a
+        # caller reads by list index. A per-store monotonic counter, recorded
+        # on each row at create time, gives a total order that always
+        # matches creation order, tie or no tie.
+        self._sequence: dict[str, int] = {}
+        self._next_sequence = 0
 
     def create(self, payload: CaptionReviewItemCreate) -> CaptionReviewItemResponse:
         if payload.review_item_id in self._items:
@@ -251,6 +265,8 @@ class InMemoryCaptionReviewStore:
             updated_at=now,
         )
         self._items[item.review_item_id] = item
+        self._sequence[item.review_item_id] = self._next_sequence
+        self._next_sequence += 1
         if payload.audio_evidence is not None:
             self._audio_evidence[item.review_item_id] = payload.audio_evidence
         return deepcopy(item)
@@ -282,7 +298,14 @@ class InMemoryCaptionReviewStore:
             rows = [row for row in rows if row.language == language]
         return [
             deepcopy(row)
-            for row in sorted(rows, key=lambda item: (item.created_at, item.review_item_id))
+            for row in sorted(
+                rows,
+                key=lambda item: (
+                    item.created_at,
+                    self._sequence[item.review_item_id],
+                    item.review_item_id,
+                ),
+            )
         ]
 
     def approve(
