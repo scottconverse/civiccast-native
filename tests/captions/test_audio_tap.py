@@ -59,6 +59,36 @@ class TestBuildAudioTapPlan:
         assert plan is not None
         assert plan.tap_dir == tmp_path / "tap" / "gov-ch12"
 
+    def test_caption_tap_off_means_no_tap_even_with_a_dir_configured(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Item 91: ``CIVICCAST_CAPTION_TAP=off`` wins over a configured (or
+        stray leftover) ``CIVICCAST_CAPTION_TAP_DIR`` -- this function is the
+        single place that decides whether a channel's audio is forked, so it
+        must not build a plan just because a directory happens to be set."""
+
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tmp_path / "tap"))
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "off")
+        assert build_audio_tap_plan("gov-ch12") is None
+
+    @pytest.mark.parametrize("mode", ["", "inline", "external", "ON", "OFF ", " off"])
+    def test_non_exact_off_values_do_not_suppress_the_tap(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, mode: str
+    ) -> None:
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tmp_path / "tap"))
+        if mode:
+            monkeypatch.setenv("CIVICCAST_CAPTION_TAP", mode)
+        else:
+            monkeypatch.delenv("CIVICCAST_CAPTION_TAP", raising=False)
+        plan = build_audio_tap_plan("gov-ch12")
+        # "OFF " / " off" (whitespace) are still recognized as off since the
+        # check strips before lowercasing; only a value that is not the
+        # literal off token (unset, inline, external, ON) keeps the tap.
+        if mode.strip().lower() == "off":
+            assert plan is None
+        else:
+            assert plan is not None
+
 
 class TestEncoderArgsCarryTheFork:
     def test_encoder_args_include_the_audio_fork_when_planned(self, tmp_path: Path) -> None:

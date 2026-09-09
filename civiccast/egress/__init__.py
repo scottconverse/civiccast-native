@@ -46,6 +46,8 @@ from civiccast.egress.health import (
     encoder_has_progress,
     parse_ffmpeg_encoder_metrics_line,
     read_latest_ffmpeg_encoder_metrics,
+    worker_produced_output,
+    worker_reached_playing,
 )
 from civiccast.egress.live_takeover import build_live_takeover_source_plan
 from civiccast.egress.models import (
@@ -147,5 +149,7 @@ __all__ = [
     "run_filesink_continuity_proof",
     "run_srt_receiver_continuity_proof",
     "split_srt_receiver_options",
+    "worker_produced_output",
+    "worker_reached_playing",
     "write_concat_plan",
 ]

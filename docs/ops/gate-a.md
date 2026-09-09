@@ -993,9 +993,9 @@ Evidence for every run — pass or fail — lands at
 Even at ~1-2 MB/s the download above is one leg of a two-leg transfer
 problem: `native-beta-candidate-artifacts.yml` normally builds on a hosted
 `windows-latest` runner and uploads the same ~21 GB kit (plus an ~18.6 GB
-station bundle and a ~3 GB candidate) before Gate A ever starts pulling it
-back down onto this box — full round trip, ~2.5-3h before the Windows
-Sandbox even launches.
+station bundle and ~3.4 GB of candidate binaries — the signed installer and
+every `.ccpack`) before Gate A ever starts pulling it back down onto this
+box — full round trip, ~2.5-3h before the Windows Sandbox even launches.
 
 `native-beta-candidate-artifacts.yml` accepts a `build_target` input on
 manual dispatch. `hosted` (the default, and every `push`-triggered build on
@@ -1005,11 +1005,28 @@ runs on. It keeps intermediate mirrors under
 `C:\CivicCastTester\candidates\<sha>\` and writes the FINAL kit in the flat
 layout Gate A expects — `setup.exe`, `packs\`, `station\` directly under the
 directory — straight to `C:\CivicCastTester\kit-staging\<sha>\`, instead of
-only uploading it. By default it also skips the two large uploads (station
-bundle, kit) — the small `native-beta-candidate-<sha>` artifact (~3 GB)
-still uploads unconditionally. Pass `upload_large_artifacts: true` on the
-dispatch to force the two large uploads anyway (e.g. to let a different
-machine run Gate A against that candidate).
+only uploading it.
+
+By default it also skips every large upload: the station bundle and kit
+(gated by `upload_large_artifacts`, as before) *and*, as of the 2026-09-09
+shared-storage-cap fix, the ~3.4 GB candidate binaries too (gated by the
+newer `upload_candidate_binaries` input). Gate A never consumed that
+binaries artifact on the self-hosted lane in the first place — its
+`assemble-native-beta-kit` job reads the signed installer and packs from
+the local mirror `native-beta-candidate-artifacts.yml` writes under
+`C:\CivicCastTester\candidates\<sha>\candidate\` on that same box, never
+from a download — so leaving it uploading unconditionally was pure dead
+weight against the 10 GB/month Actions artifact-storage cap this repo
+shares with five other projects. Only the small evidence set (`*-report.json`,
+`SHA256SUMS.txt`, `candidate-receipt.json`, uploaded as the
+`native-beta-candidate-<sha>` artifact) and the tiny installer-embed
+artifact (`native-station-embed-<sha>`) still upload unconditionally on
+every lane. Pass `upload_large_artifacts: true` and/or
+`upload_candidate_binaries: true` on the dispatch to force the corresponding
+uploads anyway (e.g. to let a different machine inspect that candidate
+without disk access to this box). Hosted builds always upload everything —
+both flags are ignored there, since a hosted runner has no persistent local
+box for anything to read from.
 
 `gate-a-station-acceptance.yml` owns the consumer side of this contract in
 its own "Reuse a locally pre-staged kit" step: it checks

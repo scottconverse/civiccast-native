@@ -8,10 +8,14 @@
 
 ## Current Release
 
-`v1.0.0-beta.4` is the current release, a download-only upgrade for
-stations already on `v1.0.0-beta.3`: `setup.exe`, the five runtime
-`.ccpack` packs, a `SHA256SUMS.txt` checksum file, and a signed
-`setup.exe.sidecar.json` are attached to the
+`v1.0.0-beta.4` is the current published release. The beta.5 native Windows
+candidate is not published yet. Do not describe beta.5 as a public download
+until the release owner publishes the exact candidate and updates the release
+truth record. For a published GitHub release, use its `setup.exe`, runtime
+`.ccpack` packs, `SHA256SUMS.txt`, and `setup.exe.sidecar.json` metadata from the
+exact release page. For a USB/LAN field kit, use the complete kit's own hash-pinned
+delivery manifest and do not require a GitHub sidecar that is not present. The
+current published release is the
 [`v1.0.0-beta.4` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4)
 as a **prerelease** -- watch
 <https://github.com/scottconverse/civiccast-native/releases>, not
@@ -25,16 +29,19 @@ authored release-state record.
 `v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
 upgrade-baseline kit, never a release a tester receives.
 
-**If you are reading this after Scott has told you a new beta is
+**If you are reading this after the release owner has told you a new beta is
 available, check
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) first
 -- it is the single source of truth for which tag is current, and this page
-may not have been updated yet.**
+may not have been updated yet. A beta.5 candidate remains unpublished until
+that record and the public release page say otherwise.**
 
 A first-time install on a station with no prior CivicCast install needs the
-USB model bundle even with `v1.0.0-beta.4` published -- the GitHub download
-alone is the setup executable and runtime packs, not the ~21 GB model
-bundle. **Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit
+complete signed native station bundle. The current bundle is about 21 GB and
+includes the signed runtime and model payloads; the installer verifies and
+stages those packs, then composes the local Ollama model store. Do not assume
+the installer will fetch models later in the background. **Upgrading from
+`v1.0.0-beta.1`:** copy the whole `beta.3` kit
 (`setup.exe` plus the `station\` folder beside it) to the station and run
 `setup.exe` over the existing install -- recordings, settings, database, and
 AI models are kept and the schema migrates. Do not run `setup.exe` alone
@@ -86,15 +93,13 @@ before clicking through it.
 ## What You Should Be Able To Do
 
 1. Verify the release Windows proof kit or setup executable against its
-   matching manifest, sidecar, and checksum (`SHA256SUMS.txt`).
-2. Run the Windows setup app. Keep at least **5 GB free** for the base
-   install; recordings, media, backups, and downloaded caption models need
-   additional storage. The local AI models (Ollama summary and translation
-   models) add roughly 15-20 GB on top of that for a first install using the
-   USB bundle -- CivicCast ensures the same three AI model versions (the
-   fixed summary/translation model set) are present and downloads only the
-   ones still missing, automatically in the background after the base
-   install finishes, not before.
+   matching delivery manifest or, for a GitHub download, its sidecar and
+   checksum (`SHA256SUMS.txt`).
+2. Run the Windows setup app. Plan enough disk space for the exact downloaded
+   station bundle and the installed runtime/model copy it produces, plus the
+   recordings, media, and backups used by the station. The installer verifies
+   the signed model packs and composes the local Ollama model store; it does
+   not automatically download missing models in the background after setup.
 3. Let it prepare local storage, runtime dependencies, and the CivicCast
    service when your handoff names a gate-cleared package (a package your
    tester handoff confirms has passed release review). Also provisions the

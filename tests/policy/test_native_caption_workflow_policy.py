@@ -1127,7 +1127,52 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # scripted CaptionRuntime and a tmp_path WAV), so both lanes advance by
     # four. Re-derived by an actual `--collect-only` run on this tree, not by
     # arithmetic: (1790, 1991) -> (1794, 1995).
-    assert (collect("not windows_only"), collect()) == (1794, 1995)
+    # fix/caption-tap-caps-item79 review round 4: three new
+    # platform-independent cases in tests/native/test_caption_capacity_proof.py
+    # (TestArgParserDefaultsTrackTheLiveTap), added after review caught the
+    # capacity proof constructing FasterWhisperRuntime WITHOUT live=True --
+    # so --cpu-threads's live-tap default (a prior fix) paired with a beam
+    # width that never followed it, measuring a sizing nobody ships. The new
+    # cases pin the --cpu-threads and --beam-size argparse defaults against
+    # civiccast.captions.runtime's own default_live_tap_cpu_threads()/
+    # LIVE_TAP_CPU_BEAM_SIZE, plus that the constructed runtime actually
+    # receives live=True. No windows_only marker and no OS dependency (an
+    # argparse.ArgumentParser and a monkeypatched constructor), so both lanes
+    # advance by three. Re-derived by an actual `--collect-only` run on this
+    # tree, not by arithmetic: (1794, 1995) -> (1797, 1998).
+    # fix/caption-tap-caps-item79 review round 5: one new platform-independent
+    # case in tests/native/test_caption_capacity_proof.py,
+    # test_capacity_proof_identity_records_post_construction_beam_and_threads,
+    # added after review caught build_caption_runtime's identity dict
+    # recording the PRE-construction --beam-size/--cpu-threads args instead
+    # of the runtime's own post-construction values, which
+    # FasterWhisperRuntime(live=True) can override via
+    # CIVICCAST_WHISPER_BEAM_SIZE/CIVICCAST_WHISPER_CPU_THREADS and the live
+    # ceiling cap (measured: env beam 7 + --beam-size 1 -> runtime.beam_size
+    # 7; env threads 8 + --cpu-threads 1 -> runtime.cpu_threads 2). The new
+    # case fakes a runtime whose resolved attributes differ from the
+    # constructor arguments and asserts the identity dict follows the
+    # runtime. No windows_only marker and no OS dependency (a monkeypatched
+    # constructor and a SimpleNamespace fake), so both lanes advance by one.
+    # Re-derived by an actual `--collect-only` run on this tree, not by
+    # arithmetic: (1797, 1998) -> (1798, 1999).
+    # feat/caption-tap-off-switch-item91: six new platform-independent cases
+    # in tests/native/test_station_runtime.py --
+    # test_station_environment_caption_tap_off_switch_disables_the_tap_leg
+    # (1) plus test_station_environment_caption_tap_non_off_values_keep_forcing_inline
+    # parametrized over 5 values (5) -- covering the env-composition fix that
+    # makes CIVICCAST_CAPTION_TAP=off actually reach an activated native
+    # station's child environment instead of always being overwritten back
+    # to "inline". No windows_only marker and no OS dependency (tmp_path +
+    # monkeypatch env only), so both lanes advance by six. Re-derived by an
+    # actual `--collect-only` run on this tree, not by arithmetic:
+    # (1798, 1999) -> (1804, 2005).
+    # 2026-09-08 build-probe profile isolation: two platform-independent
+    # success/failure cases in tests/native/test_app_payload_builder.py.
+    # Actual collect-only runs on this tree returned (1806, 2007), including
+    # the CI failure and the local red reproduction of this exact assertion.
+    # The workflow's minimum floors and allowed margin remain unchanged.
+    assert (collect("not windows_only"), collect()) == (1806, 2007)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

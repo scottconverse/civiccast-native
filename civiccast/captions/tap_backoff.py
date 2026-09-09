@@ -53,7 +53,16 @@ __all__ = [
 #: One base window is deliberately much longer than one scan (default poll is
 #: 2s): the point is to stop paying for ASR at all for a while, not to retry
 #: promptly.
-DEFAULT_BASE_BACKOFF_SECONDS = 60.0
+#:
+#: Item 79 (sandbox candidate 3b, MEASURED: 10 "Caption tap overload" events
+#: with a cluster of GStreamer worker stalls inside them, the same root cause
+#: as the tester's beta.4 soak): 60s was not a long enough first pause -- a
+#: station that overloads once is likely to still be catching up 60s later,
+#: so it re-overloads almost immediately and burns a second escalation cycle
+#: proving what the first one already showed. Doubled to 120s so the FIRST
+#: pause alone gives a struggling station real recovery room before ASR is
+#: attempted again.
+DEFAULT_BASE_BACKOFF_SECONDS = 120.0
 #: Ceiling on the exponential growth. A permanently under-powered station
 #: retries every 15 minutes -- enough that recovery (the operator lowering the
 #: caption tier, or the channel going off air) is noticed, cheap enough that it

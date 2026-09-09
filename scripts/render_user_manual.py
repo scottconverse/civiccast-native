@@ -28,8 +28,9 @@ REQUIRED = (
     "Technical Operations Reference",
 )
 
-# Matches both a bare version ("v1.0.0-rc18") and one embedded in prose.
-_VERSION_TOKEN_RE = re.compile(r"v\d+\.\d+\.\d+(?:-rc\d+)?")
+# Matches both a bare version ("v1.0.0"), prerelease versions ("v1.0.0-rc18"
+# and "v1.0.0-beta.5"), and one embedded in prose.
+_VERSION_TOKEN_RE = re.compile(r"v\d+\.\d+\.\d+(?:-(?:rc\d+|beta\.\d+))?")
 
 
 def _source_version_token(text: str) -> str:
@@ -45,7 +46,10 @@ def _source_version_token(text: str) -> str:
         raise RuntimeError(f"{SOURCE} has no `subtitle:` frontmatter field")
     token = _VERSION_TOKEN_RE.search(match.group(0))
     if not token:
-        raise RuntimeError(f"{SOURCE}'s subtitle does not contain a vX.Y.Z(-rcN) version token")
+        raise RuntimeError(
+            f"{SOURCE}'s subtitle does not contain a vX.Y.Z, vX.Y.Z-rcN, "
+            "or vX.Y.Z-beta.N version token"
+        )
     return token.group(0)
 
 

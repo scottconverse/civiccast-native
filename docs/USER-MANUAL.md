@@ -2,7 +2,7 @@
 title: CivicCast User Manual
 subtitle: For station operators, clerks, and IT staff - v1.0.0-beta.5 (native Windows line)
 author: The CivicCast Authors
-date: 2026-08-30
+date: 2026-09-08
 # Layout, fonts, and colours live in docs/assets/manual.pandoc.yaml so the
 # shell and Python renderers cannot drift. Keep this block to content
 # metadata only.
@@ -43,19 +43,37 @@ work (see
 [Comparative Capability Status](#comparative-capability-status) in
 Section C). These source capabilities and their lab evidence are not stock
 acceptance claims and do not establish station-device, provider, app-store, or
-production proof. `v1.0.0-beta.2` was never published -- it exists only as an
-internal Gate A upgrade-baseline kit. `v1.0.0-beta.4` is the current
-published release described in this manual, a download-only upgrade for
-stations already on `v1.0.0-beta.3` (CivicCast's first downloadable
-release, now superseded -- see
-[`docs/releases/release-truth.yaml`](releases/release-truth.yaml)).
-`v1.0.0-beta.5` is the next candidate and the current native-Windows
-development candidate (an owner-held unpublished candidate) described in
-this manual; it does not change the beta.4 install story. It is a fresh,
-from-scratch native Windows product line — its
+production proof. This manual describes the `v1.0.0-beta.5` native-Windows
+software. A bundled manual does not itself establish publication or installation acceptance.
+Before installing, check the exact
+[GitHub Release](https://github.com/scottconverse/civiccast-native/releases),
+its signed installer, checksums and candidate-specific verification record;
+the current recommendation is recorded in
+[`release-truth.yaml`](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/release-truth.yaml).
+That release record can change after this immutable installer/manual is built.
+Downloadable upgrades preserve a beta.3-or-later station's cached AI models;
+first-time installations also require the approximately 21 GB `station` model
+bundle delivered by USB or LAN. See the Windows installation section below.
+`v1.0.0-beta.2` was never published; it is an internal upgrade-baseline kit.
+This is a fresh, from-scratch native Windows product line -- its
 version numbers do not continue from, and are not comparable to, the older
 `v1.0.0-rcNN` line documented for a retired WSL2-based product in a separate,
 private repository.
+
+In beta.5, schedule rollover uses an in-place reload
+by default: the playout worker prepares the next plan while the current plan
+airs. When scheduled media ends, the channel switches to its configured
+bulletins or slate; that filler refreshes until another program is due.
+Large bulletin rotations retain every approved, currently airable slide.
+After a handoff, channel status and health reporting agree on whether the
+channel is airing a scheduled program or its configured filler.
+Operators do not need to enable an environment flag. For troubleshooting,
+IT may set `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` (also `false`, `no`, or `off`)
+in the service environment and restart the service during a maintenance
+window. This opts into encoder restarts at plan rollover and may interrupt
+output. Remove that override to restore the default. Each published beta
+requires its own signed-candidate installation and soak evidence; a version
+number or this manual is not a substitute for that evidence.
 
 ![CivicCast system architecture](assets/architecture/civiccast-system-architecture.png)
 
@@ -331,8 +349,12 @@ workflow is. Two things to know before relying on it for a real meeting:
 
 ### Live Captions, And When To Turn Them Off {#live-captions-switch}
 
-When live captions are on, CivicCast listens to every channel that is on air
-and writes captions as the meeting happens. It is useful, and it is hard work
+When live captions are on, CivicCast writes captions as the meeting happens —
+but it captions **one channel at a time**. On a station with more than one
+channel on air, the others are **paused, most of the time**, with no live
+captions showing and their audio discarded rather than saved up for later —
+this is not a brief wait, it is the normal state for every channel that
+isn't the one currently being captioned. It is useful, and it is hard work
 for the computer — hard enough that on a station without a suitable graphics
 card it can compete with the broadcast itself for the processor.
 
@@ -351,12 +373,12 @@ your station publishes captioned recordings to meet an accessibility
 requirement, that keeps working with this switch off.
 
 **If you leave it on and the station cannot keep up,** CivicCast does not
-simply grind: it stops captioning that channel for a while (one minute, then
-two, then four, up to fifteen), clears the captions that were on screen rather
-than showing stale ones, and tries again later. You will see one warning in
-the log each time that happens. Repeated warnings on the same channel mean
-that station cannot caption that channel live — turn the switch off, or ask
-about a lower-quality caption model or a supported graphics card.
+simply grind: it stops captioning that channel for a while (two minutes, then
+four, then eight, up to fifteen), clears the captions that were on screen
+rather than showing stale ones, and tries again later. You will see one
+warning in the log each time that happens. Repeated warnings on the same
+channel mean that station cannot caption that channel live — turn the switch
+off, or ask about a lower-quality caption model or a supported graphics card.
 
 ### Operator Graphics Control (Lower-Third Banner) {#operator-graphics-control}
 
@@ -376,6 +398,21 @@ on an already-live channel.
 
 Station bug/logo placement is not yet operator-controllable from this
 panel; only the lower-third text layer is.
+
+**What happens during a program change?** CivicCast prepares the next program
+while the current feed continues. An accepted reload request means preparation
+has started, not that the new program is already on air. Check the channel
+status and player to confirm the new program is running; do not treat the
+initial request acknowledgement as confirmation of the picture on air. The
+existing timeout and recovery safeguards remain active.
+
+A program change normally completes in well under a second, so back-to-back
+requests are not something you need to pace by hand. In the rare case where a
+change is still finishing when the next one arrives, CivicCast declines the
+second in-place request and the supervisor falls back to its existing
+channel-restart recovery to load the current plan, which can briefly interrupt
+the feed. Seeing that repeatedly is a fault worth reporting, not normal
+operation.
 
 ### Common Operator Questions {#common-operator-questions}
 
@@ -672,15 +709,16 @@ bounded recorded-media workflow described in Section A.
    Authenticode status and publisher with the exact approved handoff.
    See [INSTALL-WINDOWS.md](https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md).
 
-   Leave at least **5 GB free** for the base installation. Recordings, station
-   media, backups, and downloaded caption models require additional storage.
+   Budget disk space for the downloaded kit, its installed runtime and model
+   files, and separate capacity for recordings, station media and backups.
+   Five GB is not enough for a complete first installation.
 
-   **Local AI models.** The local AI models (Ollama summary and
-   translation models, roughly 15-20 GB combined) are large; CivicCast
-   ensures the same three-tag target set and downloads only the tags still
-   missing, automatically in the background after the base install finishes,
-   not before, and a slow or failed model download does not block the
-   operator console from opening.
+   **Local AI models.** A first install needs the signed `station` model
+   bundle (about 21 GB), delivered by USB or LAN beside `setup.exe` and the
+   runtime packs. Setup verifies and activates those model components,
+   including the required caption floor and summary/translation models.
+   Do not rely on background internet downloads to complete a missing
+   model bundle. Upgrades from beta.3 or later reuse matching cached models.
 
 2. **Source / `uv` (for developers and integrators).**
 
@@ -702,16 +740,19 @@ rehearsal before the first public meeting.
 
 ### Updating To A New Version {#upgrade-path}
 
-Use the complete new CivicCast kit and run its installer directly on the
-station that already has CivicCast (Native) installed. You do **not** need to
-uninstall the current version first.
+Run the new CivicCast installer directly on the station that already has
+CivicCast (Native) installed. You do **not** need to uninstall the current
+version first. From beta.3 onward, download-only upgrades reuse the installed
+models; a fresh station or the older beta.1 migration needs the complete kit
+described in the Windows installation guide.
 
 1. Before the maintenance window, save a current recovery kit and confirm
    your normal station backup is available.
 2. Stop active meetings, recordings, publishing jobs, and other operator
    work. Close the CivicCast desktop window.
-3. Keep the new `setup.exe`, its `packs` folder, and its `station` folder
-   together, then run `setup.exe` as an administrator.
+3. Keep the release-matched `setup.exe` and runtime packs together as
+   described in the Windows installation guide. Include the `station`
+   folder when using the full USB/LAN kit. Run `setup.exe` as an administrator.
 4. Setup detects the existing install and asks the old CivicCast bootstrap to
    stop and unregister its native service state before replacing application
    files. It preserves `C:\ProgramData\CivicCast`, including recordings,
@@ -824,20 +865,54 @@ station needs.
 
 - **`CIVICCAST_CAPTION_TAP`** — Live caption tap configuration. Setting it to
   `off` forces live captions off regardless of the station-profile switch; it
-  can never force them back on against an operator who turned them off.
+  can never force them back on against an operator who turned them off. On an
+  activated native station the runtime otherwise always sets this to `inline`
+  on every start (item 91, 2026-09): setting it to `off` requires editing the
+  Windows service's environment and restarting the control plane for the
+  service to pick it up, and it takes effect for every channel from that
+  restart's first start onward. Before item 91, `off` in the service
+  environment stopped only ASR transcription (the tap worker discarded and
+  deleted what it read); the egress audio-fork leg (the tee that writes
+  rolling WAV segments) kept running regardless. `off` now stops the fork leg
+  itself — no tap directory is created, no segment is written, and no tap
+  worker thread starts. The operator-facing `live_captions_enabled`
+  station-profile switch (Staff → Station Profile) also now stops the fork
+  leg, WITHOUT a control-plane restart — but only at a channel's next
+  **start** (going off air and back on, or a supervisor restart), same as
+  the graphics-overlay honest limit above: a content reload on an
+  already-running channel does not pick up a profile change made in
+  between, because the reload path never touches the audio-tap leg either
+  way (only the program source and the graphics overlay are re-applied on
+  reload).
 - **`CIVICCAST_CAPTION_TAP_DIR`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_POLL_SECONDS`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`** — Live caption tap configuration.
-- **`CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`** — How many channels may be
-  transcribed at the same time. Default: one per 8 CPUs, never more than 3.
+- **`CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`** — How many channels' ASR
+  calls may be in flight at the same time. Default: `1`, station-wide,
+  regardless of core count (item 79, 2026-09, tightened from a per-core-count
+  formula, max 3). A station with more channels ON_AIR than this bound will
+  have live captions paused on the others most of the time — see
+  `docs/ops/background-workers.md`.
 - **`CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS`** — First pause after a
-  channel falls behind (default 60); each further overload doubles it.
+  channel falls behind (default 120, doubled from 60 as of item 79, 2026-09);
+  each further overload doubles it.
 - **`CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS`** — Ceiling on that
   doubling (default 900). Both backoff values are clamped to a usable value
   with a warning if misconfigured, rather than stopping the station.
-- **`CIVICCAST_WHISPER_CPU_THREADS`** — Processor threads per transcription.
-  The live tap uses 1; `0` means "every core" and is the batch default. Do not
-  set it to `0` on a station that is also on air.
+- **`CIVICCAST_CAPTION_TAP_CPU_THREADS`** — Processor threads for the **live
+  tap only** (item 79, 2026-09). Default: one per 8 CPUs, never more than 2.
+  That "never more than 2" is not just the default's own shape — it is a
+  ceiling on any operator override too: a value above 2 is refused and
+  capped at 2, with a warning logged, rather than honoured. Recorded-meeting
+  transcription is unaffected.
+- **`CIVICCAST_WHISPER_CPU_THREADS`** — Processor threads per transcription;
+  overrides `..._TAP_CPU_THREADS` above when set. For batch, `0` means "every
+  core" and is honoured as before, with no ceiling. For the **live tap**, `0`
+  is refused (item 79, 2026-09): it falls back to the live default instead,
+  with a warning logged, so this variable can no longer hand the live tap
+  "every core" — on air or otherwise. The same live ceiling as
+  `..._TAP_CPU_THREADS` also applies here: a live value above 2 is capped at
+  2, with a warning, instead of being honoured.
 - **`CIVICCAST_WHISPER_BEAM_SIZE`** — Live-tap decoder beam width (default 1 on
   CPU, 5 on a GPU). Does not affect recorded-file captioning.
 - **`CIVICCAST_CAPTION_FEED_POLL_SECONDS`** — Caption feed and decode-back proof cadence.

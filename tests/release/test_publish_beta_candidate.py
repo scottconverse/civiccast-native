@@ -13,6 +13,8 @@ against a real kit or real ``gh``/GitHub (see the task's final report).
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -34,6 +36,29 @@ SOURCE_SHA = "a" * 40
 # self-contained fixture in _base_repo_root(), not the repo's real file.
 VERSION = m.get_native_source_version()
 TAG = f"v{VERSION}"
+
+
+def test_run_powershell_isolates_only_psmodulepath(monkeypatch: pytest.MonkeyPatch) -> None:
+    module_path_key = "PSModulePath"  # Exercise the conventional mixed-case Windows spelling.
+    monkeypatch.setenv(module_path_key, "inherited-module-path-must-not-cross-boundary")
+    monkeypatch.setenv("CIVICCAST_TEST_CHILD_ENV", "preserved")
+    observed: dict[str, object] = {}
+
+    def fake_run_command(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        observed["command"] = command
+        observed["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(command, 0, stdout="Valid\n", stderr="")
+
+    monkeypatch.setattr(m, "run_command", fake_run_command)
+    result = m.run_powershell("Get-AuthenticodeSignature")
+
+    child_env = observed["env"]
+    assert isinstance(child_env, dict)
+    assert not any(name.casefold() == "psmodulepath" for name in child_env)
+    assert child_env["CIVICCAST_TEST_CHILD_ENV"] == "preserved"
+    assert os.environ[module_path_key] == "inherited-module-path-must-not-cross-boundary"
+    assert observed["command"][:3] == ["powershell", "-NoProfile", "-NonInteractive"]
+    assert result.stdout == "Valid\n"
 
 
 def _write_kit(kit_dir: Path, *, with_packs: bool = True, with_station: bool = True) -> Path:
@@ -352,6 +377,41 @@ def test_gate_a_artifact_name_uses_build_run_id_not_gate_a_run_id(tmp_path, monk
         assert artifact_name.endswith("111")
 
 
+def test_gate_a_repeated_downloads_archive_fresh_attempts(tmp_path, monkeypatch):
+    """A repeated dry-run/live preparation must never overwrite old proofs."""
+    base_fake = _fake_command_factory()
+
+    def refusing_fake(cmd, **kwargs):
+        if cmd[:3] == ["gh", "run", "download"]:
+            destination = Path(cmd[cmd.index("-D") + 1])
+            assert not (destination / "gate-a-verdict.json").exists()
+        return base_fake(cmd, **kwargs)
+
+    monkeypatch.setattr(m, "run_command", refusing_fake)
+    destination = tmp_path / "gate-a-verdicts"
+    first = m.download_gate_a_verdicts(
+        repository="scottconverse/civicast-native",
+        gate_a_run_id="222",
+        build_run_id="111",
+        dest_dir=destination,
+    )
+    second = m.download_gate_a_verdicts(
+        repository="scottconverse/civicast-native",
+        gate_a_run_id="222",
+        build_run_id="111",
+        dest_dir=destination,
+    )
+
+    assert set(first) == set(second) == set(m.GATE_A_LANES)
+    assert {doc["source_sha"] for doc in first.values()} == {SOURCE_SHA}
+    assert {doc["source_sha"] for doc in second.values()} == {SOURCE_SHA}
+    download_calls = _gh_calls(base_fake.calls, "gh", "run", "download")
+    destinations = [Path(call[call.index("-D") + 1]) for call in download_calls]
+    assert len(destinations) == 2 * len(m.GATE_A_LANES)
+    assert len({path.parents[0] for path in destinations}) == 2
+    assert all(path.name in m.GATE_A_LANES for path in destinations)
+
+
 def test_gate_a_non_pass_verdict_refuses():
     verdicts = {lane: _gate_a_doc(lane=lane) for lane in m.GATE_A_LANES}
     verdicts["clean"]["verdict"] = "FAIL"
@@ -642,6 +702,9 @@ def test_dry_run_produces_expected_artifacts(tmp_path, monkeypatch):
     assert m.sha256_file(out_dir / f"{setup.name}.sidecar.json") in notes
     assert "beta candidate, not a production release" in notes.lower()
     assert "download setup.exe" in notes.lower() or "download `setup.exe`" in notes.lower()
+    assert "verify the exact sha-256" in notes.lower()
+    assert "warning alone proves neither signature failure nor a valid publisher" in notes.lower()
+    assert "missing, or the publisher/hash differs, stop" in notes.lower()
 
     # dry run must not have touched the real release-truth.yaml on disk
     # (only via update_release_truth called on a scratch copy for the summary)

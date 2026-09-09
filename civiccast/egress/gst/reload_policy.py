@@ -31,14 +31,14 @@ nothing extended a live (ON_AIR) plan before it ran out.
    built from the same wall-clock join-in-progress offset) and lets the airing
    item finish naturally, with no re-decode and no jump.
 
-   Deferring is safe ONLY for an automation-driven extension of an already-ON_AIR
-   plan with no operator override in effect. An operator-initiated live takeover or
+   Deferring is safe ONLY for an automation-driven extension of a finite ON_AIR or
+   FALLBACK_SLATE plan with no operator override in effect. An operator-initiated live takeover or
    forced slate is a deliberate "now" request -- see ``PlayoutSupervisor.
    request_live_takeover``/``request_fallback_slate`` (civiccast/egress/
    supervisor.py) -- and must still cut immediately, so ``should_defer_switch``
-   returns False whenever a manual override is active, or the channel was not
-   already ON_AIR (e.g. the FALLBACK_SLATE gap-replan reload, which issue #157
-   requires to interrupt filler immediately, never wait for it to end).
+   returns False whenever a manual override is active. A FALLBACK_SLATE gap-replan
+   has no tracked ``plan_end_at`` and still interrupts filler immediately; a finite
+   filler-horizon rollover has one and defers to that boundary.
 """
 
 from __future__ import annotations
@@ -74,17 +74,80 @@ def reload_switch_is_deferred(reload_path: str) -> bool:
     return reload_path.endswith(DEFERRED_SWITCH_SUFFIX)
 
 
-def should_defer_switch(*, previous_state: str | None, manual_override_active: bool) -> bool:
+#: The literal filename segment ``GstPlayoutStrategy.reload_content`` writes
+#: every reload sidecar under, immediately before the id component --
+#: ``playout-graph.reload.<id><suffix>``.
+_RELOAD_SIDECAR_PREFIX = "playout-graph.reload."
+
+
+def reload_id_from_sidecar_path(reload_path: str) -> str:
+    """Extract the daemon-generated reload id embedded in a reload sidecar's
+    FILENAME (hostile-review follow-up, 2026-09-06, item "POSIX _dispatch_
+    control never settles").
+
+    ``GstPlayoutStrategy.reload_content`` uses the daemon's own ``command_id``
+    (``EgressDaemon._try_content_reload``'s freshly generated ``reload_id``,
+    the same id its own ``_poll_reload_settlement`` later looks for) as this
+    filename's unique component, instead of a disconnected, independently
+    generated uuid -- specifically so a reload dispatched over the POSIX FIFO
+    control channel can still report its settlement under an id the daemon
+    can correlate. Unlike the Windows D2 named-pipe seam, the FIFO has no
+    separate envelope/ack ``id`` field at all (``control.parse_control_line``'s
+    ``reload <path>`` grammar takes the entire remainder as the path -- see
+    ``reload_sidecar_suffix``'s docstring for why the switch-mode flag rides
+    the filename for the identical reason), so the filename is the only slot
+    available.
+
+    Falls back to the bare filename stem (``Path(reload_path).name``, suffix
+    included) if the expected ``playout-graph.reload.`` prefix isn't present
+    -- e.g. a hand-constructed path in an older test/tool -- so a dispatch can
+    never crash over this; it just correlates less precisely (effectively:
+    not at all, matching the pre-fix behavior for that one caller)."""
+    name = reload_path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    if not name.startswith(_RELOAD_SIDECAR_PREFIX):
+        return name
+    remainder = name[len(_RELOAD_SIDECAR_PREFIX) :]
+    for suffix in (DEFERRED_SWITCH_SUFFIX, IMMEDIATE_SWITCH_SUFFIX):
+        if remainder.endswith(suffix):
+            return remainder[: -len(suffix)]
+    return remainder
+
+
+def should_defer_switch(
+    *,
+    previous_state: str | None,
+    manual_override_active: bool,
+    plan_end_at: datetime | None = None,
+    now: datetime | None = None,
+) -> bool:
     """True when a content-reload should defer its selector switch to the
     outgoing leg's own EOS rather than cutting the instant the new leg is ready.
 
-    Only an automation-driven extension of an already-ON_AIR plan qualifies:
-    a FALLBACK_SLATE gap-replan (``previous_state != "ON_AIR"``) and any reload
-    issued while an operator override is active (live takeover / forced slate --
-    ``manual_override_active``) must always cut in immediately.
+    Only an automation-driven extension of an already-ON_AIR plan, or a finite
+    FALLBACK_SLATE plan carrying its tracked horizon, qualifies. A slate gap-replan
+    without a horizon and any reload issued while an operator override is active
+    (live takeover / forced slate -- ``manual_override_active``) cut immediately.
+
+    Item 78 fix: ``plan_end_at``/``now`` are an optional pair (both default
+    ``None`` and are ignored unless both are given, so every pre-existing
+    caller/test that only passes ``previous_state``/``manual_override_active``
+    keeps its exact prior behavior). When both are given and the tracked
+    plan's projected end is already at or before ``now``, deferring is never
+    safe: the "outgoing leg's own EOS" this mode waits for is a boundary that
+    has *already passed* (a channel-automation pass stalled long enough --
+    e.g. ``SourcePreparer`` blocking for ~915s inside ``daemon._start`` -- that
+    the horizon it computed the reload against is now stale), so waiting for
+    that EOS is waiting for something that may never arrive within any
+    reasonable window. Cutting immediately is always correct here regardless
+    of ``previous_state``/``manual_override_active``.
     """
 
-    return previous_state == "ON_AIR" and not manual_override_active
+    if plan_end_at is not None and now is not None and plan_end_at <= now:
+        return False
+    return not manual_override_active and (
+        previous_state == "ON_AIR"
+        or (previous_state == "FALLBACK_SLATE" and plan_end_at is not None)
+    )
 
 
 def rollover_trigger_at(
@@ -114,6 +177,7 @@ def rollover_trigger_at(
 __all__ = [
     "DEFERRED_SWITCH_SUFFIX",
     "IMMEDIATE_SWITCH_SUFFIX",
+    "reload_id_from_sidecar_path",
     "reload_sidecar_suffix",
     "reload_switch_is_deferred",
     "rollover_trigger_at",

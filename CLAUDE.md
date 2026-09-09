@@ -4,31 +4,25 @@
 
 ---
 
-## Mandatory CivicCast Cross-Agent Audit Protocol
+## Current owner authorization — 2026-09-08 beta.5 release
 
-For any CivicCast audit, audit-fix, release-gate, verification, status report,
-Claude/Codex report check, merge/tag-readiness decision, or directive-writing
-work, read and follow the repo-local protocol:
+The outdated cross-agent audit protocol has been removed at Scott's request.
+Do not restore or follow it. The current release manager is authorized to
+finish the operating beta for LPM: repair, test, document, push, merge on
+green CI, tag, and publish. This explicit assignment supersedes historical
+owner-only execution rules below for this release; no per-stage approval is
+needed. Station production cutover and new spending still require authorization.
 
-`docs/process/CIVICCAST_AUDIT_PROTOCOL.md`
-
-The protocol requires claim verification against git/GitHub/logs, durable
-artifact reads, substantive content checks, drift checks, working-tree
-reporting, unreported catches, caveats, and paste-ready directives with exact
-files, examples, acceptance criteria, halt triggers, and proof requirements.
-
-A sparse status report is not acceptable unless Scott explicitly requests a
-narrow summary.
+Do not use staged-build, Workflowwright, GauntletGate, Proof Gate, or Audit
+Team skills on this assignment. Manage work directly, use independent agents
+when useful, and support release claims with results from the actual candidate.
 
 ---
 
 ## Mandatory 5-lens self-audit before every push
 
-This rule is the *implementation-side* counterpart to the verification-side
-audit protocol above. The verification protocol governs how Codex / Claude
-audit each other's work. This rule governs how Claude audits its own work
-before the verification turn ever runs, so the verification turn finds less
-to fix.
+This repository checklist covers engineering, user experience, tests,
+documentation, and QA before pushing a change.
 
 **Before every `git push` that touches code, docs, or status artifacts on
 this repo,** run a hostile 5-lens self-audit on the actual diff. The result
@@ -56,8 +50,8 @@ proves otherwise):
    Hostile means: a doc silent about the change is wrong, not OK.
 5. **QA.** Read the final state across files cold, as the next agent
    walking in. Cross-file contradictions, ledger top-totals vs row
-   counts, forbidden status words (`done`/`ready`/`taggable`/`shippable`
-   per audit protocol §12). Hostile means: drift exists until cross-file
+   counts, and readiness claims unsupported by current evidence.
+   Hostile means: drift exists until cross-file
    reading proves it doesn't.
 
 The artifact-state checklist (specific drift Scott has had to find by hand)
@@ -95,7 +89,7 @@ archived) scottconverse/civiccast if something needs recovering. On
 machinery: `civiccast/_version.py` no longer tracks a separate WSL release
 identity (it used to hold `1.0.0-rcNN` while `civiccast/_native_version.py`
 held the native line's own `1.0.0-beta.N`). There is one product and one
-version now -- both files hold `1.0.0-beta.2`, and
+version now -- both files hold `1.0.0-beta.5`, and
 `scripts/policy/check_release_identity.py` enforces that they, and every
 other release-identity surface it checks (README, docs/index.html,
 CHANGELOG, docs/API-REFERENCE.md, the installer's Cargo/Tauri/package.json
@@ -128,7 +122,7 @@ Coder loop for every program slice:
 
 ## What CivicCast is
 
-CivicCast is an open-source, self-hostable, public-good civic broadcast platform. Streaming-first product with three-tier publish (portal + Internet Archive + syndication). The reference deployment runs on commodity Linux or Apple Silicon hardware. Apache 2.0 / CC BY 4.0 throughout. No appliances, no per-minute fees, no vendor lock-in.
+CivicCast is an open-source, self-hostable civic broadcast platform for native Windows stations, with portal, archive, and syndication capabilities. Apache 2.0 / CC BY 4.0 throughout. No proprietary appliance or per-minute software fees.
 
 The full product narrative, audience model, deployment profiles, module catalog, data model, hardware reference, governance, and roadmap live in the canonical spec. Read the spec before any architectural work.
 
@@ -197,20 +191,13 @@ below is currently enforced, not aspirational.
    `docs/claims/claims.yaml` / `claims-schema.json` / `workflow-contract.yaml`.
    A capability claim without bound evidence fails the check; this is not a
    repo-wide sweep, only the registered governed set.
-5. **Clean-box e2e: THERE IS NO AUTOMATED GATE IN THIS REPOSITORY.** Say so
-   plainly rather than citing one that is not here.
-   `ci-cleanroom-e2e.yml` was the Docker/Linux full-install gate; `docker/`
-   was excluded under the owner's "no linux" decision and the workflow went
-   with it. Nothing replaced it.
-   `vm-cleanroom-release.yml` is `workflow_dispatch`-only, targets a
-   `self-hosted, linux` runner, and its script computes an install PLAN
-   rather than performing an install. It has never run here.
-   `.agent-runs/native-windows/k1-clean-box-proof/` is likewise not in this
-   repository — `.agent-runs` was excluded by the migration manifest.
-   So a change claiming release-candidate readiness cannot cite an automated
-   clean-box run against its SHA, because none can exist yet. It needs a real
-   install on a clean Windows box, recorded — not an assumption
-   that it ran because the PR is green.
+5. **Windows installation and operation proof.** Follow the executable
+   release path in `docs/ops/release-candidates.md`: an exact-source signed
+   candidate, then `gate-a-station-acceptance.yml` clean-install,
+   cross-version upgrade and download-only PASS verdicts for that candidate.
+   `sandbox-lab/Run-SandboxSoak.ps1` is a shorter local runtime check.
+   The separate tester-machine soak establishes sustained runtime evidence;
+   physical station/headend acceptance still requires that equipment.
 6. **Keystone framing for major capabilities.** The CivicCast One
    reconciliation work names major native-line capabilities as keystones
    (K1, K2, K3, …) — see the CHANGELOG entries tagged "CivicCast One
@@ -229,8 +216,10 @@ merges.
 ### Owner gates
 
 Merges to `main` require green CI and resolved review conversations.
-**Tags, releases and publication are owner-only** — Scott decides when a
-candidate becomes a release, and no agent creates or moves a tag.
+**Tags, releases and publication require owner authorization.** The current
+beta.5 assignment at the top of this file supplies that authorization after
+the candidate passes its required checks. It does not authorize moving an
+existing published tag or cutting over the station's production feed.
 
 Standing instruction from the owner, which supersedes the older "Scott
 performs every merge personally" note this file used to carry: agents PUSH
@@ -327,8 +316,8 @@ When you ask, name (1) the branch/line you're on, (2) the section of the spec th
 
 - Branch from `main`; there is no second line to choose between.
 - Conventional commits with DCO sign-off on every commit.
-- Both protected branches require PRs — no direct pushes. Owner merges, per "Owner gates" above.
-- Tags and releases (`v1.0.0-rcNN` on the public line, `1.0.0-beta.N` on the native line) are cut by Scott only, after he confirms.
+- Use pull requests to `main`; merge on green CI under the owner's assignment.
+- This native Windows product uses `v1.0.0-beta.N` release tags. Tag and publish only with owner authorization, including the explicit beta.5 assignment above.
 - Release notes and PR descriptions carry the 5-lens self-audit result and any ADRs the change touched.
 
 ## Role posture (carry over from the human director's standing instructions)
@@ -360,7 +349,7 @@ All five questions, every time, no exceptions.
 - Execute a requirement you believe is wrong without first flagging it and proposing an alternative.
 - Ship code with stale comments, an outdated CHANGELOG, or undocumented breaking changes.
 - Reopen a closed architectural decision without surfacing it to the human director first.
-- Merge or tag anything yourself — merges to protected branches and all tags/releases are owner-only.
+- Merge with failing required checks or publish without the owner's authorization and candidate evidence.
 - Pick an open decision (spec §13 or a native-line D-decision) silently — write the ADR.
 
 ---

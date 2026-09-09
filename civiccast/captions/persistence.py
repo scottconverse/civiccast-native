@@ -241,6 +241,22 @@ class PostgresCaptionReviewStore:
         status: CaptionReviewStatus | None = None,
         language: str | None = None,
     ) -> list[CaptionReviewItemResponse]:
+        # Known contract difference from ``InMemoryCaptionReviewStore.list()``
+        # (item 92): the in-memory store breaks a ``created_at`` tie with a
+        # per-process monotonic insertion sequence, so it always returns
+        # rows in creation order. This store still breaks ties with
+        # ``review_item_id`` (lexical, not creation order) because there is
+        # no durable, DB-native equivalent of that in-process counter without
+        # adding a monotonic sequence column via a new migration. In
+        # practice a same-``created_at`` tie here would need two ``create()``
+        # calls to land in the same server-side timestamp tick, which is far
+        # less likely than the in-memory store's bug (a tight synchronous
+        # Python loop reading the wall clock faster than its resolution) --
+        # every session round-trip in between spaces the timestamps out --
+        # but it is not impossible, and no caller here has been audited as
+        # exact-tie-safe the way ``captions/retention.py`` documents itself.
+        # If this is ever seen live, the fix is an autoincrement sequence
+        # column analogous to the in-memory counter, not a semantics change.
         with self._session_factory() as session:
             query = select(CaptionReviewItem).order_by(
                 CaptionReviewItem.created_at.asc(), CaptionReviewItem.review_item_id.asc()

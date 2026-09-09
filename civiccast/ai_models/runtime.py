@@ -101,11 +101,11 @@ def build_caption_runtime(service: AiModelService, *, live: bool = False) -> Cap
     """Construct the faster-whisper runtime bound to the operator's effective model id.
 
     ``live=True`` builds the runtime for the LIVE caption tap, which shares the
-    box with playout and is therefore sized conservatively (one CTranslate2
-    intra-thread, greedy decoding on CPU -- see
-    :data:`civiccast.captions.runtime.LIVE_TAP_CPU_THREADS`). The default,
-    ``live=False``, is the batch/VOD sizing: a finalization pass is allowed to
-    use the machine.
+    box with playout and is therefore sized conservatively (a core-count-aware,
+    capped CTranslate2 intra-thread count, greedy decoding on CPU -- see
+    :func:`civiccast.captions.runtime.default_live_tap_cpu_threads`). The
+    default, ``live=False``, is the batch/VOD sizing: a finalization pass is
+    allowed to use the machine.
 
     This flag exists here, at the seam the running service actually calls,
     because the app pre-builds the caption runtime and INJECTS it into

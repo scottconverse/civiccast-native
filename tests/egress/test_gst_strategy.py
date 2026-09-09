@@ -393,8 +393,61 @@ def _reload_request(tmp_path, *, path: str = "/m/c2.ts", label: str = "c2"):
     return EncoderStartRequest(channel_id="ch1", source_plan=plan, config=config, work_dir=tmp_path)
 
 
-def test_supports_content_reload_flag() -> None:
+def test_supports_content_reload_defaults_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ordinary plan rollovers use the in-place reload without an opt-in."""
+    monkeypatch.delenv("CIVICCAST_EGRESS_SEAMLESS_RELOAD", raising=False)
     assert GstPlayoutStrategy(worker_launcher=lambda *a: None).supports_content_reload is True
+    assert GstPlayoutStrategy.supports_content_reload is True
+
+
+@pytest.mark.parametrize("value", ["0", "false", "False", "no", "off", " OFF "])
+def test_supports_content_reload_explicit_opt_out(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("CIVICCAST_EGRESS_SEAMLESS_RELOAD", value)
+    assert GstPlayoutStrategy(worker_launcher=lambda *a: None).supports_content_reload is False
+
+
+def test_supports_content_reload_constructor_true_overrides_opt_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CIVICCAST_EGRESS_SEAMLESS_RELOAD", "0")
+    assert (
+        GstPlayoutStrategy(
+            worker_launcher=lambda *a: None, supports_content_reload=True
+        ).supports_content_reload
+        is True
+    )
+
+
+def test_supports_content_reload_env_var_opts_back_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CIVICCAST_EGRESS_SEAMLESS_RELOAD", "1")
+    assert GstPlayoutStrategy(worker_launcher=lambda *a: None).supports_content_reload is True
+
+
+def test_supports_content_reload_explicit_constructor_arg_wins_over_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CIVICCAST_EGRESS_SEAMLESS_RELOAD", "1")
+    strategy = GstPlayoutStrategy(worker_launcher=lambda *a: None, supports_content_reload=False)
+    assert strategy.supports_content_reload is False
+
+
+def test_reload_ack_timeout_is_the_same_small_default_as_every_other_verb() -> None:
+    """F1 redesign (F9): item 4's original widened bound (the worker's own
+    reload_timeout_s plus a margin) was itself a bug -- a reload's ack now
+    means only "armed" (fast, like any other verb), with the eventual settle
+    outcome reported out-of-band (reload-status.json), so this bound must be
+    back to the plain default and must NOT vary with
+    CIVICCAST_RELOAD_TIMEOUT_S (the env var item 4 used to read here)."""
+    assert strategy_module._reload_ack_timeout_s() == strategy_module._WORKER_PIPE_ACK_TIMEOUT_S
+
+
+def test_reload_ack_timeout_ignores_the_old_reload_timeout_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CIVICCAST_RELOAD_TIMEOUT_S", "900")
+    assert strategy_module._reload_ack_timeout_s() == strategy_module._WORKER_PIPE_ACK_TIMEOUT_S
 
 
 @_POSIX_FIFO_ONLY
@@ -422,6 +475,79 @@ def test_reload_content_drops_when_worker_not_ready(tmp_path) -> None:
     (tmp_path / "ch1").mkdir()
     # no FIFO (worker not started) → returns False so the daemon falls back to restart
     assert strategy.reload_content("ch1", tmp_path, _reload_request(tmp_path)) is False
+
+
+# --- coordinator follow-up: daemon._try_content_reload's silent False (diagnosability) --
+
+
+def test_last_send_command_failure_reason_none_before_any_call() -> None:
+    strategy = GstPlayoutStrategy(worker_launcher=lambda *a: None)
+    assert strategy.last_send_command_failure_reason("ch1") is None
+
+
+def test_last_send_command_failure_reason_reports_worker_not_started(tmp_path) -> None:
+    strategy = GstPlayoutStrategy(worker_launcher=lambda *a: None)
+    # No pipe channel ever registered for "ch1" (start() was never called).
+    applied = strategy.send_command(tmp_path, "ch1", "swap 1")
+
+    assert applied is False
+    reason = strategy.last_send_command_failure_reason("ch1")
+    assert reason is not None and "not started" in reason
+
+
+def test_last_send_command_failure_reason_reports_the_workers_ack(tmp_path) -> None:
+    """A channel whose worker connected but explicitly declined the command
+    (e.g. a reload that aborted -- item 4's "aborted:<reason>" ack) surfaces
+    THAT text, not just a bare False."""
+
+    class _DecliningPipeChannel:
+        def __init__(self, channel_id: str) -> None:
+            self.channel_id = channel_id
+            self.last_failure_reason: str | None = None
+
+        def start(self) -> None:
+            pass
+
+        def send_and_wait(self, verb, line, *, command_id=None) -> bool:
+            self.last_failure_reason = "worker acked 'aborted:timeout'"
+            return False
+
+        def close(self) -> None:
+            pass
+
+    strategy = GstPlayoutStrategy(
+        worker_launcher=lambda *a: None,
+        pipe_channel_factory=lambda channel_id: cast(
+            _WindowsPipeChannel, _DecliningPipeChannel(channel_id)
+        ),
+        # This test exercises the Windows D2 named-pipe control path
+        # specifically (bug fix, coordinator hostile review 2026-09-06:
+        # start()/send_command() used to branch on the real os.name instead
+        # of this injectable seam, so this test silently exercised the FIFO
+        # branch instead on a POSIX CI runner and failed there).
+        is_windows=True,
+    )
+    strategy.start(_start_request(tmp_path))
+
+    applied = strategy.send_command(tmp_path, "ch1", "reload /w/g.json")
+
+    assert applied is False
+    assert strategy.last_send_command_failure_reason("ch1") == "worker acked 'aborted:timeout'"
+
+
+def test_last_send_command_failure_reason_clears_on_a_later_success(tmp_path) -> None:
+    strategy = GstPlayoutStrategy(
+        worker_launcher=lambda *a: None,
+        pipe_channel_factory=_fake_pipe_channel_factory,  # always succeeds
+        is_windows=True,  # exercises the Windows D2 pipe path -- see the test above
+    )
+    strategy.start(_start_request(tmp_path))
+    strategy._last_send_command_failure["ch1"] = "stale reason from a prior failure"
+
+    applied = strategy.send_command(tmp_path, "ch1", "swap 1")
+
+    assert applied is True
+    assert strategy.last_send_command_failure_reason("ch1") is None
 
 
 # --- S11a: CEA-708 caption embed toggle + cue feed ------------------------------
@@ -562,6 +688,148 @@ def test_strategy_builds_the_live_caption_audio_tap_into_the_gstreamer_graph(
     )
 
 
+def test_strategy_omits_the_audio_tap_when_live_captions_are_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Item 91 follow-up: the operator's ``StationProfile.live_captions_enabled``
+    switch (and/or ``CIVICCAST_CAPTION_TAP=off``, which
+    ``resolve_live_captions_enabled`` also folds in) must stop the egress
+    audio-tap LEG at the next channel start, not just stop the tap worker
+    from transcribing what it forked. Before this, a caption dir configured
+    in the environment always produced a tap leg regardless of the
+    operator's switch -- ``_with_audio_tap`` never consulted it."""
+
+    tap_root = tmp_path / "caption-tap"
+    monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tap_root))
+    monkeypatch.setattr(
+        "civiccast.installer.station_state.resolve_live_captions_enabled",
+        lambda: False,
+    )
+    strategy = GstPlayoutStrategy(
+        worker_launcher=lambda *_args: SimpleNamespace(
+            pid=1, poll=lambda: None, terminate=lambda **_kwargs: 0
+        ),
+        pipe_channel_factory=_fake_pipe_channel_factory,
+    )
+
+    result = strategy.start(_start_request(tmp_path))
+
+    graph = graph_from_json(result.concat_plan_path.read_text(encoding="utf-8"))
+    assert graph.audio_tap is None
+
+
+def test_strategy_start_survives_a_corrupt_station_state_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Item 91 review round 2 (BLOCKER): ``resolve_live_captions_enabled``
+    reads ``station-state.json`` via ``_load_raw_state``, which only ever
+    suppresses ``FileNotFoundError``/``json.JSONDecodeError`` -- a state file
+    containing a byte that is not valid UTF-8 raises ``UnicodeDecodeError``
+    straight through ``read_text(encoding="utf-8")``'s strict decode.
+    MEASURED before this test's fix landed: that exception propagated out of
+    ``GstPlayoutStrategy.start()`` and stopped the channel going to air over
+    a corrupt status file for an entirely unrelated, best-effort,
+    accessibility feature. ``_live_captions_enabled_or_default`` must catch
+    this, log once, and default to the documented "on" instead."""
+
+    strategy_module._live_captions_read_failure_announced = False
+    state_path = tmp_path / "station-state.json"
+    # A byte that is not valid UTF-8 anywhere (0xFF is invalid in every UTF-8
+    # continuation/lead position) -- guarantees UnicodeDecodeError, not a
+    # JSONDecodeError, which is already handled.
+    state_path.write_bytes(b'{"station": {"live_captions_enabled": \xff}}')
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(state_path))
+    monkeypatch.delenv("CIVICCAST_CAPTION_TAP", raising=False)
+
+    strategy = GstPlayoutStrategy(
+        worker_launcher=lambda *_args: SimpleNamespace(
+            pid=1, poll=lambda: None, terminate=lambda **_kwargs: 0
+        ),
+        pipe_channel_factory=_fake_pipe_channel_factory,
+    )
+
+    with caplog.at_level("WARNING", logger="civiccast.egress.gst.strategy"):
+        result = strategy.start(_start_request(tmp_path))  # must not raise
+
+    assert "could not read the live-captions station-profile switch" in caplog.text
+    # Defaults to the documented "on" -- unaffected by the read failure, the
+    # graph still gets built normally (no CIVICCAST_CAPTION_TAP_DIR is set in
+    # this test, so there is simply no tap plan; the point is start() did not
+    # raise, not that a tap was built).
+    graph_from_json(result.concat_plan_path.read_text(encoding="utf-8"))
+
+
+def test_strategy_start_survives_a_locked_station_state_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Sibling of the corrupt-file case: a Windows sharing violation while
+    another process holds ``station-state.json`` open surfaces as
+    ``PermissionError`` (a subclass of ``OSError``), which
+    ``_load_raw_state`` also does not suppress. Stubbed directly against
+    ``resolve_live_captions_enabled`` (rather than a real file lock, which
+    is awkward to arrange portably in a unit test) to prove the SAME guard
+    catches an ``OSError`` family member, not just ``UnicodeDecodeError``."""
+
+    strategy_module._live_captions_read_failure_announced = False
+
+    def _raise_permission_error() -> bool:
+        raise PermissionError(
+            13, "The process cannot access the file because it is being used by another process"
+        )
+
+    monkeypatch.setattr(
+        "civiccast.installer.station_state.resolve_live_captions_enabled",
+        _raise_permission_error,
+    )
+    tap_root = tmp_path / "caption-tap"
+    monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tap_root))
+
+    strategy = GstPlayoutStrategy(
+        worker_launcher=lambda *_args: SimpleNamespace(
+            pid=1, poll=lambda: None, terminate=lambda **_kwargs: 0
+        ),
+        pipe_channel_factory=_fake_pipe_channel_factory,
+    )
+
+    with caplog.at_level("WARNING", logger="civiccast.egress.gst.strategy"):
+        result = strategy.start(_start_request(tmp_path))  # must not raise
+
+    assert "could not read the live-captions station-profile switch" in caplog.text
+    # Defaults to "on": the tap dir WAS configured, so the graph carries the
+    # tap leg exactly as it would if the read had actually succeeded and
+    # returned True.
+    graph = graph_from_json(result.concat_plan_path.read_text(encoding="utf-8"))
+    assert graph.audio_tap is not None
+
+
+def test_strategy_builds_the_audio_tap_when_live_captions_stay_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sibling of the disabled case above: an explicit ``True`` (the default,
+    an operator who never touched the switch) still builds the tap exactly
+    as before -- the new check is a gate, not a behavior change for the
+    common case."""
+
+    tap_root = tmp_path / "caption-tap"
+    monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tap_root))
+    monkeypatch.setattr(
+        "civiccast.installer.station_state.resolve_live_captions_enabled",
+        lambda: True,
+    )
+    strategy = GstPlayoutStrategy(
+        worker_launcher=lambda *_args: SimpleNamespace(
+            pid=1, poll=lambda: None, terminate=lambda **_kwargs: 0
+        ),
+        pipe_channel_factory=_fake_pipe_channel_factory,
+    )
+
+    result = strategy.start(_start_request(tmp_path))
+
+    graph = graph_from_json(result.concat_plan_path.read_text(encoding="utf-8"))
+    assert graph.audio_tap is not None
+    assert graph.audio_tap.tap_dir == str(tap_root / "ch1")
+
+
 @_POSIX_FIFO_ONLY
 def test_strategy_reload_carries_caption_leg_when_embedding(tmp_path) -> None:
     strategy = GstPlayoutStrategy(worker_launcher=lambda *a: None, embed_captions=True)
@@ -695,6 +963,36 @@ class _ImmediateAckServer:
 
     def close(self) -> None:
         self.closed = True
+
+
+def test_windows_pipe_channel_surfaces_reload_commit_busy_error() -> None:
+    """The real strategy channel maps the worker's busy error to False + detail."""
+
+    class _BusyAckServer(_ImmediateAckServer):
+        def write_line(self, text: str) -> bool:
+            obj = json.loads(text)
+            self.written_cmds.append(str(obj["cmd"]))
+            self.written_ids.append(str(obj["id"]))
+            self._inbox.append(
+                json.dumps(
+                    {
+                        "v": 1,
+                        "id": str(obj["id"]),
+                        "result": "error",
+                        "detail": "RuntimeError('reload commit already in progress')",
+                    }
+                )
+            )
+            return True
+
+    server = _BusyAckServer()
+    channel = _WindowsPipeChannel("ch1", server=cast("object", server), ack_timeout_s=0.1)  # type: ignore[arg-type]
+    channel._connected_event.set()
+
+    assert channel.send_and_wait("reload", "reload C:/work/new.json") is False
+    assert channel.last_failure_reason == (
+        "worker acked 'error' (RuntimeError('reload commit already in progress'))"
+    )
 
 
 def _real_channel_factory(servers: list[_ImmediateAckServer]):

@@ -19,6 +19,7 @@ from datetime import UTC, datetime, timedelta
 from civiccast.egress.gst.reload_policy import (
     DEFERRED_SWITCH_SUFFIX,
     IMMEDIATE_SWITCH_SUFFIX,
+    reload_id_from_sidecar_path,
     reload_sidecar_suffix,
     reload_switch_is_deferred,
     rollover_trigger_at,
@@ -58,6 +59,96 @@ class TestShouldDeferSwitch:
     def test_transitioning_or_starting_never_defers(self) -> None:
         for state in ("TRANSITIONING", "STARTING", "STOPPED", "ERROR", "DRAINING"):
             assert should_defer_switch(previous_state=state, manual_override_active=False) is False
+
+
+class TestShouldDeferSwitchPlanEndAt:
+    """Item 78 fix 3: an optional ``plan_end_at``/``now`` pair overrides an
+    otherwise-deferring decision to "cut immediately" once the tracked plan's
+    projected end has already passed by wall clock -- deferring to a boundary
+    that already happened waits for something that will never arrive."""
+
+    def test_omitting_both_preserves_prior_behavior(self) -> None:
+        # Every pre-existing caller/test (including every case in
+        # TestShouldDeferSwitch above) passes neither parameter -- this must
+        # be indistinguishable from the old two-argument signature.
+        assert should_defer_switch(previous_state="ON_AIR", manual_override_active=False) is True
+        assert (
+            should_defer_switch(previous_state="FALLBACK_SLATE", manual_override_active=False)
+            is False
+        )
+
+    def test_plan_end_at_in_the_future_still_defers(self) -> None:
+        assert (
+            should_defer_switch(
+                previous_state="ON_AIR",
+                manual_override_active=False,
+                plan_end_at=_NOW + timedelta(seconds=1),
+                now=_NOW,
+            )
+            is True
+        )
+
+    def test_plan_end_at_exactly_at_now_cuts_immediately(self) -> None:
+        assert (
+            should_defer_switch(
+                previous_state="ON_AIR",
+                manual_override_active=False,
+                plan_end_at=_NOW,
+                now=_NOW,
+            )
+            is False
+        )
+
+    def test_plan_end_at_in_the_past_cuts_immediately_even_though_on_air_with_no_override(
+        self,
+    ) -> None:
+        # This is otherwise the exact shape that would defer (ON_AIR, no
+        # override) -- the stale horizon must win.
+        assert (
+            should_defer_switch(
+                previous_state="ON_AIR",
+                manual_override_active=False,
+                plan_end_at=_NOW - timedelta(seconds=698),
+                now=_NOW,
+            )
+            is False
+        )
+
+    def test_only_one_of_the_pair_given_is_ignored(self) -> None:
+        # Both must be present to engage the override -- a caller that only
+        # has one of the two (shouldn't happen, but must not crash or
+        # misbehave) falls back to the ordinary decision.
+        assert (
+            should_defer_switch(
+                previous_state="ON_AIR",
+                manual_override_active=False,
+                plan_end_at=_NOW - timedelta(seconds=1),
+                now=None,
+            )
+            is True
+        )
+        assert (
+            should_defer_switch(
+                previous_state="ON_AIR",
+                manual_override_active=False,
+                plan_end_at=None,
+                now=_NOW,
+            )
+            is True
+        )
+
+    def test_fallback_rollover_with_a_future_horizon_defers(self) -> None:
+        # A horizon-scoped filler rollover waits for the outgoing finite
+        # filler leg; an immediate due-program replan supplies no horizon.
+        assert (
+            should_defer_switch(
+                previous_state="FALLBACK_SLATE",
+                manual_override_active=False,
+                plan_end_at=_NOW + timedelta(seconds=100),
+                now=_NOW,
+            )
+            is True
+        )
 
 
 class TestReloadSidecarSuffix:
@@ -143,3 +234,51 @@ class TestRolloverTriggerAt:
                 last_segment_start_at=_NOW,
                 min_lead_seconds=-1.0,
             )
+
+
+class TestReloadIdFromSidecarPath:
+    """Hostile-review follow-up (third pass), item 5b: direct unit coverage
+    of ``reload_id_from_sidecar_path`` -- the POSIX FIFO control channel has
+    no separate envelope/ack id field, so the daemon's own reload_id rides
+    the sidecar filename instead, and this function is what recovers it on
+    the read side (see its own docstring for the full rationale)."""
+
+    def test_valid_immediate_switch_path_extracts_the_id(self) -> None:
+        path = "/work/gov/playout-graph.reload.abc-123.immediate.json"
+        assert reload_id_from_sidecar_path(path) == "abc-123"
+
+    def test_valid_deferred_switch_path_extracts_the_id(self) -> None:
+        path = "/work/gov/playout-graph.reload.abc-123.defer-eos.json"
+        assert reload_id_from_sidecar_path(path) == "abc-123"
+
+    def test_windows_backslash_path_extracts_the_id(self) -> None:
+        # The Windows D2 named-pipe seam doesn't need this function (it has
+        # its own envelope id field), but the extraction itself must not
+        # assume a POSIX separator -- a backslash-separated path still
+        # isolates the filename correctly.
+        path = r"C:\work\gov\playout-graph.reload.abc-123.immediate.json"
+        assert reload_id_from_sidecar_path(path) == "abc-123"
+
+    def test_malformed_path_missing_the_expected_prefix_falls_back_to_the_filename(
+        self,
+    ) -> None:
+        # No "playout-graph.reload." prefix at all (e.g. a hand-constructed
+        # path from an older test/tool) -- must never raise, just correlate
+        # less precisely: the bare filename stem, suffix included.
+        path = "/work/gov/some-other-file.immediate.json"
+        assert reload_id_from_sidecar_path(path) == "some-other-file.immediate.json"
+
+    def test_path_with_no_id_component_returns_the_empty_remainder(self) -> None:
+        # The prefix is present but nothing follows it before the suffix --
+        # degenerate, but still must not raise.
+        path = "/work/gov/playout-graph.reload..immediate.json"
+        assert reload_id_from_sidecar_path(path) == ""
+
+    def test_path_with_an_unrecognized_suffix_keeps_the_suffix_as_part_of_the_id(
+        self,
+    ) -> None:
+        # Neither known suffix matches, so nothing is stripped -- the
+        # remainder (including whatever trailing extension it has) is
+        # returned as-is, matching an old-format/unknown sidecar filename.
+        path = "/work/gov/playout-graph.reload.abc-123.unknown-suffix"
+        assert reload_id_from_sidecar_path(path) == "abc-123.unknown-suffix"

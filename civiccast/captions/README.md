@@ -96,7 +96,23 @@ Runtime notes:
   the shared model executor. `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`
   configures concurrent channel scans, and
   `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` sets the fail-closed backlog
-  bound. All four values must be positive integers.
+  bound. `CIVICCAST_WHISPER_NUM_WORKERS`,
+  `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`, and
+  `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` must be positive integers
+  (minimum 1); `CIVICCAST_WHISPER_CPU_THREADS` must be a non-negative integer
+  (minimum 0 -- `0` means "every core" and is the batch/VOD default, honoured
+  as before). Item 79 (2026-09) adds a live-only exception: for the **live**
+  caption tap specifically, `CIVICCAST_WHISPER_CPU_THREADS` is CLAMPED rather
+  than fatal -- an unparseable or negative value falls back to a safe
+  default with a warning instead of raising, `0` ("every core") is refused
+  the same way and falls back too, and any value above `2` is capped at `2`
+  -- so this variable can no longer hand the live tap "every core" or take
+  an activated station off air over a typo. The batch/VOD runtime keeps the
+  original fail-fast (raise) behaviour on a bad value. See
+  `docs/ops/background-workers.md` for the full env-var reference table
+  (including the live-only `CIVICCAST_CAPTION_TAP_CPU_THREADS`) and
+  `civiccast/captions/runtime.py`'s `_resolved_whisper_cpu_threads_env` for
+  the implementation.
 - CivicCast converts each mono PCM s16le chunk to a temporary WAV before
   calling `WhisperModel.transcribe`, then offsets segment timestamps back to
   the chunk's live timeline.

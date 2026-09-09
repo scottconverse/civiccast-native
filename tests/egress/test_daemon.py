@@ -3,7 +3,11 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import json
+import logging
+import uuid
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -33,6 +37,20 @@ from civiccast.egress.store import InMemoryEgressStore
 from civiccast.egress.supervisor import PlayoutSupervisor
 
 
+def _write_fake_reload_status(
+    work_dir: Path, channel_id: str, command_id: str | None, result: str
+) -> None:
+    """F1 redesign test helper: simulates ``worker.py``'s
+    ``_write_reload_status`` -- writes the file ``EgressDaemon.
+    _poll_reload_settlement`` polls for. ``command_id`` falls back to a fresh
+    uuid (mirroring ``worker.py``'s own fallback) so a caller that doesn't
+    pass one still produces a matchable id."""
+    channel_dir = work_dir / channel_id
+    channel_dir.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"id": command_id or uuid.uuid4().hex, "result": result})
+    (channel_dir / "reload-status.json").write_text(payload, encoding="utf-8")
+
+
 class _FakeProcess:
     def __init__(self, *, pid: int = 4242, returncode: int | None = None) -> None:
         self.pid = pid
@@ -45,6 +63,32 @@ class _FakeProcess:
     def terminate(self) -> None:
         self.terminated = True
         self.returncode = 0
+
+
+class _StubbornFakeProcess:
+    """Item 85 hostile-review follow-up: a worker so wedged that even
+    ``terminate()`` (SIGTERM / a Windows console-control-style request) is
+    never observed -- ``poll()`` keeps reporting "still alive" no matter how
+    many times ``terminate()`` is called. Only ``kill()`` (SIGKILL / a forced
+    Windows ``TerminateProcess``) actually ends it, with a distinct non-zero
+    returncode so a test can tell which call path actually worked."""
+
+    def __init__(self, *, pid: int = 4242) -> None:
+        self.pid = pid
+        self.returncode: int | None = None
+        self.terminate_calls = 0
+        self.killed = False
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminate_calls += 1
+        # Deliberately does NOT set returncode -- terminate() is ignored.
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = 137  # conventional "killed" exit code (128 + SIGKILL)
 
 
 def _start_fake_process(
@@ -782,12 +826,18 @@ class _FakeContentReloadStrategy:
         *,
         reload_ok: bool = True,
         reload_exc: Exception | None = None,
+        # F1/F9: False lets a test control settlement timing itself (simulate
+        # a deferred switch that stays pending across several poll ticks)
+        # instead of the fake auto-settling "applied" the instant it arms.
+        auto_settle: bool = True,
     ) -> None:
         self._processes = processes
         self._started = started
         self._reload_ok = reload_ok
         self._reload_exc = reload_exc
+        self._auto_settle = auto_settle
         self.reload_calls: list[str] = []
+        self.reload_ids: list[str | None] = []
         # B3 fix: records what each reload_content call was asked for, so tests
         # can pin daemon.py's should_defer_switch wiring (_try_content_reload
         # sets EncoderStartRequest.switch_at_end_of_current).
@@ -807,12 +857,44 @@ class _FakeContentReloadStrategy:
     def swap_role(self, channel_id: str, work_dir: Path, role: str) -> None:  # pragma: no cover
         raise NotImplementedError
 
-    def reload_content(self, channel_id: str, work_dir: Path, request: EncoderStartRequest) -> bool:
+    def reload_content(
+        self,
+        channel_id: str,
+        work_dir: Path,
+        request: EncoderStartRequest,
+        *,
+        command_id: str | None = None,
+    ) -> bool:
         self.reload_calls.append(request.source_plan.segments[0].label)
+        self.reload_ids.append(command_id)
         self.switch_at_end_of_current_calls.append(request.switch_at_end_of_current)
         if self._reload_exc is not None:
             raise self._reload_exc
+        if self._reload_ok and self._auto_settle:
+            # F1 redesign: True now means ARMED, and the daemon defers its
+            # ON_AIR bookkeeping to _poll_reload_settlement observing
+            # reload-status.json -- this fake simulates an immediate,
+            # instantly-settling reload (the common case: switch_at_end_of_
+            # current=False commits on the new leg's first buffer) by writing
+            # that file right away. A test that needs to see the daemon's
+            # POST-settlement state therefore calls process_once() ONE MORE
+            # TIME after the reload -- the same shape a real deferred switch
+            # takes, just compressed to zero wall-clock delay. A test that
+            # constructs this fake with auto_settle=False controls the status
+            # file itself (F9: proving the daemon does not terminate the
+            # worker while genuinely still awaiting settlement).
+            _write_fake_reload_status(work_dir, channel_id, command_id, "applied")
         return self._reload_ok
+
+
+class _FakeNonReloadCapableStrategy(_FakeContentReloadStrategy):
+    """Identical to ``_FakeContentReloadStrategy`` except it does NOT declare
+    ``supports_content_reload`` -- ``_request_reload``'s own guard
+    (``getattr(self._encoder_strategy, "supports_content_reload", False)``)
+    must short-circuit to the restart path before ``_try_content_reload`` is
+    ever called, so ``reload_calls`` staying empty is the proof."""
+
+    supports_content_reload = False
 
 
 def test_content_reload_swaps_program_in_place_without_restart(tmp_path: Path) -> None:
@@ -847,6 +929,12 @@ def test_content_reload_swaps_program_in_place_without_restart(tmp_path: Path) -
     assert len(started) == 1
     assert started[0].terminated is False
     assert len(processes) == 1 and processes[0].pid == 222  # the spare was never started
+
+    # F1 redesign: the reload is ARMED after the process_once above (the fake
+    # strategy already wrote reload-status.json "applied"), but the daemon's
+    # ON_AIR bookkeeping only lands once _poll_reload_settlement observes it --
+    # one more tick, exactly like a real deferred switch settling later.
+    daemon.process_once("gov")
 
     state = store.read_state("gov")
     assert state is not None
@@ -893,6 +981,1393 @@ def test_content_reload_defers_switch_for_an_on_air_reload_with_no_override(
     assert strategy.switch_at_end_of_current_calls == [True]
 
 
+def test_horizon_rollover_from_terminal_schedule_settles_as_fallback_without_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Terminal program"),
+        fallback_source_provider=lambda _config: _source_plan_with_label(
+            tmp_path, "CivicCast filler"
+        ),
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")
+    daemon.record_rollover_plan_end(
+        "gov",
+        datetime.now(UTC) + timedelta(minutes=5),
+        command_id="cmd-reload",
+        force_fallback=True,
+    )
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == ["CivicCast filler"]
+    assert strategy.switch_at_end_of_current_calls == [True]
+    assert len(started) == 1
+
+    sink_states: list[str] = []
+    alert_states: list[str] = []
+    original_sink_connected = daemon._sink_connected
+
+    def record_sink_state(*args: Any, **kwargs: Any) -> dict[str, bool]:
+        sink_states.append(kwargs["state"])
+        return original_sink_connected(*args, **kwargs)
+
+    monkeypatch.setattr(daemon, "_sink_connected", record_sink_state)
+    monkeypatch.setattr(
+        daemon,
+        "_alert_evaluator_hook",
+        lambda _channel, state, _fps, _bitrate: alert_states.append(state),
+    )
+    # Inspect the settlement itself: a later ordinary poll would overwrite
+    # the inconsistent immediate sample and hide the regression.
+    daemon._poll_reload_settlement("gov")
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+    assert state.current_source_label == "CivicCast filler"
+    assert state.pid == 111
+    assert store.recent_health("gov", 1)[0].state == "FALLBACK_SLATE"
+    assert sink_states == ["FALLBACK_SLATE"]
+    assert alert_states == ["FALLBACK_SLATE"]
+    assert [event.state for event in store.recent_proof_events("gov", 3)] == [
+        "FALLBACK_SLATE",
+        "TRANSITIONING",
+        "ON_AIR",
+    ]
+
+
+def test_horizon_rollover_honors_schedule_published_before_command_drain(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Terminal program"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        plan = _source_plan_with_label(tmp_path, current_label)
+        if current_label != "Terminal program":
+            plan.segments[0] = plan.segments[0].model_copy(
+                update={"source_ref": "asset-terminal-program"}
+            )
+        return plan
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        fallback_source_provider=lambda _config: _source_plan_with_label(
+            tmp_path, "CivicCast filler"
+        ),
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")
+    daemon.record_rollover_plan_end(
+        "gov",
+        datetime.now(UTC) + timedelta(milliseconds=100),
+        command_id="cmd-reload",
+        force_fallback=True,
+    )
+    current_label = "Late published council meeting"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == ["Late published council meeting"]
+    assert strategy.switch_at_end_of_current_calls == [True]
+    assert len(started) == 1
+
+
+def test_horizon_rollover_does_not_treat_provider_clock_jitter_as_extension(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    strategy = _FakeContentReloadStrategy(processes, started)
+    base = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
+    provider_returned = {"value": False}
+
+    class _JitteringDatetime(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            return base if not provider_returned["value"] else base + timedelta(seconds=10)
+
+    def terminal_provider(_channel_id: str) -> EgressSourcePlan:
+        plan = _source_plan_with_label(tmp_path, "Terminal program")
+        provider_returned["value"] = True
+        return plan
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=terminal_provider,
+        fallback_source_provider=lambda _config: _source_plan_with_label(
+            tmp_path, "CivicCast filler"
+        ),
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")
+    provider_returned["value"] = False
+    monkeypatch.setattr("civiccast.egress.daemon.datetime", _JitteringDatetime)
+    daemon.record_rollover_plan_end(
+        "gov", base + timedelta(seconds=1), command_id="cmd-reload", force_fallback=True
+    )
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == ["CivicCast filler"]
+
+
+def test_horizon_rollover_rejects_a_shrinking_schedule_suffix(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    phase = {"terminal": False}
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        first = _source_plan_with_label(tmp_path, "Asset A").segments[0]
+        second = _source_plan_with_label(tmp_path, "Asset B").segments[0]
+        return EgressSourcePlan(
+            channel_id="gov", segments=[second] if phase["terminal"] else [first, second]
+        )
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        fallback_source_provider=lambda _config: _source_plan_with_label(
+            tmp_path, "CivicCast filler"
+        ),
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")
+    phase["terminal"] = True
+    daemon.record_rollover_plan_end(
+        "gov",
+        datetime.now(UTC) + timedelta(seconds=1),
+        command_id="cmd-reload",
+        force_fallback=True,
+    )
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == ["CivicCast filler"]
+
+
+def test_failed_rollover_filler_keeps_current_worker_on_air(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    strategy = _FakeContentReloadStrategy(processes, started)
+
+    def failed_filler(_config: EgressConfig) -> EgressSourcePlan:
+        raise SourcePrepareError("Filler could not be prepared.")
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Terminal program"),
+        fallback_source_provider=failed_filler,
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")
+    daemon.record_rollover_plan_end(
+        "gov",
+        datetime.now(UTC) + timedelta(minutes=5),
+        command_id="cmd-reload",
+        force_fallback=True,
+    )
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == []
+    assert len(started) == 1
+    assert started[0].terminated is False
+    assert store.read_state("gov").state == "ON_AIR"  # type: ignore[union-attr]
+
+
+def test_content_reload_cuts_immediately_when_the_recorded_rollover_horizon_has_already_passed(
+    tmp_path: Path,
+) -> None:
+    """Item 78 fix 3: ``ChannelAutomationService`` records the ``plan_end_at`` it
+    computed for a rollover reload (``record_rollover_plan_end``) before
+    enqueuing it. If that horizon has already passed by the time the reload
+    actually dispatches (e.g. the automation pass itself blocked for a long
+    time before reaching this channel), deferring the switch to the outgoing
+    leg's own EOS is deferring to a boundary that already happened and will
+    never arrive -- the switch must cut in immediately instead, even though
+    this is otherwise the exact B3 "ON_AIR, no override" shape that would
+    normally defer (see the test above)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    # Scoped to the SAME command_id "cmd-reload" the reload below carries
+    # (round 8: scoping is now mandatory -- see record_rollover_plan_end's
+    # docstring), so _request_reload's match succeeds and the value is used.
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2020, 1, 1, tzinfo=UTC), command_id="cmd-reload"
+    )  # already long past
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.switch_at_end_of_current_calls == [False]
+
+
+def test_record_rollover_plan_end_is_consumed_once_and_never_leaks_to_a_later_reload(
+    tmp_path: Path,
+) -> None:
+    """Item 78 fix 3: the recorded horizon is popped (not merely read) by
+    ``_try_content_reload`` -- a stale value from an earlier, already-settled
+    rollover must never silently apply to a LATER, unrelated reload of the
+    same channel (e.g. a second automation-driven ON_AIR extension with no
+    override, which should defer normally)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222), _FakeProcess(pid=333)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    # Scoped to "cmd-reload", the id of the reload command enqueued right
+    # after (round 8: scoping is mandatory).
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2020, 1, 1, tzinfo=UTC), command_id="cmd-reload"
+    )  # already long past
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+    assert strategy.switch_at_end_of_current_calls == [False]
+    # F1 redesign: the first reload is ARMED, not yet settled -- one more
+    # tick lets _poll_reload_settlement observe reload-status.json and
+    # finish the ON_AIR bookkeeping before a second reload is requested
+    # (mirrors test_content_reload_swaps_program_in_place_without_restart
+    # above).
+    daemon.process_once("gov")
+
+    current_label = "Second Program"
+    # A distinct command_id -- `_command("reload")` always returns the SAME
+    # id, and the store treats re-enqueuing an already-consumed id as a
+    # no-op (see the identical pattern elsewhere in this file).
+    store.enqueue_command(_command("reload").model_copy(update={"command_id": "cmd-reload-2"}))
+    daemon.process_once("gov")
+
+    # The stale plan_end_at from the FIRST reload must not still apply here --
+    # this second reload, with nothing recorded for it, defers normally.
+    assert strategy.switch_at_end_of_current_calls == [False, True]
+
+
+def test_content_reload_disabled_config_pops_the_recorded_plan_end_without_using_it(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 2, item 3: ``record_rollover_plan_end``'s value
+    used to be popped only at the point ``EncoderStartRequest`` was actually
+    built -- every early return ABOVE that point (disabled config, a
+    SourcePrepareError from the provider or the preparer, a foreign/None
+    plan) left it sitting in ``_rollover_plan_end_at``, where it would
+    silently apply to whatever reload for this channel came next, however
+    unrelated. It must now be consumed (popped) at the very top of
+    ``_try_content_reload``, before any of those early returns -- this test
+    covers the disabled-config path."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    # Scoped to "cmd-reload" so _request_reload's match succeeds (round 8:
+    # a mismatch would otherwise leave the entry in place, not popped).
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2020, 1, 1, tzinfo=UTC), command_id="cmd-reload"
+    )
+    store.upsert_config(_config().model_copy(update={"enabled": False}))
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == []  # never reached reload_content
+    assert daemon._rollover_plan_end_at == {}  # popped, not left leaking
+
+
+def test_content_reload_source_prepare_error_from_provider_pops_the_recorded_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 2, item 3 -- the provider-raises-
+    SourcePrepareError early-return path."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+    fail_next = False
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        if fail_next:
+            raise SourcePrepareError("Scheduled asset is missing.")
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    # Scoped to "cmd-reload" so _request_reload's match succeeds.
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2020, 1, 1, tzinfo=UTC), command_id="cmd-reload"
+    )
+    fail_next = True
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == []
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_content_reload_source_prepare_error_from_preparer_pops_the_recorded_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 2, item 3 -- the preparer-raises-
+    SourcePrepareError early-return path (a cold-conform failure, distinct
+    from the provider-level failure above)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+    fail_next = False
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    def source_preparer(source_plan: EgressSourcePlan, _config: EgressConfig) -> object:
+        if fail_next:
+            raise SourcePrepareError("Program asset could not be conformed.")
+        return SimpleNamespace(source_plan=source_plan, plan_dir=None, records=[])
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        source_preparer=source_preparer,
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    # Scoped to "cmd-reload" so _request_reload's match succeeds.
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2020, 1, 1, tzinfo=UTC), command_id="cmd-reload"
+    )
+    fail_next = True
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == []
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_content_reload_foreign_channel_plan_pops_the_recorded_plan_end(tmp_path: Path) -> None:
+    """Coordinator review, round 2, item 3 -- the foreign/mismatched-channel
+    plan early-return path (mirrors
+    test_content_reload_foreign_channel_plan_falls_back_to_restart below)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    foreign = False
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        plan = _source_plan_with_label(
+            tmp_path, "Mayor interview" if foreign else "Council meeting"
+        )
+        if foreign:
+            object.__setattr__(plan, "channel_id", "someone-else")
+        return plan
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    # Scoped to "cmd-reload" so _request_reload's match succeeds.
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2020, 1, 1, tzinfo=UTC), command_id="cmd-reload"
+    )
+    foreign = True
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == []  # foreign plan rejected before reload_content
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_request_reload_worker_missing_or_dead_pops_the_recorded_plan_end(tmp_path: Path) -> None:
+    """Coordinator review, round 3, item A: ``_request_reload`` has THREE
+    early returns of its own that never reach ``_try_content_reload`` at
+    all -- round 2 only closed the leak paths INSIDE that method. This one
+    is "the worker is missing or has exited" (``_request_reload`` routes to
+    ``_start`` instead, and never calls ``_try_content_reload``)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    # Scoped to "cmd-reload" so _request_reload's match succeeds.
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2020, 1, 1, tzinfo=UTC), command_id="cmd-reload"
+    )
+    started[0].returncode = 0  # the worker died
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == []  # _try_content_reload was never reached
+    assert len(started) == 2  # restarted instead
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_request_reload_no_state_row_pops_the_recorded_plan_end(tmp_path: Path) -> None:
+    """Coordinator review, round 3, item A -- "no state row" (the ``state is
+    not None and ...`` guard short-circuits before ``_try_content_reload``
+    is ever called, falling straight to the terminate+restart path).
+
+    Calls ``_request_reload`` directly (rather than via ``process_once``'s
+    command loop): ``process_once`` runs ``_poll_process`` on every tick
+    BEFORE draining commands, and ``_poll_process`` re-establishes a state
+    row for any channel with a live process (deriving one from whatever the
+    current health/draining/pending-reload bookkeeping says) -- which would
+    mask "no state row" the instant a real "reload" command was queued
+    alongside it. A genuinely missing state row against a live, tracked
+    process is exactly what this guard exists to handle regardless."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    processes: list[_FakeProcess] = []
+    started: list[_FakeProcess] = []
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Council meeting"),
+        encoder_strategy=strategy,
+    )
+    daemon._processes["gov"] = _FakeProcess(pid=111)  # type: ignore[attr-defined]
+    # Deliberately no store.write_state call -- no state row exists at all.
+
+    # ``_request_reload("gov")`` below is a direct call with no command_id
+    # (defaults to ``None``, matching supervisor.py's own direct-call
+    # shape) -- record with the same explicit ``None`` so the match
+    # succeeds and the pop still happens (round 8: ``command_id`` is now
+    # required, so an unscoped recording must say so explicitly).
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
+    daemon._request_reload("gov")  # type: ignore[attr-defined]
+
+    assert strategy.reload_calls == []  # _try_content_reload was never reached
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_request_reload_strategy_without_support_pops_the_recorded_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 3, item A -- the strategy doesn't declare
+    ``supports_content_reload`` (``_request_reload``'s ``getattr`` guard
+    short-circuits before ``_try_content_reload`` is ever called)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeNonReloadCapableStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    # Scoped to "cmd-reload" so _request_reload's match succeeds.
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2020, 1, 1, tzinfo=UTC), command_id="cmd-reload"
+    )
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == []  # _try_content_reload was never reached
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_request_reload_after_a_same_tick_crash_relaunch_still_sees_the_recorded_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 4, item 1 -- REGRESSION in b4508ef (round 3).
+
+    Item 78's own diagnosed scenario is a worker crash whose relaunch
+    (``_poll_process`` -> ``_relaunch_after_crash`` -> ``_begin_relaunch`` ->
+    ``_start``) runs BEFORE that same ``process_once`` tick's queued
+    "reload" command is drained (``process_once`` runs its poll tuple,
+    ``_poll_process`` included, before ``pop_pending_commands``). A round-3
+    revision popped ``self._rollover_plan_end_at`` inside ``_start`` too
+    (defense-in-depth, or so it seemed) -- but ``_start``'s pop ran FIRST,
+    during the poll phase, and ate the value ``_request_reload``'s own pop
+    needed moments later during command draining: MEASURED, ff5cdfb (round
+    2) cut immediately here as it should; b4508ef (round 3) silently
+    deferred instead (an up-to-900s held leg on a switch that should have
+    cut immediately). Only ``_request_reload`` and ``_stop`` may ever pop
+    this dict now; ``_start`` must not."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR (process 111)
+
+    # Automation recorded a rollover plan_end that has already passed by the
+    # time this reload actually dispatches -- should_defer_switch must cut
+    # immediately for it, never defer. Scoped to "cmd-reload" so
+    # _request_reload's match succeeds.
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2020, 1, 1, tzinfo=UTC), command_id="cmd-reload"
+    )
+    current_label = "Mayor interview"
+    started[0].returncode = 1  # the worker crashes
+    store.enqueue_command(_command("reload"))
+    # ONE process_once tick: _poll_process observes the crash and relaunches
+    # (a fresh process 222, via _start) BEFORE the queued "reload" command
+    # drains and reaches _request_reload / _try_content_reload.
+    daemon.process_once("gov")
+
+    assert len(started) == 2  # the crash-relaunch really did happen first
+    assert strategy.reload_calls == ["Mayor interview"]  # the seamless path still ran
+    assert strategy.switch_at_end_of_current_calls == [False]  # cut immediately, not deferred
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_stop_clears_the_recorded_rollover_plan_end(tmp_path: Path) -> None:
+    """Coordinator review, round 4, item 2(b): ``_stop`` must clear
+    ``_rollover_plan_end_at`` too (the channel going dark makes any in-
+    flight rollover moot) -- a test that FAILS if that pop is reverted,
+    unlike the suite as a whole (nothing else exercises this path)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111)]
+    started: list[_FakeProcess] = []
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Council meeting"),
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    # command_id=None: unscoped, deliberately -- ``_stop``'s own pop (unlike
+    # ``_request_reload``'s) is unconditional regardless of any command_id,
+    # so the matching rule under test elsewhere is irrelevant here.
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
+    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False)}
+
+    store.enqueue_command(_command("stop"))
+    daemon.process_once("gov")
+
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_worker_clean_exit_then_restart_then_plain_reload_does_not_leak_stale_rollover_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 5, item 1 -- REGRESSION left by round 4.
+
+    Round 4's own docstring claimed a stale ``_rollover_plan_end_at`` entry
+    could never reach ``should_defer_switch`` because ``_request_reload``
+    pops it first -- false: the pop PASSES the value down (as
+    ``rollover_plan_end_at=``) into ``_try_content_reload`` and from there
+    into ``should_defer_switch``, it does not discard it. A worker that
+    exits cleanly (rc=0, no pending reload) never reaches ``_stop`` --
+    that route is ``_poll_process`` observing the exit on its own, not an
+    operator stop or a drain -- so the entry survived across the channel
+    going fully off-air (``STOPPED``) and being freshly restarted
+    (``ON_AIR``). MEASURED: record a rollover plan_end already in the past,
+    let the worker exit cleanly, restart the channel, then issue a PLAIN
+    operator reload with no rollover behind it at all -- the reload wrongly
+    saw the stale, already-past ``plan_end_at`` and cut immediately
+    (``switch_at_end_of_current=False``) instead of deferring normally
+    (``True``, the ordinary ON_AIR/no-override shape an unrecorded reload
+    should take). Fixed by clearing the entry in the clean-exit branch of
+    ``_poll_process`` itself, alongside the terminal-``ERROR`` branch,
+    ``_drain``'s process-is-None branch, and ``stop_all_channels``'
+    already-gone branch (see the other new tests below and
+    ``_rollover_plan_end_at``'s docstring)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Council meeting"),
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR (process 111)
+
+    # command_id=None: unscoped -- the clean-exit branch's own pop (like
+    # ``_stop``'s) is unconditional, so no id needs to match here.
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
+    started[0].returncode = 0  # a clean exit, e.g. the channel's own plan ran out
+    daemon.process_once("gov")  # _poll_process's clean-exit branch -> STOPPED
+
+    assert store.read_state("gov").state == "STOPPED"
+    assert daemon._rollover_plan_end_at == {}  # must not survive the channel going dark
+
+    # Fresh command_ids -- the initial "cmd-start"/"cmd-reload" ids from
+    # ``_command()`` are already consumed and would be silently deduped.
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="start",
+            issued_at=datetime(2026, 6, 5, 13, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-restart",
+        )
+    )
+    daemon.process_once("gov")  # restart -> ON_AIR (process 222)
+    assert store.read_state("gov").state == "ON_AIR"
+
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 14, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-plain-reload",
+        )
+    )  # a plain reload, no rollover behind it
+    daemon.process_once("gov")
+
+    assert strategy.switch_at_end_of_current_calls == [True]  # deferred, not cut
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_poll_process_terminal_error_clears_the_recorded_rollover_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 5, item 1: the terminal-``ERROR`` branch of
+    ``_poll_process`` (a crash the daemon does not relaunch, because the
+    state row is not in one of the relaunchable states) is another route
+    that takes the channel off-air without ever reaching ``_stop`` --
+    it must clear the entry itself too."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    process = _FakeProcess(pid=111)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        ffmpeg_starter=lambda args: process,
+    )
+    daemon.process_once("gov")  # start -> ON_AIR
+
+    # command_id=None: unscoped -- this off-air branch's pop is unconditional.
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
+    # Force the state row out of every relaunchable state so the crash below
+    # lands in the terminal ERROR branch instead of _relaunch_after_crash.
+    store.write_state(
+        EgressStateRow(channel_id="gov", state="STOPPED", updated_at=datetime.now(UTC))
+    )
+    process.returncode = 1  # a crash the daemon will not relaunch
+    daemon.process_once("gov")
+
+    assert store.read_state("gov").state == "ERROR"
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_drain_with_no_live_process_clears_the_recorded_rollover_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 5, item 1: ``_drain``'s process-is-None
+    branch (drain issued against a channel with no live process at all) is
+    another off-air route that bypasses ``_stop`` entirely -- it must
+    clear the entry itself too."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=lambda _cid: _source_plan(tmp_path)
+    )
+
+    # command_id=None: unscoped -- ``_drain``'s process-is-None pop is
+    # unconditional, so no id needs to match here.
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
+    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False)}
+
+    store.enqueue_command(_command("drain"))
+    daemon.process_once("gov")  # _drain: process is None -> STOPPED
+
+    assert store.read_state("gov").state == "STOPPED"
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_stop_all_channels_already_gone_clears_the_recorded_rollover_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 5, item 1: ``stop_all_channels``' "already
+    gone" branch (a channel whose process already exited but hasn't been
+    reaped by ``_poll_process`` yet) is another off-air route that bypasses
+    ``_stop`` entirely -- it must clear the entry itself too."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    process = _FakeProcess(pid=111)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        ffmpeg_starter=lambda args: process,
+    )
+    daemon.process_once("gov")  # start -> ON_AIR, tracked in self._processes
+
+    # command_id=None: unscoped -- this off-air branch's pop is unconditional.
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
+    process.returncode = 0  # exited already, but _poll_process hasn't reaped it yet
+
+    result = daemon.stop_all_channels(deadline_seconds=0.0)
+
+    assert [outcome.outcome for outcome in result.outcomes] == ["already_gone"]
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_deferred_crash_relaunch_clears_the_recorded_rollover_plan_end(tmp_path: Path) -> None:
+    """Coordinator review, round 6, item 1: a crash that recurs within the
+    back-off cooldown takes ``_relaunch_after_crash``'s DEFERRED branch --
+    the channel sits in ``STARTING`` with no process running for the whole
+    cooldown. Unlike the IMMEDIATE relaunch (which re-resolves and starts a
+    fresh plan right away, same as the pending-reload restart), this branch
+    left the channel dark for a real span of wall-clock time without ever
+    clearing the entry -- MEASURED to survive the deferred relaunch (which
+    re-resolves its own fresh plan and never reads this dict) and reach a
+    LATER, unrelated plain reload once the channel was back on the air.
+    This test FAILS if the pop inside the deferred branch is reverted."""
+    started: list[_FakeProcess] = []
+    clock = _FakeMonotonic(0.0)
+    processes = [
+        _FakeProcess(pid=111, returncode=None),
+        _FakeProcess(pid=222, returncode=None),
+        _FakeProcess(pid=333, returncode=None),
+    ]
+    strategy = _FakeContentReloadStrategy(processes, started)
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        encoder_strategy=strategy,
+        restart_cooldown_seconds=15.0,
+        monotonic=clock.now,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR (pid 111)
+
+    started[0].returncode = 1
+    clock.t = 0.0
+    daemon.process_once("gov")  # crash 1 at t=0 -> immediate relaunch (pid 222)
+    assert store.read_state("gov").state == "ON_AIR"
+
+    # A rollover plan_end recorded while the channel was briefly back on air --
+    # the same shape a stalled automation pass could leave sitting here right
+    # before the second crash lands. command_id=None: unscoped -- the
+    # deferred branch's pop is unconditional, so no id needs to match.
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
+
+    started[1].returncode = 1
+    clock.t = 5.0
+    daemon.process_once("gov")  # crash 2 at t=5 (<15) -> DEFER, no new process
+    state = store.read_state("gov")
+    assert state.state == "STARTING"
+    assert daemon._processes.get("gov") is None
+    # Must not survive into (or across) the back-off window itself.
+    assert daemon._rollover_plan_end_at == {}
+
+    clock.t = 20.0
+    daemon.process_once("gov")  # t=20 >= 15 -> deferred relaunch fires (pid 333)
+    assert store.read_state("gov").state == "ON_AIR"
+    assert daemon._rollover_plan_end_at == {}
+
+    # A genuinely later, unrelated plain reload (automation records a fresh,
+    # FUTURE plan_end for its own real rollover -- not the stale past one
+    # from before the crash) must defer normally, proving nothing leaked
+    # through the back-off window to corrupt it. Scoped to the reload's own
+    # id -- a future horizon defers regardless, but scoping it properly is
+    # what a real caller does.
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2099, 1, 1, tzinfo=UTC), command_id="cmd-post-backoff-reload"
+    )
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 15, 0, tzinfo=UTC),
+            issued_by="automation",
+            command_id="cmd-post-backoff-reload",
+        )
+    )
+    daemon.process_once("gov")
+    assert strategy.switch_at_end_of_current_calls == [True]
+
+
+def test_operator_start_superseding_a_deferred_crash_relaunch_does_not_leak_rollover_plan_end(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 6, item 1 (second leak door): an operator
+    explicit ``start`` command can supersede a still-deferred crash-relaunch
+    before the back-off latch ever permits it to fire on its own --
+    ``_process_command`` already pops ``_backoff_relaunch`` for exactly this
+    reason (an ERROR from the operator's own start must not be silently
+    resurrected later by the automatic relaunch it was meant to replace),
+    but was not popping ``_rollover_plan_end_at``. Fixed by the same pop
+    inside ``_relaunch_after_crash``'s deferred branch (it fires the moment
+    the channel enters the back-off, regardless of how the back-off is later
+    resolved) -- this test FAILS if that pop is reverted."""
+    started: list[_FakeProcess] = []
+    clock = _FakeMonotonic(0.0)
+    processes = [
+        _FakeProcess(pid=111, returncode=None),
+        _FakeProcess(pid=222, returncode=None),
+        _FakeProcess(pid=333, returncode=None),
+    ]
+    strategy = _FakeContentReloadStrategy(processes, started)
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        encoder_strategy=strategy,
+        restart_cooldown_seconds=100.0,  # long enough the operator beats it
+        monotonic=clock.now,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR (pid 111)
+    started[0].returncode = 1
+    daemon.process_once("gov")  # crash 1 -> immediate relaunch (pid 222)
+    assert store.read_state("gov").state == "ON_AIR"
+
+    # command_id=None: unscoped -- the deferred branch's pop is
+    # unconditional, so no id needs to match.
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
+
+    started[1].returncode = 1
+    daemon.process_once("gov")  # crash 2 within cooldown -> DEFER (_backoff_relaunch armed)
+    assert store.read_state("gov").state == "STARTING"
+    assert "gov" in daemon._backoff_relaunch
+    assert daemon._rollover_plan_end_at == {}  # popped the moment the defer landed
+
+    # The operator doesn't wait for the latch -- an explicit start supersedes
+    # the still-deferred relaunch outright.
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="start",
+            issued_at=datetime(2026, 6, 5, 13, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-operator-supersede",
+        )
+    )
+    daemon.process_once("gov")  # pops _backoff_relaunch, starts fresh (pid 333)
+    assert "gov" not in daemon._backoff_relaunch
+    assert store.read_state("gov").state == "ON_AIR"
+    assert daemon._rollover_plan_end_at == {}
+
+    # A later, unrelated plain reload (no automation override at all) must
+    # defer normally -- proving the earlier crash-window record never
+    # survived through to here.
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 14, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-plain-reload-after-supersede",
+        )
+    )
+    daemon.process_once("gov")
+    assert strategy.switch_at_end_of_current_calls == [True]
+
+
+def test_start_terminal_error_clears_the_recorded_rollover_plan_end(tmp_path: Path) -> None:
+    """Coordinator review, round 6, item 2: ``_start``'s own two terminal-
+    ``ERROR`` ``except`` clauses (``ConfigInvalidError``/``SecretUnresolvedError``/
+    ``FfmpegNotFoundError``, and the general ``EgressError`` fallback) never
+    popped ``_rollover_plan_end_at`` -- ``ERROR`` is off-air by the same
+    definition every other route in this file's docstring uses, so a value
+    recorded going into a ``_start`` call that lands in ``ERROR`` survived
+    across it. This test FAILS if either pop is reverted."""
+    store = InMemoryEgressStore()
+    # Deliberately no config upserted yet -- ``_start`` raises
+    # ConfigInvalidError ("No egress configuration exists for this
+    # channel."), landing in the first terminal-ERROR except clause.
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111, returncode=None), _FakeProcess(pid=222, returncode=None)]
+    started: list[_FakeProcess] = []
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        encoder_strategy=strategy,
+    )
+
+    # command_id=None: unscoped -- ``_start``'s terminal-ERROR pop is
+    # unconditional, so no id needs to match.
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
+    daemon.process_once("gov")  # _start raises ConfigInvalidError -> ERROR
+
+    assert store.read_state("gov").state == "ERROR"
+    assert daemon._rollover_plan_end_at == {}
+
+    # Fix the config on the SAME daemon instance, start for real, then issue
+    # a plain reload with no automation override -- it must defer normally,
+    # proving the earlier ERROR-path record never survived to corrupt it.
+    store.upsert_config(_config())
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="start",
+            issued_at=datetime(2026, 6, 5, 13, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-start-after-error",
+        )
+    )
+    daemon.process_once("gov")
+    assert store.read_state("gov").state == "ON_AIR"
+
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 14, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-plain-reload-after-error",
+        )
+    )
+    daemon.process_once("gov")
+    assert strategy.switch_at_end_of_current_calls == [True]
+
+
+def test_unscoped_record_never_matches_a_real_queued_reload_and_needs_an_off_air_pop(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 4, item 4 (superseded shape) / round 8: round
+    4 measured that an UNSCOPED record (``command_id`` left at its old
+    ``None`` "wildcard, matches whatever drains next" default) bound to
+    whichever "reload" command for the channel ``_request_reload`` processed
+    NEXT -- not necessarily the one automation dispatched it for -- because
+    an operator reload issued EARLIER than automation's own drained first
+    and wrongly consumed the value.
+
+    Round 8 (coordinator review): that wildcard is gone. ``command_id`` is
+    now REQUIRED on ``record_rollover_plan_end`` (round 8, item 3) and
+    ``None`` is no longer special-cased -- it matches only a drain whose own
+    ``command_id`` is also ``None`` (a direct call bypassing the command
+    queue entirely, e.g. ``supervisor.py``). A real ``EgressCommand`` drawn
+    from the durable queue always carries a real string id, so an
+    unscoped (``command_id=None``) record can now NEVER be consumed by a
+    queue-drained reload at all -- every such reload mismatches and leaves
+    it in place (round 8's own fix: a mismatch no longer discards, see
+    ``_request_reload``'s docstring), and it persists until an off-air route
+    (``_stop``, a clean/terminal worker exit, a drain, ...) pops it
+    unconditionally, exactly as if the automation caller had never scoped it
+    at all. This is the new, safe fate of an unscoped record: inert against
+    every reload it wasn't recorded for, cleared only when the channel
+    genuinely goes off-air -- never wrongly consumed by whichever reload
+    happens to drain first."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    # An unscoped record (already stale) -- explicitly ``command_id=None``,
+    # never matching any real queued command's id.
+    daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 11, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-operator-reload",
+        )
+    )
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+            issued_by="channel-automation",
+            command_id="cmd-automation-reload",
+        )
+    )
+    current_label = "Mayor interview"
+    daemon.process_once("gov")
+
+    # Both mismatch (neither command_id is None) -- both defer normally, and
+    # the unscoped entry is still sitting there, untouched, for lack of a
+    # match; it did NOT wrongly bind to whichever reload drained first.
+    assert strategy.switch_at_end_of_current_calls == [True, True]
+    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False)}
+
+    # Only a genuine off-air transition clears it -- an operator stop, here.
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="stop",
+            issued_at=datetime(2026, 6, 5, 13, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-operator-stop",
+        )
+    )
+    daemon.process_once("gov")
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_command_id_scoping_closes_the_immediate_crash_relaunch_leak(tmp_path: Path) -> None:
+    """Coordinator review, round 7, item 1 -- the IMMEDIATE crash-relaunch
+    path (``_relaunch_after_crash`` -> ``_begin_relaunch`` -> ``_start``)
+    deliberately does not pop ``_rollover_plan_end_at`` (round 4: it keeps
+    the channel effectively ON_AIR through the transition, relying on
+    ``_request_reload``'s own pop -- see that dict's docstring). MEASURED
+    without command-id scoping: ``record_rollover_plan_end`` for a rollover
+    reload about to be enqueued, then a crash lands and the channel
+    relaunches immediately (a fresh process, the recorded ``plan_end_at``
+    untouched in the dict) BEFORE that rollover reload command ever drains
+    -- and a wholly UNRELATED operator reload landing afterward inherited
+    the stale, already-past ``plan_end_at`` and was wrongly cut immediately
+    (``switch_at_end_of_current=False``) instead of deferring (``True``,
+    the ordinary ON_AIR/no-override shape an unrecorded reload takes).
+
+    Scoping the recorded value to the ``command_id`` it was recorded for
+    closes this: the unrelated reload's own command_id does not match.
+
+    Round 8 (coordinator review): a mismatch no longer discards the value
+    outright (round 7's ``_request_reload`` popped unconditionally on every
+    drain) -- it now LEAVES the entry in place, since the rollover's own
+    command never actually drains in this scenario at all (the crash
+    preempted it). The entry survives the mismatched reload above, deferring
+    it correctly, and is only cleared by a subsequent genuine off-air
+    transition (a stop, here) -- proving the leak this test names is closed
+    without the round-7 shape of silently discarding a value some OTHER,
+    still-pending command might yet have matched."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR (process 111)
+
+    # Automation records a rollover plan_end (already stale) scoped to the
+    # specific reload command it is about to enqueue -- but that command is
+    # never enqueued here: the crash below preempts it entirely, exactly
+    # the scenario this test measures.
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2020, 1, 1, tzinfo=UTC), command_id="auto-reload-scoped"
+    )
+    started[0].returncode = 1  # the worker crashes
+    daemon.process_once("gov")  # _poll_process relaunches immediately (process 222)
+
+    assert len(started) == 2  # the immediate relaunch really did happen
+    # Untouched by the relaunch -- _start must never pop this (round 4).
+    assert daemon._rollover_plan_end_at == {
+        "gov": ("auto-reload-scoped", datetime(2020, 1, 1, tzinfo=UTC), False)
+    }
+
+    # A wholly unrelated operator reload, drained afterward -- mismatches
+    # ("cmd-reload" != "auto-reload-scoped") and so LEAVES the entry in
+    # place (round 8), rather than discarding it as round 7 did.
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))  # command_id="cmd-reload" -- does NOT match
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == ["Mayor interview"]
+    assert strategy.switch_at_end_of_current_calls == [True]  # deferred, not wrongly cut
+    assert daemon._rollover_plan_end_at == {
+        "gov": ("auto-reload-scoped", datetime(2020, 1, 1, tzinfo=UTC), False)
+    }
+
+    # The rollover's own command_id never actually arrives (dropped, or
+    # superseded -- exactly the case this dict's docstring calls out): only
+    # a genuine off-air transition clears the leftover entry.
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="stop",
+            issued_at=datetime(2026, 6, 5, 13, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-operator-stop",
+        )
+    )
+    daemon.process_once("gov")
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_command_id_scoping_defers_and_retains_value_when_an_unrelated_reload_drains_first(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 7, item 1 (second shape reviewer asked for)
+    -- REWRITTEN, round 8, item 2: round 7 asserted that an unrelated reload
+    draining BEFORE the reload the value was actually recorded for
+    discarded it outright (the pop was unconditional on every drain,
+    matched or not) -- so the automation reload, draining second, found
+    nothing left and fell back to deferring. That claim was itself the bug
+    round 8 fixes: discarding on a mismatch throws away a value some OTHER,
+    still-pending command was genuinely recorded for and hasn't drained yet
+    (MEASURED as the 45s issued-timeout retry collision -- see
+    ``_rollover_plan_end_at``'s docstring).
+
+    Fixed shape: the unrelated (first-draining) reload mismatches and
+    LEAVES the value in place instead of discarding it -- it defers
+    normally (nothing recorded FOR it). Automation's own reload, draining
+    SECOND, still finds its value waiting and matches -- cutting
+    immediately on the already-past horizon it was actually recorded
+    against, instead of silently deferring on a boundary that will never
+    arrive."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    # Automation records a rollover plan_end (already stale) scoped to its
+    # own about-to-be-enqueued reload command.
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2020, 1, 1, tzinfo=UTC), command_id="cmd-automation-reload"
+    )
+    # An unrelated operator reload, issued_at EARLIER, drains first.
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 11, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-operator-reload",
+        )
+    )
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+            issued_by="channel-automation",
+            command_id="cmd-automation-reload",
+        )
+    )
+    current_label = "Mayor interview"
+    daemon.process_once("gov")
+
+    # The mismatched (operator) reload defers normally -- and, unlike round
+    # 7, LEAVES the value in place. The matching (automation) reload, drained
+    # in the SAME tick right after, still finds it and cuts on the past
+    # horizon it was actually recorded against.
+    assert strategy.switch_at_end_of_current_calls == [True, False]
+    assert daemon._rollover_plan_end_at == {}
+
+
+def test_retry_collision_a_stalled_retry_that_overwrites_the_recorded_value_still_cuts(
+    tmp_path: Path,
+) -> None:
+    """Coordinator review, round 8, item 1 -- the actual production trigger
+    for the leak this round fixes: ``ChannelAutomationService``'s own 45s
+    issued-timeout retry (``_check_plan_rollover``'s ``retrying_undelivered``
+    branch). Dispatch A records ``command_id=A`` and enqueues reload A; the
+    daemon stalls past the retry timeout; the retry re-records
+    (OVERWRITING the dict entry -- ``record_rollover_plan_end`` always
+    replaces, never merges) ``command_id=B`` and enqueues reload B. Both A
+    and B are real, live commands sitting in the queue when the daemon
+    finally catches up -- ``pop_pending_commands`` drains by ``issued_at``,
+    so A (issued first) drains before B.
+
+    Round 6 measured the pre-scoping shape as ``[False, True]`` (A wrongly
+    cut on a value it was never recorded for). Round 7's scoping fixed
+    THAT mixup but popped unconditionally, so A's mismatch discarded B's
+    entry before B ever got a chance to drain -- measured ``[True, True]``
+    (both defer -- dead air on a horizon already past, never cut at all).
+    Round 8's fix (pop only on match) gives the correct shape: A mismatches
+    and leaves B's entry in place (defers, no value for A), B then matches
+    and cuts on its own already-past horizon."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started)
+    daemon = EgressDaemon(
+        store, work_dir=tmp_path, source_plan_provider=source_provider, encoder_strategy=strategy
+    )
+    daemon.process_once("gov")  # initial start -> ON_AIR
+
+    # Dispatch A: recorded and enqueued first.
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2020, 1, 1, tzinfo=UTC), command_id="auto-reload-A"
+    )
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 11, 0, tzinfo=UTC),
+            issued_by="channel-automation",
+            command_id="auto-reload-A",
+        )
+    )
+    # The 45s issued-timeout retry: re-records (OVERWRITING A's entry) and
+    # enqueues a SECOND, distinct reload command for the same channel.
+    daemon.record_rollover_plan_end(
+        "gov", datetime(2020, 1, 1, tzinfo=UTC), command_id="auto-reload-B"
+    )
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 11, 0, 45, tzinfo=UTC),
+            issued_by="channel-automation",
+            command_id="auto-reload-B",
+        )
+    )
+    assert daemon._rollover_plan_end_at == {
+        "gov": ("auto-reload-B", datetime(2020, 1, 1, tzinfo=UTC), False)
+    }
+
+    current_label = "Mayor interview"
+    daemon.process_once("gov")  # drains A (issued_at earlier) then B, same tick
+
+    # A: mismatch (B's entry, not A's) -- defers, value left in place for B.
+    # B: match -- cuts immediately on the past horizon it was recorded for.
+    assert strategy.switch_at_end_of_current_calls == [True, False]
+    assert daemon._rollover_plan_end_at == {}
+
+
 def test_content_reload_never_defers_switch_off_of_fallback_slate(tmp_path: Path) -> None:
     """Issue #157: filler must be interrupted the moment a due program is
     ready -- a reload issued from FALLBACK_SLATE must never defer (wait out
@@ -923,7 +2398,7 @@ def test_content_reload_never_defers_switch_off_of_fallback_slate(tmp_path: Path
 
     state = store.read_state("gov")
     assert state is not None
-    applied = daemon._try_content_reload("gov", state, processes[0])  # type: ignore[attr-defined]
+    applied = daemon._try_content_reload("gov", state, processes[0], rollover_plan_end_at=None)  # type: ignore[attr-defined]
 
     assert applied is True
     assert strategy.switch_at_end_of_current_calls == [False]
@@ -962,16 +2437,21 @@ def test_content_reload_never_defers_switch_during_a_manual_override(tmp_path: P
 
     state = store.read_state("gov")
     assert state is not None
-    applied = daemon._try_content_reload("gov", state, processes[0])  # type: ignore[attr-defined]
+    applied = daemon._try_content_reload("gov", state, processes[0], rollover_plan_end_at=None)  # type: ignore[attr-defined]
 
     assert applied is True
     assert strategy.switch_at_end_of_current_calls == [False]
 
 
-def test_content_reload_falls_back_to_restart_when_worker_not_ready(tmp_path: Path) -> None:
-    """If the seamless reload can't be applied (reload_content returns False — e.g.
-    the worker control channel isn't ready), the daemon falls through to the existing
-    terminate+restart reload path so the program change still lands."""
+def test_content_reload_commit_busy_falls_back_to_restart_with_newest_graph(
+    tmp_path: Path,
+) -> None:
+    """An explicitly rejected overlap restarts onto the complete newest graph."""
+
+    class _CommitBusyStrategy(_FakeContentReloadStrategy):
+        def last_send_command_failure_reason(self, channel_id: str) -> str | None:
+            return "worker acked 'error' (RuntimeError('reload commit already in progress'))"
+
     store = InMemoryEgressStore()
     store.upsert_config(_config())
     store.enqueue_command(_command())
@@ -982,7 +2462,7 @@ def test_content_reload_falls_back_to_restart_when_worker_not_ready(tmp_path: Pa
     def source_provider(_channel_id: str) -> EgressSourcePlan:
         return _source_plan_with_label(tmp_path, current_label)
 
-    strategy = _FakeContentReloadStrategy(processes, started, reload_ok=False)
+    strategy = _CommitBusyStrategy(processes, started, reload_ok=False)
     daemon = EgressDaemon(
         store,
         work_dir=tmp_path,
@@ -1006,6 +2486,780 @@ def test_content_reload_falls_back_to_restart_when_worker_not_ready(tmp_path: Pa
     state = store.read_state("gov")
     assert state.state == "ON_AIR"
     assert state.current_source_label == "Mayor interview"
+
+
+def test_content_reload_declined_logs_the_reason(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Coordinator follow-up (2026-09-06): a declined seamless reload
+    (``reload_content`` returns False) used to fall back to restart with NO log
+    line at all -- an operator/on-call reading the control-plane log for "why
+    did this channel restart instead of reloading in place" found nothing.
+    ``_try_content_reload`` now logs a WARNING naming the channel and, when the
+    strategy can report one (``last_send_command_failure_reason``, an OPTIONAL
+    capability probed via ``getattr`` like ``supports_content_reload``), why."""
+
+    class _ReasonReportingStrategy(_FakeContentReloadStrategy):
+        def last_send_command_failure_reason(self, channel_id: str) -> str | None:
+            return "worker acked 'aborted:timeout'"
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _ReasonReportingStrategy(processes, started, reload_ok=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.daemon"):
+        daemon.process_once("gov")
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "gov" in message and "declined" in message and "worker acked 'aborted:timeout'" in message
+        for message in warnings
+    ), warnings
+
+
+def test_content_reload_declined_with_no_reason_reported_still_logs(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A strategy with no ``last_send_command_failure_reason`` capability at all
+    (the plain ``_FakeContentReloadStrategy``, matching every existing strategy
+    test double in this file) still gets a WARNING -- just without a reason."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, reload_ok=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.daemon"):
+        daemon.process_once("gov")
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("gov" in message and "declined" in message for message in warnings), warnings
+
+
+def test_content_reload_ack_timeout_on_a_live_pid_terminates_the_wedged_worker(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Item 85 daemon-side fix (sandbox soaks 12/14/15): a reload ack timeout
+    while the worker's own pid is still alive is the daemon-visible symptom of
+    the engine-side reload-commit wedge item 85's engine.py fix addresses -- the
+    worker's GLib main-loop thread is blocked forever inside a synchronous
+    GStreamer call and will NEVER again answer a pipe command. Before this fix,
+    ``_fall_back_to_restart_reload`` only terminated the process for
+    ``FALLBACK_SLATE``; for an ordinary ON_AIR channel (this test's case) it left
+    the wedged pid running forever, and ``_poll_process`` re-wrote TRANSITIONING
+    on every tick because it only ever turns a ``_pending_reloads`` entry into a
+    real restart once the worker's OWN exit is observed -- which, for a wedged
+    pid, never happens on its own. This proves the fix: the wedged process is
+    terminated immediately (bounded terminate -> wait -> kill; this fake process
+    reports exited the instant ``terminate()`` is called, so no kill escalation
+    is exercised here), and the very next poll tick observes the exit and
+    restarts the channel cleanly instead of pinning TRANSITIONING forever."""
+
+    class _AckTimeoutStrategy(_FakeContentReloadStrategy):
+        def last_send_command_failure_reason(self, channel_id: str) -> str | None:
+            return "ack timeout after 5.0s (reissue_desired_state)"
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    wedged_process = _FakeProcess(pid=111)
+    fresh_process = _FakeProcess(pid=222)
+    processes = [wedged_process, fresh_process]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _AckTimeoutStrategy(processes, started, reload_ok=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")  # starts wedged_process, writes ON_AIR
+    assert not wedged_process.terminated
+
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.daemon"):
+        daemon.process_once("gov")  # the declined reload -- must terminate the wedged worker
+
+    assert wedged_process.terminated, "a reload ack timeout on a live pid must terminate it"
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("gov" in message and "wedged" in message for message in warnings), warnings
+
+    # The fake process reports exited (returncode=0) the instant terminate() is
+    # called, so the NEXT poll tick's ordinary worker-exit handling restarts the
+    # channel -- proving the pending-reload entry does not pin TRANSITIONING
+    # against a pid that (in this fixed behavior) is no longer running.
+    daemon.process_once("gov")
+    assert started == [wedged_process, fresh_process]
+    state = store.read_state("gov")
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Mayor interview"
+
+
+def test_content_reload_ack_timeout_escalates_to_kill_when_terminate_is_ignored(
+    tmp_path: Path,
+) -> None:
+    """Hostile-review follow-up: the previous test's fake process reports
+    exited the INSTANT ``terminate()`` is called, which never exercises the
+    ``kill()`` escalation ``_process_terminate_bounded`` provides for exactly
+    this reason -- a worker wedged inside a synchronous GStreamer call may not
+    even observe (let alone act on) a graceful terminate request.
+    ``_StubbornFakeProcess`` ignores ``terminate()`` entirely (``poll()`` keeps
+    reporting "still alive" no matter how many times it's called) and only
+    ends on ``kill()``, with a distinct returncode (137) proving THAT call
+    path is what actually ended it."""
+
+    class _AckTimeoutStrategy(_FakeContentReloadStrategy):
+        def last_send_command_failure_reason(self, channel_id: str) -> str | None:
+            return "ack timeout after 5.0s (reissue_desired_state)"
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    wedged_process = _StubbornFakeProcess(pid=111)
+    fresh_process = _FakeProcess(pid=222)
+    processes = [wedged_process, fresh_process]
+    started: list[object] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _AckTimeoutStrategy(processes, started, reload_ok=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")  # starts wedged_process, writes ON_AIR
+    assert wedged_process.terminate_calls == 0
+    assert not wedged_process.killed
+
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # the declined reload -- must escalate to kill()
+
+    assert wedged_process.terminate_calls >= 1, "terminate() must still be tried first"
+    assert wedged_process.killed, "a terminate()-ignoring process must be escalated to kill()"
+    assert wedged_process.returncode == 137
+
+    # kill() actually ended the process (unlike the ignored terminate()), so the
+    # next poll tick's ordinary worker-exit handling restarts the channel.
+    daemon.process_once("gov")
+    assert started == [wedged_process, fresh_process]
+    state = store.read_state("gov")
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Mayor interview"
+
+
+def test_content_reload_declined_for_a_reason_other_than_ack_timeout_does_not_terminate(
+    tmp_path: Path,
+) -> None:
+    """Narrow scope check: a decline for a reason OTHER than an ack timeout (a
+    plan-prepare failure, a synchronous build error, etc.) must NOT terminate an
+    otherwise-healthy worker -- only a lost ack on a confirmed-alive pid (the
+    specific wedge symptom) escalates to termination. ``_FakeContentReloadStrategy``
+    with no ``last_send_command_failure_reason`` capability (matching every other
+    existing declined-reload test in this file) models exactly that: a decline
+    with no reason at all, therefore never matching the "ack timeout" check."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    process = _FakeProcess(pid=111)
+    processes = [process, _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, reload_ok=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert not process.terminated
+
+
+def test_pending_reload_does_not_terminate_the_worker_while_awaiting_settlement(
+    tmp_path: Path,
+) -> None:
+    """F1 BLOCKER fix (coordinator hostile review): a deferred/boundary-aligned
+    switch (an automation-driven ON_AIR extension) can take minutes to settle.
+    The pre-redesign code bounded the pipe ack itself at a fixed timeout, so a
+    correctly-armed long-lead reload would time out that wait and the daemon
+    would terminate a perfectly healthy worker. This redesign never blocks on
+    settlement at all -- across many poll ticks with reload-status.json still
+    absent, the worker must NEVER be restarted or terminated; only once the
+    status file actually appears does the daemon act (and even then, only to
+    finish the ON_AIR bookkeeping, not to touch the process)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # armed; strategy did NOT write reload-status.json
+
+    assert strategy.reload_calls == ["Mayor interview"]
+    assert len(started) == 1  # no restart happened to arm it
+
+    # Many more ticks with settlement still pending -- this is standing in for
+    # however long a real deferred switch's natural wait runs (up to
+    # defer_switch_timeout_s=900s in the engine); the point is that NOTHING
+    # here is time-bounded on this side, so no amount of ticks alone forces a
+    # restart the way the old synchronous ack-wait design would have.
+    for _ in range(20):
+        daemon.process_once("gov")
+
+    assert started[0].terminated is False  # never terminated while pending
+    assert len(started) == 1  # never restarted
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Council meeting"  # still the OLD label -- honest
+
+    # The reload NOW settles (a real worker's on_settled finally fires).
+    _write_fake_reload_status(tmp_path, "gov", strategy.reload_ids[-1], "applied")
+    daemon.process_once("gov")
+
+    assert started[0].terminated is False  # still never terminated
+    assert len(started) == 1  # still never restarted -- truly seamless
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Mayor interview"
+
+
+def test_pending_reload_settlement_deadline_falls_back_to_restart(tmp_path: Path) -> None:
+    """F1 redesign: if a status update never arrives at all (e.g. the worker
+    crashed between arming and writing reload-status.json), the daemon must
+    not wait forever -- past _PENDING_RELOAD_SETTLE_DEADLINE_S it gives up and
+    falls back to the terminate+restart path, same as a synchronously-declined
+    reload always did."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    fake_now = [1_000_000.0]
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+        monotonic=lambda: fake_now[0],
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # armed; no status file ever written
+
+    assert len(started) == 1  # no restart yet -- still within the deadline
+
+    # Advance the injected clock past the deadline with no status update ever
+    # arriving.
+    fake_now[0] += 961.0
+    daemon.process_once("gov")
+
+    assert store.read_state("gov").state == "TRANSITIONING"  # fell back to restart
+    started[0].returncode = 0  # the drained encoder exits -> pending reload restarts
+    daemon.process_once("gov")
+
+    assert len(started) == 2  # restart landed the program change
+    state = store.read_state("gov")
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Mayor interview"
+
+
+def test_unrecognized_settlement_result_is_treated_as_aborted_immediately(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Hostile-review follow-up: a settlement result that is neither
+    "applied" nor "aborted:<reason>" (a malformed write, a future/older
+    worker version) must be treated as aborted IMMEDIATELY -- not silently
+    waited out for the full 960s deadline, since whatever wrote it clearly
+    ran and waiting longer buys nothing."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    fake_now = [1_000_000.0]
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+        monotonic=lambda: fake_now[0],
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # armed; no status file ever written
+
+    armed_reload_id = strategy.reload_ids[-1]
+    _write_fake_reload_status(tmp_path, "gov", armed_reload_id, "weird-unknown-value")
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.daemon"):
+        # Only ONE second later -- nowhere near the 960s deadline -- proving
+        # this is recognized and acted on immediately, not merely eventually.
+        fake_now[0] += 1.0
+        daemon.process_once("gov")
+
+    assert store.read_state("gov").state == "TRANSITIONING"  # fell back to restart already
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(
+        "gov" in message and "unrecognized" in message and armed_reload_id in message
+        for message in messages
+    ), messages
+
+    started[0].returncode = 0  # the drained encoder exits -> pending reload restarts
+    daemon.process_once("gov")
+    assert len(started) == 2
+    state = store.read_state("gov")
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Mayor interview"
+
+
+def test_worker_crash_during_the_armed_window_discards_pending_settlement(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Hostile-review follow-up, item 1: a worker that crashes WHILE a reload
+    it armed is still settling must not leave that tracking behind -- the
+    entry is gone immediately (no spurious restart fires 960s later against a
+    channel that has already been relaunched onto something else), and a
+    LATE-arriving "applied" status for that dead attempt is recognized and
+    ignored (logged), not silently discarded with no evidence it was even
+    observed."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222), _FakeProcess(pid=333)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    fake_now = [1_000_000.0]
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+        monotonic=lambda: fake_now[0],
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR (pid 111)
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # armed; strategy did NOT write reload-status.json
+
+    armed_reload_id = strategy.reload_ids[-1]
+    assert daemon._pending_reload_settle.get("gov") is not None  # type: ignore[attr-defined]
+
+    # The worker crashes (non-zero exit) WHILE the reload is still armed --
+    # nothing ever settled it.
+    started[0].returncode = 1
+    daemon.process_once("gov")  # _poll_process observes the crash -> relaunches at once
+
+    assert daemon._pending_reload_settle.get("gov") is None  # type: ignore[attr-defined]
+    assert len(started) == 2  # the crash relaunch landed (pid 222)
+
+    # Well past the 960s settlement deadline the ARMED reload itself would
+    # have been allowed to take (hostile-review follow-up, third pass, P2:
+    # _discarded_reload_ids is keyed by channel_id -- already bounded by the
+    # number of channels this daemon tracks -- and carries no expiry of its
+    # own; a real settlement for a dead attempt can legitimately land any
+    # time after the crash, including well past that budget, and must still
+    # be recognized), the dead attempt's worker finally writes its status
+    # file. Recognized and ignored, logged; no additional restart triggered.
+    fake_now[0] += 1000.0
+    with caplog.at_level(logging.INFO, logger="civiccast.egress.daemon"):
+        _write_fake_reload_status(tmp_path, "gov", armed_reload_id, "applied")
+        daemon.process_once("gov")
+
+    assert len(started) == 2  # the late write changes nothing
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(
+        "gov" in message and armed_reload_id in message and "ignoring" in message
+        for message in messages
+    ), messages
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+
+
+def _prepare_with_tracked_plan_dirs(
+    tmp_path: Path, counter: dict[str, int]
+) -> Callable[[EgressSourcePlan, EgressConfig], SourcePreparationReport]:
+    """A fake ``source_preparer`` that mints a fresh, real, uniquely-named
+    directory (mirroring ``SourcePreparer.prepare``'s own per-call directory)
+    on every call, so tests can assert on exactly which one gets released."""
+
+    def prepare(source_plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
+        counter["n"] += 1
+        plan_dir = tmp_path / f"plan-{counter['n']}"
+        plan_dir.mkdir()
+        return SourcePreparationReport(source_plan=source_plan, records=(), plan_dir=plan_dir)
+
+    return prepare
+
+
+def test_superseding_a_pending_reload_releases_its_previous_plan_dir(tmp_path: Path) -> None:
+    """Hostile-review follow-up, item 3: ``_try_content_reload`` used to
+    silently overwrite ``_pending_reload_settle`` when a newer reload attempt
+    superseded a still-pending one, leaking the replaced entry's plan_dir
+    forever (never released, never GC'd until age/budget eventually caught
+    it)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+    )
+
+    daemon.process_once("gov")  # initial start -> plan-1 (becomes ACTIVE, not pending)
+    assert released == []
+
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # arms reload #1 -> plan-2 (PENDING, never settles)
+    assert released == []
+
+    current_label = "Evening news"
+    # A distinct command_id -- ``_command("reload")`` always returns the SAME
+    # fixed id ("cmd-reload"), which the store's dedup would silently drop as
+    # a re-enqueue of the already-consumed first reload command.
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime(2026, 6, 5, 12, 1, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-reload-2",
+        )
+    )
+    daemon.process_once("gov")  # a second rollover supersedes reload #1
+
+    # The FIRST reload's plan (plan-2) is released the moment it is
+    # superseded -- not left dangling until GC eventually notices.
+    assert released == [tmp_path / "plan-2"]
+
+
+def test_stop_releases_both_the_pending_reload_and_the_active_plan_dir(tmp_path: Path) -> None:
+    """Hostile-review follow-up (third pass): a direct (non-draining) operator
+    stop must route through BOTH shared discard helpers -- an armed-but-
+    unsettled reload's plan_dir (``_discard_pending_reload_settlement``) AND
+    the channel's currently-active plan_dir (``_discard_active_prepared_plan_
+    dir``) -- rather than either being left for GC. The direct stop path's
+    own ``_process_terminate`` call makes the worker's exit synchronous with
+    this call, so releasing the active dir here (unlike the draining path,
+    see the next test) is safe."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+    )
+
+    daemon.process_once("gov")  # initial start -> plan-1, tracked ACTIVE
+    assert daemon._active_prepared_plan_dir.get("gov") == tmp_path / "plan-1"  # type: ignore[attr-defined]
+
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # arms a reload -> plan-2, tracked PENDING (never settles)
+    assert daemon._pending_reload_settle.get("gov") is not None  # type: ignore[attr-defined]
+    assert released == []
+
+    store.enqueue_command(_command("stop"))
+    daemon.process_once("gov")
+
+    assert daemon._pending_reload_settle.get("gov") is None  # type: ignore[attr-defined]
+    assert daemon._active_prepared_plan_dir.get("gov") is None  # type: ignore[attr-defined]
+    # _discard_pending_reload_settlement runs before _discard_active_prepared_
+    # plan_dir inside _stop, so the pending reload's plan (plan-2) is
+    # released first, then the active plan (plan-1).
+    assert released == [tmp_path / "plan-2", tmp_path / "plan-1"]
+    assert store.read_state("gov").state == "STOPPED"
+
+
+def test_draining_stop_defers_the_active_plan_dir_release_to_stop_all_channels(
+    tmp_path: Path,
+) -> None:
+    """Hostile-review follow-up (third pass), P2: a DRAINING stop
+    (``stop_all_channels``'s graceful path) only sends the worker its
+    TERMINAL command and returns -- the worker may still be airing from the
+    active plan directory for the entire drain deadline, so ``_stop`` itself
+    must NOT release it. Proves the directory survives the draining ``_stop``
+    call untouched, and is only released once ``stop_all_channels`` actually
+    observes the worker's exit."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    process = _FakeProcess(pid=111)
+    processes = [process]
+    started: list[_FakeProcess] = []
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        encoder_strategy=_FakeContentReloadStrategy(processes, started),
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+    )
+
+    daemon.process_once("gov")  # _start -> plan-1, tracked ACTIVE
+    assert daemon._active_prepared_plan_dir.get("gov") == tmp_path / "plan-1"  # type: ignore[attr-defined]
+
+    result = daemon.stop_all_channels(deadline_seconds=0.0)  # worker never exits in time
+    assert result.outcomes[0].outcome == "killed_after_deadline"
+
+    # The worker was force-terminated by the deadline escalation -- ITS exit
+    # is what unblocks the release, which this same stop_all_channels call
+    # then performs once that escalation confirms it.
+    assert released == [tmp_path / "plan-1"]
+    assert daemon._active_prepared_plan_dir.get("gov") is None  # type: ignore[attr-defined]
+
+
+def test_worker_exit_between_poll_process_and_poll_reload_settlement_falls_back(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Hostile-review follow-up (third pass): the liveness re-check inside
+    ``_poll_reload_settlement`` (guarding the "applied" -> ``_commit_reload_
+    settlement`` transition) must catch a worker that was still alive when
+    ``_poll_process`` checked it EARLIER in this same ``process_once`` tick,
+    but has exited by the time this later check runs -- proving the
+    liveness check is a live re-read, not reused/stale information from
+    earlier in the same pass. Falls back to restart, but (since the crash
+    is only discovered mid-tick, after the healthy-poll bookkeeping already
+    ran) the actual relaunch does not fire until the FOLLOWING tick, once
+    ``_poll_process`` itself observes the same exit."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+
+    class _ExitsOnSecondPollProcess(_FakeProcess):
+        """Alive on its FIRST ``poll()`` call, exited (non-zero) on every
+        call after that -- models a worker dying in the gap between two
+        poll checks within the SAME process_once tick."""
+
+        def __init__(self, *, pid: int, alive_for_calls: int) -> None:
+            super().__init__(pid=pid, returncode=None)
+            self._poll_calls = 0
+            self._alive_for_calls = alive_for_calls
+
+        def poll(self) -> int | None:
+            self._poll_calls += 1
+            if self._poll_calls <= self._alive_for_calls:
+                return None
+            self.returncode = 1
+            return 1
+
+    # Alive for its first 3 poll() calls (the reload-arming tick's own
+    # _poll_process check, that same tick's _request_reload liveness check
+    # gating whether it even attempts the seamless path, and the critical
+    # tick's OWN _poll_process check) -- exited from the 4th call onward,
+    # which is _poll_reload_settlement's liveness re-check later in that
+    # SAME critical tick.
+    worker = _ExitsOnSecondPollProcess(pid=111, alive_for_calls=3)
+    restart_process = _FakeProcess(pid=222)
+    processes = [worker, restart_process]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR (pid 111, poll call #1 pending)
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")  # armed; no status file ever written
+
+    armed_reload_id = strategy.reload_ids[-1]
+    _write_fake_reload_status(tmp_path, "gov", armed_reload_id, "applied")
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.daemon"):
+        # ONE tick: _poll_process runs first and calls worker.poll() (call #1
+        # -> None, still alive) -- no crash-relaunch fires from THAT check.
+        # _poll_reload_settlement runs later in this SAME tick, sees the
+        # "applied" status, and does its OWN liveness re-check (call #2 ->
+        # 1, exited) -- falls back to restart, but does not itself relaunch.
+        daemon.process_once("gov")
+
+    assert daemon._pending_reload_settle.get("gov") is None  # type: ignore[attr-defined]
+    assert len(started) == 1  # no relaunch yet -- this tick only fell back
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "TRANSITIONING"
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(
+        "gov" in message and "already exited" in message and armed_reload_id in message
+        for message in messages
+    ), messages
+
+    # The FOLLOWING tick: _poll_process now observes the same exit (call #3,
+    # still 1) as a fresh crash and relaunches.
+    daemon.process_once("gov")
+    assert len(started) == 2
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Mayor interview"
+
+
+def test_start_tracks_and_releases_its_active_plan_dir_on_worker_exit(tmp_path: Path) -> None:
+    """Hostile-review follow-up, item 4: with the seamless-reload flag OFF
+    (``supports_content_reload=False``, an explicit diagnostic opt-out),
+    ``_try_content_reload``/``_commit_reload_settlement`` never run at all --
+    only ``_start`` ever prepares a plan for that channel, so without this
+    the ONLY cleanup for its directory was age/budget GC. Proves ``_start``
+    tracks its own plan as active and releases it once the worker exits."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111)]
+    started: list[_FakeProcess] = []
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        encoder_strategy=_FakeContentReloadStrategy(processes, started),
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+    )
+
+    daemon.process_once("gov")  # _start -> plan-1
+    process = started[0]
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-1"})
+    assert released == []
+
+    process.returncode = 0  # a clean exit (e.g. an operator-issued stop landed)
+    daemon.process_once("gov")
+
+    assert released == [tmp_path / "plan-1"]
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset()
 
 
 def test_content_reload_strategy_exception_falls_back_to_restart(tmp_path: Path) -> None:
@@ -1100,7 +3354,9 @@ class _CapturingEncoderStrategy:
     def swap_role(self, channel_id: str, work_dir: Path, role: str) -> None:  # pragma: no cover
         raise NotImplementedError
 
-    def reload_content(self, channel_id: str, work_dir: Path, request: EncoderStartRequest) -> bool:
+    def reload_content(
+        self, channel_id: str, work_dir: Path, request: EncoderStartRequest, **_kwargs: Any
+    ) -> bool:
         self.reload_requests.append(request)
         return True
 
@@ -1769,7 +4025,7 @@ class _FakeReconnectStrategy:
         raise NotImplementedError
 
     def reload_content(
-        self, channel_id: str, work_dir: Path, request: EncoderStartRequest
+        self, channel_id: str, work_dir: Path, request: EncoderStartRequest, **_kwargs: Any
     ) -> bool:  # pragma: no cover
         return True
 
@@ -2351,20 +4607,46 @@ def test_restart_escalation_event_fires_at_threshold_and_every_multiple(tmp_path
 
 
 def test_healthy_uptime_resets_the_crash_streak(tmp_path: Path) -> None:
-    """A worker that stays up healthily clears the crash streak, so a later failure is
-    treated as a fresh one-off (immediate relaunch, no escalation carry-over)."""
-    import time as _time
+    """A worker that stays up healthily -- REAL observed evidence, held for
+    the full healthy-uptime window -- clears the crash streak, so a later
+    failure is treated as a fresh one-off (immediate relaunch, no escalation
+    carry-over).
 
+    Round-3 fix (PR #183 review, BLOCKER item 1): this reset used to fire on
+    wall-clock seconds since spawn alone (this test used to force it by
+    back-dating ``daemon._started_at`` directly, with no encoder evidence of
+    any kind) -- that let a worker whose SPAWN overhead alone (interpreter
+    start, import, graph build, or -- for the GStreamer strategy -- the
+    preroll wait itself) crossed the threshold reset the streak despite
+    never producing any real output. It now requires observed on-air
+    evidence (see ``EgressDaemon._observed_on_air_evidence``): for this
+    FFmpeg-strategy channel, real fps/bitrate progress written to the
+    worker's own stderr log, held for the healthy-uptime window from the
+    moment it was FIRST observed -- never from spawn time."""
+    clock = {"t": 0.0}
     started: list[_FakeProcess] = []
-    daemon, store = _backoff_daemon(tmp_path, started, (100, 101, 102), cooldown=0.0)
+    daemon, store = _backoff_daemon(
+        tmp_path, started, (100, 101, 102), cooldown=0.0, monotonic=lambda: clock["t"]
+    )
 
     daemon.process_once("gov")  # start → 100
     started[0].returncode = 1
     daemon.process_once("gov")  # crash 1 → streak 1 → relaunch 101
     assert daemon._restart_streak.get("gov") == 1
 
-    # the relaunched worker has now been up well past the reset threshold
-    daemon._started_at["gov"] = _time.monotonic() - 120.0
+    # The relaunched worker (101) is now genuinely producing output -- write
+    # real ffmpeg progress into ITS stderr log, the evidence this reset now
+    # requires (not merely time since spawn).
+    log_path = daemon._stderr_logs["gov"]
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("frame=100 fps=30.0 bitrate=6000.0kbits/s\n", encoding="utf-8")
+    clock["t"] += 1.0
+    daemon.process_once("gov")  # evidence observed and latched this tick
+    assert daemon._restart_streak.get("gov") == 1  # not reset yet -- 0s held so far
+    assert "gov" in daemon._on_air_confirmed_at
+
+    # Past the 60s healthy-uptime window since evidence was FIRST observed.
+    clock["t"] += 65.0
     daemon.process_once("gov")  # healthy poll → streak cleared
     assert daemon._restart_streak.get("gov") is None
     assert store.read_state("gov").state == "ON_AIR"
@@ -2427,6 +4709,229 @@ def test_encoder_unavailable_airs_the_slate_instead_of_dead_air(tmp_path: Path) 
     assert "encoder unavailable" in (state.last_error or "")
     # Tried the program first, then the slate.
     assert strategy.start_labels == ["Council meeting", "Fallback slate"]
+
+
+def test_start_releases_the_prepared_plan_when_the_encoder_falls_back_to_slate(
+    tmp_path: Path,
+) -> None:
+    """Hostile-review follow-up (second pass), item 1: prepare() succeeds
+    (mints a real plan_dir for the PROGRAM plan) before the encoder-
+    unavailable retry decides to air the fallback slate instead --
+    using_fallback_slate flips True AFTER prepare() already ran, so the
+    pre-fix guard at the tracking site silently DROPPED the reference
+    without ever releasing it. Proves it is released instead."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    strategy = _EncoderUnavailableThenSlateStrategy()
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        encoder_strategy=strategy,  # type: ignore[arg-type]
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+    )
+
+    daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+    # The program plan's prepared directory (plan-1) was minted, then
+    # released once the slate aired instead -- never tracked as active
+    # (the slate was never built by the preparer), never left dangling.
+    assert released == [tmp_path / "plan-1"]
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset()
+
+
+def test_start_tracks_not_releases_the_prepared_plan_for_a_force_fallback_slate(
+    tmp_path: Path,
+) -> None:
+    """Hostile-review follow-up (third pass), P0: ``using_fallback_slate``
+    also flips True on THREE paths BEFORE the preparer ever runs --
+    ``force_fallback_slate`` (the crash-loop latch), a caption-readiness
+    refusal, and ``source_plan is None`` (this test covers the first). On
+    all three, the preparer runs against the SLATE plan itself (source_plan
+    was already reassigned before the preparer block), so the resulting
+    prepared_plan_dir is what the encoder is ACTIVELY airing from -- the
+    pre-fix tracking code released (rmtree'd) it out from under the live
+    slate the moment it started airing (reviewer-proven with a probe:
+    prepared_for=['Fallback slate'], state FALLBACK_SLATE pid=111,
+    released=['plan-1']). Proves the directory is tracked as active while
+    the slate airs, NOT released, and is only released once that worker
+    actually exits."""
+    from civiccast.egress.daemon import _LIVE_SOURCE_FAILURE_FALLBACK_STREAK
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    n = _LIVE_SOURCE_FAILURE_FALLBACK_STREAK
+    pids = tuple(100 + i for i in range(n + 2))  # 1 initial start + n relaunches + 1 more
+    processes = [_FakeProcess(pid=pid, returncode=None) for pid in pids]
+    started: list[_FakeProcess] = []
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _live_source_plan(tmp_path),
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+        restart_cooldown_seconds=0.0,  # never defer — isolate the fallback trigger itself
+    )
+
+    daemon.process_once("gov")  # start -> the live source, ON_AIR (plan-1, tracked active)
+    for _ in range(n):
+        started[-1].returncode = 1  # the live source drops / never connects
+        daemon.process_once("gov")  # the LAST of these force_fallback_slate=True
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+    # The slate's own prepared plan (whatever plan-N the preparer minted on
+    # the force_fallback_slate relaunch) is tracked ACTIVE, not released,
+    # while this worker airs it.
+    active_dir = daemon._active_prepared_plan_dir.get("gov")  # type: ignore[attr-defined]
+    assert active_dir is not None
+    assert active_dir not in released
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset({active_dir})
+
+    # Once THAT worker exits (a clean exit here, e.g. an operator stop), the
+    # slate's own directory is released like any other active plan.
+    started[-1].returncode = 0
+    daemon.process_once("gov")
+    assert active_dir in released
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset()
+
+
+def test_start_tracks_not_releases_the_prepared_plan_for_a_caption_readiness_refusal(
+    tmp_path: Path,
+) -> None:
+    """Hostile-review follow-up (third pass), P0 (second early-flip path):
+    same defect as the force_fallback_slate test above, triggered instead by
+    a caption-readiness refusal that requires the fallback slate."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        caption_readiness_provider=lambda _channel_id: SimpleNamespace(
+            ready=False,
+            refusal_reason="free-space-reserve-unrestorable",
+            requires_fallback_slate=True,
+        ),
+        ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+    )
+
+    daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+    assert released == []  # the slate's own directory (plan-1) is airing, not released
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-1"})
+
+    started[0].returncode = 0  # the slate worker exits cleanly
+    daemon.process_once("gov")
+    assert released == [tmp_path / "plan-1"]
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset()
+
+
+def test_start_tracks_not_releases_the_prepared_plan_for_a_missing_source_plan(
+    tmp_path: Path,
+) -> None:
+    """Hostile-review follow-up (third pass), P0 (third early-flip path):
+    same defect as the two tests above, triggered instead by
+    ``source_plan_provider`` returning ``None`` with a fallback configured."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+    )
+
+    daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+    assert released == []  # the slate's own directory (plan-1) is airing, not released
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-1"})
+
+    started[0].returncode = 0  # the slate worker exits cleanly
+    daemon.process_once("gov")
+    assert released == [tmp_path / "plan-1"]
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset()
+
+
+def test_start_releases_the_prepared_plan_on_a_failure_after_prepare_succeeds(
+    tmp_path: Path,
+) -> None:
+    """Hostile-review follow-up (second pass), item 2: ANY raise between a
+    successful prepare() and the tracking decision (a provider hook here --
+    cg_overlay_provider) used to leak prepared_plan_dir; each retry (e.g. a
+    subsequent auto_start pass) would mint another one. Proves the directory
+    is released, and that the exception still propagates out of _start
+    unchanged (existing outer behavior for an exception this generic --
+    logged by process_once's command loop -- is untouched by this fix; the
+    fix is scoped to the plan_dir, not to changing what state the row is
+    left in)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111)]
+    started: list[_FakeProcess] = []
+    counter = {"n": 0}
+    released: list[Path] = []
+
+    def _raising_cg_overlay_provider(_channel_id: str, _config: EgressConfig) -> Path | None:
+        raise RuntimeError("simulated board-overlay provider failure")
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        encoder_strategy=_FakeContentReloadStrategy(processes, started),
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+        cg_overlay_provider=_raising_cg_overlay_provider,
+    )
+
+    daemon.process_once("gov")
+
+    assert released == [tmp_path / "plan-1"]  # released, not leaked
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset()
+    assert len(started) == 0  # the encoder never even started
+    assert daemon._active_prepared_plan_dir.get("gov") is None  # never tracked as active
 
 
 def test_encoder_unavailable_with_no_fallback_provider_is_error_not_a_crash(

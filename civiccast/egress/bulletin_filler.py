@@ -14,6 +14,7 @@ import hashlib
 import logging
 import os
 import textwrap
+import uuid
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,7 +33,12 @@ from civiccast.egress.board_compositor import (
     build_board_segment_args,
 )
 from civiccast.egress.errors import SourcePrepareError
-from civiccast.egress.models import EgressConfig, EgressSourcePlan, EgressSourceSegment
+from civiccast.egress.models import (
+    MAX_PLAYLIST_SUBCHAINS,
+    EgressConfig,
+    EgressSourcePlan,
+    EgressSourceSegment,
+)
 from civiccast.egress.runtime import FfmpegRunner
 from civiccast.egress.source_plan import SlateSourceGenerator, _escape_drawtext
 from civiccast.schedule.store import PostgresAssetStore
@@ -180,9 +186,69 @@ class BulletinFillerSourceGenerator:
     def _plan_with_cycle(
         self, config: EgressConfig, segments: list[EgressSourceSegment]
     ) -> EgressSourcePlan:
-        cycle_seconds = self._slide_seconds * len(segments)
-        cycles = max(1, -(-self._target_fill_seconds // cycle_seconds))
-        return EgressSourcePlan(channel_id=config.channel_id, segments=segments * cycles)
+        if len(segments) <= MAX_PLAYLIST_SUBCHAINS:
+            cycle_seconds = self._slide_seconds * len(segments)
+            cycles = min(
+                MAX_PLAYLIST_SUBCHAINS // len(segments),
+                max(1, -(-self._target_fill_seconds // cycle_seconds)),
+            )
+            return EgressSourcePlan(channel_id=config.channel_id, segments=segments * cycles)
+        group_size = -(-len(segments) // MAX_PLAYLIST_SUBCHAINS)
+        rotations: list[EgressSourceSegment] = []
+        for index in range(0, len(segments), group_size):
+            group = segments[index : index + group_size]
+            rotation_path = self._render_rotation(config, group)
+            rotations.append(
+                EgressSourceSegment(
+                    label="Bulletin rotation",
+                    path=str(rotation_path),
+                    duration_seconds=sum(segment.duration_seconds for segment in group),
+                    kind="cg",
+                    source_ref=f"bulletin-rotation-{index // group_size}",
+                )
+            )
+        return EgressSourcePlan(
+            channel_id=config.channel_id,
+            segments=rotations,
+        )
+
+    def _render_rotation(self, config: EgressConfig, segments: list[EgressSourceSegment]) -> Path:
+        rotation_dir = self._work_dir / config.channel_id / "rotations"
+        rotation_dir.mkdir(parents=True, exist_ok=True)
+        key = self._rotation_hash(config, segments)
+        rotation_path = rotation_dir / f"rotation-{key}.ts"
+        if rotation_path.exists() and rotation_path.stat().st_size > 0:
+            return rotation_path
+        manifest = rotation_dir / f".{key}.{uuid.uuid4().hex}.concat.txt"
+        staging = rotation_dir / f".{key}.{uuid.uuid4().hex}.partial.ts"
+        try:
+            manifest.write_text(
+                "".join(f"file '{_escape_concat_path(segment.path)}'\n" for segment in segments),
+                encoding="utf-8",
+            )
+            result = self._run_ffmpeg_or_fail_open(
+                ["-f", "concat", "-safe", "0", "-i", str(manifest), "-c", "copy", str(staging)],
+                what=f"bulletin rotation for channel {config.channel_id}",
+            )
+            if result.returncode != 0:
+                raise SourcePrepareError(
+                    f"Could not concatenate bulletin rotation for channel {config.channel_id!r}."
+                )
+            staging.replace(rotation_path)
+        finally:
+            manifest.unlink(missing_ok=True)
+            staging.unlink(missing_ok=True)
+        return rotation_path
+
+    @staticmethod
+    def _rotation_hash(config: EgressConfig, segments: list[EgressSourceSegment]) -> str:
+        digest = hashlib.sha256()
+        digest.update(config.canonical_profile.model_dump_json().encode("utf-8"))
+        digest.update(str(_SLIDE_SECONDS).encode("utf-8"))
+        for segment in segments:
+            digest.update(segment.path.encode("utf-8"))
+            digest.update(str(segment.duration_seconds).encode("utf-8"))
+        return digest.hexdigest()[:24]
 
     def _render_board_segment(
         self,
@@ -344,6 +410,14 @@ class BulletinFillerSourceGenerator:
     @staticmethod
     def _background(branding: ChannelBranding | None) -> str:
         return "0x" + branding.color.lstrip("#") if branding is not None else _DEFAULT_BACKGROUND
+
+
+def _escape_concat_path(path: str) -> str:
+    """Quote one absolute path for FFmpeg's concat demuxer manifest."""
+
+    # A backslash inside a single-quoted ffconcat token is literal. Close
+    # the quote, escape the apostrophe outside it, then reopen the quote.
+    return Path(path).resolve().as_posix().replace("'", "'\\''")
 
 
 class FillerSourceProvider:

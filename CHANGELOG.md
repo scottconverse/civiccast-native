@@ -201,6 +201,40 @@ off (candidate 2's stopgap, while the mechanism above was still being
 proven) to on, once the sandbox lane showed the fixed mechanism holding
 across repeated runs.
 
+### External field documentation
+
+- **Publisher-generated SmartScreen guidance now states the verification order.**
+  Release notes require the exact SHA-256 and valid Authenticode publisher
+  before any conditional SmartScreen action; a warning alone is not proof of a
+  failed signature or valid publisher, and missing options or mismatched
+  publisher/hash remain stop conditions.
+
+- **Publisher PowerShell preflight isolates `PSModulePath`.** The child uses
+  Windows PowerShell's own default module paths, preventing the observed
+  inherited-PowerShell-7 type-data import failure before signature checking.
+  The parent process environment and actual signature checks remain unchanged.
+
+- **Gate A preflight downloads use fresh archived attempts.** Repeated dry-run
+  and live preparation cannot overwrite or silently reuse an older verdict
+  directory.
+
+- **Mutation collection includes the Sandbox harness fixtures.** The isolated
+  mutation workspace now copies `sandbox-lab` and `gate-b`, which the harness
+  policy tests read. This repairs collection without skipping those tests.
+
+- **Field-installation guidance now separates installation, trust and cutover.**
+  The external quickstart and tester guides require the actual installer hash
+  and Authenticode publisher checks before running it, distinguish USB/LAN
+  delivery manifests from GitHub sidecar metadata, and no longer describe a
+  waiting setup screen or an accessible console as an operating station.
+  The JSON sidecar is not a separately signed attestation. The landing-page
+  download question now explicitly describes a Windows beta, not a production
+  installer. Regression tests reject the prior false signing and completion
+  claims. The README also identifies the already-merged caption repairs rather
+  than calling their PR pending, without treating a merge as installed soak
+  acceptance. These are external-documentation corrections made after the signed
+  beta.5 candidate was built; the preserved kit and packaged manual are unchanged.
+
 ### Added
 
 - **An operator switch for live captions: `Show live captions on air` on
@@ -219,8 +253,1207 @@ across repeated runs.
   deliberately not true, so no environment value can re-enable captions
   against the operator's switch.
 
+### Changed
+
+- **Self-hosted candidate builds no longer upload the signed installer and
+  `.ccpack` files by default.** `native-beta-candidate-artifacts.yml`'s
+  `build_target: self-hosted` lane already lands those exact bytes on the
+  sandbox-lab box at `C:\CivicCastTester\candidates\<sha>\candidate\`, and
+  `assemble-native-beta-kit`'s self-hosted path reads them from that local
+  mirror, never from a downloaded artifact — so re-uploading ~3.4 GB nobody
+  downloads was dead weight against the 10 GB/month GitHub Actions
+  artifact-storage cap this repo shares with five other projects. A new
+  `upload_candidate_binaries` workflow-dispatch input (default `false`,
+  self-hosted only) forces the upload anyway. Only the small evidence set
+  (`*-report.json`, `SHA256SUMS.txt`, `candidate-receipt.json`) still
+  uploads unconditionally, under the unchanged `native-beta-candidate-<sha>`
+  artifact name; the binaries moved to their own
+  `native-beta-candidate-binaries-<sha>` artifact. Hosted (`windows-latest`)
+  builds are unaffected — they always upload everything, exactly as before,
+  since there is no persistent local box for anything to read from. Owner
+  decision 2026-09-09.
+
+- **The packaged manual no longer freezes publication status.** It describes
+  beta.5 operation and directs installers to the exact signed GitHub Release
+  and live release record for availability and candidate acceptance. The PDF,
+  DOCX and in-product handbook are regenerated together; a source regression
+  prevents reintroducing an unpublished/current banner into the immutable manual.
+
+- **In-place schedule rollover is enabled by default for beta.5.**
+  `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` (also `false`, `no`, or `off`) opts
+  into the diagnostic terminate/restart fallback. Explicit constructor
+  overrides still win. Candidate installation and soak evidence are required
+  before publication; the older default-off notes below describe history.
+
 ### Fixed
 
+- **Playback evidence bindings include the new caption helper.** The current
+  engine, test and historical-evidence annotations are hash-bound in both
+  registry entries. All seven runtime modules have individual drift tests.
+  July17 service/boot observations remain historical; current native tests
+  do not claim a new pre-login, installed-service or field acceptance result.
+
+- **Live-caption heartbeat admission is now explicitly bounded at its source.**
+  The integrated guard isolates heartbeat GAP events from caption
+  conversion, permits only one pending heartbeat reservation, and protects
+  newer reservations from stale send/probe callbacks. Existing cue-buffer flow
+  is unchanged and not counted by this guard; queue caps alone are not treated
+  as an event bound. Native stress coverage includes real sequence assignment,
+  A/V packet spans, transport/PCR checks, caption taps, and clean stop. The
+  full native suite and field acceptance remain separate evidence.
+
+- **Native in-place reload retirement is now bounded and serialized.** The
+  repaired path keeps persistent bounded A/V queues, holds a replacement until
+  the outgoing leg retires, and preserves the existing watchdog bounds. An
+  overlapping commit request is explicitly declined into the existing
+  full-graph restart recovery path rather than queued as latest-wins. The
+  native engine suite runs clean ten times out of ten with normal logging, each
+  run covering three workers and six in-place replacements with clean transport
+  checks and clean stop (320 committed replacements in total, no stalls and no
+  unfinished commits). Ten clean runs bounds the failure rate rather than
+  proving absence; this does not claim installer acceptance or a two-hour
+  physical soak, and no station capability is disabled.
+
+- **Aborting a prepared replacement can no longer disturb the program on air.**
+  A replacement that is abandoned before it goes live -- superseded, timed out,
+  or failed -- is now cut off at its own outputs before it is released, so it
+  cannot push anything into the live switch, and it is cleaned up on a worker
+  thread instead of on the control loop. Its error message now also names the
+  element that failed. The two replacement watchdogs no longer overlap: the
+  stall bound stands down while a replacement is being committed so the commit
+  watchdog owns that window and can record its diagnostic, and the stall bound
+  restarts from full afterwards. A replacement whose old program is slow to
+  release is now waited out and retried once rather than being treated as a
+  failure that takes a channel that is still broadcasting off air.
+
+- **The final caption audio file is no longer lost on shutdown.** The caption
+  audio writer is given its own short closing budget instead of whatever
+  remained of the overall shutdown deadline, which in practice was often none.
+
+- **Caption review queue `list()` now returns creation order even when two
+  rows share the identical microsecond `created_at`** (item 92). On a fast
+  Windows box, two rows created in a tight loop (e.g. queueing every cue of
+  a job in one pass) can read the same `datetime.now(UTC)` value; the
+  in-memory store's tie-break used to fall back to `review_item_id`, a
+  lexical string comparison that does not track creation order and could
+  silently swap adjacent rows (e.g. sorting a cue's `-02:` suffixed id
+  before its `:`-suffixed sibling). `InMemoryCaptionReviewStore` now records
+  a monotonic insertion sequence per row at create time and sorts by
+  `(created_at, sequence)`, so `list()` order equals creation order on
+  every tie, deterministically. The regression this masked was a flaky
+  test (`test_an_orphaned_spanish_row_neither_gates_nor_reaches_the_track`)
+  that has since been hardened to look up rows by source cue identity
+  rather than list position; a new store-level regression test forces the
+  tie via a frozen clock and asserts creation order directly.
+  `PostgresCaptionReviewStore.list()` keeps its existing
+  `(created_at, review_item_id)` ordering — a durable equivalent of the
+  in-memory counter would need a new migration and is documented as a
+  known, narrower-risk contract difference rather than changed here.
+
+- **Sandbox TSDuck analysis now reads the current nested JSON schema.** The
+  soak sampler reads packet totals, invalid syncs, and transport errors from
+  `ts.packets`, rejects absent or malformed fields instead of converting them
+  to zero, and records the explicit aggregate of per-PID discontinuity
+  counters. TSDuck timeouts remain failed probes; this is harness parsing
+  maintenance, not a change to playout or verdict thresholds.
+
+- **Sandbox-soak install and health deadlines now remain consistent across
+  the host and guest.** `Run-SandboxSoak.ps1 -InstallBoundMinutes` and
+  `-HealthBoundMinutes` are rendered into the Windows Sandbox LogonCommand
+  and accepted by `In-Sandbox-Soak.ps1`, rather than letting the guest
+  silently revert to its 20/10-minute defaults. The effective values are
+  retained in `SOAK-START.json` and `VERDICT.json`; defaults and all product
+  verdict criteria are unchanged. This is test-harness maintenance after the
+  signed beta.5 candidate was built; its installer and runtime bytes are unchanged.
+
+- **The native app-payload runtime probe now redirects its profile-backed
+  application state.** The build-only embedded-Python smoke test removes
+  inherited `DATABASE_URL` and `CIVICCAST_*` overrides from its child
+  environment, points the app's known profile and storage resolvers at a fresh
+  temporary directory, and removes that directory after either success or
+  failure. Its mandatory imports, audio decode, and packaged portal checks are
+  unchanged. This changes build-time validation only: it does not change the
+  files selected for the shipped runtime, installer behavior, or station
+  storage resolution. A rebuilt artifact still receives the new commit's
+  source identity and hashes. The native collection-count contract includes
+  both new success/failure regression cases; CI minimum floors are unchanged.
+  The builder tests load the source under its fully qualified module name so
+  mutation-test trampoline hits map to the builder's actual mutant keys,
+  rather than aborting without mutation data under a bare module alias.
+
+- **Finite program and filler plans roll over before running out.** The
+  end of scheduled media arms the configured filler, and finite filler
+  refreshes without a planned worker restart. Due programs still interrupt
+  filler immediately; manual overrides and live sources keep their existing
+  behavior. Reload settlement records the actual program or filler state
+  consistently in channel status, immediate health samples, sink evaluation
+  and alert evaluation. A regression observes the settlement itself before
+  an ordinary poll can mask an inconsistent health sample.
+- **Filler horizons match the playable decoder-chain limit.** Slate uses
+  immutable cached media and at most 12 segments. Larger bulletin rotations
+  concatenate groups into at most 12 files without dropping later slides.
+  A real FFmpeg regression verifies all 13 slides decode even when their
+  directory contains an apostrophe.
+- **The PDF manual header preserves the full beta version.** The renderer
+  now reads `v1.0.0-beta.5` without truncating it to `v1.0.0`; parser tests
+  cover release, RC and beta versions. Regenerated PDF, Word and in-app
+  manuals include the beta.5 rollover behavior and current documentation date.
+  CI uses the same renderer and checks its generated artifact version.
+
+- **Windows release-baseline tests no longer assume distinct clock ticks.**
+  The orphaned Spanish-caption test selects the retained translation by cue
+  identity and forces equal creation timestamps; the migration history test
+  supplies explicit timestamps. The sidecar entrypoint test uses a controlled
+  checkout and also proves that a missing signed installer is rejected.
+  Production caption publication and signing validation are unchanged.
+
+- **Removed the obsolete cross-agent audit protocol and its instruction
+  references** at the owner's request. The beta.5 release manager has explicit
+  authority to complete fixes, documentation, verification, merges, tagging,
+  and publication without additional stage approvals.
+
+- **The caption audio tap can no longer take a channel off air, and the
+  `CTRL first-output` marker now measures real post-PLAYING output instead of
+  a tautology (items 88, 84c).** MEASURED in the sandbox on
+  soak-a6d7871-20260906-213332Z (run 17, Opus diagnosis): every worker
+  reached PLAYING, pushed real TS output at ~3.2 Mbps for 26-100s, then
+  output silently stopped and the 10s stall watchdog killed the worker.
+  Root cause: the caption-audio-tap appsink's `_on_new_sample` callback ran
+  its blocking I/O (WAV close, `flush`, `os.fsync`, atomic
+  `partial.replace(target)`) directly on the GStreamer STREAMING thread.
+  Once that I/O fell behind (two ffmpeg jobs plus a Whisper ASR pass sharing
+  the box), the tap's plain (default, non-leaky) `queue` backed up, the tee
+  it forks from stalled, and the mux's audio pad — fed by the SAME tee —
+  starved, stopping real TS output. A caption side-channel was able to take
+  the CHANNEL off air. Fixed on both the graph and writer sides, in
+  `civiccast/egress/gst/engine.py` and `civiccast/egress/gst/audio_tap.py`,
+  so no single layer removal re-opens the hole: the caption-audio-tap
+  `queue` element is now `leaky=2` (`GST_QUEUE_LEAK_DOWNSTREAM` — drop the
+  OLDEST buffered data rather than ever block upstream) with a much deeper
+  buffer cap, and the appsink is `drop=True` (was `False`). More
+  importantly, `RollingWavSegmentWriter.write_pcm_s16le` no longer does ANY
+  blocking I/O itself — it only appends PCM to an in-memory buffer under a
+  lock that guards ONLY that bookkeeping, and hands finished segments to a
+  new `SegmentWriterThread`, a dedicated background thread that owns all
+  the blocking I/O. The hand-off never blocks: a bounded queue (8 segments
+  by default) drops the OLDEST pending segment — never the newest, never by
+  waiting — when full, logging the drop at most once a minute.
+  `RollingWavSegmentWriter.close()` still blocks until the writer thread
+  drains (the publish boundary callers already rely on), but ordinary
+  writes during live playout never can.
+
+  Separately, item 84's own `CTRL first-output: first buffer after 0.0s`
+  marker turned out to be a TAUTOLOGY, not evidence: the persistent output
+  half's `queue -> udpsink` sink chain is async, so the pipeline cannot even
+  reach PLAYING before at least one buffer (PAT/PMT/SDT tables plus the
+  first media buffer) has already prerolled through the mux —
+  `_arm_stall_watchdog` latching `_first_output_seen = self._output_buffers
+  > 0` at arm time was therefore true for essentially every worker that ever
+  reached PLAYING, real media flow or not, defeating the exact
+  escalation-cliff guard item 84 (round-2) existed to close. Fixed:
+  `_arm_stall_watchdog` now snapshots the output-buffer count at arm time
+  (`_output_buffers_at_arm`) instead of crediting it, and `_check_stall`
+  requires the count to exceed that snapshot by at least 2 buffers observed
+  STRICTLY AFTER arming (one alone could still be a table-refresh
+  coincidence) before crediting real first output. The marker text is
+  unchanged, so `civiccast.egress.health.worker_produced_output` and the
+  daemon's on-air evidence check needed no change. Addendum: `_check_stall`
+  now also prints a bounded, at-most-one-line-per-5s `CTRL output: <N>
+  buffers (+<delta>) since PLAYING` progress line (both while advancing and
+  while flat) so the next soak shows exactly when real output stops instead
+  of only the eventual stall-kill line. Item 89 (daemon reaps a dead child
+  only on the 30s automation tick, so a worker that exits ~20ms after
+  `issued start` can report ON_AIR with a dead pid for up to 30s) is a
+  known, deliberately deferred follow-up — not fixed here.
+
+- **`CIVICCAST_CAPTION_TAP=off` now actually disables the live caption audio
+  tap leg on an activated native station (item 91).** Found in review of PR
+  #189/#190: `civiccast.native.station_runtime.load_native_station_environment`
+  unconditionally forced `CIVICCAST_CAPTION_TAP=inline` and injected
+  `CIVICCAST_CAPTION_TAP_DIR` into every activated station's child
+  environment, and `civiccast/native/supervisor/service.py` applies that spec
+  environment LAST over the service's own `os.environ` -- so an operator (or
+  a tester) who set `CIVICCAST_CAPTION_TAP=off` in the Windows service's
+  registry `Environment` could never reach the child at all: the native
+  runtime always overwrote it back to `inline` with a real tap directory,
+  and `build_audio_tap_plan` (`civiccast/captions/tap.py`) only ever
+  consulted the directory, not the mode. There was no shipped way to turn
+  the tap off on a native station short of uninstalling the caption model.
+  Fixed at three layers: (1) `load_native_station_environment` now passes
+  `CIVICCAST_CAPTION_TAP=off` THROUGH instead of overwriting it, and sets
+  `CIVICCAST_CAPTION_TAP_DIR` to the empty string (never merely omitted --
+  see the round-2 correction below) when the service environment already
+  carries the literal `off`; any other value (unset, `inline`, a typo) keeps
+  prior behavior byte-for-byte; (2) `build_audio_tap_plan` itself now checks
+  the mode and returns `None` under `off` even if a directory is still
+  configured, so it stays the single place deciding whether a channel's
+  audio is forked regardless of caller; (3) `GstPlayoutStrategy._with_audio_tap`
+  (`civiccast/egress/gst/strategy.py`) now also consults
+  `resolve_live_captions_enabled()` before building the tap, so the
+  **operator-facing** `live_captions_enabled` station-profile switch (added
+  above) now stops the audio-fork leg itself at the channel's next **start**
+  -- previously it stopped only ASR transcription (`CaptionTapWorker._run_disabled`
+  discarded and deleted what the still-running fork wrote); the
+  tee/appsink/WAV writer kept running regardless of the switch. A content
+  reload does NOT pick this up: `engine.py`'s `_dispatch_control` and
+  `worker.py`'s D2-pipe reload branch both read the reloaded graph back with
+  `graph_from_json` and re-apply only `new_graph.sources[0]`
+  (`reload_program`) and `new_graph.graphics_overlay`
+  (`reload_graphics_overlay`) -- `new_graph.audio_tap` is read into memory
+  and discarded, because the tee/appsink is built exactly once, at initial
+  pipeline construction, and nothing on the reload path can touch it either
+  way. Neither `civiccast/egress/gst/engine.py`'s
+  `_build_audio_tap`/`_audio_tap_element_specs` nor
+  `civiccast/egress/gst/audio_tap.py` (PR #190, merged as `66e02c4` -- see the
+  items 88/84c entry above) were touched --
+  the graph builder there already only builds the tee when
+  `graph.audio_tap is not None`, which is exactly the signal this fix now
+  controls correctly upstream. New coverage: `tests/native/test_station_runtime.py`
+  (env composition: `off` passthrough + dir set to `""`, every non-`off`
+  value unchanged), `tests/captions/test_audio_tap.py` (`build_audio_tap_plan`
+  returns `None` under `off` even with a dir configured),
+  `tests/captions/test_caption_tap_worker.py` (`off` with no dir parses
+  without raising; a scan against a not-yet-created tap directory idles
+  cleanly rather than raising), and `tests/egress/test_gst_strategy.py`
+  (the built graph carries no `audio_tap` when live captions are disabled,
+  and still carries one when they are not).
+
+  **Review round 2 found two real defects in the round-1 fix, both corrected
+  here:**
+  - **BLOCKER, uncaught exception could stop a channel going to air.**
+    `GstPlayoutStrategy._with_audio_tap` calling `resolve_live_captions_enabled()`
+    means a corrupt or momentarily-locked `station-state.json` now raised
+    straight out of `GstPlayoutStrategy.start()`/`reload_content()`:
+    `_load_raw_state` (`civiccast/installer/station_state.py`) only ever
+    suppresses `FileNotFoundError`/`json.JSONDecodeError`, so a byte that is
+    not valid UTF-8 (measured: `UnicodeDecodeError`) or a Windows sharing
+    violation (`PermissionError`) propagated through and stopped an
+    unrelated, best-effort, optional accessibility feature from taking a
+    channel off air. Fixed by a new `_live_captions_enabled_or_default`
+    wrapper in `strategy.py` that catches any exception from the read,
+    logs one WARNING per process (not per channel/reload), and defaults to
+    the documented "on" -- exactly what `resolve_live_captions_enabled`
+    itself already defaults to when nothing is persisted. New coverage:
+    `tests/egress/test_gst_strategy.py::test_strategy_start_survives_a_corrupt_station_state_file`
+    (a real 0xFF byte written to a real file) and
+    `::test_strategy_start_survives_a_locked_station_state_file`
+    (a stubbed `PermissionError`).
+  - **The "or content reload" claim in the round-1 text was FALSE**, per the
+    reload-path trace above -- corrected throughout this entry,
+    `civiccast/egress/gst/strategy.py`'s `_with_audio_tap` docstring,
+    `docs/ops/background-workers.md`, and `docs/USER-MANUAL.md`: the profile
+    switch (and the env switch) take effect at the channel's next **start**
+    only.
+  - **The "removing any stray leftover" claim was also FALSE** against the
+    real child environment: `civiccast/native/supervisor/service.py` composes
+    `env = {**os.environ, **spec.env}`, so merely omitting
+    `CIVICCAST_CAPTION_TAP_DIR` from `spec.env` (this function's return
+    value) left an inherited stray value in `os.environ` free to win the
+    merge unopposed. Fixed by setting the key to the empty string in
+    `spec.env` instead of omitting it -- `build_audio_tap_plan`'s `.strip()`
+    check treats `""` exactly like unset, and `spec.env` is applied LAST, so
+    it always wins regardless of what `os.environ` inherited. New coverage:
+    `test_station_environment_caption_tap_off_switch_disables_the_tap_leg`
+    now drives the actual `{**os.environ, **spec.env}` merge (not just this
+    function's return value) and feeds the merged result through
+    `build_audio_tap_plan` to prove the tee is not built.
+  - A stale file citation (`installer/supervisor/service.py` instead of
+    `civiccast/native/supervisor/service.py`) was also corrected, and
+    `CAPABILITIES.md`'s caption-transcription-worker row (governed,
+    `enforced: false`) updated to match.
+
+- **Reload-commit wedge: diagnostic instrumentation, a commit watchdog with a
+  stack-dump, and wedged-worker termination (item 85). The wedge itself is
+  NOT YET LOCALIZED** -- this is not the fix, it is the tooling that finds
+  it. MEASURED in sandbox runs 12/14/15: `CTRL reload committed` never
+  appeared in seven soaked workers' logs; the last line either ever printed
+  was `CTRL reload: boundary switch rebased to running time Ns`, then the
+  process sat alive but permanently unresponsive -- the pipe control reader
+  stopped answering, and the daemon logged `Seamless content-reload
+  declined... ack timeout after 5.0s (reissue_desired_state); falling back
+  to restart` every retry while rewriting `TRANSITIONING` every ~2s for
+  minutes, because the wedged pid never actually exited.
+
+  Round 1 of this item hypothesized a root cause in
+  `civiccast/egress/gst/engine.py`'s `_commit_reload`/`_dispose_source_leg`
+  (switching the selector's `active-pad` before releasing the new leg's hold
+  probes; NULLing a retiring leg's elements before unlinking its selector
+  pad) and shipped a REORDERING as the fix. Hostile review (10 real-GStreamer
+  runs of the extended test against that reordering: 4 failures, 0 on main,
+  every one `gst_base_src_loop ... streaming stopped, reason not-linked`
+  right after `CTRL reload committed`) found that reorder introduced a NEW,
+  deterministic defect: unlinking/releasing a retiring leg's selector
+  request pad BEFORE that leg's own elements reach `NULL` races its
+  still-live streaming thread into pushing a buffer through a pad with no
+  peer -- `GST_FLOW_NOT_LINKED`, a fatal flow error, not a benign no-op --
+  and releasing a new leg's hold probes before the selector switch
+  deterministically drops that leg's first buffer at the default
+  (`cache-buffers=False`) input-selector sink pad. **The reorder is
+  REVERTED**; `_commit_reload`/`_dispose_source_leg` keep main's original
+  ordering unchanged. What ships instead:
+
+  1. Four staged stdout lines in `_commit_reload` (`CTRL reload: switching
+     selector` / `holds released` / `old leg disposed` / `committed
+     (elements=N)`) so the next soak that reproduces the wedge shows exactly
+     which of these four steps it stalled inside.
+  2. `_commit_reload` is wrapped by `_arm_commit_watchdog`, a real OS
+     `threading.Timer` -- not a `GLib` timeout source, which could never fire
+     if the wedge is the SAME thread that would run it -- that, on
+     expiry, dumps every live thread's Python stack
+     (`faulthandler.dump_traceback(all_threads=True)`) to stderr FIRST (the
+     actual localization tool for whichever future soak reproduces the
+     wedge), then force-exits IMMEDIATELY with a new, distinct
+     `civiccast.egress.gst.exit_codes.GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE`
+     (`5` -- `4` is reserved by item 84's first-output watchdog). Deliberately
+     attempts NO pipeline teardown first: a downward `set_state` transition
+     takes the same `STREAM_LOCK` a genuinely wedged thread already holds, so
+     attempting one here would either do nothing or wedge this watchdog
+     thread too. This path emits no `WORKER_RESULT` receipt, by design --
+     `os._exit` bypasses the remaining Python that would print one.
+     `commit_timeout_s` (worker.py: `CIVICCAST_RELOAD_COMMIT_TIMEOUT_S` env
+     override, default 15s) is validated/clamped to `[3, 120]`s with a
+     stderr warning on an out-of-range or non-finite value -- never silently
+     floored.
+  3. Daemon side (`civiccast/egress/daemon.py`): a reload ack timeout while
+     the worker's own pid is confirmed still alive now terminates that
+     worker (bounded terminate -> wait -> kill, escalating to `kill()` if
+     `terminate()` is never observed) instead of leaving it running while
+     `_fall_back_to_restart_reload` pins `TRANSITIONING` forever -- the
+     `_pending_reloads` fallback entry is set BEFORE terminating (not after)
+     so a concurrent exit observation can never miss it. The next poll tick
+     restarts the channel cleanly. A `GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE`
+     exit is classified as `reload-commit-timeout` in the relaunch log line
+     and, unlike a genuine slow-start exit code, is deliberately NOT
+     exempted from the crash-loop streak -- every occurrence counts as an
+     ordinary crash toward fallback-slate escalation.
+
+  New gi-free coverage in `tests/egress/test_gst_engine_reload_commit_ordering.py`
+  (main's ordering is unchanged: `active-pad` switch before hold-probe
+  release, `NULL` before unlink/`release_request_pad`, no `FLUSH_START`/
+  `FLUSH_STOP` events sent at all; the four staged log lines print in order;
+  the commit-watchdog thread dumps all-threads then force-exits with no
+  pipeline teardown when a commit never returns, and is a no-op when it
+  finishes in time; `commit_timeout_s` clamps with a warning). Extended
+  real-GStreamer coverage in `tests/egress/test_gst_engine_wsl.py` (a
+  deferred rollover whose payload is a real multi-segment concat
+  `PlaylistLeg` of 4 short real A/V clips, each decoded via
+  `filesrc ! decodebin` -- the production shape a real schedule-derived
+  program leg takes -- committing within bound, run 10x directly against a
+  bundled native GStreamer runtime on this box, not skipped: 0 `not-linked`
+  errors across all 10 runs). New daemon coverage in `tests/egress/
+  test_daemon.py` (the ack-timeout-on-a-live-pid termination including a
+  `kill()` escalation case, and that a decline for any other reason does not
+  terminate a healthy worker) and `tests/egress/
+  test_daemon_reload_commit_timeout_relaunch.py` (the relaunch log line's
+  classification, and that this exit code counts toward the crash-loop
+  streak on every occurrence, unlike a genuine slow-start code).
+- **Live caption tap knob hardening: one channel at a time, bounded live ASR
+  threads, a longer first pause after an overload (item 79).** MEASURED in
+  the sandbox on candidate 3b: 10 "Caption tap overload" events, with
+  GStreamer playout worker stalls clustered inside them -- the same root
+  cause class as the tester's beta.4 soak, and PR #172's backoff alone was
+  not enough. Three changes, all in `civiccast/captions/tap_worker.py` and
+  `civiccast/captions/runtime.py`: (1) the live caption tap's per-scan
+  concurrency bound is now a flat **one channel's ASR call in flight at a
+  time, station-wide**, always -- tightened from "one channel per 8 CPUs,
+  never more than 3" (override: `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`,
+  unchanged). Read this as hardening, not as the mechanism that fixed the
+  original field failure by itself: every channel already shares ONE speech
+  recognition model instance built with CTranslate2's `inter_threads=1`, so
+  the previous default of 3 never actually ran 3 concurrent inferences --
+  that model-level queue was already serializing them. A station with more
+  channels ON_AIR than this bound will spend most of a scan transcribing one
+  channel while the others' backlog grows; once a channel's backlog exceeds
+  `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` its stale audio is
+  **discarded**, not queued, and it is paused under the same exponential
+  backoff as any other overload -- a 3-channel station will have live
+  captions paused most of the time. (2) the speech recognition model used by
+  the live tap now caps how many CPU threads it uses per channel (1 on a
+  small station, up to 2 on a bigger one, never more, logged once when the
+  tap starts alongside `cpu_count` and the channel concurrency bound;
+  override: `CIVICCAST_CAPTION_TAP_CPU_THREADS`, clamped rather than fatal on
+  a bad value, and capped at 2 with a warning if it asks for more, so a typo
+  or an over-aggressive value cannot take an activated station off air or
+  hand the live tap "every core" worth of threads. The existing, more
+  general `CIVICCAST_WHISPER_CPU_THREADS` keeps its original fail-fast
+  (raise) behaviour for recorded-meeting transcription, unchanged -- but for
+  the **live tap specifically** it is now clamped the same way as the
+  tap-only variable (a bad value warns and falls back instead of raising),
+  its `0` ("every core") is refused regardless of which of the two variables
+  asked for it, and a value above 2 is capped the same way. Recorded meeting
+  transcription itself is untouched either way -- it still uses as many
+  threads as the box allows. (3) the first pause after an overload is now
+  twice as long (120 seconds instead of 60) so a station that just proved it cannot
+  keep up gets real recovery time before speech recognition is attempted
+  again. Does not add any new cross-module wiring to the stall watchdog --
+  that stays a separate, medium-risk item. `scripts/prove_native_caption_capacity.py`'s
+  `--cpu-threads`/`--beam-size` flags now default to the same live sizing
+  production ships, and the proof constructs its runtime with `live=True`, so
+  an unoverridden capacity-proof run measures the actual deployed
+  configuration instead of a station nobody ships.
+- **First ON_AIR no longer waits for a whole-clip re-encode (item 66).**
+  MEASURED: a fresh station took 8.5-12+ minutes to first ON_AIR because
+  `civiccast/egress/preparer.py`'s `_prepare_segment` conformed the WHOLE
+  first asset synchronously on the automation thread before the channel
+  could start, and every channel queued behind that one conform. An initial
+  pass at this fix also tried making the synchronous conform single-threaded
+  (`-threads 1`) or fully unthrottled, and probing loudness once per
+  segment; an Opus review measured both of those choices on real hardware
+  (HALO) and found real regressions, so the shipped fix is different from
+  that first pass. What actually ships, all measured on HALO:
+  - **A foreground thread cap, not `-threads 1` and not unthrottled.**
+    Conforming 300s of content took 233s at `-threads 1` vs 36.6s fully
+    unthrottled — serializing every synchronous conform to one thread (the
+    first pass's fix) was itself the kind of regression item 66 exists to
+    close, and it's reachable outside first-ON_AIR too:
+    `EgressDaemon._try_content_reload` (`daemon.py` around line 1839) runs
+    this same synchronous conform on the automation thread on the legacy
+    ffmpeg-concat engine while ANOTHER channel may genuinely be on air, so
+    fully unthrottled isn't safe there either. `build_conform_source_args`
+    now takes a `threads: int | None` argument instead of a `background:
+    bool` flag: warm-behind conforms (`_schedule_warm`) still pass
+    `threads=1` (a background warm must never starve the on-air encoder),
+    but every SYNCHRONOUS conform — first-ON_AIR and the content-reload path
+    above — now passes a cap of `max(1, os.cpu_count() // 2)` instead. This
+    is a real behavior change for `playout_trim_supported=True` (the legacy
+    ffmpeg-concat engine): its synchronous untrimmed-MISS conform used to run
+    fully unthrottled and is now thread-capped too.
+  - **Loudness probing is memoized per asset, not per segment.** A
+    `ebur128` loudness pass on a 39-minute clip took 46.7s (it decodes video
+    too — `check_loudness` in `civiccast/stream/loudness.py` now passes
+    `-vn`, audio-only decode, cutting that cost). An 8-segment plan of one
+    asset (8 distinct trims of the same recording) used to mean 8 full-file
+    probes — ~6.3 minutes, still on the synchronous start path. `_prepare_segment`
+    now consults the persisted cache meta (`_read_cache_meta`, keyed by the
+    same source fingerprint `_cache_key` uses) BEFORE probing; a miss probes
+    once and writes the meta immediately — even before any conform for that
+    asset exists — so every other segment of the same asset, in this
+    `prepare()` call or a later one, reuses it instead of re-probing.
+  - **An untrimmed foreground conform now populates the cache by LINKING
+    the already-finished per-plan file into it, never by moving it.**
+    Untrimmed segments are the full asset by definition (`source_plan.py`'s
+    untrimmed-segment contract) — on the GStreamer engine an untrimmed
+    MISS's bounded conform (`-t <duration>`) IS already a full-asset
+    conform. A round-2 version of this fix finished that conform into the
+    persistent cache FIRST and then copied it back OUT for the per-plan
+    file — an extra full-length copy on the blocking path, and if the cache
+    promotion raised (the entry alone exceeds `CIVICCAST_CONFORM_CACHE_GB`),
+    the per-plan file no longer existed and the segment failed to air where
+    it used to air fine. An Opus review caught both problems. The per-plan
+    file is now finished FIRST, unconditionally (`tmp_output_path.replace
+    (output_path)`), and airs from itself; the cache is populated
+    afterward via `_promote_finished_conform_into_cache` — a hard link
+    (`os.link`) of that SAME already-airing file into
+    `conform-cache/{key}.ts.tmp`, then the existing atomic rename.
+  - **The link/lock design in the paragraph above went through FOUR more
+    measured rounds of Opus review after it first shipped:**
+    - **Round 4, BLOCKER:** the lock guarding that promotion (and the
+      matching lock in `_conform_full_asset_into_cache`, used on the
+      `playout_trim_supported=True` engine) was still acquired BLOCKING. A
+      background warm holds the identical lock for its ENTIRE
+      single-threaded conform — tens of minutes for a long asset — so a
+      synchronous `prepare()` landing behind an in-progress warm for the
+      SAME asset stalled for just as long (measured: 3.01s against a
+      3-second fake warm in the regression test). Both lock sites now
+      acquire NON-BLOCKING: on contention, the promotion is skipped
+      (logged) and the untrimmed-miss path falls through to the bounded
+      per-segment conform instead of waiting — the segment already airs
+      from its own file either way. `_schedule_warm`'s queued job also
+      re-checks `{key}.ts` (and a fresh meta) right before doing any work,
+      so a job that sat in the single-worker warm queue while a foreground
+      promotion already populated the same entry skips its now-redundant
+      re-conform instead of racing it.
+    - **Round 4, point 3:** the `shutil.copy2` fallback (when `os.link`
+      fails, e.g. the cache and per-plan directories live on different
+      volumes) was still a full synchronous byte-for-byte copy on the
+      start path — the same class of blocking work item 66 exists to
+      close. It was handed to the warm scheduler
+      (`_schedule_cache_copy_promotion`) as a queued background job.
+    - **Round 5, BLOCKER:** round 4's fix for the point above scheduled
+      that background job from INSIDE the still-held per-key lock, and the
+      queued job itself blocking-acquired the SAME lock — with a
+      SYNCHRONOUS `warm_scheduler` (a test double, or any future
+      non-threaded integration) the job ran inline, before the caller's
+      own `finally: lock.release()` could ever execute: a reproducible
+      self-deadlock. With the real threaded scheduler it was head-of-line
+      blocking of the single warm worker on a lock its own caller still
+      held. Fixed: `_promote_finished_conform_into_cache` now releases its
+      lock FIRST (in `finally`) and only schedules the copy job
+      AFTERWARD; the queued job's own lock acquisition is now also
+      non-blocking (skip on contention rather than wait or busy-loop
+      re-queuing itself).
+    - **Round 6, point 7:** if handing the job to `self._warm_scheduler`
+      itself raised (the job "discarded" before it ever ran, e.g. a broken
+      or test-double scheduler), `key` was left stuck in `self._warming`
+      forever — silently suppressing every future GENUINE warm for that
+      asset. Both `_schedule_warm` and `_schedule_cache_copy_promotion` now
+      catch that failure, discard the key, and log instead of leaving it
+      stuck. Point 5: the copy job's OUTER exception handler (covering
+      every failure other than a failed `shutil.copy2` itself, e.g.
+      `_promote_conform_into_cache`'s own over-budget raise after the copy
+      already succeeded) now also unlinks its partial `.ts.tmp` — only the
+      inner handler did before.
+    Any failure in cache promotion (including the over-budget case) is
+    still logged and swallowed, never raised: the segment is already
+    safely on air regardless, and only the NEXT airing of that asset
+    misses the cache and re-conforms. TRIMMED misses are unchanged: bounded
+    conform straight to air, full-asset warm scheduled behind it.
+  - **The warm scheduler is a single-worker FIFO queue, not one thread per
+    job.** `_default_warm_scheduler` used to spawn an unbounded daemon
+    thread per warm job; it now queues onto one long-lived background
+    worker, so at most one warm conform (or cache-copy promotion, above)
+    runs at a time regardless of how many distinct assets are warming. The
+    existing per-key dedupe (`self._warming`) is unchanged, and now shared
+    between the two job kinds.
+  - **The loudness probe is now bounded to a window, not the whole file --
+    and, since round 4 (corrected round 5), not the HEAD of an untrimmed
+    asset either.** A trimmed segment probes exactly its own wanted window
+    (`-ss <inpoint>` before `-i`, `-t <duration>` after it — the same
+    convention `build_conform_source_args` uses). An untrimmed segment (the
+    full asset) samples 120 seconds starting 40% into the asset's REAL
+    MEDIA DURATION instead of its whole duration -- the initial round-3
+    shape sampled the HEAD instead, and an Opus review found a real failure
+    mode: a cold-open with silence or room tone measures the silence floor
+    instead of the program's real loudness, which then drives `loudnorm`'s
+    normalization target completely wrong and gets memoized for every
+    other segment/airing of that asset. A round-4 version of the 40%
+    offset used `segment.duration_seconds` for "the asset's duration" --
+    wrong: `source_plan.py`'s `_segment_duration` returns
+    `min(slot, playable)` (or the bare schedule SLOT for an un-probed
+    asset), so a slot shorter than the asset placed the sample past the
+    asset's actual EOF (measured: a past-EOF `-ss` reads as silence -> -70
+    LUFS -> an unnecessary floor fallback). Round 5 uses the asset's REAL
+    media duration instead -- a cheap ffprobe `-format` query (never a
+    decode), cached in the same meta as the loudness result -- and clamps
+    the 40% offset so it can never land past EOF even for a short asset.
+    If the mid-file sample itself measures at or below -60 LUFS integrated
+    (still silence -- e.g. a pause that happens to land in the sampled
+    window), a round-4 version fell back to a synchronous WHOLE-FILE probe
+    (measured 46.7s on a 39-minute clip) -- exactly the kind of
+    start-path-blocking work item 66 exists to close. Round 5 replaced that
+    with a SECOND bounded sample at a different offset (70% into the real
+    media duration, still 120 seconds).
+    **Round 6 found two more real bugs in that round-5 shape, both PROVEN
+    on real clips:** (1) when the real duration is genuinely UNKNOWN
+    (ffprobe unavailable or failed), round 5 still sampled at fixed 120s
+    and 240s offsets — for a real 67-second clip (true loudness -10.9
+    LUFS) BOTH offsets land past the clip's actual end, read as silence,
+    and the asset was misreported as genuinely silent. Round 6 samples
+    from 0s instead when duration is unknown (never past EOF for any
+    asset with real audio), and never trusts that single,
+    uncorroborated sample as proof of silence. (2) round 5's "second,
+    different offset" sample was actually IDENTICAL to the first for any
+    asset <=200s and OVERLAPPED it for up to 400s — never genuinely
+    independent evidence. Round 6 takes exactly ONE sample (0s, spanning
+    `min(duration, 120s)`) for any asset <=240s instead (trusted directly
+    as silence if it hits the floor — that one sample already covers the
+    whole, or nearly the whole, file); above 240s, the two samples are
+    placed and clamped so the second always starts at least 120s after
+    the first, guaranteeing no overlap. If the resample itself fails to
+    produce a measurement at all, the first (floor) reading is kept
+    rather than raising or silently discarding it.
+    `check_loudness`/`check_streaming_loudness` gained optional
+    `probe_start_seconds`/`probe_duration_seconds`/`threads` parameters for
+    this (`None` for every OTHER caller, still measuring the whole file,
+    unthrottled, unchanged); `_prepare_segment` now passes `threads=` on
+    every probe (round 6, point 6 — a production caller now exercises the
+    arg-order fix below, not just its own unit tests). This remains a
+    documented sample, not a full-file measurement, for material whose
+    loudness varies significantly across its length — the persisted-meta
+    memo above still means one asset gets one measured value shared
+    across every segment/airing of it, which was already this codebase's
+    model before item 66 (the cache key never depended on trim). The
+    asset's real media duration is threaded explicitly through every
+    conform/promotion call site that writes cache meta (round 6, point 3)
+    instead of `_write_cache_meta` doing a defensive read-modify-write on
+    every single write to avoid losing it.
+  - **`-threads`'s position in `check_loudness` was an OUTPUT option, not
+    an input one (round 5).** Round 4 placed `-threads <N>` after `-i`/
+    `-t`, which ffmpeg parses as applying to the `-f null` output --
+    capping nothing about the actual decode or filter graph. It now comes
+    BEFORE `-i` (an input/decoder option), paired with
+    `-filter_complex_threads <N>` to also cap the `ebur128` filter graph's
+    own threading, which `-threads` alone never bounded.
+  - **`_evict_cache_over_budget` now reaps orphaned cache-dir files** that
+    no other path here ever cleaned up: an abandoned `{key}.ts.tmp` (a
+    conform or promotion interrupted mid-write) older than 1 hour is
+    deleted outright, and a live one still counts toward the budget so a
+    burst of concurrent warms/promotions can't blow past
+    `CIVICCAST_CONFORM_CACHE_GB` before finishing; a `{key}.json` with no
+    sibling `{key}.ts` (a loudness-only probe whose conform never followed)
+    older than 24 hours is deleted outright. `_write_cache_meta`'s sidecar
+    write is now tmp+replace atomic, matching every `.ts` write in this
+    module. `os.utime(cached_ts)` on a cache HIT is now guarded against
+    `FileNotFoundError` (a concurrent eviction pass removing the entry
+    between the existence check and the utime call) and falls through to a
+    MISS instead of crashing. A failed/partial background copy (in the
+    cross-volume job above) now unlinks its own partial `.ts.tmp` instead
+    of leaving it for the orphan reap to find later.
+  - **`cli.py`'s CLI-driven worker now passes `playout_trim_supported`
+    too.** Its `SourcePreparer(work_dir=work_dir)` construction was missing
+    the argument entirely (silently defaulting to `False`, the
+    GStreamer-engine shape, even when running the legacy ffmpeg-concat
+    engine) — `automation.py`'s in-app driver already wired this correctly;
+    the CLI path now imports the same `gstreamer_engine_selected` helper
+    and mirrors it.
+  See `docs/ops/channel-egress-runbook.md`'s corrected "Cache HIT accuracy vs
+  MISS accuracy" note (an untrimmed asset's cache entry is a link -- or, on
+  a cross-volume layout, a background copy -- of the exact file that
+  already aired, so it is byte-identical, not a separately-produced copy),
+  its new "Cache promotion never waits behind an in-progress warm" note,
+  and its corrected "loudness probe" note describing the sampling window
+  (40%/70% of the asset's REAL media duration, not its schedule-slot
+  duration, with a single-sample shape for assets at or below 240s and a
+  never-trust-a-single-blind-sample rule when duration is unknown).
+  **Round 7 found two more real bugs, both PROVEN with a reproduction, in
+  the round-6 shape above:**
+  - **HIGH: an "untrimmed" segment is NOT, by definition, the whole asset.**
+    Round 6's own line above ("untrimmed segments are the full asset by
+    definition") was wrong once D42 (`source_plan.py`'s `_segment_duration`,
+    `min(slot, playable)`) shipped: a schedule slot shorter than its asset
+    makes an untrimmed segment's `duration_seconds` shorter than the
+    asset's real media length too, with no inpoint/outpoint attached to
+    show it. `_promote_finished_conform_into_cache` still hard-linked that
+    SHORT bounded conform into the persistent cache as if it were the whole
+    asset; a later, longer-slot airing of the same asset then hit that
+    entry and stream-copied `-t <longer duration>` from a file that didn't
+    have that much content — dead air, sticky in the cache until its
+    size/mtime happened to change. Reproduced: a 30-second schedule slot on
+    a 67-second asset, followed by a 60-second slot on the same asset.
+    Fixed at both ends: the promotion is now gated on the bounded conform's
+    own `duration_seconds` actually covering the asset's real media
+    duration (the same 1-second tolerance `_covers_slot` uses) — if it
+    doesn't, the full-asset cache is warmed behind it instead, exactly like
+    a genuinely trimmed miss already was. (A genuinely UNKNOWN real duration
+    — the preparer's own ffprobe unavailable or failing for this call —
+    keeps the pre-round-7 "trust untrimmed as full" assumption rather than
+    force every such segment through an extra, unverifiable warm: D42 itself
+    can only shorten a segment's duration below the real media length when
+    the asset's duration is KNOWN, so an untrimmed segment reaching this
+    gate with a genuinely unknown duration was never capped by D42 to begin
+    with.) The cache **read** side no longer
+    trusts `{key}.ts` on `duration_seconds` arithmetic either (a short
+    entry's meta still reports the asset's correct real length, so a
+    numeric comparison alone can't tell a genuine full conform apart from a
+    stale short one) — `_write_cache_meta` gained an explicit
+    `full_asset_conform` flag, set ONLY by `_promote_conform_into_cache`
+    (the one place a `.ts` is ever finalized into the cache), and a cache
+    HIT now requires that flag to be `True`. A `{key}.json` written by
+    pre-round-7 code never carries it, so an already-corrupted on-disk
+    entry from before this fix self-heals into a MISS (and gets correctly
+    re-conformed) instead of staying silently wrong.
+  - **MEDIUM: a single HEAD sample was trusted as conclusive silence for
+    assets up to 240 seconds, even though the sampled window only covers
+    120 of them — reintroducing the exact round-4 head-silence failure for
+    that range.** Reproduced: a 200-second clip whose only audio starts at
+    130 seconds (well past the sampled `[0, 120)` window) got memoized as
+    silent, and normalization was skipped. The single-sample-conclusive
+    cutoff (`_SHORT_ASSET_SINGLE_SAMPLE_MAX_S`) is now the probe window's
+    own size (120s, not 240s) — a "duration known" asset over 120 seconds
+    always falls into the sampled-window branch instead (40% in, not the
+    head), which happens to cover the 130-200s range in the reproduction
+    above. That branch's corroborating resample also gained an explicit
+    non-overlap check (`second_probe_start >= first + 120s`): lowering the
+    cutoff means the 120-240s range can now reach that branch too, where
+    two full non-overlapping 120-second windows don't always fit — without
+    the check, an overlapping/identical resample could count as
+    "corroboration" while providing none, exactly the failure round-6
+    already fixed for durations above 240s.
+  - Doc-only: `civiccast/stream/loudness.py`'s `check_streaming_loudness`
+    docstring claimed its `probe_start_seconds`/`probe_duration_seconds`/
+    `threads` parameters were "not currently exercised by any caller" —
+    false since round 6 shipped: `_prepare_segment` passes `threads=` on
+    every probe (see above) and `probe_start_seconds`/`probe_duration_seconds`
+    on every untrimmed/trimmed probe alike. Corrected.
+  See `docs/ops/channel-egress-runbook.md`'s corrected loudness-probe note
+  (the single-sample cutoff is 120s, not 240s, and the 120-240s range's
+  resample is skipped rather than trusted when no non-overlapping window
+  fits).
+  **Round 8 found the round-7 HIGH fix was still not fixed, reproduced
+  twice with real ffmpeg on an 8-second test asset (a 3-second slot, then a
+  6-second slot):**
+  - **HIGH: `media_duration is None` still promoted a slot-capped fragment
+    as the full asset.** Round 7's fallback reasoned that D42's own cap in
+    `source_plan.py` can only shorten a segment's `duration_seconds` below
+    the real media length when that file's `_playable_duration` already
+    knows the asset's duration — so an untrimmed segment reaching the
+    promotion gate with an UNKNOWN `media_duration` was "never capped by
+    D42 to begin with," and kept promoting it. That compares the wrong two
+    sources: D42's cap reads the asset's duration off the **database row**
+    (`source_plan.py:523-543`); `media_duration` in the preparer comes from
+    **this call's own live ffprobe**. The two can disagree, and disagree in
+    exactly the poisoning direction (DB knows the duration, ffprobe
+    doesn't): (a) ffprobe genuinely fails for one call while the DB row
+    still caps the segment to 3 of the asset's 8 seconds — the 3-second
+    fragment got promoted as the whole asset; (b) with no failure at all —
+    a TRIMMED airing runs first, takes the sibling probe branch that never
+    calls `probe_media_duration_seconds` at all, and persists
+    `media_duration_seconds: null`; the very next airing (untrimmed,
+    slot-capped to 6 of 8 seconds) reads that cached `null` back and
+    promotes its own fragment as the whole asset. `media_duration is None`
+    now **never** promotes — it always falls through to `_schedule_warm`,
+    whose background job conforms with `build_conform_source_args(segment=
+    None, ...)` — no `-ss`/`-t` at all — so its output genuinely is the
+    whole file regardless of what `media_duration` measured, unlike this
+    unverified fragment. `_promote_conform_into_cache` then marks the entry
+    `full_asset_conform=True` unconditionally (it measures nothing itself);
+    that is safe here only because the caller reaching it already
+    guaranteed a trim-free, whole-file conform. Threading the plan's
+    already-known (DB) asset duration through to the segment spec so the
+    preparer stops re-deriving it via a second, independently fallible
+    ffprobe is a listed follow-up, not done this round.
+  - **MEDIUM: the warm/copy-job skip checks didn't require the
+    `full_asset_conform` flag.** `_schedule_warm`'s and
+    `_schedule_cache_copy_promotion`'s own re-check-before-running guards
+    (added round-4/round-6 to skip redundant work if another caller already
+    populated the entry) accepted ANY meta file as "already populated," so
+    a flagless legacy entry (anything written before round 7) read as a
+    hit and the job returned without ever conforming — the asset never
+    healed: every future airing kept paying the foreground conform, and the
+    stale short `.ts` stayed in the eviction budget forever. Both guards
+    now require `meta.get("full_asset_conform") is True`, matching the
+    cache-HIT check round 7 already applied on the read side.
+  - **LOW: the "no room for a corroborating resample" comment named the
+    wrong cutoff.** With `probe_start = max(0, min(0.4·d, d−120))` and the
+    non-overlap requirement `second_probe_start >= probe_start + 120`,
+    working both clamped expressions through (not just describing them)
+    shows corroboration is actually unavailable for every asset under 400
+    seconds, not 240 — the fail-safe *behavior* was already correct
+    (skip the resample, keep the single reading), only the documented
+    boundary was wrong. Corrected in this file, the runbook, and the
+    in-code comments; no behavior change.
+  **Round 9 was tests/wording only — both round-8 functional fixes (the
+  warm/copy skip-predicate MEDIUM and the fail-closed HIGH gate) were
+  already correct, just uncovered:**
+  - **MEDIUM: added a mock-level test per job** (`_schedule_warm`'s and
+    `_schedule_cache_copy_promotion`'s own queued `_job`) that plants a
+    flagless legacy meta plus a short `.ts`, runs the job, and asserts it
+    re-conforms (does not return early) with the resulting cache entry
+    carrying `full_asset_conform=True` — reverting either skip predicate
+    back to `cached_meta is not None` now fails the suite instead of
+    passing silently.
+  - **MEDIUM: added a mock-level (no-ffmpeg) test of the HIGH fail-closed
+    gate** — an untrimmed, slot-capped segment with an unknown media
+    duration now asserts `_schedule_warm` is called and nothing is
+    promoted, catching a revert of `is_full_asset_conform`'s
+    `media_duration is not None` clause without needing real ffmpeg on the
+    runner. Also wired `tests/egress/test_preparer_conform_cache_real_ffmpeg.py`'s
+    four tests into `ci-test.yml`'s junit-floor guard pattern (matching the
+    existing `tests/live/test_finalization_worker` and live-HLS guards), so
+    CI fails if they were skipped (no ffmpeg/ffprobe on the runner) rather
+    than silently passing.
+  - **LOW: corrected a false invariant in a code comment and this file.**
+    Both claimed the warm job "sets `full_asset_conform=True` from its own
+    measured length via `_promote_conform_into_cache`" — that method sets
+    the flag unconditionally and measures nothing. The real invariant is
+    that the warm job's conform always builds with
+    `build_conform_source_args(segment=None, ...)`, emitting no `-ss`/`-t`,
+    so its output is genuinely the whole file regardless of what
+    `media_duration` measured; `_promote_conform_into_cache`'s unconditional
+    flag write is safe only because of that guarantee, not because it
+    verified anything itself.
+  - **LOW: `docs/ops/channel-egress-runbook.md`'s "for a 120-400 second
+    asset that room may not exist" line now says plainly that below 400s a
+    second sample never fits at all**, plus two new operational notes: a
+    broken ffprobe queues a single-threaded background whole-asset conform
+    for every slot-capped untrimmed airing until it heals (bounded by the
+    warm dedupe; can mean a long first-run queue on a GStreamer station with
+    many assets), and upgrading past this fix invalidates every
+    pre-existing conform-cache entry (flagless reads as a miss), so each
+    asset pays one re-conform after upgrade — synchronous on the start path
+    when `playout_trim_supported=True`.
+- **A seamless plan rollover collided its own concat aggregators, silently
+  failed to join the pipeline, and was acked "applied" anyway -- so
+  automation kept re-triggering it forever while the channel bounced.**
+  MEASURED on real hardware (2026-09-06, clean install of `609273d`, three
+  GStreamer channels): the first seamless plan rollover
+  (`daemon._try_content_reload` -> `strategy.reload_content` -> the D2
+  worker-pipe seam -> `engine.reload_program`) was followed by
+  `CTRL stall: no output for 10s` worker relaunches every ~30s on every
+  channel. Root cause (H1): `bridge.graph_from_config`/`reload_content`
+  always build the program leg as a `PlaylistLeg` labeled `"program"`, and
+  `engine._build_playlist` named its `concat` aggregators with the bare
+  label (`vconcat_program`/`aconcat_program`) on every build -- a reload's
+  rebuilt aggregators therefore collided with the still-live outgoing leg's
+  same-named aggregators while both were in the pipeline. GStreamer's
+  `Gst.Bin.add()` silently REFUSED the duplicate name
+  (`"Name 'vconcat_program' is not unique in bin ... not adding"`) and the
+  discarded return value let the new leg's elements dangle unlinked: its
+  readiness probes never fired, `_on_reload_timeout` aborted the reload
+  every time (`reload_timeout_s=10.0`), and `worker.py`'s D2 pipe dispatch
+  acked the `reload` command `"applied"` the instant `reload_program`
+  *returned* -- before the reload had committed or even had a chance to --
+  so the daemon believed every rollover had landed and automation
+  re-issued it every cadence tick, forever. A second measured root cause
+  (H5) also contributed on the tester: `preparer.prepare()` wrote every
+  content-reload's non-cache-hit prepared segment to a FIXED path keyed
+  only by the segment's index within its own call
+  (`<channel>/prepared/segment-NNNN.ts`), never by which plan the call was
+  preparing -- for the GStreamer engine (`playout_trim_supported=False`) a
+  reload's prepare wrote directly over the exact file the CURRENTLY LIVE
+  worker's `filesrc` was still reading, with no GStreamer warning, only a
+  downstream stall. Four independent fixes, all in this change:
+  - `engine.py`'s `_make` now checks `pipeline.add()`'s return value and
+    raises `RuntimeError` naming the refused element instead of silently
+    proceeding; `reload_program`'s existing build-error handling aborts the
+    in-flight reload cleanly on that raise (the current program keeps
+    playing).
+  - `_build_playlist` now names each build's aggregators with a monotonic
+    `self._source_leg_seq` (`vconcat_<label>_<seq>`/`aconcat_<label>_<seq>`,
+    mirroring the existing `_overlay_layer_seq` pattern) so a reload's
+    rebuilt aggregators never collide with the leg they are replacing.
+  - `reload_program` gained an optional `on_settled` callback, invoked
+    exactly once when the reload actually commits or aborts.
+    `worker.py`'s D2 pipe dispatch acks a `reload` command `"armed"`
+    SYNCHRONOUSLY the instant `reload_program` returns without raising (the
+    command was accepted; the new leg is building/prerolling) -- a first
+    attempt at this fix made the ack wait for `on_settled` to fire instead,
+    which just moved the dishonesty: a DEFERRED/boundary-aligned switch (an
+    automation-driven ON_AIR extension, `reload_policy.should_defer_switch`)
+    can take up to `defer_switch_timeout_s` (900s default) to settle, so that
+    ack would have blocked far longer than any pipe round trip should, and
+    the strategy's bounded ack wait would time out on a correctly-armed
+    long-lead reload and the daemon would terminate a perfectly healthy
+    worker. The reload's eventual settle outcome
+    (`"applied"`/`"aborted:<reason>"`) is instead reported OUT-OF-BAND via
+    `reload-status.json` (`worker.py`'s `_write_reload_status`), polled once
+    per automation tick by the new `EgressDaemon._poll_reload_settlement`
+    (added to `process_once`'s poll set) -- `_try_content_reload` now only
+    ARMS a reload and records a `_PendingReloadSettlement`; the ON_AIR
+    proof-event/state bookkeeping (`_commit_reload_settlement`) runs only
+    once settlement is actually observed, and a settlement that never
+    arrives within a generous backstop deadline (`
+    _PENDING_RELOAD_SETTLE_DEADLINE_S`, 960s) falls back to the daemon's
+    terminate+restart path, same as an immediately-declined reload always
+    did. The strategy's ack wait for `reload` is therefore back to the SAME
+    small default every other verb uses. The daemon also now logs a WARNING
+    naming the channel and the reason whenever a seamless reload is declined
+    or fails to settle
+    (`GstPlayoutStrategy.last_send_command_failure_reason`), where before
+    `if not applied: return False` had no log line at all. **Known
+    consequence, not a bug**: while a reload is armed but genuinely still
+    settling, the channel's state row stays at whatever it was before the
+    reload (honest -- the physical output has not switched yet either); with
+    the seamless path explicitly OFF, a plan rollover instead
+    shows `TRANSITIONING` from the moment automation triggers the rollover
+    check (well before the current item's natural end, by design -- see
+    `reload_policy.rollover_trigger_at`) until the item actually ends and the
+    restart lands, even though the channel is airing normally the whole time.
+  - `preparer.py`'s `prepare()` now writes every call's prepared segments
+    into their own uniquely-named subdirectory
+    (`<channel>/prepared/<uuid>/segment-NNNN.ts`) so two `prepare()` calls
+    can never share an output path; the two direct-ffmpeg write sites
+    (cache-hit stream-copy, trimmed-miss conform) now write to a `.tmp`
+    sibling and rename into place atomically, matching the existing
+    full-asset-cache write's pattern. GC is now keep-3-most-recent-plans
+    first (never swept regardless of age or size), then a byte budget, then
+    a 24h age floor as a last resort -- plus an explicit `release()` the
+    daemon calls the moment it independently knows a plan is retired (a
+    just-settled reload's predecessor, or a channel's active plan on
+    operator stop), and a plan whose every segment never triggers a local
+    write (all-live, or every segment a `playout_trim_supported` cache hit)
+    leaves no directory behind at all.
+  - **Historical default-off state, superseded by the beta.5 default-on
+    change above.** At this point in development, the fixes above were
+    unit-tested, but the seamless path had not yet been re-proven on
+    real hardware. `GstPlayoutStrategy.supports_content_reload`
+    then defaulted to `False` (env `CIVICCAST_EGRESS_SEAMLESS_RELOAD=1` to opt
+    back in); a channel with it off falls back to the daemon's existing
+    terminate+restart reload path at every plan rollover instead of the
+    in-place swap. Cost of the fallback: one encoder restart per plan
+    rollover -- a rounding error for a normal 10-40 minute program item, but
+    roughly one restart every ~30 seconds for a rapid 30-second-item
+    test/demo schedule -- and, per the TRANSITIONING note above, the state
+    row reads `TRANSITIONING` for that whole rollover-trigger-to-natural-end
+    window even though playout itself never glitches.
+  - **Second-round hostile-review fixes (same branch):** an armed-but-not-
+    yet-settled reload's tracking (and its prepared-plan directory) is now
+    released on every worker-exit path (a crash mid-settle no longer fires a
+    spurious restart 960s later against a channel that already moved on, and
+    a late-arriving settlement for a dead attempt is logged as ignored
+    instead of silently doing nothing), on a fresh restart, and when a newer
+    reload supersedes a still-pending one (the previous code silently leaked
+    the superseded attempt's directory). `ChannelAutomationService`'s
+    45-second "did the reload land" retry now checks the daemon's own
+    "armed, still settling" signal first, so a legitimately-settling deferred
+    reload (~120s+ before its `current_proof_event_id` changes) is never
+    retried out from under itself (previously: a re-prep, a superseded leg,
+    and another prepared-plan directory every ~45s while it was still
+    healthy). `SourcePreparer`'s GC now also protects every directory the
+    daemon reports as live (not just the keep-N-most-recent heuristic), and
+    the `_start` path -- not just the seamless-reload path -- tracks and
+    releases its own prepared-plan directory, so the fallback-flag-off
+    (shipped) default gets the same cleanup. The POSIX FIFO control channel
+    now reports reload settlement too (it previously never did, so a FIFO-
+    dispatched reload always waited out the full 960s deadline and fell back
+    to restart regardless of whether it actually landed). Automation's own
+    reload dispatch remains synchronous on its shared poll thread, now
+    bounded by the ~5-second "armed" ack instead of up to 900 seconds (F5 --
+    documented, not eliminated; a dedicated dispatch thread per channel would
+    remove even that bound but is a separate change).
+- **A channel-automation pass that blocked for a long time (e.g. a cold
+  content prepare inside a channel's own start) could freeze a channel's
+  plan-rollover horizon in the past and make it roll over forever, and a
+  worker that kept crashing right after a rollover could get hit with an
+  unthrottled re-arm every second (item 78).** Four related fixes in
+  `ChannelAutomationService`/`reload_policy`/the daemon:
+  - Wall-clock "now" is now read fresh for EACH channel's pass, AFTER that
+    channel's own poll work runs (not before it) -- reading it any earlier
+    left the channel that actually blocks still computing its own
+    rollover math against a timestamp captured before the block, which is
+    the exact scenario that was freezing the horizon in the past.
+  - If a channel's tracked plan horizon has already ended by wall clock
+    (`plan_end_at` at or before "now") by the time it is checked, it is now
+    discarded and re-established from the channel's current plan instead of
+    being used to justify another dispatch. This stops the runaway
+    rollover-forever failure, but it is not free: re-anchoring to "now"
+    also pushes the NEXT trigger point later than it would otherwise have
+    been, since the new plan is windowed from a later starting point --
+    safe, but a real behavior change worth knowing about, not a free
+    correction. (`tests/egress/test_automation.py`'s
+    `TestRolloverCadence.test_the_flat_floor_bug_the_scaled_floor_fixes`
+    measures this concretely: it deliberately reproduces an OLDER, already-
+    fixed cadence-floor bug from D43 to compare against the shipped,
+    scaled floor, and this PR's stale-horizon re-anchor changes the
+    reproduced bug's own worst-case lead from -180s to -360s. The negative
+    lead itself is that older bug, not this PR's doing -- the shipped floor
+    the test compares against is unaffected -- but the re-anchor measurably
+    changes how that unrelated, deliberately-reintroduced bug plays out.)
+  - The 45-second "did the last rollover reload actually land" retry path
+    used to be completely unthrottled; it now refuses to dispatch to a
+    worker whose process has been alive less than 60 seconds (giving a
+    freshly relaunched worker room to settle before another synchronous
+    prepare is thrown at it), and separately enforces its own 60-second
+    minimum gap between CONSECUTIVE retries (measured from the last retry
+    dispatch, not the original one, which is what makes this floor
+    actually bind instead of always being satisfied already by the 45-
+    second timeout that gates entry to the retry path in the first place).
+    Degrade mode, unchanged by this fix: a worker that keeps relaunching
+    faster than a rollover's own boundary-aligned trigger delay never keeps
+    a horizon tracked long enough to fire one at all (every relaunch resets
+    it -- see the "not ON_AIR"/"fresh plan took air" clearing above); one
+    that relaunches slower than that but still faster than the 60-second
+    worker-age floor gets no rollover RETRY (the floor applies only to the
+    retry branch, never to a plan's first, original dispatch) for as long
+    as that keeps happening. Neither is a hang -- just a reversion to the
+    pre-item-78 shape, where the channel reaches its own end-of-schedule/
+    crash cycle and the daemon's own crash back-off (this fix does not
+    touch it) owns the restart.
+  - The daemon also now refuses to defer a seamless reload's on-air switch
+    to the outgoing program's own end if that boundary has already passed
+    by the time the reload actually runs -- it cuts over immediately
+    instead, since waiting for an end-of-program event that is already
+    behind the clock would otherwise mean waiting for something that will
+    never arrive. The plan_end_at a rollover reload was computed against is
+    consumed exactly once per "reload" command: `EgressDaemon._request_reload`
+    pops it at the very top of its own body, before any of ITS OWN branches
+    run (the worker is missing/dead, there is no state row, or the strategy
+    doesn't support content-reload all used to skip straight past the point
+    that consumed it and leave it sitting there), and passes the value down
+    explicitly to `_try_content_reload`. Plainly: the recorded value binds
+    to whatever "reload" command for that channel `_request_reload`
+    processes NEXT, not necessarily the one automation dispatched it for --
+    MEASURED, an operator reload queued before automation's own rollover
+    reload drains consumes it instead, and cuts immediately when it should
+    have deferred normally. Automation's own 45-second retry-timeout/
+    settlement bookkeeping still recovers from that (the never-landed
+    reload it was actually tracking gets retried on schedule), but the
+    mixup itself is real and this fix does not close it -- only the
+    indefinite leak, and only once every route off-air actually clears the
+    entry (see the next paragraph; an earlier round of this same fix
+    believed, incorrectly, that `_stop` alone was enough).
+  - **Round 5 (coordinator review): three more off-air routes left the
+    same entry uncleared, and one of them was MEASURED to actually revert
+    a later, unrelated reload's defer decision.** `_stop` clearing the
+    entry (added above) only covers an operator stop or a drain -- a
+    worker that exits on its own (a clean rc=0 exit with no pending
+    reload, or a terminal crash that lands the channel in `ERROR` rather
+    than a relaunch) never reaches `_stop`, and neither does `_drain`'s
+    own "nothing to drain" branch nor `stop_all_channels`' "already gone"
+    branch (both handle a channel with no live process at all). Any of
+    the four now leaves a rollover-plan `plan_end_at` sitting in memory
+    forever once recorded, exactly as before `_stop`'s own fix, just via a
+    different door. MEASURED: record a rollover plan_end already in the
+    past for a channel, let its worker exit cleanly (`STOPPED`), restart
+    the channel (`ON_AIR`), then issue a plain operator reload with no
+    rollover behind it at all -- the reload wrongly saw the stale,
+    already-past `plan_end_at` and cut immediately instead of deferring
+    normally. All four routes (`_poll_process`'s clean-exit and
+    terminal-`ERROR` worker-exit branches, `_drain`'s process-is-None
+    branch, and `stop_all_channels`' already-gone branch) now clear the
+    entry themselves, the same as `_stop` does; the pending-reload restart
+    and crash-relaunch routes inside `_poll_process` deliberately do not,
+    since those keep the channel effectively on air and rely on
+    `_request_reload`'s own pop instead (the same round-4 rule that keeps
+    `_start` from popping this dict). Note: `_poll_process`'s clean-exit
+    branch is shared by two cases -- a worker that simply exited on its
+    own, and a drain that has finished (`was_draining`). An operator-issued
+    "drain" command (`_process_command` -> `EgressDaemon._drain`) never
+    calls `_stop` at all -- it only writes the `DRAINING` state and waits
+    for the worker to actually exit -- so `_stop(draining=True)`'s own pop
+    plays no part in that path; only `stop_all_channels` calls `_stop(...,
+    draining=True)`. The clean-exit pop this round adds is therefore what
+    actually covers an operator drain finishing: it is the only pop either
+    case (a plain clean exit or a completed drain) reaches, not a
+    redundant backstop behind an earlier one.
+  - **Round 6 (coordinator review): the round-5 fix's "nothing recorded
+    before a channel goes fully dark can ever survive" claim was still
+    false -- two more routes leaked, both MEASURED.** First, a worker
+    that crashes twice within the back-off cooldown takes
+    `_relaunch_after_crash`'s DEFERRED branch: the channel sits in
+    `STARTING` with no process running for the entire cooldown, and that
+    branch never popped the entry. MEASURED: crash once (immediate
+    relaunch), crash again inside the cooldown (deferred), let
+    `_service_backoff_relaunch` fire the deferred relaunch once the latch
+    permits, then issue a plain operator reload -- `switch_at_end_of_
+    current` came back `False` (cut) instead of the deferred `True` a
+    rollover plan_end sitting in the dict should have produced, and the
+    dict was confirmed empty during the back-off window itself. The same
+    leak also reached the operator via a second path: an explicit operator
+    start command superseding a still-deferred relaunch (`_process_command`
+    already pops `_backoff_relaunch` there, but was not popping this
+    dict). Fixed by a single pop, not two: `_relaunch_after_crash`'s
+    DEFERRED branch itself now clears the entry the moment the channel
+    enters the back-off (`_backoff_relaunch[channel_id] = ...`), before
+    either later resolution runs -- so both the latch eventually firing the
+    deferred relaunch on its own AND an operator start command superseding
+    it first find the entry already gone; `_process_command` itself gained
+    no new pop of this dict. Second, `_start`'s own two terminal-`ERROR`
+    `except` clauses (`ConfigInvalidError`/`SecretUnresolvedError`/
+    `FfmpegNotFoundError`, and the general `EgressError` fallback) never
+    popped -- `ERROR` is off-air by the same definition every other route
+    in this list uses, so a value recorded going into a `_start` call that
+    lands in `ERROR` survived across it. That branch now pops directly,
+    closing the second gap.
+    Exactly two routes deliberately still do not pop, unchanged from
+    round 4: the pending-reload restart inside `_poll_process`, and the
+    IMMEDIATE crash-relaunch path (`_relaunch_after_crash` ->
+    `_begin_relaunch` -> `_start`, taken when the back-off latch permits
+    running right away instead of deferring) -- both keep the channel
+    effectively on air through the transition and rely on
+    `_request_reload`'s own pop instead. The daemon's in-code docstring
+    for `_rollover_plan_end_at` names both of these still-standing
+    exceptions explicitly rather than repeating the "nothing can ever
+    survive" claim this round disproved twice.
+  - **Round 7 (coordinator review): the IMMEDIATE crash-relaunch path
+    round 6 left standing (deliberately -- it keeps the channel effectively
+    on air through the transition, per round 4) still leaked, MEASURED.**
+    `record_rollover_plan_end` for a rollover reload about to be enqueued,
+    then a crash lands and the channel relaunches immediately
+    (`_relaunch_after_crash` -> `_begin_relaunch` -> `_start`, which per
+    round 4 must not pop this dict) BEFORE that reload command ever
+    drains -- and a wholly unrelated operator reload landing afterward
+    inherited the stale, already-past `plan_end_at` and was wrongly cut
+    immediately (`switch_at_end_of_current=False`) instead of deferring
+    normally (`True`). This closes the mixup round 4's own fix explicitly
+    left open (see that round's entry above, and
+    `test_the_recorded_plan_end_binds_to_whichever_reload_drains_first_
+    not_automations_own`, which now documents the WILDCARD/unscoped shape
+    only, not the caller ChannelAutomationService actually uses): every
+    pop above still fires unconditionally exactly as before (this round
+    changes none of the "does the channel go off-air" routes), but the
+    entry is now `(command_id, plan_end_at)` rather than a bare
+    `plan_end_at`, and `EgressDaemon._request_reload` only hands the
+    value down to `_try_content_reload` when the command actually
+    draining matches the `command_id` the value was recorded for (or the
+    recorded id is the `None` wildcard -- kept as the default so a direct
+    call that bypasses the command queue entirely, e.g. every
+    `PlayoutSupervisor` live-takeover/handback/slate route, and any
+    pre-round-7 test double, keeps its exact prior behavior). A mismatch
+    discards the value outright -- the reload that finds it gone falls
+    back to `should_defer_switch`'s ordinary ON_AIR/no-override behavior
+    (defer), the same as if nothing had ever been recorded, never a wrong
+    cut and never a wrong defer off a horizon it wasn't actually computed
+    against. `ChannelAutomationService._check_plan_rollover` now
+    generates its rollover reload's `command_id` up front and passes the
+    SAME id to both `record_rollover_plan_end` and the `_enqueue` call
+    that dispatches it (`_enqueue` gained an optional `command_id`
+    parameter for exactly this); every other `_enqueue` call site is
+    unaffected (defaults to generating its own id, as before). Two new
+    tests exercise the fix directly:
+    `test_command_id_scoping_closes_the_immediate_crash_relaunch_leak`
+    (the scenario above: the crash-relaunch leaves the entry untouched,
+    and the scoped id keeps the later unrelated reload from consuming it)
+    and `test_command_id_scoping_discards_value_when_an_unrelated_reload_
+    drains_first` (an unrelated reload draining BEFORE the rollover's own
+    scoped reload discards the value outright; the rollover's own reload,
+    draining second, finds nothing left and also defers normally --
+    neither wrongly cuts). No prior claim in this file or the daemon's own
+    `_rollover_plan_end_at`/`_request_reload`/`_try_content_reload`
+    docstrings asserted this specific mixup was closed; the claims about
+    `_request_reload`'s pop "passing the value down" (never discarding it)
+    were and remain accurate -- what changes this round is that the value
+    passed down is now gated on the command_id matching before it is used
+    at all.
+  - **Round 8 (coordinator review): round 7's claim above -- "never a wrong
+    cut and never a wrong defer off a horizon it wasn't actually computed
+    against" -- was FALSE, MEASURED.** Round 7's `_request_reload` popped
+    `_rollover_plan_end_at` UNCONDITIONALLY on every drain and only gated
+    *use* of the popped value on the command_id match; a mismatch still
+    discarded whatever was recorded. The common trigger is
+    `ChannelAutomationService`'s own 45s issued-timeout retry
+    (`_check_plan_rollover`'s `retrying_undelivered` branch): dispatch A
+    records `command_id=A` and enqueues reload A; the daemon stalls past
+    the retry timeout; the retry re-records (OVERWRITING the dict entry)
+    `command_id=B` and enqueues reload B. Both A and B are real, live
+    commands sitting in the queue when the daemon catches up. If A drains
+    first, round 7's unconditional pop threw away B's freshly-recorded
+    entry right there, on A's mismatch -- so when B itself drained moments
+    later there was nothing left at all, and the daemon deferred against no
+    recorded horizon even though B's own horizon (the one just discarded)
+    had already passed. Round 6 measured the pre-scoping shape as
+    `[False, True]` (A wrongly cut on a value recorded for a different
+    command); round 7's scoping flipped it to `[True, True]` (both wrongly
+    defer -- dead air on a horizon already past, never cut at all). Neither
+    shape is correct; the right one is `[True, False]` (A: mismatch, value
+    left in place, ordinary defer; B: match, cut on the past horizon it was
+    actually recorded against).
+
+    Fixed by popping `_rollover_plan_end_at` ONLY on an actual command_id
+    match -- a mismatch now leaves the entry untouched for whichever
+    command it was really recorded for to consume when that one drains,
+    instead of discarding it on the first unrelated command that happens to
+    drain first. This stays safe against every off-air/relaunch leak the
+    prior rounds closed: none of those routes go through `_request_reload`
+    at all, so a mismatched entry left here still cannot outlive the
+    channel going off-air (every off-air route pops the dict itself,
+    unconditionally, unchanged by this round).
+
+    `record_rollover_plan_end`'s `command_id` is now a REQUIRED
+    keyword-only parameter -- the round-7 `None` default doubled as a
+    "wildcard, matches whatever drains next" behavior that zero production
+    callers relied on (`ChannelAutomationService` is the only recorder and
+    always supplies a real generated id); a caller that genuinely wants an
+    unscoped recording must now say so explicitly (`command_id=None`), and
+    an explicit `None` matches only a drain whose own `command_id` is also
+    `None` (`supervisor.py`'s direct-call routes) by ordinary equality, not
+    a special-cased wildcard -- since a real `EgressCommand` drawn from the
+    durable queue always carries a real string id, an unscoped record can
+    no longer be wrongly consumed by whichever queued reload happens to
+    drain first at all (see
+    `test_unscoped_record_never_matches_a_real_queued_reload_and_needs_an_
+    off_air_pop`). `_enqueue`'s previously-unused `str` return value is
+    removed (nothing read it; every call site that needs to correlate an id
+    already pre-generates its own, per round 7).
+
+    `test_command_id_scoping_closes_the_immediate_crash_relaunch_leak` and
+    `test_command_id_scoping_discards_value_when_an_unrelated_reload_drains_
+    first` are rewritten (the latter renamed
+    `test_command_id_scoping_defers_and_retains_value_when_an_unrelated_
+    reload_drains_first`) to the corrected pop-only-on-match shape,
+    `test_the_recorded_plan_end_binds_to_whichever_reload_drains_first_not_
+    automations_own` is rewritten as
+    `test_unscoped_record_never_matches_a_real_queued_reload_and_needs_an_
+    off_air_pop` (the old wildcard-binds-to-whichever-drains-first shape is
+    no longer reachable at all), and a new
+    `test_retry_collision_a_stalled_retry_that_overwrites_the_recorded_
+    value_still_cuts` reproduces the exact production trigger above end to
+    end through the real command queue. `tests/egress/test_automation.py`
+    gained
+    `test_check_plan_rollover_records_the_plan_end_scoped_to_the_enqueued_
+    commands_own_id`, pinning that `_check_plan_rollover` actually passes
+    the SAME id to both `record_rollover_plan_end` and `_enqueue` --
+    nothing had asserted the two agree before this round.
 - **Install-over could leave the PREVIOUS kit's application payload silently
   running.** MEASURED on a real tester (2026-09-05): installing kit B `/S`
   (install-over) on a station kit A had already installed, where both kits
@@ -633,6 +1866,337 @@ across repeated runs.
   changed files (`source_plan.py`, `automation.py`, `bridge.py`) are D2
   blob-drift-bound in `docs/claims/claims.yaml`; `models.py` is not bound
   either.
+- **A fresh GStreamer worker under CPU load could die with `pipeline did not
+  reach PLAYING within 5.0s`, which the daemon treated as an ordinary crash
+  and relaunched into a storm** (item 82, sandbox run 13 evidence). The old
+  bound reused `teardown_timeout_s` (5.0s), a constant never meant to double
+  as a preroll bound. `engine.py`'s `_await_playing` now waits up to a
+  dedicated, configurable `preroll_timeout_s` (30s default,
+  `CIVICCAST_GST_PREROLL_TIMEOUT_S` env override, clamped to `[5, 45]`s),
+  polling in 5s slices and logging the `get_state` result, the CURRENT
+  pipeline state, and the pending state on every slice instead of blocking
+  silently for the whole bound. Once the bound is actually exceeded it raises
+  the distinct `PrerollTimeoutError` (a `RuntimeError` subclass) rather than a
+  bare `RuntimeError`; `worker.py` catches that, emits its `WORKER_RESULT`
+  receipt (`{"error": ("preroll-timeout", ...), "teardown_clean": False}`, so
+  `civiccast.native.installed_gstreamer_smoke.require_clean_worker_result`
+  can name the reason instead of reporting a missing receipt), and exits with
+  a new, distinct `civiccast.egress.gst.exit_codes.GST_PREROLL_TIMEOUT_EXIT_CODE`
+  instead of the generic crash code. `EgressDaemon._relaunch_after_crash`
+  still relaunches that exit through the exact same back-off path as any
+  other crash, but no longer counts it toward the crash-loop streak that
+  eventually forces fallback slate (`_LIVE_SOURCE_FAILURE_FALLBACK_STREAK`)
+  more than once per 60s -- a train of legitimate slow starts under load can
+  no longer force a healthy source onto fallback slate.
+  - **Round-2 review BLOCKER (Opus, PR #183), fixed same day:** the 45s
+    upper clamp is load-bearing, not cosmetic. An unclamped
+    `CIVICCAST_GST_PREROLL_TIMEOUT_S >= 60` made a worker that ALWAYS
+    preroll-times-out still measure >= 60s of "uptime" on every single exit
+    (it dies right at its own configured bound) -- which is exactly the
+    daemon's healthy-uptime streak-reset threshold
+    (`_RESTART_STREAK_RESET_UPTIME_S`), so the crash-loop streak reset on
+    every single crash and NEVER escalated to fallback slate (measured: 40
+    consecutive relaunches, streak stuck at 0 -- a genuinely dead source
+    would have relaunched forever). Fixed on both sides: the 45s clamp keeps
+    the configured bound safely under that threshold, and
+    `_relaunch_after_crash` now ALSO exempts a
+    `GST_PREROLL_TIMEOUT_EXIT_CODE` exit from the healthy-uptime reset
+    outright (a preroll that never reached PLAYING is not "healthy uptime"
+    regardless of how long it took). The healthy-uptime reset (for every
+    OTHER exit reason) now also clears the preroll-timeout rate-limit
+    bookkeeping, so a genuinely healthy run doesn't leave a stale rate-limit
+    window behind for a later, unrelated preroll timeout.
+  - **Round-3 review BLOCKER (Opus, PR #183), fixed same day: round-2's fix
+    was NOT sufficient on its own.** Correcting the round-2 entry directly
+    above: the 45s clamp and the crash-path exemption did **not**, either
+    alone or together, close the hole -- `EgressDaemon._poll_process` has a
+    SEPARATE healthy-uptime reset on the **alive-poll** path (no returncode
+    there to exempt, since the worker hasn't exited) that reset the crash
+    streak on wall-clock seconds since the worker was **spawned** -- which
+    also counts interpreter start, `import gi`/`Gst.init`, graph build, and
+    the preroll wait itself, none of which is air, and none of which is
+    bounded by the worker's own `preroll_timeout_s`. Measured against the
+    real `process_once` poll loop (2s ticks while alive, then a real
+    preroll-timeout exit): a worker "alive" for 45/58/59s still escalated to
+    fallback slate by cycle 9 as expected, but one "alive" for 60 or 62s got
+    its streak reset on every single alive poll past the 60s mark --
+    **before it even exited** -- so the streak stayed stuck at 1 forever
+    (never escalated in 40 cycles), reproducing the exact 40-relaunch
+    symptom this whole fix chain exists to close. Fixed: `_await_playing`
+    now prints a stable `CTRL preroll: reached PLAYING` marker on stderr
+    ONLY on the actual PLAYING success path (never on timeout or failure);
+    the daemon greps for it via a new
+    `civiccast.egress.health.worker_reached_playing`, and the alive-poll
+    reset now starts its 60s healthy-uptime clock from the moment that
+    evidence is first observed (`EgressDaemon._on_air_confirmed_at`), never
+    from spawn time. An FFmpeg-strategy channel has no PLAYING marker of its
+    own, so the same evidence check also accepts real fps/bitrate progress
+    (`civiccast.egress.health.encoder_has_progress`, already used for sink
+    health) as an equally valid on-air signal --
+    `EgressDaemon._observed_on_air_evidence` covers both encoder families.
+    Also fixed the same round, both false claims this document and the code
+    itself were carrying: the "either fix alone would have closed the hole"
+    line directly above was not true (see this correction), and
+    `engine.py`'s own module comment claiming the healthy-uptime exemption
+    holds "regardless of how this bound is configured" was equally false
+    for the identical reason -- both now read the corrected story. And a
+    separate BLOCKER: `CIVICCAST_GST_PREROLL_TIMEOUT_S=nan` escaped the
+    `[5, 45]` clamp entirely (`min(max(nan, 5), 45)` evaluates to `nan`, not
+    `5.0` -- Python's `min`/`max` keep their first argument across any
+    comparison against NaN, and `float("nan")` parses without raising, so
+    the pre-existing malformed-value guard never caught it either), which
+    reached `_await_playing`'s deadline arithmetic as `nan` and fell through
+    to the generic pipeline-construction `ValueError` path instead of ever
+    raising the distinct `PrerollTimeoutError` -- `_resolve_preroll_timeout_s`
+    now guards both the explicit-arg and env-var paths with `math.isfinite`
+    before clamping, falling back to the 30s default (with a stderr warning)
+    on any non-finite value.
+  - **Carry-over follow-up (item 5), fixed the same round:** `worker.py`'s
+    `PrerollTimeoutError` handler used to let the exception propagate out of
+    `run_forever` without ever calling `engine_instance.stop()` -- the only
+    teardown was the unconditional, non-graceful `os._exit()` at the very
+    bottom of the file. `main()` now attempts `stop(force_exit_on_hang=False)`
+    in that handler (already time-bounded via `teardown_timeout_s`;
+    deliberately never `force_exit_on_hang=True`, which would call
+    `os._exit(70)` on a stuck teardown and silently swap out the distinct
+    `GST_PREROLL_TIMEOUT_EXIT_CODE` this whole path exists to preserve), and
+    the `WORKER_RESULT` receipt's `teardown_clean` field now reports that
+    real outcome instead of a hardcoded `False`. A teardown that itself
+    raises is caught and logged, never allowed to mask the distinct exit
+    code.
+  - **Round-4 review BLOCKER (Opus, PR #183), reproduced -- round-3's fix
+    was NOT sufficient on its own.** Correcting the round-3 entry directly
+    above: `EgressDaemon._poll_process` did start greping for the
+    `CTRL preroll: reached PLAYING` marker via
+    `civiccast.egress.health.worker_reached_playing`, but that function read
+    a fixed tail window of the channel's per-worker stderr log with no
+    anchor to the CURRENT worker's own spawn point. Both encoder strategies
+    open that fixed per-channel log (`gst-worker.stderr.log` /
+    `ffmpeg.stderr.log`) in **APPEND mode and never truncate it per spawn**
+    (`_default_worker_launcher` in `strategy.py`, `start_ffmpeg` in
+    `_ffmpeg.py`) -- so once ANY worker on a channel ever reached PLAYING (or
+    ever showed FFmpeg fps/bitrate progress), that evidence sat in the log
+    forever, and every LATER worker spawned on the same channel read as
+    "confirmed on air" on its very first poll tick, whether or not it ever
+    produced any output of its own. The 60s healthy-uptime clock had become
+    a spawn clock again -- the exact round-3 symptom, reproduced (measured:
+    40 relaunches, streak pinned at 1). Fixed with two independent anchors,
+    belt and braces: `EgressDaemon._stderr_spawn_offset` now records the
+    stderr log's byte SIZE at the moment the CURRENT worker was spawned
+    (`_start`, popped alongside `_started_at` on every exit/spawn/stop route
+    so a fresh worker never inherits a stale offset), and
+    `civiccast.egress.health.worker_reached_playing` /
+    the new `read_ffmpeg_encoder_metrics_since` scan ONLY bytes at or after
+    that offset -- a previous worker's evidence, which always sits before
+    it, is never read at all, not merely filtered out afterward. If the log
+    is ever found smaller than the recorded offset (rotated/truncated
+    out from under the daemon), the read falls back to byte 0 rather than
+    erroring. Second, independent layer: `_await_playing`'s marker now also
+    prints the worker's own pid (`... pid=1234`, `os.getpid()`), and the
+    daemon requires that pid to match its currently-tracked process
+    (`_observed_on_air_evidence`) before crediting the marker -- a defense
+    that holds even on the (believed-impossible) case where the byte offset
+    itself were somehow wrong. The old fixed 64 KiB tail window is gone from
+    this check entirely, replaced by a 4 MiB bounded scan measured FROM the
+    spawn offset (not a hard requirement of the fix, but a deliberate choice
+    not to reintroduce an unbounded read from the other end of the file --
+    see `civiccast.egress.health._SPAWN_SCAN_LIMIT_BYTES`); per-tick cost of
+    the new scan measured directly (2,000 calls, wall-clock average) against
+    a representative unconfirmed-worker log: `worker_reached_playing`
+    (~55 KB, marker present, early-exit on match) averaged ~0.1ms/call;
+    `read_ffmpeg_encoder_metrics_since` (~110 KB / 2,000 progress lines, the
+    worst case of a channel that has been unconfirmed since spawn for a
+    while and keeps accumulating progress lines with no early exit) averaged
+    ~5.8ms/call. Both comfortably inside the existing ~2s poll cadence, and
+    the 4 MiB bound caps the worst case regardless of how long a channel
+    stays unconfirmed. `read_latest_ffmpeg_encoder_metrics`
+    (the sink-health tail-window reader used by `_health_metrics` /
+    `build_default_sink_health`) is unchanged -- that reader only ever wants
+    "is the encoder moving media right now," which a previous worker's
+    long-stale progress line cannot masquerade as once the current worker
+    has printed anything of its own; only the ON-AIR-EVIDENCE readers needed
+    the spawn anchor.
+  - New tests: `tests/egress/test_gst_engine_preroll_timeout.py` (the
+    engine's bounded wait, env-var resolution/clamp including the new 45s
+    ceiling, the distinct exception, the current+pending log line, the new
+    `reached PLAYING` success marker -- present only on success, never on
+    timeout -- and the NaN-clamp-escape regression),
+    `tests/egress/test_gst_worker_preroll_timeout_exit.py` (`worker.main()`
+    returns the distinct exit code, still emits a `WORKER_RESULT` receipt,
+    and now attempts a bounded teardown -- covering a clean teardown, an
+    unclean one, and one that itself raises), `tests/egress/test_health.py`
+    (`worker_reached_playing`, spawn-offset anchoring and the pid check --
+    round-4 rewrote
+    `test_true_even_when_the_marker_is_outside_the_default_tail_window` into
+    `test_true_when_the_marker_is_130kb_past_the_spawn_offset` (the OLD test
+    named a tail-window parameter that no longer exists; the real behavior
+    now under test is that a marker well past the 64 KiB the old window
+    would have covered is still found because it's scanned from the spawn
+    offset forward with no window at all) plus a new
+    `test_a_marker_before_the_spawn_offset_does_not_count`, and
+    `read_ffmpeg_encoder_metrics_since`'s equivalent stale-progress-before-
+    offset case), and `tests/egress/test_daemon_preroll_timeout_relaunch.py`
+    (the rate-limited streak wired through a REAL `_poll_process` returncode
+    rather than a direct call, per-channel isolation, the healthy-uptime
+    exemption even at uptime >= 60s, reset behavior, sustained-crash
+    escalation to fallback slate at both the 30s default and the 45s clamp
+    ceiling with the previously-loose cadence bound replaced by the actual
+    measured value, AND the round-3 alive-poll-path regression: sustained
+    preroll timeouts at worker lifetimes of 45/59/60/62/90s under both
+    bounds -- reproduced against the pre-fix gating logic to confirm each
+    new test actually fails without the fix before being restored). Round-4
+    additionally: changed the fixture's `_WorkerStrategy.start` from
+    `write_text` (truncates per spawn -- the reason the round-3 test matrix
+    passed while the real append-mode log did not) to append mode, matching
+    `strategy.py`'s real behavior, and re-ran the full 45/59/60/62/90s x
+    30/45s matrix under it; added
+    `test_a_stale_marker_from_a_previous_worker_does_not_confirm_a_new_one`,
+    the reviewer's own reproduction: worker 1 emits the real marker, airs
+    10s, exits cleanly; workers 2 through 41 append ONLY the never-reaches-
+    PLAYING timeout line to the SAME log, each staying alive 62s before its
+    own preroll-timeout exit -- and the channel must still escalate to
+    FALLBACK_SLATE (asserted at cycle 5, the same cadence the non-stale-
+    marker 62s case already reaches) rather than latching "confirmed on air"
+    off worker 1's long-stale marker forever. Also updated
+    `tests/egress/test_daemon.py::test_healthy_uptime_resets_the_crash_streak`,
+    which used to force the reset by back-dating `_started_at` directly with
+    no encoder evidence at all -- exactly the bug this round closes -- to
+    instead write real evidence and assert the reset only fires once that
+    evidence has been held for the healthy-uptime window.
+- **A fresh GStreamer worker could reach PLAYING quickly and still get killed
+  before its first output buffer, distinct from item 82's slow-preroll case**
+  (item 84, measured in sandbox run 15, soak-fcfcb81-20260906-183448Z, and in
+  three seamless-OFF runs). Every affected worker printed
+  `CTRL preroll: reached PLAYING after 0.3s` -- a real, fast PLAYING
+  transition -- immediately followed by
+  `CTRL stall: no output for 10s - quitting for daemon restart`.
+  `_await_playing` accepts `NO_PREROLL` as success (unchanged, and correctly
+  so -- some pipelines legitimately never preroll), so PLAYING is not
+  evidence a single buffer crossed the mux, but `_arm_stall_watchdog` armed
+  the 10s post-first-buffer `stall_timeout_s` the instant PLAYING was
+  reached. Under start-up load (a concurrent `ffmpeg -threads 1 h264_mf +
+  loudnorm` conform, a ~10s synchronous content-reload source preparation on
+  the automation thread, live caption-tap overload) the first output buffer
+  can legitimately take longer than 10s, killing a perfectly healthy worker.
+  `engine.py`'s `_check_stall` now measures two DISTINCT budgets: while no
+  output buffer has been observed yet, a new, separate, configurable
+  `first_output_timeout_s` (45s default, `CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S`
+  env override, clamped to `[10, 120]`s, `math.isfinite`-guarded exactly like
+  `preroll_timeout_s`); only once the first buffer IS observed does the
+  original 10s `stall_timeout_s` apply, completely unchanged. A distinct
+  stderr marker (`CTRL first-output: no output within Ns of PLAYING -
+  quitting for daemon restart`) and a distinct `("first-output-timeout", ...)`
+  `WORKER_RESULT` error reason let `worker.py` exit with a new, distinct
+  `civiccast.egress.gst.exit_codes.GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE`
+  instead of the generic crash code every other engine failure uses.
+  `EgressDaemon._relaunch_after_crash` treats this new exit code exactly like
+  `GST_PREROLL_TIMEOUT_EXIT_CODE` (`_SLOW_START_EXIT_CODES`, sharing the same
+  per-channel rate-limit bookkeeping) -- still relaunches through the normal
+  back-off path, but never advances the crash-loop streak more than once per
+  60s and is exempt from the healthy-uptime streak reset, so a train of
+  legitimate slow-first-output starts under load can no longer force a
+  healthy source onto fallback slate. `_arm_stall_watchdog` now arms
+  whenever EITHER budget is active (before this fix, an operator setting
+  `stall_timeout_s <= 0` to disable the post-first-buffer check also
+  silently disabled the independently useful first-output check).
+  - **Related automation.py fix (same item, same soak evidence):** the
+    channel-rollover "reload for `<ch>` did not land within 45s; retrying"
+    WARNING used to log on EVERY ~2s poll tick for as long as the actual
+    retry stayed gated behind either the retry-cadence floor or the
+    worker-pid-age floor (measured 1:1 with "deferred: worker pid has only
+    been alive Ns" -- a worker that keeps crashing/relaunching right after
+    every reload never gets a chance to settle) because the WARNING fires
+    before either gate and `_rollover_issued_at` is never cleared by a gated
+    tick. Now logs once when the 45s threshold is first crossed, at most
+    once more per 60s while still gated (DEBUG for every other gated tick),
+    and a separate WARNING when the retry actually dispatches. The gating
+    logic itself is unchanged.
+  - New tests: `tests/egress/test_gst_engine_first_output_timeout.py` (the
+    `_check_stall`/`_arm_stall_watchdog` two-budget split, and
+    `_resolve_first_output_timeout_s`'s default/env/clamp/NaN-guard coverage
+    mirroring the preroll resolver's own),
+    `tests/egress/test_gst_worker_first_output_timeout_exit.py` (the
+    worker's distinct exit code and `WORKER_RESULT` receipt on this reason,
+    contrasted against the unchanged generic-crash-code path for an ordinary
+    stall), `tests/egress/test_daemon_first_output_timeout_relaunch.py` (the
+    daemon's shared rate-limited streak across both slow-start exit reasons,
+    the healthy-uptime exemption, and sustained-failure escalation to
+    fallback slate), and
+    `tests/egress/test_automation_rollover_retry_log_cadence.py` (the log
+    cadence fix: one WARNING on first crossing, DEBUG while still gated, a
+    repeat WARNING at the 60s mark while STILL gated -- simulating a worker
+    that keeps relaunching with a fresh, still-too-young pid -- and a
+    distinct WARNING once the retry actually dispatches).
+  - **Runbook note:** a worker's stderr distinguishes "never produced
+    output" (`CTRL first-output: ...`, item 84) from "stopped producing
+    output after airing" (`CTRL stall: ...`, S9-5/unchanged) -- read the
+    exact marker before assuming a channel bounce is the same failure mode
+    as any other stall.
+  - **Round-2 review BLOCKER (2026-09-06), fixed same day: an escalation
+    cliff in the fix directly above.** `_MAX_FIRST_OUTPUT_TIMEOUT_S` (120)
+    exceeds the daemon's ALIVE-poll healthy-uptime reset threshold
+    (`_RESTART_STREAK_RESET_UPTIME_S`, 60s), and item 84's own failure mode
+    prints `CTRL preroll: reached PLAYING after 0.3s pid=N` on every single
+    relaunch -- which `EgressDaemon._observed_on_air_evidence` accepted as
+    sufficient GStreamer on-air evidence (unchanged from before item 84,
+    predating this fix). Measured with that marker present and the worker
+    never actually producing output: at `first_output_timeout_s`
+    65s/90s/120s the crash-loop streak reset on every alive-poll cycle and
+    NEVER escalated to fallback slate (streak pinned at 1); at 45s-60s
+    escalation still worked, purely because the worker's alive window never
+    crossed the 60s reset threshold before it exited. PLAYING is not
+    evidence output ever flowed -- fixed properly rather than by re-tuning
+    the clamp: `GstPlayoutEngine` now prints a SEPARATE, new, pid-tagged
+    marker exactly once, the moment the first real mux buffer is observed
+    (`CTRL first-output: first buffer after Ns pid=N`,
+    `_maybe_print_first_output_marker`); `civiccast.egress.health` gained
+    `worker_produced_output`, the parsing counterpart to
+    `worker_reached_playing` for this new marker (same spawn-offset/pid
+    anchoring contract); and `EgressDaemon._observed_on_air_evidence` now
+    requires `worker_produced_output` instead of `worker_reached_playing`
+    for the GStreamer strategy -- the PLAYING marker is kept (still
+    printed, still a genuine "reached PLAYING" log signal) but is no longer
+    sufficient on-air evidence on its own. No configured budget value can
+    defeat escalation now. Also this round: `_arm_stall_watchdog` used to
+    hardcode `_first_output_seen = False` on every arm, which could wrongly
+    re-open the first-output budget for a buffer that already crossed the
+    mux DURING preroll, before arming -- now
+    `self._first_output_seen = self._output_buffers > 0`.
+  - **Round-2 also fixed automation.py's own sibling defect the round-1
+    entry missed:** the "worker pid has only been alive Ns" deferred-WARNING
+    (gated on the worker-pid-age floor, a different condition than the "did
+    not land" WARNING above) still fired on every single gated tick after
+    round 1's fix landed (measured: 150 WARNINGs per 300s) -- now
+    rate-limited the same way, with its own bookkeeping
+    (`_rollover_pid_age_warned_at`) since the two WARNINGs gate on
+    different, independently-timed conditions.
+  - **Round-2 also corrected `docs/claims/claims.yaml`'s engine.py blob**,
+    which the round-1 entry recorded WRONG (a post-hash comment typo-fix
+    edit was never re-hashed before that entry was written; the recorded
+    value did not correspond to any object this repository had ever
+    produced) -- re-hashed via `git hash-object --path
+    civiccast/egress/gst/engine.py civiccast/egress/gst/engine.py` against
+    the file as it stands after every round-1 AND round-2 edit.
+  - **Round-2 additional tests:** `tests/egress/test_gst_engine_first_output_timeout.py`
+    gained `_maybe_print_first_output_marker` coverage (prints once, prints
+    at arm-time when output already flowed before arm -- round-2 item 4's
+    own scenario -- and the zero-elapsed fallback);
+    `tests/egress/test_health.py` gained `TestWorkerProducedOutput`
+    (mirrors `TestWorkerReachedPlaying`, including the
+    PLAYING-marker-alone-is-insufficient contrast case);
+    `tests/egress/test_daemon_first_output_timeout_relaunch.py` gained the
+    escalation-cliff reproduction itself (sustained cycles at the 45s
+    default AND the 120s clamp ceiling with the PLAYING marker present but
+    the output marker absent -- both must reach `FALLBACK_SLATE` -- and the
+    positive case: a worker printing the real output marker and holding it
+    60s DOES reset the streak); and
+    `tests/egress/test_automation_rollover_retry_log_cadence.py` gained a
+    dedicated test isolating the pid-age WARNING's own cadence. Two
+    engine-side tests that assigned `first_output_timeout_s = 0.0` directly
+    (an unreachable configuration -- the constructor always clamps to
+    `[10, 120]`) were removed rather than converted, since a passing test
+    against a state the product can never reach is misleading, not
+    coverage.
 - **Soak #5: clean-install retest of candidate 2 (`609273d`), confirms the
   decoder-pileup fix above and surfaces a different, deeper defect (item
   60).** Tester `DESKTOP-VBMA6O5`, fresh `/S` install, soak clock started

@@ -43,6 +43,7 @@ import os
 import sys
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -108,6 +109,10 @@ _sibling_module("decode_policy")
 # B3 fix: engine.py also imports the gi-free reload-switch-mode decoder from this
 # sibling at module scope -- same reasoning as decode_policy above.
 reload_policy_mod = _sibling_module("reload_policy")
+# Item 82: gi-free exit-code contract with the daemon (civiccast.egress.daemon
+# reads this same module -- see exit_codes.py's own docstring for why it must
+# stay side-effect-free rather than living in engine.py).
+exit_codes_mod = _sibling_module("exit_codes")
 enginemod = _sibling_module("engine")
 
 # -- D2 Windows worker-pipe seam (spec-supervisor D2, design.md sec4) --------------
@@ -148,15 +153,80 @@ class _AppliedIdCache:
             self._ids.popitem(last=False)
 
 
-def _dispatch_control_with_ack(engine_instance: Any, line: str) -> tuple[str, str | None]:
+def _write_reload_status(channel_dir: Path, *, reload_id: str, result: str) -> None:
+    """F1 redesign (coordinator hostile review, 2026-09-06): the OUT-OF-BAND
+    settle outcome for a reload.
+
+    The pipe ack for a ``reload`` command now means only "armed" (see
+    ``_dispatch_control_with_ack``'s docstring) -- the actual commit or abort
+    can take up to the engine's own ``reload_timeout_s`` (an immediate switch)
+    or ``defer_switch_timeout_s`` (900s default, a deferred/boundary-aligned
+    switch -- exactly the case an automation-driven ON_AIR extension uses, per
+    ``reload_policy.should_defer_switch``). Blocking a synchronous pipe
+    round-trip ack for up to 900s was THE F1 blocker this redesign fixes: it
+    starved the automation thread and, worse, the strategy's bounded ack wait
+    would time out long before a legitimately-armed deferred reload ever
+    settles, causing the daemon to terminate a worker that was doing exactly
+    what it was told.
+
+    Instead, this file (``<channel_dir>/reload-status.json``) carries the
+    eventual outcome; ``EgressDaemon._poll_reload_settlement`` polls it once
+    per automation tick (bounded, cheap) instead of blocking on it. Atomic
+    write (tmp + replace) so the daemon never observes a partial JSON body.
+    Best-effort: a write hiccup here must not crash the worker -- the daemon's
+    own deadline (``_PENDING_RELOAD_SETTLE_DEADLINE_S``) is the backstop if a
+    status update never arrives at all."""
+    status_path = channel_dir / "reload-status.json"
+    tmp_path = status_path.with_name(status_path.name + ".tmp")
+    payload = json.dumps({"id": reload_id, "result": result, "ts": time.time()})
+    try:
+        tmp_path.write_text(payload, encoding="utf-8")
+        tmp_path.replace(status_path)
+    except OSError as exc:
+        print(f"WARN: failed to write reload-status.json: {exc!r}", flush=True)
+
+
+def _dispatch_control_with_ack(
+    engine_instance: Any,
+    line: str,
+    *,
+    command_id: str | None = None,
+) -> tuple[str, str | None]:
     """The D2 pipe-seam dispatch: applies ``line`` and returns an ack result
-    (``"applied"``|``"error"``, detail) instead of only printing, so the pipe seam
-    can write back ``{"result": ...}`` (design.md sec4's 'ack-point reading').
-    Calls the SAME public engine effects ``engine._dispatch_control`` uses
+    (``"applied"``|``"armed"``|``"error"``, detail) instead of only printing, so
+    the pipe seam can write back ``{"result": ...}`` (design.md sec4's 'ack-point
+    reading'). Calls the SAME public engine effects ``engine._dispatch_control`` uses
     (``swap.swap_to``, ``reload_program``, ``push_caption_cue``, ``_loop.quit()``)
     -- it does not reimplement engine internals, only observes their outcome,
     since ``_dispatch_control`` itself is fire-and-forget (engine.py, out of this
-    unit's file ownership) and has no return value to relay."""
+    unit's file ownership) and has no return value to relay.
+
+    F1 redesign (coordinator hostile review, 2026-09-06, superseding item 4's
+    original "deferred ack" design): ``reload_program`` only ARMS a reload -- it
+    builds and prerolls the new leg and returns immediately; the actual commit
+    (first buffer / boundary reached) or abort (build error, async bus error,
+    timeout, supersession) happens LATER, on the main loop, and for a DEFERRED
+    switch (an automation-driven ON_AIR extension) that can take up to
+    ``defer_switch_timeout_s`` (900s default) -- far longer than any pipe
+    round-trip ack should ever block for. Item 4's fix made the ack wait for
+    that full settlement, which just moved the dishonesty (and, worse,
+    introduced a NEW failure: the strategy's bounded ack wait would time out
+    on a correctly-armed long-lead deferred reload and the daemon would
+    terminate a healthy worker). This redesign instead:
+
+    * acks ``"armed"`` the instant ``reload_program`` returns without raising
+      (the command was accepted; the new leg is now building/prerolling) --
+      keeps the ack fast and bounded, like every other verb;
+    * acks ``"error:<repr>"`` immediately if ``reload_program`` (or reading/
+      parsing the graph file) raises synchronously -- nothing was armed, so
+      there is nothing to settle later;
+    * reports the EVENTUAL settle outcome out-of-band via
+      ``_write_reload_status`` (``reload_id`` is the D2 envelope's own
+      command id, so the daemon can correlate a specific armed attempt to its
+      settlement even across a supersede).
+
+    Every other verb (swap/caption/stop) is unchanged: dispatch and ack are
+    still the same synchronous step they always were."""
     command = controlmod.parse_control_line(line)
     if command is None:
         return "error", f"unparseable control line: {line!r}"
@@ -167,20 +237,50 @@ def _dispatch_control_with_ack(engine_instance: Any, line: str) -> tuple[str, st
             return "applied", None
         if verb == "reload":
             reload_path = Path(command[1])
+            channel_dir = reload_path.parent
             with reload_path.open(encoding="utf-8") as handle:
                 new_graph = graphmod.graph_from_json(handle.read())
             switch_at_end_of_current = reload_policy_mod.reload_switch_is_deferred(command[1])
             with contextlib.suppress(OSError):
-                reload_path.unlink()  # one-shot graph file: consumed after read
+                # One-shot graph file: consumed after read, and deliberately
+                # unlinked BEFORE ``reload_program`` below decides anything. A
+                # rejected payload is therefore destroyed rather than left on
+                # disk, so recovery is always "the daemon re-prepares the plan
+                # and dispatches a fresh file", never "retry this file". Keep
+                # that ordering: leaving the file behind on rejection would
+                # invite a retry loop over a payload the engine already refused.
+                reload_path.unlink()
+
+            reload_id = command_id or uuid.uuid4().hex
+
+            def _on_settled(committed: bool, reason: str | None) -> None:
+                result = "applied" if committed else f"aborted:{reason or 'unknown'}"
+                _write_reload_status(channel_dir, reload_id=reload_id, result=result)
+
             engine_instance.reload_program(
-                new_graph.sources[0], switch_at_end_of_current=switch_at_end_of_current
+                new_graph.sources[0],
+                switch_at_end_of_current=switch_at_end_of_current,
+                on_settled=_on_settled,
             )
             # BLOCKER fix: re-apply the graphics-overlay leg too (mirrors the FIFO
             # dispatch path, engine._dispatch_control) -- otherwise a content-reload
             # delivered over the D2 Windows pipe seam would silently drop a lower-third
-            # text update just like the FIFO path used to.
-            engine_instance.reload_graphics_overlay(new_graph.graphics_overlay)
-            return "applied", None
+            # text update just like the FIFO path used to. Its own failure must NOT
+            # affect the program reload's ack above (that reload already armed
+            # successfully and will settle on its own via ``_on_settled``) -- an
+            # overlay re-apply failure never disturbs the already-on-air overlay
+            # (see ``reload_graphics_overlay``'s own docstring) and must not be
+            # conflated with the program reload's outcome.
+            try:
+                engine_instance.reload_graphics_overlay(new_graph.graphics_overlay)
+            except Exception as exc:
+                print(
+                    f"CTRL reload: graphics-overlay re-apply failed "
+                    f"(program reload still in flight): {exc!r}",
+                    flush=True,
+                )
+            # F1: ack "armed" NOW -- do not wait for _on_settled.
+            return "armed", None
         if verb == "caption":
             text = base64.b64decode(command[3]).decode("utf-8", "replace")
             pushed = engine_instance.push_caption_cue(
@@ -297,19 +397,28 @@ def _windows_pipe_reader_loop(
         current_handle = handle
         if not applied.should_apply(command_id):
             # Redelivered id: the ack was lost, not the application -- ack again
-            # without re-enacting (D2 idempotent-redelivery contract).
+            # without re-enacting (D2 idempotent-redelivery contract). F1
+            # redesign: "applied" is only ever cached for swap/caption/stop
+            # now (a "reload" that ACTUALLY committed writes reload-status.json,
+            # not the applied-id cache -- see _dispatch_and_ack); a cached
+            # "reload" id was marked applied at ARM time, so redelivering it
+            # re-acks "armed" (matching what the original ack said), never
+            # "applied".
+            parsed = controlmod.parse_control_line(command_line)
+            reack_result = "armed" if parsed is not None and parsed[0] == "reload" else "applied"
             ack_written = threading.Event()
 
             def _reack(
                 h: Any = current_handle,
                 cid: str = command_id,
+                result: str = reack_result,
                 completed: threading.Event = ack_written,
             ) -> bool:
                 try:
                     _windows_pipe_write_line(
                         h,
                         write_lock,
-                        json.dumps({"v": 1, "id": cid, "result": "applied"}),
+                        json.dumps({"v": 1, "id": cid, "result": result}),
                     )
                 finally:
                     completed.set()
@@ -328,21 +437,36 @@ def _windows_pipe_reader_loop(
             line_text: str = command_line,
             completed: threading.Event = ack_written,
         ) -> bool:
+            # F1 redesign: the ack is ALWAYS written synchronously now (a
+            # "reload"'s eventual settle outcome goes out-of-band via
+            # reload-status.json instead -- see _dispatch_control_with_ack's
+            # docstring). "armed" counts as accepted for the dedup cache, same
+            # as "applied": a redelivery of an already-armed reload id must
+            # re-ack, not re-enact (re-arming would supersede the FIRST
+            # attempt's own still-settling reload for no reason).
             try:
-                result, detail = _dispatch_control_with_ack(engine_instance, line_text)
-                if result == "applied":
+                try:
+                    result, detail = _dispatch_control_with_ack(
+                        engine_instance, line_text, command_id=cid
+                    )
+                except Exception as exc:
+                    # Hostile-review follow-up (2026-09-06): _dispatch_control_
+                    # with_ack already catches everything INSIDE its own body,
+                    # but a raise from code that runs before its try block
+                    # (e.g. a malformed line reaching parse_control_line) would
+                    # otherwise escape all the way past this bare try/finally
+                    # with NO ack ever written -- the strategy's send_and_wait
+                    # would then sit out its full timeout and report a lost ack
+                    # instead of a clean, immediate error. Write one here so a
+                    # bug in dispatch itself is still an honest, fast "error"
+                    # ack rather than a silent hang.
+                    result, detail = "error", repr(exc)
+                if result in ("applied", "armed"):
                     applied.mark_applied(cid)
                 _windows_pipe_write_line(
                     h,
                     write_lock,
-                    json.dumps(
-                        {
-                            "v": 1,
-                            "id": cid,
-                            "result": result,
-                            "detail": detail,
-                        }
-                    ),
+                    json.dumps({"v": 1, "id": cid, "result": result, "detail": detail}),
                 )
             finally:
                 completed.set()
@@ -395,18 +519,92 @@ def main() -> int:
         os.mkfifo(control_fifo)
     reload_timeout = float(os.environ.get("CIVICCAST_RELOAD_TIMEOUT_S", "10"))
     stall_timeout = float(os.environ.get("CIVICCAST_STALL_TIMEOUT_S", "10"))
+    # Item 85: bounds GstPlayoutEngine._commit_reload itself (see its own
+    # docstring / _arm_commit_watchdog) -- separate from reload_timeout above,
+    # which only bounds waiting for the NEW leg's first buffer, not the commit.
+    commit_timeout = float(os.environ.get("CIVICCAST_RELOAD_COMMIT_TIMEOUT_S", "15"))
     engine_instance = enginemod.GstPlayoutEngine(
-        playout, reload_timeout_s=reload_timeout, stall_timeout_s=stall_timeout
+        playout,
+        reload_timeout_s=reload_timeout,
+        stall_timeout_s=stall_timeout,
+        commit_timeout_s=commit_timeout,
     )
     swaps = int(os.environ.get("SWAPS", "0"))
-    if swaps > 0:
-        result = engine_instance.run(swaps=swaps, interval_s=int(os.environ.get("INTERVAL", "2")))
-    elif os.name == "nt" and control_fifo:
-        result = _run_forever_windows_pipe(engine_instance, control_fifo)
-    else:
-        result = engine_instance.run_forever(control_fifo=control_fifo)
+    try:
+        if swaps > 0:
+            result = engine_instance.run(
+                swaps=swaps, interval_s=int(os.environ.get("INTERVAL", "2"))
+            )
+        elif os.name == "nt" and control_fifo:
+            result = _run_forever_windows_pipe(engine_instance, control_fifo)
+        else:
+            result = engine_instance.run_forever(control_fifo=control_fifo)
+    except enginemod.PrerollTimeoutError as exc:
+        # Item 82: a slow-but-progressing preroll under CPU load is a slow
+        # start, not a crash. Exit with a DISTINCT code (never 1, the generic
+        # crash code every other engine failure below still uses) so the
+        # daemon's relaunch path (civiccast.egress.daemon._relaunch_after_crash
+        # / _begin_relaunch) can retry with the existing backoff WITHOUT
+        # counting this toward the crash-loop force-fallback-slate streak the
+        # same way an ordinary crash does. A distinct stderr message too, so an
+        # operator reading the worker's own log (folded into the daemon's
+        # last_error) sees "slow preroll", not a generic crash.
+        print(f"CTRL preroll: worker exiting -- {exc}", file=sys.stderr, flush=True)
+        # Round-3 review (Opus, PR #183), item 5: ``PrerollTimeoutError`` is
+        # raised INSIDE ``_await_playing`` -- before this fix it propagated
+        # straight here without ``engine_instance.stop()`` ever running, so
+        # the pipeline was never given a chance at a clean ``->NULL``
+        # teardown; only the hard ``os._exit()`` at the bottom of this file
+        # (__main__) ever tore it down, unconditionally, with no attempt at
+        # a graceful release. Call ``stop()`` here too, but deliberately
+        # ``force_exit_on_hang=False``: ``stop()`` is ALREADY time-bounded
+        # (blocks at most ``teardown_timeout_s``, ~5s default, via its own
+        # bounded ``get_state`` call) so this can never hang the worker, and
+        # ``force_exit_on_hang=True`` would call ``os._exit(70)`` on a stuck
+        # teardown -- silently swapping the distinct
+        # ``GST_PREROLL_TIMEOUT_EXIT_CODE`` this whole except block exists to
+        # preserve for a generic forced-kill code, defeating item 82 itself.
+        # A teardown that itself raises (or simply doesn't complete) must
+        # never block reaching the ``return`` below.
+        teardown_clean = False
+        try:
+            teardown_clean = engine_instance.stop(force_exit_on_hang=False)
+        except Exception as teardown_exc:  # never let teardown mask the real exit code
+            print(
+                f"CTRL preroll: teardown after preroll timeout failed: {teardown_exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+        # Round-2 review, item 5: emit the WORKER_RESULT receipt here too --
+        # civiccast.native.installed_gstreamer_smoke.require_clean_worker_result
+        # requires ONE (its own error is an unhelpful "product worker emitted
+        # no WORKER_RESULT receipt" otherwise) and, with it, its failure
+        # message NAMES the actual reason (this dict's ``error`` tuple)
+        # instead of just an exit code. ``teardown_clean`` now reflects the
+        # ``stop()`` attempt above, not a hardcoded False -- a preroll that
+        # never reached PLAYING can still tear its (partially built)
+        # pipeline down to NULL cleanly within the bound.
+        preroll_result = {"error": ("preroll-timeout", str(exc)), "teardown_clean": teardown_clean}
+        print(f"WORKER_RESULT {preroll_result}", flush=True)
+        return int(exit_codes_mod.GST_PREROLL_TIMEOUT_EXIT_CODE)
     print(f"WORKER_RESULT {result}", flush=True)
-    return 0 if result.get("error") is None else 1
+    error = result.get("error")
+    if error is None:
+        return 0
+    # Item 84: unlike PrerollTimeoutError above (raised as an exception, so
+    # its own except-clause chooses the exit code), a first-output timeout is
+    # NOT raised -- ``GstPlayoutEngine._check_stall`` sets ``self._error`` and
+    # quits the loop exactly like the ordinary post-first-buffer stall does
+    # (see the ``("stall", ...)`` reason, which still falls through to the
+    # generic exit code 1 below), so ``run_forever`` returns normally and this
+    # reason has to be told apart from every OTHER engine failure here instead.
+    # A distinct exit code (never 1) is what lets the daemon's relaunch path
+    # (``EgressDaemon._relaunch_after_crash``) rate-limit this the same way it
+    # already does ``GST_PREROLL_TIMEOUT_EXIT_CODE``, instead of counting a
+    # slow-but-healthy start toward the crash-loop fallback-slate streak.
+    if isinstance(error, (tuple, list)) and error and error[0] == "first-output-timeout":
+        return int(exit_codes_mod.GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE)
+    return 1
 
 
 if __name__ == "__main__":

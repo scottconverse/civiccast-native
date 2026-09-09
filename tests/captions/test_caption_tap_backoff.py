@@ -158,8 +158,25 @@ class TestCaptionBackoffPolicy:
     def test_shipped_defaults_are_the_documented_ones(self) -> None:
         policy = CaptionBackoffPolicy()
 
-        assert policy.base_seconds == DEFAULT_BASE_BACKOFF_SECONDS == 60.0
+        # Item 79: the first pause was doubled from 60s to 120s (MEASURED:
+        # 60s was not enough recovery room before a struggling station
+        # re-overloaded almost immediately).
+        assert policy.base_seconds == DEFAULT_BASE_BACKOFF_SECONDS == 120.0
         assert policy.max_seconds == DEFAULT_MAX_BACKOFF_SECONDS == 900.0
+
+    def test_shipped_backoff_schedule_is_120_240_480_900(self) -> None:
+        """Item 79's acceptance schedule, using the real shipped defaults."""
+
+        clock = _FakeClock()
+        policy = CaptionBackoffPolicy(monotonic=clock)
+
+        observed = []
+        for _ in range(4):
+            state = policy.record_overload("government")
+            observed.append(state.pause_seconds)
+            clock.advance(state.pause_seconds + 1.0)
+
+        assert observed == [120.0, 240.0, 480.0, 900.0]
 
 
 class TestBackoffSettingsFromEnv:

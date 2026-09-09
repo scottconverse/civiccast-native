@@ -39,6 +39,30 @@ The egress proof path does not by itself prove:
 
 ## Operator Checklist
 
+### Native reload status
+
+The current native repair runs clean ten times out of ten with normal logging,
+each run covering three workers and six in-place replacements with clean
+transport checks and clean stop. A normal replacement keeps output while the new
+leg is prepared and holds the switch until the outgoing leg retires. An
+overlapping commit request is explicitly declined and uses the existing
+full-graph restart recovery path; it is not queued as a latest-request-wins
+operation. Existing watchdog time bounds and station capabilities are unchanged.
+
+Two watchdogs cover a replacement and they no longer overlap: while a commit is
+in progress the stall bound stands down so the commit watchdog owns that window
+and can emit its stack dump, and the stall bound restarts from full once the
+commit settles. Ten clean runs bounds the failure rate rather than proving
+absence, and this diagnostic does not establish beta.5 installer acceptance or a
+two-hour physical soak.
+
+A caption heartbeat is a timing signal for an interval without caption text.
+Its guard is separate from caption conversion: it admits one
+heartbeat reservation at a time and prevents an older send/probe callback from
+clearing a newer reservation. Queue capacity settings alone are not the event
+bound. Actual caption cue buffers are unchanged and are not counted by this
+heartbeat guard.
+
 1. Open the operator console.
 2. Open **System Health** or **Channels**.
 3. Find **Outgoing channel feed**.
@@ -225,6 +249,124 @@ itself — no CLI worker needed. Posture for a three-channel station:
   one GOP — about 2 seconds — early); on the GStreamer engine the cached copy is
   re-cut by stream copy rather than re-encoded, which costs seconds, not
   minutes.
+- **Cache HIT accuracy vs MISS accuracy (item 66, corrected round-3):** for a
+  TRIMMED (join-in-progress) request, a cache HIT's window is a `-c copy` cut
+  out of the shared conform — fast, but floors to the previous keyframe (up to
+  ~2 seconds early, per the keyframe note above); a first-time trimmed MISS's
+  bounded conform re-encodes the wanted window instead (`-ss` before `-i`, but
+  ffmpeg still decodes every source frame from that keyframe forward when
+  transcoding rather than stream-copying, so the OUTPUT starts at the exact
+  requested time, not the nearest keyframe). So a join-in-progress asset's
+  FIRST airing at a given offset (a MISS, re-encoded) can start more precisely
+  than a LATER airing at that same offset served from the cache (a HIT,
+  keyframe-floored) — the opposite of what "cached = better" intuition
+  suggests. Neither is a defect; don't read a later airing's ~2s-early start
+  as a regression from the first.
+  For an UNTRIMMED asset there is no flooring concern either way: the
+  GStreamer engine's bounded conform for an untrimmed MISS never seeks (the
+  whole asset is wanted from the start, so no `-ss`), and that already-
+  finished per-plan file is what airs directly — the persistent cache entry
+  is populated afterward from a hard link of that SAME file (round-4
+  correction: **if the cache and the per-plan directory live on different
+  volumes, the link fails and the cache entry populates in the BACKGROUND
+  instead** — a queued byte-for-byte copy, same one-worker warm queue as an
+  ordinary warm — never a second encode, and never blocking that airing).
+  A cache HIT for an untrimmed asset is therefore byte-identical to its
+  first airing, whether it arrived by link or by background copy.
+- **Cache promotion never waits behind an in-progress warm (item 66
+  round-4, non-blocking acquire; round-5 fixed a self-deadlock in the
+  cross-volume path — see below):** if a background warm for the identical
+  asset is already running when a foreground airing tries to populate (or
+  link/copy into) the same cache entry, that foreground promotion is
+  skipped outright rather than waiting for the warm to finish — a warm's
+  own single-threaded conform can take tens of minutes for a long asset,
+  and item 66 exists precisely to keep the synchronous start path from
+  waiting on work like that. Skipping costs nothing beyond that one
+  airing's copy being (for now) absent from the persistent cache: the
+  segment already aired from its own file regardless, and the in-progress
+  warm (or a later airing) still populates the cache normally. On a
+  cross-volume cache/work-dir layout (the hard-link fallback), the
+  background copy job itself also acquires non-blocking and skips on
+  contention rather than waiting or busy-looping — round 4 shipped this
+  scheduling from INSIDE the still-held lock, which self-deadlocked with a
+  synchronous scheduler and head-of-line-blocked the real one; round 5
+  schedules it only after the lock is released.
+- **A broken ffprobe on a station means every slot-capped untrimmed airing
+  queues a background whole-asset conform (item 66 round-8, HIGH fix):**
+  when this call's own live ffprobe can't determine an asset's real media
+  duration, an untrimmed segment whose schedule slot is shorter than the
+  asset (D42) is never promoted straight from its own bounded conform — it
+  always falls through to a background warm that conforms the whole asset
+  fresh instead. That warm is single-threaded and bounded by the existing
+  warm dedupe (one queued conform per asset, not one per airing), so the
+  station self-heals after one pass per asset rather than piling up
+  duplicate work — but on a GStreamer station with many assets and a
+  genuinely broken ffprobe, expect a long queue of first-run background
+  conforms until ffprobe is fixed or every asset has been warmed once.
+- **Upgrading past item 66 round-7/8 invalidates every pre-existing
+  conform-cache entry:** a `.json` sidecar written by older code has no
+  `full_asset_conform` key at all, which now reads as `False` rather than
+  a trusted HIT (see the flag's own docstring in `preparer.py`). Each asset
+  therefore pays exactly one re-conform after the upgrade the first time it
+  airs again — synchronous, on the start path, when
+  `playout_trim_supported=True` (the ffmpeg-concat engine); scheduled as a
+  background warm otherwise (GStreamer). This is a one-time cost per asset,
+  not a permanent regression — once re-conformed, the entry carries the
+  flag and hits normally again.
+- **The loudness probe samples the asset, it does not measure the whole
+  file (item 66, revised round-6):** a TRIMMED (join-in-progress) segment's
+  probe is bounded to its own wanted window. An UNTRIMMED segment's probe
+  uses the asset's REAL MEDIA DURATION — NOT the head, and NOT the
+  prepared segment's `duration_seconds` (which is capped by the schedule
+  slot and can be shorter than the asset itself; using the slot duration
+  for an offset could seek past the asset's actual end, read as silence,
+  and trigger an unnecessary floor verdict). The real duration comes from
+  a cheap ffprobe query, cached alongside the loudness result so a later
+  airing of the same asset never re-probes either one.
+  - **Duration known, asset > 120 seconds:** samples 120 seconds starting
+    40% in (a head sample can land on cold-open silence or room tone and
+    measure the silence floor instead of the program's real loudness — a
+    real field failure: -70 LUFS measured at the head of a 39-minute
+    meeting recording). If that sample measures at or below -60 LUFS
+    integrated (still silence, e.g. a long pause that happens to land in
+    the window), the preparer resamples ONCE more at 70% in — but only if
+    a genuinely non-overlapping second window actually fits (the second
+    must start at least 120 seconds after the first AND stay inside the
+    file); below 400 seconds that room never exists — item 66 round-8
+    corrected this from a previously-documented "120-240 seconds": working
+    the two clamped windows through by hand (not just describing them)
+    shows the non-overlap requirement only starts holding at exactly 400
+    seconds, not 240 — so for any asset shorter than 400 seconds no
+    resample is ever attempted, and the single (floor) reading is used as
+    measured. When a
+    non-overlapping resample IS possible and
+    both independent samples land at the floor, the asset is treated as
+    genuinely silent (normalization is skipped outright rather than
+    trusting either floor reading as a real target). If the resample
+    itself fails to produce a measurement at all, the FIRST reading is
+    kept rather than raising or discarding it.
+  - **Duration known, asset <= 120 seconds:** one sample spanning
+    `min(duration, 120s)` from the very start already covers the whole (or
+    nearly the whole) file, so a floor reading on it is trusted directly
+    as silence with no resample needed. (Item 66 round-6 used a 240-second
+    cutoff here instead of 120; that let a 120-240 second asset's
+    HEAD-only 120-second sample stand in for the whole file when it
+    covered at most half of it — a real field failure: a 200-second clip
+    whose audio starts at 130 seconds got memoized as silent because the
+    sampled window never reached it. Round 7 lowered the cutoff to the
+    probe window's own size, so a "duration known" asset over 120 seconds
+    always falls into the sampled-window case above instead.)
+  - **Duration genuinely unknown** (ffprobe unavailable or failed): the
+    probe samples from the very start (never past EOF for any asset with
+    real audio) and a floor reading is NEVER trusted as proof of silence —
+    there is no independent second window, and no known length, to
+    cross-check it against. This corrects a real, measured failure: with
+    the previous fixed-offset design (120s and 240s in), a real 67-second
+    clip (true loudness -10.9 LUFS) had BOTH offsets land past its actual
+    end, read as silence, and got misreported as a genuinely silent asset.
+  Either way this remains a sample rather than a full-file measurement for
+  material whose loudness varies significantly across its length.
+
 - Never run the inline automation driver AND a `civiccast egress run` CLI
   worker for the same channels: two daemons would race the same durable
   command queue.
@@ -457,6 +599,62 @@ Blackmagic's licensing is handled inside OBS:
 The OBS bridge is operationally outside CivicCast — its supervision is
 OBS's job, and the SDI readiness endpoint will not report it. It is the
 right answer when the station wants SDI today without building FFmpeg.
+
+## Diagnosing A Worker Exit: Never Produced Output vs Stopped Producing It
+
+A GStreamer worker's stderr distinguishes two DIFFERENT failure shapes that
+both end in a daemon-driven restart -- read the exact marker before assuming
+a bounced channel is the same failure mode as any other:
+
+- `CTRL first-output: no output within Ns of PLAYING - quitting for daemon
+  restart` (item 84) -- the pipeline reached `PLAYING` (see the preceding
+  `CTRL preroll: reached PLAYING after ...s` line) but never produced a
+  single output buffer within `first_output_timeout_s` (45s default,
+  `CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S` env override, clamped `[10, 120]`s).
+  This is a SLOW START under load (a concurrent conform, a synchronous
+  content-reload source preparation, live caption-tap overload), not a
+  stalled or dead pipeline -- the daemon relaunches it through the normal
+  back-off path but rate-limits how often it counts toward the crash-loop
+  streak that forces fallback slate, the same way it already does for
+  `CTRL preroll: worker exiting -- ...` (item 82, a preroll that never
+  reached `PLAYING` at all). If this line recurs steadily on a box, look at
+  what else is competing for CPU/IO at worker start (an `ffmpeg` conform, a
+  slow disk, another channel's caption tap) before assuming the source
+  itself is unreachable.
+- `CTRL stall: no output for 10s - quitting for daemon restart` (S9-5,
+  unchanged by item 84) -- the pipeline WAS producing output and then
+  stopped for `stall_timeout_s` (10s default). This is the pipeline going
+  silently dead after already airing (a frozen live source that never posts
+  an error) -- treat it as a genuine on-air interruption, not a slow start.
+
+A THIRD line, `CTRL first-output: first buffer after Ns pid=N` (item 84
+Round-2 review), is not a failure -- it is the positive-evidence marker a
+worker prints exactly once, the moment its first TS buffer actually crosses
+the mux. It is the daemon's own on-air evidence for the GStreamer strategy
+(`EgressDaemon._observed_on_air_evidence`): a worker that only ever prints
+`CTRL preroll: reached PLAYING` and never this marker is NOT credited as
+on-air, on purpose -- reaching `PLAYING` is not proof any output ever
+flowed, and treating it as such was the measured cause of a worker that
+kept reaching `PLAYING` on every relaunch, but never producing output,
+resetting its own crash-loop streak forever instead of ever escalating to
+fallback slate.
+
+Both failure lines land in the operator state row's `last_error` (folded
+from the worker's stderr tail); the exit code the daemon actually observed
+(`GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE` vs the ordinary crash code for a
+`("stall", ...)` exit vs `GST_PREROLL_TIMEOUT_EXIT_CODE`) is not itself
+operator-visible, so the stderr marker text is the fastest way to tell the
+three failure shapes apart when triaging a relaunch storm.
+
+**`CIVICCAST_STALL_TIMEOUT_S=0` no longer disables output supervision.**
+Before item 84, setting this env var to `0` (or any non-positive value) fully
+disabled the stall watchdog -- a worker that silently stopped producing
+output, OR one that never produced any at all, would run forever with no
+daemon-driven restart. That opt-out now only covers the POST-first-buffer
+stall check (`CTRL stall: ...`, unchanged S9-5 semantics); the first-output
+budget (`CTRL first-output: no output within Ns ...`) is separate, floors at
+10s regardless of this env var, and cannot be disabled entirely -- a worker
+that never produces a single output buffer is always eventually restarted.
 
 ## What To Do With Failures
 

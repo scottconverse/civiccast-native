@@ -20,7 +20,8 @@ repository, not this one).
 already on `v1.0.0-beta.3`. `setup.exe` and the five runtime `.ccpack` packs
 are attached to the
 [`v1.0.0-beta.4` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4),
-each verified by `SHA256SUMS.txt` and a signed sidecar; the ~21 GB AI-model
+with `SHA256SUMS.txt` and installer sidecar metadata for checksum checks;
+the installer itself carries the Authenticode signature. The ~21 GB AI-model
 `station\` bundle is deliberately not a release asset (see "Install and run"
 below). `v1.0.0-beta.3` (the first downloadable public release) is now
 superseded; `v1.0.0-beta.1` (USB-delivered, no downloadable assets) remains
@@ -38,6 +39,38 @@ for the publish record.
 `v1.0.0-beta.5` is the next candidate and the current owner-held unpublished candidate
 (unpublished; no installer asset) -- it does not change the install story
 above, which still targets `v1.0.0-beta.4`.
+
+The beta.5 development build enables in-place schedule rollover by default.
+This lets the playout worker load the next plan without a planned encoder
+restart, including refreshing filler between programs. Bulletin rotations
+retain all approved, currently airable slides within the decoder-chain limit.
+Channel status and health reporting distinguish scheduled programs from filler
+as soon as a handoff completes.
+Setting `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` explicitly selects the
+restart fallback for diagnosis and can interrupt output. Installed-candidate
+soaks remain required before beta.5 publication; see the
+[recovery record](docs/releases/beta5-recovery-2026-09-08.md).
+The bundled beta.5 manual describes operation without freezing a mutable
+publication status into the installer. Use this page and the exact GitHub
+Release for current download and verification status.
+
+**Reload repair status (2026-09-09):** the native engine suite now runs clean
+ten times out of ten with normal logging, each run covering three workers
+through six in-place replacements with clean transport checks and clean stop
+(320 committed replacements across those runs, no stalls and no unfinished
+commits). The repaired path keeps persistent bounded A/V queues, holds the
+replacement until the outgoing leg retires, and leaves the existing watchdog
+bounds unchanged. An overlapping commit request is explicitly declined and
+uses the existing full-graph restart recovery path; there is no latest-request
+queue and no capability is disabled. Ten clean runs bounds the failure rate; it
+is not proof of absence. This is source/diagnostic evidence only: the beta.5
+installer remains unaccepted and has no two-hour physical soak pass.
+
+Live-caption timing now uses a separate forwarding queue. During intervals
+without text, CivicCast sends small timing signals; at most one can wait behind
+the signal currently being processed. This prevents an unlimited heartbeat
+backlog. It does not change how actual caption cues are handled or impose a
+new limit on their text buffers.
 
 ![CivicCast system architecture](docs/assets/architecture/civiccast-system-architecture.svg)
 
@@ -213,8 +246,16 @@ things outside this repository's control:
   driving the control-plane process to ~2.5 CPU cores and starving the
   GStreamer playout workers, whose own 10-second stall watchdog then
   exits, which the daemon relaunches. Fixed in beta.5: #169 (the
-  state-write `UnicodeEncodeError` above). The caption-tap overload fix
-  itself has no merged PR yet (PR pending). **Workaround for beta.4:
+  state-write `UnicodeEncodeError` above). **Current beta.5 source update:**
+  the caption backoff repair [#172](https://github.com/scottconverse/civiccast-native/pull/172),
+  bounded live-caption work [#182](https://github.com/scottconverse/civiccast-native/pull/182),
+  non-blocking audio tap [#190](https://github.com/scottconverse/civiccast-native/pull/190),
+  and native caption-tap off switch [#191](https://github.com/scottconverse/civiccast-native/pull/191)
+  are merged and included in the candidate source. Merged code is not a
+  completed two-hour candidate soak; the exact installed beta.5 candidate
+  still needs its own acceptance evidence before release. This does not
+  retroactively turn the historical beta.4 or earlier beta.5 soaks into passes.
+  **Workaround for beta.4:
   none in the product.** `CIVICCAST_CAPTION_TAP` is the only switch for
   the live caption tap, and a native station's control-plane process
   hardcodes it to `inline` unconditionally
@@ -233,7 +274,7 @@ things outside this repository's control:
   model. `v1.0.0-beta.4` is the current release, a download-only upgrade
   for stations already on `v1.0.0-beta.3` (the first
   **downloadable** release): `setup.exe`, the five runtime `.ccpack` packs,
-  `SHA256SUMS.txt`, and a signed sidecar are attached to the
+  `SHA256SUMS.txt`, and installer sidecar metadata are attached to the
   [GitHub Releases page](https://github.com/scottconverse/civiccast-native/releases).
   `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is superseded.
   `v1.0.0-beta.2` was never published -- it exists only as an internal

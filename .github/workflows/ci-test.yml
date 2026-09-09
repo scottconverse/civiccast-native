@@ -168,6 +168,62 @@ jobs:
           print(f"Finalization real-media proofs executed: {sorted(executed)}")
           PYFLOOR
 
+      - name: Assert the item 66 conform-cache real-ffmpeg proofs actually ran
+        # Item 66 round-9 (MEDIUM fix): tests/egress/test_preparer_conform_cache_real_ffmpeg.py
+        # is the only end-to-end proof that the round-7/8 full-asset-conform-cache
+        # gate fixes (a slot-capped untrimmed segment must never poison the
+        # persistent cache as if it were the whole asset) hold against a real,
+        # measured output duration rather than just which code path fired. All
+        # four tests are gated on ffmpeg/ffprobe being on PATH (same
+        # `pytestmark = pytest.mark.skipif(...)` shape as the finalization-worker
+        # suite above), so without this guard a runner image that silently lost
+        # ffmpeg/ffprobe would drop this coverage with CI still green.
+        if: always()
+        run: |
+          if [ ! -f junit.xml ]; then
+            echo "::error::junit.xml missing — pytest did not run."
+            exit 1
+          fi
+          python <<'PYFLOOR'
+          import sys, xml.etree.ElementTree as ET
+
+          REQUIRED = {
+              "test_slot_capped_untrimmed_segment_then_longer_slot_no_dead_air",
+              "test_repeated_shorter_slot_still_hits_the_real_full_asset_cache",
+              "test_ffprobe_unavailable_never_promotes_a_fragment_as_full_asset",
+              "test_trimmed_airing_then_slot_capped_untrimmed_does_not_poison_cache",
+          }
+          tree = ET.parse("junit.xml")
+          executed = set()
+          skipped = set()
+          for case in tree.iter("testcase"):
+              if not case.get("classname", "").startswith(
+                  "tests.egress.test_preparer_conform_cache_real_ffmpeg"
+              ):
+                  continue
+              name = case.get("name", "")
+              if name not in REQUIRED:
+                  continue
+              if case.find("skipped") is not None:
+                  skipped.add(name)
+                  continue
+              if case.find("failure") is not None or case.find("error") is not None:
+                  print(f"::error::Conform-cache real-ffmpeg proof {name} failed.")
+                  sys.exit(1)
+              executed.add(name)
+
+          missing = REQUIRED - executed
+          if missing:
+              print(
+                  f"::error::Conform-cache real-ffmpeg proof did not execute: "
+                  f"{sorted(missing)} (skipped={sorted(skipped)}). ffmpeg/ffprobe "
+                  "missing on the runner, or the tests were renamed without "
+                  "updating this guard."
+              )
+              sys.exit(1)
+          print(f"Conform-cache real-ffmpeg proofs executed: {sorted(executed)}")
+          PYFLOOR
+
       - name: Assert the live-HLS playability proof actually ran
         # 1.0-hardening: the single most important behavioral test in the repo
         # (real ffmpeg + ffprobe rolling-live-window playability,

@@ -33,8 +33,10 @@ import psutil
 from civiccast.captions.models import AudioChunk
 from civiccast.captions.review import InMemoryCaptionReviewStore
 from civiccast.captions.runtime import (
+    LIVE_TAP_CPU_BEAM_SIZE,
     CaptionRuntime,
     FasterWhisperRuntime,
+    default_live_tap_cpu_threads,
 )
 from civiccast.captions.tap_worker import CaptionTapWorker
 from civiccast.native.app_payload import (
@@ -376,6 +378,27 @@ def build_caption_runtime(
             beam_size=beam_size,
             language="en",
             vad_filter=vad_filter,
+            # This proof exists to measure the LIVE tap specifically (see the
+            # module docstring: "the production CaptionTapWorker ... under a
+            # real-time deadline"), so it must ask for the live sizing the
+            # same way civiccast.ai_models.runtime.build_caption_runtime does
+            # for the real product. `cpu_threads`/`beam_size` are still passed
+            # explicitly above (from --cpu-threads/--beam-size, both now
+            # defaulting to the live values -- see argparse below), but
+            # `live=True` here DOES let the runtime override those explicit
+            # trial values: FasterWhisperRuntime.__init__ resolves
+            # CIVICCAST_WHISPER_CPU_THREADS/CIVICCAST_WHISPER_BEAM_SIZE (and,
+            # for cpu_threads, CIVICCAST_CAPTION_TAP_CPU_THREADS and the
+            # LIVE_TAP_CPU_THREADS_CEILING cap) AFTER the constructor
+            # argument, when `live=True` (round 4 review, measured: env beam
+            # 7 + --beam-size 1 -> runtime.beam_size becomes 7; env threads 8
+            # + --cpu-threads 1 -> runtime.cpu_threads becomes 2). So the
+            # identity dict below records `runtime.beam_size`/
+            # `runtime.cpu_threads` POST-CONSTRUCTION, the same standard
+            # `num_workers` already uses, rather than the pre-construction
+            # args, which can silently differ from what was actually
+            # measured whenever those env vars are set.
+            live=True,
         )
     finally:
         for name, previous_value in previous_environment.items():
@@ -385,9 +408,21 @@ def build_caption_runtime(
                 os.environ[name] = previous_value
     return runtime, {
         "backend": backend,
-        "beam_size": beam_size,
+        # Recorded post-construction (reflects CIVICCAST_WHISPER_BEAM_SIZE if
+        # the operator set one, and live=True's CUDA-fallback beam-width
+        # drop) so every capacity report states, in the durable artifact,
+        # exactly which beam width was actually measured -- not the
+        # pre-construction --beam-size trial value, which
+        # FasterWhisperRuntime.__init__ can override for the live tap (see
+        # the comment above this call).
+        "beam_size": runtime.beam_size,
         "compute_type": CAPTION_COMPUTE_TYPE,
-        "cpu_threads": cpu_threads,
+        # Recorded post-construction (reflects CIVICCAST_WHISPER_CPU_THREADS,
+        # CIVICCAST_CAPTION_TAP_CPU_THREADS, and the
+        # LIVE_TAP_CPU_THREADS_CEILING cap) for the same reason: the
+        # pre-construction --cpu-threads trial value can differ from what
+        # the live tap actually ran with.
+        "cpu_threads": runtime.cpu_threads,
         "device": CAPTION_DEVICE,
         "local_files_only": True,
         "model": str(model_dir),
@@ -597,7 +632,18 @@ def _overload_negative_control(
         review_store=InMemoryCaptionReviewStore(),
         segment_seconds=segment_seconds,
         overlap_seconds=overlap_seconds,
-        max_channel_workers=3,
+        # Deliberately NOT hardcoding max_channel_workers: the same doctrine
+        # as `build_caption_runtime`'s num_workers above (this file, ~line
+        # 358) -- civiccast/captions/tap_worker.py's production callers
+        # construct CaptionTapWorker bare, so a capacity proof that hardcodes
+        # a different value here would measure a station nobody ships and
+        # could pass without proving the deployed default. Omitting the
+        # argument tracks whatever `default_max_channel_workers()` production
+        # actually uses (item 79: a flat 1), including a future default
+        # change or an operator override, with zero risk of the two drifting
+        # apart again -- the same failure this PR's coordinator review found
+        # when this argument was still hardcoded to the pre-item-79 value of
+        # 3.
         max_backlog_segments=2,
     )
     result = worker.run_once()
@@ -611,12 +657,17 @@ def _overload_negative_control(
     }
 
 
-def main() -> int:
-    # Every downstream site (runtime construction, expected identity, env
-    # pins) reads these module globals at call time, so overriding them from
-    # the CLI keeps the whole run — including the identity acceptance —
-    # consistent.
-    global CAPTION_DEVICE, CAPTION_COMPUTE_TYPE
+def _build_arg_parser() -> argparse.ArgumentParser:
+    """Build the CLI parser, factored out of :func:`main` so its defaults --
+
+    in particular ``--cpu-threads`` and ``--beam-size``, both wired to the
+    live tap's real shipped sizing (item 79) -- are directly testable without
+    running the whole proof (which needs real audio fixtures, a model
+    directory, and a work directory). See
+    ``tests/native/test_caption_capacity_proof.py``'s
+    ``TestArgParserDefaultsTrackTheLiveTap``.
+    """
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--audio",
@@ -633,9 +684,32 @@ def main() -> int:
     parser.add_argument("--model-dir", required=True, type=Path)
     parser.add_argument("--work-dir", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--beam-size", type=int, default=5)
+    parser.add_argument(
+        "--beam-size",
+        type=int,
+        # Deliberately NOT 5 (the batch/GPU default): this proof exists to
+        # measure the shipped LIVE tap, and greedy decoding (beam 1) is the
+        # live tap's own default on CPU (LIVE_TAP_CPU_BEAM_SIZE). An
+        # unoverridden run therefore matches cpu_threads and beam_size to
+        # the SAME deployed sizing, rather than measuring a station that
+        # caps its threads like the live tap but decodes like a batch pass
+        # nobody ships that way.
+        default=LIVE_TAP_CPU_BEAM_SIZE,
+    )
     parser.add_argument("--overlap-seconds", type=float, default=4.0)
-    parser.add_argument("--cpu-threads", type=int, default=0)
+    parser.add_argument(
+        "--cpu-threads",
+        type=int,
+        # Deliberately NOT 0 ("every core"): this proof exists to measure the
+        # shipped LIVE tap, and 0 is the batch/VOD default, not the live
+        # tap's. Defaulting to the same `default_live_tap_cpu_threads()`
+        # production actually uses (item 79) means this flag only overrides
+        # for a deliberate hardware-exploration trial -- an unoverridden run
+        # measures the real deployed sizing instead of a station nobody
+        # ships, the same doctrine `build_caption_runtime`'s omitted
+        # `num_workers` already follows above.
+        default=default_live_tap_cpu_threads(),
+    )
     parser.add_argument(
         "--device",
         default=CAPTION_DEVICE,
@@ -667,6 +741,16 @@ def main() -> int:
         action="store_true",
         help="disable the production VAD optimization for a comparison run",
     )
+    return parser
+
+
+def main() -> int:
+    # Every downstream site (runtime construction, expected identity, env
+    # pins) reads these module globals at call time, so overriding them from
+    # the CLI keeps the whole run — including the identity acceptance —
+    # consistent.
+    global CAPTION_DEVICE, CAPTION_COMPUTE_TYPE
+    parser = _build_arg_parser()
     args = parser.parse_args()
 
     CAPTION_DEVICE = args.device
@@ -733,7 +817,10 @@ def main() -> int:
         review_store=store,
         segment_seconds=segment_seconds,
         overlap_seconds=float(tuning["overlap_seconds"]),
-        max_channel_workers=3,
+        # See the sibling `CaptionTapWorker(...)` call above (~line 593) for
+        # why `max_channel_workers` is deliberately omitted rather than
+        # hardcoded: track the shipped `default_max_channel_workers()`, not a
+        # stale literal.
         max_backlog_segments=2,
     )
 

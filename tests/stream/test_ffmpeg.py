@@ -16,6 +16,7 @@ from civiccast.stream._ffmpeg import (
     _parse_ffmpeg_version,
     _version_is_supported,
     check_ffmpeg,
+    probe_media_duration_seconds,
     run_ffmpeg,
     start_ffmpeg,
 )
@@ -473,6 +474,70 @@ def test_probe_ffmpeg_encoders_uses_exact_binary_and_parses_registered_names(
         "-hide_banner",
         "-encoders",
     ]
+
+
+class TestProbeMediaDurationSeconds:
+    """Item 66 round-5 (Opus review, point 2): a cheap ``-format`` query
+    (never a decode) for the source preparer's untrimmed loudness-probe
+    window, deliberately total like ``probe_video_dimensions``."""
+
+    def test_parses_duration_from_ffprobe_output(self, tmp_path) -> None:
+        completed = MagicMock(returncode=0, stdout="3600.048000\n", stderr="")
+        with (
+            patch("civiccast.stream._ffmpeg.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch("civiccast.stream._ffmpeg.subprocess.run", return_value=completed) as spawn,
+        ):
+            duration = probe_media_duration_seconds(tmp_path / "long-recording.mp4")
+
+        assert duration == pytest.approx(3600.048)
+        assert spawn.call_args.args[0] == [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
+            str(tmp_path / "long-recording.mp4"),
+        ]
+
+    def test_returns_none_when_ffprobe_absent(self, tmp_path) -> None:
+        with patch("civiccast.stream._ffmpeg.shutil.which", return_value=None):
+            assert probe_media_duration_seconds(tmp_path / "asset.mp4") is None
+
+    def test_returns_none_on_nonzero_exit(self, tmp_path) -> None:
+        completed = MagicMock(returncode=1, stdout="", stderr="No such file")
+        with (
+            patch("civiccast.stream._ffmpeg.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch("civiccast.stream._ffmpeg.subprocess.run", return_value=completed),
+        ):
+            assert probe_media_duration_seconds(tmp_path / "missing.mp4") is None
+
+    def test_returns_none_on_unparseable_output(self, tmp_path) -> None:
+        completed = MagicMock(returncode=0, stdout="N/A\n", stderr="")
+        with (
+            patch("civiccast.stream._ffmpeg.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch("civiccast.stream._ffmpeg.subprocess.run", return_value=completed),
+        ):
+            assert probe_media_duration_seconds(tmp_path / "asset.mp4") is None
+
+    def test_returns_none_on_timeout(self, tmp_path) -> None:
+        with (
+            patch("civiccast.stream._ffmpeg.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch(
+                "civiccast.stream._ffmpeg.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd="ffprobe", timeout=30),
+            ),
+        ):
+            assert probe_media_duration_seconds(tmp_path / "asset.mp4") is None
+
+    def test_returns_none_for_nonpositive_duration(self, tmp_path) -> None:
+        completed = MagicMock(returncode=0, stdout="0\n", stderr="")
+        with (
+            patch("civiccast.stream._ffmpeg.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch("civiccast.stream._ffmpeg.subprocess.run", return_value=completed),
+        ):
+            assert probe_media_duration_seconds(tmp_path / "asset.mp4") is None
 
 
 class TestCheckFfmpeg:

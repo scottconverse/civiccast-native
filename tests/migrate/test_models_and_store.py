@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from civiccast.db import Base
-from civiccast.migrate.models import ImportedShow, ImportPlan, NormalizedInventory
+from civiccast.migrate.models import ImportBatchDb, ImportedShow, ImportPlan, NormalizedInventory
 from civiccast.migrate.store import (
     BatchAlreadyRolledBackError,
     BatchNotFoundError,
@@ -96,8 +97,17 @@ class TestMigrationStore:
         assert {i.entity_id for i in items} == {"a1", "s1"}
 
     def test_list_batches_orders_newest_first(self, store: MigrationStore) -> None:
-        store.create_batch("older", "cablecast")
         store.create_batch("newer", "cablecast")
+        store.create_batch("older", "cablecast")
+        # The contract orders persisted timestamps, not calls within one Windows
+        # clock tick. Insert in reverse order and give the rows explicit times.
+        with store._session_factory() as session:
+            older = session.get(ImportBatchDb, "older")
+            newer = session.get(ImportBatchDb, "newer")
+            assert older is not None and newer is not None
+            older.created_at = datetime(2026, 9, 7, tzinfo=UTC)
+            newer.created_at = datetime(2026, 9, 8, tzinfo=UTC)
+            session.commit()
         batches = store.list_batches()
         ids = [b.import_batch_id for b in batches]
         assert ids.index("newer") < ids.index("older")
