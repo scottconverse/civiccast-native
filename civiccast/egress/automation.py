@@ -986,11 +986,13 @@ class ChannelAutomationService:
             self._rollover_retry_warned_at.pop(channel_id, None)
             self._rollover_pid_age_warned_at.pop(channel_id, None)
             previous_end_at = tracked[1] if tracked is not None else None
+            previous_planned_seconds = tracked[3] if tracked is not None else None
             self._reestablish_plan_horizon(
                 channel_id,
                 now=now,
                 proof_event_id=proof_event_id,
                 previous_end_at=previous_end_at,
+                previous_planned_seconds=previous_planned_seconds,
             )
             return
         _, plan_end_at, last_segment_start_at, planned_seconds = tracked
@@ -1008,9 +1010,7 @@ class ChannelAutomationService:
             # re-establish it from the CURRENT proof event/dispatch instead of
             # dispatching against a lie -- the same logic the "fresh plan just
             # took air" branch above already uses.
-            if channel_id in self._rollover_issued and self._daemon_has_pending_reload_settlement(
-                channel_id
-            ):
+            if self._daemon_has_pending_reload_settlement(channel_id):
                 # Sandbox soak 39d852e (2026-09-09, government + education
                 # channels): a boundary-aligned seamless rollover was ARMED
                 # (``switch_at_end_of_current=True``) and the OUTGOING leg ran
@@ -1035,6 +1035,51 @@ class ChannelAutomationService:
                 # daemon, whose own settlement deadline
                 # (``_PENDING_RELOAD_SETTLE_DEADLINE_S``) or worker-exit
                 # discard bounds this wait and then lets the branch run.
+                #
+                # Hostile review, round 2 (finding 1): this deliberately does
+                # NOT also require ``channel_id in self._rollover_issued``.
+                # The invariant is "a settlement is in flight, so the daemon's
+                # ``dispatched_plan_horizon`` still describes the OUTGOING
+                # plan and must not be re-read" -- and that holds no matter
+                # who issued the reload: this method's own rollover, a slate
+                # replan (``_check_slate_replan`` / ``_reload_issued``), or an
+                # operator-queued reload. ``reload_policy.should_defer_switch``
+                # defers ANY ON_AIR reload with no override, so every one of
+                # those has the same 5-17s overrun window, and the reviewer
+                # reproduced the EOS run with the conjunct in place via an
+                # operator reload. Every discard path bounds the wait (daemon
+                # settle deadline, worker exit, applied-but-dead, restart/
+                # stop), so waiting on the daemon alone is never unbounded.
+                #
+                # Finding 3: the early return used to be silent, and the old
+                # "was stale" WARNING is how the soak bug was found in the
+                # first place -- log the wait, rate-limited per channel with
+                # the same ``_rollover_retry_warned_at`` timestamp /
+                # ``_ROLLOVER_RETRY_WARN_INTERVAL_SECONDS`` cadence the
+                # undelivered-retry branch below uses (one line per settling
+                # rollover, not one per ~2s tick). The timestamp is cleared
+                # with the rest of the per-sequence state when the settlement
+                # lands (fresh-plan branch) or is discarded (stale branch).
+                past_due_seconds = (now - plan_end_at).total_seconds()
+                last_warned_at = self._rollover_retry_warned_at.get(channel_id)
+                if last_warned_at is None or (
+                    self._monotonic() - last_warned_at >= self._ROLLOVER_RETRY_WARN_INTERVAL_SECONDS
+                ):
+                    _LOG.info(
+                        "Channel automation rollover horizon for %s is past due by %.0fs "
+                        "but the seamless reload is still settling; waiting.",
+                        channel_id,
+                        past_due_seconds,
+                    )
+                    self._rollover_retry_warned_at[channel_id] = self._monotonic()
+                else:
+                    _LOG.debug(
+                        "Channel automation rollover horizon for %s is past due by %.0fs; "
+                        "seamless reload still settling (last logged %.0fs ago).",
+                        channel_id,
+                        past_due_seconds,
+                        self._monotonic() - last_warned_at,
+                    )
                 return
             _LOG.warning(
                 "Channel automation rollover horizon for %s was stale (plan_end_at "
@@ -1057,6 +1102,7 @@ class ChannelAutomationService:
                 now=now,
                 proof_event_id=proof_event_id,
                 previous_end_at=plan_end_at,
+                previous_planned_seconds=planned_seconds,
             )
             return
 
@@ -1289,6 +1335,7 @@ class ChannelAutomationService:
         now: datetime,
         proof_event_id: str | None,
         previous_end_at: datetime | None,
+        previous_planned_seconds: float | None = None,
     ) -> None:
         """(Re)establish ``channel_id``'s tracked plan horizon from the plan the
         daemon actually dispatched (falling back to re-querying the schedule
@@ -1304,6 +1351,7 @@ class ChannelAutomationService:
             now=now,
             proof_event_id=proof_event_id,
             previous_end_at=previous_end_at,
+            previous_planned_seconds=previous_planned_seconds,
         ):
             return
         retry_at = self._rollover_retry_at.get(channel_id)
@@ -1372,6 +1420,7 @@ class ChannelAutomationService:
         now: datetime,
         proof_event_id: str | None,
         previous_end_at: datetime | None,
+        previous_planned_seconds: float | None = None,
     ) -> bool:
         """Set this channel's tracked plan horizon from the plan the daemon
         ACTUALLY dispatched. Returns False when the daemon cannot say (a bare test
@@ -1408,19 +1457,31 @@ class ChannelAutomationService:
             # what is on air right now.
             return False
         starts_at = now
-        if (
-            switch_deferred
-            and previous_end_at is not None
-            and now < previous_end_at <= now + timedelta(seconds=self._ROLLOVER_MIN_LEAD_SECONDS)
-        ):
+        if switch_deferred and previous_end_at is not None:
             # A deferred switch is observed at (or a few seconds after) the
             # outgoing leg's boundary, so a trustworthy ``previous_end_at`` is
-            # at most a rollover lead time ahead of ``now``. Anything further
-            # out is a poisoned tuple (sandbox soak 39d852e: a stale-horizon
-            # re-establishment during settlement dated the OLD plan from
-            # "now", one plan-length ahead) and must not push this horizon a
-            # whole plan into the future -- date from ``now`` instead.
-            starts_at = previous_end_at
+            # at most the OUTGOING plan's own rollover lead ahead of ``now``.
+            # Anything further out is a poisoned tuple (sandbox soak 39d852e:
+            # a stale-horizon re-establishment during settlement dated the OLD
+            # plan from "now", one plan-length ahead) and must not push this
+            # horizon a whole plan into the future -- date from ``now``
+            # instead.
+            #
+            # Hostile review, round 2 (finding 2): the bound is the outgoing
+            # plan's own scaled lead, ``_rollover_min_lead_seconds(previous_
+            # planned_seconds)`` = min(120s, half the plan), NOT the flat
+            # ``_ROLLOVER_MIN_LEAD_SECONDS``. The poisoned anchor sits about
+            # one outgoing-plan-length ahead, so against a plan shorter than
+            # 120s a flat 120s bound honoured the poison and the belt was
+            # inert exactly where short schedule slots make it matter. When
+            # the caller cannot say how long the outgoing plan was (no tracked
+            # tuple), fall back to the flat ceiling as before.
+            if previous_planned_seconds is None:
+                anchor_lead_seconds = self._ROLLOVER_MIN_LEAD_SECONDS
+            else:
+                anchor_lead_seconds = self._rollover_min_lead_seconds(previous_planned_seconds)
+            if now < previous_end_at <= now + timedelta(seconds=anchor_lead_seconds):
+                starts_at = previous_end_at
         planned_seconds = sum(durations)
         plan_end_at = starts_at + timedelta(seconds=planned_seconds)
         last_segment_start_at = plan_end_at - timedelta(seconds=durations[-1])

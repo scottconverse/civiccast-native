@@ -127,13 +127,19 @@ below.
   ahead. When the settlement then landed, the "fresh plan just took air"
   branch fed that poisoned end to the deferred-start rule, dated the incoming
   plan's horizon a whole plan too late, and no rollover was ever issued for
-  it. The stale branch now returns and waits while the channel's rollover is
-  issued and `EgressDaemon.has_pending_reload_settlement` reports it settling
-  (the daemon's own settlement deadline and worker-exit discard bound the
-  wait), and the deferred-start anchor is only honoured when it lies within
-  `_ROLLOVER_MIN_LEAD_SECONDS` of "now". Covered by
-  `tests/egress/test_automation.py::TestStaleHorizonWaitsForASettlingSeamlessReload`;
-  all four cases fail against the previous code.
+  it. The stale branch now returns and waits whenever
+  `EgressDaemon.has_pending_reload_settlement` reports a reload settling --
+  whoever issued it (the automation rollover, a slate replan, or an operator
+  reload: `should_defer_switch` defers every ON_AIR reload to the boundary,
+  so all of them share the overrun window; the daemon's own settlement
+  deadline and worker-exit / applied-but-dead / restart discards bound the
+  wait) -- logging the wait once per channel per 60s rather than silently,
+  and the deferred-start anchor is only honoured when it lies within the
+  OUTGOING plan's own scaled rollover lead (`min(120s, half the plan)`) of
+  "now", so the belt also holds for plans shorter than 120s. Covered by
+  `tests/egress/test_automation.py::TestStaleHorizonWaitsForASettlingSeamlessReload`
+  (seven cases, including the operator-reload short-plan reproduction from
+  the hostile review).
 
 - **Playback evidence bindings include the new caption helper.** The current
   engine, test and historical-evidence annotations are hash-bound in both
