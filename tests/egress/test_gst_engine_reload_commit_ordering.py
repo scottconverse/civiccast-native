@@ -25,6 +25,7 @@ and the independent commit-watchdog thread."""
 from __future__ import annotations
 
 import importlib
+import re
 import sys
 import threading
 import time
@@ -252,6 +253,7 @@ def _bare_engine_for_commit(module: types.ModuleType, recorder: _Recorder) -> An
     engine._pending_overlay_swaps = {}
     engine._selector_pads_quiet = threading.Condition()
     engine._selector_pad_retirements = 0
+    engine._retirement_ledger = []
     engine._retiring_legs = []
     engine._orphaned_leg_elements = []
     engine.stall_timeout_s = 10.0
@@ -470,7 +472,8 @@ def test_commit_releases_the_replacement_before_retiring_the_old_leg(engine_modu
 
     result = _complete_commit_for_test(engine, pending)
 
-    assert result is False  # one-shot GLib-source contract
+    # Round-3 review finding 5: the publish verdict, not a GLib one-shot contract.
+    assert result is True
     calls = recorder.calls
 
     switch_video = _index_of(calls, "video_sel.set_property:active-pad")
@@ -675,6 +678,23 @@ def test_commit_prints_the_four_staged_log_lines_in_order(
     diagnostic_positions = [captured.err.index(marker) for marker in diagnostic_markers]
     assert diagnostic_positions == sorted(diagnostic_positions), captured.err
     assert "CTRL reload committed" not in captured.err
+    # Round-3 review finding 4: the instrument. The retirement line carries how
+    # long the retirement took, and EVERY ``CTRL`` stderr line ends with a UTC
+    # ``t=HH:MM:SS.mmm`` stamp -- appended at the END, with ``CTRL`` still at
+    # column 0, because every consumer anchors on ``^CTRL``.
+    diagnostic_lines = [
+        line for line in captured.err.splitlines() if line.startswith("CTRL reload diagnostic:")
+    ]
+    assert len(diagnostic_lines) == 4, captured.err
+    for line in diagnostic_lines:
+        assert re.search(r" t=\d{2}:\d{2}:\d{2}\.\d{3}$", line), line
+    disposed_line = diagnostic_lines[-1]
+    assert re.search(r"stage=old-leg-disposed elements=0 elapsed=\d+\.\d{3}s t=", disposed_line), (
+        disposed_line
+    )
+    # Stdout settlement markers are untouched: the sandbox lane's
+    # ``^CTRL reload committed(...)\s*$`` regex must keep matching.
+    assert any(line == "CTRL reload committed" for line in out.splitlines()), out
 
 
 # --- (4) asynchronous transaction ownership and failure settlement --------------
@@ -757,7 +777,9 @@ def test_success_callback_reentry_can_start_a_new_reload(engine_module) -> None:
         "commit_watchdog": None,
     }
     engine._pending_reload = pending
-    assert engine._finish_reload_commit(pending) is False
+    # Round-3 review finding 5: the return value is now the publish verdict
+    # (True = this call published), which ``_commit_reload`` gates retirement on.
+    assert engine._finish_reload_commit(pending) is True
     assert current_results == [(True, None)]
     assert engine._pending_reload == {"newer": True}
 
@@ -1556,13 +1578,21 @@ def test_reload_waits_for_a_retiring_leg_to_release_its_selector_pads(engine_mod
 
 
 def test_reload_refuses_rather_than_racing_a_wedged_selector_release(
-    engine_module, monkeypatch: pytest.MonkeyPatch
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Bounded, and the bound is a refusal -- not a shrug that races anyway.
 
     ``reload_program`` raises before it instantiates or links anything, so the
     contract that a pre-build failure has committed no state still holds. The
-    worker reports the error and the daemon restarts from the newest graph."""
+    worker reports the error and the daemon restarts from the newest graph.
+
+    Round-3 review finding 2: the refusal is no longer SILENT to the daemon.
+    Before raising, the caller is settled ``aborted:selector-busy`` (so the
+    FIFO path's reload-status sidecar is written instead of the daemon sitting
+    on its 960s deadline) and the ``CTRL reload aborted:`` stdout marker the
+    sandbox lane counts is printed. The claim here is set WITHOUT a ledger
+    record, which is the one shape the abandon rule (finding 2) cannot
+    conclude on the waiter's behalf -- so the bound still ends in a raise."""
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)
     monkeypatch.setattr(engine_module, "_SELECTOR_PAD_QUIESCE_TIMEOUT_S", 0.05)
@@ -1570,14 +1600,295 @@ def test_reload_refuses_rather_than_racing_a_wedged_selector_release(
     engine.audio_sink_pads = []
     build_calls: list[object] = []
     engine._instantiate_source_leg = lambda leg: build_calls.append(leg)  # type: ignore[method-assign]
+    settled: list[tuple[bool, str | None]] = []
     with engine._selector_pads_quiet:
         engine._selector_pad_retirements = 1
 
     with pytest.raises(RuntimeError, match="still holds this pipeline's input-selector"):
-        engine.reload_program(object())
+        engine.reload_program(
+            object(), on_settled=lambda committed, reason: settled.append((committed, reason))
+        )
 
     assert build_calls == []
     assert not any(call.startswith("video_sel.") for call in recorder.calls), recorder.calls
+    assert settled == [(False, "selector-busy")]
+    out = capsys.readouterr().out
+    assert any(
+        line.startswith("CTRL reload aborted: selector pads still held")
+        for line in out.splitlines()
+    ), out
+
+
+def test_selector_pad_gate_bound_is_derived_from_the_leg_disposal_budgets(engine_module) -> None:
+    """Round-3 review finding 3: 2.0s was sized against a HEALTHY disposal
+    (~0.08s), but a disposal may legitimately take up to its whole 12s budget
+    (8s leg + 4s orphan sweep). A merely slow retirement must never turn the next
+    rollover into a refusal, so the gate's bound covers the full budget plus a
+    margin, and the abandon bound (finding 2) sits at that same age."""
+    budget = engine_module._LEG_DISPOSAL_BUDGET_S + engine_module._LEG_ORPHAN_RETRY_BUDGET_S
+    gate_bound = engine_module._SELECTOR_PAD_QUIESCE_TIMEOUT_S
+    abandon_bound = engine_module._RETIREMENT_ABANDON_AFTER_S
+    assert gate_bound == budget + engine_module._SELECTOR_PAD_QUIESCE_MARGIN_S
+    assert gate_bound > budget
+    assert abandon_bound >= budget
+
+
+def test_slow_but_in_budget_retirement_is_waited_for_not_abandoned(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Round-3 review findings 2 and 3 together: a retirement inside its budget
+    is waited out and concludes itself; the waiter neither refuses nor abandons
+    it, and the counter ends at zero exactly once."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    monkeypatch.setattr(engine_module, "_SELECTOR_PAD_QUIESCE_TIMEOUT_S", 2.0)
+    monkeypatch.setattr(engine_module, "_RETIREMENT_ABANDON_AFTER_S", 2.0)
+    release = threading.Event()
+
+    class _SlowElement(_FakeOldElement):
+        def set_state(self, state: Any) -> str:
+            release.wait(2.0)
+            return super().set_state(state)
+
+    elements = [_SlowElement("slow", recorder)]
+    engine._start_aborted_leg_retirement("superseded", None, None, elements)
+    threading.Timer(0.15, release.set).start()
+
+    started = time.monotonic()
+    engine._await_selector_pads_quiet()
+    waited = time.monotonic() - started
+
+    assert 0.1 <= waited < 1.5, waited
+    assert engine._selector_pad_retirements == 0
+    assert engine._retirement_ledger == []
+    assert engine._orphaned_leg_elements == []
+    assert "abandoned" not in capsys.readouterr().err
+    engine._abort_retire_threads[0].join(2.0)
+
+
+def test_overdue_retirement_is_abandoned_so_later_reloads_proceed(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Round-3 review finding 2: a retirement thread that never returns (its
+    ``set_state(NULL)`` blocked forever) never concludes its claim on the
+    selector-pad gate. Without a bound on that claim every later
+    ``reload_program`` would refuse at the gate forever -- dead air at the next
+    rollover. Once the claim is older than the abandon bound the waiter concludes
+    it, records the leg's elements as orphans, prints an ERROR naming them, and
+    proceeds -- and the thread finally returning later must not conclude it a
+    second time."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    monkeypatch.setattr(engine_module, "_SELECTOR_PAD_QUIESCE_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(engine_module, "_RETIREMENT_ABANDON_AFTER_S", 0.2)
+    elements = [_FakeOldElement("vdec_program_7", recorder), _FakeOldElement("q7", recorder)]
+    engine._announce_retirement(elements)
+    # Age the claim past the bound without sleeping through it.
+    with engine._selector_pads_quiet:
+        engine._retirement_ledger[0]["started"] -= 5.0
+
+    started = time.monotonic()
+    engine._await_selector_pads_quiet()  # must NOT raise
+    assert time.monotonic() - started < 0.4
+
+    assert engine._selector_pad_retirements == 0
+    assert engine._orphaned_leg_elements == elements
+    # Bus-error containment for the abandoned (off-air) leg is kept.
+    assert engine._belongs_to_retiring_leg(elements[0]) is True
+    err = capsys.readouterr().err
+    assert "ERROR: reload leg retirement abandoned after" in err, err
+    assert "vdec_program_7" in err and "q7" in err, err
+
+    # A second waiter sees nothing outstanding and returns at once.
+    engine._await_selector_pads_quiet()
+    # The wedged thread finally returns: the claim is not concluded twice.
+    engine._conclude_retirement(elements)
+    assert engine._selector_pad_retirements == 0
+    assert engine._retirement_ledger == []
+    assert engine._belongs_to_retiring_leg(elements[0]) is False
+
+
+def test_retirement_thread_construction_failure_retires_inline_and_concludes(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round-3 review finding 2b: ``threading.Thread(...)`` used to be constructed
+    OUTSIDE the ``try`` in both starters, after the retirement was announced --
+    a raise there leaked the gate claim and propagated out of ``_commit_reload``
+    with the boundary probes still installed. Both starters now fall back to the
+    inline retirement for a construction failure too, and the claim concludes."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+
+    def _no_thread(**_kwargs: Any) -> Any:
+        raise RuntimeError("cannot create thread")
+
+    monkeypatch.setattr(engine_module.threading, "Thread", _no_thread)
+
+    old_element = _FakeOldElement("old-elem", recorder)
+    pending: dict[str, Any] = {
+        "boundary_probes": [],
+        "old_video_pad": None,
+        "old_audio_pad": None,
+        "old_elements": [old_element],
+    }
+    engine._start_old_leg_retirement(pending)  # must not raise
+    assert "set_state:old-elem:NULL" in recorder.calls, recorder.calls
+    assert engine._selector_pad_retirements == 0
+    assert engine._reload_commit_thread is None
+    assert engine._commit_retire_threads == []
+
+    aborted = _FakeOldElement("aborted-elem", recorder)
+    engine._start_aborted_leg_retirement("superseded", None, None, [aborted])  # must not raise
+    assert "set_state:aborted-elem:NULL" in recorder.calls, recorder.calls
+    assert engine._selector_pad_retirements == 0
+    assert engine._abort_retire_threads == []
+    assert engine._retiring_legs == []
+
+
+def test_commit_does_not_retire_the_old_leg_when_the_commit_did_not_publish(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round-3 review finding 5: retirement starts only behind a commit that
+    ``_finish_reload_commit`` actually published (returned True)."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.teardown_timeout_s = 0.1
+    started: list[dict[str, Any]] = []
+    # No real 15s watchdog Timer under the test runner (it would os._exit).
+    monkeypatch.setattr(engine, "_arm_commit_watchdog", lambda: (None, None))
+    monkeypatch.setattr(engine, "_begin_reload_commit", lambda pending: None)
+    monkeypatch.setattr(engine, "_finish_reload_commit", lambda pending: False)
+    monkeypatch.setattr(
+        engine, "_start_old_leg_retirement", lambda pending: started.append(pending)
+    )
+    engine._pending_reload = {
+        "commit_in_progress": False,
+        "boundary_probes": [],
+        "hold_probes": [],
+        "on_settled": None,
+    }
+
+    assert engine._commit_reload() is False
+    assert started == []
+
+    monkeypatch.setattr(engine, "_finish_reload_commit", lambda pending: True)
+    engine._pending_reload = {
+        "commit_in_progress": False,
+        "boundary_probes": [],
+        "hold_probes": [],
+        "on_settled": None,
+    }
+    assert engine._commit_reload() is False
+    assert len(started) == 1
+
+
+def test_build_failure_cleanup_removes_only_elements_confirmed_at_null(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Round-3 review finding 1b: ``gst_bin_remove`` does not change the removed
+    child's state, so removing an element that did not reach NULL leaves a
+    possibly-running element to be disposed above NULL (the measured
+    ``Trying to dispose element ... in PLAYING`` crash). The cleanup now
+    confirms NULL and removes only what is confirmed; the rest stays locked in
+    the pipeline as orphans and is reported by name."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+
+    class _RefusingElement(_FakeOldElement):
+        def set_state(self, state: Any) -> str:
+            super().set_state(state)
+            return _FakeStateChangeReturn.FAILURE
+
+    class _AsyncElement(_FakeOldElement):
+        def set_state(self, state: Any) -> str:
+            super().set_state(state)
+            return _FakeStateChangeReturn.ASYNC
+
+    good = _FakeOldElement("good", recorder)
+    lazy = _AsyncElement("lazy", recorder)
+    bad = _RefusingElement("bad", recorder)
+    engine._dispose_elements_best_effort([good, lazy, bad])
+
+    assert "pipeline.remove:good" in recorder.calls
+    assert "pipeline.remove:lazy" in recorder.calls  # ASYNC that settled to NULL
+    assert "pipeline.remove:bad" not in recorder.calls, recorder.calls
+    assert _index_of(recorder.calls, "set_locked_state:bad:True") < _index_of(
+        recorder.calls, "set_state:bad:NULL"
+    )
+    assert engine._orphaned_leg_elements == [bad]
+    err = capsys.readouterr().err
+    assert "build-failure cleanup left 1 element(s) above NULL" in err, err
+    assert "bad" in err
+
+
+def _stop_engine_with_orphans(
+    engine_module, recorder: _Recorder, orphans: list[Any]
+) -> tuple[Any, Any]:
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.teardown_timeout_s = 0.5
+    engine.audio_tap_writer = None
+
+    class _StopPipeline(_FakePipeline):
+        def set_state(self, state: Any) -> str:
+            assert state == _FakeState.NULL
+            self.recorder.calls.append("pipeline.set_state:NULL")
+            return _FakeStateChangeReturn.SUCCESS
+
+        def get_state(self, _timeout: int) -> tuple[str, None, None]:
+            return _FakeStateChangeReturn.SUCCESS, None, None
+
+    engine.pipeline = _StopPipeline(recorder)
+    engine._orphaned_leg_elements = list(orphans)
+    return engine, engine.stop(force_exit_on_hang=False)
+
+
+def test_stop_unlocks_orphans_before_the_pipeline_null_and_confirms_them(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Round-3 review finding 1: an orphan is state-LOCKED, and a locked child is
+    skipped by the bin's own state change, so the whole-pipeline NULL would report
+    SUCCESS with a running element inside it and ``stop()`` would return True. The
+    orphan is unlocked BEFORE the transition (so the pipeline's descent takes it),
+    then NULLed directly; an orphan that confirms NULL keeps the teardown clean."""
+    recorder = _Recorder()
+    orphan = _FakeOldElement("orphan", recorder)
+    _engine, clean = _stop_engine_with_orphans(engine_module, recorder, [orphan])
+
+    assert clean is True
+    assert _index_of(recorder.calls, "set_locked_state:orphan:False") < _index_of(
+        recorder.calls, "pipeline.set_state:NULL"
+    )
+    assert _index_of(recorder.calls, "pipeline.set_state:NULL") < _index_of(
+        recorder.calls, "set_state:orphan:NULL"
+    )
+    err = capsys.readouterr().err
+    assert "1 orphaned reload-leg element(s) were unlocked" in err, err
+    assert "all confirmed at NULL" in err, err
+
+
+def test_stop_is_not_clean_while_an_orphan_stays_above_null(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Round-3 review finding 1: 'orphans outstanding' is folded into ``clean``,
+    which is what ``WORKER_RESULT``'s ``teardown_clean`` is built from -- a stop
+    that leaves an element above NULL must not be reported as a clean teardown."""
+    recorder = _Recorder()
+
+    class _StuckOrphan(_FakeOldElement):
+        def set_state(self, state: Any) -> str:
+            super().set_state(state)
+            return _FakeStateChangeReturn.ASYNC
+
+        def get_state(self, timeout: Any) -> tuple[str, str, str]:
+            self.recorder.calls.append(f"get_state:{self.name}:{timeout}")
+            return (_FakeStateChangeReturn.ASYNC, "PLAYING", _FakeState.NULL)
+
+    stuck = _StuckOrphan("stuck", recorder)
+    _engine, clean = _stop_engine_with_orphans(engine_module, recorder, [stuck])
+
+    assert clean is False
+    err = capsys.readouterr().err
+    assert "still above NULL: stuck" in err, err
 
 
 def test_retirement_is_announced_before_its_thread_runs(engine_module) -> None:

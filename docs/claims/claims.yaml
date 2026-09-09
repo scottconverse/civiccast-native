@@ -1057,11 +1057,30 @@ entries:
       # now reads the element count from the retirement line. The loaded
       # tally of the round-3 ordering is a LATER measurement, not claimed
       # here; the 10/10 idle-box tallies above are unchanged and unrepeated.
+      # PR 202 round-3 review follow-ups (2026-09-09): engine.py is re-hashed
+      # below (`git hash-object --path <file> <file>`), worker.py and
+      # test_gst_engine_wsl.py are unchanged. engine.py: stop() unlocks every
+      # orphaned retiring element before the whole-pipeline NULL, NULLs each
+      # directly inside the same bounded step, and folds any still above NULL
+      # into teardown_clean; build-failure cleanup removes only elements it
+      # confirmed at NULL; a retirement claim on the selector-pad gate older
+      # than 13s is abandoned (elements recorded as orphans, ERROR by name) so
+      # later reloads proceed, and a gate refusal settles aborted:selector-busy
+      # and prints the stdout aborted marker before raising; the gate bound is
+      # derived from the leg budgets (8s + 4s + 1s) instead of 2s; retirement
+      # lines carry elapsed= and every CTRL stderr line ends with a UTC t=
+      # stamp (CTRL stays at column 0 -- the lane parsers, health.py markers
+      # and the daemon's last_error fold are unchanged and their suites pass);
+      # retirement thread construction is inside its guard and old-leg
+      # retirement starts only behind a published commit. Verified ONLY by the
+      # two GI-free engine suites (84 PASS) and the lane's 12 parser suites on
+      # this box while Gate A occupied the sandbox; no native-runtime run and
+      # NO loaded tally is claimed for this round.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: e5baeb27dd7c053233407286085e2b0f594d4b64
         - path: civiccast/egress/gst/engine.py
-          blob: 020b3956464931bb8ca53df04825ea64c03c53b8
+          blob: 7cfa01d1269127e336618e651b391c71951f07c3
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -1965,11 +1984,30 @@ entries:
       # now reads the element count from the retirement line. The loaded
       # tally of the round-3 ordering is a LATER measurement, not claimed
       # here; the 10/10 idle-box tallies above are unchanged and unrepeated.
+      # PR 202 round-3 review follow-ups (2026-09-09): engine.py is re-hashed
+      # below (`git hash-object --path <file> <file>`), worker.py and
+      # test_gst_engine_wsl.py are unchanged. engine.py: stop() unlocks every
+      # orphaned retiring element before the whole-pipeline NULL, NULLs each
+      # directly inside the same bounded step, and folds any still above NULL
+      # into teardown_clean; build-failure cleanup removes only elements it
+      # confirmed at NULL; a retirement claim on the selector-pad gate older
+      # than 13s is abandoned (elements recorded as orphans, ERROR by name) so
+      # later reloads proceed, and a gate refusal settles aborted:selector-busy
+      # and prints the stdout aborted marker before raising; the gate bound is
+      # derived from the leg budgets (8s + 4s + 1s) instead of 2s; retirement
+      # lines carry elapsed= and every CTRL stderr line ends with a UTC t=
+      # stamp (CTRL stays at column 0 -- the lane parsers, health.py markers
+      # and the daemon's last_error fold are unchanged and their suites pass);
+      # retirement thread construction is inside its guard and old-leg
+      # retirement starts only behind a published commit. Verified ONLY by the
+      # two GI-free engine suites (84 PASS) and the lane's 12 parser suites on
+      # this box while Gate A occupied the sandbox; no native-runtime run and
+      # NO loaded tally is claimed for this round.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: e5baeb27dd7c053233407286085e2b0f594d4b64
         - path: civiccast/egress/gst/engine.py
-          blob: 020b3956464931bb8ca53df04825ea64c03c53b8
+          blob: 7cfa01d1269127e336618e651b391c71951f07c3
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py

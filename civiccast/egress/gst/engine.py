@@ -426,11 +426,59 @@ _LEG_ORPHAN_RETRY_BUDGET_S = 4.0
 # ``_abort_pending_reload("superseded")`` could return while its retirement thread
 # was still inside ``release_request_pad`` and the very next statement in
 # ``reload_program`` called ``request_pad_simple("sink_%u")`` on that same
-# element -- concurrent request-pad mutation of one ``input-selector``. Healthy
-# disposal measures ~0.08s, so this is ~25x headroom; exceeding it means the
-# selector is genuinely wedged, and the reload is then refused honestly (nothing
-# built, nothing mutated) instead of being raced into that wedge.
-_SELECTOR_PAD_QUIESCE_TIMEOUT_S = 2.0
+# element -- concurrent request-pad mutation of one ``input-selector``.
+#
+# Round-3 review finding 3 (the round-3 cut sized this at 2.0s, "~25x a healthy
+# ~0.08s disposal"): that sizing was against the HEALTHY case, but a disposal is
+# allowed to take up to ``_LEG_DISPOSAL_BUDGET_S + _LEG_ORPHAN_RETRY_BUDGET_S``
+# (12s) and still be within its own budget. A merely SLOW disposal (2-12s) was
+# therefore turning the very next rollover into a refusal -- silent dead air on
+# the FIFO path, a worker restart on the Windows path -- for a leg that was
+# retiring correctly. The bound is now DERIVED from the two disposal budgets plus
+# a scheduling margin, so a retirement that is inside its own bound can never
+# trip the gate; only a retirement that has ALREADY overrun its bound can, and
+# that one is abandoned (``_RETIREMENT_ABANDON_AFTER_S``) rather than waited on.
+_SELECTOR_PAD_QUIESCE_MARGIN_S = 1.0
+_SELECTOR_PAD_QUIESCE_TIMEOUT_S = (
+    _LEG_DISPOSAL_BUDGET_S + _LEG_ORPHAN_RETRY_BUDGET_S + _SELECTOR_PAD_QUIESCE_MARGIN_S
+)
+
+# Round-3 review finding 2: a retirement thread that never returns (a
+# ``set_state(NULL)`` blocked forever inside a streaming task) never runs
+# ``_dispose_source_leg``'s ``finally``, so its claim on the selector-pad gate
+# would otherwise stand forever and EVERY later ``reload_program`` would fail at
+# the gate -- permanent dead air at the next rollover. A retirement that has held
+# its claim longer than this is declared ABANDONED by the waiter: its claim is
+# concluded, its elements are recorded as orphans (they stay locked in the
+# pipeline until ``stop()`` unlocks them), an ERROR names them, and later reloads
+# proceed. Equal to the gate's own bound: anything still in flight at that age
+# has overrun the whole leg budget by the full margin.
+_RETIREMENT_ABANDON_AFTER_S = _SELECTOR_PAD_QUIESCE_TIMEOUT_S
+
+
+def _utc_stamp() -> str:
+    """``HH:MM:SS.mmm`` in UTC, for the ``t=`` suffix on ``CTRL`` stderr lines.
+
+    Round-3 review finding 4: the worker's stderr carried no clock at all, so a
+    ``stage=old-leg-disposed`` line could not be placed against the daemon's own
+    timestamped log or against the sandbox lane's CPU sampler. UTC so it lines up
+    with the daemon's log regardless of the box's zone."""
+    now = time.time()
+    return f"{time.strftime('%H:%M:%S', time.gmtime(now))}.{int(now * 1000) % 1000:03d}"
+
+
+def _ctrl_stderr(message: str) -> None:
+    """Print one ``CTRL`` diagnostic line to stderr with a trailing UTC timestamp.
+
+    The stamp goes at the END (`` t=HH:MM:SS.mmm``), never in front: every
+    consumer of these lines anchors on ``^CTRL `` at column 0 -- the sandbox
+    lane's ``WorkerStdoutParser.ps1`` (``^CTRL stall:``), ``health.py``'s
+    ``_PLAYING_REACHED_RE`` / ``_FIRST_OUTPUT_RE``, and the daemon's
+    ``_RELOAD_COMMIT_TIMEOUT_MARKER`` substring fold into ``last_error`` -- and
+    none of them anchor on the line's end. Stdout ``CTRL`` lines (the settlement
+    markers the lane counts with ``\\s*$``-anchored regexes) are deliberately NOT
+    routed through here."""
+    print(f"{message} t={_utc_stamp()}", file=sys.stderr, flush=True)
 
 
 def _lock_retiring_element_state(element: object) -> None:
@@ -505,11 +553,9 @@ def _resolve_first_output_timeout_s(explicit: float | None) -> float:
     full reasoning, which applies unchanged here)."""
     if explicit is not None:
         if not math.isfinite(explicit):
-            print(
+            _ctrl_stderr(
                 f"CTRL first-output: ignoring non-finite first_output_timeout_s="
-                f"{explicit!r}; using default {_DEFAULT_FIRST_OUTPUT_TIMEOUT_S}s",
-                file=sys.stderr,
-                flush=True,
+                f"{explicit!r}; using default {_DEFAULT_FIRST_OUTPUT_TIMEOUT_S}s"
             )
             return _DEFAULT_FIRST_OUTPUT_TIMEOUT_S
         return min(max(explicit, _MIN_FIRST_OUTPUT_TIMEOUT_S), _MAX_FIRST_OUTPUT_TIMEOUT_S)
@@ -520,11 +566,9 @@ def _resolve_first_output_timeout_s(explicit: float | None) -> float:
         except ValueError:
             parsed = math.nan  # falls through to the non-finite branch below
         if not math.isfinite(parsed):
-            print(
+            _ctrl_stderr(
                 f"CTRL first-output: ignoring non-finite {_FIRST_OUTPUT_TIMEOUT_ENV_VAR}="
-                f"{raw!r}; using default {_DEFAULT_FIRST_OUTPUT_TIMEOUT_S}s",
-                file=sys.stderr,
-                flush=True,
+                f"{raw!r}; using default {_DEFAULT_FIRST_OUTPUT_TIMEOUT_S}s"
             )
             return _DEFAULT_FIRST_OUTPUT_TIMEOUT_S
         return min(max(parsed, _MIN_FIRST_OUTPUT_TIMEOUT_S), _MAX_FIRST_OUTPUT_TIMEOUT_S)
@@ -559,11 +603,9 @@ def _resolve_preroll_timeout_s(explicit: float | None) -> float:
     with a warning, exactly like any other unusable input."""
     if explicit is not None:
         if not math.isfinite(explicit):
-            print(
+            _ctrl_stderr(
                 f"CTRL preroll: ignoring non-finite preroll_timeout_s={explicit!r}; "
-                f"using default {_DEFAULT_PREROLL_TIMEOUT_S}s",
-                file=sys.stderr,
-                flush=True,
+                f"using default {_DEFAULT_PREROLL_TIMEOUT_S}s"
             )
             return _DEFAULT_PREROLL_TIMEOUT_S
         return min(max(explicit, _MIN_PREROLL_TIMEOUT_S), _MAX_PREROLL_TIMEOUT_S)
@@ -574,11 +616,9 @@ def _resolve_preroll_timeout_s(explicit: float | None) -> float:
         except ValueError:
             parsed = math.nan  # falls through to the non-finite branch below
         if not math.isfinite(parsed):
-            print(
+            _ctrl_stderr(
                 f"CTRL preroll: ignoring non-finite {_PREROLL_TIMEOUT_ENV_VAR}={raw!r}; "
-                f"using default {_DEFAULT_PREROLL_TIMEOUT_S}s",
-                file=sys.stderr,
-                flush=True,
+                f"using default {_DEFAULT_PREROLL_TIMEOUT_S}s"
             )
             return _DEFAULT_PREROLL_TIMEOUT_S
         return min(max(parsed, _MIN_PREROLL_TIMEOUT_S), _MAX_PREROLL_TIMEOUT_S)
@@ -609,20 +649,16 @@ def _resolve_commit_timeout_s(explicit: float) -> float:
     reach ``threading.Timer`` as its ``interval`` and either raise or silently
     never fire, defeating the watchdog entirely."""
     if not math.isfinite(explicit):
-        print(
+        _ctrl_stderr(
             f"CTRL reload: ignoring non-finite commit_timeout_s={explicit!r}; "
-            f"using default {_DEFAULT_COMMIT_TIMEOUT_S}s",
-            file=sys.stderr,
-            flush=True,
+            f"using default {_DEFAULT_COMMIT_TIMEOUT_S}s"
         )
         return _DEFAULT_COMMIT_TIMEOUT_S
     clamped = min(max(explicit, _MIN_COMMIT_TIMEOUT_S), _MAX_COMMIT_TIMEOUT_S)
     if clamped != explicit:
-        print(
+        _ctrl_stderr(
             f"CTRL reload: commit_timeout_s={explicit!r} out of bounds "
-            f"[{_MIN_COMMIT_TIMEOUT_S}, {_MAX_COMMIT_TIMEOUT_S}]; clamped to {clamped}s",
-            file=sys.stderr,
-            flush=True,
+            f"[{_MIN_COMMIT_TIMEOUT_S}, {_MAX_COMMIT_TIMEOUT_S}]; clamped to {clamped}s"
         )
     return clamped
 
@@ -692,10 +728,8 @@ class GstPlayoutEngine:
         # added to the name list cannot win autoplug (Gate A T4 root cause).
         demoted = demote_hardware_decoders(Gst.Registry.get().get_feature_list(Gst.ElementFactory))
         if demoted:
-            print(
-                f"CTRL decode: demoted hardware decoders to CPU decode: {','.join(demoted)}",
-                file=sys.stderr,
-                flush=True,
+            _ctrl_stderr(
+                f"CTRL decode: demoted hardware decoders to CPU decode: {','.join(demoted)}"
             )
         self.graph = graph
         self.swap = swap or InputSelectorSwap()
@@ -808,6 +842,13 @@ class GstPlayoutEngine:
         # asks for a pad. See ``_await_selector_pads_quiet``.
         self._selector_pads_quiet = threading.Condition()
         self._selector_pad_retirements = 0
+        # Round-3 review finding 2: one record per retirement still holding a
+        # claim on the gate above -- the leg's elements and when it was announced
+        # -- so ``_await_selector_pads_quiet`` can tell a retirement that is slow
+        # (inside its 12s budget) from one that has overrun it and will never
+        # conclude itself, and abandon only the latter. Guarded by
+        # ``_selector_pads_quiet``.
+        self._retirement_ledger: list[dict[str, Any]] = []
         # Round-3 finding 1: legs whose retirement is in flight AFTER their
         # replacement is already on air. A bus ERROR from one of these is a
         # message from a leg that is being torn down on purpose -- it must be
@@ -1604,14 +1645,56 @@ class GstPlayoutEngine:
         error -- used from an already-failing build/link path (F2 fix) where
         raising a SECOND exception would replace the caller's real one. Mirrors
         ``_dispose_source_leg``'s element half but skips the pad/selector half
-        (a caller here never got as far as linking anything to a selector)."""
+        (a caller here never got as far as linking anything to a selector).
+
+        Round-3 review finding 1b: the earlier cut locked, NULLed and then called
+        ``pipeline.remove`` on every element unconditionally, never checking that
+        NULL was reached. ``gst_bin_remove_func`` (gstbin.c, GStreamer main; the
+        bundled 1.28 runtime has the same function) does NOT change the removed
+        child's state -- it clears the child's bus and clock, unlinks its pads and
+        unparents it, and nothing more -- so removal can never bring an element to
+        NULL, locked or not; and ``gst_element_dispose`` then rejects a non-NULL
+        element on its final unref with the ``Trying to dispose element ... but it
+        is in PLAYING instead of the NULL state`` critical that this round measured
+        (``_lock_retiring_element_state``). Unlocking before removal would not help
+        for the same reason. The correct sequence, applied identically to
+        ``_dispose_source_leg``'s, is therefore: lock, NULL, CONFIRM NULL (bounded),
+        remove only what is confirmed at NULL, and keep whatever is not as a locked,
+        in-pipeline orphan that ``stop()`` unlocks before the whole-pipeline NULL."""
+        deadline = time.monotonic() + _LEG_DISPOSAL_BUDGET_S
+        removable: list[Gst.Element] = []
+        orphans: list[Gst.Element] = []
         for element in elements:
             _lock_retiring_element_state(element)
-            with contextlib.suppress(Exception):
-                element.set_state(Gst.State.NULL)
-        for element in elements:
+            reached_null = False
+            try:
+                state_result = element.set_state(Gst.State.NULL)
+                if state_result == Gst.StateChangeReturn.SUCCESS:
+                    reached_null = True
+                elif state_result == Gst.StateChangeReturn.ASYNC:
+                    wait_s = max(0.0, min(_LEG_NULL_ASYNC_WAIT_S, deadline - time.monotonic()))
+                    ret, state, _pending = element.get_state(int(wait_s * Gst.SECOND))
+                    reached_null = bool(
+                        ret in (Gst.StateChangeReturn.SUCCESS, Gst.StateChangeReturn.NO_PREROLL)
+                        and state == Gst.State.NULL
+                    )
+            except Exception:
+                reached_null = False
+            (removable if reached_null else orphans).append(element)
+        for element in removable:
             with contextlib.suppress(Exception):
                 self.pipeline.remove(element)
+        if orphans:
+            self._orphaned_leg_elements.extend(orphans)
+            named = ", ".join(_element_label(element) for element in orphans)
+            print(
+                f"ERROR: build-failure cleanup left {len(orphans)} element(s) above NULL "
+                f"({named}). They stay in the pipeline, locked and NOT removed (remove() "
+                "does not NULL a child; disposing one above NULL is a crash), and are "
+                f"counted as orphans: {len(self._orphaned_leg_elements)} for this worker so far.",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def _link_leg_to_selectors(
         self, label: str, out_pad: Gst.Pad | None, audio_out_pad: Gst.Pad | None
@@ -1839,13 +1922,11 @@ class GstPlayoutEngine:
             if self._playing_reached_at is not None
             else 0.0
         )
-        print(
+        _ctrl_stderr(
             # ASCII only, stable prefix -- a parsed contract like the PLAYING
             # marker above, not just a human-readable log line (see
             # ``civiccast.egress.health.worker_produced_output``).
-            f"CTRL first-output: first buffer after {elapsed:.1f}s pid={os.getpid()}",
-            file=sys.stderr,
-            flush=True,
+            f"CTRL first-output: first buffer after {elapsed:.1f}s pid={os.getpid()}"
         )
 
     def _maybe_print_output_progress(self, now: float) -> None:
@@ -1860,11 +1941,7 @@ class GstPlayoutEngine:
             return
         self._last_output_progress_print_t = now
         delta = self._output_buffers - self._output_buffers_at_arm
-        print(
-            f"CTRL output: {self._output_buffers} buffers (+{delta}) since PLAYING",
-            file=sys.stderr,
-            flush=True,
-        )
+        _ctrl_stderr(f"CTRL output: {self._output_buffers} buffers (+{delta}) since PLAYING")
 
     def _check_stall(self) -> bool:
         """Quit the run loop on either of two DISTINCT budgets, measured from
@@ -1916,14 +1993,12 @@ class GstPlayoutEngine:
             # worker's stderr tail into ``last_error`` when the child exits non-zero,
             # so the reason a channel bounced is on the operator's state row instead
             # of only in an uncollected stdout log.
-            print(
+            _ctrl_stderr(
                 # ASCII only -- same reasoning as the stall message below (the
                 # daemon folds this into the state row's last_error, written
                 # to Postgres via a client_encoding that may not be UTF-8).
                 f"CTRL first-output: no output within {int(self.first_output_timeout_s)}s "
-                "of PLAYING - quitting for daemon restart",
-                file=sys.stderr,
-                flush=True,
+                "of PLAYING - quitting for daemon restart"
             )
             # Distinct reason from ("stall", ...) below -- worker.py maps this
             # to its own exit code (GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE) so the
@@ -1959,16 +2034,14 @@ class GstPlayoutEngine:
             # worker's stderr tail into ``last_error`` when the child exits non-zero,
             # so the reason a channel bounced is on the operator's state row instead
             # of only in an uncollected stdout log.
-            print(
+            _ctrl_stderr(
                 # ASCII only: the daemon folds this line into the state row's
                 # last_error, which is written to Postgres. A non-ASCII byte here
                 # is re-read as U+FFFD (_child_stderr_tail reads errors="replace")
                 # and a non-UTF8 client_encoding then fails the whole state write
                 # -- see _child_stderr_tail's sanitiser and the T6 soak evidence
                 # (soak-120-e502074-20260905).
-                f"CTRL stall: no output for {int(self.stall_timeout_s)}s - quitting for daemon restart",
-                file=sys.stderr,
-                flush=True,
+                f"CTRL stall: no output for {int(self.stall_timeout_s)}s - quitting for daemon restart"
             )
             self._error = ("stall", "output stalled")  # → worker exits non-zero → restart
             if self._loop is not None:
@@ -2053,11 +2126,9 @@ class GstPlayoutEngine:
                 # (``civiccast.egress.health.worker_reached_playing``'s
                 # ``expected_pid``) that holds even if the byte offset is
                 # ever wrong.
-                print(
+                _ctrl_stderr(
                     f"CTRL preroll: reached PLAYING after {time.monotonic() - started:.1f}s "
-                    f"pid={os.getpid()}",
-                    file=sys.stderr,
-                    flush=True,
+                    f"pid={os.getpid()}"
                 )
                 # Item 84 Round-2 review BLOCKER: the reference point the
                 # NEW ``CTRL first-output: ...`` marker's ``Ns`` measures
@@ -2085,13 +2156,11 @@ class GstPlayoutEngine:
             # actually tells an operator whether the pipeline is stuck in
             # NULL/READY (never really started) vs PAUSED (genuinely
             # prerolling, just slowly) while it waits.
-            print(
+            _ctrl_stderr(
                 f"CTRL preroll: still waiting for PLAYING after "
                 f"{self.preroll_timeout_s - (deadline - now):.1f}s of "
                 f"{self.preroll_timeout_s:.1f}s (get_state={result.value_nick}, "
-                f"current={current.value_nick}, pending={pending.value_nick})",
-                file=sys.stderr,
-                flush=True,
+                f"current={current.value_nick}, pending={pending.value_nick})"
             )
 
     def run(self, *, swaps: int, interval_s: int) -> dict[str, Any]:
@@ -2440,7 +2509,24 @@ class GstPlayoutEngine:
         # whose request pads another thread is concurrently releasing. Raising here
         # still satisfies this method's contract that a failure before the build
         # has committed no state: nothing has been instantiated or linked yet.
-        self._await_selector_pads_quiet()
+        #
+        # Round-3 review finding 2: a refusal here used to be SILENT to the daemon
+        # -- it happened before any transaction (and its ``on_settled``) existed,
+        # so the FIFO path's reload-status sidecar was never written and the daemon
+        # sat on its 960s settle deadline with the channel dark at the rollover.
+        # Settle the caller with an ``aborted:`` reason FIRST, and print the
+        # ``CTRL reload aborted:`` stdout marker the sandbox lane counts, then
+        # raise for the dispatch path's own error report.
+        try:
+            self._await_selector_pads_quiet()
+        except RuntimeError as exc:
+            print(
+                f"CTRL reload aborted: selector pads still held by a retiring leg; "
+                f"keeping current program ({exc})",
+                flush=True,
+            )
+            self._notify_reload_settled(on_settled, False, "selector-busy")
+            raise
 
         old_video_pad = self.selector_sink_pads[0]
         old_audio_pad = self.audio_sink_pads[0] if self.audio_sink_pads else None
@@ -2757,11 +2843,9 @@ class GstPlayoutEngine:
             return False
         seen.add(pad)
         stream = "video" if pad is pending["old_video_pad"] else "audio"
-        print(
+        _ctrl_stderr(
             "CTRL reload: outgoing EOS observed "
-            f"stream={stream} ({len(seen & expected)}/{len(expected)} stream(s))",
-            file=sys.stderr,
-            flush=True,
+            f"stream={stream} ({len(seen & expected)}/{len(expected)} stream(s))"
         )
         pending["old_leg_eos"] = True
         if pending["new_leg_ready"]:
@@ -2858,11 +2942,9 @@ class GstPlayoutEngine:
                 # rejected that hypothesis and asked for the instrument instead
                 # of another guess).
                 faulthandler.dump_traceback(file=sys.stderr, all_threads=True)
-                print(
+                _ctrl_stderr(
                     "CTRL reload: commit did not finish within "
-                    f"{self.commit_timeout_s:.0f}s - quitting for daemon restart",
-                    file=sys.stderr,
-                    flush=True,
+                    f"{self.commit_timeout_s:.0f}s - quitting for daemon restart"
                 )
             finally:
                 # Unconditional: the exit must happen even if stderr itself is
@@ -2950,7 +3032,7 @@ class GstPlayoutEngine:
         pending["commit_completed"] = completed
         try:
             self._begin_reload_commit(pending)
-            self._finish_reload_commit(pending)
+            published = self._finish_reload_commit(pending)
         except Exception as exc:
             # The selector switch is the first thing ``_begin_reload_commit`` does
             # after its own validation, so a raise here means either nothing was
@@ -2973,6 +3055,23 @@ class GstPlayoutEngine:
             )
             self._notify_reload_settled(pending["on_settled"], False, "commit-failed")
             self._reset_stall_reference()
+            return False
+        if not published:
+            # Round-3 review finding 5: retire the outgoing leg ONLY behind a
+            # commit that actually published. ``_finish_reload_commit`` declines
+            # when the transaction is no longer current (``stop()`` dropped it
+            # between the two on-air steps); the whole-pipeline teardown then
+            # owns every element, and starting a retirement thread against it
+            # would race that teardown for the same elements' locks. The watchdog
+            # is disarmed here too (idempotent) so a declined publish can never
+            # be followed by a force-exit.
+            self._finish_commit_watchdog(pending)
+            print(
+                "WARN: reload commit switched but did not publish (transaction no longer "
+                "current); the outgoing leg is left to the whole-pipeline teardown",
+                file=sys.stderr,
+                flush=True,
+            )
             return False
         self._start_old_leg_retirement(pending)
         return False
@@ -3023,7 +3122,7 @@ class GstPlayoutEngine:
                 flush=True,
             )
         print("CTRL reload: switching selector", flush=True)
-        print("CTRL reload diagnostic: stage=switching-selector", file=sys.stderr, flush=True)
+        _ctrl_stderr("CTRL reload diagnostic: stage=switching-selector")
         selector.set_property("active-pad", new_video_pad)
         audio_selector = self.audio_selector
         if new_audio_pad is not None and audio_selector is not None:
@@ -3046,8 +3145,12 @@ class GstPlayoutEngine:
         few main-loop statements. Retirement has not started yet and its outcome no
         longer gates -- or can fail -- the commit.
 
-        ``return False`` preserves the GLib one-shot contract for any caller that
-        still schedules it as a source."""
+        Returns True when THIS call published the commit, False when it declined
+        because ``pending`` is no longer the current transaction. Round-3 review
+        finding 5: ``_commit_reload`` starts old-leg retirement only on True. This
+        is no longer scheduled as a GLib source anywhere (the round-3 ordering
+        calls it synchronously), so the old ``return False`` one-shot contract no
+        longer applies -- the return value is the publish verdict."""
         if self._pending_reload is not pending or not pending.get("commit_in_progress", False):
             return False
         # The outgoing pads' EOS-drop probes deliberately STAY installed here and
@@ -3061,14 +3164,14 @@ class GstPlayoutEngine:
         # "trying to dispose element ... instead of the NULL state" criticals.
         self._release_hold_probes(pending)
         print("CTRL reload: holds released", flush=True)
-        print("CTRL reload diagnostic: stage=holds-released", file=sys.stderr, flush=True)
+        _ctrl_stderr("CTRL reload diagnostic: stage=holds-released")
         # Round-3 finding 1: the element count moved to the retirement line below,
         # because at THIS point the outgoing leg is still in the pipeline by
         # design. ``CTRL reload committed`` stays exactly where every existing
         # evidence consumer looks for it (stdout, one line, settlement marker); the
         # sandbox stdout parser has always accepted it with or without the count.
         print("CTRL reload committed", flush=True)
-        print("CTRL reload diagnostic: stage=committed", file=sys.stderr, flush=True)
+        _ctrl_stderr("CTRL reload diagnostic: stage=committed")
         self._pending_reload = None
         # Disarm BEFORE the callback: the watchdog exists to bound the window in
         # which output can be dark, and output is flowing as of the hold release
@@ -3080,7 +3183,7 @@ class GstPlayoutEngine:
         # last, and guarded so a callback failure can never re-wedge a reload that
         # has, in every other respect, already committed cleanly.
         self._notify_reload_settled(pending["on_settled"], True, None)
-        return False
+        return True
 
     def _start_old_leg_retirement(self, pending: dict[str, Any]) -> None:
         """Retire the already-replaced outgoing leg off the GLib loop.
@@ -3094,6 +3197,11 @@ class GstPlayoutEngine:
         this channel down, and it does so only on the evidence that actually
         matters: output stopped."""
         old_elements = pending["old_elements"]
+        # Round-3 review finding 4: the instrument. Every retirement line below
+        # carries how long the retirement took from THIS point, so a slow leg
+        # (inside its 12s budget) and a wedged one (the ERROR line) are both
+        # measurable against the daemon's clock, not inferred from line order.
+        retirement_started = time.monotonic()
         # Round-3 finding 4 (closing the gap the first round-3 cut left open):
         # the retirement must be VISIBLE -- counted against the selector-pad gate
         # and listed for bus-error containment -- before this method returns,
@@ -3122,31 +3230,40 @@ class GstPlayoutEngine:
                 with contextlib.suppress(Exception):  # may already have auto-removed
                     pad.remove_probe(probe_id)
             element_count = self._element_count()
+            elapsed = time.monotonic() - retirement_started
             if retired:
                 # Element count proves disposal reclaimed (the leak test asserts it
                 # is flat across many reloads -- a dispose leak would grow it). It
                 # is reported HERE, not on the commit line, because the outgoing
                 # leg is still in the pipeline when the commit publishes.
                 print(f"CTRL reload: old leg disposed (elements={element_count})", flush=True)
-                print(
-                    f"CTRL reload diagnostic: stage=old-leg-disposed elements={element_count}",
-                    file=sys.stderr,
-                    flush=True,
+                _ctrl_stderr(
+                    f"CTRL reload diagnostic: stage=old-leg-disposed elements={element_count} "
+                    f"elapsed={elapsed:.3f}s"
                 )
                 return
             print(
                 f"ERROR: reload retired the old leg incompletely: {detail}; the replacement "
-                f"stays on air (elements={element_count}). A retirement problem that really "
-                "does stop output is the stall watchdog's to escalate, with better evidence.",
+                f"stays on air (elements={element_count} elapsed={elapsed:.3f}s). A retirement "
+                "problem that really does stop output is the stall watchdog's to escalate, "
+                "with better evidence.",
                 file=sys.stderr,
                 flush=True,
             )
 
-        thread = threading.Thread(target=_retire, name="civiccast-reload-retirement", daemon=True)
-        self._reload_commit_thread = thread
-        self._commit_retire_threads = [t for t in self._commit_retire_threads if t.is_alive()]
-        self._commit_retire_threads.append(thread)
+        # Round-3 review finding 2b: the retirement is ALREADY announced above, so
+        # from here every failure -- constructing the thread as much as starting
+        # it -- must end in ``_retire()`` running (which concludes the claim in
+        # ``_dispose_source_leg``'s ``finally``) rather than propagating out of
+        # ``_commit_reload`` with the gate held and the boundary probes installed.
+        thread: threading.Thread | None = None
         try:
+            thread = threading.Thread(
+                target=_retire, name="civiccast-reload-retirement", daemon=True
+            )
+            self._reload_commit_thread = thread
+            self._commit_retire_threads = [t for t in self._commit_retire_threads if t.is_alive()]
+            self._commit_retire_threads.append(thread)
             thread.start()
         except Exception as exc:
             # A thread that will not start must not leak the leg. Retiring inline
@@ -3155,7 +3272,8 @@ class GstPlayoutEngine:
             # loop but does not darken output, and the stall watchdog still owns a
             # real outage.
             self._reload_commit_thread = None
-            self._commit_retire_threads.remove(thread)
+            if thread is not None and thread in self._commit_retire_threads:
+                self._commit_retire_threads.remove(thread)
             print(
                 f"WARN: reload old-leg retirement running inline; "
                 f"worker thread did not start: {exc!r}",
@@ -3305,16 +3423,21 @@ class GstPlayoutEngine:
                     flush=True,
                 )
 
-        self._abort_retire_threads = [t for t in self._abort_retire_threads if t.is_alive()]
-        thread = threading.Thread(target=_retire, name="cc-abort-retire", daemon=True)
-        self._abort_retire_threads.append(thread)
+        # Round-3 review finding 2b: construction inside the ``try`` too -- the
+        # retirement is already announced, so a raise anywhere from here must end
+        # in the inline ``_retire()`` that concludes it, never propagate.
+        thread: threading.Thread | None = None
         try:
+            self._abort_retire_threads = [t for t in self._abort_retire_threads if t.is_alive()]
+            thread = threading.Thread(target=_retire, name="cc-abort-retire", daemon=True)
+            self._abort_retire_threads.append(thread)
             thread.start()
         except Exception as exc:
             # A thread that will not start must not leak the leg: fall back to the
             # in-line retirement this method exists to move OFF the loop. The
             # blocking risk is the lesser problem versus never cleaning up at all.
-            self._abort_retire_threads.remove(thread)
+            if thread is not None and thread in self._abort_retire_threads:
+                self._abort_retire_threads.remove(thread)
             print(
                 f"WARN: aborted reload leg ({reason}) retiring inline; "
                 f"worker thread did not start: {exc!r}",
@@ -3388,14 +3511,73 @@ class GstPlayoutEngine:
         self._retiring_legs.append(elements)
         with self._selector_pads_quiet:
             self._selector_pad_retirements += 1
+            self._retirement_ledger.append(
+                {"elements": elements, "started": time.monotonic(), "abandoned": False}
+            )
 
     def _conclude_retirement(self, elements: list[Gst.Element]) -> None:
-        """Undo ``_announce_retirement``; wakes any ``reload_program`` waiting."""
+        """Undo ``_announce_retirement``; wakes any ``reload_program`` waiting.
+
+        Round-3 review finding 2: a retirement the waiter has already ABANDONED
+        (``_abandon_overdue_retirements_locked``) had its claim on the gate
+        concluded then; a thread that finally does return must not conclude it a
+        second time and drive the count negative."""
         with self._selector_pads_quiet:
-            self._selector_pad_retirements -= 1
+            record = next(
+                (entry for entry in self._retirement_ledger if entry["elements"] is elements),
+                None,
+            )
+            if record is not None:
+                self._retirement_ledger.remove(record)
+            if record is None or not record["abandoned"]:
+                self._selector_pad_retirements -= 1
             self._selector_pads_quiet.notify_all()
         with contextlib.suppress(ValueError):
             self._retiring_legs.remove(elements)
+
+    def _abandon_overdue_retirements_locked(self, now: float) -> float | None:
+        """Conclude the claim of every retirement older than the abandon bound.
+
+        Round-3 review finding 2. Called with ``_selector_pads_quiet`` HELD. A
+        retirement whose thread never returns (``set_state(NULL)`` blocked forever
+        inside a streaming task) never reaches ``_dispose_source_leg``'s
+        ``finally``, so without this every later ``reload_program`` would fail at
+        the gate forever -- permanent dead air at the next rollover. Once a
+        retirement has held its claim for ``_RETIREMENT_ABANDON_AFTER_S`` (the
+        whole leg budget plus margin) it has, by construction, already overrun
+        every bound ``_dispose_source_leg`` applies to itself; its claim is
+        concluded here, its elements are recorded as orphans (state-locked and
+        still in the pipeline; ``stop()`` unlocks them before the whole-pipeline
+        NULL), and an ERROR names them. The leg STAYS listed in
+        ``_retiring_legs``: a bus ERROR from an abandoned, off-air leg is still a
+        teardown message, not a channel failure.
+
+        Returns the monotonic time at which the youngest surviving claim will
+        become overdue, or None when nothing is still claimed."""
+        next_due: float | None = None
+        for record in list(self._retirement_ledger):
+            if record["abandoned"]:
+                continue
+            age = now - record["started"]
+            if age < _RETIREMENT_ABANDON_AFTER_S:
+                due = record["started"] + _RETIREMENT_ABANDON_AFTER_S
+                next_due = due if next_due is None else min(next_due, due)
+                continue
+            record["abandoned"] = True
+            self._selector_pad_retirements -= 1
+            elements = record["elements"]
+            self._orphaned_leg_elements.extend(elements)
+            named = ", ".join(_element_label(element) for element in elements) or "-"
+            print(
+                f"ERROR: reload leg retirement abandoned after {age:.1f}s (bound "
+                f"{_RETIREMENT_ABANDON_AFTER_S:.0f}s): its thread never returned from "
+                f"disposal. {len(elements)} element(s) stay locked in the pipeline as "
+                f"orphans ({named}); {len(self._orphaned_leg_elements)} orphan(s) for this "
+                "worker so far. Later reloads proceed; stop() reports the orphans.",
+                file=sys.stderr,
+                flush=True,
+            )
+        return next_due
 
     def _await_selector_pads_quiet(self) -> None:
         """Block, bounded, until no retirement still holds selector request pads.
@@ -3409,24 +3591,42 @@ class GstPlayoutEngine:
         retirement THREAD has started, not when it has finished -- was immediately
         followed by a pad request racing that thread's release.
 
-        Waiting here costs the GLib loop up to ``_SELECTOR_PAD_QUIESCE_TIMEOUT_S``
-        in the worst case, and nothing at all in the normal one (a healthy leg's
-        whole disposal measures ~0.08s and the count is usually already zero). It
+        Round-3 review finding 3: the bound is ``_SELECTOR_PAD_QUIESCE_TIMEOUT_S``,
+        DERIVED from the leg's own disposal budgets (8s + 4s) plus a margin -- not
+        the 2s the first round-3 cut sized against a healthy ~0.08s disposal. A
+        retirement that is slow but inside its own budget is waited for, never
+        refused; the wait costs the GLib loop that long in the worst case and
+        nothing at all in the normal one (the count is usually already zero). It
         does not darken output: the streaming threads that feed the mux are not
-        this thread. Exceeding the bound raises, which ``reload_program`` reports
-        BEFORE building or mutating anything -- an honest refusal the daemon can
-        retry, rather than a graph mutation raced into a wedged selector."""
+        this thread.
+
+        Round-3 review finding 2: a retirement that has held its claim past
+        ``_RETIREMENT_ABANDON_AFTER_S`` is abandoned (its claim concluded, its
+        elements recorded as orphans, an ERROR printed) instead of being waited
+        on, so a retirement thread that never returns can block exactly one later
+        reload for the bound and none after it. Exceeding the bound with a claim
+        still outstanding (a retirement announced by a caller other than the two
+        starters, or a count set without a ledger record) raises, which
+        ``reload_program`` settles as ``aborted:selector-busy`` and reports BEFORE
+        building or mutating anything."""
         deadline = time.monotonic() + _SELECTOR_PAD_QUIESCE_TIMEOUT_S
         with self._selector_pads_quiet:
-            while self._selector_pad_retirements > 0:
-                remaining = deadline - time.monotonic()
+            while True:
+                now = time.monotonic()
+                next_due = self._abandon_overdue_retirements_locked(now)
+                if self._selector_pad_retirements <= 0:
+                    return
+                remaining = deadline - now
                 if remaining <= 0:
                     raise RuntimeError(
                         "a retiring reload leg still holds this pipeline's input-selector "
                         f"request pads after {_SELECTOR_PAD_QUIESCE_TIMEOUT_S:.1f}s; refusing "
                         "to request new selector pads into that race"
                     )
-                self._selector_pads_quiet.wait(remaining)
+                wait_s = remaining
+                if next_due is not None:
+                    wait_s = min(wait_s, max(0.0, next_due - now))
+                self._selector_pads_quiet.wait(wait_s)
 
     def _element_count(self) -> int:
         """Count elements currently in the pipeline (for the reload-leak guard)."""
@@ -4025,12 +4225,47 @@ class GstPlayoutEngine:
                 file=sys.stderr,
                 flush=True,
             )
+        # Round-3 review finding 1: orphans -- elements a retirement (or an
+        # abandoned retirement, or a build-failure cleanup) could not confirm at
+        # NULL -- were left state-LOCKED inside the pipeline, and a locked child is
+        # skipped by the bin's own state change (gstbin.c
+        # ``gst_bin_element_set_state``: "element is locked, return previous
+        # return"), so the whole-pipeline NULL below would report SUCCESS with a
+        # still-running element inside it, ``stop()`` would return True, and the
+        # process would then dispose that element above NULL. Unlock every orphan
+        # HERE, before the transition, so the pipeline's descent takes them with
+        # it; after the transition each is NULLed directly, best-effort and
+        # inside the same bounded thread, and any still not confirmed at NULL is
+        # folded into ``clean`` below. Snapshot: the list can still be appended to
+        # by an in-flight retirement thread.
+        orphans = list(self._orphaned_leg_elements)
+        for element in orphans:
+            with contextlib.suppress(Exception):
+                element.set_locked_state(False)
+
         # The pipeline transition gets its OWN full budget, measured from here --
         # the join above is not taken out of it, for the same reason the audio tap
         # writer stopped being handed the leftover of somebody else's deadline.
         deadline = time.monotonic() + self.teardown_timeout_s
 
-        transition: dict[str, object] = {"result": None, "error": None}
+        transition: dict[str, object] = {"result": None, "error": None, "orphans_settled": False}
+
+        def _settle_orphans() -> None:
+            """Best-effort direct NULL for each orphan, after the pipeline's own
+            descent; bounded because it runs inside the joined thread below."""
+            unsettled: list[str] = []
+            for element in orphans:
+                try:
+                    state_result = element.set_state(Gst.State.NULL)
+                    if state_result != Gst.StateChangeReturn.SUCCESS:
+                        remaining = max(0.0, deadline - time.monotonic())
+                        _ret, state, _pending = element.get_state(int(remaining * Gst.SECOND))
+                        if state != Gst.State.NULL:
+                            unsettled.append(_element_label(element))
+                except Exception as exc:
+                    unsettled.append(f"{_element_label(element)}:{exc!r}")
+            transition["orphans_unsettled"] = unsettled
+            transition["orphans_settled"] = not unsettled
 
         def _set_pipeline_null() -> None:
             try:
@@ -4043,6 +4278,11 @@ class GstPlayoutEngine:
                 transition["result"] = result
             except Exception as exc:
                 transition["error"] = repr(exc)
+            finally:
+                if orphans:
+                    _settle_orphans()
+                else:
+                    transition["orphans_settled"] = True
 
         transition_thread: threading.Thread | None = None
         try:
@@ -4086,7 +4326,26 @@ class GstPlayoutEngine:
                 flush=True,
             )
         retirement_clean = not any(thread.is_alive() for thread in self._commit_retire_threads)
-        clean = bool(transition_clean and retirement_clean and aborts_clean)
+        # Round-3 review finding 1: orphans outstanding are part of the verdict.
+        # A stop that leaves an element above NULL is not a clean teardown, and
+        # ``WORKER_RESULT``'s ``teardown_clean`` (built from this return) must say
+        # so, whatever the pipeline's own transition reported.
+        orphans_clean = bool(transition.get("orphans_settled", False))
+        if orphans:
+            unsettled = transition.get("orphans_unsettled")
+            print(
+                f"WARN: {len(orphans)} orphaned reload-leg element(s) were unlocked for the "
+                "teardown; "
+                + (
+                    "all confirmed at NULL"
+                    if orphans_clean
+                    else "still above NULL: "
+                    + (", ".join(unsettled) if isinstance(unsettled, list) else "unconfirmed")
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+        clean = bool(transition_clean and retirement_clean and aborts_clean and orphans_clean)
         if self.audio_tap_writer is not None:
             # Round-2 finding 4: this used to be handed the LEFTOVER of the shared
             # teardown deadline. By this point the pipeline-NULL transition and the

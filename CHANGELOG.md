@@ -254,6 +254,41 @@ below.
   Loaded-run tally for this ordering is not yet measured; the idle-box and
   round-2 loaded tallies are in the README.
 
+- **Round-3 review follow-ups on the off-air retirement (same PR).** Five
+  findings against the ordering above, all in the engine, none measured under
+  load yet. (1) An element a retirement could not shut down was left
+  state-locked inside the pipeline, and a locked element is skipped by the
+  pipeline's own shutdown -- so `stop()` reported a clean teardown with a
+  running element still inside. `stop()` now unlocks every such orphan before
+  the whole-pipeline shutdown, shuts each one down directly inside the same
+  bounded step, and reports the teardown unclean (the worker's
+  `teardown_clean` receipt) if any is still running. The build-failure cleanup
+  had the same gap the other way round -- it removed elements without
+  confirming they had shut down (removal does not shut a child down; disposing
+  one still running is the crash measured above) -- and now removes only what
+  it has confirmed. (2) A retirement whose thread never returns held its claim
+  on the input-pad gate forever, so every later program change would have
+  been refused at that gate -- silent dead air at the next rollover on the
+  FIFO path, a worker restart on the Windows path. A claim older than the leg's
+  whole budget plus margin (13 s) is now abandoned: its elements are recorded
+  as orphans and named in an ERROR line, and later changes proceed. A refusal
+  at that gate also now settles the request as `aborted:selector-busy` and
+  prints the `CTRL reload aborted:` marker before raising, instead of leaving
+  the daemon on its 960 s settle deadline. (3) The gate's own bound was 2 s,
+  sized against a healthy 0.08 s teardown, while a teardown is allowed 12 s;
+  a merely slow teardown therefore turned the next rollover into a restart.
+  The bound is now derived from the teardown budgets (8 s + 4 s + 1 s margin).
+  (4) Instrument: the `old-leg-disposed` diagnostic and the incomplete-
+  retirement ERROR now carry `elapsed=<s>`, and every `CTRL` line on stderr
+  ends with a UTC `t=HH:MM:SS.mmm` stamp (appended at the end; `CTRL` stays at
+  column 0, so the sandbox lane's parsers, `health.py`'s markers and the
+  daemon's `last_error` fold are unchanged -- the lane's 12 parser suites and
+  the engine's two GI-free suites pass). (5) Retirement thread construction
+  moved inside its guard on both paths, and old-leg retirement starts only
+  behind a commit that actually published. Eight new GI-free tests (and two
+  extended ones) cover each finding against the fake-Gst harness; the loaded-run tally for the round-3
+  ordering remains unmeasured.
+
 - **Native in-place reload retirement is bounded and serialized.** The
   repaired path keeps persistent bounded A/V queues. An overlapping commit
   request is explicitly declined into the existing full-graph restart recovery
