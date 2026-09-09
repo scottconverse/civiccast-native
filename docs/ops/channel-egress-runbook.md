@@ -41,20 +41,34 @@ The egress proof path does not by itself prove:
 
 ### Native reload status
 
-The current native repair runs clean ten times out of ten with normal logging,
-each run covering three workers and six in-place replacements with clean
-transport checks and clean stop. A normal replacement keeps output while the new
-leg is prepared and holds the switch until the outgoing leg retires. An
-overlapping commit request is explicitly declined and uses the existing
-full-graph restart recovery path; it is not queued as a latest-request-wins
-operation. Existing watchdog time bounds and station capabilities are unchanged.
+A normal replacement keeps output while the new leg is prepared, switches to
+the new leg at the boundary, lets it flow immediately, and only then tears the
+outgoing leg down on a worker thread behind it. An overlapping commit request is
+explicitly declined and uses the existing full-graph restart recovery path; it
+is not queued as a latest-request-wins operation. Station capabilities are
+unchanged.
 
-Two watchdogs cover a replacement and they no longer overlap: while a commit is
-in progress the stall bound stands down so the commit watchdog owns that window
-and can emit its stack dump, and the stall bound restarts from full once the
-commit settles. Ten clean runs bounds the failure rate rather than proving
-absence, and this diagnostic does not establish beta.5 installer acceptance or a
-two-hour physical soak.
+Measured status, with the load condition (the numbers depend on it): on an
+otherwise idle box with normal logging the round-2 suite ran clean 10 of 10
+times, each run three workers through six in-place replacements with clean
+transport checks and clean stop. Under a synthetic 100% CPU load the same
+three-worker rollover test was 0 of 3 clean before round 2 and 20 of 24 clean
+after it; every failure was the commit watchdog force-exiting a worker whose
+replacement was ready while the outgoing program was still being torn down.
+Round 3 reorders the commit so the teardown runs behind a replacement that is
+already on air; its loaded-run tally is not yet measured. None of this is beta.5
+installer acceptance or a two-hour physical soak.
+
+Worst-case dead air a viewer can see from one wedged replacement: the stall
+bound, `stall_timeout_s` (10 s default). It is never stood down -- not during a
+commit either -- so a worker that stops producing is quit for daemon restart
+within 10 s of its last output buffer plus the daemon's restart time. The
+commit watchdog (`commit_timeout_s`, 15 s) covers only the short synchronous
+switch-and-release step on the control loop and no longer covers the outgoing
+leg's teardown; a teardown that is slow or that leaves an element it cannot
+shut down is logged (naming the element) and never ends a run on its own. One
+outgoing leg's teardown is bounded at 12 s total (8 s plus one 4 s retry sweep),
+not per element.
 
 A caption heartbeat is a timing signal for an interval without caption text.
 Its guard is separate from caption conversion: it admits one

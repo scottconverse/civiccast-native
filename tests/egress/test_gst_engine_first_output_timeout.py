@@ -580,31 +580,34 @@ def _stall_engine_at_the_bound(engine_module, monkeypatch: pytest.MonkeyPatch, c
     return engine
 
 
-def test_stall_bound_does_not_kill_the_worker_while_a_commit_is_in_progress(
+def test_stall_bound_is_not_suspended_by_a_commit_in_progress(
     engine_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Round-2 finding 2: the two watchdogs were racing and the wrong one won.
+    """Round-3 finding 2: the round-2 suspension is REMOVED.
 
-    A commit holds the replacement leg (producing nothing) while the old leg is
-    retired, and the isolation queues drain in well under a second, so output
-    legitimately stops advancing for the length of the retirement. With
-    ``stall_timeout_s`` at 10s and ``commit_timeout_s`` at 15s the stall watchdog
-    therefore always fired FIRST -- five seconds before the commit watchdog could
-    dump the faulthandler stacks that exist precisely to localise a wedged
-    retirement, which is why that dump was never seen in production."""
+    Round 2 stood this watchdog down while ``commit_in_progress`` was set, on the
+    reasoning that a commit legitimately produced no output while the replacement
+    stayed held across old-leg retirement. That reasoning is obsolete and the trade
+    was bad: it stretched the worst-case dead air a viewer can see from
+    ``stall_timeout_s`` (10s) to ``commit_timeout_s`` (15s) on EVERY wedge.
+    Round-3 finding 1 puts the replacement ON AIR before retirement starts, so the
+    only part of a commit that can darken output is a handful of synchronous
+    main-loop statements -- and this check is itself a GLib timeout source on that
+    same main loop, so it cannot even be entered while they run. Nothing is left to
+    suspend for, and the commit watchdog still owns (and only owns) that window."""
     clock = {"t": 0.0}
     engine = _stall_engine_at_the_bound(engine_module, monkeypatch, clock)
     engine._pending_reload = {"commit_in_progress": True}
 
-    assert engine._check_stall() is True  # suspended, not fatal
-    assert engine._loop.quit_calls == 0
-    assert engine._error is None
+    assert engine._check_stall() is False
+    assert engine._loop.quit_calls == 1
+    assert engine._error == ("stall", "output stalled")
 
 
 def test_stall_bound_still_kills_the_worker_outside_a_commit(
     engine_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The suspension is scoped to commits; the ordinary bound is unchanged."""
+    """The ordinary bound is unchanged -- and is now the ONLY bound on dead air."""
     clock = {"t": 0.0}
     engine = _stall_engine_at_the_bound(engine_module, monkeypatch, clock)
 
@@ -613,12 +616,11 @@ def test_stall_bound_still_kills_the_worker_outside_a_commit(
     assert engine._error == ("stall", "output stalled")
 
 
-def test_a_reload_armed_but_not_committing_does_not_suspend_the_stall_bound(
+def test_a_reload_armed_but_not_committing_does_not_change_the_stall_bound(
     engine_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Only an IN-FLIGHT commit owns the window. A reload that is merely armed --
-    prepared, held, waiting for its boundary -- leaves the current program on air
-    and must not buy it an exemption from the stall bound."""
+    """A reload that is merely armed -- prepared, held, waiting for its boundary --
+    leaves the current program on air and buys it no exemption either."""
     clock = {"t": 0.0}
     engine = _stall_engine_at_the_bound(engine_module, monkeypatch, clock)
     engine._pending_reload = {"commit_in_progress": False}
@@ -630,21 +632,19 @@ def test_a_reload_armed_but_not_committing_does_not_suspend_the_stall_bound(
 def test_a_commit_that_finishes_gets_a_full_fresh_stall_budget(
     engine_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The suspension pushes the stall reference forward rather than skipping one
-    tick, so a commit that completes cleanly is measured against a FULL budget
-    instead of the backlog it accumulated while suspended -- otherwise the first
-    post-commit tick would fire immediately on a healthy channel."""
+    """A deferred reload legitimately produces no output between the outgoing
+    leg's last buffer and the replacement's first, so part of the budget is
+    normally spent by the time a commit publishes. ``_reset_stall_reference``
+    hands the freshly-selected leg a FULL ``stall_timeout_s`` to resume, so the
+    watchdog measures the NEW leg rather than the boundary. Round-3 finding 2:
+    this is the only accommodation a commit gets -- the watchdog itself never
+    stands down, so the worst case a viewer can see stays ``stall_timeout_s``."""
     clock = {"t": 0.0}
     engine = _stall_engine_at_the_bound(engine_module, monkeypatch, clock)
-    engine._pending_reload = {"commit_in_progress": True}
 
-    for _ in range(5):  # five seconds of retirement
-        assert engine._check_stall() is True
-        clock["t"] += 1.0
-
-    # Commit finished. ``_finish_reload_commit`` calls ``_reset_stall_reference``
-    # on both its exits; do the same here, since this test drives ``_check_stall``
-    # directly rather than through a real commit.
+    # Commit publishes: ``_finish_reload_commit`` calls ``_reset_stall_reference``
+    # on its way out. Drive it directly, since this test exercises ``_check_stall``
+    # rather than a whole commit.
     engine._pending_reload = None
     engine._reset_stall_reference()
     for _ in range(10):  # a full fresh 10s budget, none of it already spent

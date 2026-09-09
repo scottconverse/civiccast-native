@@ -54,16 +54,21 @@ The bundled beta.5 manual describes operation without freezing a mutable
 publication status into the installer. Use this page and the exact GitHub
 Release for current download and verification status.
 
-**Reload repair status (2026-09-09):** the native engine suite now runs clean
-ten times out of ten with normal logging, each run covering three workers
-through six in-place replacements with clean transport checks and clean stop
-(320 committed replacements across those runs, no stalls and no unfinished
-commits). The repaired path keeps persistent bounded A/V queues, holds the
-replacement until the outgoing leg retires, and leaves the existing watchdog
-bounds unchanged. An overlapping commit request is explicitly declined and
-uses the existing full-graph restart recovery path; there is no latest-request
-queue and no capability is disabled. Ten clean runs bounds the failure rate; it
-is not proof of absence. This is source/diagnostic evidence only: the beta.5
+**Reload repair status (2026-09-09):** measured, with the load condition
+stated, because the numbers depend on it. On an otherwise idle box with normal
+logging the round-2 native engine suite ran clean 10 of 10 times, each run
+covering three workers through six in-place replacements with clean transport
+checks and clean stop. Under a synthetic 100% CPU load the same three-worker
+rollover test was 0 of 3 clean before round 2 and 20 of 24 clean after it; the
+four failures were a commit watchdog force-exit while the outgoing program was
+still being torn down. Round 3 puts the replacement on air before that
+teardown starts, so a slow teardown can no longer darken output or end the run;
+its loaded-run tally is not yet measured and is not claimed here. The path
+keeps persistent bounded A/V queues; the stall watchdog (10 s) is never stood
+down, so 10 s is the worst-case dead air before a non-producing worker is
+restarted. An overlapping commit request is explicitly declined and uses the
+existing full-graph restart recovery path; there is no latest-request queue and
+no capability is disabled. This is source/diagnostic evidence only: the beta.5
 installer remains unaccepted and has no two-hour physical soak pass.
 
 Live-caption timing now uses a separate forwarding queue. During intervals

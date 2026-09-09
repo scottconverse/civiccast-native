@@ -10,7 +10,7 @@ unmodified from `program/native-windows` @ `3b4b24511c711fcc023cbf865f412687a7bf
 
 ## Current interpretation (2026-09-08)
 
-The July17 experiment and timing below are historical. No new boot/pre-login
+The July 17 experiment and timing below are historical. No new boot/pre-login
 result is asserted for the beta.5 caption/reload changes. Their current native
 tests are recorded separately in
 [the beta.5 source-level record](../../.agent-runs/native-windows/beta5-caption-flow-20260908/evidence/verification.md),

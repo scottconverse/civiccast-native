@@ -69,10 +69,15 @@ those generated artifacts in the first source push.
 Existing renderers regenerated PDF, DOCX, both manifests and in-product handbook.
 Both --check-current checks now PASS. Extracted PDF/DOCX text contains the updated
 program-change explanation and v1.0.0-beta.5; handbook contains the same paragraph.
-- normalized manual source: d3e8b259f43f347f77128ca8239ea1f2913d2c06564eefecfd05ded3ec468641
-- PDF: c047136fbadcaa2a4c6691a9c7f0b287252e1856b743c58c60dbf5a066a865f3
-- DOCX: c9974a2845e733fb615f6b710fa193d81137bcaf82dd4c42e51a48d7c63b72df
-- handbook JSON: 1e100575d5db73e347ff2b7d0c9e31e6ec6db4c9cbd822cbfaba7d9f9018aa7d
+Round-3 review finding 9: the four digests below were stale -- they named an
+earlier render, not the artifacts tracked on this branch. Regenerated from the
+committed files and their own render manifests (`docs/USER-MANUAL.render.json`,
+`civiccast/docsite/manual.render.json`):
+
+- normalized manual source: 37f3679b3a4651ab0eddd3c0d9795d11adcf4f0150d4b34cea98638f518c2679
+- PDF (`docs/USER-MANUAL.pdf`, 346878 bytes): 7f6ba807fbfcf1063e40d4d3e8a5f9c080bd852ab890e2eac2dee1331fd0a6bb
+- DOCX (`docs/USER-MANUAL.docx`, 183690 bytes): 7e97a699d33328fd66ce94d1ebcb9a3915bac01ab39ee0b071d043ac51c77190
+- handbook JSON (`civiccast/docsite/manual.json`, 301147 bytes): 0ee10b250e9a0d15892c1d890fc19167a202f5642b2ed8690913e910fbd76f03
 MiKTeX printed update-check reminders but rendering exited 0; no runtime or TeX
 upgrade was performed and no freshness check was relaxed.
 
