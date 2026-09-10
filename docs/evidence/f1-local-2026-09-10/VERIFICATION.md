@@ -7,6 +7,9 @@ Post-push correction: PR #219's first CI cycle is red. The local evidence below
 remains scoped as recorded, but does not establish branch-wide acceptance.
 The pre-push audit missed stale claims-registry bindings. See `CI-RESULT.md`
 for that omission, the two additional CI issues, exact runs and next actions.
+The later local CI repairs at `59ef1be6498e5a4eced081d7c412df1176fefdb0` are
+recorded in `../f1-ci-repair-2026-09-10/VERIFICATION.md`. They have not been
+pushed; the earlier proof and failed remote CI retain their separate identities.
 
 ## Source and authority
 

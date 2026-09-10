@@ -5,6 +5,10 @@ after the first CI cycle. These changes have not been pushed. The remote PR
 remains at `f9b5e1aa71e8860e8fff41c1cb572b80bbbc8e2b`, with 16 passing, 5 failing
 and 3 skipped checks. Main remains `d77b634e3685de8fb077956b8099fc92c3927243`.
 
+Local correction source/proof anchor:
+`59ef1be6498e5a4eced081d7c412df1176fefdb0`. A following documentation-only
+checkpoint records this anchor without changing the verified source files.
+
 Local repair base: `5bc57d7e5500e10465c413632c2ece3cce32bfec`. The four repaired
 source/registry files are bound by Git blobs and local checkout SHA-256 values
 in `source-hashes.json`. Git blobs are portable across checkout line endings;

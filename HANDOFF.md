@@ -1,6 +1,51 @@
 # HANDOFF
 
-## 2026-09-10 post-push / CI checkpoint
+## 2026-09-10 local CI repairs checkpoint
+
+Current branch: `fix/f1-reload-readiness-20260910`.
+Local correction source/proof HEAD: `59ef1be6498e5a4eced081d7c412df1176fefdb0`.
+This following documentation checkpoint changes no tested source; obtain the
+current checkout HEAD with `git rev-parse HEAD` in the integration worktree.
+Remote PR / CI HEAD: `f9b5e1aa71e8860e8fff41c1cb572b80bbbc8e2b`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/219 (OPEN).
+Main: `d77b634e3685de8fb077956b8099fc92c3927243`, unchanged.
+Current public tag remains `v1.0.0-beta.5`. No new tag or release was created.
+
+Integration worktree:
+`C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f1-integration`.
+Scott approved local correction and testing of the three first-cycle CI issues.
+The four current-source claims bindings are corrected; the state-guard child
+imports its actual fixture without unrelated application fixtures; the builder
+now clears retained old script ZIPs that could still execute with uv 0.12.13.
+The repair verifies both PE resources and whole-file ZIP script selection.
+
+Local verification: 213 passed across all three affected test files; Ruff check
+and format passed (1541 files), mypy passed (675 source files). The lead's actual
+uv 0.12.12/0.12.13 executable matrix reproduces the old uv 0.12.13 failure and
+passes each corrected launcher twice with a relative interpreter and no fixture
+bytecode. Sol independently reviewed the integrated changes and ran 88 passing
+guard/native-builder tests. Luna completed the claims slice; Terra supplied
+launcher diagnosis and drafts; the lead finished the reviewed corrections.
+
+Evidence: `docs/evidence/f1-ci-repair-2026-09-10/VERIFICATION.md`, source hashes,
+red/green receipts, matrix script/output and independent review. Earlier F-1
+proof at `7a468cd2` is historical source/runtime evidence, not candidate acceptance.
+First PR CI remains red: 16 passed, 5 failed, 3 skipped. No actual Linux mutation
+score or fresh successful CI producer/verifier evidence exists yet.
+
+**Next owner action: approve a second push to the existing PR and one new CI
+cycle.** No second push or rerun, merge, candidate build, Gate A, soak, service
+restart or publication has occurred. F-2 is unimplemented. The beta.6 kit at
+`795cdab5065e3b1b1d9df69c6fc06658f481c8d4` is unchanged, unsoaked, ungated and must
+not be published. The LAN server and Gate A runner were not restarted.
+
+Agent worktrees `work/ci-claims` and `work/ci-launcher` retain their task-owned
+uncommitted submissions as review history; they are not the integration source.
+The launcher submission is also preserved as
+`work/ci-repair-notes/launcher/terra-submitted.patch`. No test process remains
+running. No main checkout changes were made.
+
+## 2026-09-10 post-push / CI checkpoint (historical first-cycle snapshot)
 
 Current HEAD (remote PR / CI): `f9b5e1aa71e8860e8fff41c1cb572b80bbbc8e2b`.
 Current branch: `fix/f1-reload-readiness-20260910`.
