@@ -5,7 +5,7 @@ Rules in force: no new features; finish and test what exists; commit after each 
 
 ## Task list, most important first
 
-1. **Publish v1.0.0-beta.5** from main 148c8d21. Gate A 34423542177: ALL THREE LANES PASS (10:04 PM). First publish attempt was refused: rendered body > 125,000 chars (HTTP 422); fixed in the renderer (PR #210, `bound_changelog_section`) and re-run; draft release uploading at 10:13 PM. Command, run from the repo root once lane 3 is PASS:
+1. DONE 10:14 PM: **v1.0.0-beta.5 PUBLISHED** https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5 (8 assets, prerelease, target 148c8d21; Gate A 34423542177 all three lanes PASS). First attempt was refused (body > 125,000 chars, HTTP 422); the renderer fix is PR #210. release-truth.yaml flipped by the publisher and committed. Command used:
    `python scripts/release/publish_beta_candidate.py --kit-dir C:\CivicCastTester\kit-mirror\148c8d2172dd6b63cbbb856b429b68aa020dc421 --source-sha 148c8d2172dd6b63cbbb856b429b68aa020dc421 --build-run-id 34405681086 --gate-a-run-id 34423542177 --tag v1.0.0-beta.5 --truth-status current`
    The dry run already passed layout, version and Authenticode. The publisher updates docs/releases/release-truth.yaml; commit that.
 2. **Finish release notes PR #165** (branch docs/release-beta5, worktree C:\Users\scott\Desktop\Code\cc-docs165, head 834d68f5): fill the last tokens (GATE-A-XVER = PASS, GATE-A-DLONLY, RELEASE-URL, ASSETS-TABLE; release-notes.md ~487-491, verification.md ~80-88, 112), add known issues 99 (legacy NATS journal halts August-install upgrades) and 100 (ownership check exit 85/127 on boxes with uninstall history) with the workarounds in docs/INSTALL-HELPER-PROMPT.md, then merge.
@@ -45,4 +45,4 @@ VERIFIED: HANDOFF.md is gitignored in this repo and must be force-added | .gitig
 VERIFIED: 1.0.0-beta.5 is the product version on main 148c8d21 | civiccast/_native_version.py:34
 VERIFIED: the sandbox soak lane's Run-SandboxSoak.ps1 takes -SeamlessReload, -OnAirBoundMinutes, -CaptionsOff, -WorkerEnv | sandbox-lab/Run-SandboxSoak.ps1:105-135
 UNVERIFIED: the builder-reported line numbers for PRs #202, #206, #208, #209 - taken from builder and reviewer reports, not re-read by this session
-UNVERIFIED: Gate A run 34423542177 lane 3 verdict - still running when this file was written
+VERIFIED: Gate A run 34423542177 concluded success with all three lanes PASS; v1.0.0-beta.5 release exists with 8 assets, isDraft=false | gh run view 34423542177 / gh release view v1.0.0-beta.5 (2026-09-10 04:14Z)
