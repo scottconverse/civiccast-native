@@ -36,7 +36,7 @@ checks), and
 [`docs/releases/2026-09-03-beta4-release-notes.md`](docs/releases/2026-09-03-beta4-release-notes.md)
 for the publish record.
 
-`v1.0.0-beta.5` is the next candidate and the current owner-held unpublished candidate
+`v1.0.0-beta.6` is the next candidate and the current owner-held unpublished candidate
 (unpublished; no installer asset) -- it does not change the install story
 above, which still targets `v1.0.0-beta.4`.
 

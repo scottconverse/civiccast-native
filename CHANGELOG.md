@@ -13,21 +13,27 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
-No changes yet beyond `v1.0.0-beta.5`, drafted immediately below.
+`v1.0.0-beta.6` is the next candidate and the current owner-held unpublished
+candidate; it does not change the `v1.0.0-beta.4` install story documented
+below.
 
-## [1.0.0-beta.5] - <RELEASE_DATE>
+## [1.0.0-beta.5] - 2026-09-09
 
-**DRAFT -- not yet published.** `v1.0.0-beta.5` is still the next candidate
-and the current owner-held unpublished candidate; it does not change the
-`v1.0.0-beta.4` install story documented below `v1.0.0-beta.4`'s own entry.
-`docs/releases/release-truth.yaml` still carries `v1.0.0-beta.4` as
-`current` and `v1.0.0-beta.5` as `staging` -- this entry does not flip
-either; it will be updated in place, and this header's `<RELEASE_DATE>`
-filled in, once an actual publish lands. See
+**PUBLISHED.** `v1.0.0-beta.5` was published 2026-09-09 at 10:14 PM
+Mountain (2026-09-10 04:14Z) as a GitHub prerelease:
+https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5
+(source `148c8d2172dd6b63cbbb856b429b68aa020dc421`, build run
+`34405681086`, Gate A run `34423542177` -- clean, cross-version, and
+download-only lanes all PASS -- 8 assets). `docs/releases/release-truth.yaml`
+carries `v1.0.0-beta.5` as `current` and `v1.0.0-beta.4` as `superseded`.
+The dated "Update" paragraphs below are the honest history of the
+candidates that were cut, soaked, and rejected on the way here; where they
+say a fix is "pending" or "not yet merged", the 2026-09-09 section at the
+top of the release notes supersedes them. See
 [`docs/releases/2026-09-04-beta5-release-notes.md`](docs/releases/2026-09-04-beta5-release-notes.md)
-for the draft publish record and
+for the publish record and
 [`docs/releases/v1.0.0-beta.5-verification.md`](docs/releases/v1.0.0-beta.5-verification.md)
-for the draft verification record.
+for the verification record.
 
 **Update 2026-09-05: kit `91caebc` ("candidate 1") was NOT the beta.5
 release candidate.** Candidate 1's Gate A run passed all three lanes, but
@@ -87,10 +93,11 @@ PASS / cross-version invalidated by harness gap (item 58) / download-only
 not reached, hardware soak FAIL (item 60).** `v1.0.0-beta.5` will be cut
 from `main` as **candidate 3** once `fix/gst-reload-concat-collision`
 merges, then re-run through a fresh Gate A and a fresh clean-install
-hardware soak, whose identity is still pending: source SHA
-`<BETA5_FINAL_SHA>`, build run `<BETA5_FINAL_BUILD_RUN>`, Gate A run
-`<GATE_A_FINAL_RUN_ID>`, hardware soak clock `<SOAK6_START_UTC>`, verdict
-`<SOAK6_VERDICT>`, relaunches `<SOAK6_RELAUNCHES>`.
+hardware soak. (Resolved at publish: the released candidate is source SHA
+`148c8d21`, build run `34405681086`, Gate A run `34423542177`; a further
+tester hardware soak was not run for beta.5 -- owner decision 2026-09-09:
+sandbox soaks + Gate A + the owner's own fresh-machine install stand in;
+the 24-hour soak follows publication.)
 
 **Update 2026-09-06 (process change): beta.5 now proves itself in a sandbox
 loop before it ever goes back to the tester.** After candidate 2's hardware
@@ -101,9 +108,9 @@ soak every time. `fix/gst-reload-concat-collision` (item 60's fix) is
 being finished under that process now, alongside a companion change the
 owner made a beta.5 requirement: seamless plan rollover ships **on** by
 default rather than off (see "Seamless plan rollover ON by default" below).
-Candidate 3 and candidate 4's build/Gate A/soak identities remain the
-`<BETA5_FINAL_SHA>` / `<BETA5_FINAL_BUILD_RUN>` / `<GATE_A_FINAL_RUN_ID>` /
-`<SOAK6_*>` placeholders above until that chain completes.
+Candidate 3 and candidate 4's build/Gate A/soak identities were
+placeholders here until that chain completed; the published identity is
+recorded in the paragraph at the top of this entry.
 
 ### How this release was proven
 

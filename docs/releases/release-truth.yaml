@@ -21,8 +21,7 @@ schema_version: 1
 repository: scottconverse/civiccast-native
 
 # The tag that public surfaces may present as the current install target.
-current: v1.0.0-beta.4
-
+current: v1.0.0-beta.5
 # Live tags matching these regexes predate this manifest and are exempt from
 # per-entry listing (they remain visible on GitHub as history). Anything else
 # unlisted is drift.
@@ -44,22 +43,25 @@ entries:
   # build gets tagged and published as a GitHub pre-release because the beta
   # tester (Sergio, "LPM") checks GitHub daily.
   - tag: v1.0.0-beta.5
-    status: staging
-    notes: >-
-      Owner-held candidate as of this entry; NOT YET PUBLISHED by this
-      change. Release-prep bump: product version moves from v1.0.0-beta.4 to
-      v1.0.0-beta.5 across every check_release_identity.py-bound surface, and
-      sandbox-lab/upgrade-baseline.json is repinned from the beta.3 kit to the
-      published beta.4 kit (source SHA
-      c27c6e70200406b51558ee1ef6b3a95ee4dc4426, build run 33854799455, Gate A
-      run 33857982657) so Gate A's cross-version and download-only lanes have
-      the actual current published release as their prior build. Flips to
-      current, with the v1.0.0-beta.4 entry's status flipped to
-      superseded_by v1.0.0-beta.5, only once an actual publish lands and a
-      human/agent updates this file to match -- this manifest is the SOLE
-      AUTHORED SOURCE and is never inferred from what "should" be live.
-  - tag: v1.0.0-beta.4
     status: current
+    notes: >-
+      Published by publish_beta_candidate.py 2026-09-09 10:14 PM Mountain
+      (2026-09-10 04:14Z), source 148c8d2172dd6b63cbbb856b429b68aa020dc421,
+      build run 34405681086, Gate A run 34423542177 (all three lanes --
+      clean install, cross-version upgrade over the beta.4 baseline, and
+      download-only -- PASS). 8 GitHub Release assets (setup.exe, five
+      runtime .ccpack packs, SHA256SUMS.txt, setup.exe.sidecar.json). Its
+      release-prep bump repinned sandbox-lab/upgrade-baseline.json from the
+      beta.3 kit to the published beta.4 kit (source SHA
+      c27c6e70200406b51558ee1ef6b3a95ee4dc4426, build run 33854799455) so
+      Gate A's cross-version and download-only lanes had the actual prior
+      published release as their baseline. The earlier `staging` entry for
+      this tag was folded into this one at publish (one entry per tag). See
+      docs/releases/2026-09-04-beta5-release-notes.md and
+      docs/releases/v1.0.0-beta.5-verification.md.
+  - tag: v1.0.0-beta.4
+    status: superseded
+    superseded_by: v1.0.0-beta.5
     notes: >-
       Published by publish_beta_candidate.py at 2026-09-04 ~20:05Z, target
       source SHA c27c6e70200406b51558ee1ef6b3a95ee4dc4426, build run

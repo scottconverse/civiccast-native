@@ -31,7 +31,7 @@ get it to the current release without wiping it.
 upgrade-baseline kit used to prove the download-only install/upgrade lanes,
 never a release a station receives.
 
-`v1.0.0-beta.5` is the next candidate and the current owner-held unpublished
+`v1.0.0-beta.6` is the next candidate and the current owner-held unpublished
 candidate (unpublished; no installer asset) -- it does not change anything
 above, which still targets `v1.0.0-beta.4` as the current release to
 install.
