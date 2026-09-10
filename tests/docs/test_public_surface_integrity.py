@@ -21,9 +21,16 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO = Path(__file__).resolve().parents[2]
-CURRENT_PUBLIC_CANDIDATE = "v1.0.0-beta.4"
+# The published, downloadable release tag the public surfaces must pin --
+# read from docs/releases/release-truth.yaml's authored `current` field (the
+# sole authored source for release state) so a release flip cannot leave
+# this guard pinned to the previous tag.
+CURRENT_PUBLIC_CANDIDATE = yaml.safe_load(
+    (REPO / "docs" / "releases" / "release-truth.yaml").read_text(encoding="utf-8")
+)["current"]
 WITHDRAWN_RELEASE_TAG = "v1.0.0-rc13"
 
 # Live, user-facing surfaces a PEG operator or their IT actually reads.

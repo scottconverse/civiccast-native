@@ -16,40 +16,42 @@ See [BRANCHES.md](BRANCHES.md) for the full explanation, including where an
 earlier, retired WSL2/Ubuntu lane's history now lives (a separate, private
 repository, not this one).
 
-**Current version: `v1.0.0-beta.4`** -- a download-only upgrade for stations
-already on `v1.0.0-beta.3`. `setup.exe` and the five runtime `.ccpack` packs
-are attached to the
-[`v1.0.0-beta.4` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4),
+**Current version: `v1.0.0-beta.5`** (published 2026-09-09) -- a
+download-only upgrade for stations already on `v1.0.0-beta.4`. `setup.exe`
+and the five runtime `.ccpack` packs are attached to the
+[`v1.0.0-beta.5` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5),
 with `SHA256SUMS.txt` and installer sidecar metadata for checksum checks;
 the installer itself carries the Authenticode signature. The ~21 GB AI-model
 `station\` bundle is deliberately not a release asset (see "Install and run"
-below). `v1.0.0-beta.3` (the first downloadable public release) is now
-superseded; `v1.0.0-beta.1` (USB-delivered, no downloadable assets) remains
-superseded; `v1.0.0-beta.2` was never published -- it exists only as an
-internal Gate A upgrade-baseline kit (see
+below). `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable public
+release) are now superseded; `v1.0.0-beta.1` (USB-delivered, no downloadable
+assets) remains superseded; `v1.0.0-beta.2` was never published -- it exists
+only as an internal Gate A upgrade-baseline kit (see
 [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)).
 See [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml)
 for the authored release-state record,
-[`docs/releases/v1.0.0-beta.4-verification.md`](docs/releases/v1.0.0-beta.4-verification.md)
+[`docs/releases/v1.0.0-beta.5-verification.md`](docs/releases/v1.0.0-beta.5-verification.md)
 for the release's verification record (Gate A run, asset/hash/signature
-checks), and
-[`docs/releases/2026-09-03-beta4-release-notes.md`](docs/releases/2026-09-03-beta4-release-notes.md)
-for the publish record.
+checks, sandbox soaks, and the known issues carried forward), and
+[`docs/releases/2026-09-04-beta5-release-notes.md`](docs/releases/2026-09-04-beta5-release-notes.md)
+for the publish record and the upgrade steps.
 
 `v1.0.0-beta.6` is the next candidate and the current owner-held unpublished candidate
 (unpublished; no installer asset) -- it does not change the install story
-above, which still targets `v1.0.0-beta.4`.
+above, which still targets `v1.0.0-beta.5`.
 
-The beta.5 development build enables in-place schedule rollover by default.
+`v1.0.0-beta.5` enables in-place schedule rollover by default.
 This lets the playout worker load the next plan without a planned encoder
 restart, including refreshing filler between programs. Bulletin rotations
 retain all approved, currently airable slides within the decoder-chain limit.
 Channel status and health reporting distinguish scheduled programs from filler
 as soon as a handoff completes.
 Setting `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` explicitly selects the
-restart fallback for diagnosis and can interrupt output. Installed-candidate
-soaks remain required before beta.5 publication; see the
-[recovery record](docs/releases/beta5-recovery-2026-09-08.md).
+restart fallback for diagnosis and can interrupt output. Live captions are
+**off by default** in beta.5; the release notes explain how to turn them on
+and what to expect. The soak history that led to the published candidate is
+in the [recovery record](docs/releases/beta5-recovery-2026-09-08.md) and the
+verification record linked above.
 The bundled beta.5 manual describes operation without freezing a mutable
 publication status into the installer. Use this page and the exact GitHub
 Release for current download and verification status.
@@ -63,8 +65,10 @@ replacement until the outgoing leg retires, and leaves the existing watchdog
 bounds unchanged. An overlapping commit request is explicitly declined and
 uses the existing full-graph restart recovery path; there is no latest-request
 queue and no capability is disabled. Ten clean runs bounds the failure rate; it
-is not proof of absence. This is source/diagnostic evidence only: the beta.5
-installer remains unaccepted and has no two-hour physical soak pass.
+is not proof of absence. This is source/diagnostic evidence only; the
+published candidate's own sandbox-soak and Gate A evidence, and the known
+issues it ships with, are recorded in
+[`docs/releases/v1.0.0-beta.5-verification.md`](docs/releases/v1.0.0-beta.5-verification.md).
 
 Live-caption timing now uses a separate forwarding queue. During intervals
 without text, CivicCast sends small timing signals; at most one can wait behind
@@ -271,11 +275,13 @@ things outside this repository's control:
   see [Install CivicCast On Windows](INSTALL-WINDOWS.md) and
   [Windows Release Trust And Verification](docs/install/windows-release-trust.md)
   for the setup path, Authenticode signature verification, and the pack-trust
-  model. `v1.0.0-beta.4` is the current release, a download-only upgrade
-  for stations already on `v1.0.0-beta.3` (the first
-  **downloadable** release): `setup.exe`, the five runtime `.ccpack` packs,
-  `SHA256SUMS.txt`, and installer sidecar metadata are attached to the
-  [GitHub Releases page](https://github.com/scottconverse/civiccast-native/releases).
+  model. `v1.0.0-beta.5` is the current release, a download-only upgrade
+  for stations already on `v1.0.0-beta.4`: `setup.exe`, the five runtime
+  `.ccpack` packs, `SHA256SUMS.txt`, and installer sidecar metadata are
+  attached to the
+  [`v1.0.0-beta.5` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5).
+  `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first **downloadable** release)
+  are superseded.
   `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is superseded.
   `v1.0.0-beta.2` was never published -- it exists only as an internal
   Gate A upgrade-baseline kit, not a release a tester can obtain.
@@ -290,7 +296,8 @@ things outside this repository's control:
   [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md).
   From `v1.0.0-beta.3` on, a download-only **upgrade** of an
   already-installed station keeps the station's recordings, database, and
-  AI models -- this is the path for `v1.0.0-beta.3` -> `v1.0.0-beta.4`: run
+  AI models -- this is the path for `v1.0.0-beta.4` -> `v1.0.0-beta.5`
+  (as it was for `v1.0.0-beta.3` -> `v1.0.0-beta.4`): run
   `setup.exe` (with the runtime packs) over the existing install, no
   `station\` folder and no re-downloading the AI-model bundle. See
   [BRANCHES.md](BRANCHES.md) for release identity and status.
@@ -378,7 +385,7 @@ status against evidence that actually exists on disk; treat "Built" there
 as "the code and its tests exist," not as a field-proven claim for this
 candidate — the "What's proven in this candidate" and "Honestly scoped"
 sections above are the accurate summary for a reader deciding whether to
-run beta.4 today.
+run beta.5 today.
 
 Proprietary-appliance capabilities are **out of scope** for V1 by explicit
 decision, documented in
