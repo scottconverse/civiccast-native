@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -45,7 +46,7 @@ import civiccast.live.models
 import civiccast.schedule.models  # noqa: F401
 from civiccast.app import create_app
 from civiccast.db import Base, bind_engine, reset_engine
-from civiccast.egress.models import EgressConfig, EgressSinkSpec
+from civiccast.egress.models import EgressConfig, EgressSinkSpec, EgressStateRow
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.store import InMemoryEgressStore
 from civiccast.live.finalization_worker import LiveFinalizationWorker
@@ -338,6 +339,7 @@ class TestPublicCurrentLive:
             "title": None,
             "started_at": None,
             "manifest_url": None,
+            "reason": None,
         }
 
     def test_returns_newest_on_air_session_with_optional_manifest_url(
@@ -508,6 +510,165 @@ class TestPublicCurrentLive:
 
         assert r.status_code == 200
         assert r.json()["manifest_url"] is None
+
+    # ------------------------------------------------------------------
+    # Egress fall-through (beta.5 clean-machine walkthrough): the channel was
+    # visibly on air (slate, then a scheduled asset) on a UDP headend preset
+    # while the resident Home said "Offline", because only live-SESSION rows
+    # were consulted. With no session on air, /current now follows the egress
+    # daemon's state.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _egress_store(
+        *,
+        channel_id: str = "gov-ch12",
+        state: str = "ON_AIR",
+        hls: bool = True,
+        source_label: str | None = "Council meeting 2026-05-15",
+    ) -> InMemoryEgressStore:
+        store = InMemoryEgressStore()
+        sinks = [EgressSinkSpec(kind="udp-ts", label="Cable headend", uri="udp://10.0.0.9:5000")]
+        if hls:
+            sinks.append(
+                EgressSinkSpec(kind="hls", label="Web", uri=f"/var/civiccast/live/{channel_id}")
+            )
+        store.upsert_config(
+            EgressConfig(channel_id=channel_id, enabled=True, slate_message="Off air", sinks=sinks)
+        )
+        store.write_state(
+            EgressStateRow(
+                channel_id=channel_id,
+                state=state,  # type: ignore[arg-type]
+                current_source_label=source_label,
+                updated_at=datetime(2026, 5, 15, 18, 0, tzinfo=UTC),
+            )
+        )
+        return store
+
+    def test_egress_on_air_with_hls_sink_reports_on_air_without_a_session(
+        self, client: TestClient
+    ) -> None:
+        store = self._egress_store()
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        r = client.get("/api/public/live/current")
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["state"] == "on_air"
+        assert body["live_session_id"] is None
+        assert body["channel_id"] == "gov-ch12"
+        assert body["title"] == "Council meeting 2026-05-15"
+        assert body["started_at"] == "2026-05-15T18:00:00+00:00"
+        assert body["manifest_url"].endswith("/media/live/gov-ch12/playlist.m3u8")
+        assert body["reason"] is None
+
+    def test_egress_fallback_slate_counts_as_on_air(self, client: TestClient) -> None:
+        # Residents see the slate; that is on air, not offline.
+        store = self._egress_store(state="FALLBACK_SLATE", source_label="Slate")
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "on_air"
+        assert body["title"] == "Slate"
+
+    def test_egress_on_air_without_hls_sink_is_on_air_no_web_output(
+        self, client: TestClient
+    ) -> None:
+        store = self._egress_store(hls=False)
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "on_air_no_web_output"
+        assert body["channel_id"] == "gov-ch12"
+        assert body["manifest_url"] is None
+        assert body["reason"] == "no HLS output configured"
+
+    def test_egress_no_hls_sink_still_honours_a_valid_cdn_override(
+        self, client: TestClient
+    ) -> None:
+        # A deployer fronting the headend feed with their own CDN can still
+        # hand residents that URL even though no local hls sink exists.
+        store = self._egress_store(hls=False)
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get(
+            "/api/public/live/current",
+            params={"manifest_url": "https://cdn.example/live/playlist.m3u8"},
+        ).json()
+
+        assert body["state"] == "on_air"
+        assert body["manifest_url"] == "https://cdn.example/live/playlist.m3u8"
+
+    @pytest.mark.parametrize("state", ["STOPPED", "STARTING", "DRAINING", "STOPPING", "ERROR"])
+    def test_egress_not_emitting_states_stay_offline(self, client: TestClient, state: str) -> None:
+        store = self._egress_store(state=state)
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "offline"
+        assert body["channel_id"] is None
+
+    def test_live_session_keeps_precedence_over_egress_state(self, client: TestClient) -> None:
+        store = self._egress_store(source_label="Slate")
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+        _seed_source_and_target(client)
+        _seed_session(client)
+        assert (
+            client.post("/api/staff/live/sessions/council-2026-05-15/start-preflight").status_code
+            == 200
+        )
+        assert (
+            client.post(
+                "/api/staff/live/sessions/council-2026-05-15/go-on-air",
+                json=_all_pass_inputs("council-2026-05-15"),
+            ).status_code
+            == 200
+        )
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "on_air"
+        assert body["live_session_id"] == "council-2026-05-15"
+        assert (
+            body["title"] == "City Council Meeting"
+        )  # the session's title, not the daemon's label
+
+    def test_egress_channel_filter_and_web_enabled_preference(self, client: TestClient) -> None:
+        store = InMemoryEgressStore()
+        for channel_id, hls in (("aaa-cable-only", False), ("zzz-web", True)):
+            sinks = [
+                EgressSinkSpec(kind="udp-ts", label="Cable headend", uri="udp://10.0.0.9:5000")
+            ]
+            if hls:
+                sinks.append(EgressSinkSpec(kind="hls", label="Web", uri=f"/var/live/{channel_id}"))
+            store.upsert_config(
+                EgressConfig(channel_id=channel_id, enabled=True, slate_message="x", sinks=sinks)
+            )
+            store.write_state(
+                EgressStateRow(
+                    channel_id=channel_id, state="ON_AIR", updated_at=datetime.now(tz=UTC)
+                )
+            )
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        # No filter: the web-playable channel wins even though it sorts last.
+        body = client.get("/api/public/live/current").json()
+        assert (body["state"], body["channel_id"]) == ("on_air", "zzz-web")
+
+        # Explicit filter: the cable-only channel reports its own truth.
+        body = client.get(
+            "/api/public/live/current", params={"channel_id": "aaa-cable-only"}
+        ).json()
+        assert (body["state"], body["channel_id"]) == ("on_air_no_web_output", "aaa-cable-only")
+
+        # Filter for a channel with no egress config at all: offline.
+        body = client.get("/api/public/live/current", params={"channel_id": "nope"}).json()
+        assert body["state"] == "offline"
 
     def test_channel_filter_limits_current_session(self, client: TestClient) -> None:
         _seed_source_and_target(client, channel_id="gov", live_source_id="gov-camera")

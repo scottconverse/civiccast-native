@@ -55,12 +55,15 @@ export interface PortalStationConfig {
 }
 
 export interface PublicLiveStatus {
-  state: 'offline' | 'on_air' | string
+  // 'on_air_no_web_output': the channel is on air on the headend but has no
+  // hls sink, so there is nothing web-playable; `reason` says why in words.
+  state: 'offline' | 'on_air' | 'on_air_no_web_output' | string
   live_session_id: string | null
   channel_id: string | null
   title: string | null
   started_at: string | null
   manifest_url: string | null
+  reason?: string | null
 }
 
 export interface IdlePage {

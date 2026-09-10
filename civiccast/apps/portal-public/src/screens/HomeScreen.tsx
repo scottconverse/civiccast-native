@@ -327,6 +327,16 @@ export function HomeScreen() {
   }
 
   const liveManifest = data.live?.manifest_url
+  // On air on the headend, but the station has not enabled an HLS web output
+  // for this channel. Say exactly that rather than "Offline" (beta.5
+  // walkthrough: the channel was visibly on air while Home said Offline).
+  const liveNoWebOutput = data.live?.state === 'on_air_no_web_output'
+  const liveStateLabel =
+    data.live?.state === 'on_air'
+      ? 'On air'
+      : liveNoWebOutput
+        ? 'On air (no web preview)'
+        : 'Offline'
   const isPartial = state === 'ready' && errors.length > 0
   const isEmpty =
     state === 'ready' &&
@@ -375,7 +385,9 @@ export function HomeScreen() {
             <p className="text-sm text-stone-300">
               {data.live?.state === 'on_air'
                 ? `${data.live.title ?? 'Broadcast'} is on air.`
-                : 'No live broadcast is on air.'}
+                : liveNoWebOutput
+                  ? `${data.live?.title ?? 'The station'} is on air, but web preview is not enabled for this channel.`
+                  : 'No live broadcast is on air.'}
             </p>
           </div>
           {liveManifest ? (
@@ -383,6 +395,19 @@ export function HomeScreen() {
               manifestUrl={liveManifest}
               analytics={{ channelId: data.live?.channel_id ?? null }}
             />
+          ) : liveNoWebOutput ? (
+            <div
+              role="status"
+              className="flex aspect-video flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-stone-500 bg-[#172018] p-6 text-center text-sm text-stone-200"
+            >
+              <span className="font-semibold text-stone-100">
+                On air, but web preview is not enabled for this channel.
+              </span>
+              <span className="text-stone-300">
+                The broadcast is going out on the cable channel. Ask the station to turn on
+                HLS web output to watch it here.
+              </span>
+            </div>
           ) : idlePage ? (
             <IdlePanel idlePage={idlePage} />
           ) : (
@@ -395,7 +420,7 @@ export function HomeScreen() {
         <aside className="rounded-lg border border-stone-500/30 bg-[#172018] p-5">
           <h3 className="text-base font-semibold">Broadcast status</h3>
           <dl className="mt-4 space-y-3 text-sm">
-            <StatusRow label="State" value={data.live?.state === 'on_air' ? 'On air' : 'Offline'} />
+            <StatusRow label="State" value={liveStateLabel} />
             <StatusRow label="Channel" value={data.live?.channel_id ?? 'None yet'} />
             <StatusRow label="Started" value={formatDateTime(data.live?.started_at ?? null)} />
           </dl>

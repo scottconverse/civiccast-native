@@ -10,7 +10,9 @@ import type {
   GraphicsOverlayStateResponse,
 } from '../types/api.generated'
 import type { EgressHealthSample } from '../api/client'
-import { EgressControlPanel, GraphicsOverlayPanel, PlayoutPlanPanel } from './ChannelOpsScreen'
+import { EgressControlPanel, GraphicsOverlayPanel, OutputsPanel, PlayoutPlanPanel } from './ChannelOpsScreen'
+
+type ChannelOutput = NonNullable<ChannelProfile['outputs']>[number]
 
 afterEach(cleanup)
 
@@ -289,5 +291,53 @@ describe('EgressControlPanel captions row', () => {
     expect(renderCaptions(true).container.textContent).toContain('Not yet confirmed (waiting for the on-air check)')
     cleanup()
     expect(renderCaptions(undefined).container.textContent).toContain('Not yet confirmed (waiting for the on-air check)')
+  })
+})
+
+describe('OutputsPanel', () => {
+  // beta.5 clean-machine walkthrough: the Channels screen printed
+  // /api/public/channels/public/live.m3u8 as a working URL while it answered
+  // 404. The backend now marks an hls output `enabled: false` when the channel
+  // has no hls sink; this card must say so instead of printing the link.
+  const notEnabled: ChannelOutput = {
+    kind: 'hls',
+    label: 'Resident and CTV HLS',
+    target: '/api/public/channels/public/live.m3u8',
+    proof_boundary: 'hls-output-not-enabled',
+    next_step:
+      "HLS web output is not enabled for this channel. Apply the 'Local rehearsal (web preview, HLS)' preset under Cable headend delivery, or add an hls sink to the channel's egress config, and this URL starts serving.",
+    enabled: false,
+  }
+  const enabled: ChannelOutput = {
+    kind: 'hls',
+    label: 'Resident and CTV HLS',
+    target: '/media/live/public/playlist.m3u8',
+    proof_boundary: 'hls-sink-configured',
+    next_step: 'Serves the channel\'s hls egress sink while the channel is on air.',
+    enabled: true,
+  }
+
+  it('says web output is not enabled instead of printing a dead URL', () => {
+    const { getByText, queryByText } = render(<OutputsPanel outputs={[notEnabled]} />)
+    expect(getByText('HLS web output is not enabled for this channel.')).toBeTruthy()
+    expect(getByText('Not enabled')).toBeTruthy()
+    expect(queryByText('/api/public/channels/public/live.m3u8')).toBeNull()
+    // The fix is still spelled out.
+    expect(getByText(/Local rehearsal \(web preview, HLS\)/)).toBeTruthy()
+  })
+
+  it('prints the real manifest URL when the hls sink is configured', () => {
+    const { getByText, queryByText } = render(<OutputsPanel outputs={[enabled]} />)
+    expect(getByText('/media/live/public/playlist.m3u8')).toBeTruthy()
+    expect(queryByText('Not enabled')).toBeNull()
+    expect(queryByText('HLS web output is not enabled for this channel.')).toBeNull()
+  })
+
+  it('treats a missing enabled flag as enabled (older API payloads)', () => {
+    const legacy = { ...enabled } as Partial<ChannelOutput>
+    delete legacy.enabled
+    const { getByText, queryByText } = render(<OutputsPanel outputs={[legacy as ChannelOutput]} />)
+    expect(getByText('/media/live/public/playlist.m3u8')).toBeTruthy()
+    expect(queryByText('Not enabled')).toBeNull()
   })
 })

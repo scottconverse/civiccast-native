@@ -4390,7 +4390,7 @@
           "live"
         ],
         "summary": "Return the current on-air live session for residents",
-        "description": "Return the newest on-air session, or ``offline`` when none exists.\n\nThe public contract exposes only resident-safe fields. Precedence for\n``manifest_url`` (Sprint 0.4 Phase 2): an explicit ``manifest_url`` query\nparam wins (a deployer's CDN/reverse-proxy URL); otherwise, when the\non-air channel has a local ``hls`` egress sink configured, this defaults\nto that sink's servable local URL (``civiccast.stream.media_router``'s\n``/media/live`` mount) so a stock install has a real, resolvable URL\ninstead of ``None``. A channel with no ``hls`` sink configured still\nreports ``on_air`` with ``manifest_url=None`` \u2014 session state does not\ndepend on live-HLS packaging being wired up.\n\nThis is also the **backend half** of the surge switch's post-switch load\nsignal: ``observe`` here drives the switch from ``/current`` rather than only\nfrom the local-manifest poll (``media_router``), which goes silent the\ninstant a viewer follows the switch to the CDN. It only actually keeps the\nswitch driven if the client *re-polls* ``/current`` while watching \u2014 which\nthe shipped public portal does **not** yet do (it fetches ``/current`` once\non mount). So this is a necessary-but-not-sufficient step: the periodic\nclient re-resolve + player source-swap is the remaining piece (tracked in\nthe 0.2.0 Deliverable 2 issue) and is a **prerequisite for enabling the\nsurge switch against real traffic** \u2014 until it ships, the origin cannot see\nviewers the CDN is serving, so the release path could evict under an active\naudience. The switch is off by default for exactly this reason.",
+        "description": "Return the newest on-air session, else the egress pipeline's live state.\n\nPrecedence: a live SESSION that is ``on_air`` always wins (its title and\n``live_session_id`` are the resident-facing record). When no session is on\nair, the channel's EGRESS state is consulted: a channel whose pipeline is\n``ON_AIR`` or ``FALLBACK_SLATE`` (scheduled playout, or the slate) reports\n``on_air`` when it has an ``hls`` sink to serve residents from, and\n``on_air_no_web_output`` (with ``reason``) when it is on air on the headend\nonly. Before this fall-through the resident portal said \"Offline\" for a\nchannel that was visibly on air on a UDP headend preset (beta.5 clean-\nmachine walkthrough) because only session rows were ever consulted.\n\nThe public contract exposes only resident-safe fields. Precedence for\n``manifest_url`` (Sprint 0.4 Phase 2): an explicit ``manifest_url`` query\nparam wins (a deployer's CDN/reverse-proxy URL); otherwise, when the\non-air channel has a local ``hls`` egress sink configured, this defaults\nto that sink's servable local URL (``civiccast.stream.media_router``'s\n``/media/live`` mount) so a stock install has a real, resolvable URL\ninstead of ``None``. A channel with no ``hls`` sink configured still\nreports ``on_air`` with ``manifest_url=None`` \u2014 session state does not\ndepend on live-HLS packaging being wired up.\n\nThis is also the **backend half** of the surge switch's post-switch load\nsignal: ``observe`` here drives the switch from ``/current`` rather than only\nfrom the local-manifest poll (``media_router``), which goes silent the\ninstant a viewer follows the switch to the CDN. It only actually keeps the\nswitch driven if the client *re-polls* ``/current`` while watching \u2014 which\nthe shipped public portal does **not** yet do (it fetches ``/current`` once\non mount). So this is a necessary-but-not-sufficient step: the periodic\nclient re-resolve + player source-swap is the remaining piece (tracked in\nthe 0.2.0 Deliverable 2 issue) and is a **prerequisite for enabling the\nsurge switch against real traffic** \u2014 until it ships, the origin cannot see\nviewers the CDN is serving, so the release path could evict under an active\naudience. The switch is off by default for exactly this reason.",
         "operationId": "get_current_live_session_api_public_live_current_get",
         "parameters": [
           {
@@ -5973,6 +5973,46 @@
                   },
                   "type": "array",
                   "title": "Response List Public Channels Api Public Channels Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/channels/{channel_id}/live.m3u8": {
+      "get": {
+        "tags": [
+          "public",
+          "channels"
+        ],
+        "summary": "Redirect to the channel's live HLS manifest",
+        "description": "Make the advertised ``/api/public/channels/{id}/live.m3u8`` URL true.\n\nThe Channels screen, the CTV feed and the app-platform schedule feed all\nprint this URL. It used to be a bare string with no route behind it (404\nfor every channel, on air or not \u2014 beta.5 walkthrough). Now it redirects\nto the manifest ``civiccast.stream.media_router`` really serves when the\nchannel has an ``hls`` egress sink, and otherwise answers 404 with a\n``detail`` that names the fix.",
+        "operationId": "public_channel_live_manifest_api_public_channels__channel_id__live_m3u8_get",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "responses": {
+          "307": {
+            "description": "Redirects to /media/live/{channel_id}/playlist.m3u8"
+          },
+          "404": {
+            "description": "Unknown channel, or HLS web output is not enabled for it"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -45057,7 +45097,8 @@
             "enum": [
               "udp-unicast",
               "udp-multicast",
-              "file-drop"
+              "file-drop",
+              "local-hls"
             ],
             "title": "Transport"
           },
@@ -45129,7 +45170,8 @@
           },
           "destination_uri": {
             "type": "string",
-            "title": "Destination Uri"
+            "title": "Destination Uri",
+            "default": ""
           },
           "muxrate_kbps": {
             "anyOf": [
@@ -45151,8 +45193,7 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "profile_id",
-          "destination_uri"
+          "profile_id"
         ],
         "title": "HeadendProfileApplyRequest",
         "description": "Apply one named headend delivery profile to a channel (CA-6)."
@@ -51978,6 +52019,17 @@
               }
             ],
             "title": "Manifest Url"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           }
         },
         "type": "object",
@@ -51985,7 +52037,7 @@
           "state"
         ],
         "title": "PublicLiveStatus",
-        "description": "Resident-safe live-session projection for the public portal."
+        "description": "Resident-safe live-session projection for the public portal.\n\n``state`` is one of ``offline`` / ``on_air`` / ``on_air_no_web_output``.\n``reason`` is set only for the last of those and names, in plain words,\nwhy there is no ``manifest_url`` although the channel is on air."
       },
       "PublicMeetingAgenda": {
         "properties": {
@@ -63564,6 +63616,11 @@
             "type": "string",
             "minLength": 1,
             "title": "Next Step"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
           }
         },
         "additionalProperties": false,
@@ -63576,7 +63633,7 @@
           "next_step"
         ],
         "title": "ChannelOutput",
-        "description": "One software output target for a linear channel."
+        "description": "One software output target for a linear channel.\n\n``enabled`` is ``False`` when the output is advertised by the product but\nnot wired on this station (today: the HLS web output of a channel with no\n``hls`` egress sink). ``next_step`` then says what turns it on, and UIs must\nshow that sentence instead of the ``target`` link."
       }
     },
     "securitySchemes": {

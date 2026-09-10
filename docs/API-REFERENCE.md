@@ -396,6 +396,15 @@ Read the current public WebVTT captions for a channel.
 - Request body: none
 - Responses: 200 Current live WebVTT captions; Cache-Control: no-store; 404 Channel or live caption feed not found
 
+### `GET /api/public/channels/{channel_id}/live.m3u8`
+
+Redirect to the channel's live HLS manifest.
+
+- Access: public
+- Parameters: `channel_id` (path, required): `string`
+- Request body: none
+- Responses: 307 Redirects to /media/live/{channel_id}/playlist.m3u8; 404 Unknown channel, or HLS web output is not enabled for it
+
 ### `GET /api/public/channels/{channel_id}/now-next`
 
 Read public now/next state for a channel.
@@ -6695,12 +6704,12 @@ rule (S13 §5.1).
 - `profile_id` (required): `string`
 - `recommended_loudness_regime` (optional): `'streaming' | 'atsc-a85' | 'ebu-r128' | 'inherit'`
 - `source_urls` (required): `Array<string>`
-- `transport` (required): `'udp-unicast' | 'udp-multicast' | 'file-drop'`
+- `transport` (required): `'udp-unicast' | 'udp-multicast' | 'file-drop' | 'local-hls'`
 - `vendor` (required): `string`
 
 ### `HeadendProfileApplyRequest`
 
-- `destination_uri` (required): `string`
+- `destination_uri` (optional): `string`
 - `keep_existing_sinks` (optional): `boolean`
 - `muxrate_kbps` (optional): `number | null`
 - `profile_id` (required): `string`
@@ -7775,6 +7784,7 @@ rule (S13 §5.1).
 - `channel_id` (optional): `string | null`
 - `live_session_id` (optional): `string | null`
 - `manifest_url` (optional): `string | null`
+- `reason` (optional): `string | null`
 - `started_at` (optional): `string | null`
 - `state` (required): `string`
 - `title` (optional): `string | null`
@@ -9513,6 +9523,7 @@ rule (S13 §5.1).
 
 ### `civiccast__cable__channel__ChannelOutput`
 
+- `enabled` (optional): `boolean`
 - `kind` (required): `'hls' | 'rtmp' | 'srt' | 'ndi-plan'`
 - `label` (required): `string`
 - `next_step` (required): `string`

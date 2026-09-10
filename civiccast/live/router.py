@@ -193,8 +193,27 @@ def _translate_state_error(exc: Any, *, attempted_transition: str) -> HTTPExcept
     )
 
 
+PUBLIC_LIVE_STATE_OFFLINE = "offline"
+PUBLIC_LIVE_STATE_ON_AIR = "on_air"
+# The channel's egress pipeline is on air (program or fallback slate) but no
+# ``hls`` sink is configured, so there is no web-playable manifest. Distinct from
+# ``offline`` so the resident portal can say "on air, web preview not enabled"
+# instead of lying that the station is dark.
+PUBLIC_LIVE_STATE_ON_AIR_NO_WEB_OUTPUT = "on_air_no_web_output"
+PUBLIC_LIVE_REASON_NO_HLS_OUTPUT = "no HLS output configured"
+# Egress states that mean "the channel is emitting a program right now". A
+# FALLBACK_SLATE channel is still on air from a resident's point of view (they
+# see the slate), which is exactly the clean-machine walkthrough case.
+_EGRESS_STATES_ON_AIR = frozenset({"ON_AIR", "FALLBACK_SLATE"})
+
+
 class PublicLiveStatus(BaseModel):
-    """Resident-safe live-session projection for the public portal."""
+    """Resident-safe live-session projection for the public portal.
+
+    ``state`` is one of ``offline`` / ``on_air`` / ``on_air_no_web_output``.
+    ``reason`` is set only for the last of those and names, in plain words,
+    why there is no ``manifest_url`` although the channel is on air.
+    """
 
     state: str
     live_session_id: str | None = None
@@ -202,6 +221,7 @@ class PublicLiveStatus(BaseModel):
     title: str | None = None
     started_at: str | None = None
     manifest_url: str | None = None
+    reason: str | None = None
 
 
 @public_router.get(
@@ -220,7 +240,17 @@ def get_current_live_session(
     egress_store: Any = Depends(get_egress_store),
     surge: Any = Depends(get_surge_switch_service),
 ) -> PublicLiveStatus:
-    """Return the newest on-air session, or ``offline`` when none exists.
+    """Return the newest on-air session, else the egress pipeline's live state.
+
+    Precedence: a live SESSION that is ``on_air`` always wins (its title and
+    ``live_session_id`` are the resident-facing record). When no session is on
+    air, the channel's EGRESS state is consulted: a channel whose pipeline is
+    ``ON_AIR`` or ``FALLBACK_SLATE`` (scheduled playout, or the slate) reports
+    ``on_air`` when it has an ``hls`` sink to serve residents from, and
+    ``on_air_no_web_output`` (with ``reason``) when it is on air on the headend
+    only. Before this fall-through the resident portal said "Offline" for a
+    channel that was visibly on air on a UDP headend preset (beta.5 clean-
+    machine walkthrough) because only session rows were ever consulted.
 
     The public contract exposes only resident-safe fields. Precedence for
     ``manifest_url`` (Sprint 0.4 Phase 2): an explicit ``manifest_url`` query
@@ -251,7 +281,13 @@ def get_current_live_session(
         states=(LIVE_SESSION_STATE_ON_AIR,),
     )
     if not rows:
-        return PublicLiveStatus(state="offline")
+        return _egress_live_status(
+            request,
+            channel_id=channel_id,
+            manifest_url_override=manifest_url,
+            egress_store=egress_store,
+            surge=surge,
+        )
     current = rows[0]
     # Feed + advance the surge switch on every resolution poll, before reading
     # the resolved URL, so the delay buffer elapsing on this very poll hands the
@@ -271,11 +307,72 @@ def get_current_live_session(
         or _local_live_manifest_url(current.channel_id, egress_store)
     )
     return PublicLiveStatus(
-        state="on_air",
+        state=PUBLIC_LIVE_STATE_ON_AIR,
         live_session_id=current.live_session_id,
         channel_id=current.channel_id,
         title=current.title,
         started_at=current.started_at.isoformat() if current.started_at else None,
+        manifest_url=resolved_manifest_url,
+    )
+
+
+def _egress_live_status(
+    request: Request,
+    *,
+    channel_id: str | None,
+    manifest_url_override: str | None,
+    egress_store: Any,
+    surge: Any,
+) -> PublicLiveStatus:
+    """Project the egress daemon's state for residents when no session is on air.
+
+    Picks the on-air channel (``ON_AIR`` / ``FALLBACK_SLATE``) — the requested
+    ``channel_id`` when given, otherwise the first on-air channel by id,
+    preferring one that has an ``hls`` sink so a multi-channel station with one
+    web-enabled channel resolves to something playable. ``title`` carries the
+    daemon's current source label (asset name or slate) and ``started_at`` the
+    moment the pipeline entered its current state (``EgressStateRow.updated_at``
+    is written only on state transitions).
+    """
+    if egress_store is None:
+        return PublicLiveStatus(state=PUBLIC_LIVE_STATE_OFFLINE)
+    if channel_id is not None:
+        config = egress_store.get_config(channel_id)
+        configs = [config] if config is not None else []
+    else:
+        configs = sorted(egress_store.list_configs(), key=lambda cfg: cfg.channel_id)
+    candidates: list[tuple[bool, Any, Any]] = []
+    for config in configs:
+        row = egress_store.read_state(config.channel_id)
+        if row is None or row.state not in _EGRESS_STATES_ON_AIR:
+            continue
+        has_hls = any(sink.kind == "hls" for sink in config.sinks)
+        candidates.append((has_hls, config, row))
+    if not candidates:
+        return PublicLiveStatus(state=PUBLIC_LIVE_STATE_OFFLINE)
+    # Web-playable channels first; the sort above already fixed the id order.
+    has_hls, config, row = max(candidates, key=lambda item: item[0])
+    if surge is not None and has_hls:
+        surge.observe(config.channel_id, resolve_client_ip(request))
+    resolved_manifest_url = (
+        _safe_override_url(manifest_url_override)
+        or (surge.manifest_url(config.channel_id) if surge is not None and has_hls else None)
+        or _local_live_manifest_url(config.channel_id, egress_store)
+    )
+    started_at = row.updated_at.isoformat() if row.updated_at else None
+    if resolved_manifest_url is None:
+        return PublicLiveStatus(
+            state=PUBLIC_LIVE_STATE_ON_AIR_NO_WEB_OUTPUT,
+            channel_id=config.channel_id,
+            title=row.current_source_label,
+            started_at=started_at,
+            reason=PUBLIC_LIVE_REASON_NO_HLS_OUTPUT,
+        )
+    return PublicLiveStatus(
+        state=PUBLIC_LIVE_STATE_ON_AIR,
+        channel_id=config.channel_id,
+        title=row.current_source_label,
+        started_at=started_at,
         manifest_url=resolved_manifest_url,
     )
 

@@ -13,7 +13,10 @@ import pytest
 
 from civiccast.egress.headend import (
     HEADEND_PROFILES,
+    LOCAL_HLS_PROFILE_ID,
+    LOCAL_HLS_SINK_LABEL,
     apply_headend_profile,
+    default_local_hls_directory,
     get_headend_profile,
     list_headend_profiles,
 )
@@ -26,6 +29,7 @@ EXPECTED_PROFILE_IDS = {
     "telvue-hypercaster-ip",
     "harmonic-spectrum-ts",
     "leightronix-file-drop",
+    "local-rehearsal-hls",
 }
 
 
@@ -201,3 +205,120 @@ def test_apply_headend_profile_normalises_channel_to_atsc_a85() -> None:
     cable = next(s for s in plan.sinks if s.label == headend_sink.label)
     assert cable.effective_target_lufs == -24.0
     assert cable.requires_reencode is False
+
+
+# ---------------------------------------------------------------------------
+# Local rehearsal (web preview, HLS): the one preset that is not a cable
+# delivery. It exists so a first-time operator can watch the channel in the
+# resident portal with no headend and no CDN (beta.5 walkthrough: on air on a
+# UDP preset, resident Home "Offline", advertised HLS URL 404).
+# ---------------------------------------------------------------------------
+
+
+def test_local_hls_profile_is_registered_and_honest() -> None:
+    profile = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert profile is not None
+    assert profile.label == "Local rehearsal (web preview, HLS)"
+    assert profile.transport == "local-hls"
+    assert profile.muxrate_kbps == 0
+    assert profile.recommended_loudness_regime == "streaming"
+    # Says out loud that it is not a cable delivery and not a CDN.
+    assert any("headend" in claim.lower() for claim in profile.not_claimed)
+    assert any("cdn" in claim.lower() for claim in profile.not_claimed)
+    # The operator has to supply nothing (the folder is optional).
+    assert profile.operator_must_supply and profile.operator_must_supply[0].startswith("Nothing")
+
+
+def test_apply_local_hls_profile_with_blank_destination_uses_station_work_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CIVICCAST_EGRESS_WORK_DIR", "/srv/civiccast/egress")
+    profile = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert profile is not None
+    base = _base_config(channel_id="government")
+
+    config = apply_headend_profile(base, profile, destination_uri="")
+
+    assert len(config.sinks) == 1
+    sink = config.sinks[0]
+    assert sink.kind == "hls"
+    assert sink.label == LOCAL_HLS_SINK_LABEL
+    assert sink.uri == default_local_hls_directory("government")
+    assert sink.uri.replace("\\", "/").endswith("/srv/civiccast/egress/live-hls/government")
+    assert sink.loudness_regime == "streaming"
+    assert "-muxrate" not in sink.extra_output_args
+
+
+def test_apply_local_hls_profile_never_rewrites_encode_or_loudness() -> None:
+    # Applying the web preview AFTER a cable preset must leave the cable feed's
+    # canonical profile and -24 LKFS channel target exactly as they were.
+    cable = get_headend_profile("comcast-mtd-hd")
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert cable is not None and local is not None
+    with_cable = apply_headend_profile(
+        _base_config(), cable, destination_uri="udp://239.20.30.40:5000"
+    )
+
+    config = apply_headend_profile(with_cable, local, destination_uri="", keep_existing_sinks=True)
+
+    assert config.canonical_profile == with_cable.canonical_profile
+    assert config.loudness_target_lufs == with_cable.loudness_target_lufs == -24.0
+    kinds = sorted(sink.kind for sink in config.sinks)
+    assert kinds == ["hls", "udp-ts"]
+
+
+def test_apply_local_hls_profile_replaces_a_previous_hls_sink_but_keeps_others() -> None:
+    # media_router serves ONE hls sink per channel, so re-applying with a new
+    # folder swaps the old hls sink instead of stacking a second one.
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    base = _base_config().model_copy(
+        update={
+            "sinks": [
+                EgressSinkSpec(kind="file", label="Proof", uri="build/proof.ts"),
+                EgressSinkSpec(kind="hls", label="Old web", uri="/tmp/old-hls"),
+            ]
+        }
+    )
+
+    config = apply_headend_profile(
+        base, local, destination_uri="/srv/new-hls", keep_existing_sinks=True
+    )
+
+    labels = sorted(sink.label for sink in config.sinks)
+    assert labels == sorted(["Proof", LOCAL_HLS_SINK_LABEL])
+    hls = next(sink for sink in config.sinks if sink.kind == "hls")
+    assert hls.uri == "/srv/new-hls"
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        "/srv/civiccast/live/public",
+        "file:///srv/civiccast/live/public",
+        r"D:\civiccast\live\public",
+    ],
+)
+def test_apply_local_hls_profile_accepts_local_folders(destination: str) -> None:
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    config = apply_headend_profile(_base_config(), local, destination_uri=destination)
+    assert config.sinks[-1].kind == "hls"
+    assert config.sinks[-1].uri == destination
+
+
+@pytest.mark.parametrize("destination", ["udp://239.0.0.1:5000", "srt://host:9000", "https://cdn"])
+def test_apply_local_hls_profile_rejects_network_destinations(destination: str) -> None:
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    with pytest.raises(ValueError, match="local folder"):
+        apply_headend_profile(_base_config(), local, destination_uri=destination)
+
+
+def test_cable_profiles_still_require_a_destination() -> None:
+    # Making destination_uri optional at the API is for the local preset ONLY;
+    # a blank destination on a cable transport must still fail loudly.
+    cable = get_headend_profile("generic-udp-spts")
+    assert cable is not None
+    with pytest.raises(ValueError, match="udp"):
+        apply_headend_profile(_base_config(), cable, destination_uri="")

@@ -19,10 +19,18 @@ How the pieces map onto the existing egress pipeline:
   muxer null-pads to that rate even over ``-c copy``.
 - Datagram sizing (1316 = 7 x 188-byte TS packets) is owned by the
   ``udp-ts`` sink.
+
+One preset is not a cable delivery at all: ``local-rehearsal-hls`` adds an
+``hls`` sink (served by ``civiccast.stream.media_router`` at
+``/media/live/{channel_id}/playlist.m3u8``) so a first-time operator can watch
+the channel in the resident portal with no headend and no CDN. It only adds the
+sink — it never rewrites the channel's canonical encode profile or loudness
+target, so applying it after a cable preset leaves the cable feed untouched.
 """
 
 from __future__ import annotations
 
+from pathlib import PureWindowsPath
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
@@ -36,7 +44,7 @@ from civiccast.egress.models import (
     LoudnessRegime,
 )
 
-HeadendTransport = Literal["udp-unicast", "udp-multicast", "file-drop"]
+HeadendTransport = Literal["udp-unicast", "udp-multicast", "file-drop", "local-hls"]
 
 _FIELD_PROOF_BOUNDARY = (
     "Built from published vendor documentation; not field-proven against a "
@@ -44,6 +52,27 @@ _FIELD_PROOF_BOUNDARY = (
 )
 
 _HEADEND_SINK_LABEL = "Cable headend"
+LOCAL_HLS_PROFILE_ID = "local-rehearsal-hls"
+LOCAL_HLS_SINK_LABEL = "Web preview (HLS)"
+# Directory name under the egress work dir that holds each channel's rolling
+# live-HLS window when the operator leaves the preset's folder blank.
+LOCAL_HLS_WORK_SUBDIR = "live-hls"
+
+
+def default_local_hls_directory(channel_id: str) -> str:
+    """Default manifest + segment folder for a channel's local HLS preview.
+
+    Lives under the same egress work dir the daemon already resolves for its
+    plans, prepared segments and slates (``CIVICCAST_EGRESS_WORK_DIR``, else
+    ``%LOCALAPPDATA%\\CivicCast\\egress``), so the daemon (which writes it via
+    ``egress.hls_relay`` / ``egress.sinks.HlsSink``) and the API process (which
+    serves it via ``stream.media_router``) agree on one absolute path without
+    the operator typing one. Imported lazily: ``egress.automation`` pulls the
+    whole daemon in, which this registry module must not do at import time.
+    """
+    from civiccast.egress.automation import default_egress_work_dir
+
+    return str(default_egress_work_dir() / LOCAL_HLS_WORK_SUBDIR / channel_id)
 
 
 class HeadendProfile(BaseModel):
@@ -248,6 +277,33 @@ def _profiles() -> dict[str, HeadendProfile]:
                     "Drop-folder path the UltraNEXUS ingests from.",
                 ],
             ),
+            HeadendProfile(
+                profile_id=LOCAL_HLS_PROFILE_ID,
+                label="Local rehearsal (web preview, HLS)",
+                vendor="CivicCast resident portal (built-in HLS player, no headend)",
+                source_urls=[
+                    "https://datatracker.ietf.org/doc/html/rfc8216",
+                    "https://ffmpeg.org/ffmpeg-formats.html#hls-2",
+                ],
+                # The hls sink re-encodes its own leg (HlsSink pins keyframes
+                # to its 2 s segment cadence), so the canonical profile is left
+                # alone at apply time; these are the module defaults, listed
+                # so the preset card reads like the others.
+                canonical_profile=CanonicalProfile(),
+                muxrate_kbps=0,
+                transport="local-hls",
+                recommended_loudness_regime="streaming",
+                operator_must_supply=[
+                    "Nothing. Optionally a local folder for the manifest and segments; "
+                    "blank uses the station's egress work folder (live-hls/<channel>).",
+                ],
+                not_claimed=[
+                    "Web preview only: nothing here reaches a cable headend, and it is "
+                    "not field-proven as a cable delivery.",
+                    "Not a CDN. Serves this station's own /media/live/<channel>/playlist.m3u8; "
+                    "the surge switch still hands heavy audiences to a CDN when configured.",
+                ],
+            ),
         )
     }
 
@@ -272,15 +328,29 @@ def apply_headend_profile(
     destination_uri: str,
     muxrate_kbps_override: int | None = None,
     keep_existing_sinks: bool = False,
-    label: str = _HEADEND_SINK_LABEL,
+    label: str | None = None,
 ) -> EgressConfig:
     """Return a new config carrying the profile's encode + delivery sink.
 
     Validates the destination against the profile's transport before
     anything is persisted, so a typo'd address fails loudly instead of
     silently streaming into the void.
+
+    ``label`` defaults to ``"Cable headend"`` for cable transports and
+    ``"Web preview (HLS)"`` for ``local-hls``; with ``keep_existing_sinks`` the
+    sink carrying that label (and, for ``local-hls``, any other ``hls`` sink —
+    the media router serves one per channel) is replaced, the rest are kept.
     """
 
+    if profile.transport == "local-hls":
+        return _apply_local_hls_profile(
+            config,
+            profile,
+            destination_uri=destination_uri,
+            keep_existing_sinks=keep_existing_sinks,
+            label=label or LOCAL_HLS_SINK_LABEL,
+        )
+    label = label or _HEADEND_SINK_LABEL
     _validate_destination(profile, destination_uri)
     muxrate_kbps = muxrate_kbps_override or profile.muxrate_kbps
     if profile.transport == "file-drop":
@@ -324,9 +394,54 @@ def apply_headend_profile(
     )
 
 
+def _apply_local_hls_profile(
+    config: EgressConfig,
+    profile: HeadendProfile,
+    *,
+    destination_uri: str,
+    keep_existing_sinks: bool,
+    label: str,
+) -> EgressConfig:
+    """Add the local web-preview ``hls`` sink; leave encode + loudness alone."""
+
+    directory = destination_uri.strip() or default_local_hls_directory(config.channel_id)
+    _validate_destination(profile, directory)
+    sink = EgressSinkSpec(
+        kind="hls",
+        label=label,
+        uri=directory,
+        loudness_regime=profile.recommended_loudness_regime,
+    )
+    kept = (
+        [
+            existing
+            for existing in config.sinks
+            if existing.label != label and existing.kind != "hls"
+        ]
+        if keep_existing_sinks
+        else []
+    )
+    return config.model_copy(update={"sinks": [*kept, sink]})
+
+
+def _is_local_directory_uri(value: str) -> bool:
+    scheme = urlsplit(value).scheme.lower()
+    if scheme in {"", "file"}:
+        return True
+    path = PureWindowsPath(value)
+    return bool(path.drive and path.root)  # ``C:\...`` parses as scheme "c"
+
+
 def _validate_destination(profile: HeadendProfile, destination_uri: str) -> None:
     parsed = urlsplit(destination_uri)
     scheme = parsed.scheme.lower()
+    if profile.transport == "local-hls":
+        if not _is_local_directory_uri(destination_uri):
+            raise ValueError(
+                f"profile {profile.profile_id} writes HLS to a local folder; "
+                "the destination must be a directory path or file:// uri, not a network address"
+            )
+        return
     if profile.transport == "file-drop":
         if scheme not in {"", "file"}:
             raise ValueError(

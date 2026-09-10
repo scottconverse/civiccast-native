@@ -248,6 +248,48 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   and `tests/native/test_provision_cli.py`
   (`test_main_adopts_a_station_with_a_legacy_august_journal_instead_of_halting`,
   `test_main_reuses_registry_credential_with_a_legacy_august_journal_present`).
+- **Resident live state follows the egress pipeline; Channels shows the real
+  HLS URL or says web output is off; a local-rehearsal HLS preset exists.**
+  beta.5 clean-machine walkthrough: the channel was on air (slate, then a
+  scheduled asset) on a UDP headend preset while the resident portal Home
+  said "Offline" throughout, and the Channels screen advertised
+  `/api/public/channels/public/live.m3u8`, which answered 404. Three causes,
+  three fixes, no new screens:
+  - `GET /api/public/live/current` only ever consulted live SESSION rows
+    (`civiccast/live/router.py`). With no session on air it now falls through
+    to the channel's egress state: `ON_AIR` or `FALLBACK_SLATE` with an `hls`
+    sink reports `on_air` with the served `/media/live/{channel}/playlist.m3u8`
+    manifest and the daemon's current source label; on air WITHOUT an `hls`
+    sink reports the new `on_air_no_web_output` state with
+    `reason: "no HLS output configured"` (a valid `?manifest_url=` CDN
+    override still wins). A live session keeps precedence. Resident Home
+    renders that state as "On air, but web preview is not enabled for this
+    channel" instead of "Offline".
+  - `civiccast/cable/channel.py` built a static
+    `/api/public/channels/{id}/live.m3u8` output string with no route behind
+    it, and the Channels screen's Software outputs card printed it as a
+    working link. `ChannelOutput` now carries `enabled`; both channel-list
+    endpoints resolve the HLS output against the egress config (real
+    `/media/live/...` target when an `hls` sink exists, `enabled: false` plus
+    the fix otherwise) and the card says "HLS web output is not enabled for
+    this channel" in place of a dead URL. The advertised URL is now true:
+    `GET /api/public/channels/{id}/live.m3u8` redirects (307) to the media
+    router's manifest when an `hls` sink exists and answers 404 with a
+    `detail` naming the fix otherwise (the CTV feed and app-platform schedule
+    feed print the same URL).
+  - Every headend preset was UDP or file, so a first-time operator had no way
+    to make the resident portal play without a headend.
+    `civiccast/egress/headend.py` adds `local-rehearsal-hls` ("Local
+    rehearsal (web preview, HLS)"): it adds ONE `hls` sink (folder optional;
+    blank = `<egress work dir>/live-hls/<channel>`, the same directory
+    convention `hls_relay` / `HlsSink` write and `media_router` serves), never
+    rewrites the channel's canonical encode profile or loudness target, and
+    replaces a previous `hls` sink rather than stacking one. The apply
+    endpoint's `destination_uri` is optional for it (still required, and still
+    validated, for every cable transport); the Channels screen's Cable
+    headend delivery card labels the field "Output folder (optional)", hides
+    the mux-rate input, and confirms with "Enable web preview".
+
 - **Seamless rollover no longer runs to EOS when the outgoing leg overruns its
   projected end.** Sandbox soak 39d852e (2026-09-09) showed every government
   channel rollover taking the 20s planned restart: with a boundary-aligned

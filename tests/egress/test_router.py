@@ -1006,3 +1006,40 @@ def test_staff_repair_gstreamer_endpoint_returns_recovery_outcome(
     assert body["closure_healthy"] is False
     assert body["remedy"] == "restage-launched"
     assert body["pid"] == 777
+
+
+def test_apply_local_hls_profile_via_api_with_no_destination(client: TestClient) -> None:
+    # First-time operator path: no egress config yet, no destination typed.
+    # The placeholder file sink the fresh path seeds is replaced by ONE hls sink
+    # under the station's egress work dir, and the channel comes back enabled.
+    r = client.post(
+        "/api/staff/egress/channels/gov/config/headend-profile",
+        json={"profile_id": "local-rehearsal-hls"},
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["enabled"] is True
+    assert [sink["kind"] for sink in body["sinks"]] == ["hls"]
+    assert body["sinks"][0]["label"] == "Web preview (HLS)"
+    assert body["sinks"][0]["uri"].replace("\\", "/").endswith("/live-hls/gov")
+
+
+def test_apply_local_hls_profile_via_api_rejects_network_destination(
+    client: TestClient,
+) -> None:
+    r = client.post(
+        "/api/staff/egress/channels/gov/config/headend-profile",
+        json={"profile_id": "local-rehearsal-hls", "destination_uri": "udp://239.0.0.1:5000"},
+    )
+    assert r.status_code == 422
+    assert "local folder" in r.json()["detail"]
+
+
+def test_apply_cable_profile_via_api_still_requires_destination(client: TestClient) -> None:
+    r = client.post(
+        "/api/staff/egress/channels/gov/config/headend-profile",
+        json={"profile_id": "generic-udp-spts"},
+    )
+    assert r.status_code == 422
+    assert "udp" in r.json()["detail"]

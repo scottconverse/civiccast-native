@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,8 +17,44 @@ PlayoutKind = Literal["live", "file", "slate", "bulletin", "rerun", "fallback"]
 PlayoutStatus = Literal["scheduled", "playing", "completed", "failed", "fallback"]
 
 
+HLS_OUTPUT_LABEL = "Resident and CTV HLS"
+HLS_OUTPUT_NOT_ENABLED_BOUNDARY = "hls-output-not-enabled"
+HLS_OUTPUT_ENABLED_BOUNDARY = "hls-sink-configured"
+HLS_OUTPUT_NOT_ENABLED_NEXT_STEP = (
+    "HLS web output is not enabled for this channel. Apply the "
+    "'Local rehearsal (web preview, HLS)' preset under Cable headend delivery, "
+    "or add an hls sink to the channel's egress config, and this URL starts serving."
+)
+HLS_OUTPUT_ENABLED_NEXT_STEP = (
+    "Serves the channel's hls egress sink while the channel is on air; the resident "
+    "portal resolves this same URL from /api/public/live/current."
+)
+
+
+def public_live_manifest_path(channel_id: str) -> str:
+    """The advertised public HLS URL for a channel.
+
+    Served by ``civiccast.cable.router`` as a redirect to
+    :func:`local_live_manifest_path` when the channel has an ``hls`` egress
+    sink, and as a 404 whose ``detail`` names the fix otherwise — so the URL
+    printed on the Channels screen and in the CTV feed is never a dead link.
+    """
+    return f"/api/public/channels/{channel_id}/live.m3u8"
+
+
+def local_live_manifest_path(channel_id: str) -> str:
+    """Where ``civiccast.stream.media_router`` serves a channel's hls sink."""
+    return f"/media/live/{channel_id}/playlist.m3u8"
+
+
 class ChannelOutput(BaseModel):
-    """One software output target for a linear channel."""
+    """One software output target for a linear channel.
+
+    ``enabled`` is ``False`` when the output is advertised by the product but
+    not wired on this station (today: the HLS web output of a channel with no
+    ``hls`` egress sink). ``next_step`` then says what turns it on, and UIs must
+    show that sentence instead of the ``target`` link.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -27,6 +63,59 @@ class ChannelOutput(BaseModel):
     target: str = Field(min_length=1, max_length=500)
     proof_boundary: str = Field(min_length=1, max_length=120)
     next_step: str = Field(min_length=1)
+    enabled: bool = True
+
+
+def hls_channel_output(channel_id: str, *, hls_sink_configured: bool) -> ChannelOutput:
+    """The channel's HLS web output, truthful about whether it is wired.
+
+    With an ``hls`` sink the target is the real ``/media/live`` manifest the
+    media router serves; without one the target is the public redirect URL
+    (which answers 404 + fix instructions, see :func:`public_live_manifest_path`)
+    and ``enabled`` is ``False``.
+    """
+    if hls_sink_configured:
+        return ChannelOutput(
+            kind="hls",
+            label=HLS_OUTPUT_LABEL,
+            target=local_live_manifest_path(channel_id),
+            proof_boundary=HLS_OUTPUT_ENABLED_BOUNDARY,
+            next_step=HLS_OUTPUT_ENABLED_NEXT_STEP,
+            enabled=True,
+        )
+    return ChannelOutput(
+        kind="hls",
+        label=HLS_OUTPUT_LABEL,
+        target=public_live_manifest_path(channel_id),
+        proof_boundary=HLS_OUTPUT_NOT_ENABLED_BOUNDARY,
+        next_step=HLS_OUTPUT_NOT_ENABLED_NEXT_STEP,
+        enabled=False,
+    )
+
+
+def channel_has_hls_sink(channel_id: str, egress_store: Any) -> bool:
+    """True when the channel's egress config carries an ``hls`` sink."""
+    if egress_store is None:
+        return False
+    config = egress_store.get_config(channel_id)
+    return config is not None and any(sink.kind == "hls" for sink in config.sinks)
+
+
+def resolve_live_outputs(profiles: list[ChannelProfile], egress_store: Any) -> list[ChannelProfile]:
+    """Replace each profile's static HLS output with the station's real state."""
+    resolved: list[ChannelProfile] = []
+    for profile in profiles:
+        outputs = [
+            hls_channel_output(
+                profile.channel_id,
+                hls_sink_configured=channel_has_hls_sink(profile.channel_id, egress_store),
+            )
+            if output.kind == "hls"
+            else output
+            for output in profile.outputs
+        ]
+        resolved.append(profile.model_copy(update={"outputs": outputs}))
+    return resolved
 
 
 class ChannelBranding(BaseModel):
@@ -321,7 +410,7 @@ def build_ctv_feed(*, station_name: str = "CivicCast Test Station") -> CtvFeed:
             type="live",
             title=profile.branding.display_name,
             channel_id=profile.channel_id,
-            stream_url=f"/api/public/channels/{profile.channel_id}/live.m3u8",
+            stream_url=public_live_manifest_path(profile.channel_id),
             captions_url=f"/api/public/channels/{profile.channel_id}/captions.vtt",
             content_id=f"civiccast-live-{profile.channel_id}",
             description=f"Live and scheduled programming for {profile.branding.display_name}.",
@@ -376,13 +465,9 @@ def _profile(
         ),
         default_slate_asset_id=default_slate_asset_id,
         outputs=[
-            ChannelOutput(
-                kind="hls",
-                label="Resident and CTV HLS",
-                target=f"/api/public/channels/{channel_id}/live.m3u8",
-                proof_boundary="software-output-url",
-                next_step="Connect this URL to the channel playout worker before partner proof.",
-            ),
+            # Static default = not wired; ``resolve_live_outputs`` upgrades it
+            # from the station's egress config at request time.
+            hls_channel_output(channel_id, hls_sink_configured=False),
             ChannelOutput(
                 kind="ndi-plan",
                 label="NDI command plan",

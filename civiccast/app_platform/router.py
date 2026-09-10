@@ -54,6 +54,7 @@ from civiccast.cable.channel import (
     PlayoutBlock,
     build_channel_now_next,
     default_channel_profiles,
+    public_live_manifest_path,
 )
 from civiccast.platform.stores import resolve_app_store
 from civiccast.playback_policy.models import PlaybackPolicyConfig
@@ -753,7 +754,7 @@ def _catalog_item_id_for_block(block: PlayoutBlock) -> str | None:
 
 def _playback_url_for_block(profile: ChannelProfile, block: PlayoutBlock) -> str:
     if block.kind == "live":
-        return f"/api/public/channels/{profile.channel_id}/live.m3u8"
+        return public_live_manifest_path(profile.channel_id)
     return f"/api/public/assets/{block.source_ref}/embed.m3u8"
 
 

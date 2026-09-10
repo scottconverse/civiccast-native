@@ -559,7 +559,10 @@ class HeadendProfileApplyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     profile_id: str
-    destination_uri: str
+    # Required for every cable transport (the profile validates it). Optional
+    # for ``local-rehearsal-hls``: blank means "the station's egress work
+    # folder", see ``civiccast.egress.headend.default_local_hls_directory``.
+    destination_uri: str = ""
     muxrate_kbps: int | None = None
     keep_existing_sinks: bool = False
 
