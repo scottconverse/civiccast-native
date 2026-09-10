@@ -319,6 +319,175 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   upgrading, rotate the `civiccast_svc` PostgreSQL password -- there is no
   documented self-service rotate procedure yet, so contact support.
 
+- **Installer: the runtime-ownership claim runs first, gathers machine-wide
+  evidence, and records why it refused** (beta.5 field defect, measured
+  2026-09-09 on a test box with uninstall history). After `d4-provision` had
+  already rewritten `postgresql.conf`/`pg_hba.conf`, the Rust CLI's
+  `claim_install_selector` got `Unknown` from the per-user WSL ARP probe
+  (some `HKEY_USERS` hive it could not read), refused to write
+  `ActiveRuntime=native`, exited 85, and setup showed exit 127 with a dialog
+  that guessed "most often a permissions problem on HKEY_USERS". The only
+  line naming the failing read went to stderr, i.e. the NSIS details pane,
+  which is persisted nowhere. Five changes in
+  `civiccast/apps/installer/src-tauri`:
+  1. **Diagnosable.** Every registry/SCM read the claim makes is kept as a
+     `ProbeObservation` (source, hive/SID, WOW64 view, classification, error
+     kind, raw OS error code) and folded into the claim's `detail`; the CLI
+     prints it on the 85 path; the d4 NSIS step reads the CLI's one-line
+     `%ProgramData%\CivicCast\provision\ownership-observation.txt` back
+     into `install-progress.log` (`step d4-provision: runtime ownership:`)
+     on every path; on refusal the CLI also writes
+     `%ProgramData%\CivicCast\provision\OWNERSHIP-RECOVERY.md` with every
+     individual read and the exact remedy.
+  2. **More evidence before giving up.** When the selector is absent and the
+     per-user ARP probe is `Unknown`, the claim now consults the WSL
+     product's uninstall key under `HKLM` (both WOW64 views), a port of the
+     Python guard's `scan_registered_distros` (Lxss `DistributionName ==
+     CivicCast-Ubuntu-24.04` under every loaded hive) and `sc query
+     WslService`/`LxssManager`. No WSL service at all, or no machine ARP AND
+     no CivicCast distro, rules the WSL product out and the install claims
+     native (logging the hive it could not read). Any genuine WSL-product
+     observation still refuses; only a still-inconclusive set of reads
+     aborts, with the observation. The pre-existing `Absent` per-user verdict
+     keeps deciding on its own, so machines where `sc.exe` misbehaves do not
+     regress. (`native_uninstall::corroborate_wsl_product_state`, unit-tested
+     over the whole table.)
+  3. **Order.** `run_native_provision` performs the claim BEFORE spawning the
+     Python provisioning engine, so a refused install leaves the database
+     configuration exactly as found. `AlreadyNative` is still a no-op.
+  4. **Dialog.** The exit-127 text embeds the recorded observation instead of
+     the HKEY_USERS guess, states that setup stopped before provisioning, and
+     points at the recovery document and the progress log (both of which now
+     carry the observation). Budgeted against `NSIS_MAX_STRLEN=1024`
+     (static text + 360-char observation cap + log timestamp, pinned by
+     test).
+  5. **Containment.** `sc config CivicCastSupervisor start= demand` returning
+     1060 (service does not exist) is now logged as confirmed containment --
+     there is no service that could auto-start onto the new payload -- not
+     as "NOT confirmed".
+
+  6. **The three refusals are three different things** (round 3; the
+     corrected field report, from an elevated registry read on the failing
+     box, showed the probe had NOT returned `Unknown`: the old WSL-era
+     "CivicCast Installer" 3.0.0-beta1 entry was genuinely registered under
+     `HKCU\...\Uninstall\CivicCast Installer`, with no
+     `CivicCast-Ubuntu-24.04` distro in Lxss, no `CivicCast Autostart` Run
+     entry, and `HKLM\SOFTWARE\CivicCast\NativeUninstallTransferCompleted`
+     set from an earlier native uninstall's hand-off -- and the decision
+     table sent that `Present` through the same exit 85 and the same
+     "could not determine ..." text as the Unknown case, the only sentence
+     naming the product going to stderr). Now:
+     - A `Present` uninstall key carries its ARP record (DisplayName,
+       DisplayVersion, Publisher, InstallLocation, UninstallString, and the
+       account the hive belongs to) in the observation, the one-line
+       `ownership-observation.txt`, `install-progress.log` and
+       `OWNERSHIP-RECOVERY.md`.
+     - **Inert-leftover rule** (`classify_wsl_product_for_claim`): a
+       `Present` ARP entry with NO CivicCast distro in any loaded hive, NO
+       `CivicCast Autostart` Run entry (HKCU + every loaded HKU hive, both
+       views) AND the native transfer marker set is `PresentInert` -> setup
+       claims native and logs `WARNING: an old CivicCast Installer
+       3.0.0-beta1 registration remains for user <name> with no distro or
+       autostart; claimed native. Remove the leftover via Apps & Features
+       (uninstall.exe at <path>)`. Any of the three not confidently settled
+       keeps the refusal. Pinned by tests: Present+distro -> refuse;
+       Present+no distro+no autostart+marker -> ClaimNative with the warning;
+       Present+no distro+Unknown autostart -> refuse.
+     - A real `Present` is its own refusal: CLI exit **87** (new; installer
+       exit 135, `CIVICCAST_EXIT_D4_OTHER_PRODUCT`), observation line and
+       dialog leading with "Setup found another CivicCast product installed
+       for user <name>: CivicCast Installer 3.0.0-beta1 (registered at
+       HKU\<SID>\...\Uninstall\CivicCast Installer; InstallLocation ...;
+       UninstallString ...)", remedy "Uninstall 'CivicCast Installer
+       3.0.0-beta1' from Settings > Apps (or run <UninstallString>), or run
+       `civiccast-runtime cutover-to-native`, then run setup again" -- no
+       registry-edit instruction anywhere on that path.
+     - Exit 85 is now only the Unknown (a read failed for a reason other
+       than not-found) and Unreadable-selector cases, each with its own
+       text; the registry remedy stays there and the "permissions" guess is
+       gone. `OWNERSHIP_OBSERVATION_LINE_MAX_CHARS` 360 -> 420 so the exit-87
+       lead fits.
+     - Round 4 (hostile review): the round-3 dialog text had no slack under
+       the NSIS 1024 string limit (584 + 420 + 35 = 1039 counted as source,
+       against a usable 1022), so both dialogs were shortened (85:
+       540 + 420 + 35 = 995; 87: 558 + 420 + 35 = 1013 as source;
+       520 + 420 + 31 = 971 and 542 + 420 + 31 = 993 at runtime) and the
+       budget test now measures the real strings under both the runtime and
+       the source count instead of trusting a number. `OWNERSHIP-RECOVERY.md`
+       said "installer exit 127" for the exit-87 refusal too; it now names
+       135, from constants a policy test pins to the NSIS defines. The
+       inert-leftover rule needs the entry to have been found in a LOADED
+       user hive: a per-machine ARP entry whose owner is logged out cannot
+       be proven inert (the distro and autostart scans never saw that hive)
+       and stays exit 87.
+     - Round 5 (delta review of round 4): `OWNERSHIP-RECOVERY.md`'s "What it
+       means" now names the inert condition(s) that actually failed, derived
+       from the evidence (a live distro, a set autostart entry, a missing
+       hand-off marker, an inconclusive read, or a per-machine entry no
+       signed-in account's hive carries) instead of asserting the per-machine
+       cause for every refusal. A machine-only (HKLM) entry -- which round 4
+       refuses for as long as its owner is signed out, and whose uninstaller
+       may be gone -- gets the two remedies that reach it: sign in as the
+       owning account and re-run setup, or delete the stale
+       `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CivicCast Installer`
+       key (`reg delete ... /f /reg:64|32`, the view the probe found it in).
+       The exit-87 observation line is built field by field: a long account
+       name (it appears three times in the lead) no longer pushes the lead
+       past the truncation point (420 - 48 = 372) and cuts the UninstallString
+       in half -- InstallLocation is dropped first, and any cut lands on a
+       field boundary. `installer_exit_code_for` is an exhaustive match on
+       the action (a future refusal is a compile error, not a silent 127),
+       and the recovery-document test asserts the mapped code in the
+       document itself. The budget test derives the log-line overhead from
+       the NSIS macros (31 at runtime, 35 as source; the old `29` missed the
+       trailing CRLF) and `NSIS_MAX_STRLEN` from `makensis -HDRINFO` when a
+       makensis is present.
+     - Round 6 (delta review of round 5): round 5's per-machine sentence and
+       its `reg delete` remedy were gated on the per-user read alone, so a
+       presence established by the distro scan (no ARP entry in any hive)
+       was told its cause was a stale HKLM registration -- two lines under
+       `machine-ARP=Absent` -- and handed an elevated delete for a key the
+       document had just reported absent; and a per-user probe that FAILED
+       (`user-ARP=unknown`) was described as "no signed-in account's hive
+       carries it". Both now require the per-machine probe to have found
+       the entry (with its ARP record) and the per-user probe not to have,
+       and `unknown` is written as "could not be read", never as absence;
+       every (user-ARP, machine-ARP) shape that reaches a refusal gets the
+       sentence its own evidence supports. The "What it means" opener points
+       at the read that established presence instead of always at "the
+       Add/Remove Programs entry above". The `reg delete` path is derived
+       from the probe's `WSL_ARP_KEY` constant (one command per WOW64 view
+       the entry was found in, so a key in both views no longer needs two
+       refused runs), the `; ` field-boundary cut of the exit-87 lead has
+       its own regression test (a raw character cut goes red), and the
+       recovery-document generator returns nothing for a non-refusal instead
+       of falling back to exit 85 / 127.
+
+  Follow-up, not in this change: a setup wizard page asking the operator to
+  confirm native ownership when the evidence is merely inconclusive, instead
+  of stopping.
+
+  **Known issue in beta.5** (workaround until beta.5.1 ships): if setup stops
+  with exit 127 / "could not determine which CivicCast runtime owns this
+  machine" on a machine with no CivicCast WSL product, run from an
+  administrator PowerShell
+  `New-ItemProperty -Path 'HKLM:\SOFTWARE\CivicCast' -Name 'ActiveRuntime' -PropertyType String -Value 'native' -Force`
+  and re-run setup; with the selector already `native` the ownership step is
+  a no-op and provisioning proceeds. If Settings > Apps lists a "CivicCast
+  Installer" (the old WSL-era product) that you no longer use, uninstall it
+  first instead of editing the registry -- beta.5 refuses over that entry
+  with the same dialog.
+
+  **Known issue (open, not changed here): the D3 upgrade engine routed the
+  field box as a fresh install.** The same box's `install-progress.log`
+  shows `step d3-engine: begin (old=none)` and `route=FRESH_INSTALL` although
+  it carried a full August install with `%ProgramData%\CivicCast` preserved,
+  and that August run had recorded `InstalledVersion 1.0.0-beta.1` at
+  postinstall SUCCESS. Why the engine read `old=none` there (the recorded
+  InstalledVersion not consulted, or cleared by the intervening native
+  uninstall?) is not established; the routing is deliberately left as is in
+  this change and needs its own investigation before beta.5.1.
+
 ## [1.0.0-beta.5] - 2026-09-09
 
 **PUBLISHED.** `v1.0.0-beta.5` was published 2026-09-09 at 10:14 PM
