@@ -10724,13 +10724,16 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ManagedStorageStatus"
+                  "$ref": "#/components/schemas/ManagedStorageStatusReport"
                 }
               }
             }
           },
           "403": {
             "description": "First setup is only reachable from the station computer itself (loopback), or the station is already configured."
+          },
+          "401": {
+            "description": "Setup is complete, so this endpoint now requires the staff bearer token (sign in at /api/setup/login or recover at /api/setup/recover)."
           }
         }
       },
@@ -10756,13 +10759,16 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ManagedStorageStatus"
+                  "$ref": "#/components/schemas/ManagedStorageStatusReport"
                 }
               }
             }
           },
           "403": {
             "description": "First setup is only reachable from the station computer itself (loopback), or the station is already configured."
+          },
+          "401": {
+            "description": "Setup is complete, so this endpoint now requires the staff bearer token (sign in at /api/setup/login or recover at /api/setup/recover)."
           },
           "422": {
             "description": "Validation Error",
@@ -10808,6 +10814,9 @@
           "403": {
             "description": "First setup is only reachable from the station computer itself (loopback), or the station is already configured."
           },
+          "401": {
+            "description": "Setup is complete, so this endpoint now requires the staff bearer token (sign in at /api/setup/login or recover at /api/setup/recover)."
+          },
           "422": {
             "description": "Validation Error",
             "content": {
@@ -10851,6 +10860,9 @@
           },
           "403": {
             "description": "First setup is only reachable from the station computer itself (loopback), or the station is already configured."
+          },
+          "401": {
+            "description": "Setup is complete, so this endpoint now requires the staff bearer token (sign in at /api/setup/login or recover at /api/setup/recover)."
           },
           "422": {
             "description": "Validation Error",
@@ -13078,7 +13090,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ManagedStorageStatus"
+                  "$ref": "#/components/schemas/ManagedStorageStatusReport"
                 }
               }
             }
@@ -13127,7 +13139,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ManagedStorageStatus"
+                  "$ref": "#/components/schemas/ManagedStorageStatusReport"
                 }
               }
             }
@@ -47294,17 +47306,54 @@
         "title": "MagicLinkResponse",
         "description": "Confirmation envelope for ``POST /api/public/paywall/magic-link``.\n\nWe deliberately do NOT echo the token here \u2014 the viewer receives it\nvia email; surfacing it on the response would defeat the channel-\nseparation that makes magic-links a defense against credential\nstuffing. Returning the same shape on success + \"no config yet\" would\nalso surface a tiny configuration probe; we return 409 from the\nhandler in that case so the client gets a distinct status."
       },
-      "ManagedStorageStatus": {
+      "ManagedStorageStatusReport": {
         "properties": {
           "status": {
             "type": "string",
             "minLength": 1,
             "title": "Status"
           },
-          "database_url": {
+          "database_configured": {
+            "type": "boolean",
+            "title": "Database Configured"
+          },
+          "database_kind": {
             "type": "string",
             "minLength": 1,
-            "title": "Database Url"
+            "title": "Database Kind"
+          },
+          "database_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Database Host"
+          },
+          "database_port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Database Port"
+          },
+          "database_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Database Name"
           },
           "database_path": {
             "type": "string",
@@ -47345,7 +47394,8 @@
         "type": "object",
         "required": [
           "status",
-          "database_url",
+          "database_configured",
+          "database_kind",
           "database_path",
           "upload_dir",
           "storage_dir",
@@ -47354,8 +47404,8 @@
           "operator_message",
           "next_step"
         ],
-        "title": "ManagedStorageStatus",
-        "description": "Current installer-managed durable storage state."
+        "title": "ManagedStorageStatusReport",
+        "description": "Durable storage state as served over the API: never the credential.\n\nSame shape as :class:`ManagedStorageStatus` minus ``database_url``, which\nis replaced by ``database_configured`` plus the backend kind and, for a\nnetwork database, its host, port and database name. No user name, no\npassword, no URL -- see :meth:`ManagedStorageStatus.report`."
       },
       "ManualAlertInput": {
         "properties": {
@@ -59316,6 +59366,19 @@
             "type": "boolean",
             "title": "Setup Complete"
           },
+          "station_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Station Name"
+          },
           "profile": {
             "anyOf": [
               {
@@ -59345,7 +59408,14 @@
             "title": "Recovery Kit Id"
           },
           "recovery_kit_acknowledged": {
-            "type": "boolean",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Recovery Kit Acknowledged",
             "default": false
           },
@@ -59369,7 +59439,7 @@
           "next_step"
         ],
         "title": "StationSetupState",
-        "description": "Current station setup state without secret values."
+        "description": "Current station setup state without secret values.\n\nTwo views exist once setup is complete. A caller holding a valid staff\nbearer token gets the full state. A caller WITHOUT one -- the signed-out\noperator console loading its sign-in screen, or any other process on the\nstation's loopback -- gets :meth:`signed_out_view`: ``setup_complete``,\n``station_name`` (public branding) and ``next_step`` only. The profile\n(admin user name, display name, channel profiles, storage locations),\nthe recovery-kit id and the recovery-kit acknowledgement are not\ndisclosed to an unauthenticated caller (walkthrough on a running beta.5\nstation, 2026-09-09)."
       },
       "StationStorageLocations": {
         "properties": {

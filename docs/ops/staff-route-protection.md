@@ -44,10 +44,19 @@ These routes now require a staff bearer token at the application layer. Deployme
 
 ### Deliberately unauthenticated routes
 
-`/health`, `/api/version`, `/api/hardware`, `/api/public/*`, `/docs` and
-`/openapi.json` answer without a token. That is a design choice, not an
-oversight: the installer sizes a deployment and confirms the service is running
-before a station or any staff token exists.
+`/health`, `/api/version`, `/api/hardware` and `/api/public/*` answer without
+a token. That is a design choice, not an oversight: the installer sizes a
+deployment and confirms the service is running before a station or any staff
+token exists.
+
+`/docs`, `/redoc` and `/openapi.json` are **not** on that list on a station.
+Every installed station runs with `CIVICCAST_LAN_ONLY_STATION=1` (set by
+`civiccast.native.station_runtime` on both the activated and the
+pre-activation path): there `/docs` and `/redoc` are not served at all, and
+`/openapi.json` requires the staff bearer token, with a wrong token spending
+the same per-IP failure budget as a wrong token on `/api/staff/*`. Only a
+deployment without that flag (a container or a developer checkout) keeps
+FastAPI's default unauthenticated schema and doc pages.
 
 Because they are public, what they disclose is a deliberate contract:
 
@@ -79,10 +88,18 @@ The app verifies the token before dispatching the request to any `/api/staff/*` 
 
 For the standard standalone setup path, the operator console Setup screen
 prepares durable local storage, applies migrations, creates the first admin,
-and generates the printable recovery kit. `/api/setup/*` is admitted by
-loopback alone (the control plane binds `127.0.0.1` only, so it is
-unreachable from the network by construction); open the console from the
-station itself before choosing **Prepare storage**.
+and generates the printable recovery kit. Before setup completes,
+`/api/setup/*` is admitted by loopback alone (the control plane binds
+`127.0.0.1` only, so it is unreachable from the network by construction);
+open the console from the station itself before choosing **Prepare
+storage**. Once setup is complete, every `/api/setup/*` route that reads or
+changes station state (`storage`, `first-admin`, `recovery-kit/acknowledge`)
+requires the same staff bearer token as `/api/staff/*`; only `login` and
+`recover` stay open on loopback so a signed-out operator can obtain one, and
+`station-state` answers a signed-out caller with `setup_complete`,
+`station_name` and `next_step` only. No route ever returns the database
+connection string: the storage routes report the backend kind, host, port
+and database name, never the user name, password or URL.
 
 The lifecycle CLI remains the technical-administrator override and recovery
 path for scripted deployments. Use it only after storage is already configured
@@ -228,7 +245,7 @@ server {
     listen 443 ssl http2;
     server_name civiccast.example.org;
 
-    location ~ ^/(api/public|api/version|api/hardware|health|docs|openapi.json) {
+    location ~ ^/(api/public|api/version|api/hardware|health) {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

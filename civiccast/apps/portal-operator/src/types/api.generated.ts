@@ -2548,9 +2548,13 @@ export interface MagicLinkResponse {
   sent?: boolean
 }
 
-export interface ManagedStorageStatus {
+export interface ManagedStorageStatusReport {
   status: string
-  database_url: string
+  database_configured: boolean
+  database_kind: string
+  database_host?: string | null
+  database_port?: number | null
+  database_name?: string | null
   database_path: string
   upload_dir: string
   storage_dir: string
@@ -4411,10 +4415,11 @@ export interface StationRecoveryRequest {
 export interface StationSetupState {
   status: 'not_started' | 'complete'
   setup_complete: boolean
+  station_name?: string | null
   profile?: StationProfile | null
   recovery_kit_created?: boolean
   recovery_kit_id?: string | null
-  recovery_kit_acknowledged?: boolean
+  recovery_kit_acknowledged?: boolean | null
   operator_console_url: string
   next_step: string
 }

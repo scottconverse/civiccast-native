@@ -15,7 +15,11 @@ const NOT_STARTED = {
 
 const STORAGE_READY = {
   status: 'ready',
-  database_url: 'sqlite:///C:/CivicCast/data/civiccast.sqlite3',
+  database_configured: true,
+  database_kind: 'sqlite',
+  database_host: null,
+  database_port: null,
+  database_name: null,
   database_path: 'C:/CivicCast/data/civiccast.sqlite3',
   upload_dir: 'C:/CivicCast/uploads',
   storage_dir: 'C:/CivicCast',
