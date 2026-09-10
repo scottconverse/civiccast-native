@@ -17,6 +17,17 @@ came across and what deliberately did not.
 candidate; it does not change the `v1.0.0-beta.4` install story documented
 below.
 
+**Known issue in beta.5 (fixed for beta.5.1 below).** Upgrading a station
+installed from the August 2026 beta.1/beta.2 kits halts provisioning with
+"the provisioning journal at C:\ProgramData\CivicCast\provision is
+corrupt/unparseable: ... Extra inputs are not permitted" (five
+`context.nats_*` validation errors). The journal is fine; the beta.5 model
+rejects the NATS fields the August installer wrote. Workaround: stop the
+`CivicCastSupervisor` service, rename
+`C:\ProgramData\CivicCast\provision\provision-journal.json` to
+`provision-journal.json.legacy`, and re-run `setup.exe`. Station data (the
+PostgreSQL data directory) is untouched by the halt and by the workaround.
+
 ### External field documentation
 
 - **Publisher-generated SmartScreen guidance now states the verification order.**
@@ -188,6 +199,44 @@ below.
 
 ### Fixed
 
+- **beta.5.1: provisioning tolerates legacy journal fields (the August NATS
+  keys) instead of halting the upgrade.** Measured 2026-09-09 on an upgrade
+  over an August-15 beta.1-era station: the installer's provisioning step
+  halted at its very first read of
+  `C:\ProgramData\CivicCast\provision\provision-journal.json` with "5
+  validation errors for ProvisionJournal -- context.nats_config_path /
+  nats_host / nats_port / nats_store_dir / nats_tls: Extra inputs are not
+  permitted", wrote `PROVISION-RECOVERY.md`, and never looked at the
+  cluster. The journal was valid JSON, `schema_version: 1`,
+  `phase: complete`; the August installer wrote NATS fields into `context`
+  that `85ffe6c0` ("stop provisioning a NATS store or config") removed from
+  the model with no migration and no tolerance, and the persisted models
+  were `extra="forbid"`. `ProvisionJournal`, `ProvisionPlan` and
+  `ProvisionContext` (the three structures persisted across installer
+  versions) are now `extra="ignore"`; `load_journal` names every dropped key
+  in one INFO log line (`ignored_journal_keys`), and the first
+  `write_journal` after adoption serialises only declared fields, so the
+  legacy keys migrate away by rewrite. Still fail-loud: invalid JSON, wrong
+  types, missing required fields, an unknown `phase` value. The in-process
+  decision/outcome models (`PostgresClusterDecision`, `DatabaseDecision`,
+  `ProvisionOutcome`, `ProvisionRecovery`) keep `extra="forbid"`; they are
+  never loaded from disk. With the journal readable, the upgrade takes the
+  ordinary paths it always had: registry `DatabaseUrl` present ->
+  `NOOP_REUSE_EXISTING` (schema migration only, journal untouched);
+  credential gone -> `ADOPT_EXISTING` (fresh credential on the surviving
+  cluster, no initdb, no drop); the engine's own rerun over a `COMPLETE`
+  journal short-circuits without calling a single seam. Fixture:
+  `tests/fixtures/provision/provision-journal-2026-08-15-beta1-nats.json`
+  (the August journal's on-disk shape, password already the product's
+  redaction marker). Covered by
+  `tests/native/test_provision_journal.py` (`..._tolerates_the_august_beta1_nats_context_fields`,
+  `..._tolerates_a_genuinely_unknown_future_field`,
+  `..._still_fails_loud_on_real_corruption`,
+  `..._rewriting_an_adopted_legacy_journal_drops_the_legacy_keys`),
+  `tests/native/test_provision_orchestrator.py::test_legacy_complete_journal_is_adopted_without_touching_the_cluster`,
+  and `tests/native/test_provision_cli.py`
+  (`test_main_adopts_a_station_with_a_legacy_august_journal_instead_of_halting`,
+  `test_main_reuses_registry_credential_with_a_legacy_august_journal_present`).
 - **Seamless rollover no longer runs to EOS when the outgoing leg overruns its
   projected end.** Sandbox soak 39d852e (2026-09-09) showed every government
   channel rollover taking the 20s planned restart: with a boundary-aligned

@@ -14,6 +14,7 @@ import pytest
 from civiccast.native.provision.journal import (
     JournalError,
     advance,
+    ignored_journal_keys,
     journal_path,
     load_journal,
     write_journal,
@@ -211,3 +212,171 @@ def test_write_journal_invokes_state_root_acl_hardening(
     write_journal(j)
 
     assert calls == [Path(j.context.state_root)]
+
+
+# --- legacy / unknown keys (beta.5.1, 2026-09-09) -----------------------------
+
+_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "provision"
+_LEGACY_AUGUST_JOURNAL = _FIXTURES / "provision-journal-2026-08-15-beta1-nats.json"
+_LEGACY_NATS_KEYS = [
+    "context.nats_config_path",
+    "context.nats_host",
+    "context.nats_port",
+    "context.nats_store_dir",
+    "context.nats_tls",
+]
+
+
+def _stage_raw_journal(tmp_path: Path, raw: str) -> Path:
+    """Put ``raw`` on disk exactly as a prior installer would have left it
+    (NOT through write_journal, which only ever serialises declared fields)."""
+
+    state_root = tmp_path / "state"
+    state_root.mkdir()
+    path = journal_path(state_root)
+    path.write_text(raw, encoding="utf-8")
+    return state_root
+
+
+def test_load_journal_tolerates_the_august_beta1_nats_context_fields(
+    tmp_path: Path, caplog
+) -> None:
+    """The measured upgrade halt: a valid ``phase: complete`` journal written
+    by the August 2026 installer carries five ``context.nats_*`` keys the
+    model dropped in 85ffe6c0. It must LOAD (so the upgrade adopts the
+    station), drop the keys, and say so once at INFO."""
+
+    import logging
+
+    state_root = _stage_raw_journal(tmp_path, _LEGACY_AUGUST_JOURNAL.read_text(encoding="utf-8"))
+
+    with caplog.at_level(logging.INFO, logger="civiccast.native.provision.journal"):
+        loaded = load_journal(state_root)
+
+    assert loaded is not None
+    assert loaded.phase is ProvisionPhase.COMPLETE
+    assert loaded.schema_version == 1
+    assert loaded.history[-1][2] == "provisioning complete"
+    # The legacy history phases are plain strings and load unchanged.
+    assert [entry[0] for entry in loaded.history[4:6]] == [
+        "nats_store_ready",
+        "nats_config_written",
+    ]
+    for key in _LEGACY_NATS_KEYS:
+        assert not hasattr(loaded.context, key.removeprefix("context.")), key
+    assert loaded.context.postgres_data_dir.endswith(r"\data\pgdata")
+
+    info_lines = [
+        r for r in caplog.records if r.levelno == logging.INFO and "ignored" in r.getMessage()
+    ]
+    assert len(info_lines) == 1, caplog.text
+    message = info_lines[0].getMessage()
+    assert "5 field(s)" in message
+    for key in _LEGACY_NATS_KEYS:
+        assert key in message
+
+
+def test_ignored_journal_keys_names_exactly_the_undeclared_keys() -> None:
+    raw = _LEGACY_AUGUST_JOURNAL.read_text(encoding="utf-8")
+    assert ignored_journal_keys(raw) == _LEGACY_NATS_KEYS
+    assert ignored_journal_keys("{not json") == []
+    assert ignored_journal_keys("[1, 2]") == []
+
+
+def test_load_journal_tolerates_a_genuinely_unknown_future_field(tmp_path: Path, caplog) -> None:
+    """A journal from a NEWER installer (a downgrade/reinstall over preserved
+    ProgramData) may carry keys this version has never heard of. Same rule:
+    load, drop, log -- never halt."""
+
+    import json
+    import logging
+
+    data = json.loads(_LEGACY_AUGUST_JOURNAL.read_text(encoding="utf-8"))
+    for key in ("nats_config_path", "nats_host", "nats_port", "nats_store_dir", "nats_tls"):
+        del data["context"][key]
+    data["future_top_level_field"] = {"anything": True}
+    data["context"]["future_context_field"] = "x"
+    data["plan"]["future_plan_field"] = 7
+    state_root = _stage_raw_journal(tmp_path, json.dumps(data))
+
+    with caplog.at_level(logging.INFO, logger="civiccast.native.provision.journal"):
+        loaded = load_journal(state_root)
+
+    assert loaded is not None
+    assert loaded.phase is ProvisionPhase.COMPLETE
+    assert ignored_journal_keys(json.dumps(data)) == [
+        "context.future_context_field",
+        "future_top_level_field",
+        "plan.future_plan_field",
+    ]
+    assert (
+        "context.future_context_field, future_top_level_field, plan.future_plan_field"
+        in caplog.text
+    )
+
+
+def test_load_journal_logs_nothing_about_ignored_keys_for_a_current_journal(
+    tmp_path: Path, caplog
+) -> None:
+    import logging
+
+    write_journal(_journal(tmp_path))
+    with caplog.at_level(logging.INFO, logger="civiccast.native.provision.journal"):
+        assert load_journal(tmp_path / "state") is not None
+    assert "ignored" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (lambda d: d.__setitem__("phase", "nats_store_ready"), "phase"),
+        (
+            lambda d: d["context"].__setitem__("postgres_port", "five-four-three-two"),
+            "postgres_port",
+        ),
+        (lambda d: d["plan"].pop("postgres_major_version"), "postgres_major_version"),
+    ],
+    ids=["unknown-phase", "type-drift", "missing-required"],
+)
+def test_load_journal_still_fails_loud_on_real_corruption(tmp_path: Path, mutate, match) -> None:
+    """Tolerance is for unknown KEY NAMES only. An unknown phase value, a
+    wrong type, or a missing required field is still a value we cannot
+    trust, and still a JournalError (never a silent fresh start)."""
+
+    import json
+
+    data = json.loads(_LEGACY_AUGUST_JOURNAL.read_text(encoding="utf-8"))
+    mutate(data)
+    state_root = _stage_raw_journal(tmp_path, json.dumps(data))
+    with pytest.raises(JournalError, match=match):
+        load_journal(state_root)
+
+
+def test_rewriting_an_adopted_legacy_journal_drops_the_legacy_keys(tmp_path: Path) -> None:
+    """Migration-by-rewrite: the first write_journal after adoption
+    serialises only declared fields, so the nats_* keys disappear and the
+    next load has nothing to ignore."""
+
+    import json
+
+    data = json.loads(_LEGACY_AUGUST_JOURNAL.read_text(encoding="utf-8"))
+    state_root = tmp_path / "state"
+    for key in (
+        "postgres_data_dir",
+        "postgres_config_path",
+        "postgres_hba_path",
+        "server_pack_path",
+    ):
+        data["context"][key] = str(tmp_path / key)
+    data["context"]["state_root"] = str(state_root)
+    _stage_raw_journal(tmp_path, json.dumps(data))
+
+    loaded = load_journal(state_root)
+    assert loaded is not None
+    path = write_journal(loaded)
+    rewritten = path.read_text(encoding="utf-8")
+    rewritten_context = json.loads(rewritten)["context"]
+    assert not [k for k in rewritten_context if k.startswith("nats_")], rewritten_context
+    assert ignored_journal_keys(rewritten) == []
+    reloaded = load_journal(state_root)
+    assert reloaded is not None and reloaded.phase is ProvisionPhase.COMPLETE

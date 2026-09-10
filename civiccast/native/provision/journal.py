@@ -9,11 +9,16 @@ module's docstring, verbatim rationale, applies here unchanged):
   ``os.replace``\\s it over the real journal, so a power loss during a write
   leaves EITHER the old complete journal OR the new complete journal on disk
   -- never a half-written one.
-* **Fail-loud load.** The journal is parsed through
-  :class:`~civiccast.native.provision.models.ProvisionJournal`
-  (``extra="forbid"``); a truncated, schema-drifted, or hand-edited journal
-  raises :class:`JournalError` instead of resuming from a value we cannot
-  trust.
+* **Fail-loud load, tolerant of unknown keys.** The journal is parsed
+  through :class:`~civiccast.native.provision.models.ProvisionJournal`; a
+  truncated, type-drifted, or hand-edited journal raises
+  :class:`JournalError` instead of resuming from a value we cannot trust.
+  Since beta.5.1 (2026-09-09) an UNKNOWN KEY is not corruption: journals
+  written by the August 2026 beta.1/beta.2 installers carry
+  ``context.nats_*`` fields the model no longer declares, and rejecting them
+  halted every upgrade over such a station. :func:`load_journal` drops
+  unknown keys (``extra="ignore"`` on the persisted models) and names them
+  in one INFO log line so the tolerance is visible in the installer log.
 
 The journal file lives under the provisioning state root (ProgramData), so a
 resuming process can find it regardless of what happened to the data
@@ -50,13 +55,21 @@ does that the ORIGINAL version of this module did not --
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import ValidationError
 
-from civiccast.native.provision.models import ProvisionJournal, ProvisionPhase
+from civiccast.native.provision.models import (
+    ProvisionContext,
+    ProvisionJournal,
+    ProvisionPhase,
+    ProvisionPlan,
+)
+
+_LOG = logging.getLogger(__name__)
 
 JOURNAL_FILENAME = "provision-journal.json"
 
@@ -205,9 +218,41 @@ def load_journal(state_root: str | Path) -> ProvisionJournal | None:
     except OSError as exc:  # pragma: no cover - unreadable file is env-specific
         raise JournalError(f"cannot read journal at {path}: {exc}") from exc
     try:
-        return ProvisionJournal.model_validate_json(raw)
+        journal = ProvisionJournal.model_validate_json(raw)
     except ValidationError as exc:
         raise JournalError(f"journal at {path} is corrupt/unparseable: {exc}") from exc
+    ignored = ignored_journal_keys(raw)
+    if ignored:
+        _LOG.info(
+            "provision journal at %s carries %d field(s) this version does not declare; "
+            "ignored (legacy or newer-installer keys, not corruption): %s",
+            path,
+            len(ignored),
+            ", ".join(ignored),
+        )
+    return journal
+
+
+def ignored_journal_keys(raw: str) -> list[str]:
+    """Dotted names of the keys in the raw journal JSON that
+    :class:`ProvisionJournal` / :class:`ProvisionPlan` /
+    :class:`ProvisionContext` do not declare (and therefore silently drop
+    under ``extra="ignore"``). Pure; returns ``[]`` for anything that is not a
+    JSON object (a parse failure is :func:`load_journal`'s job to report).
+    Sorted so the log line is deterministic."""
+
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    ignored: list[str] = [k for k in data if k not in ProvisionJournal.model_fields]
+    for section, model in (("plan", ProvisionPlan), ("context", ProvisionContext)):
+        nested = data.get(section)
+        if isinstance(nested, dict):
+            ignored.extend(f"{section}.{k}" for k in nested if k not in model.model_fields)
+    return sorted(ignored)
 
 
 def write_journal(journal: ProvisionJournal) -> Path:
@@ -278,6 +323,7 @@ __all__ = [
     "JOURNAL_FILENAME",
     "JournalError",
     "advance",
+    "ignored_journal_keys",
     "journal_path",
     "load_journal",
     "write_journal",

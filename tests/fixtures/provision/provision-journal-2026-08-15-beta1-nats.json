@@ -1,0 +1,67 @@
+{
+  "context": {
+    "database_password": "REDACTED-NOT-PERSISTED-TO-DISK",
+    "nats_config_path": "C:\\ProgramData\\CivicCast\\config\\nats-server.conf",
+    "nats_host": "127.0.0.1",
+    "nats_port": 4222,
+    "nats_store_dir": "C:\\ProgramData\\CivicCast\\data\\nats-store",
+    "nats_tls": null,
+    "owner_run_id": "provision-20260815T203112Z-7f3a",
+    "postgres_config_path": "C:\\ProgramData\\CivicCast\\data\\pgdata\\postgresql.conf",
+    "postgres_data_dir": "C:\\ProgramData\\CivicCast\\data\\pgdata",
+    "postgres_hba_path": "C:\\ProgramData\\CivicCast\\data\\pgdata\\pg_hba.conf",
+    "postgres_host": "127.0.0.1",
+    "postgres_port": 5432,
+    "server_pack_path": "C:\\Program Files\\CivicCast\\packs\\native-server-binaries.ccpack",
+    "state_root": "C:\\ProgramData\\CivicCast\\provision"
+  },
+  "error": null,
+  "history": [
+    [
+      "pack_verified",
+      "2026-08-15T20:31:14.207311+00:00",
+      "server-binaries pack signature and byte inventory verified"
+    ],
+    [
+      "postgres_cluster_ready",
+      "2026-08-15T20:31:21.884602+00:00",
+      "initdb completed; new cluster is PostgreSQL 17"
+    ],
+    [
+      "postgres_config_written",
+      "2026-08-15T20:31:21.951873+00:00",
+      "postgresql.conf and pg_hba.conf written"
+    ],
+    [
+      "database_ready",
+      "2026-08-15T20:31:26.410558+00:00",
+      "created"
+    ],
+    [
+      "nats_store_ready",
+      "2026-08-15T20:31:26.428104+00:00",
+      "NATS JetStream store directory does not exist yet"
+    ],
+    [
+      "nats_config_written",
+      "2026-08-15T20:31:26.439977+00:00",
+      "nats-server config written"
+    ],
+    [
+      "complete",
+      "2026-08-15T20:31:26.451230+00:00",
+      "provisioning complete"
+    ]
+  ],
+  "phase": "complete",
+  "plan": {
+    "database_name": "civiccast",
+    "database_username": "civiccast_svc",
+    "postgres_major_version": "17",
+    "server_pack_compatible_core": "1.0.0-beta.1",
+    "server_pack_product_version": "1.0.0-beta.1",
+    "server_pack_signing_key_id": "civiccast-pack-2026"
+  },
+  "recovery_document_path": null,
+  "schema_version": 1
+}
