@@ -18,7 +18,15 @@ module's docstring, verbatim rationale, applies here unchanged):
   ``context.nats_*`` fields the model no longer declares, and rejecting them
   halted every upgrade over such a station. :func:`load_journal` drops
   unknown keys (``extra="ignore"`` on the persisted models) and names them
-  in one INFO log line so the tolerance is visible in the installer log.
+  on this module's logger at INFO -- a line only a caller that configured
+  logging ever sees. The provisioning CLI (:mod:`~civiccast.native.
+  provision.__main__`) configures no logging, so the line that actually
+  reaches the installer log (the NSIS d4 step captures stderr) is the ONE
+  ``sys.stderr.write`` ``main()`` emits per run from
+  :func:`ignored_journal_keys` over the raw file, right after its first
+  load. That is deliberately once per run, not once per load:
+  ``main`` -> ``probe_resumable_journal`` -> ``probe_credential_lost_journal``
+  -> ``run_provision`` each load the same file.
 
 The journal file lives under the provisioning state root (ProgramData), so a
 resuming process can find it regardless of what happened to the data
@@ -239,7 +247,14 @@ def ignored_journal_keys(raw: str) -> list[str]:
     :class:`ProvisionContext` do not declare (and therefore silently drop
     under ``extra="ignore"``). Pure; returns ``[]`` for anything that is not a
     JSON object (a parse failure is :func:`load_journal`'s job to report).
-    Sorted so the log line is deterministic."""
+    Sorted so the log line is deterministic.
+
+    Walks exactly three dicts: the top level, ``plan`` and ``context`` --
+    the three persisted models. It does NOT recurse further: none of those
+    models declares a nested ``BaseModel`` field (``history`` is a list of
+    string triples, everything else is scalar), so there is no deeper level
+    at which pydantic could drop a key. Extend the loop if one is ever
+    added, or the CLI's ignored-keys line will under-report."""
 
     try:
         data = json.loads(raw)

@@ -116,13 +116,18 @@ def test_load_corrupt_journal_raises_fail_loud(tmp_path: Path) -> None:
         load_journal(str(state_root))
 
 
-def test_load_schema_drifted_journal_raises(tmp_path: Path) -> None:
+def test_load_journal_missing_required_sections_raises(tmp_path: Path) -> None:
+    """``plan`` and ``context`` are required. (Before beta.5.1 this case also
+    failed on ``unexpected_field``; unknown keys are tolerated now, so the
+    ONLY thing keeping this journal unparseable is the missing sections --
+    pinned by matching the message on them.)"""
+
     state_root = tmp_path / "state"
     state_root.mkdir()
     journal_path(state_root).write_text(
         '{"schema_version": 1, "unexpected_field": true}', encoding="utf-8"
     )
-    with pytest.raises(JournalError):
+    with pytest.raises(JournalError, match=r"(?s)corrupt/unparseable.*\bplan\b.*\bcontext\b"):
         load_journal(str(state_root))
 
 
@@ -352,10 +357,16 @@ def test_load_journal_still_fails_loud_on_real_corruption(tmp_path: Path, mutate
         load_journal(state_root)
 
 
-def test_rewriting_an_adopted_legacy_journal_drops_the_legacy_keys(tmp_path: Path) -> None:
-    """Migration-by-rewrite: the first write_journal after adoption
-    serialises only declared fields, so the nats_* keys disappear and the
-    next load has nothing to ignore."""
+def test_write_journal_serialises_only_declared_fields_over_a_loaded_legacy_journal(
+    tmp_path: Path,
+) -> None:
+    """A UNIT property of write_journal, not a CLI path: a journal loaded
+    from the legacy file and written back contains only declared fields, so
+    the nats_* keys are gone and the next load has nothing to ignore.
+    Neither real CLI path over such a station exercises this -- ADOPT_EXISTING
+    unlinks the journal before the engine writes a fresh one, and
+    NOOP_REUSE_EXISTING never writes it (see
+    tests/native/test_provision_cli.py)."""
 
     import json
 

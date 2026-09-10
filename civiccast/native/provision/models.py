@@ -316,11 +316,14 @@ class ProvisionContext(BaseModel):
     85ffe6c0 "stop provisioning a NATS store or config" with no migration).
     With ``extra="forbid"`` those five keys made a valid, ``phase: complete``
     journal unparseable and halted every upgrade over such a station. The
-    context is now ``extra="ignore"``: unknown keys are dropped at load (and
-    named in one INFO log line by
-    :func:`civiccast.native.provision.journal.load_journal`); nothing here
-    ever reads a field by anything but its declared name, so a stray key has
-    no path to influence provisioning.
+    context is now ``extra="ignore"``: unknown keys are dropped at load and
+    named once per run on the provisioning CLI's stderr (``main()`` in
+    :mod:`civiccast.native.provision.__main__`, via
+    :func:`civiccast.native.provision.journal.ignored_journal_keys`; the
+    INFO line :func:`~civiccast.native.provision.journal.load_journal` also
+    emits reaches nothing in production because the CLI configures no
+    logging). Nothing here ever reads a field by anything but its declared
+    name, so a stray key has no path to influence provisioning.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -379,9 +382,14 @@ class ProvisionJournal(BaseModel):
     missing required fields, and an unknown ``phase`` -- the cases where the
     value genuinely cannot be trusted. ``history`` entries are plain string
     triples, so legacy phase names recorded there (``nats_store_ready``,
-    ``nats_config_written``) load unchanged. A rewrite of an adopted legacy
-    journal (any ``write_journal``) serialises only declared fields, so the
-    legacy keys are dropped on the first write after upgrade.
+    ``nats_config_written``) load unchanged. What becomes of the legacy keys
+    on disk depends on the path the CLI takes over such a station: the
+    ADOPT_EXISTING path clears the journal outright (pre-existing
+    behaviour; the engine then writes a fresh one, history discarded) and
+    the NOOP_REUSE_EXISTING path never writes it, so the file is left
+    exactly as-is, legacy keys included. Either way no legacy key can
+    influence a later run: any ``write_journal`` serialises only declared
+    fields, and any load drops the undeclared ones again.
     """
 
     model_config = ConfigDict(extra="ignore")

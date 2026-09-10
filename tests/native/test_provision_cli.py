@@ -2200,13 +2200,40 @@ def _stage_legacy_august_journal(paths) -> str:
     return raw
 
 
+_LEGACY_NATS_KEYS = (
+    "context.nats_config_path",
+    "context.nats_host",
+    "context.nats_port",
+    "context.nats_store_dir",
+    "context.nats_tls",
+)
+
+
+def _assert_one_ignored_keys_line(err: str, state_root: str) -> None:
+    """Exactly one stderr line reports the ignored legacy keys, naming all
+    five, and it is the CLI's own line (the module logger's INFO line reaches
+    no stream here: main() configures no logging)."""
+
+    lines = [line for line in err.splitlines() if "does not declare" in line]
+    assert len(lines) == 1, err
+    (line,) = lines
+    assert line.startswith("provision note: adopted provisioning journal at "), line
+    assert repr(state_root) in line, line
+    assert "5 field(s)" in line, line
+    assert "not corruption" in line, line
+    for key in _LEGACY_NATS_KEYS:
+        assert key in line, (key, line)
+
+
 def test_main_adopts_a_station_with_a_legacy_august_journal_instead_of_halting(
     tmp_path, capsys, monkeypatch
 ) -> None:
     """Registry credential gone (uninstall/reinstall over preserved
     ProgramData) + PG_VERSION 17 + the August journal -> ADOPT_EXISTING: the
     surviving cluster gets a fresh credential, nothing is re-initialized, no
-    recovery document is written, and the legacy journal is left in place."""
+    recovery document is written, the ignored legacy keys are named ONCE on
+    stderr, and (pre-existing ADOPT_EXISTING behaviour) the prior journal is
+    cleared for the engine's fresh forward run."""
 
     import pathlib
 
@@ -2262,16 +2289,18 @@ def test_main_adopts_a_station_with_a_legacy_august_journal_instead_of_halting(
     # Station data untouched.
     assert (data_dir / "PG_VERSION").read_text(encoding="utf-8") == "17"
     assert (data_dir / "base-marker").read_text(encoding="utf-8") == "station data"
+    # Exactly one stderr line names the five ignored keys -- emitted by main()
+    # after its first load, not by every load_journal call (the probes and the
+    # engine load the same file again).
+    _assert_one_ignored_keys_line(captured.err, paths.state_root)
     # ADOPT_EXISTING clears the prior terminal journal (provisioning-run
     # bookkeeping only, per N-15) so the engine drives a fresh forward run over
-    # the credential-reset cluster; the fake engine here writes none, so the
-    # legacy file is simply gone. Either way no nats_* key survives.
+    # the credential-reset cluster; the faked engine writes none, so the file
+    # is absent afterwards. Pinned: the legacy keys do not "migrate" here --
+    # the whole file (history included) is discarded.
     journal_file = pathlib.Path(paths.state_root) / "provision-journal.json"
-    if journal_file.exists():
-        assert "nats_" not in journal_file.read_text(encoding="utf-8")
-        assert journal_file.read_text(encoding="utf-8") != staged
-    else:
-        assert not journal_file.exists()
+    assert not journal_file.exists(), journal_file.read_text(encoding="utf-8")
+    assert "nats_host" in staged  # the staged file really carried them
 
 
 def test_main_reuses_registry_credential_with_a_legacy_august_journal_present(
@@ -2318,7 +2347,12 @@ def test_main_reuses_registry_credential_with_a_legacy_august_journal_present(
     assert not (pathlib.Path(paths.state_root) / "PROVISION-RECOVERY.md").exists()
     assert migrated, "the reuse path must still bring the schema to head"
     assert (data_dir / "PG_VERSION").read_text(encoding="utf-8") == "17"
+    _assert_one_ignored_keys_line(captured.err, paths.state_root)
+    # NOOP_REUSE_EXISTING never writes the journal: the legacy file is left
+    # exactly as-is, nats_* keys included (they are dropped again on every
+    # load, so they cannot influence a later run).
     on_disk = (pathlib.Path(paths.state_root) / "provision-journal.json").read_text(
         encoding="utf-8"
     )
     assert on_disk == staged
+    assert "nats_host" in on_disk

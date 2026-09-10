@@ -100,7 +100,12 @@ from urllib.parse import urlsplit
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from civiccast.native.pgdata_acl import PgDataAclError
-from civiccast.native.provision.journal import JournalError, journal_path, load_journal
+from civiccast.native.provision.journal import (
+    JournalError,
+    ignored_journal_keys,
+    journal_path,
+    load_journal,
+)
 from civiccast.native.provision.models import (
     ProvisionContext,
     ProvisionJournal,
@@ -911,6 +916,21 @@ def main(argv: list[str] | None = None) -> int:
         )
         return EXIT_UNEXPECTED
     if existing_journal is not None:
+        # beta.5.1: an adopted journal may carry keys this version's models do
+        # not declare (the August 2026 installers' context.nats_*; or a newer
+        # installer's fields on a reinstall over preserved ProgramData).
+        # load_journal drops them; say which ones ONCE per run, here, on
+        # stderr -- the channel the NSIS d4 step captures (this CLI configures
+        # no logging, so load_journal's own INFO line reaches nothing in
+        # production). Not per load: the probes below and run_provision each
+        # load this same file again.
+        ignored = ignored_journal_keys(journal_path(paths.state_root).read_text(encoding="utf-8"))
+        if ignored:
+            sys.stderr.write(
+                f"provision note: adopted provisioning journal at {paths.state_root!r} "
+                f"carries {len(ignored)} field(s) this version does not declare; ignored "
+                f"(legacy or newer-installer keys, not corruption): {', '.join(ignored)}\n"
+            )
         stale_reason = journal_stale_reason(existing_journal, paths=paths)
         if stale_reason is not None:
             sys.stderr.write(

@@ -213,12 +213,19 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   the model with no migration and no tolerance, and the persisted models
   were `extra="forbid"`. `ProvisionJournal`, `ProvisionPlan` and
   `ProvisionContext` (the three structures persisted across installer
-  versions) are now `extra="ignore"`; `load_journal` names every dropped key
-  in one INFO log line (`ignored_journal_keys`), and the first
-  `write_journal` after adoption serialises only declared fields, so the
-  legacy keys migrate away by rewrite. Still fail-loud: invalid JSON, wrong
-  types, missing required fields, an unknown `phase` value. The in-process
-  decision/outcome models (`PostgresClusterDecision`, `DatabaseDecision`,
+  versions) are now `extra="ignore"`. The provisioning CLI names every
+  dropped key once per run on stderr (`provision note: adopted provisioning
+  journal at ... carries 5 field(s) this version does not declare; ignored
+  (legacy or newer-installer keys, not corruption): context.nats_config_path,
+  ...`), the channel the installer's d4 step captures; `load_journal` also
+  logs the same at INFO on its module logger, which the CLI does not
+  configure. The legacy keys do not "migrate away": the adopt path clears
+  the journal outright and the reuse path leaves it as-is; either way no
+  legacy key can influence a later run (`write_journal` serialises only
+  declared fields, every load drops the undeclared ones). Still fail-loud:
+  invalid JSON, wrong types, missing required fields, an unknown `phase`
+  value. The in-process decision/outcome models
+  (`PostgresClusterDecision`, `DatabaseDecision`,
   `ProvisionOutcome`, `ProvisionRecovery`) keep `extra="forbid"`; they are
   never loaded from disk. With the journal readable, the upgrade takes the
   ordinary paths it always had: registry `DatabaseUrl` present ->
@@ -232,7 +239,7 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   `tests/native/test_provision_journal.py` (`..._tolerates_the_august_beta1_nats_context_fields`,
   `..._tolerates_a_genuinely_unknown_future_field`,
   `..._still_fails_loud_on_real_corruption`,
-  `..._rewriting_an_adopted_legacy_journal_drops_the_legacy_keys`),
+  `test_write_journal_serialises_only_declared_fields_over_a_loaded_legacy_journal`),
   `tests/native/test_provision_orchestrator.py::test_legacy_complete_journal_is_adopted_without_touching_the_cluster`,
   and `tests/native/test_provision_cli.py`
   (`test_main_adopts_a_station_with_a_legacy_august_journal_instead_of_halting`,
