@@ -22,7 +22,15 @@ Three fix PRs are being built in parallel; each gets a hostile review, then merg
 - cc-boundary-stop / fix/slate-boundary-relaunch-not-stopped: a finite slate plan reaching EOS relaunches onto the due program instead of STOPPED; STARTING written before prepare; Channels elapsed-time polling. (items 105, 110)
 - cc-portal-live / fix/portal-live-follows-egress-and-hls-truth: resident /api/public/live/current follows egress when an hls sink exists; Channels shows the real HLS URL or says web output is off; local rehearsal HLS preset. (item 104)
 - cc-setup-session / fix/first-setup-recovery-kit-signout-autofill: recovery kit survives navigation until confirmed; Sign out control + route; no browser autofill on first setup. (items 102, 103, 97)
-Not started (beta.6 or later): 106 startup page, 107 state authority, 108 start-without-egress error, 109 sample live source, 111 resident schedule, 112-115 copy/mobile/docs. Full list: Desktop\floatsom\CIVICCAST-BATCH-FIX-LIST-2026-09-03.md items 102-115.
+Not started (beta.6 or later): 106 startup page, 107 state authority, 109 sample live source, 112-115 copy/mobile/docs. Full list: Desktop\floatsom\CIVICCAST-BATCH-FIX-LIST-2026-09-03.md items 102-135.
+
+## Added 10:55 PM from the upgrade-machine walkthrough (Blackwell, 5070 Ti; items 120-135)
+- PR #212 (slate boundary relaunch): review CHANGES (relaunch bypasses the crash-escalation latch; the 30 s cap can never fire because the slate plan is 120 s; STOP race; stale stamp). Round 2 in progress in cc-boundary-stop.
+- cc-setup-auth / fix/setup-api-no-secrets-unauthenticated: CRITICAL item 120 -- /api/setup/storage served the PostgreSQL URL with password unauthenticated; setup endpoints require the staff token after setup. Builder running.
+- cc-honesty / fix/publish-default-portal-and-channel-honesty: Publish defaults to Portal only (121); Channels drops fabricated sample rows (122); Start refuses without egress (123); readiness separates rehearsal result from the gate (124). Builder running.
+- PR #209 round 3 (cc-ownership-claim): the real cause on the Blackwell box was a PRESENT per-user ARP entry for the WSL-era "CivicCast Installer 3.0.0-beta1" (inert), not an Unknown probe; adding a PresentInert -> claim-native rule with a warning and a product-naming refusal. Builder running.
+- PR #211 also carries docs/SOAK-PROMPT.md (overnight soak brief for a station PC). Copies on the USB root and the owner's Desktop.
+- Still open from that report: 125 Live screen has no controls / manual names a missing button; 126 CLI/env-var copy on operator screens; 127 scheduled premiere not visible to residents; 128 media under the SYSTEM profile vs docs saying ProgramData; 129 responsive tables; 130 sign-in UX (recovery confirm, username hint, code format, landing page); 131-135 minor.
 
 ## Done tonight (2026-09-09 to 09-10)
 - Merged: #199 reload/caption-flow (39d852e5), #178 seamless default proof (8920a6c7), #203 live captions OFF by default (508e637a), #204 rollover horizon race (7891109b), #205 manual note + tolerant resolver (148c8d21).
