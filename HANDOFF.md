@@ -1,5 +1,35 @@
 # HANDOFF
 
+## 2026-09-10 post-push / CI checkpoint
+
+Current HEAD (remote PR / CI): `f9b5e1aa71e8860e8fff41c1cb572b80bbbc8e2b`.
+Current branch: `fix/f1-reload-readiness-20260910`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/219 (OPEN).
+Current public tag remains `v1.0.0-beta.5`; no new tag or release was created.
+Main remains `d77b634e3685de8fb077956b8099fc92c3927243`.
+
+Scott approved the branch push and one PR. The first CI cycle completed with
+16 passing, 5 failing and 3 skipped checks. Runs 34530877832 (ci-test) and
+34530877848 (deterministic-detectors) failed. Windows app reproducibility run
+34530877710 passed. Full results: `docs/evidence/f1-local-2026-09-10/CI-RESULT.md`.
+
+The F-1 change omitted four claims-registry blob updates. Both ordinary and
+randomized suites failed 18 policy tests on those bindings; the dependent
+claims verifier also failed. The pre-push all-pass audit missed this and is
+superseded by the finding. A separate Windows launcher-normalization test
+failed after CI's uv selector advanced from 0.12.12 to 0.12.13. The mutation
+baseline failed in a nested process importing instrumented code without its
+configuration; no mutation score was produced.
+
+An independently reviewed, unapplied claims correction is in the task outputs.
+Further local correction/reproduction and any second push await the owner's
+next action. No merge, candidate build, Gate A, soak, service restart or
+publication has occurred. F-2 remains unimplemented; the old beta.6 kit is blocked.
+
+This local documentation checkpoint follows the pushed source; obtain its own
+local SHA with `git rev-parse HEAD`. The remote PR/CI SHA above remains the source
+identity for this cycle. Prior proof anchors remain historical, not new acceptance.
+
 ## 2026-09-10 local F-1 implementation update (pre-push snapshot)
 
 Scott authorized GO following the cold takeover. Active branch:

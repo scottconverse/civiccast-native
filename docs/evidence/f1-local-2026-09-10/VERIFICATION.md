@@ -3,6 +3,11 @@
 Status: independent local implementation review accepted; release acceptance open.
 Recorded 2026-09-10, Mountain time.
 
+Post-push correction: PR #219's first CI cycle is red. The local evidence below
+remains scoped as recorded, but does not establish branch-wide acceptance.
+The pre-push audit missed stale claims-registry bindings. See `CI-RESULT.md`
+for that omission, the two additional CI issues, exact runs and next actions.
+
 ## Source and authority
 
 - Base main: `d77b634e3685de8fb077956b8099fc92c3927243`.

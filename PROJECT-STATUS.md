@@ -1,5 +1,12 @@
 # CivicCast Native — full project status and cold-start handoff
 
+> **2026-09-10 post-push update: PR #219 is open and CI is red.** Owner-authorized
+> push: `f9b5e1aa71e8860e8fff41c1cb572b80bbbc8e2b`. Final checks: 16 passed,
+> 5 failed, 3 skipped. F-1 omitted four claims-registry bindings; Windows launcher
+> normalization and the mutation baseline also failed. Read
+> `docs/evidence/f1-local-2026-09-10/CI-RESULT.md` for exact runs and proposals.
+> No correction or second push has been applied. Main and the old kit are unchanged.
+
 > **2026-09-10 update: F-1 local implementation passed local verification.** Scott
 > authorized GO after the cold takeover. Work is isolated on
 > `fix/f1-reload-readiness-20260910`, based on `d77b634e3685de8fb077956b8099fc92c3927243`.
