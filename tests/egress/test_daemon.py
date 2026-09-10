@@ -5718,20 +5718,68 @@ def _slate_then_program_daemon(
     clock: list[float],
     source_preparer: Callable[[EgressSourcePlan, EgressConfig], SourcePreparationReport]
     | None = None,
+    prepared_plan_release: Callable[[Path], None] | None = None,
+    restart_cooldown_seconds: float = 0.0,
+    slate_plan: Callable[[Path], EgressSourcePlan] = _slate_plan,
+    program_resolves: list[int] | None = None,
 ) -> EgressDaemon:
     """A daemon whose program provider hands out ``program_plan[0]`` (mutable
-    by the test) and whose fallback provider always yields the slate plan."""
+    by the test) and whose fallback provider always yields the slate plan.
+    ``program_resolves`` (a one-element counter) is bumped on every program
+    provider call so a test can pin how many times a tick resolved it."""
+
+    def provide(_channel_id: str) -> EgressSourcePlan | None:
+        if program_resolves is not None:
+            program_resolves[0] += 1
+        return program_plan[0]
 
     return EgressDaemon(
         InMemoryEgressStore(),
         work_dir=tmp_path,
-        source_plan_provider=lambda _channel_id: program_plan[0],
-        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        source_plan_provider=provide,
+        fallback_source_provider=lambda _config: slate_plan(tmp_path),
         ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
         source_preparer=source_preparer,
+        prepared_plan_release=prepared_plan_release,
         monotonic=lambda: clock[0],
-        restart_cooldown_seconds=0.0,
+        restart_cooldown_seconds=restart_cooldown_seconds,
     )
+
+
+def _realistic_slate_plan(tmp_path: Path) -> EgressSourcePlan:
+    """A fallback plan of the length the real bulletin filler actually mints:
+    ``BulletinFillerSourceGenerator._plan_with_cycle`` caps a plan at
+    ``MAX_PLAYLIST_SUBCHAINS`` (12) sub-chains of ``_SLIDE_SECONDS`` (10s)
+    -- 120s -- so a boundary that keeps failing recurs every ~2 minutes,
+    never inside a 30s window (round-2 hostile review, item 2)."""
+    from civiccast.egress.bulletin_filler import _SLIDE_SECONDS
+    from civiccast.egress.models import MAX_PLAYLIST_SUBCHAINS
+
+    source = tmp_path / "slate.ts"
+    source.write_text("slate", encoding="utf-8")
+    segment = EgressSourceSegment(
+        label="Fallback slate",
+        path=str(source),
+        duration_seconds=_SLIDE_SECONDS,
+        source_ref="civiccast-slate",
+    )
+    plan = EgressSourcePlan(channel_id="gov", segments=[segment] * MAX_PLAYLIST_SUBCHAINS)
+    assert sum(s.duration_seconds for s in plan.segments) == 120
+    return plan
+
+
+def _record_state_rows(store: InMemoryEgressStore) -> list[tuple[str, str | None]]:
+    """Spy on ``store.write_state`` -- the store keeps only the latest row, but
+    the ORDER of (state, label) writes is what the STARTING-label tests pin."""
+    rows: list[tuple[str, str | None]] = []
+    original = store.write_state
+
+    def spy(row: EgressStateRow) -> None:
+        rows.append((row.state, row.current_source_label))
+        original(row)
+
+    store.write_state = spy  # type: ignore[method-assign]
+    return rows
 
 
 def test_slate_eos_with_a_due_program_relaunches_instead_of_stopping(tmp_path: Path) -> None:
@@ -5739,22 +5787,42 @@ def test_slate_eos_with_a_due_program_relaunches_instead_of_stopping(tmp_path: P
     finite to the next due item), no reload is pending (the automation's
     reload prepare was still running), and the program provider now yields
     the due program -- the channel must go ON_AIR on that program, not
-    STOPPED, with the slate->program transition recorded."""
+    STOPPED, with the slate->program transition recorded.
+
+    Round-2 hostile review: also pins that the exited slate's prepared plan
+    directory is released on this path (item 7), that the program plan is
+    resolved ONCE on the relaunch tick and threaded into ``_start`` rather
+    than re-resolved (item 6), and that the program's label survives every
+    STARTING rewrite through to TRANSITIONING (item 5)."""
     program_plan: list[EgressSourcePlan | None] = [None]
     processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
     started: list[_FakeProcess] = []
     clock = [1000.0]
+    counter = {"n": 0}
+    released: list[Path] = []
+    program_resolves = [0]
     daemon = _slate_then_program_daemon(
-        tmp_path, program_plan=program_plan, processes=processes, started=started, clock=clock
+        tmp_path,
+        program_plan=program_plan,
+        processes=processes,
+        started=started,
+        clock=clock,
+        source_preparer=_prepare_with_tracked_plan_dirs(tmp_path, counter),
+        prepared_plan_release=released.append,
+        program_resolves=program_resolves,
     )
     store = daemon._store  # type: ignore[attr-defined]
     store.upsert_config(_config())
     store.enqueue_command(_command())
     daemon.process_once("gov")  # nothing due -> FALLBACK_SLATE (process 111)
     assert store.read_state("gov").state == "FALLBACK_SLATE"
+    active_dir = daemon._active_prepared_plan_dir.get("gov")  # type: ignore[attr-defined]
+    assert active_dir is not None and active_dir not in released
 
     program_plan[0] = _source_plan_with_label(tmp_path, "Council meeting")  # now due
     started[0].returncode = 0  # the finite slate plan reached EOS
+    rows = _record_state_rows(store)
+    program_resolves[0] = 0
     daemon.process_once("gov")
 
     state = store.read_state("gov")
@@ -5765,6 +5833,18 @@ def test_slate_eos_with_a_due_program_relaunches_instead_of_stopping(tmp_path: P
     transition = store.recent_proof_events("gov", 1)[0]
     assert "exited fallback slate" in transition.machine_summary
     assert store.recent_health("gov", 1)[0].state == "ON_AIR"
+    assert active_dir in released  # item 7: the slate's plan dir is reclaimed
+    assert program_resolves[0] == 1  # item 6: probed once, threaded into _start
+    # Item 5: once the program plan is known, every STARTING rewrite and the
+    # TRANSITIONING row carry its label -- no row in between says None.
+    assert rows[0] == ("STARTING", "Fallback slate")  # the relaunch's pid-clearing write
+    assert rows[1:] == [
+        ("STARTING", "Council meeting"),  # before prepare
+        ("STARTING", "Council meeting"),  # after prepare, before the encoder starts
+        ("TRANSITIONING", "Council meeting"),
+        ("ON_AIR", "Council meeting"),  # written before the encoder spawns (pid None)
+        ("ON_AIR", "Council meeting"),  # and again with the pid
+    ]
 
 
 def test_slate_eos_with_nothing_due_still_stops(tmp_path: Path) -> None:
@@ -5795,9 +5875,9 @@ def test_slate_eos_with_nothing_due_still_stops(tmp_path: Path) -> None:
 def test_slate_eos_relaunch_is_capped_to_one_per_boundary(tmp_path: Path) -> None:
     """The program plan resolves but its prepare keeps failing, so ``_start``
     falls straight back to a (finite) slate that ends at once. The first slate
-    EOS relaunches; the second inside the 30s window must NOT relaunch again
-    -- STOPPED with a last_error saying why -- and once the window has
-    passed a fresh boundary gets its one relaunch again."""
+    EOS relaunches; the second consecutive one must NOT relaunch again --
+    STOPPED with a last_error saying why -- and an operator start afterwards
+    resets the count so a fresh boundary gets its one relaunch again."""
     program_plan: list[EgressSourcePlan | None] = [None]
     processes = [_FakeProcess(pid=pid) for pid in (111, 222, 333)]
     started: list[_FakeProcess] = []
@@ -5923,6 +6003,7 @@ def test_start_writes_starting_with_the_target_label_before_source_preparation(
         source_preparer=prepare,
         ffmpeg_starter=lambda _args: _FakeProcess(pid=111),
     )
+    rows = _record_state_rows(store)
     daemon.process_once("gov")
 
     assert len(seen_at_prepare) == 1
@@ -5934,6 +6015,11 @@ def test_start_writes_starting_with_the_target_label_before_source_preparation(
     final = store.read_state("gov")
     assert final.state == "ON_AIR"
     assert final.pid == 111
+    # Round-2 hostile review, item 5: the post-prepare STARTING rewrite used
+    # to drop the label (``_write_state`` replaces the row) -- every STARTING
+    # row this start wrote carries it.
+    starting_rows = [label for state, label in rows if state == "STARTING"]
+    assert starting_rows == ["Council meeting", "Council meeting"]
 
 
 def test_start_leaves_the_early_slate_flip_state_in_place_during_preparation(
@@ -5967,3 +6053,406 @@ def test_start_leaves_the_early_slate_flip_state_in_place_during_preparation(
     assert row.state == "FALLBACK_SLATE"
     assert "No valid source plan" in (row.last_error or "")
     assert store.read_state("gov").state == "FALLBACK_SLATE"
+
+
+# ---------------------------------------------------------------------------
+# Round-2 hostile review of the slate-EOS relaunch (PR #212).
+# ---------------------------------------------------------------------------
+
+
+def test_persistently_unplayable_program_stops_after_the_cap_and_does_not_flap(
+    tmp_path: Path,
+) -> None:
+    """Item 2 (HIGH). The real bulletin filler mints a slate plan of at most
+    120s (``_realistic_slate_plan``), so the first-round 30s time window
+    could never refuse anything: a program whose prepare always fails would
+    have flapped slate -> relaunch -> slate every ~2 minutes forever. With
+    the cap a COUNT of consecutive automatic relaunches, the channel gets
+    exactly one, then STOPPED with the operator-facing last_error, and stays
+    STOPPED across further ticks (no third worker, no more prepares)."""
+    program_plan: list[EgressSourcePlan | None] = [None]
+    processes = [_FakeProcess(pid=pid) for pid in (111, 222, 333, 444)]
+    started: list[_FakeProcess] = []
+    clock = [1000.0]
+    prepares: list[str] = []
+
+    def prepare(source_plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
+        prepares.append(source_plan.segments[0].label)
+        if source_plan.segments[0].label != "Fallback slate":
+            raise SourcePrepareError("conform failed: unsupported codec")
+        return SourcePreparationReport(source_plan=source_plan, records=())
+
+    daemon = _slate_then_program_daemon(
+        tmp_path,
+        program_plan=program_plan,
+        processes=processes,
+        started=started,
+        clock=clock,
+        source_preparer=prepare,
+        slate_plan=_realistic_slate_plan,
+    )
+    store = daemon._store  # type: ignore[attr-defined]
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    daemon.process_once("gov")  # FALLBACK_SLATE (111), a 120s plan
+    program_plan[0] = _source_plan_with_label(tmp_path, "Council meeting")
+
+    started[0].returncode = 0  # the 120s slate reached EOS
+    clock[0] += 120.0
+    daemon.process_once("gov")  # one automatic relaunch -> program prepare fails -> slate 222
+    state = store.read_state("gov")
+    assert state.state == "FALLBACK_SLATE"
+    assert state.pid == 222
+    # (_start's prepare-failure fallback airs the slate plan as-is; the
+    # slate is not re-prepared on that branch.)
+    assert prepares == ["Fallback slate", "Council meeting"]
+
+    started[1].returncode = 0  # 120s later the renewed slate reaches EOS again
+    clock[0] += 120.0
+    daemon.process_once("gov")
+    state = store.read_state("gov")
+    assert state.state == "STOPPED"
+    assert "stopped instead of looping" in (state.last_error or "")
+    assert "Check the program's media" in (state.last_error or "")
+    assert [p.pid for p in started] == [111, 222]
+
+    # And it STAYS stopped: no flap, no further plan resolves or prepares.
+    for _ in range(3):
+        clock[0] += 120.0
+        daemon.process_once("gov")
+    assert store.read_state("gov").state == "STOPPED"
+    assert [p.pid for p in started] == [111, 222]
+    assert prepares == ["Fallback slate", "Council meeting"]
+
+
+def test_a_program_that_holds_healthy_air_resets_the_slate_eos_relaunch_count(
+    tmp_path: Path,
+) -> None:
+    """Item 2: the counter clears once a REAL program airing (ON_AIR, not the
+    slate) holds observed on-air evidence for the healthy-uptime window, so
+    a later boundary gets its own relaunch again. A FALLBACK_SLATE worker
+    holding the same uptime must NOT clear it (that is the flap the cap
+    bounds)."""
+    program_plan: list[EgressSourcePlan | None] = [None]
+    processes = [_FakeProcess(pid=pid) for pid in (111, 222, 333, 444)]
+    started: list[_FakeProcess] = []
+    clock = [1000.0]
+    daemon = _slate_then_program_daemon(
+        tmp_path, program_plan=program_plan, processes=processes, started=started, clock=clock
+    )
+    store = daemon._store  # type: ignore[attr-defined]
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    daemon.process_once("gov")  # FALLBACK_SLATE (111)
+
+    # The slate itself holds healthy uptime: streak bookkeeping may reset,
+    # the slate-EOS counter must not (it is 0 here anyway; pin the rule with a
+    # seeded count).
+    daemon._slate_eos_relaunches["gov"] = 1  # type: ignore[attr-defined]
+    log_path = daemon._stderr_logs["gov"]  # type: ignore[attr-defined]
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text("frame=100 fps=30.0 bitrate=6000.0kbits/s\n", encoding="utf-8")
+    clock[0] += 1.0
+    daemon.process_once("gov")  # evidence latched
+    clock[0] += 65.0
+    daemon.process_once("gov")  # healthy slate uptime
+    assert store.read_state("gov").state == "FALLBACK_SLATE"
+    assert daemon._slate_eos_relaunches.get("gov") == 1  # type: ignore[attr-defined]
+    daemon._slate_eos_relaunches.pop("gov")  # type: ignore[attr-defined]
+
+    program_plan[0] = _source_plan_with_label(tmp_path, "Council meeting")
+    started[0].returncode = 0
+    daemon.process_once("gov")  # relaunch #1 -> ON_AIR (222), count 1
+    assert store.read_state("gov").state == "ON_AIR"
+    assert daemon._slate_eos_relaunches.get("gov") == 1  # type: ignore[attr-defined]
+
+    # The program holds real on-air evidence for the healthy window (appended
+    # past THIS worker's spawn offset -- the evidence gate is anchored there).
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write("frame=200 fps=30.0 bitrate=6000.0kbits/s\n")
+    clock[0] += 1.0
+    daemon.process_once("gov")
+    clock[0] += 65.0
+    daemon.process_once("gov")
+    assert store.read_state("gov").state == "ON_AIR"
+    assert "gov" not in daemon._slate_eos_relaunches  # type: ignore[attr-defined]
+
+    # The program ends cleanly -> STOPPED as before; an operator start with
+    # nothing due lands on slate; that slate's EOS gets its own relaunch.
+    started[1].returncode = 0
+    program_plan[0] = None
+    daemon.process_once("gov")
+    assert store.read_state("gov").state == "STOPPED"
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="start",
+            issued_at=datetime(2026, 6, 5, 13, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-restart",
+        )
+    )
+    daemon.process_once("gov")  # FALLBACK_SLATE (333)
+    program_plan[0] = _source_plan_with_label(tmp_path, "Council meeting")
+    started[2].returncode = 0
+    daemon.process_once("gov")
+    assert store.read_state("gov").state == "ON_AIR"
+    assert store.read_state("gov").pid == 444
+
+
+def test_slate_eos_after_a_crash_looped_live_source_renews_the_slate_not_the_source(
+    tmp_path: Path,
+) -> None:
+    """Item 1 (HIGH). A live source that crash-looped past
+    ``_LIVE_SOURCE_FAILURE_FALLBACK_STREAK`` parked the channel on the slate
+    (streak stays at the threshold, latched). When that finite slate reaches
+    EOS the relaunch must NOT go straight back onto the dead source (the
+    reviewer's probe: state ON_AIR pid 106 "Live: Council chamber", streak
+    still 5): it renews the slate through ``force_fallback_slate``, and a
+    slate renewal does not count toward the relaunch cap (it is the B1
+    terminal state that replaces dead air)."""
+    from civiccast.egress.daemon import _LIVE_SOURCE_FAILURE_FALLBACK_STREAK
+
+    n = _LIVE_SOURCE_FAILURE_FALLBACK_STREAK
+    program_plan: list[EgressSourcePlan | None] = [_live_source_plan(tmp_path)]
+    processes = [_FakeProcess(pid=100 + i) for i in range(n + 4)]
+    started: list[_FakeProcess] = []
+    clock = [1000.0]
+    program_resolves = [0]
+    daemon = _slate_then_program_daemon(
+        tmp_path,
+        program_plan=program_plan,
+        processes=processes,
+        started=started,
+        clock=clock,
+        program_resolves=program_resolves,
+    )
+    store = daemon._store  # type: ignore[attr-defined]
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    daemon.process_once("gov")  # ON_AIR on the live source (100)
+    for _ in range(n):
+        started[-1].returncode = 1  # the live source drops every time
+        daemon.process_once("gov")
+    state = store.read_state("gov")
+    assert state.state == "FALLBACK_SLATE"
+    assert daemon._restart_streak.get("gov") == n  # type: ignore[attr-defined]
+    slate_pid = state.pid
+
+    program_resolves[0] = 0
+    started[-1].returncode = 0  # the finite slate reaches EOS
+    clock[0] += 120.0
+    daemon.process_once("gov")
+    state = store.read_state("gov")
+    assert state.state == "FALLBACK_SLATE"  # renewed, not the dead source
+    assert state.current_source_label == "Fallback slate"
+    assert state.pid == slate_pid + 1
+    assert "renewed rather than retrying the failed source" in (state.last_error or "")
+    assert program_resolves[0] == 0  # the dead source was not even asked for
+    assert daemon._restart_streak.get("gov") == n  # type: ignore[attr-defined]
+    assert "gov" not in daemon._slate_eos_relaunches  # type: ignore[attr-defined]
+
+    # Renewals keep the station on slate for as long as the source stays dead.
+    started[-1].returncode = 0
+    clock[0] += 120.0
+    daemon.process_once("gov")
+    state = store.read_state("gov")
+    assert state.state == "FALLBACK_SLATE"
+    assert state.pid == slate_pid + 2
+
+
+def test_slate_eos_inside_the_restart_cooldown_defers_through_the_backoff_path(
+    tmp_path: Path,
+) -> None:
+    """Item 1 (HIGH), the latch half: the relaunch honours
+    ``_restart_latch.should_run_now`` like ``_relaunch_after_crash`` does. A
+    slate that ends inside the cooldown a crash-relaunch just armed is
+    deferred (STARTING, ``_backoff_relaunch`` armed, no new worker) and
+    fires from ``_service_backoff_relaunch`` once the latch permits."""
+    program_plan: list[EgressSourcePlan | None] = [
+        _source_plan_with_label(tmp_path, "Council meeting")
+    ]
+    processes = [_FakeProcess(pid=pid) for pid in (111, 222, 333)]
+    started: list[_FakeProcess] = []
+    clock = [1000.0]
+    daemon = _slate_then_program_daemon(
+        tmp_path,
+        program_plan=program_plan,
+        processes=processes,
+        started=started,
+        clock=clock,
+        restart_cooldown_seconds=15.0,
+    )
+    store = daemon._store  # type: ignore[attr-defined]
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    daemon.process_once("gov")  # ON_AIR (111)
+    started[0].returncode = 1
+    daemon.process_once("gov")  # crash 1 -> immediate relaunch (222), latch armed 15s
+    assert store.read_state("gov").pid == 222
+    # Park the relaunched worker on the slate (as a source that fell back
+    # would be) so its clean exit is a slate EOS.
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="FALLBACK_SLATE",
+            current_source_label="Fallback slate",
+            current_proof_event_id=None,
+            updated_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+            pid=222,
+        )
+    )
+
+    started[1].returncode = 0  # slate EOS 5s after the crash relaunch
+    clock[0] += 5.0
+    daemon.process_once("gov")
+    state = store.read_state("gov")
+    assert state.state == "STARTING"
+    assert state.pid is None
+    assert "inside the crash-relaunch cooldown" in (state.last_error or "")
+    assert "gov" in daemon._backoff_relaunch  # type: ignore[attr-defined]
+    assert [p.pid for p in started] == [111, 222]  # nothing spawned yet
+    assert store.recent_health("gov", 1)[0].state == "STARTING"
+
+    clock[0] += 15.0  # past the cooldown: the deferred relaunch fires
+    daemon.process_once("gov")
+    state = store.read_state("gov")
+    assert state.state == "ON_AIR"
+    assert state.pid == 333
+    assert "gov" not in daemon._backoff_relaunch  # type: ignore[attr-defined]
+
+
+@pytest.mark.parametrize("action", ["stop", "drain"])
+def test_slate_eos_with_a_queued_operator_stop_does_not_relaunch(
+    tmp_path: Path, action: str
+) -> None:
+    """Item 3 (MEDIUM). ``process_once`` polls BEFORE it drains commands; a
+    Stop queued while the slate was ending used to lose the race -- the
+    relaunch spawned a worker (pids [111, 222] in the reviewer's probe) that
+    the Stop then killed, after waiting behind the relaunch's cold prepare.
+    The relaunch now peeks the queue and steps aside for a stop or drain."""
+    program_plan: list[EgressSourcePlan | None] = [None]
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    clock = [1000.0]
+    prepares: list[str] = []
+
+    def prepare(source_plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
+        prepares.append(source_plan.segments[0].label)
+        return SourcePreparationReport(source_plan=source_plan, records=())
+
+    daemon = _slate_then_program_daemon(
+        tmp_path,
+        program_plan=program_plan,
+        processes=processes,
+        started=started,
+        clock=clock,
+        source_preparer=prepare,
+    )
+    store = daemon._store  # type: ignore[attr-defined]
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    daemon.process_once("gov")  # FALLBACK_SLATE (111)
+    program_plan[0] = _source_plan_with_label(tmp_path, "Council meeting")
+
+    store.enqueue_command(_command(action))  # queued, not yet drained
+    started[0].returncode = 0  # the slate reaches EOS in the same tick
+    daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state.state == "STOPPED"
+    assert state.last_error is None
+    assert [p.pid for p in started] == [111]  # no worker the stop had to kill
+    assert prepares == ["Fallback slate"]  # no cold prepare ahead of the stop
+    assert store.peek_pending_commands("gov") == []  # the command was drained
+
+
+def test_stop_and_reset_restart_tracking_clear_the_slate_eos_relaunch_count(
+    tmp_path: Path,
+) -> None:
+    """Item 4 (MEDIUM). The count must not outlive an operator stop or any
+    other route through ``_reset_restart_tracking`` (clean exit, terminal
+    error, healthy ON_AIR uptime)."""
+    program_plan: list[EgressSourcePlan | None] = [None]
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    clock = [1000.0]
+    daemon = _slate_then_program_daemon(
+        tmp_path, program_plan=program_plan, processes=processes, started=started, clock=clock
+    )
+    store = daemon._store  # type: ignore[attr-defined]
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    daemon.process_once("gov")  # FALLBACK_SLATE (111)
+    program_plan[0] = _source_plan_with_label(tmp_path, "Council meeting")
+    started[0].returncode = 0
+    daemon.process_once("gov")  # relaunch #1 -> ON_AIR (222)
+    assert daemon._slate_eos_relaunches.get("gov") == 1  # type: ignore[attr-defined]
+
+    store.enqueue_command(_command("stop"))
+    daemon.process_once("gov")  # _stop -> _reset_restart_tracking
+    assert store.read_state("gov").state == "STOPPED"
+    assert "gov" not in daemon._slate_eos_relaunches  # type: ignore[attr-defined]
+
+    daemon._slate_eos_relaunches["gov"] = 1  # type: ignore[attr-defined]
+    daemon._reset_restart_tracking("gov")  # type: ignore[attr-defined]
+    assert "gov" not in daemon._slate_eos_relaunches  # type: ignore[attr-defined]
+
+    # The healthy-uptime caller keeps it while the channel is on the slate.
+    daemon._slate_eos_relaunches["gov"] = 1  # type: ignore[attr-defined]
+    daemon._reset_restart_tracking("gov", slate_eos_relaunches=False)  # type: ignore[attr-defined]
+    assert daemon._slate_eos_relaunches.get("gov") == 1  # type: ignore[attr-defined]
+
+
+def test_operator_start_clears_the_slate_eos_relaunch_count(tmp_path: Path) -> None:
+    """Item 2/4: an operator start is a fresh intent -- the cap starts over
+    even when the count was left behind by a relaunch whose program never
+    held healthy air."""
+    program_plan: list[EgressSourcePlan | None] = [None]
+    processes = [_FakeProcess(pid=pid) for pid in (111, 222, 333)]
+    started: list[_FakeProcess] = []
+    clock = [1000.0]
+    daemon = _slate_then_program_daemon(
+        tmp_path, program_plan=program_plan, processes=processes, started=started, clock=clock
+    )
+    store = daemon._store  # type: ignore[attr-defined]
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    daemon.process_once("gov")  # FALLBACK_SLATE (111)
+    program_plan[0] = _source_plan_with_label(tmp_path, "Council meeting")
+    started[0].returncode = 0
+    daemon.process_once("gov")  # relaunch #1 -> ON_AIR (222)
+    assert daemon._slate_eos_relaunches.get("gov") == 1  # type: ignore[attr-defined]
+
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="start",
+            issued_at=datetime(2026, 6, 5, 13, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-restart",
+        )
+    )
+    daemon.process_once("gov")  # the worker is alive: start is a no-op ON_AIR rewrite
+    assert store.read_state("gov").pid == 222
+    assert "gov" not in daemon._slate_eos_relaunches  # type: ignore[attr-defined]
+
+
+def test_peek_pending_commands_does_not_consume(tmp_path: Path) -> None:
+    """The store seam item 3 relies on: peeking returns the same ordered
+    commands ``pop_pending_commands`` will, without marking them consumed."""
+    store = InMemoryEgressStore()
+    later = EgressCommand(
+        channel_id="gov",
+        action="stop",
+        issued_at=datetime(2026, 6, 5, 12, 1, tzinfo=UTC),
+        issued_by="operator",
+        command_id="cmd-later",
+    )
+    store.enqueue_command(later)
+    store.enqueue_command(_command("start"))
+    assert [c.command_id for c in store.peek_pending_commands("gov")] == ["cmd-start", "cmd-later"]
+    assert [c.command_id for c in store.peek_pending_commands("gov")] == ["cmd-start", "cmd-later"]
+    assert store.peek_pending_commands("other") == []
+    assert [c.command_id for c in store.pop_pending_commands("gov")] == ["cmd-start", "cmd-later"]
+    assert store.peek_pending_commands("gov") == []

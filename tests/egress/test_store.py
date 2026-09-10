@@ -262,9 +262,16 @@ def test_postgres_egress_store_commands_are_idempotent_and_consumed(
     store.enqueue_command(earlier)
     store.enqueue_command(earlier)
 
+    # PR #212 round 2: peeking reports the same ordered queue without
+    # consuming it (the daemon's slate-EOS relaunch yields to a queued stop).
+    assert [cmd.command_id for cmd in store.peek_pending_commands("gov")] == ["cmd-1", "cmd-2"]
+    assert [cmd.command_id for cmd in store.peek_pending_commands("gov")] == ["cmd-1", "cmd-2"]
+    assert store.peek_pending_commands("other") == []
+
     popped = store.pop_pending_commands("gov")
 
     assert [cmd.command_id for cmd in popped] == ["cmd-1", "cmd-2"]
+    assert store.peek_pending_commands("gov") == []
     assert store.pop_pending_commands("gov") == []
     store.enqueue_command(earlier)
     assert store.pop_pending_commands("gov") == []
