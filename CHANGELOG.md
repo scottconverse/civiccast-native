@@ -159,6 +159,55 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   (pre-existing gap) and would then count the boundary as an unplanned pid
   change.
 
+- **The first-setup recovery kit no longer vanishes before it is saved.**
+  beta.5 clean-machine walkthrough (2026-09-09): the one-time kit disappeared
+  within seconds of appearing, before Save/Print, and the next paint said
+  "Recovery kit never confirmed". The kit lived only in `SetupScreen` React
+  state, the server never re-serves the codes, and any unmount of the screen
+  (a Sidebar click, the shell's missing-session bounce to `/setup`, a reload
+  -- the `beforeunload` guard covered only reload/close) lost it for good.
+  The setup response (codes included) and the admin password the kit prints
+  are now persisted in tab-scoped `sessionStorage`
+  (`civiccast/apps/portal-operator/src/auth/recoveryKitGate.ts`) the moment
+  first-admin setup succeeds and cleared only when the acknowledge call
+  succeeds (or the station reports the kit already confirmed, or the station
+  was reset after the kit was stored). `SetupScreen` rehydrates it on mount;
+  while a kit is pending the shell bounces every other route back to
+  `/setup`, the Sidebar renders every destination disabled with the reason
+  as its title, and Sign out is held. An acknowledge that fails 401 releases
+  the gate so the sign-in card's own "Recovery kit never confirmed" reminder
+  takes over instead of trapping the operator.
+- **The operator console has a Sign out.** The `OperatorBadge` was display-
+  only; the only ways to end a session were 20 more sign-ins elsewhere or
+  "Sign out other sessions" from a *different* browser. New
+  `POST /api/staff/auth/sign-out` (`civiccast/auth/router.py`) revokes
+  exactly the calling session -- a station operator-console token is removed
+  from `operator_console.tokens` (`revoke_operator_session`, the mirror of
+  `revoke_other_operator_sessions`), a lifecycle-store token is revoked
+  through the store with an audit event, and an env-configured
+  `CIVICCAST_STAFF_TOKENS` token reports `session_revoked=false` because it
+  has no server-side record. The TopBar **Sign out** button POSTs it with
+  the stored token, then always forgets the token, drops the cached
+  identity, and lands on `/setup` -- even when the station is unreachable.
+  `/login` and `/sign-in` already redirected to `/setup`.
+- **Browser autofill can no longer paint a saved credential into First
+  Setup or account recovery.** Chrome filled a previously saved username and
+  a masked password into the first-admin form on a clean machine (and the
+  owner locked himself out the same way on 2026-09-09), so the station's
+  only admin was created with credentials nobody had typed. The first-admin
+  form and the recovery form now carry `autocomplete="off"`, both password
+  fields on each carry `autocomplete="new-password"`, the recovery code is
+  `one-time-code`, and the first-admin credential fields use deliberately
+  non-guessable `id`/`name` values (`first-setup-admin-handle`,
+  `first-setup-admin-key-phrase`, `-confirm`) that match none of the
+  name/id autofill heuristics; the Station name and Admin display name
+  fields carry `autocomplete="off"` too, so Chrome's address autofill
+  cannot paint an organisation or person name into them. The routine Admin sign-in form is
+  the one place a saved credential belongs and is marked
+  `username`/`current-password`. The confirm-password check is unchanged.
+  Playwright specs that targeted `#admin_password`/`#confirm_password` were
+  updated to the new ids.
+
 
 ### Security
 
