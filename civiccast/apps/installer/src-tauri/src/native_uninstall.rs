@@ -421,31 +421,46 @@ where
 }
 
 #[cfg(target_os = "windows")]
-fn probe_wsl_arp_view(access: u32) -> OtherProductState {
+pub(crate) fn probe_wsl_arp() -> OtherProductState {
+    probe_wsl_arp_observed().0
+}
+
+/// [`probe_wsl_arp`] with every individual registry observation it made
+/// kept alongside the combined verdict, so a caller that has to explain a
+/// refusal (the install-time ownership claim) can name the hive, view, error
+/// kind and raw error code instead of the bare word `Unknown`.
+///
+/// Field defect (beta.5, 2026-09-09): an elevated install on a machine with
+/// uninstall history got `Unknown` back from this probe, refused to claim
+/// ownership, and the only line naming WHY went to stderr -> the NSIS
+/// details pane -> nowhere. A non-elevated mirror of the probe read
+/// NotFound everywhere, so the failing observation was never identified.
+#[cfg(target_os = "windows")]
+fn probe_wsl_arp_observed() -> (OtherProductState, Vec<ProbeObservation>) {
+    const SOURCE: &str = "user-ARP";
+    let mut observations = Vec::new();
+
+    // Same-user, un-elevated case: both HKCU ARP views must agree Absent
+    // before we trust it; any denied/broken view is Unknown and blocks.
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    match hkcu.open_subkey_with_flags(WSL_ARP_KEY, KEY_READ | access) {
-        Ok(_) => OtherProductState::Present,
-        Err(error) => classify_registry_error(&error),
+    for (view, access) in [("64-bit", KEY_WOW64_64KEY), ("32-bit", KEY_WOW64_32KEY)] {
+        observations.push(observe_registry_open(
+            SOURCE,
+            "HKCU".to_string(),
+            view,
+            &hkcu,
+            WSL_ARP_KEY,
+            KEY_READ | access,
+        ));
     }
-}
-
-/// Probe one WOW64 view of the WSL ARP key under an arbitrary root (used for
-/// `HKEY_USERS\<SID>` roots; `subkey_prefix` is the SID subkey name).
-#[cfg(target_os = "windows")]
-fn probe_wsl_arp_view_under(root: &RegKey, subkey_prefix: &str, access: u32) -> OtherProductState {
-    let path = format!("{subkey_prefix}\\{WSL_ARP_KEY}");
-    match root.open_subkey_with_flags(&path, KEY_READ | access) {
-        Ok(_) => OtherProductState::Present,
-        Err(error) => classify_registry_error(&error),
+    let hkcu_state = combine_probe_results(observations.iter().map(|o| o.state));
+    if hkcu_state == OtherProductState::Present {
+        return (OtherProductState::Present, observations);
     }
-}
 
-/// Enumerate every other *loaded* user hive under `HKEY_USERS` and probe
-/// each (both WOW64 views) for the WSL ARP entry. See the module doc-comment
-/// and [`WSL_ARP_PROBE_LOADED_HIVES_ONLY`] for the loaded-hives-only
-/// limitation this intentionally does not solve.
-#[cfg(target_os = "windows")]
-fn probe_wsl_arp_hkey_users() -> OtherProductState {
+    // Elevated per-machine case: HKCU is the elevating admin's hive, so also
+    // check every other loaded user hive via HKEY_USERS (see module
+    // doc-comment for the loaded-hives-only limitation this does not solve).
     let hkey_users = RegKey::predef(HKEY_USERS);
     let names: Vec<String> = match hkey_users
         .enum_keys()
@@ -454,39 +469,479 @@ fn probe_wsl_arp_hkey_users() -> OtherProductState {
         Ok(names) => names,
         // Enumeration itself failing (e.g. access denied) must fail closed:
         // it means we cannot rule out another loaded user owning WSL.
-        Err(_) => return OtherProductState::Unknown,
+        Err(error) => {
+            observations.push(ProbeObservation::from_registry_error(
+                SOURCE,
+                "HKU (hive enumeration)".to_string(),
+                "n/a",
+                &error,
+            ));
+            return (OtherProductState::Unknown, observations);
+        }
     };
-
-    combine_probe_results(
-        names
-            .into_iter()
-            .filter(|name| !should_skip_users_subkey(name))
-            .flat_map(|name| {
-                [
-                    probe_wsl_arp_view_under(&hkey_users, &name, KEY_WOW64_64KEY),
-                    probe_wsl_arp_view_under(&hkey_users, &name, KEY_WOW64_32KEY),
-                ]
-            }),
-    )
+    for name in names
+        .into_iter()
+        .filter(|name| !should_skip_users_subkey(name))
+    {
+        for (view, access) in [("64-bit", KEY_WOW64_64KEY), ("32-bit", KEY_WOW64_32KEY)] {
+            observations.push(observe_registry_open(
+                SOURCE,
+                format!("HKU\\{name}"),
+                view,
+                &hkey_users,
+                &format!("{name}\\{WSL_ARP_KEY}"),
+                KEY_READ | access,
+            ));
+        }
+    }
+    let state = combine_probe_results(observations.iter().map(|o| o.state));
+    (state, observations)
 }
 
-#[cfg(target_os = "windows")]
-pub(crate) fn probe_wsl_arp() -> OtherProductState {
-    // Same-user, un-elevated case: both HKCU ARP views must agree Absent
-    // before we trust it; any denied/broken view is Unknown and blocks.
-    let hkcu_state = combine_probe_results([
-        probe_wsl_arp_view(KEY_WOW64_64KEY),
-        probe_wsl_arp_view(KEY_WOW64_32KEY),
-    ]);
-    if hkcu_state == OtherProductState::Present {
-        return OtherProductState::Present;
+// ---------------------------------------------------------------------------
+// Install-time runtime-ownership evidence
+// ---------------------------------------------------------------------------
+
+/// The CivicCast WSL distro's registered `DistributionName`. MUST equal
+/// `civiccast.native.runtime_guard.WSL_DISTRO_NAME`; pinned cross-language
+/// by `tests/policy/test_native_installer_identity.py`.
+pub const WSL_DISTRO_NAME: &str = "CivicCast-Ubuntu-24.04";
+/// Per-user WSL distro registration subtree (relative to a loaded
+/// `HKEY_USERS\<SID>` hive). MUST equal
+/// `civiccast.native.win_probes.WSL_LXSS_KEY_PATH`.
+pub const WSL_LXSS_KEY_PATH: &str = r"Software\Microsoft\Windows\CurrentVersion\Lxss";
+/// Service names `sc query` is asked about, in order (modern, then legacy).
+/// MUST equal `civiccast.native.win_probes.WSL_SERVICE_NAMES`.
+pub const WSL_SERVICE_NAMES: [&str; 2] = ["WslService", "LxssManager"];
+/// Win32 `ERROR_SERVICE_DOES_NOT_EXIST`: the ONE `sc query` exit code that
+/// definitively means "no such service".
+pub const ERROR_SERVICE_DOES_NOT_EXIST: i32 = 1060;
+
+/// One registry or SCM observation made while establishing whether the
+/// CivicCast WSL product is on this machine. Carries enough to reproduce
+/// the failing read by hand: WHICH source, WHICH hive/SID (or service),
+/// WHICH WOW64 view, what it classified to, and the raw error behind an
+/// `Unknown`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProbeObservation {
+    /// `user-ARP`, `machine-ARP`, `distro-scan` or `wsl-service`.
+    pub source: &'static str,
+    /// `HKCU`, `HKU\<SID>`, `HKLM`, `HKU (hive enumeration)`,
+    /// `sc query <name>` ...
+    pub scope: String,
+    /// `64-bit`, `32-bit`, or `n/a` where the view does not apply.
+    pub view: &'static str,
+    pub state: OtherProductState,
+    /// `io::ErrorKind` debug name (e.g. `PermissionDenied`) when the read
+    /// errored with anything other than a clean not-found.
+    pub error_kind: Option<String>,
+    /// Raw OS error code (`raw_os_error`) or `sc.exe` exit code.
+    pub raw_code: Option<i32>,
+}
+
+impl ProbeObservation {
+    pub fn settled(
+        source: &'static str,
+        scope: String,
+        view: &'static str,
+        state: OtherProductState,
+    ) -> Self {
+        Self {
+            source,
+            scope,
+            view,
+            state,
+            error_kind: None,
+            raw_code: None,
+        }
     }
 
-    // Elevated per-machine case: HKCU is the elevating admin's hive, so also
-    // check every other loaded user hive via HKEY_USERS (see module
-    // doc-comment for the loaded-hives-only limitation this does not solve).
-    let hkey_users_state = probe_wsl_arp_hkey_users();
-    combine_probe_results([hkcu_state, hkey_users_state])
+    /// Classifies exactly like [`classify_registry_error`] (NotFound ->
+    /// Absent, anything else -> Unknown) but keeps the error's kind and raw
+    /// code for the report. A NotFound carries no error detail: it is the
+    /// expected, readable absence.
+    #[cfg(target_os = "windows")]
+    pub fn from_registry_error(
+        source: &'static str,
+        scope: String,
+        view: &'static str,
+        error: &io::Error,
+    ) -> Self {
+        let state = classify_registry_error(error);
+        let (error_kind, raw_code) = if state == OtherProductState::Absent {
+            (None, None)
+        } else {
+            (Some(format!("{:?}", error.kind())), error.raw_os_error())
+        };
+        Self {
+            source,
+            scope,
+            view,
+            state,
+            error_kind,
+            raw_code,
+        }
+    }
+}
+
+fn other_product_token(state: OtherProductState) -> &'static str {
+    match state {
+        OtherProductState::Present => "present",
+        OtherProductState::Absent => "absent",
+        OtherProductState::Unknown => "unknown",
+    }
+}
+
+impl std::fmt::Display for ProbeObservation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{} {}", self.source, self.scope)?;
+        if self.view != "n/a" {
+            write!(formatter, " ({} view)", self.view)?;
+        }
+        write!(formatter, ": {}", other_product_token(self.state))?;
+        match (&self.error_kind, self.raw_code) {
+            (Some(kind), Some(code)) => write!(formatter, " [{kind}, os error {code}]"),
+            (Some(kind), None) => write!(formatter, " [{kind}]"),
+            (None, Some(code)) => write!(formatter, " [exit {code}]"),
+            (None, None) => Ok(()),
+        }
+    }
+}
+
+/// Everything the install-time ownership claim looked at before deciding
+/// whether the CivicCast WSL product is on this machine.
+///
+/// `wsl_service` is NOT product evidence: `Present` there means only that a
+/// WSL service (`WslService`/`LxssManager`) is registered at all -- WSL may
+/// be installed for something unrelated. `Absent` there IS dispositive the
+/// other way: with no WSL service on the machine, no CivicCast WSL product
+/// can exist or transmit (the same rule
+/// `civiccast.native.win_probes._confirm_absence_via_service` applies).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WslPresenceEvidence {
+    /// The per-user ARP probe ([`probe_wsl_arp`]): HKCU plus every loaded
+    /// `HKEY_USERS` hive, both WOW64 views.
+    pub user_arp: OtherProductState,
+    /// The WSL product's uninstall key under `HKLM`, both WOW64 views.
+    pub machine_arp: OtherProductState,
+    /// [`WSL_DISTRO_NAME`] registered under any loaded hive's Lxss subtree
+    /// -- the LocalSystem-safe inventory the runtime guard itself trusts.
+    pub distro_registration: OtherProductState,
+    /// Whether ANY WSL service is registered with the SCM (see above).
+    pub wsl_service: OtherProductState,
+    pub observations: Vec<ProbeObservation>,
+}
+
+impl WslPresenceEvidence {
+    /// Evidence consisting of the per-user ARP verdict alone, every
+    /// corroborating source unconsulted (`Unknown`). Reproduces the
+    /// pre-corroboration decision table exactly, which is what the
+    /// orchestration tests pin. Test-only by construction (production
+    /// always gathers the full evidence), hence the lint exemption.
+    #[allow(dead_code)]
+    pub fn user_arp_only(user_arp: OtherProductState) -> Self {
+        Self {
+            user_arp,
+            machine_arp: OtherProductState::Unknown,
+            distro_registration: OtherProductState::Unknown,
+            wsl_service: OtherProductState::Unknown,
+            observations: Vec::new(),
+        }
+    }
+
+    /// One line per source, each source followed by the individual
+    /// observations that were NOT a clean absence (a hive that read
+    /// `absent` explains nothing; the one that read `unknown` is the whole
+    /// story). Example:
+    ///
+    /// `user-ARP=unknown [user-ARP HKU\S-1-5-21-...-1001 (64-bit view):
+    /// unknown [PermissionDenied, os error 5]], machine-ARP=absent,
+    /// distro-scan=absent, wsl-service=present`
+    pub fn explain(&self) -> String {
+        let sources = [
+            ("user-ARP", self.user_arp),
+            ("machine-ARP", self.machine_arp),
+            ("distro-scan", self.distro_registration),
+            ("wsl-service", self.wsl_service),
+        ];
+        sources
+            .iter()
+            .map(|(source, state)| {
+                let notable: Vec<String> = self
+                    .observations
+                    .iter()
+                    .filter(|o| o.source == *source && o.state != OtherProductState::Absent)
+                    .map(ToString::to_string)
+                    .collect();
+                if notable.is_empty() {
+                    format!("{source}={}", other_product_token(*state))
+                } else {
+                    format!(
+                        "{source}={} [{}]",
+                        other_product_token(*state),
+                        notable.join("; ")
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Every observation, one per line, for the recovery document.
+    pub fn observation_lines(&self) -> Vec<String> {
+        self.observations.iter().map(ToString::to_string).collect()
+    }
+}
+
+/// Fold the four evidence sources into the single `OtherProductState` the
+/// claim decision ([`decide_install_selector_claim`]) consumes.
+///
+/// | user-ARP  | machine-ARP | distro-scan | wsl-service | verdict   |
+/// |-----------|-------------|-------------|-------------|-----------|
+/// | Present   | any         | any         | any         | Present   |
+/// | any       | Present     | any         | any         | Present   |
+/// | any       | any         | Present     | any         | Present   |
+/// | Absent    | not Present | not Present | any         | Absent    |
+/// | Unknown   | any         | any         | Absent      | Absent    |
+/// | Unknown   | Absent      | Absent      | not Absent  | Absent    |
+/// | Unknown   | otherwise                               | Unknown   |
+///
+/// The `Absent` user-ARP row is the pre-existing contract, unchanged: it
+/// was sufficient on its own before corroboration existed, so a machine
+/// where `sc.exe` happens to misbehave does not regress. The two new
+/// `Unknown`-user-ARP rows are the field defect: the per-user probe could
+/// not read some hive, but machine-wide evidence (no WSL service at all, or
+/// no product ARP under HKLM AND no CivicCast distro registered anywhere)
+/// rules the WSL product out, so the install claims ownership and logs the
+/// hive it could not read. Anything else stays `Unknown` and the install
+/// refuses with the observation.
+pub fn corroborate_wsl_product_state(evidence: &WslPresenceEvidence) -> OtherProductState {
+    if [
+        evidence.user_arp,
+        evidence.machine_arp,
+        evidence.distro_registration,
+    ]
+    .contains(&OtherProductState::Present)
+    {
+        return OtherProductState::Present;
+    }
+    match evidence.user_arp {
+        OtherProductState::Present => OtherProductState::Present,
+        OtherProductState::Absent => OtherProductState::Absent,
+        OtherProductState::Unknown => {
+            if evidence.wsl_service == OtherProductState::Absent {
+                return OtherProductState::Absent;
+            }
+            if evidence.machine_arp == OtherProductState::Absent
+                && evidence.distro_registration == OtherProductState::Absent
+            {
+                OtherProductState::Absent
+            } else {
+                OtherProductState::Unknown
+            }
+        }
+    }
+}
+
+/// Open `subkey` under `root` and classify the result as one observation.
+#[cfg(target_os = "windows")]
+fn observe_registry_open(
+    source: &'static str,
+    scope: String,
+    view: &'static str,
+    root: &RegKey,
+    subkey: &str,
+    access: u32,
+) -> ProbeObservation {
+    match root.open_subkey_with_flags(subkey, access) {
+        Ok(_) => ProbeObservation::settled(source, scope, view, OtherProductState::Present),
+        Err(error) => ProbeObservation::from_registry_error(source, scope, view, &error),
+    }
+}
+
+/// The WSL product's uninstall key under `HKLM` (a per-machine install of
+/// the WSL product, or a per-machine remnant), both WOW64 views.
+#[cfg(target_os = "windows")]
+fn probe_wsl_machine_arp_observed() -> (OtherProductState, Vec<ProbeObservation>) {
+    const SOURCE: &str = "machine-ARP";
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let observations: Vec<ProbeObservation> =
+        [("64-bit", KEY_WOW64_64KEY), ("32-bit", KEY_WOW64_32KEY)]
+            .into_iter()
+            .map(|(view, access)| {
+                observe_registry_open(
+                    SOURCE,
+                    "HKLM".to_string(),
+                    view,
+                    &hklm,
+                    WSL_ARP_KEY,
+                    KEY_READ | access,
+                )
+            })
+            .collect();
+    let state = combine_probe_results(observations.iter().map(|o| o.state));
+    (state, observations)
+}
+
+/// Port of `civiccast.native.win_probes.scan_registered_distros`: is
+/// [`WSL_DISTRO_NAME`] the `DistributionName` of any `{guid}` subkey under
+/// any loaded hive's [`WSL_LXSS_KEY_PATH`]? Same tri-state, same rule that
+/// NotFound is the ONLY readable absence (a hive with no Lxss key, or a
+/// `{guid}` without a `DistributionName`, is clean); every other error
+/// downgrades that hive to `Unknown` with the error recorded.
+#[cfg(target_os = "windows")]
+fn probe_wsl_distro_registration_observed() -> (OtherProductState, Vec<ProbeObservation>) {
+    const SOURCE: &str = "distro-scan";
+    let hkey_users = RegKey::predef(HKEY_USERS);
+    let names: Vec<String> = match hkey_users
+        .enum_keys()
+        .collect::<Result<Vec<String>, io::Error>>()
+    {
+        Ok(names) => names,
+        Err(error) => {
+            return (
+                OtherProductState::Unknown,
+                vec![ProbeObservation::from_registry_error(
+                    SOURCE,
+                    "HKU (hive enumeration)".to_string(),
+                    "n/a",
+                    &error,
+                )],
+            );
+        }
+    };
+    let mut observations = Vec::new();
+    for name in names
+        .into_iter()
+        .filter(|name| !should_skip_users_subkey(name))
+    {
+        let scope = format!("HKU\\{name}\\...\\Lxss");
+        let lxss = match hkey_users
+            .open_subkey_with_flags(format!("{name}\\{WSL_LXSS_KEY_PATH}"), KEY_READ)
+        {
+            Ok(key) => key,
+            Err(error) => {
+                observations.push(ProbeObservation::from_registry_error(
+                    SOURCE, scope, "n/a", &error,
+                ));
+                continue;
+            }
+        };
+        observations.push(scan_lxss_hive(SOURCE, scope, &lxss));
+    }
+    let state = combine_probe_results(observations.iter().map(|o| o.state));
+    (state, observations)
+}
+
+/// One hive's Lxss subtree, folded to a single observation.
+#[cfg(target_os = "windows")]
+fn scan_lxss_hive(source: &'static str, scope: String, lxss: &RegKey) -> ProbeObservation {
+    for guid in lxss.enum_keys() {
+        let guid = match guid {
+            Ok(guid) => guid,
+            Err(error) => {
+                return ProbeObservation::from_registry_error(source, scope, "n/a", &error);
+            }
+        };
+        let distro = match lxss.open_subkey_with_flags(&guid, KEY_READ) {
+            Ok(key) => key,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return ProbeObservation::from_registry_error(source, scope, "n/a", &error);
+            }
+        };
+        match distro.get_value::<String, _>("DistributionName") {
+            Ok(value) if value == WSL_DISTRO_NAME => {
+                return ProbeObservation::settled(
+                    source,
+                    format!("{scope}\\{guid}"),
+                    "n/a",
+                    OtherProductState::Present,
+                );
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return ProbeObservation::from_registry_error(source, scope, "n/a", &error);
+            }
+        }
+    }
+    ProbeObservation::settled(source, scope, "n/a", OtherProductState::Absent)
+}
+
+/// Classify one `sc query <name>` exit status the way
+/// `civiccast.native.win_probes._default_wsl_service_present` does: 0 ->
+/// the service exists (any state); 1060 -> definitively does not exist;
+/// anything else -> Unknown. Pure; unit-tested.
+pub fn classify_sc_query_exit_code(code: Option<i32>) -> OtherProductState {
+    match code {
+        Some(0) => OtherProductState::Present,
+        Some(ERROR_SERVICE_DOES_NOT_EXIST) => OtherProductState::Absent,
+        _ => OtherProductState::Unknown,
+    }
+}
+
+/// Port of `_default_wsl_service_present`: `Present` the instant any WSL
+/// service name resolves; `Absent` only when EVERY candidate is a definite
+/// 1060; `Unknown` on anything else. The SCM query is used rather than
+/// winreg because the Store-packaged `WslService` does not expose a raw
+/// `HKLM\SYSTEM\...\Services` key even while it is running.
+#[cfg(target_os = "windows")]
+fn probe_wsl_service_observed() -> (OtherProductState, Vec<ProbeObservation>) {
+    const SOURCE: &str = "wsl-service";
+    let mut observations = Vec::new();
+    for name in WSL_SERVICE_NAMES {
+        let scope = format!("sc query {name}");
+        let observation = match std::process::Command::new("sc.exe")
+            .args(["query", name])
+            .output()
+        {
+            Ok(output) => {
+                let code = output.status.code();
+                let state = classify_sc_query_exit_code(code);
+                let mut observation = ProbeObservation::settled(SOURCE, scope, "n/a", state);
+                if state != OtherProductState::Absent {
+                    observation.raw_code = code;
+                }
+                observation
+            }
+            Err(error) => ProbeObservation {
+                source: SOURCE,
+                scope,
+                view: "n/a",
+                state: OtherProductState::Unknown,
+                error_kind: Some(format!("{:?}", error.kind())),
+                raw_code: error.raw_os_error(),
+            },
+        };
+        let state = observation.state;
+        observations.push(observation);
+        if state != OtherProductState::Absent {
+            return (state, observations);
+        }
+    }
+    (OtherProductState::Absent, observations)
+}
+
+/// Production evidence gathering for the install-time claim: the per-user
+/// ARP probe plus the three machine-wide corroborating sources, every
+/// individual observation retained.
+#[cfg(target_os = "windows")]
+pub(crate) fn probe_wsl_presence_evidence() -> WslPresenceEvidence {
+    let (user_arp, mut observations) = probe_wsl_arp_observed();
+    let (machine_arp, machine_observations) = probe_wsl_machine_arp_observed();
+    let (distro_registration, distro_observations) = probe_wsl_distro_registration_observed();
+    let (wsl_service, service_observations) = probe_wsl_service_observed();
+    observations.extend(machine_observations);
+    observations.extend(distro_observations);
+    observations.extend(service_observations);
+    WslPresenceEvidence {
+        user_arp,
+        machine_arp,
+        distro_registration,
+        wsl_service,
+        observations,
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -656,6 +1111,12 @@ pub enum SelectorClaimAction {
 /// | `Absent`     | `Absent`            | `ClaimNative`      |
 /// | `Absent`     | `Present`/`Unknown` | `LeaveUnprovable`  |
 /// | `Unreadable` | any                 | `LeaveUnprovable`  |
+///
+/// The `WSL product` column is the CORROBORATED state
+/// ([`corroborate_wsl_product_state`]): since beta.5.1 a per-user ARP probe
+/// that could not read some hive no longer decides the row on its own --
+/// machine-wide ARP, the Lxss distro registration scan and the WSL service
+/// presence are consulted before the row settles on `Unknown`.
 pub fn decide_install_selector_claim(
     selector: SelectorState,
     other_product: OtherProductState,
@@ -682,10 +1143,20 @@ pub fn decide_install_selector_claim(
 #[derive(Debug, Clone)]
 pub struct SelectorClaimOutcome {
     pub action: SelectorClaimAction,
+    /// What the selector read as.
+    pub selector: SelectorState,
+    /// The WSL-product evidence that was gathered -- `Some` exactly when the
+    /// selector was `Absent` (the one cell where evidence can change the
+    /// answer), `None` otherwise. Carries every per-hive observation.
+    pub evidence: Option<WslPresenceEvidence>,
     /// One operator-readable sentence naming what was observed and what was
     /// done about it. Printed into the install log on EVERY path, including
     /// the ones that write nothing: a station whose selector was left alone
-    /// will not start, and this line is the only place that says why.
+    /// will not start, and this line is the only place that says why. On
+    /// the paths that consulted evidence it embeds
+    /// [`WslPresenceEvidence::explain`] -- the hive/SID, WOW64 view, error
+    /// kind and raw error code of every observation that was not a clean
+    /// absence.
     pub detail: String,
     pub write_error: Option<String>,
 }
@@ -695,32 +1166,41 @@ pub struct SelectorClaimOutcome {
 /// touching a real registry (this module's HARD RULE).
 pub fn claim_install_selector_with(
     probe_selector: impl Fn() -> SelectorState,
-    probe_other_product: impl Fn() -> OtherProductState,
+    probe_wsl_presence: impl Fn() -> WslPresenceEvidence,
     write_native: impl Fn() -> Result<(), String>,
 ) -> SelectorClaimOutcome {
     let selector = probe_selector();
     // Only consulted in the ONE cell where it can change the answer, so a
     // slow/ambiguous ARP enumeration cannot affect an install whose selector
     // already settles the question.
-    let other_product = if selector == SelectorState::Absent {
-        probe_other_product()
+    let evidence = if selector == SelectorState::Absent {
+        Some(probe_wsl_presence())
     } else {
-        OtherProductState::Unknown
+        None
     };
+    let other_product = evidence
+        .as_ref()
+        .map(corroborate_wsl_product_state)
+        .unwrap_or(OtherProductState::Unknown);
+    let explained = evidence
+        .as_ref()
+        .map(WslPresenceEvidence::explain)
+        .unwrap_or_else(|| "not consulted".to_string());
     let action = decide_install_selector_claim(selector, other_product);
     let (detail, write_error) = match action {
         SelectorClaimAction::ClaimNative => match write_native() {
             Ok(()) => (
-                "ActiveRuntime was absent and no CivicCast WSL product is registered; this \
-                 install claimed native ownership (ActiveRuntime = \"native\", read-back \
-                 verified)."
-                    .to_string(),
+                format!(
+                    "ActiveRuntime was absent and the CivicCast WSL product is not on this \
+                     machine ({explained}); this install claimed native ownership \
+                     (ActiveRuntime = \"native\", read-back verified)."
+                ),
                 None,
             ),
             Err(error) => (
                 format!(
-                    "ActiveRuntime was absent and no CivicCast WSL product is registered, but \
-                     claiming native ownership failed: {error}"
+                    "ActiveRuntime was absent and the CivicCast WSL product is not on this \
+                     machine ({explained}), but claiming native ownership failed: {error}"
                 ),
                 Some(error),
             ),
@@ -738,10 +1218,10 @@ pub fn claim_install_selector_with(
         ),
         SelectorClaimAction::LeaveUnprovable => (
             format!(
-                "ActiveRuntime was left unchanged: observed selector {selector:?} with WSL \
-                 product state {other_product:?}, which does not establish that this machine's \
-                 runtime ownership is the native product's to claim. The native runtime will \
-                 not start until an operator sets it; inspect \
+                "ActiveRuntime was left unchanged: observed selector {selector:?}; WSL product \
+                 evidence: {explained}; combined WSL product state {other_product:?}. That does \
+                 not establish that this machine's runtime ownership is the native product's \
+                 to claim. The native runtime will not start until an operator sets \
                  HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime."
             ),
             None,
@@ -749,19 +1229,21 @@ pub fn claim_install_selector_with(
     };
     SelectorClaimOutcome {
         action,
+        selector,
+        evidence,
         detail,
         write_error,
     }
 }
 
 /// Production wiring of [`claim_install_selector_with`]: the real registry
-/// selector probe, the real WSL-product ARP probe, and the real
-/// write + read-back-verify.
+/// selector probe, the real WSL-presence evidence gathering
+/// ([`probe_wsl_presence_evidence`]), and the real write + read-back-verify.
 #[cfg(target_os = "windows")]
 pub fn claim_install_selector() -> SelectorClaimOutcome {
     claim_install_selector_with(
         probe_active_runtime_selector,
-        probe_wsl_arp,
+        probe_wsl_presence_evidence,
         write_selector_native,
     )
 }
@@ -1890,7 +2372,7 @@ mod install_selector_claim_orchestration_tests {
         let writes = RefCell::new(0usize);
         let outcome = claim_install_selector_with(
             || selector,
-            || other,
+            || WslPresenceEvidence::user_arp_only(other),
             || {
                 *writes.borrow_mut() += 1;
                 write_result.clone()
@@ -1964,5 +2446,417 @@ mod install_selector_claim_orchestration_tests {
             5,
             "each observed (selector, other-product) pair explains itself distinctly"
         );
+    }
+}
+
+#[cfg(test)]
+mod runtime_ownership_evidence_tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    fn evidence(
+        user_arp: OtherProductState,
+        machine_arp: OtherProductState,
+        distro_registration: OtherProductState,
+        wsl_service: OtherProductState,
+    ) -> WslPresenceEvidence {
+        WslPresenceEvidence {
+            user_arp,
+            machine_arp,
+            distro_registration,
+            wsl_service,
+            observations: Vec::new(),
+        }
+    }
+
+    fn denied_hive_observation() -> ProbeObservation {
+        ProbeObservation {
+            source: "user-ARP",
+            scope: r"HKU\S-1-5-21-1111111111-2222222222-3333333333-1001".to_string(),
+            view: "64-bit",
+            state: OtherProductState::Unknown,
+            error_kind: Some("PermissionDenied".to_string()),
+            raw_code: Some(5),
+        }
+    }
+
+    /// The field defect (beta.5, dirty test box with uninstall history): the
+    /// per-user ARP probe came back Unknown from a hive it could not read,
+    /// and on that alone the install refused to claim ownership. With every
+    /// machine-wide source confidently Absent, the claim proceeds.
+    #[test]
+    fn unknown_user_arp_is_outweighed_by_confidently_absent_machine_wide_evidence() {
+        let e = evidence(
+            OtherProductState::Unknown,
+            OtherProductState::Absent,
+            OtherProductState::Absent,
+            OtherProductState::Absent,
+        );
+        assert_eq!(corroborate_wsl_product_state(&e), OtherProductState::Absent);
+        assert_eq!(
+            decide_install_selector_claim(SelectorState::Absent, corroborate_wsl_product_state(&e)),
+            SelectorClaimAction::ClaimNative
+        );
+    }
+
+    /// No WSL service registered at all means no CivicCast WSL product can
+    /// exist or transmit -- dispositive on its own, the same rule the Python
+    /// guard's `_confirm_absence_via_service` applies.
+    #[test]
+    fn an_absent_wsl_service_alone_rules_the_wsl_product_out() {
+        for (machine, distro) in [
+            (OtherProductState::Unknown, OtherProductState::Unknown),
+            (OtherProductState::Absent, OtherProductState::Unknown),
+            (OtherProductState::Unknown, OtherProductState::Absent),
+        ] {
+            let e = evidence(
+                OtherProductState::Unknown,
+                machine,
+                distro,
+                OtherProductState::Absent,
+            );
+            assert_eq!(
+                corroborate_wsl_product_state(&e),
+                OtherProductState::Absent,
+                "machine={machine:?} distro={distro:?}"
+            );
+        }
+    }
+
+    /// WSL installed for something unrelated (service Present) is not
+    /// evidence of the CivicCast product: with no product ARP under HKLM
+    /// and no CivicCast distro registered anywhere, the claim proceeds.
+    #[test]
+    fn a_present_wsl_service_without_product_or_distro_still_claims_native() {
+        let e = evidence(
+            OtherProductState::Unknown,
+            OtherProductState::Absent,
+            OtherProductState::Absent,
+            OtherProductState::Present,
+        );
+        assert_eq!(corroborate_wsl_product_state(&e), OtherProductState::Absent);
+    }
+
+    /// A genuine WSL-product observation anywhere -- per-user ARP, machine
+    /// ARP or the distro registration -- still refuses, whatever the other
+    /// sources say.
+    #[test]
+    fn any_genuine_wsl_product_observation_still_refuses() {
+        let present_cases = [
+            evidence(
+                OtherProductState::Present,
+                OtherProductState::Absent,
+                OtherProductState::Absent,
+                OtherProductState::Absent,
+            ),
+            evidence(
+                OtherProductState::Unknown,
+                OtherProductState::Present,
+                OtherProductState::Absent,
+                OtherProductState::Absent,
+            ),
+            evidence(
+                OtherProductState::Absent,
+                OtherProductState::Absent,
+                OtherProductState::Present,
+                OtherProductState::Unknown,
+            ),
+            evidence(
+                OtherProductState::Unknown,
+                OtherProductState::Absent,
+                OtherProductState::Present,
+                OtherProductState::Absent,
+            ),
+        ];
+        for e in present_cases {
+            assert_eq!(
+                corroborate_wsl_product_state(&e),
+                OtherProductState::Present,
+                "{e:?}"
+            );
+            assert_eq!(
+                decide_install_selector_claim(
+                    SelectorState::Absent,
+                    corroborate_wsl_product_state(&e)
+                ),
+                SelectorClaimAction::LeaveUnprovable
+            );
+        }
+    }
+
+    /// Unknown user-ARP with the corroborating sources themselves unable to
+    /// answer stays fail-closed -- the install refuses with the observation
+    /// rather than guessing.
+    #[test]
+    fn unknown_user_arp_without_confident_corroboration_stays_unknown() {
+        for (machine, distro, service) in [
+            (
+                OtherProductState::Unknown,
+                OtherProductState::Unknown,
+                OtherProductState::Unknown,
+            ),
+            (
+                OtherProductState::Absent,
+                OtherProductState::Unknown,
+                OtherProductState::Present,
+            ),
+            (
+                OtherProductState::Unknown,
+                OtherProductState::Absent,
+                OtherProductState::Unknown,
+            ),
+        ] {
+            let e = evidence(OtherProductState::Unknown, machine, distro, service);
+            assert_eq!(
+                corroborate_wsl_product_state(&e),
+                OtherProductState::Unknown,
+                "machine={machine:?} distro={distro:?} service={service:?}"
+            );
+        }
+    }
+
+    /// The pre-corroboration contract is preserved bit for bit: an Absent
+    /// per-user ARP verdict was sufficient before, and still is, even when
+    /// the new sources cannot answer (so a machine where `sc.exe` misbehaves
+    /// does not regress a fresh install).
+    #[test]
+    fn user_arp_only_evidence_reproduces_the_original_decision_table() {
+        for (user_arp, expected) in [
+            (OtherProductState::Absent, OtherProductState::Absent),
+            (OtherProductState::Present, OtherProductState::Present),
+            (OtherProductState::Unknown, OtherProductState::Unknown),
+        ] {
+            assert_eq!(
+                corroborate_wsl_product_state(&WslPresenceEvidence::user_arp_only(user_arp)),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn sc_query_exit_classification_matches_the_python_guard() {
+        assert_eq!(
+            classify_sc_query_exit_code(Some(0)),
+            OtherProductState::Present
+        );
+        assert_eq!(
+            classify_sc_query_exit_code(Some(1060)),
+            OtherProductState::Absent
+        );
+        assert_eq!(
+            classify_sc_query_exit_code(Some(5)),
+            OtherProductState::Unknown
+        );
+        assert_eq!(
+            classify_sc_query_exit_code(Some(1)),
+            OtherProductState::Unknown
+        );
+        assert_eq!(
+            classify_sc_query_exit_code(None),
+            OtherProductState::Unknown
+        );
+        assert_eq!(ERROR_SERVICE_DOES_NOT_EXIST, 1060);
+    }
+
+    /// An observation names its source, hive/SID, WOW64 view, classification,
+    /// error kind and raw error code -- everything needed to reproduce the
+    /// failing read by hand from the install log.
+    #[test]
+    fn an_observation_formats_hive_view_kind_and_raw_code() {
+        let text = denied_hive_observation().to_string();
+        assert_eq!(
+            text,
+            r"user-ARP HKU\S-1-5-21-1111111111-2222222222-3333333333-1001 (64-bit view): unknown [PermissionDenied, os error 5]"
+        );
+        let settled = ProbeObservation::settled(
+            "machine-ARP",
+            "HKLM".to_string(),
+            "32-bit",
+            OtherProductState::Absent,
+        );
+        assert_eq!(
+            settled.to_string(),
+            "machine-ARP HKLM (32-bit view): absent"
+        );
+        let service = ProbeObservation {
+            source: "wsl-service",
+            scope: "sc query WslService".to_string(),
+            view: "n/a",
+            state: OtherProductState::Unknown,
+            error_kind: None,
+            raw_code: Some(1722),
+        };
+        assert_eq!(
+            service.to_string(),
+            "wsl-service sc query WslService: unknown [exit 1722]"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn a_registry_observation_keeps_error_detail_only_for_non_absent_reads() {
+        let denied = ProbeObservation::from_registry_error(
+            "user-ARP",
+            "HKCU".to_string(),
+            "64-bit",
+            &std::io::Error::from_raw_os_error(5),
+        );
+        assert_eq!(denied.state, OtherProductState::Unknown);
+        assert_eq!(denied.error_kind.as_deref(), Some("PermissionDenied"));
+        assert_eq!(denied.raw_code, Some(5));
+
+        let not_found = ProbeObservation::from_registry_error(
+            "user-ARP",
+            "HKCU".to_string(),
+            "64-bit",
+            &std::io::Error::from_raw_os_error(2),
+        );
+        assert_eq!(not_found.state, OtherProductState::Absent);
+        assert_eq!(not_found.error_kind, None);
+        assert_eq!(not_found.raw_code, None);
+    }
+
+    /// `explain` names every source's verdict and, for any source that was
+    /// not a clean absence, the individual observations behind it -- and
+    /// stays quiet about hives that read absent (they explain nothing).
+    #[test]
+    fn explain_names_every_source_and_only_the_notable_observations() {
+        let mut e = evidence(
+            OtherProductState::Unknown,
+            OtherProductState::Absent,
+            OtherProductState::Absent,
+            OtherProductState::Present,
+        );
+        e.observations = vec![
+            ProbeObservation::settled(
+                "user-ARP",
+                "HKCU".to_string(),
+                "64-bit",
+                OtherProductState::Absent,
+            ),
+            denied_hive_observation(),
+            ProbeObservation::settled(
+                "machine-ARP",
+                "HKLM".to_string(),
+                "64-bit",
+                OtherProductState::Absent,
+            ),
+            ProbeObservation {
+                source: "wsl-service",
+                scope: "sc query WslService".to_string(),
+                view: "n/a",
+                state: OtherProductState::Present,
+                error_kind: None,
+                raw_code: Some(0),
+            },
+        ];
+        let text = e.explain();
+        assert_eq!(
+            text,
+            r"user-ARP=unknown [user-ARP HKU\S-1-5-21-1111111111-2222222222-3333333333-1001 (64-bit view): unknown [PermissionDenied, os error 5]], machine-ARP=absent, distro-scan=absent, wsl-service=present [wsl-service sc query WslService: present [exit 0]]"
+        );
+        assert!(
+            !text.contains("HKCU"),
+            "an absent hive must not clutter the report"
+        );
+        assert_eq!(e.observation_lines().len(), 4);
+    }
+
+    /// End to end through the orchestration: the field defect's evidence
+    /// shape writes the selector exactly once and the detail names the hive
+    /// that could not be read.
+    #[test]
+    fn the_field_defect_evidence_claims_native_and_names_the_unreadable_hive() {
+        let writes = RefCell::new(0usize);
+        let mut e = evidence(
+            OtherProductState::Unknown,
+            OtherProductState::Absent,
+            OtherProductState::Absent,
+            OtherProductState::Absent,
+        );
+        e.observations = vec![denied_hive_observation()];
+        let outcome = claim_install_selector_with(
+            || SelectorState::Absent,
+            || e.clone(),
+            || {
+                *writes.borrow_mut() += 1;
+                Ok(())
+            },
+        );
+        assert_eq!(outcome.action, SelectorClaimAction::ClaimNative);
+        assert_eq!(*writes.borrow(), 1);
+        assert_eq!(outcome.selector, SelectorState::Absent);
+        assert_eq!(outcome.evidence.as_ref(), Some(&e));
+        assert!(outcome
+            .detail
+            .contains("S-1-5-21-1111111111-2222222222-3333333333-1001"));
+        assert!(outcome.detail.contains("PermissionDenied, os error 5"));
+        assert!(outcome.detail.contains("wsl-service=absent"));
+    }
+
+    /// The refusal detail carries the same observation, so the install log
+    /// and the recovery document name the exact read that failed instead of
+    /// the bare word `Unknown`.
+    #[test]
+    fn a_refusal_detail_carries_the_per_hive_observation() {
+        let mut e = evidence(
+            OtherProductState::Unknown,
+            OtherProductState::Unknown,
+            OtherProductState::Unknown,
+            OtherProductState::Present,
+        );
+        e.observations = vec![denied_hive_observation()];
+        let outcome =
+            claim_install_selector_with(|| SelectorState::Absent, || e.clone(), || Ok(()));
+        assert_eq!(outcome.action, SelectorClaimAction::LeaveUnprovable);
+        assert!(
+            outcome.detail.contains("PermissionDenied, os error 5"),
+            "{}",
+            outcome.detail
+        );
+        assert!(
+            outcome.detail.contains("machine-ARP=unknown"),
+            "{}",
+            outcome.detail
+        );
+        assert!(outcome
+            .detail
+            .contains("HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime"));
+    }
+
+    /// Evidence is gathered ONLY when the selector is absent; every other
+    /// selector state settles the question without a single probe.
+    #[test]
+    fn evidence_is_not_gathered_when_the_selector_settles_the_question() {
+        for selector in [
+            SelectorState::Native,
+            SelectorState::Wsl,
+            SelectorState::Unreadable,
+        ] {
+            let probes = RefCell::new(0usize);
+            let outcome = claim_install_selector_with(
+                || selector,
+                || {
+                    *probes.borrow_mut() += 1;
+                    WslPresenceEvidence::user_arp_only(OtherProductState::Absent)
+                },
+                || Ok(()),
+            );
+            assert_eq!(*probes.borrow(), 0, "{selector:?}");
+            assert_eq!(outcome.evidence, None);
+        }
+    }
+
+    /// Cross-language pins: the Rust port must look for exactly what the
+    /// Python guard looks for (also asserted from the Python side by
+    /// tests/policy/test_native_installer_identity.py).
+    #[test]
+    fn the_ported_probe_constants_match_the_python_guard() {
+        assert_eq!(WSL_DISTRO_NAME, "CivicCast-Ubuntu-24.04");
+        assert_eq!(
+            WSL_LXSS_KEY_PATH,
+            r"Software\Microsoft\Windows\CurrentVersion\Lxss"
+        );
+        assert_eq!(WSL_SERVICE_NAMES, ["WslService", "LxssManager"]);
     }
 }

@@ -248,6 +248,65 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   and `tests/native/test_provision_cli.py`
   (`test_main_adopts_a_station_with_a_legacy_august_journal_instead_of_halting`,
   `test_main_reuses_registry_credential_with_a_legacy_august_journal_present`).
+- **Installer: the runtime-ownership claim runs first, gathers machine-wide
+  evidence, and records why it refused** (beta.5 field defect, measured
+  2026-09-09 on a test box with uninstall history). After `d4-provision` had
+  already rewritten `postgresql.conf`/`pg_hba.conf`, the Rust CLI's
+  `claim_install_selector` got `Unknown` from the per-user WSL ARP probe
+  (some `HKEY_USERS` hive it could not read), refused to write
+  `ActiveRuntime=native`, exited 85, and setup showed exit 127 with a dialog
+  that guessed "most often a permissions problem on HKEY_USERS". The only
+  line naming the failing read went to stderr, i.e. the NSIS details pane,
+  which is persisted nowhere. Five changes in
+  `civiccast/apps/installer/src-tauri`:
+  1. **Diagnosable.** Every registry/SCM read the claim makes is kept as a
+     `ProbeObservation` (source, hive/SID, WOW64 view, classification, error
+     kind, raw OS error code) and folded into the claim's `detail`; the CLI
+     prints it on the 85 path; the d4 NSIS step reads the CLI's one-line
+     `%ProgramData%\CivicCast\provision\ownership-observation.txt` back
+     into `install-progress.log` (`step d4-provision: runtime ownership:`)
+     on every path; on refusal the CLI also writes
+     `%ProgramData%\CivicCast\provision\OWNERSHIP-RECOVERY.md` with every
+     individual read and the exact remedy.
+  2. **More evidence before giving up.** When the selector is absent and the
+     per-user ARP probe is `Unknown`, the claim now consults the WSL
+     product's uninstall key under `HKLM` (both WOW64 views), a port of the
+     Python guard's `scan_registered_distros` (Lxss `DistributionName ==
+     CivicCast-Ubuntu-24.04` under every loaded hive) and `sc query
+     WslService`/`LxssManager`. No WSL service at all, or no machine ARP AND
+     no CivicCast distro, rules the WSL product out and the install claims
+     native (logging the hive it could not read). Any genuine WSL-product
+     observation still refuses; only a still-inconclusive set of reads
+     aborts, with the observation. The pre-existing `Absent` per-user verdict
+     keeps deciding on its own, so machines where `sc.exe` misbehaves do not
+     regress. (`native_uninstall::corroborate_wsl_product_state`, unit-tested
+     over the whole table.)
+  3. **Order.** `run_native_provision` performs the claim BEFORE spawning the
+     Python provisioning engine, so a refused install leaves the database
+     configuration exactly as found. `AlreadyNative` is still a no-op.
+  4. **Dialog.** The exit-127 text embeds the recorded observation instead of
+     the HKEY_USERS guess, states that setup stopped before provisioning, and
+     points at the recovery document and the progress log (both of which now
+     carry the observation). Budgeted against `NSIS_MAX_STRLEN=1024`
+     (static text + 360-char observation cap + log timestamp, pinned by
+     test).
+  5. **Containment.** `sc config CivicCastSupervisor start= demand` returning
+     1060 (service does not exist) is now logged as confirmed containment --
+     there is no service that could auto-start onto the new payload -- not
+     as "NOT confirmed".
+
+  Follow-up, not in this change: a setup wizard page asking the operator to
+  confirm native ownership when the evidence is merely inconclusive, instead
+  of stopping.
+
+  **Known issue in beta.5** (workaround until beta.5.1 ships): if setup stops
+  with exit 127 / "could not determine which CivicCast runtime owns this
+  machine" on a machine with no CivicCast WSL product, run from an
+  administrator PowerShell
+  `New-ItemProperty -Path 'HKLM:\SOFTWARE\CivicCast' -Name 'ActiveRuntime' -PropertyType String -Value 'native' -Force`
+  and re-run setup; with the selector already `native` the ownership step is
+  a no-op and provisioning proceeds.
+
 - **Seamless rollover no longer runs to EOS when the outgoing leg overruns its
   projected end.** Sandbox soak 39d852e (2026-09-09) showed every government
   channel rollover taking the 20s planned restart: with a boundary-aligned

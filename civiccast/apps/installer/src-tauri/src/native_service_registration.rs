@@ -1910,10 +1910,11 @@ pub enum ProvisionOutcome {
 ///
 /// **Installer-path audit BL-13.** `claim_install_selector`'s
 /// `LeaveUnprovable` outcome -- reached whenever the ActiveRuntime probe is
-/// `Unreadable`, or the selector is `Absent` while the WSL ARP probe returns
-/// `Unknown` (which `probe_wsl_arp_hkey_users` returns on ANY `HKEY_USERS`
-/// enumeration failure, e.g. access denied) -- used to print one sentence and
-/// return `Ok`. That sentence itself says "The native runtime will not start
+/// `Unreadable`, or the selector is `Absent` while the corroborated WSL
+/// product evidence (`native_uninstall::corroborate_wsl_product_state`: the
+/// per-user ARP probe, machine-wide ARP, the Lxss distro scan and the WSL
+/// service presence) is `Present` or still `Unknown` -- used to print one
+/// sentence and return `Ok`. That sentence itself says "The native runtime will not start
 /// until an operator sets it". Exit 0 followed; the service registered,
 /// `sc start` succeeded, the SCM reported RUNNING (the host process runs; the
 /// guard blocks the control plane), and setup showed "installation complete"
@@ -1924,6 +1925,12 @@ pub enum ProvisionOutcome {
 /// support log carries about WHICH precondition failed, and the operator
 /// remedy here (set ActiveRuntime, or fix the permission that made it
 /// unreadable) shares nothing with a provisioning failure's.
+///
+/// Since beta.5.1 this is raised BEFORE the provisioning subprocess runs
+/// (so the database configuration is untouched) and is accompanied by
+/// `%ProgramData%\CivicCast\provision\ownership-observation.txt` (one
+/// line, read back by the NSIS d4 step into `install-progress.log` and the
+/// dialog) and `OWNERSHIP-RECOVERY.md` (every observation plus the remedy).
 pub const SELECTOR_UNPROVABLE_EXIT_CODE: i32 = 85;
 
 /// The exit code the binary reports for a `--civiccast-*` flag it does not
@@ -1969,6 +1976,219 @@ impl std::fmt::Display for ProvisionFailure {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Runtime-ownership observation report (beta.5.1 field defect)
+// ---------------------------------------------------------------------------
+
+/// File name of the ONE-LINE ownership observation the NSIS d4 step reads
+/// back (`FileRead`) into `install-progress.log` and, on exit 85, into the
+/// dialog. Lives beside the Python engine's own `PROVISION-RECOVERY.md`.
+pub const OWNERSHIP_OBSERVATION_FILE_NAME: &str = "ownership-observation.txt";
+/// File name of the operator recovery document written on the exit-85 path.
+pub const OWNERSHIP_RECOVERY_DOCUMENT_FILE_NAME: &str = "OWNERSHIP-RECOVERY.md";
+/// Upper bound on the one-line observation. `NSIS_MAX_STRLEN` is 1024 in
+/// Tauri's NSIS 3.11 (measured with `makensis -HDRINFO`); the exit-85
+/// dialog in `nsis-hooks-bootstrap.nsh` embeds this line inside ~560 chars
+/// of its own text and `CIVICCAST_ALERT` prefixes that with a ~29-char
+/// timestamp before writing it to `install-progress.log`, so 360 keeps the
+/// whole string under 1023 with margin (pinned by
+/// `test_the_exit_85_dialog_fits_the_nsis_string_budget_with_the_observation`).
+/// The full observation list lives in the recovery document and the CLI's
+/// stderr.
+pub const OWNERSHIP_OBSERVATION_LINE_MAX_CHARS: usize = 360;
+
+/// `<program_data>\CivicCast\provision` -- the SAME root the Python
+/// provisioning engine writes its journal and `PROVISION-RECOVERY.md` to
+/// (`civiccast.native.provision.__main__`, `PROGRAMDATA` env var with the
+/// `C:\ProgramData` fallback).
+fn ownership_report_root() -> PathBuf {
+    let program_data = std::env::var("PROGRAMDATA")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|value| !value.as_os_str().is_empty())
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"));
+    ownership_report_root_from(&program_data)
+}
+
+fn ownership_report_root_from(program_data: &Path) -> PathBuf {
+    program_data.join("CivicCast").join("provision")
+}
+
+fn ownership_observation_path(report_root: &Path) -> PathBuf {
+    report_root.join(OWNERSHIP_OBSERVATION_FILE_NAME)
+}
+
+fn ownership_recovery_document_path(report_root: &Path) -> PathBuf {
+    report_root.join(OWNERSHIP_RECOVERY_DOCUMENT_FILE_NAME)
+}
+
+/// The one line NSIS reads back, folded to a single ASCII line and capped
+/// at [`OWNERSHIP_OBSERVATION_LINE_MAX_CHARS`] (with a marker pointing at
+/// the recovery document when it had to be cut). Evidence FIRST: when the
+/// claim gathered evidence, the line is the verdict, the selector, and
+/// [`WslPresenceEvidence::explain`] -- so the hive that could not be read
+/// is the first thing after the verdict and survives the cap, rather than
+/// trailing a full prose sentence that the cap would cut it out of. With
+/// no evidence (the selector settled the question) the line is the claim's
+/// own `detail` sentence. Pure; unit-tested.
+///
+/// [`WslPresenceEvidence::explain`]: crate::native_uninstall::WslPresenceEvidence::explain
+pub fn ownership_observation_line(
+    outcome: &crate::native_uninstall::SelectorClaimOutcome,
+) -> String {
+    use crate::native_uninstall::SelectorClaimAction;
+    let verdict = match (outcome.action, &outcome.write_error) {
+        (SelectorClaimAction::ClaimNative, None) => "ownership claimed (ActiveRuntime=native)",
+        (SelectorClaimAction::ClaimNative, Some(_)) => "ownership claim WRITE FAILED",
+        (SelectorClaimAction::AlreadyNative, _) => "ownership already native",
+        (SelectorClaimAction::LeaveWslOwnership, _) => "ownership is WSL's; left unchanged",
+        (SelectorClaimAction::LeaveUnprovable, _) => "ownership NOT established; left unchanged",
+    };
+    let raw = match &outcome.evidence {
+        Some(evidence) => {
+            let mut line = format!(
+                "{verdict}; selector {:?}; {}",
+                outcome.selector,
+                evidence.explain()
+            );
+            if let Some(error) = &outcome.write_error {
+                line.push_str(&format!("; write error: {error}"));
+            }
+            line
+        }
+        None => outcome.detail.clone(),
+    };
+    let folded: String = raw
+        .chars()
+        .map(|c| match c {
+            '\r' | '\n' | '\t' => ' ',
+            c if c.is_ascii() => c,
+            _ => '?',
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if folded.chars().count() <= OWNERSHIP_OBSERVATION_LINE_MAX_CHARS {
+        return folded;
+    }
+    const MARKER: &str = " ... (full observation in OWNERSHIP-RECOVERY.md)";
+    let keep = OWNERSHIP_OBSERVATION_LINE_MAX_CHARS - MARKER.len();
+    let mut cut: String = folded.chars().take(keep).collect();
+    cut.push_str(MARKER);
+    cut
+}
+
+/// The operator-facing recovery document for a refused ownership claim:
+/// the observation (every individual read, one per line), what it means,
+/// and the exact remedy. Pure; unit-tested.
+pub fn ownership_recovery_document(
+    outcome: &crate::native_uninstall::SelectorClaimOutcome,
+    version: &str,
+) -> String {
+    let mut doc = String::new();
+    doc.push_str("# CivicCast (Native) setup: runtime ownership could not be established\n\n");
+    doc.push_str(&format!(
+        "Setup {version} stopped (exit 85 / installer exit 127) BEFORE provisioning the \
+         PostgreSQL server, so nothing under `%ProgramData%\\CivicCast` was changed by this \
+         run: postgresql.conf, pg_hba.conf, the database, recordings and settings are exactly \
+         as they were.\n\n"
+    ));
+    doc.push_str("## What setup observed\n\n");
+    doc.push_str(&format!("{}\n\n", outcome.detail));
+    doc.push_str(&format!(
+        "- `HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime` read as: {:?}\n",
+        outcome.selector
+    ));
+    match &outcome.evidence {
+        Some(evidence) => {
+            doc.push_str(&format!(
+                "- CivicCast WSL product evidence: user-ARP={:?}, machine-ARP={:?}, \
+                 distro-scan={:?}, wsl-service={:?}\n\n",
+                evidence.user_arp,
+                evidence.machine_arp,
+                evidence.distro_registration,
+                evidence.wsl_service
+            ));
+            doc.push_str("Every individual read, in the order it was made:\n\n");
+            if evidence.observations.is_empty() {
+                doc.push_str("- (no individual observations were recorded)\n");
+            }
+            for line in evidence.observation_lines() {
+                doc.push_str(&format!("- {line}\n"));
+            }
+            doc.push('\n');
+        }
+        None => doc.push_str(
+            "- The WSL product was not probed: the selector's own state settled the question.\n\n",
+        ),
+    }
+    doc.push_str("## What it means\n\n");
+    doc.push_str(
+        "The LocalSystem supervisor's dual-runtime guard only starts the control plane when \
+         `ActiveRuntime` names a runtime. Setup writes `native` itself when no selector exists \
+         and it can establish that the CivicCast WSL product is not on this machine. It could \
+         not establish that here (an `unknown` above is a read that failed for a reason other \
+         than \"not found\" -- the error kind and OS error code are beside it; a `present` is \
+         a genuine WSL-product registration), so it stopped rather than finish an install \
+         whose station could never serve.\n\n",
+    );
+    doc.push_str("## Remedy\n\n");
+    doc.push_str(
+        "1. If this machine has no CivicCast WSL product (the usual case), tell the guard so \
+         from an ADMINISTRATOR PowerShell:\n\n\
+         ```powershell\n\
+         New-ItemProperty -Path 'HKLM:\\SOFTWARE\\CivicCast' -Name 'ActiveRuntime' \
+         -PropertyType String -Value 'native' -Force\n\
+         ```\n\n\
+         2. Re-run setup. With the selector already `native`, the ownership step is a no-op \
+         and provisioning proceeds.\n\n\
+         3. If a `present` observation above names a real CivicCast WSL installation you \
+         still use, do NOT set the value; uninstall that product first, or run \
+         `civiccast-runtime cutover-to-native` from it, then re-run setup.\n\n\
+         The same observation is in `%ProgramData%\\CivicCast\\install-progress.log` \
+         (the `step d4-provision: runtime ownership:` line).\n\n\
+         Follow-up (not in this release): a setup wizard page that asks the operator to \
+         confirm native ownership when the evidence is merely inconclusive, instead of \
+         stopping.\n",
+    );
+    doc
+}
+
+/// Thin writer (untested directly, matching this module's convention for
+/// real filesystem/registry execution).
+fn write_ownership_observation_line(
+    report_root: &Path,
+    outcome: &crate::native_uninstall::SelectorClaimOutcome,
+) -> Result<(), String> {
+    std::fs::create_dir_all(report_root)
+        .map_err(|error| format!("could not create {}: {error}", report_root.display()))?;
+    let path = ownership_observation_path(report_root);
+    // Deliberately NO trailing newline: the NSIS side reads this with a bare
+    // `FileRead` (Tauri's NSIS ships no `${TrimNewLines}`), which returns
+    // everything up to the newline INCLUDING it; a newline-free file is the
+    // only way the read-back lands in the dialog without a stray line break.
+    std::fs::write(&path, ownership_observation_line(outcome))
+        .map_err(|error| format!("could not write {}: {error}", path.display()))
+}
+
+/// Thin writer (untested directly, same convention). Returns the path it
+/// wrote so the caller can name it.
+fn write_ownership_recovery_document(
+    report_root: &Path,
+    outcome: &crate::native_uninstall::SelectorClaimOutcome,
+) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(report_root)
+        .map_err(|error| format!("could not create {}: {error}", report_root.display()))?;
+    let path = ownership_recovery_document_path(report_root);
+    std::fs::write(
+        &path,
+        ownership_recovery_document(outcome, crate::CIVICCAST_VERSION),
+    )
+    .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+    Ok(path)
+}
+
 /// Thin execution wrapper (untested directly, matching
 /// `register_native_service`/`write_database_url`'s convention -- the HARD
 /// RULE forbids unit-testing real SCM/registry/subprocess execution):
@@ -1987,6 +2207,81 @@ pub fn run_native_provision(
     existing_database_url: &str,
 ) -> Result<ProvisionOutcome, ProvisionFailure> {
     let trust = crate::native_packs::embedded_pack_trust().map_err(ProvisionFailure::generic)?;
+    // Chain G: claim the dual-runtime selector this install is earning the
+    // right to. Nothing else in a native install ever wrote
+    // HKLM\SOFTWARE\CivicCast\ActiveRuntime, so every native station came up
+    // with selector=absent and the supervisor's guard had no authority basis
+    // for a native start (`blocked_probe_unavailable` on any machine where
+    // the WSL install-detection probe cannot answer). The decision is
+    // conservative and unit-tested
+    // (`native_uninstall::decide_install_selector_claim` over
+    // `corroborate_wsl_product_state`): it writes in exactly ONE cell --
+    // selector absent AND the CivicCast WSL product not on this machine --
+    // and never overwrites a "wsl" or unreadable value. `detail` is this
+    // installer's OWN sentence (never captured child output, so no
+    // credential can ride it) and is printed on EVERY path, including the
+    // ones that deliberately write nothing.
+    //
+    // ORDER (beta.5.1 field defect): this runs BEFORE the provisioning
+    // subprocess. It used to run after, so a refused claim (exit 85) left
+    // the Python engine's rewrite of postgresql.conf/pg_hba.conf and its
+    // completed journal behind on a machine setup then declared unowned.
+    // Now a refusal leaves the database configuration exactly as found.
+    // The AlreadyNative path is still a no-op.
+    let selector_claim = crate::native_uninstall::claim_install_selector();
+    eprintln!("{}", selector_claim.detail);
+    // Persist the observation for the NSIS d4 step (which reads the one-line
+    // file into install-progress.log and the exit-85 dialog) on EVERY path,
+    // so a successful corroborated claim is as auditable as a refusal.
+    // Best-effort: a report that could not be written must not replace the
+    // real outcome with a different failure.
+    let report_root = ownership_report_root();
+    if let Err(error) = write_ownership_observation_line(&report_root, &selector_claim) {
+        eprintln!("Could not record the runtime-ownership observation: {error}");
+    }
+    if let Some(error) = selector_claim.write_error.clone() {
+        // Fails LOUD: an install that finishes without the selector it
+        // decided to claim produces a station whose control plane can never
+        // start.
+        return Err(ProvisionFailure::generic(format!(
+            "CivicCast (Native) provisioning could not claim the dual-runtime selector, so the \
+             station's control plane would never be authorized to start: {error}"
+        )));
+    }
+    // <installer-path-audit BL-13> `write_error` is `Some` ONLY on
+    // ClaimNative + a failed write. `LeaveUnprovable` -- reached whenever the
+    // selector probe is Unreadable, or the selector is Absent while the
+    // corroborated WSL-product evidence is Present or still Unknown -- used
+    // to print its sentence and return Ok. Exit 0. The chain then registered
+    // the service, `sc start` succeeded, the SCM reported RUNNING (the host
+    // process runs; the guard blocks the control plane), and setup showed
+    // "installation complete" over a station that can never start.
+    if selector_claim.action == crate::native_uninstall::SelectorClaimAction::LeaveUnprovable {
+        match write_ownership_recovery_document(&report_root, &selector_claim) {
+            Ok(path) => eprintln!(
+                "Runtime-ownership recovery document written to {}",
+                path.display()
+            ),
+            Err(error) => {
+                eprintln!("Could not write the runtime-ownership recovery document: {error}")
+            }
+        }
+        return Err(ProvisionFailure {
+            exit_code: SELECTOR_UNPROVABLE_EXIT_CODE,
+            message: format!(
+                "CivicCast (Native) setup could not establish which runtime owns this machine, \
+                 so the station's control plane would be blocked from starting and setup would \
+                 otherwise have reported success over a station that can never serve. {} No \
+                 database configuration was touched. The observation above is recorded in \
+                 {} and the remedy in {}. An administrator must set \
+                 HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime to \"native\" (or resolve the \
+                 condition named in the observation) and re-run setup.",
+                selector_claim.detail,
+                ownership_observation_path(&report_root).display(),
+                ownership_recovery_document_path(&report_root).display(),
+            ),
+        });
+    }
     let (python_exe, args) = provision_command(
         install_root,
         owner_run_id,
@@ -2024,57 +2319,6 @@ pub fn run_native_provision(
         )));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Chain G: claim the dual-runtime selector this install just earned the
-    // right to. Nothing else in a native install ever wrote
-    // HKLM\SOFTWARE\CivicCast\ActiveRuntime, so every native station came up
-    // with selector=absent and the supervisor's guard had no authority basis
-    // for a native start (`blocked_probe_unavailable` on any machine where
-    // the WSL install-detection probe cannot answer). The decision is
-    // conservative and unit-tested
-    // (`native_uninstall::decide_install_selector_claim`): it writes in
-    // exactly ONE cell -- selector absent AND the CivicCast WSL product
-    // provably not registered -- and never overwrites a "wsl" or unreadable
-    // value. `detail` is this installer's OWN sentence (never captured child
-    // output, so no credential can ride it) and is printed on EVERY path,
-    // including the ones that deliberately write nothing: a station whose
-    // selector was left alone will not start, and this is the only line that
-    // says why.
-    let selector_claim = crate::native_uninstall::claim_install_selector();
-    eprintln!("{}", selector_claim.detail);
-    if let Some(error) = selector_claim.write_error {
-        // Fails LOUD: an install that finishes without the selector it
-        // decided to claim produces a station whose control plane can never
-        // start.
-        return Err(ProvisionFailure::generic(format!(
-            "CivicCast (Native) provisioning could not claim the dual-runtime selector, so the \
-             station's control plane would never be authorized to start: {error}"
-        )));
-    }
-    // <installer-path-audit BL-13> `write_error` is `Some` ONLY on
-    // ClaimNative + a failed write. `LeaveUnprovable` -- reached whenever the
-    // selector probe is Unreadable, or the selector is Absent while the WSL
-    // ARP probe returns Unknown (which `probe_wsl_arp_hkey_users` returns on
-    // ANY HKEY_USERS enumeration failure, e.g. access denied) -- printed its
-    // sentence and returned Ok. Exit 0. The chain then registered the
-    // service, `sc start` succeeded, the SCM reported RUNNING (the host
-    // process runs; the guard blocks the control plane), and setup showed
-    // "installation complete" over a station that can never start. The
-    // printed sentence itself SAYS "The native runtime will not start until
-    // an operator sets it" -- a step that failed to establish a precondition,
-    // logged it, and did not propagate.
-    if selector_claim.action == crate::native_uninstall::SelectorClaimAction::LeaveUnprovable {
-        return Err(ProvisionFailure {
-            exit_code: SELECTOR_UNPROVABLE_EXIT_CODE,
-            message: format!(
-                "CivicCast (Native) setup could not establish which runtime owns this machine, \
-                 so the station's control plane would be blocked from starting and setup would \
-                 otherwise have reported success over a station that can never serve. {} An \
-                 administrator must set HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime to \"native\" \
-                 (or resolve the condition that made it unreadable) and re-run setup.",
-                selector_claim.detail
-            ),
-        });
-    }
     match parse_provision_handoff(&stdout) {
         Some(database_url) => {
             write_database_url(&database_url).map_err(ProvisionFailure::generic)?;
@@ -4391,5 +4635,152 @@ mod tests {
         drop(key);
         let _ = hkcu.delete_subkey_all(&scratch_path);
     }
+}
 
+#[cfg(test)]
+mod runtime_ownership_report_tests {
+    use super::*;
+    use crate::native_uninstall::{
+        OtherProductState, ProbeObservation, SelectorClaimAction, SelectorClaimOutcome,
+        SelectorState, WslPresenceEvidence,
+    };
+
+    fn refused_outcome() -> SelectorClaimOutcome {
+        let evidence = WslPresenceEvidence {
+            user_arp: OtherProductState::Unknown,
+            machine_arp: OtherProductState::Unknown,
+            distro_registration: OtherProductState::Absent,
+            wsl_service: OtherProductState::Present,
+            observations: vec![
+                ProbeObservation::settled(
+                    "user-ARP",
+                    "HKCU".to_string(),
+                    "64-bit",
+                    OtherProductState::Absent,
+                ),
+                ProbeObservation {
+                    source: "user-ARP",
+                    scope: r"HKU\S-1-5-21-1111111111-2222222222-3333333333-1001".to_string(),
+                    view: "64-bit",
+                    state: OtherProductState::Unknown,
+                    error_kind: Some("PermissionDenied".to_string()),
+                    raw_code: Some(5),
+                },
+            ],
+        };
+        SelectorClaimOutcome {
+            action: SelectorClaimAction::LeaveUnprovable,
+            selector: SelectorState::Absent,
+            detail: format!(
+                "ActiveRuntime was left unchanged: observed selector Absent; WSL product \
+                 evidence: {}; combined WSL product state Unknown.",
+                evidence.explain()
+            ),
+            evidence: Some(evidence),
+            write_error: None,
+        }
+    }
+
+    #[test]
+    fn the_report_root_is_the_python_engines_provision_directory() {
+        let root = ownership_report_root_from(Path::new(r"C:\ProgramData"));
+        assert_eq!(root, PathBuf::from(r"C:\ProgramData\CivicCast\provision"));
+        assert_eq!(
+            ownership_observation_path(&root),
+            PathBuf::from(r"C:\ProgramData\CivicCast\provision\ownership-observation.txt")
+        );
+        assert_eq!(
+            ownership_recovery_document_path(&root),
+            PathBuf::from(r"C:\ProgramData\CivicCast\provision\OWNERSHIP-RECOVERY.md")
+        );
+    }
+
+    /// The line NSIS reads back is ONE line, ASCII, carries the per-hive
+    /// observation, and never exceeds the cap the dialog can embed.
+    #[test]
+    fn the_observation_line_is_single_line_ascii_and_bounded() {
+        let outcome = refused_outcome();
+        let line = ownership_observation_line(&outcome);
+        assert!(!line.contains('\n') && !line.contains('\r'));
+        assert!(line.is_ascii());
+        assert!(
+            line.starts_with(
+                "ownership NOT established; left unchanged; selector Absent; user-ARP=unknown ["
+            ),
+            "{line}"
+        );
+        assert!(line.contains("PermissionDenied, os error 5"), "{line}");
+        assert!(line.contains("S-1-5-21-1111111111-2222222222-3333333333-1001"));
+        assert!(
+            line.contains("machine-ARP=unknown, distro-scan=absent, wsl-service=present"),
+            "{line}"
+        );
+        assert!(line.chars().count() <= OWNERSHIP_OBSERVATION_LINE_MAX_CHARS);
+
+        let mut claimed = outcome.clone();
+        claimed.action = SelectorClaimAction::ClaimNative;
+        assert!(ownership_observation_line(&claimed)
+            .starts_with("ownership claimed (ActiveRuntime=native); selector Absent; "));
+        let mut failed = claimed.clone();
+        failed.write_error = Some("access denied".to_string());
+        let failed_line = ownership_observation_line(&failed);
+        assert!(failed_line.starts_with("ownership claim WRITE FAILED; "));
+        assert!(
+            failed_line.ends_with("; write error: access denied"),
+            "{failed_line}"
+        );
+
+        let settled = SelectorClaimOutcome {
+            action: SelectorClaimAction::AlreadyNative,
+            selector: SelectorState::Native,
+            evidence: None,
+            detail: "ActiveRuntime already reads \"native\"; this install left it unchanged."
+                .to_string(),
+            write_error: None,
+        };
+        assert_eq!(ownership_observation_line(&settled), settled.detail);
+
+        let mut long = outcome.clone();
+        long.evidence = None;
+        long.detail = format!("{}\r\n{}", "x".repeat(600), "tail \u{2014} unicode");
+        let cut = ownership_observation_line(&long);
+        assert_eq!(cut.chars().count(), OWNERSHIP_OBSERVATION_LINE_MAX_CHARS);
+        assert!(cut.ends_with("(full observation in OWNERSHIP-RECOVERY.md)"));
+        assert!(cut.is_ascii());
+    }
+
+    /// The recovery document names every individual read, the exact remedy
+    /// command, the fact that the database configuration was not touched,
+    /// and where else the observation lives.
+    #[test]
+    fn the_recovery_document_carries_observations_remedy_and_untouched_state() {
+        let doc = ownership_recovery_document(&refused_outcome(), "1.0.0-beta.5.1");
+        assert!(doc.contains("1.0.0-beta.5.1"));
+        assert!(doc.contains("BEFORE provisioning"));
+        assert!(doc.contains("postgresql.conf, pg_hba.conf"));
+        assert!(doc.contains(
+            r"- user-ARP HKU\S-1-5-21-1111111111-2222222222-3333333333-1001 (64-bit view): unknown [PermissionDenied, os error 5]"
+        ));
+        assert!(doc.contains("- user-ARP HKCU (64-bit view): absent"));
+        assert!(doc.contains(
+            "New-ItemProperty -Path 'HKLM:\\SOFTWARE\\CivicCast' -Name 'ActiveRuntime' -PropertyType String -Value 'native' -Force"
+        ));
+        assert!(doc.contains("install-progress.log"));
+        assert!(doc.contains("step d4-provision: runtime ownership:"));
+        assert!(doc.contains("Follow-up (not in this release): a setup wizard page"));
+    }
+
+    #[test]
+    fn a_selector_settled_outcome_documents_that_no_probe_ran() {
+        let outcome = SelectorClaimOutcome {
+            action: SelectorClaimAction::LeaveUnprovable,
+            selector: SelectorState::Unreadable,
+            evidence: None,
+            detail: "ActiveRuntime could not be read.".to_string(),
+            write_error: None,
+        };
+        let doc = ownership_recovery_document(&outcome, "1.0.0-beta.5.1");
+        assert!(doc.contains("read as: Unreadable"));
+        assert!(doc.contains("The WSL product was not probed"));
+    }
 }

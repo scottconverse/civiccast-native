@@ -244,6 +244,41 @@ def test_native_uninstall_preflight_probes_other_users_via_hkey_users() -> None:
     assert "RegKey::predef(HKEY_CURRENT_USER)" in source
 
 
+def test_install_ownership_claim_ports_the_python_guards_wsl_probes_exactly() -> None:
+    """beta.5.1: when the per-user WSL ARP probe cannot read a hive, the
+    install-time ownership claim corroborates with machine-wide ARP, the
+    Lxss distro registration scan and the WSL service presence -- the SAME
+    checks the Python runtime guard (`civiccast.native.win_probes`) trusts.
+    The Rust port must look for exactly what Python looks for, or the two
+    sides can disagree about the same machine."""
+    from civiccast.native import runtime_guard, win_probes
+
+    source = (INSTALLER / "src" / "native_uninstall.rs").read_text(encoding="utf-8")
+
+    def rust_str(name: str) -> str:
+        match = re.search(rf'pub const {name}: &str = r?"([^"]+)";', source)
+        assert match is not None, f"{name} not found in native_uninstall.rs"
+        return match.group(1)
+
+    assert rust_str("WSL_DISTRO_NAME") == runtime_guard.WSL_DISTRO_NAME
+    assert rust_str("WSL_LXSS_KEY_PATH") == win_probes.WSL_LXSS_KEY_PATH
+    services = re.search(r"pub const WSL_SERVICE_NAMES: \[&str; 2\] = \[([^\]]+)\];", source)
+    assert services is not None
+    assert tuple(token.strip().strip('"') for token in services.group(1).split(",")) == tuple(
+        win_probes.WSL_SERVICE_NAMES
+    )
+    assert "pub const ERROR_SERVICE_DOES_NOT_EXIST: i32 = 1060;" in source
+    assert win_probes._ERROR_SERVICE_DOES_NOT_EXIST == 1060
+
+    # Machine-wide ARP: HKLM, both WOW64 views, direct winreg -- no reg.exe.
+    assert "fn probe_wsl_machine_arp_observed" in source
+    assert "RegKey::predef(HKEY_LOCAL_MACHINE)" in source
+    # The corroboration is a pure, unit-tested fold consumed by the claim.
+    assert "pub fn corroborate_wsl_product_state" in source
+    assert "probe_wsl_presence_evidence" in source
+    assert "reg.exe" not in source.replace("localized `reg.exe`", "")
+
+
 # ---------------------------------------------------------------------------
 # WP2 hook-migration (2026-07-30): nsis-hooks-native.nsh's POSTINSTALL D2/D4/
 # pack-delivery chain was folded into nsis-hooks-bootstrap.nsh (the ONE live

@@ -398,14 +398,21 @@ Var CIVICCAST_CONTAINED
     ; reported success; the exit-124 branch reads this Var and says one thing
     ; or the other, never the optimistic one unconditionally.
     ;
-    ; `sc config` on an absent service (1060) is a legitimate 0-payload case
-    ; -- a FRESH_INSTALL failure has no registered service to disarm -- but it
-    ; is reported honestly rather than counted as containment, because the
-    ; distinction only matters when a service DOES exist.
+    ; `sc config` on an absent service (1060, ERROR_SERVICE_DOES_NOT_EXIST)
+    ; IS confirmed containment: a FRESH_INSTALL failure has no registered
+    ; service, so there is nothing that could auto-start onto the new payload
+    ; at the next boot. (beta.5.1: this used to be logged as "NOT confirmed",
+    ; which sent the operator to disarm a service that does not exist; 1060
+    ; is the ONE exit code that definitively means absent -- the same rule
+    ; the PREINSTALL SCM classification applies.)
     ${If} $R8 == "0"
     ${AndIf} $R9 == "0"
       StrCpy $CIVICCAST_CONTAINED "1"
       !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT confirmed (service stopped and set to manual start)"
+    ${ElseIf} $R8 == "0"
+    ${AndIf} $R9 == "1060"
+      StrCpy $CIVICCAST_CONTAINED "1"
+      !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT confirmed (no CivicCastSupervisor service is registered -- sc config returned 1060 -- so nothing can auto-start onto the new payload)"
     ${Else}
       !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT NOT confirmed (stop=$R8 config=$R9) -- the service may still auto-start onto the new payload"
     ${EndIf}
@@ -1279,9 +1286,33 @@ Var CIVICCAST_POSTCLEAR_ARMED
   ReadRegStr $R3 HKLM "Software\CivicCast\Native" "DatabaseUrl"
   !insertmacro CIVICCAST_STEP "step d4-provision: begin"
   DetailPrint "Provisioning the CivicCast (Native) PostgreSQL server (D4)..."
+  ; beta.5.1: clear a previous run's ownership observation first, so the
+  ; read-back below can only ever report THIS run's observation (a CLI that
+  ; exits before its ownership step -- e.g. a usage error -- leaves no file,
+  ; and the read-back then says so instead of replaying stale text).
+  Delete "$COMMONPROGRAMDATA\CivicCast\provision\ownership-observation.txt"
   nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" --civiccast-provision --install-root "$INSTDIR" --owner-run-id "$R1" --existing-database-url "$R3"'
   Pop $0
   !insertmacro CIVICCAST_STEP "step d4-provision: returned $0"
+  ; beta.5.1 (runtime-ownership claim, field defect 2026-09-09): the CLI's
+  ; ownership step now runs BEFORE the provisioning engine and writes its
+  ; one-line observation -- which hive/SID, which WOW64 view, which error
+  ; kind and OS error code -- to ownership-observation.txt on EVERY path.
+  ; Read it back here so install-progress.log carries it (the CLI's stderr
+  ; only reaches this details pane, which is not persisted anywhere) and so
+  ; the exit-85 dialog below can show the actual observation instead of a
+  ; guess. The full per-read list and the remedy are in OWNERSHIP-RECOVERY.md
+  ; beside it on the 85 path.
+  StrCpy $R6 "(no ownership observation file was written; see the details above)"
+  ${If} ${FileExists} "$COMMONPROGRAMDATA\CivicCast\provision\ownership-observation.txt"
+    ClearErrors
+    FileOpen $R7 "$COMMONPROGRAMDATA\CivicCast\provision\ownership-observation.txt" r
+    ${IfNot} ${Errors}
+      FileRead $R7 $R6
+      FileClose $R7
+    ${EndIf}
+  ${EndIf}
+  !insertmacro CIVICCAST_STEP "step d4-provision: runtime ownership: $R6"
   ${If} $0 == 0
     DetailPrint "CivicCast (Native): database/messaging provisioning complete (or already provisioned; no-op)."
   ${ElseIf} $0 == 75
@@ -1292,8 +1323,20 @@ Var CIVICCAST_POSTCLEAR_ARMED
     ; established. This used to be a printed sentence and an exit 0, after
     ; which setup registered and started a service whose control plane the
     ; dual-runtime guard blocks, then reported "installation complete".
-    DetailPrint "CivicCast (Native): D4 could not establish this machine's runtime ownership (exit 85) — see the installer log above."
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP} "CivicCast (Native) setup could not determine which CivicCast runtime owns this machine, so it stopped rather than finish an installation that could never start.$\r$\n$\r$\nAn administrator must set HKLM\SOFTWARE\CivicCast\ActiveRuntime to the value $\"native$\" -- or resolve whatever prevented setup from reading it (most often a permissions problem on HKEY_USERS) -- and then run setup again.$\r$\n$\r$\nNothing was deleted. Your recordings, database and settings in $COMMONPROGRAMDATA\CivicCast are intact. See $COMMONPROGRAMDATA\CivicCast\install-progress.log for the exact observation."
+    DetailPrint "CivicCast (Native): D4 could not establish this machine's runtime ownership (exit 85) — see the installer log above and $COMMONPROGRAMDATA\CivicCast\provision\OWNERSHIP-RECOVERY.md."
+    ; beta.5.1: the text carries the CLI's actual observation ($R6, read back
+    ; above) instead of the former "most often a permissions problem on
+    ; HKEY_USERS" guess, and the claim now runs BEFORE provisioning, so the
+    ; "database configuration untouched" sentence is a fact, not a hope.
+    ; String budget: NSIS_MAX_STRLEN is 1024 (Tauri's NSIS 3.11, measured
+    ; with makensis -HDRINFO) and CIVICCAST_ALERT prefixes this text with a
+    ; ~29-char timestamp before writing it to install-progress.log, so the
+    ; static text here (~575 chars) plus the observation line (capped at
+    ; OWNERSHIP_OBSERVATION_LINE_MAX_CHARS = 360 by the Rust writer) must
+    ; stay under 1023 (pinned by test_the_exit_85_dialog_fits_the_nsis_
+    ; string_budget_with_the_observation). Do not lengthen either without
+    ; re-measuring.
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP} "CivicCast (Native) setup could not determine which CivicCast runtime owns this machine, so it stopped BEFORE provisioning. Nothing was deleted and your database configuration was not touched.$\r$\n$\r$\nWhat setup observed: $R6$\r$\n$\r$\nIf this machine has no CivicCast WSL product, an administrator sets HKLM\SOFTWARE\CivicCast\ActiveRuntime to $\"native$\" and runs setup again. The exact command and every individual read are in $COMMONPROGRAMDATA\CivicCast\provision\OWNERSHIP-RECOVERY.md; the observation above is also recorded in $COMMONPROGRAMDATA\CivicCast\install-progress.log."
   ${Else}
     DetailPrint "CivicCast (Native): D4 database/messaging provisioning reported an unexpected fault (exit $0) — see the installer log above."
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_PROVISION_FAULT} "CivicCast (Native) setup hit an unexpected fault while provisioning the PostgreSQL server (exit code $0). See the installer log."

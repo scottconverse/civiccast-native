@@ -963,6 +963,28 @@ def test_bl02_the_exit_124_message_is_conditional_on_what_containment_achieved()
     )
 
 
+def test_containment_treats_sc_config_1060_as_confirmed_not_unconfirmed() -> None:
+    """Defect 5 of the beta.5.1 batch. `sc config CivicCastSupervisor
+    start= demand` returning 1060 (ERROR_SERVICE_DOES_NOT_EXIST) means no
+    service is registered at all -- a FRESH_INSTALL failure -- so nothing can
+    auto-start onto the new payload. That IS containment. It used to be
+    logged as "NOT confirmed ... the service may still auto-start", sending
+    the operator to disarm a service that does not exist."""
+    source = _hooks_source()
+    fail_macro = _code(_slice(source, "!macro CIVICCAST_FAIL CODE TEXT", "!macroend"))
+    containment = _slice(fail_macro, '${If} $R8 == "0"', "${Else}")
+    assert '${AndIf} $R9 == "0"' in containment
+    assert '${ElseIf} $R8 == "0"' in containment and '${AndIf} $R9 == "1060"' in containment
+    assert containment.count('StrCpy $CIVICCAST_CONTAINED "1"') == 2, (
+        "both the stopped+demand case and the no-service (1060) case must set CONTAINED"
+    )
+    assert "sc config returned 1060" in containment
+    unconfirmed = _slice(fail_macro, "${Else}", "${EndIf}")
+    assert "NOT confirmed" in unconfirmed, (
+        "every OTHER combination must still be reported as unconfirmed"
+    )
+
+
 def test_ma17_the_uninstall_warns_that_it_destroys_the_pack_cache() -> None:
     r"""<installer-path-audit MA-17> KNOWN LIMITATION, stated not hidden.
 
@@ -1049,6 +1071,129 @@ def test_bl13_an_unprovable_runtime_selector_aborts_the_install() -> None:
     assert "${CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP}" in step
     arm = _slice(step, "${ElseIf} $0 == 85", "${Else}")
     assert "ActiveRuntime" in arm, "the message must name the value an administrator has to set"
+
+
+OWNERSHIP_OBSERVATION_FILE = "$COMMONPROGRAMDATA\\CivicCast\\provision\\ownership-observation.txt"
+OWNERSHIP_RECOVERY_DOC = "$COMMONPROGRAMDATA\\CivicCast\\provision\\OWNERSHIP-RECOVERY.md"
+
+
+def _d4_provision_step(source: str) -> str:
+    return _slice(
+        source,
+        '!insertmacro CIVICCAST_STEP "step d4-provision: begin"',
+        "K1 FIX: FLAT-LAYOUT STATION ACTIVATION",
+    )
+
+
+def test_ownership_claim_observation_is_read_back_into_the_progress_log() -> None:
+    r"""beta.5.1 field defect (2026-09-09, dirty test box with uninstall
+    history): the Rust CLI refused the ownership claim on an `Unknown` it
+    never named -- its only detail line went to stderr, i.e. the NSIS details
+    pane, which is not persisted anywhere. The CLI now writes a one-line
+    observation file and the d4 step MUST read it back into
+    install-progress.log via CIVICCAST_STEP, on every path, so the log
+    carries the hive/SID, view, error kind and OS error code."""
+    step = _code(_d4_provision_step(_hooks_source()))
+    read_at = step.index(f'FileOpen $R7 "{OWNERSHIP_OBSERVATION_FILE}" r')
+    assert f'${{If}} ${{FileExists}} "{OWNERSHIP_OBSERVATION_FILE}"' in step
+    assert "FileRead $R7 $R6" in step
+    assert "FileClose $R7" in step
+    logged_at = step.index(
+        '!insertmacro CIVICCAST_STEP "step d4-provision: runtime ownership: $R6"'
+    )
+    returned_at = step.index('!insertmacro CIVICCAST_STEP "step d4-provision: returned $0"')
+    cleared_at = step.index(f'Delete "{OWNERSHIP_OBSERVATION_FILE}"')
+    assert cleared_at < returned_at, (
+        "a previous run's observation must be deleted before the CLI runs, so the read-back "
+        "can only report THIS run's observation"
+    )
+    first_branch_at = step.index("${If} $0 == 0")
+    assert returned_at < read_at < logged_at < first_branch_at, (
+        "the observation must be read and logged after the CLI returns and BEFORE any "
+        "exit-code branch, so every path (including the corroborated claim) is logged"
+    )
+    # A missing file must not leave $R6 empty: the dialog embeds it.
+    assert 'StrCpy $R6 "(no ownership observation file was written' in step
+    # No TrimNewLines: Tauri's NSIS 3.11 ships FileFunc without it, so the
+    # Rust writer emits the line WITHOUT a trailing newline instead.
+    assert "TrimNewLines" not in step
+
+
+def test_the_exit_85_dialog_carries_the_actual_observation_not_a_guess() -> None:
+    """Defect 4 of the beta.5.1 batch: the dialog used to say the cause was
+    "most often a permissions problem on HKEY_USERS" -- a guess that was
+    wrong on the box it was measured on. It must now embed the observation
+    the CLI recorded ($R6), say that the log and the recovery document carry
+    it (both must exist: the read-back above and the Rust writer), and state
+    the untouched-database fact the new step ORDER makes true."""
+    source = _hooks_source()
+    arm = _slice(_d4_provision_step(source), "${ElseIf} $0 == 85", "${Else}")
+    assert "permissions problem on HKEY_USERS" not in arm
+    assert "What setup observed: $R6" in arm
+    assert OWNERSHIP_RECOVERY_DOC in arm
+    assert "$COMMONPROGRAMDATA\\CivicCast\\install-progress.log" in arm
+    assert "stopped BEFORE provisioning" in arm
+    assert "database configuration was not touched" in arm
+    assert "ActiveRuntime" in arm and r"$\"native$\"" in arm
+
+    # The Rust side is the writer of both files the dialog cites.
+    registration = (
+        BOOTSTRAP_HOOKS_NSH.parent / "src" / "native_service_registration.rs"
+    ).read_text(encoding="utf-8")
+    assert (
+        'pub const OWNERSHIP_OBSERVATION_FILE_NAME: &str = "ownership-observation.txt";'
+        in registration
+    )
+    assert (
+        'pub const OWNERSHIP_RECOVERY_DOCUMENT_FILE_NAME: &str = "OWNERSHIP-RECOVERY.md";'
+        in registration
+    )
+
+
+def test_the_exit_85_dialog_fits_the_nsis_string_budget_with_the_observation() -> None:
+    """NSIS_MAX_STRLEN is 1024 in Tauri's NSIS 3.11 (makensis -HDRINFO).
+    CIVICCAST_ALERT prefixes the dialog text with a timestamp (~29 chars)
+    before FileWrite, and the Rust writer caps the embedded observation
+    line at OWNERSHIP_OBSERVATION_LINE_MAX_CHARS. The three together must
+    stay under 1023 or the log line (and the dialog) silently truncate."""
+    source = _hooks_source()
+    arm = _slice(_d4_provision_step(source), "${ElseIf} $0 == 85", "${Else}")
+    text = re.search(r'CIVICCAST_FAIL \$\{CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP\} "(.*)"', arm)
+    assert text is not None
+    expanded = (
+        text.group(1)
+        .replace("$\\r$\\n", "\r\n")
+        .replace('$\\"', '"')
+        .replace("$COMMONPROGRAMDATA", "C:\\ProgramData")
+        .replace("$R6", "")
+    )
+    registration = (
+        BOOTSTRAP_HOOKS_NSH.parent / "src" / "native_service_registration.rs"
+    ).read_text(encoding="utf-8")
+    cap = re.search(r"pub const OWNERSHIP_OBSERVATION_LINE_MAX_CHARS: usize = (\d+);", registration)
+    assert cap is not None
+    timestamp_prefix = len("[2026-09-09 21:16:00] ALERT: ")
+    total = len(expanded) + int(cap.group(1)) + timestamp_prefix
+    assert total < 1023, f"exit-85 dialog + observation + log prefix = {total} chars"
+
+
+def test_ownership_claim_runs_before_the_provisioning_engine_mutates_state() -> None:
+    """Defect 3: the claim used to run AFTER the Python engine had rewritten
+    postgresql.conf/pg_hba.conf and completed its journal, so a refused
+    install (exit 85) left the database configuration changed on a machine
+    setup then declared unowned. In run_native_provision the claim must now
+    precede the subprocess spawn."""
+    registration = (
+        BOOTSTRAP_HOOKS_NSH.parent / "src" / "native_service_registration.rs"
+    ).read_text(encoding="utf-8")
+    body = registration.split("pub fn run_native_provision(", 1)[1].split("\n}\n", 1)[0]
+    claim_at = body.index("crate::native_uninstall::claim_install_selector()")
+    spawn_at = body.index("std::process::Command::new(&python_exe)")
+    refusal_at = body.index("exit_code: SELECTOR_UNPROVABLE_EXIT_CODE")
+    assert claim_at < refusal_at < spawn_at, (
+        "the ownership claim and its exit-85 refusal must both precede the provisioning "
+        "subprocess so a refused install leaves postgresql.conf/pg_hba.conf untouched"
+    )
 
 
 def test_ma08_activation_exit_codes_do_not_collapse_to_one_message() -> None:
