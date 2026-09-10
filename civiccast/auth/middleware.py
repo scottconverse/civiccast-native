@@ -64,6 +64,27 @@ async def staff_auth_middleware(
     if not request.url.path.startswith("/api/staff/"):
         return await call_next(request)
 
+    rejected = authenticate_staff_request(request)
+    if rejected is not None:
+        return rejected
+    return await call_next(request)
+
+
+def authenticate_staff_request(request: Request) -> JSONResponse | None:
+    """Verify a request's staff bearer and attach the identity, or return the refusal.
+
+    The one token-checking routine every staff-token-gated surface shares:
+    :func:`staff_auth_middleware` for ``/api/staff/*`` and the LAN-only
+    ``/openapi.json`` route in :mod:`civiccast.app` (MINOR-3, hostile review
+    of PR #215: that route verified the bearer itself and never touched the
+    limiter, an unthrottled token oracle next to throttled ones). Returns
+    ``None`` after setting ``request.state.operator_identity``, or the 401/429
+    :class:`JSONResponse` to send instead. Same accounting as documented on
+    the middleware: a missing header is a budget-free 401; a present-but-wrong
+    token spends one ``staff-auth-fail:<ip>`` hit; a saturated budget answers
+    429 unless the token matches exactly.
+    """
+
     authorization = request.headers.get("Authorization")
     if not authorization:
         return JSONResponse(
@@ -115,7 +136,7 @@ async def staff_auth_middleware(
             content={"detail": str(exc)},
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return await call_next(request)
+    return None
 
 
 def _staff_rate_limited_response(

@@ -628,7 +628,7 @@ Complete local first-admin setup before staff auth exists.
 - Access: public
 - Parameters: none
 - Request body: `FirstAdminSetupRequest`
-- Responses: 200 `FirstAdminSetupResponse`; 403 First setup is only reachable from the station computer itself (loopback), or the station is already configured.; 422 `HTTPValidationError`
+- Responses: 200 `FirstAdminSetupResponse`; 401 Setup is complete, so this endpoint now requires the staff bearer token (sign in at /api/setup/login or recover at /api/setup/recover).; 403 First setup is only reachable from the station computer itself (loopback), or the station is already configured.; 422 `HTTPValidationError`
 
 ### `POST /api/setup/login`
 
@@ -655,7 +655,7 @@ Record that the operator saved or printed the one-time recovery kit.
 - Access: public
 - Parameters: none
 - Request body: `RecoveryKitAcknowledgeRequest`
-- Responses: 200 `StationSetupState`; 403 First setup is only reachable from the station computer itself (loopback), or the station is already configured.; 422 `HTTPValidationError`
+- Responses: 200 `StationSetupState`; 401 Setup is complete, so this endpoint now requires the staff bearer token (sign in at /api/setup/login or recover at /api/setup/recover).; 403 First setup is only reachable from the station computer itself (loopback), or the station is already configured.; 422 `HTTPValidationError`
 
 ### `GET /api/setup/station-state`
 
@@ -673,7 +673,7 @@ Read local durable storage setup state before staff auth exists.
 - Access: public
 - Parameters: none
 - Request body: none
-- Responses: 200 `ManagedStorageStatus`; 403 First setup is only reachable from the station computer itself (loopback), or the station is already configured.
+- Responses: 200 `ManagedStorageStatusReport`; 401 Setup is complete, so this endpoint now requires the staff bearer token (sign in at /api/setup/login or recover at /api/setup/recover).; 403 First setup is only reachable from the station computer itself (loopback), or the station is already configured.
 
 ### `POST /api/setup/storage`
 
@@ -682,7 +682,7 @@ Prepare installer-managed durable storage before staff auth exists.
 - Access: public
 - Parameters: none
 - Request body: `PublicStorageSetupRequest`
-- Responses: 200 `ManagedStorageStatus`; 403 First setup is only reachable from the station computer itself (loopback), or the station is already configured.; 422 `HTTPValidationError`
+- Responses: 200 `ManagedStorageStatusReport`; 401 Setup is complete, so this endpoint now requires the staff bearer token (sign in at /api/setup/login or recover at /api/setup/recover).; 403 First setup is only reachable from the station computer itself (loopback), or the station is already configured.; 422 `HTTPValidationError`
 
 ### `GET /api/staff/activitypub/deliveries`
 
@@ -2995,7 +2995,7 @@ Read installer-managed durable storage setup state.
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: none
 - Request body: none
-- Responses: 200 `ManagedStorageStatus`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+- Responses: 200 `ManagedStorageStatusReport`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
 ### `POST /api/staff/installer/storage`
 
@@ -3004,7 +3004,7 @@ Prepare installer-managed durable storage.
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: none
 - Request body: `StorageSetupRequest`
-- Responses: 200 `ManagedStorageStatus`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+- Responses: 200 `ManagedStorageStatusReport`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
 ### `POST /api/staff/installer/support-bundle`
 
@@ -7002,11 +7002,15 @@ rule (S13 §5.1).
 
 - `sent` (optional): `boolean`
 
-### `ManagedStorageStatus`
+### `ManagedStorageStatusReport`
 
 - `configured_at` (required): `string`
+- `database_configured` (required): `boolean`
+- `database_host` (optional): `string | null`
+- `database_kind` (required): `string`
+- `database_name` (optional): `string | null`
 - `database_path` (required): `string`
-- `database_url` (required): `string`
+- `database_port` (optional): `number | null`
 - `migrations_applied` (required): `boolean`
 - `next_step` (required): `string`
 - `operator_message` (required): `string`
@@ -8867,10 +8871,11 @@ rule (S13 §5.1).
 - `next_step` (required): `string`
 - `operator_console_url` (required): `string`
 - `profile` (optional): `StationProfile | null`
-- `recovery_kit_acknowledged` (optional): `boolean`
+- `recovery_kit_acknowledged` (optional): `boolean | null`
 - `recovery_kit_created` (optional): `boolean`
 - `recovery_kit_id` (optional): `string | null`
 - `setup_complete` (required): `boolean`
+- `station_name` (optional): `string | null`
 - `status` (required): `'not_started' | 'complete'`
 
 ### `StationStorageLocations`

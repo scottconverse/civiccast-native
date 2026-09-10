@@ -160,6 +160,116 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   change.
 
 
+### Security
+
+- **The setup API never serves the database credential, and `/api/setup/*`
+  requires the staff token once setup is complete.** Walkthrough on a running
+  beta.5 station, 2026-09-09, verified twice from a non-admin shell:
+  `GET /api/setup/storage` answered a request with NO Authorization header
+  with HTTP 200 and the live
+  `postgresql://civiccast_svc:<PASSWORD>@127.0.0.1:5432/civiccast` connection
+  string (F-01, CRITICAL) -- PostgreSQL listens on loopback, so any local
+  process or user could open the station database. `GET
+  /api/setup/station-state` likewise returned the admin user name and display
+  name, the recovery-kit id, channel profiles and storage locations to an
+  unauthenticated caller (F-03), and `/openapi.json` enumerated every
+  `/api/staff/*` path on the LAN-only station (F-06). Fixed:
+  - Every storage route (`GET`/`POST /api/setup/storage`, `GET`/`POST
+    /api/staff/installer/storage`) now returns `ManagedStorageStatusReport`
+    instead of the internal `ManagedStorageStatus`: `database_configured`,
+    `database_kind`, and for a network database its `database_host`,
+    `database_port` and `database_name`. No user name, no password, no URL,
+    authenticated or not. The operator console's Setup screen only ever read
+    `status` and `next_step`, which are unchanged.
+  - Once `setup_complete` is true, `/api/setup/storage` (both methods),
+    `/api/setup/first-admin` and `/api/setup/recovery-kit/acknowledge`
+    require the staff bearer token (401 with `WWW-Authenticate: Bearer`
+    otherwise; the one-time first-admin guard still answers 409 to a caller
+    who has it). Before setup they are loopback-only, exactly as before.
+    `/api/setup/login` and `/api/setup/recover` stay open on loopback so a
+    signed-out operator can obtain a token; both keep their rate limit.
+  - `GET /api/setup/station-state` without a token after setup now returns
+    only `setup_complete`, `station_name` (new field; public branding) and
+    `next_step`, with `profile`/`recovery_kit_id` null and
+    `recovery_kit_acknowledged` null (withheld, not "false"). With a valid
+    token the response is the full state it always was, now also carrying
+    `station_name`. The signed-out Setup screen renders "Setup complete, sign
+    in" plus the sign-in and recovery forms from the reduced body and no
+    longer requests `/api/setup/storage` at all once setup is complete.
+  - On a LAN-only station (`CIVICCAST_LAN_ONLY_STATION=1`, set by
+    `civiccast.native.station_runtime` on both the activated and the
+    pre-activation path) `/openapi.json` is served only to a caller holding
+    the staff bearer token. Deployments without the flag keep FastAPI's
+    default, and `scripts/generate-openapi-artifacts.py` is unaffected (it
+    reads `create_app().openapi()` from the app object, not over HTTP).
+  - Regression tests: `tests/installer/test_installer_api.py`
+    (`test_setup_storage_never_serves_the_database_credential`,
+    `test_setup_endpoints_require_the_staff_token_once_setup_is_complete`,
+    `test_signed_out_station_state_after_setup_discloses_only_public_fields`),
+    `tests/installer/test_storage.py`
+    (`test_storage_report_never_carries_the_database_url`),
+    `tests/policy/test_lan_only_station_external_dependencies.py`, and the
+    signed-out `SetupScreen` vitest.
+  - Hostile review of the fix (two HIGH findings, both corrected before
+    merge): (1) the token-gated `/openapi.json` route was installed AFTER
+    `create_app` mounted the resident portal SPA at `/`, and Starlette matches
+    in registration order -- so on a real station (where
+    `civiccast.native.station_runtime` sets `CIVICCAST_PUBLIC_PORTAL_DIST`
+    alongside the LAN-only flag) the SPA answered `/openapi.json` with `200
+    text/html` and the gate did not exist; it is now installed before the
+    mount, pinned by
+    `test_f06_the_token_gate_survives_the_packaged_portal_mount_at_root`,
+    which runs with a portal dist actually mounted. (2) A browser still
+    sending an expired console token got a 401 from
+    `/api/setup/station-state` and the Setup screen rendered it as "Could not
+    read setup state." with no sign-in form and no way forward -- an operator
+    with an evicted token was locked out of their own station. The screen now
+    drops the rejected token, re-reads the state without it (the signed-out
+    view), shows the "You were signed out" notice above the sign-in card, and
+    keeps an explicit "Sign in again" button on the 401 card for a token it
+    could not discard automatically -- that button now stops sending the
+    rejected token too, so it lands on the sign-in form even while the
+    station keeps rejecting it; covered by the `SetupScreen stale staff
+    token` vitests, one of which keeps the station rejecting throughout.
+  - Round-3 corrections from the same review, all with regression tests
+    proven failing first: (1) `_describe_database_url` could still echo an
+    operator-set credential -- an unescaped `@` in the password put the
+    password tail in `database_host`, and an unparseable value was echoed as
+    `database_kind` (the user name or the password when pasted without a
+    scheme); the kind is now a whitelisted backend name or `unknown` and a
+    URL whose authority carries more than one `@` describes only its kind
+    (`test_describe_database_url_never_echoes_a_credential_fragment`, five
+    cases). (2) `POST /api/setup/storage`, `POST /api/setup/first-admin` and
+    `POST /api/setup/recovery-kit/acknowledge` now require the `setup_admin`
+    role after setup, the same role their `/api/staff/` siblings require --
+    any valid staff token used to pass, so a records-clerk token could rebind
+    the database engine through the setup path
+    (`test_mutating_setup_routes_require_setup_admin_once_setup_is_complete`:
+    403 for the clerk, 200/409 for the admin). (3) The token-gated
+    `/openapi.json` now runs the same verify-and-throttle routine as the
+    staff middleware (`civiccast.auth.middleware.authenticate_staff_request`),
+    so a wrong bearer there spends the `staff-auth-fail:<ip>` budget instead
+    of being an unthrottled token oracle
+    (`test_f06_the_gated_schema_route_spends_the_same_failure_budget_as_the_staff_routes`).
+    (4) A 429 from `/api/setup/station-state` renders a cooldown card that
+    still carries the admin sign-in form (`/api/setup/login` is budgeted
+    separately, per IP and path), instead of a dead-end error card. (5)
+    `docs/ops/staff-route-protection.md` no longer lists `/docs` and
+    `/openapi.json` as unauthenticated on a station.
+  - Gate fallout from the same fix, corrected before merge: the descriptive
+    `make_url` in `civiccast/installer/storage.py`'s new
+    `_describe_database_url` now goes through `normalize_database_url`
+    (`tests/policy/test_shipped_payload_db_driver.py` is a textual tripwire
+    by design), and `scripts/run_isolated_first_run_attestation.py` sends the
+    staff token `first-admin` just issued on its recovery-kit acknowledge and
+    final station-state calls, as the console does, now that those routes
+    require it after setup.
+- **Known issue (beta.5): beta.5 serves the database credential to local
+  unauthenticated callers on the station's loopback** (`GET
+  /api/setup/storage`, no Authorization header). Fixed in beta.6. After
+  upgrading, rotate the `civiccast_svc` PostgreSQL password -- there is no
+  documented self-service rotate procedure yet, so contact support.
+
 - **Installer: the runtime-ownership claim runs first, gathers machine-wide
   evidence, and records why it refused** (beta.5 field defect, measured
   2026-09-09 on a test box with uninstall history). After `d4-provision` had
