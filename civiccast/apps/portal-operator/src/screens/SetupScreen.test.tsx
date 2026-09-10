@@ -256,7 +256,11 @@ describe('SetupScreen first-admin form validation', () => {
       if (url === '/api/setup/storage') {
         return jsonResponse({
           status: 'ready',
-          database_url: 'sqlite:///tmp/civiccast.db',
+          database_configured: true,
+          database_kind: 'sqlite',
+          database_host: null,
+          database_port: null,
+          database_name: null,
           database_path: '/tmp/civiccast.db',
           upload_dir: '/tmp/uploads',
           storage_dir: '/tmp',
@@ -375,7 +379,11 @@ describe('SetupScreen first-admin recovery kit gate', () => {
       if (url === '/api/setup/storage') {
         return jsonResponse({
           status: 'ready',
-          database_url: 'sqlite:///tmp/civiccast.db',
+          database_configured: true,
+          database_kind: 'sqlite',
+          database_host: null,
+          database_port: null,
+          database_name: null,
           database_path: '/tmp/civiccast.db',
           upload_dir: '/tmp/uploads',
           storage_dir: '/tmp',
@@ -505,7 +513,11 @@ describe('SetupScreen first-admin recovery kit gate', () => {
       if (url === '/api/setup/storage') {
         return jsonResponse({
           status: 'ready',
-          database_url: 'sqlite:///tmp/civiccast.db',
+          database_configured: true,
+          database_kind: 'sqlite',
+          database_host: null,
+          database_port: null,
+          database_name: null,
           database_path: '/tmp/civiccast.db',
           upload_dir: '/tmp/uploads',
           storage_dir: '/tmp',
@@ -606,7 +618,11 @@ describe('SetupScreen returning-operator sign-in', () => {
       if (url === '/api/setup/storage') {
         return jsonResponse({
           status: 'ready',
-          database_url: 'sqlite:///tmp/civiccast.db',
+          database_configured: true,
+          database_kind: 'sqlite',
+          database_host: null,
+          database_port: null,
+          database_name: null,
           database_path: '/tmp/civiccast.db',
           upload_dir: '/tmp/uploads',
           storage_dir: '/tmp',
@@ -720,6 +736,220 @@ describe('SetupScreen returning-operator sign-in', () => {
   })
 })
 
+describe('SetupScreen signed-out after setup (setup API requires the staff token)', () => {
+  it('renders sign-in and recovery from the reduced station-state body and never asks for storage', async () => {
+    const requestedUrls: string[] = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      requestedUrls.push(`${method} ${url}`)
+      if (url === '/api/setup/station-state') {
+        // Exactly what GET /api/setup/station-state returns to a caller with
+        // no Authorization header once setup is complete: no profile, no
+        // admin username, no recovery kit id, acknowledgement withheld.
+        return jsonResponse({
+          status: 'complete',
+          setup_complete: true,
+          station_name: 'Pinegrove School Board',
+          profile: null,
+          recovery_kit_created: false,
+          recovery_kit_id: null,
+          recovery_kit_acknowledged: null,
+          operator_console_url: 'http://127.0.0.1:8000/operator/',
+          next_step: 'Sign in with the local admin password to continue.',
+        })
+      }
+      if (url === '/api/setup/storage') {
+        return jsonResponse({ detail: 'Setup is complete. Sign in first.' }, 401)
+      }
+      return jsonResponse({ detail: `Unhandled ${method} ${url}` }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderSetupScreen()
+
+    expect(await screen.findByText('Setup complete')).toBeTruthy()
+    expect(
+      screen.getByText(/Pinegrove School Board already has a first admin and recovery kit/),
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy()
+    expect(screen.getByText('Use recovery code')).toBeTruthy()
+    // recovery_kit_acknowledged is null (withheld), not false: no alert that
+    // would invite a signed-out visitor to click an endpoint they cannot use.
+    expect(screen.queryByText('Recovery kit never confirmed')).toBeNull()
+    expect(screen.queryByText('First-run defaults')).toBeNull()
+    expect(requestedUrls).not.toContain('GET /api/setup/storage')
+    expect(requestedUrls).not.toContain('GET /api/staff/auth/me')
+  })
+})
+
+describe('SetupScreen stale staff token (HIGH 2, hostile review of PR #215)', () => {
+  const signedOutBody = {
+    status: 'complete',
+    setup_complete: true,
+    station_name: 'Pinegrove School Board',
+    profile: null,
+    recovery_kit_created: false,
+    recovery_kit_id: null,
+    recovery_kit_acknowledged: null,
+    operator_console_url: 'http://127.0.0.1:8000/operator/',
+    next_step: 'Sign in with the local admin password to continue.',
+  }
+
+  function authorizationOf(init?: RequestInit): string | null {
+    const headers = init?.headers
+    if (!headers) return null
+    if (headers instanceof Headers) return headers.get('Authorization')
+    if (Array.isArray(headers)) {
+      const pair = headers.find(([name]) => name.toLowerCase() === 'authorization')
+      return pair ? pair[1] : null
+    }
+    const record = headers as Record<string, string>
+    return record.Authorization ?? record.authorization ?? null
+  }
+
+  it('drops a token the server rejects and lands on a usable sign-in card instead of an error dead-end', async () => {
+    // An operator whose console token expired (evicted under the session
+    // cap, or the station's sign-in state reset) still has it stored.
+    window.localStorage.setItem('civiccast.staffToken', 'ccst_stale_token')
+    window.sessionStorage.setItem('civiccast.staffToken', 'ccst_stale_token')
+    const requestedUrls: string[] = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const authorization = authorizationOf(init)
+      requestedUrls.push(`${url} ${authorization ?? '(no token)'}`)
+      if (url === '/api/setup/station-state') {
+        // civiccast/installer/router.py public_station_state: a present-but-
+        // invalid token is a 401 so the browser learns to drop it; no token
+        // at all is the signed-out view.
+        if (authorization) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ detail: 'Invalid staff bearer token.' }), {
+              status: 401,
+              headers: { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer' },
+            }),
+          )
+        }
+        return jsonResponse(signedOutBody)
+      }
+      if (url === '/api/staff/auth/me') {
+        return jsonResponse({ detail: 'Invalid staff bearer token.' }, 401)
+      }
+      return jsonResponse({ detail: `Unhandled GET ${url}` }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderSetupScreen()
+
+    // The sign-in form is reachable: the operator is not stuck on
+    // "Could not read setup state. Invalid staff bearer token." with no
+    // way forward.
+    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeTruthy()
+    expect(inputById('login-admin-username')).toBeTruthy()
+    expect(screen.queryByText(/Could not read setup state/)).toBeNull()
+    // The dead token is gone from both storages, so nothing re-sends it.
+    expect(window.localStorage.getItem('civiccast.staffToken')).toBeNull()
+    expect(window.sessionStorage.getItem('civiccast.staffToken')).toBeNull()
+    // The operator is told why they are looking at a sign-in card.
+    expect(screen.getByText('You were signed out')).toBeTruthy()
+    // The state was re-read WITHOUT the stale token to get here.
+    expect(requestedUrls).toContain('/api/setup/station-state (no token)')
+  })
+
+  it('"Sign in again" on the 401 card recovers while the station KEEPS rejecting the token it could not clear automatically', async () => {
+    // MINOR-1 (hostile review of PR #215, round 2): a token the automatic
+    // path cannot discard -- the test-only injected one -- was re-sent by
+    // the button, so the same 401 card came straight back. The station never
+    // starts accepting the token in this test; the button must stop sending
+    // it and land on the sign-in form from the signed-out view.
+    window.__CIVICCAST_STAFF_TOKEN__ = 'ccst_injected_stale'
+    try {
+      const requestedUrls: string[] = []
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        const authorization = authorizationOf(init)
+        requestedUrls.push(`${url} ${authorization ?? '(no token)'}`)
+        if (url === '/api/setup/station-state') {
+          if (authorization) {
+            return jsonResponse({ detail: 'Invalid staff bearer token.' }, 401)
+          }
+          return jsonResponse(signedOutBody)
+        }
+        if (url === '/api/staff/auth/me') {
+          return jsonResponse({ detail: 'Invalid staff bearer token.' }, 401)
+        }
+        return jsonResponse({ detail: `Unhandled GET ${url}` }, 404)
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      renderSetupScreen()
+
+      const again = await screen.findByRole('button', { name: 'Sign in again' })
+      expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull()
+      fireEvent.click(again)
+      expect(await screen.findByRole('button', { name: 'Sign in' })).toBeTruthy()
+      expect(inputById('login-admin-username')).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'Sign in again' })).toBeNull()
+      // The recovery read went out WITHOUT the rejected token.
+      expect(requestedUrls).toContain('/api/setup/station-state (no token)')
+      expect(screen.getByText('You were signed out')).toBeTruthy()
+    } finally {
+      delete window.__CIVICCAST_STAFF_TOKEN__
+    }
+  })
+
+  it('still offers the admin sign-in form when station-state is rate-limited (429)', async () => {
+    // MINOR-4 (hostile review of PR #215, round 2): /api/setup/station-state
+    // spends a per-request budget, and the stale-token recovery costs two
+    // reads, so a 429 there is likelier -- and it rendered the generic
+    // "Could not read setup state" card with no way to sign in. /api/setup/
+    // login is budgeted separately (per IP AND path), so the operator can
+    // still sign in from a station-state 429 if the form is on the card.
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/setup/station-state') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              detail:
+                'Too many sign-in attempts from this station. Wait 42 seconds, then try again with the correct password, or use a printed recovery code.',
+            }),
+            {
+              status: 429,
+              headers: { 'Content-Type': 'application/json', 'Retry-After': '42' },
+            },
+          ),
+        )
+      }
+      if (url === '/api/setup/login' && init?.method === 'POST') {
+        return jsonResponse({
+          status: 'authenticated',
+          profile,
+          operator_console_token: 'ccst_fresh_token',
+          operator_console_url: 'http://127.0.0.1:8000/operator/',
+          next_step: 'Open the operator console.',
+        })
+      }
+      return jsonResponse({ detail: `Unhandled ${init?.method ?? 'GET'} ${url}` }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderSetupScreen()
+
+    expect(await screen.findByText(/Wait 42 seconds/)).toBeTruthy()
+    const signIn = await screen.findByRole('button', { name: 'Sign in' })
+    fireEvent.change(inputById('login-admin-username'), { target: { value: 'avery' } })
+    fireEvent.change(inputById('login-admin-password'), {
+      target: { value: 'correct horse battery staple' },
+    })
+    fireEvent.click(signIn)
+    await waitFor(() =>
+      expect(window.localStorage.getItem('civiccast.staffToken')).toBe('ccst_fresh_token'),
+    )
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/setup/login')).toBe(true)
+  })
+})
+
 describe('SetupScreen staff-identity gating (Finding MINOR-1)', () => {
   it('never calls /api/staff/auth/me for a signed-out visitor with no stored token', async () => {
     const requestedUrls: string[] = []
@@ -741,7 +971,11 @@ describe('SetupScreen staff-identity gating (Finding MINOR-1)', () => {
       if (url === '/api/setup/storage') {
         return jsonResponse({
           status: 'ready',
-          database_url: 'sqlite:///tmp/civiccast.db',
+          database_configured: true,
+          database_kind: 'sqlite',
+          database_host: null,
+          database_port: null,
+          database_name: null,
           database_path: '/tmp/civiccast.db',
           upload_dir: '/tmp/uploads',
           storage_dir: '/tmp',

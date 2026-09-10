@@ -5,8 +5,10 @@ import { Link } from 'react-router'
 import {
   acknowledgeRecoveryKit,
   ApiError,
+  clearStoredStaffToken,
   configureBackup,
   completePublicFirstAdminSetup,
+  discardRejectedStaffToken,
   getBackupStatus,
   getPublicStorageState,
   getProviderReadiness,
@@ -36,13 +38,14 @@ import type {
   BackupStatus,
   FirstAdminSetupRequest,
   FirstAdminSetupResponse,
-  ManagedStorageStatus,
+  ManagedStorageStatusReport,
   ProviderConnectionTestResponse,
   ProviderReadinessItem,
   R2ConciergeResponse,
   StationAuthResponse,
   StationLoginRequest,
   StationRecoveryRequest,
+  StationSetupState,
 } from '../types/api.generated'
 
 // Setup-wizard provider ids that expose a live "Test connection" (CDN
@@ -88,6 +91,31 @@ function apiMessage(error: unknown, fallback: string): string {
  * plain 403 with this stable detail text -- match on it so this screen can
  * tell that refusal apart from any other 403 without over-matching.
  */
+/**
+ * HIGH 2 (hostile review of PR #215): once setup is complete,
+ * /api/setup/station-state answers a present-but-INVALID staff token with
+ * 401 (civiccast/installer/router.py's _verify_setup_caller) so a browser
+ * still sending an expired console token learns to drop it. Before this
+ * fix the screen rendered that 401 as "Could not read setup state." with no
+ * sign-in form and no way forward -- an operator whose token had been
+ * evicted was locked out of their own station until they cleared browser
+ * storage by hand.
+ */
+function isStaleStaffTokenError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401
+}
+
+/**
+ * `/api/setup/station-state` spends a per-request rate-limit budget
+ * (civiccast/installer/router.py `_enforce_setup_rate_limit`), and its 429
+ * `detail` already says how long to wait. `/api/setup/login` is budgeted
+ * separately (per client IP AND path), so the operator can still sign in
+ * while station-state is cooling down -- as long as the form is on screen.
+ */
+function isRateLimitedError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 429
+}
+
 function isNonLocalSetupError(error: unknown): boolean {
   return (
     error instanceof ApiError &&
@@ -542,7 +570,7 @@ function StorageSetupPanel({
   isPreparing,
   onPrepare,
 }: {
-  storage?: ManagedStorageStatus
+  storage?: ManagedStorageStatusReport
   error: unknown
   isLoading: boolean
   isPreparing: boolean
@@ -1348,15 +1376,60 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
   )
   const [authenticated, setAuthenticated] = useState<StationAuthResponse | null>(null)
 
+  // A 401 from station-state means THIS browser's stored console token is
+  // dead. Drop it, remember why for the notice above the sign-in card, and
+  // re-read the state without it -- the server then returns the signed-out
+  // view and the sign-in card renders. Done inside the query function so
+  // the operator never sees the error state at all on the ordinary path; a
+  // token the console cannot discard (nothing stored, e.g. the injected
+  // test-only one) still surfaces the 401 card with "Sign in again".
   const stateQuery = useQuery({
     queryKey: ['station-setup-state'],
-    queryFn: getStationSetupState,
+    queryFn: async (): Promise<StationSetupState> => {
+      try {
+        return await getStationSetupState()
+      } catch (error) {
+        if (!isStaleStaffTokenError(error) || !clearStoredStaffToken()) throw error
+        try {
+          window.sessionStorage.setItem(STAFF_SIGNED_OUT_NOTICE_KEY, '1')
+        } catch {
+          // Storage unavailable -- the notice is still shown from state.
+        }
+        setSignedOutNotice(true)
+        queryClient.removeQueries({ queryKey: ['staff-identity'] })
+        return getStationSetupState()
+      }
+    },
     retry: false,
   })
+  const staleTokenError = isStaleStaffTokenError(stateQuery.error)
+  // The operator's explicit "Sign in again": unlike the automatic path
+  // above, this also stops sending a token the console could not clear
+  // from storage (the injected test-only one), so the re-read is genuinely
+  // credential-free and the station answers with the signed-out view even
+  // while it keeps rejecting that token (MINOR-1, hostile review of PR #215).
+  const recoverFromStaleToken = () => {
+    if (discardRejectedStaffToken()) {
+      try {
+        window.sessionStorage.setItem(STAFF_SIGNED_OUT_NOTICE_KEY, '1')
+      } catch {
+        // Storage unavailable -- the notice is still shown from state.
+      }
+      setSignedOutNotice(true)
+    }
+    queryClient.removeQueries({ queryKey: ['staff-identity'] })
+    void stateQuery.refetch()
+  }
+  const rateLimitedError = isRateLimitedError(stateQuery.error)
   const storageQuery = useQuery({
     queryKey: ['setup-storage-state'],
     queryFn: getPublicStorageState,
     retry: false,
+    // Storage state only drives the pre-setup flow (prepare storage, then
+    // create the first admin). Once setup is complete the server requires
+    // the staff token for /api/setup/storage, and a signed-out visitor on
+    // the sign-in screen has nothing to send -- so do not ask.
+    enabled: stateQuery.isSuccess && !stateQuery.data.setup_complete,
   })
   const staffIdentityQuery = useQuery({
     queryKey: ['staff-identity'],
@@ -1504,6 +1577,67 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
     passwordsMismatch ||
     form.recovery_kit_destination.trim() === ''
 
+  // Rendered in two places: the ordinary signed-out "Setup complete" card,
+  // and the station-state 429 card (MINOR-4, hostile review of PR #215) so a
+  // rate-limited state read never hides the one form the operator needs.
+  const adminSignInForm = (
+    <form
+      className="grid gap-3 rounded-md p-4"
+      style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+      onSubmit={(event) => {
+        event.preventDefault()
+        loginMutation.mutate(loginForm)
+      }}
+    >
+      <div>
+        <h2 className="m-0 text-base font-semibold">Admin sign-in</h2>
+        <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          Routine sign-in — use this every time, with the username and password from your
+          printed or saved recovery kit. Creates a fresh console token for this browser
+          without touching any other browser or device already signed in.
+        </p>
+      </div>
+      <label className="grid gap-1 text-sm" htmlFor="login-admin-username">
+        <span className="font-semibold">Admin username</span>
+        <input
+          id="login-admin-username"
+          name="username"
+          autoComplete="username"
+          value={loginForm.admin_username}
+          onChange={(event) => setLoginForm((current) => ({ ...current, admin_username: event.target.value }))}
+          className="rounded-md px-3 py-2"
+          style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
+        />
+      </label>
+      <label className="grid gap-1 text-sm" htmlFor="login-admin-password">
+        <span className="font-semibold">Admin password</span>
+        <input
+          id="login-admin-password"
+          name="password"
+          type="password"
+          autoComplete="current-password"
+          value={loginForm.admin_password}
+          onChange={(event) => setLoginForm((current) => ({ ...current, admin_password: event.target.value }))}
+          className="rounded-md px-3 py-2"
+          style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
+        />
+      </label>
+      <button
+        type="submit"
+        disabled={loginMutation.isPending || loginForm.admin_username.trim() === '' || loginForm.admin_password === ''}
+        className="rounded-md px-4 py-2 text-sm font-semibold"
+        style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
+      >
+        Sign in
+      </button>
+      {loginMutation.error && (
+        <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
+          {apiMessage(loginMutation.error, 'Sign-in failed.')}
+        </div>
+      )}
+    </form>
+  )
+
   return (
     <div className="grid gap-5 px-6 py-5">
       <header className="max-w-3xl">
@@ -1522,7 +1656,66 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
         </div>
       )}
 
-      {stateQuery.error && !isNonLocalSetupError(stateQuery.error) && (
+      {stateQuery.error && staleTokenError && (
+        <section
+          role="alert"
+          className="rounded-md p-4 text-sm"
+          style={{
+            background: 'var(--cc-warn-soft, var(--cc-err-soft))',
+            border: '1px solid var(--cc-warn, var(--cc-err))',
+          }}
+        >
+          <h2 className="m-0 text-base font-semibold">This browser&apos;s console sign-in is no longer valid</h2>
+          <p className="m-0 mt-1 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
+            The station rejected the console token this browser was still sending
+            ({apiMessage(stateQuery.error, 'sign-in expired')}). Nothing is wrong with the
+            station. Sign in again with the admin username and password from your recovery kit.
+          </p>
+          <button
+            type="button"
+            onClick={recoverFromStaleToken}
+            disabled={stateQuery.isFetching}
+            className="mt-3 rounded-md px-3 py-2 text-sm font-semibold"
+            style={{ background: 'var(--cc-ink)', color: 'var(--cc-ink-inv)' }}
+          >
+            Sign in again
+          </button>
+        </section>
+      )}
+
+      {stateQuery.error && rateLimitedError && !authenticated && (
+        <section
+          role="alert"
+          className="grid gap-4 rounded-md p-4 text-sm"
+          style={{
+            background: 'var(--cc-warn-soft, var(--cc-err-soft))',
+            border: '1px solid var(--cc-warn, var(--cc-err))',
+          }}
+        >
+          <div>
+            <h2 className="m-0 text-base font-semibold">The station is cooling down after too many requests</h2>
+            <p className="m-0 mt-1 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
+              {apiMessage(stateQuery.error, 'Wait a moment, then try again.')}
+            </p>
+            <p className="m-0 mt-2 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
+              If this station is already set up you can sign in right now &mdash; sign-in is
+              counted separately, so it is not affected by this wait.
+            </p>
+            <button
+              type="button"
+              onClick={() => void stateQuery.refetch()}
+              disabled={stateQuery.isFetching}
+              className="mt-3 rounded-md px-3 py-2 text-sm font-semibold"
+              style={{ background: 'var(--cc-ink)', color: 'var(--cc-ink-inv)' }}
+            >
+              Try again
+            </button>
+          </div>
+          {adminSignInForm}
+        </section>
+      )}
+
+      {stateQuery.error && !staleTokenError && !rateLimitedError && !isNonLocalSetupError(stateQuery.error) && (
         <div role="alert" className="rounded-md p-4 text-sm" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
           Could not read setup state. {apiMessage(stateQuery.error, 'Try again.')}
         </div>
@@ -1611,7 +1804,7 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
           >
             <h2 className="m-0 text-base font-semibold">Setup complete</h2>
             <p className="m-0 mt-1 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
-              {stateQuery.data.profile?.station_name ?? 'This station'} already has a first admin and recovery kit.
+              {stateQuery.data.station_name ?? stateQuery.data.profile?.station_name ?? 'This station'} already has a first admin and recovery kit.
             </p>
             <p className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
               Sign in with the local admin password if this browser lost its console token.
@@ -1619,61 +1812,7 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
           </section>
           <CommissioningDefaultsPanel profile={stateQuery.data.profile} className="lg:col-span-2" />
 
-          <form
-            className="grid gap-3 rounded-md p-4"
-            style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
-            onSubmit={(event) => {
-              event.preventDefault()
-              loginMutation.mutate(loginForm)
-            }}
-          >
-            <div>
-              <h2 className="m-0 text-base font-semibold">Admin sign-in</h2>
-              <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-                Routine sign-in — use this every time, with the username and password from your
-                printed or saved recovery kit. Creates a fresh console token for this browser
-                without touching any other browser or device already signed in.
-              </p>
-            </div>
-            <label className="grid gap-1 text-sm" htmlFor="login-admin-username">
-              <span className="font-semibold">Admin username</span>
-              <input
-                id="login-admin-username"
-                name="username"
-                autoComplete="username"
-                value={loginForm.admin_username}
-                onChange={(event) => setLoginForm((current) => ({ ...current, admin_username: event.target.value }))}
-                className="rounded-md px-3 py-2"
-                style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
-              />
-            </label>
-            <label className="grid gap-1 text-sm" htmlFor="login-admin-password">
-              <span className="font-semibold">Admin password</span>
-              <input
-                id="login-admin-password"
-                name="password"
-                type="password"
-                autoComplete="current-password"
-                value={loginForm.admin_password}
-                onChange={(event) => setLoginForm((current) => ({ ...current, admin_password: event.target.value }))}
-                className="rounded-md px-3 py-2"
-                style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={loginMutation.isPending || loginForm.admin_username.trim() === '' || loginForm.admin_password === ''}
-              className="rounded-md px-4 py-2 text-sm font-semibold"
-              style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
-            >
-              Sign in
-            </button>
-            {loginMutation.error && (
-              <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
-                {apiMessage(loginMutation.error, 'Sign-in failed.')}
-              </div>
-            )}
-          </form>
+          {adminSignInForm}
 
           <form
             className="grid gap-3 rounded-md p-4"

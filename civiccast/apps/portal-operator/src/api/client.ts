@@ -96,7 +96,7 @@ import type {
   DeliveryRetryRecord,
   FollowerRecord,
   LiveFinalizationStatusResponse,
-  ManagedStorageStatus,
+  ManagedStorageStatusReport,
   ManualDocument,
   OverlayCompositorPlan,
   OverlayCompositorRequest,
@@ -324,11 +324,41 @@ export function clearStoredStaffToken(): boolean {
   return hadToken
 }
 
+/**
+ * The injected test-only token the server has rejected, if any. Once the
+ * operator has explicitly asked to sign in again (SetupScreen's "Sign in
+ * again" button), that exact value is no longer sent -- otherwise the button
+ * re-sent the same dead token and looped back to the same 401 card
+ * (MINOR-1, hostile review of PR #215). Remembered by value, so a different
+ * injected token is honored again without any reset.
+ */
+let rejectedInjectedStaffToken: string | null = null
+
+/**
+ * The operator's explicit "sign in again": drop every token this browser
+ * could send, INCLUDING the injected test-only one the automatic 401
+ * handler deliberately leaves alone. Returns true when there was anything
+ * to drop, so the caller knows the next request goes out credential-free.
+ */
+export function discardRejectedStaffToken(): boolean {
+  const clearedStored = clearStoredStaffToken()
+  if (typeof window === 'undefined') return clearedStored
+  const injectedToken = window.__CIVICCAST_STAFF_TOKEN__
+  if (injectedToken != null && injectedToken !== rejectedInjectedStaffToken) {
+    rejectedInjectedStaffToken = injectedToken
+    return true
+  }
+  return clearedStored
+}
+
 function runtimeStaffToken(): string | null {
   if (typeof window === 'undefined') return null
   const localToken = window.localStorage.getItem('civiccast.staffToken')
   const sessionToken = window.sessionStorage.getItem('civiccast.staffToken')
   const injectedToken = window.__CIVICCAST_STAFF_TOKEN__
+  if (injectedToken != null && injectedToken === rejectedInjectedStaffToken) {
+    return localToken ?? sessionToken ?? null
+  }
   return (
     localToken ??
     sessionToken ??
@@ -591,12 +621,12 @@ export function getStationSetupState(): Promise<StationSetupState> {
   return request<StationSetupState>('/api/setup/station-state')
 }
 
-export function getPublicStorageState(): Promise<ManagedStorageStatus> {
-  return request<ManagedStorageStatus>('/api/setup/storage')
+export function getPublicStorageState(): Promise<ManagedStorageStatusReport> {
+  return request<ManagedStorageStatusReport>('/api/setup/storage')
 }
 
-export function preparePublicStorage(): Promise<ManagedStorageStatus> {
-  return request<ManagedStorageStatus>('/api/setup/storage', {
+export function preparePublicStorage(): Promise<ManagedStorageStatusReport> {
+  return request<ManagedStorageStatusReport>('/api/setup/storage', {
     method: 'POST',
     body: {},
   })

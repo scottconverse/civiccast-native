@@ -632,6 +632,7 @@ def read_station_setup_state(*, operator_console_url: str) -> StationSetupState:
     return StationSetupState(
         status="complete",
         setup_complete=True,
+        station_name=profile.station_name,
         profile=profile,
         recovery_kit_created=True,
         recovery_kit_id=recovery_kit_id,

@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from civiccast import __version__
 from civiccast.app import create_app
+from civiccast.installer import storage as storage_module
 from civiccast.installer.models import (
     DiagnosticBundleRequest,
     FirstAdminSetupRequest,
@@ -843,8 +844,15 @@ def test_station_state_reports_unacknowledged_recovery_kit(monkeypatch, tmp_path
         },
     )
     assert setup.status_code == 200
+    token = setup.json()["operator_console_token"]
 
-    state = client.get("/api/setup/station-state")
+    signed_out = client.get("/api/setup/station-state")
+    assert signed_out.status_code == 200
+    assert signed_out.json()["setup_complete"] is True
+    # Withheld, not "False": a signed-out caller learns nothing about the kit.
+    assert signed_out.json()["recovery_kit_acknowledged"] is None
+
+    state = client.get("/api/setup/station-state", headers={"Authorization": f"Bearer {token}"})
     assert state.status_code == 200
     payload = state.json()
     assert payload["setup_complete"] is True
@@ -866,16 +874,18 @@ def test_recovery_kit_acknowledge_records_confirmation(monkeypatch, tmp_path) ->
         },
     )
     assert setup.status_code == 200
+    auth = {"Authorization": f"Bearer {setup.json()['operator_console_token']}"}
 
     ack = client.post(
         "/api/setup/recovery-kit/acknowledge",
         json={"confirmed": True},
+        headers=auth,
     )
     assert ack.status_code == 200
     assert ack.json()["recovery_kit_acknowledged"] is True
     assert "rehearsal" in ack.json()["next_step"].lower()
 
-    state = client.get("/api/setup/station-state")
+    state = client.get("/api/setup/station-state", headers=auth)
     assert state.json()["recovery_kit_acknowledged"] is True
 
     raw = json.loads((tmp_path / "station-state.json").read_text(encoding="utf-8"))
@@ -904,13 +914,15 @@ def test_recovery_kit_acknowledge_requires_setup_and_confirmation(monkeypatch, t
         },
     )
     assert setup.status_code == 200
+    auth = {"Authorization": f"Bearer {setup.json()['operator_console_token']}"}
 
     not_confirmed = client.post(
         "/api/setup/recovery-kit/acknowledge",
         json={"confirmed": False},
+        headers=auth,
     )
     assert not_confirmed.status_code == 400
-    state = client.get("/api/setup/station-state")
+    state = client.get("/api/setup/station-state", headers=auth)
     assert state.json()["recovery_kit_acknowledged"] is False
 
 
@@ -940,6 +952,237 @@ def test_public_setup_station_state_allowed_from_loopback_with_no_token() -> Non
     response = client.get("/api/setup/station-state")
 
     assert response.status_code == 200
+
+
+_SETUP_PAYLOAD = {
+    "station_name": "Pinegrove School Board",
+    "admin_display_name": "Avery Admin",
+    "admin_username": "avery",
+    "admin_password": "correct horse battery staple",
+    "recovery_kit_destination": "printed and stored in the clerk safe",
+}
+
+_EXTERNAL_PG_URL = "postgresql://civiccast_svc:s3cret-pw@127.0.0.1:5432/civiccast"
+
+
+def _complete_setup(client: TestClient) -> str:
+    setup = client.post("/api/setup/first-admin", json=_SETUP_PAYLOAD)
+    assert setup.status_code == 200
+    return setup.json()["operator_console_token"]
+
+
+def test_setup_storage_never_serves_the_database_credential(monkeypatch, tmp_path) -> None:
+    """SECURITY F-01 (walkthrough on a running beta.5 station, 2026-09-09):
+    ``GET /api/setup/storage`` returned the live ``postgresql://user:password@``
+    URL to a caller with no Authorization header. No route may return the URL
+    now, authenticated or not, before or after setup."""
+
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    client = TestClient(create_app())
+    # Set AFTER create_app (ephemeral stores stay bound); the storage routes
+    # read the env at request time, and the probe is the one real DB touch.
+    monkeypatch.setenv("DATABASE_URL", _EXTERNAL_PG_URL)
+    monkeypatch.setattr(
+        storage_module,
+        "_cached_probe_external_database",
+        lambda url: storage_module.ExternalDatabaseProbe(
+            status="ready",
+            migrations_applied=True,
+            operator_message="Database ready.",
+            next_step="Nothing to do.",
+        ),
+    )
+
+    before = client.get("/api/setup/storage")
+    assert before.status_code == 200
+    body = before.text
+    assert "postgresql://" not in body
+    assert "s3cret-pw" not in body
+    assert "civiccast_svc" not in body
+    payload = before.json()
+    assert "database_url" not in payload
+    assert payload["database_configured"] is True
+    assert payload["database_kind"] == "postgresql"
+    assert payload["database_host"] == "127.0.0.1"
+    assert payload["database_port"] == 5432
+    assert payload["database_name"] == "civiccast"
+
+    token = _complete_setup(client)
+    for headers in ({}, {"Authorization": f"Bearer {token}"}):
+        for path in ("/api/setup/storage", "/api/staff/installer/storage"):
+            response = client.get(path, headers=headers)
+            assert "postgresql://" not in response.text, (path, headers)
+            assert "s3cret-pw" not in response.text, (path, headers)
+            assert "civiccast_svc" not in response.text, (path, headers)
+    authed = client.get("/api/setup/storage", headers={"Authorization": f"Bearer {token}"})
+    assert authed.status_code == 200
+    assert "database_url" not in authed.json()
+
+
+def test_setup_endpoints_require_the_staff_token_once_setup_is_complete(
+    monkeypatch, tmp_path
+) -> None:
+    """After ``setup_complete`` every state-bearing ``/api/setup/*`` route
+    needs the staff bearer token; ``login``/``recover`` stay open so the
+    operator can obtain one, and a present-but-invalid token is a 401 too."""
+
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    client = TestClient(create_app())
+    token = _complete_setup(client)
+    auth = {"Authorization": f"Bearer {token}"}
+
+    assert client.get("/api/setup/storage").status_code == 401
+    assert client.post("/api/setup/storage", json={}).status_code == 401
+    assert client.post("/api/setup/first-admin", json=_SETUP_PAYLOAD).status_code == 401
+    assert (
+        client.post("/api/setup/recovery-kit/acknowledge", json={"confirmed": True}).status_code
+        == 401
+    )
+    unauthorized = client.get("/api/setup/storage")
+    assert unauthorized.headers["WWW-Authenticate"] == "Bearer"
+    assert "Sign in" in unauthorized.json()["detail"]
+
+    stale = client.get("/api/setup/storage", headers={"Authorization": "Bearer ccst_not-valid"})
+    assert stale.status_code == 401
+    stale_state = client.get(
+        "/api/setup/station-state", headers={"Authorization": "Bearer ccst_not-valid"}
+    )
+    assert stale_state.status_code == 401
+
+    assert client.get("/api/setup/storage", headers=auth).status_code == 200
+    ack = client.post("/api/setup/recovery-kit/acknowledge", json={"confirmed": True}, headers=auth)
+    assert ack.status_code == 200
+    # Re-running first-admin with a valid token is still refused by the
+    # already-complete guard, exactly as before this change.
+    assert (
+        client.post("/api/setup/first-admin", json=_SETUP_PAYLOAD, headers=auth).status_code == 409
+    )
+
+    login = client.post(
+        "/api/setup/login",
+        json={"admin_username": "avery", "admin_password": "correct horse battery staple"},
+    )
+    assert login.status_code == 200
+    assert login.json()["operator_console_token"].startswith("ccst_")
+    wrong_recovery = client.post(
+        "/api/setup/recover",
+        json={
+            "admin_username": "avery",
+            "recovery_code": "not-a-real-code",
+            "new_admin_password": "fresh horse battery staple",
+        },
+    )
+    assert wrong_recovery.status_code == 401
+    assert "Sign in" not in wrong_recovery.json()["detail"]
+
+
+def test_mutating_setup_routes_require_setup_admin_once_setup_is_complete(
+    monkeypatch, tmp_path
+) -> None:
+    """MAJOR-2 (hostile review of PR #215, rounds 1 and 2): after
+    ``setup_complete`` the mutating ``/api/setup/*`` routes accepted ANY valid
+    staff token, while their ``/api/staff/`` siblings require ``setup_admin``.
+    A records-clerk token could rebind the database engine through the weaker
+    door. Now the setup path demands the same role the staff sibling does:
+    a wrong-role token gets 403, a ``setup_admin`` token succeeds, and the
+    read-only ``GET /api/setup/storage`` stays open to any staff token exactly
+    like ``GET /api/staff/installer/storage``."""
+
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    monkeypatch.setenv("CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB", "1")
+    monkeypatch.setenv(
+        "CIVICCAST_STAFF_TOKENS", "records-token:records-1:Records Clerk:records_clerk"
+    )
+    client = TestClient(create_app())
+    admin = {"Authorization": f"Bearer {_complete_setup(client)}"}
+    clerk = {"Authorization": "Bearer records-token"}
+    monkeypatch.setenv("DATABASE_URL", _EXTERNAL_PG_URL)
+    monkeypatch.setattr(
+        storage_module,
+        "_cached_probe_external_database",
+        lambda url: storage_module.ExternalDatabaseProbe(
+            status="ready",
+            migrations_applied=True,
+            operator_message="Database ready.",
+            next_step="Nothing to do.",
+        ),
+    )
+
+    # The clerk token is genuinely authenticated: the read route admits it.
+    assert client.get("/api/setup/storage", headers=clerk).status_code == 200
+
+    forbidden_storage = client.post("/api/setup/storage", json={}, headers=clerk)
+    assert forbidden_storage.status_code == 403
+    assert "setup_admin" in forbidden_storage.json()["detail"]
+    forbidden_ack = client.post(
+        "/api/setup/recovery-kit/acknowledge", json={"confirmed": True}, headers=clerk
+    )
+    assert forbidden_ack.status_code == 403
+    assert "setup_admin" in forbidden_ack.json()["detail"]
+    forbidden_admin = client.post("/api/setup/first-admin", json=_SETUP_PAYLOAD, headers=clerk)
+    assert forbidden_admin.status_code == 403
+
+    assert client.post("/api/setup/storage", json={}, headers=admin).status_code == 200
+    assert (
+        client.post(
+            "/api/setup/recovery-kit/acknowledge", json={"confirmed": True}, headers=admin
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post("/api/setup/first-admin", json=_SETUP_PAYLOAD, headers=admin).status_code == 409
+    )
+    # The role gate is a post-setup rule only: the signed-out 401 still wins
+    # for a caller with no token at all.
+    assert client.post("/api/setup/storage", json={}).status_code == 401
+
+
+def test_signed_out_station_state_after_setup_discloses_only_public_fields(
+    monkeypatch, tmp_path
+) -> None:
+    """F-03: unauthenticated ``station-state`` used to return the admin user
+    name, display name, recovery-kit id, channel profiles and storage
+    locations. Signed out it now carries ``setup_complete``, ``station_name``
+    and ``next_step``; the same call with the token is unchanged."""
+
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    client = TestClient(create_app())
+    token = _complete_setup(client)
+
+    signed_out = client.get("/api/setup/station-state")
+    assert signed_out.status_code == 200
+    payload = signed_out.json()
+    assert payload["setup_complete"] is True
+    assert payload["station_name"] == "Pinegrove School Board"
+    assert payload["next_step"]
+    assert payload["profile"] is None
+    assert payload["recovery_kit_id"] is None
+    assert payload["recovery_kit_acknowledged"] is None
+    assert payload["recovery_kit_created"] is False
+    body = signed_out.text
+    for secret_ish in (
+        "avery",
+        "Avery Admin",
+        "admin_username",
+        "storage_locations",
+        "channel_profiles",
+    ):
+        assert secret_ish not in body, secret_ish
+
+    signed_in = client.get("/api/setup/station-state", headers={"Authorization": f"Bearer {token}"})
+    assert signed_in.status_code == 200
+    full = signed_in.json()
+    assert full["station_name"] == "Pinegrove School Board"
+    assert full["profile"]["admin_username"] == "avery"
+    assert full["recovery_kit_id"]
+    assert full["recovery_kit_acknowledged"] is False
+    assert full["recovery_kit_created"] is True
+
+    staff_view = client.get(
+        "/api/staff/installer/station-state", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert staff_view.status_code == 200
+    assert staff_view.json() == full
 
 
 def test_public_setup_session_mutations_refused_from_non_loopback(tmp_path) -> None:
@@ -1081,7 +1324,10 @@ def test_first_admin_setup_persists_first_station_commissioning_defaults(
     assert profile["operation_mode"] == "test"
     assert profile["dashboard_ready_state"] == "not_ready"
 
-    state = client.get("/api/setup/station-state")
+    state = client.get(
+        "/api/setup/station-state",
+        headers={"Authorization": f"Bearer {response.json()['operator_console_token']}"},
+    )
     assert state.status_code == 200
     assert state.json()["profile"] == profile
 
@@ -1511,14 +1757,17 @@ def test_first_admin_setup_is_one_time_unless_reset_is_explicit(
         "recovery_kit_destination": "safe",
     }
 
-    assert (
-        client.post(
-            "/api/setup/first-admin",
-            json=payload,
-        ).status_code
-        == 200
+    first = client.post(
+        "/api/setup/first-admin",
+        json=payload,
     )
-    second = client.post("/api/setup/first-admin", json=payload)
+    assert first.status_code == 200
+    auth = {"Authorization": f"Bearer {first.json()['operator_console_token']}"}
+
+    # Once setup is complete the route needs the staff token before it even
+    # reaches the one-time guard; with the token, the guard still refuses.
+    assert client.post("/api/setup/first-admin", json=payload).status_code == 401
+    second = client.post("/api/setup/first-admin", json=payload, headers=auth)
 
     assert second.status_code == 409
     assert "already complete" in second.json()["detail"]
