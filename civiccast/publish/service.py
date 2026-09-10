@@ -202,6 +202,12 @@ def _pending_surface(
     )
 
 
+def default_approved_surface_ids(asset: StaffAssetRow) -> set[str]:
+    """Surfaces an approval publishes when the operator names none: canonical only."""
+
+    return {surface.id for surface in build_initial_surfaces(asset) if surface.kind == "canonical"}
+
+
 def build_initial_surfaces(asset: StaffAssetRow) -> list[PublishSurfaceStatus]:
     """Build per-surface approval rows before a publish run exists."""
     public_record = _is_public_record(asset)
@@ -531,10 +537,13 @@ def approve_publish(
     at = datetime.now(UTC)
     payload = f"{asset.asset_id}:{asset.title}".encode()
     overrides = {override.surface_id: override.justification for override in request.overrides}
+    # F-23 (safety): an omitted selection is the canonical Portal surface
+    # only, matching the Publish screen's default. It used to be every
+    # surface, which put a closed session on Internet Archive for good.
     approved_ids = (
         set(request.approved_surface_ids)
         if request.approved_surface_ids is not None
-        else {surface.id for surface in build_initial_surfaces(asset)}
+        else default_approved_surface_ids(asset)
     )
     resolved_registry = registry if registry is not None else default_registry()
     blocked = _blocked_selected_surfaces(

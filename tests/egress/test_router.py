@@ -347,6 +347,10 @@ def test_staff_egress_command_is_queued_for_daemon(
     client: TestClient,
     store: PostgresEgressStore,
 ) -> None:
+    assert (
+        client.put("/api/staff/egress/channels/gov/config", json=_config_payload()).status_code
+        == 200
+    )
     r = client.post(
         "/api/staff/egress/channels/gov/commands",
         json={"action": "start"},
@@ -360,6 +364,48 @@ def test_staff_egress_command_is_queued_for_daemon(
     assert [cmd.command_id for cmd in store.pop_pending_commands("gov")] == [
         body["command"]["command_id"]
     ]
+
+
+def test_staff_egress_start_is_refused_with_a_reason_when_no_config_exists(
+    client: TestClient,
+    store: PostgresEgressStore,
+) -> None:
+    # beta.5 walkthrough F-29: Start on an unconfigured channel used to be
+    # accepted (202) and silently dropped by the daemon; state stayed Stopped.
+    r = client.post(
+        "/api/staff/egress/channels/gov/commands",
+        json={"action": "start"},
+    )
+
+    assert r.status_code == 409
+    assert r.json()["detail"] == (
+        "No outgoing-feed configuration for gov. Apply a headend preset or the local "
+        "rehearsal preset first."
+    )
+    assert store.pop_pending_commands("gov") == []
+
+
+def test_staff_egress_start_is_refused_when_config_is_disabled(client: TestClient) -> None:
+    payload = _config_payload()
+    payload["enabled"] = False
+    assert client.put("/api/staff/egress/channels/gov/config", json=payload).status_code == 200
+
+    r = client.post("/api/staff/egress/channels/gov/commands", json={"action": "start"})
+
+    assert r.status_code == 409
+    assert "disabled" in r.json()["detail"]
+
+
+def test_staff_egress_stop_is_still_accepted_without_config(
+    client: TestClient,
+    store: PostgresEgressStore,
+) -> None:
+    # Only start needs a config; stop/drain on an unconfigured channel is a
+    # harmless no-op for the daemon and must stay reachable.
+    r = client.post("/api/staff/egress/channels/gov/commands", json={"action": "stop"})
+
+    assert r.status_code == 202
+    assert [cmd.action for cmd in store.pop_pending_commands("gov")] == ["stop"]
 
 
 def test_staff_egress_command_rejects_client_supplied_actor(client: TestClient) -> None:

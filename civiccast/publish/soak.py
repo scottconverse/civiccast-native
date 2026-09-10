@@ -119,9 +119,12 @@ def run_publish_soak(iterations: int = 24) -> PublishSoakResult:
         _assert_preflight_ready(preflight)
         record = approve_publish(
             asset=asset,
+            # The soak exercises every surface on purpose; an omitted
+            # selection means the canonical Portal surface only (F-23).
             request=PublishApprovalRequest(
                 operator_id="nightly-soak",
                 operator_display_name="Nightly Publish Soak",
+                approved_surface_ids=list(EXPECTED_SURFACE_IDS),
             ),
             store=store,
         )

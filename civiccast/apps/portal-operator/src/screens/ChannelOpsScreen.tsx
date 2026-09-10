@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ApiError,
@@ -30,6 +30,15 @@ import {
 import { hasOperatorRole } from '../auth/roles'
 import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { feedCommandConfirmCopy } from './feed-command-confirm'
+import {
+  type EgressConfigState,
+  START_APPLY_TIMEOUT_MS,
+  type StartWatch,
+  configCheckFailedReason,
+  startDisabledConfigReason,
+  startWatchApplied,
+  startWithoutConfigReason,
+} from './egress-start'
 import { humanizeDuration } from '../format'
 import { RadioCardGroup } from '../components/RadioCardGroup'
 import { CableVerificationCard } from './CableVerificationCard'
@@ -463,7 +472,7 @@ function ChannelBrandingPanel({
   )
 }
 
-function PlayoutPanel({ nowNext }: { nowNext: ChannelNowNext | undefined }) {
+export function PlayoutPanel({ nowNext }: { nowNext: ChannelNowNext | undefined }) {
   if (!nowNext) {
     return (
       <section className="rounded-md p-4" style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}>
@@ -472,7 +481,13 @@ function PlayoutPanel({ nowNext }: { nowNext: ChannelNowNext | undefined }) {
       </section>
     )
   }
-  const blocks = [nowNext.current, nowNext.next].filter((block): block is PlayoutBlock => block != null)
+  // beta.5 walkthrough F-27: the API now reports current=null while nothing
+  // is on air and next=null while nothing is scheduled. Say exactly that --
+  // never a fabricated "live programming -- Playing" row.
+  const slots: Array<{ slot: 'Now' | 'Next'; block: PlayoutBlock | null; empty: string }> = [
+    { slot: 'Now', block: nowNext.current, empty: 'No program on air' },
+    { slot: 'Next', block: nowNext.next, empty: 'Nothing scheduled' },
+  ]
   return (
     <section className="rounded-md p-4" style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -488,8 +503,31 @@ function PlayoutPanel({ nowNext }: { nowNext: ChannelNowNext | undefined }) {
           </span>
         )}
       </div>
+      {nowNext.schedule_note && (
+        <div
+          role="note"
+          className="mt-3 rounded-md p-3 text-sm"
+          style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-warn)', border: '1px solid var(--cc-line)' }}
+        >
+          <strong>Schedule differs from what is on air.</strong> {nowNext.schedule_note}
+        </div>
+      )}
       <div className="mt-4 grid gap-3">
-        {blocks.map((block) => (
+        {slots.map(({ slot, block, empty }) => block == null ? (
+          <div
+            key={slot}
+            className="rounded-md p-3 text-sm"
+            style={{ background: 'var(--cc-surface-2)', border: '1px dashed var(--cc-line)', color: 'var(--cc-ink-2)' }}
+          >
+            <span className="cc-mono mr-2 text-[11px] uppercase" style={{ color: 'var(--cc-ink-3)' }}>{slot}</span>
+            {empty}
+            <div className="mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+              {slot === 'Now'
+                ? 'The outgoing feed is not reporting anything on air. Start the feed or schedule a premiere.'
+                : 'Add a premiere on the Schedule screen to fill this slot.'}
+            </div>
+          </div>
+        ) : (
           <div
             key={block.block_id}
             className="grid gap-2 rounded-md p-3 sm:grid-cols-[1fr_auto]"
@@ -510,6 +548,7 @@ function PlayoutPanel({ nowNext }: { nowNext: ChannelNowNext | undefined }) {
               )}
             </div>
             <div className="cc-mono text-right text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+              <span className="mr-2 uppercase" style={{ color: 'var(--cc-ink-3)' }}>{slot}</span>
               {formatTime(block.starts_at)}
               <div>{Math.round(block.duration_seconds / 60)} min</div>
             </div>
@@ -559,6 +598,9 @@ export function EgressControlPanel({
   error,
   onCommand,
   liveCaptionsEnabled,
+  configState,
+  onRetryConfigCheck,
+  startNotApplied = null,
 }: {
   channelId: string | undefined
   state: EgressStateRow | null | undefined
@@ -569,10 +611,34 @@ export function EgressControlPanel({
   onCommand: (action: EgressCommandAction) => void
   // Station-profile live-captions switch; undefined until it loads.
   liveCaptionsEnabled?: boolean
+  // beta.5 walkthrough F-29: whether this channel has an enabled outgoing-feed
+  // (egress) configuration. `undefined` while the list is still loading --
+  // Start stays disabled until we know, because the daemon drops a start on
+  // an unconfigured channel and the API refuses it with 409 (a disabled
+  // configuration gets its own 409).
+  configState?: EgressConfigState
+  // Re-runs the configuration-list fetch after it failed ('unknown').
+  onRetryConfigCheck?: () => void
+  // Set by the screen when a queued Start was not acted on by the daemon
+  // within START_APPLY_TIMEOUT_MS (state still Stopped / no state row).
+  startNotApplied?: { channelId: string; waitedSeconds: number } | null
 }) {
   const latestHealth = health[0]
   const sending = pendingCommand !== null
   const commandDisabled = !channelId || sending || !canControl
+  const startDisabled = commandDisabled || configState !== 'configured'
+  const startDisabledReason =
+    !channelId || sending || !canControl
+      ? null
+      : configState === undefined
+        ? 'Checking for an outgoing-feed configuration...'
+        : configState === 'configured'
+          ? null
+          : configState === 'disabled'
+            ? startDisabledConfigReason(channelId)
+            : configState === 'unknown'
+              ? configCheckFailedReason(channelId)
+              : startWithoutConfigReason(channelId)
   const rawEgressState = state?.state ?? 'STOPPED'
   // Tone comes from the shared toneForEgressState so this pill cannot disagree
   // with the same feed's pill on System Health. A not-on-air feed is amber
@@ -660,16 +726,18 @@ export function EgressControlPanel({
           const isThisSending =
             pendingCommand?.channelId === channelId &&
             pendingCommand?.action === action
+          const disabled = action === 'start' ? startDisabled : commandDisabled
           return (
             <button
               key={action}
               type="button"
-              disabled={commandDisabled}
+              disabled={disabled}
+              aria-describedby={action === 'start' && startDisabledReason ? 'egress-start-reason' : undefined}
               onClick={() => onCommand(action)}
               className="rounded-md px-3 py-2 text-sm font-semibold"
               style={{
-                background: commandDisabled ? 'var(--cc-surface-3)' : 'var(--cc-brand)',
-                color: commandDisabled ? 'var(--cc-ink-3)' : 'var(--cc-brand-ink)',
+                background: disabled ? 'var(--cc-surface-3)' : 'var(--cc-brand)',
+                color: disabled ? 'var(--cc-ink-3)' : 'var(--cc-brand-ink)',
               }}
             >
               {isThisSending ? 'Queuing...' : label}
@@ -677,6 +745,29 @@ export function EgressControlPanel({
           )
         })}
       </div>
+      {startDisabledReason && (
+        <div id="egress-start-reason" className="mt-2 flex flex-wrap items-center gap-2 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
+          <span>{startDisabledReason}</span>
+          {configState === 'unknown' && onRetryConfigCheck && (
+            <button
+              type="button"
+              onClick={onRetryConfigCheck}
+              className="rounded-md px-2 py-1 text-xs font-semibold"
+              style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink)', border: '1px solid var(--cc-line)' }}
+            >
+              Retry check
+            </button>
+          )}
+        </div>
+      )}
+      {startNotApplied && startNotApplied.channelId === channelId && (
+        <div role="alert" className="mt-3 rounded-md p-3 text-sm" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
+          <strong>Start was queued but the feed did not start.</strong> The outgoing-feed worker did
+          not report Starting or On air within {startNotApplied.waitedSeconds}s
+          {state?.last_error ? `: ${state.last_error}` : '.'} Check that the CivicCast egress
+          service is running on this station (System Health), then try Start again.
+        </div>
+      )}
       {Boolean(error) && (
         <div role="alert" className="mt-3 text-sm" style={{ color: 'var(--cc-err)' }}>
           {apiMessage(error, 'Channel command failed.')}
@@ -1409,6 +1500,14 @@ export function PlayoutPlanPanel({ plan }: { plan: ChannelPlayoutPlan | undefine
         )}
       </div>
       <div className="mt-3 grid gap-2">
+        {plan && blocks.length === 0 && (
+          <div className="rounded-md p-3 text-sm" style={{ background: 'var(--cc-surface-2)', border: '1px dashed var(--cc-line)', color: 'var(--cc-ink-2)' }}>
+            Nothing scheduled
+            <div className="mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+              No premieres are scheduled for this channel. Add one on the Schedule screen and it appears here.
+            </div>
+          </div>
+        )}
         {blocks.map((block) => (
           <div key={block.block_id} className="rounded-md p-3 text-sm" style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}>
             <div className="flex flex-wrap items-center gap-2">
@@ -1440,7 +1539,7 @@ export function PlayoutPlanPanel({ plan }: { plan: ChannelPlayoutPlan | undefine
   )
 }
 
-function ProofPanel({ proof }: { proof: ChannelProofLog | undefined }) {
+export function ProofPanel({ proof }: { proof: ChannelProofLog | undefined }) {
   const events = proof?.events ?? []
   return (
     <section className="rounded-md p-4" style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}>
@@ -1457,7 +1556,15 @@ function ProofPanel({ proof }: { proof: ChannelProofLog | undefined }) {
           </div>
         )}
       </div>
-      <div className="mt-4 overflow-x-auto">
+      {proof && events.length === 0 && (
+        <div className="mt-4 rounded-md p-3 text-sm" style={{ background: 'var(--cc-surface-2)', border: '1px dashed var(--cc-line)', color: 'var(--cc-ink-2)' }}>
+          No proof events yet
+          <div className="mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+            The outgoing-feed worker records a proof event each time it puts a source on air. Rows appear here after the first start.
+          </div>
+        </div>
+      )}
+      <div className="mt-4 overflow-x-auto" hidden={proof != null && events.length === 0}>
         <table className="w-full min-w-[680px] border-collapse text-left text-sm">
           <thead>
             <tr style={{ borderBottom: '1px solid var(--cc-line)' }}>
@@ -1474,7 +1581,13 @@ function ProofPanel({ proof }: { proof: ChannelProofLog | undefined }) {
                 <td className="px-2 py-2 cc-mono text-xs">{formatTime(event.observed_at)}</td>
                 <td className="px-2 py-2">{event.title}</td>
                 <td className="px-2 py-2"><StatusPill label={event.actual_status} /></td>
-                <td className="px-2 py-2">{event.captions_attached ? 'Attached' : 'Missing'}</td>
+                <td className="px-2 py-2">
+                  {event.captions_attached == null
+                    ? 'Not verified'
+                    : event.captions_attached
+                      ? 'Attached'
+                      : 'Missing'}
+                </td>
                 <td className="px-2 py-2 cc-mono text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
                   {event.machine_summary}
                 </td>
@@ -1611,20 +1724,75 @@ export function ChannelOpsScreen() {
     retry: false,
   })
   const liveCaptionsEnabled = stationProfileQuery.data?.live_captions_enabled
-  const egressConfigured = useMemo(() => {
-    return Boolean(
-      channelId &&
-        (egressChannelsQuery.data ?? []).some((channel) => channel.channel_id === channelId),
-    )
+  const egressChannelRow = useMemo(() => {
+    if (!channelId) return undefined
+    return (egressChannelsQuery.data ?? []).find((channel) => channel.channel_id === channelId)
   }, [channelId, egressChannelsQuery.data])
+  // A configuration row exists (config editor, loudness plan, overlay).
+  const egressConfigured = egressChannelRow != null
+  // Start needs the row to exist AND be enabled: the router answers 409 to
+  // either a missing or a disabled configuration (hostile review m1).
+  const egressConfigState: EgressConfigState | undefined = egressChannelsQuery.isSuccess
+    ? egressChannelRow == null
+      ? 'missing'
+      : egressChannelRow.enabled
+        ? 'configured'
+        : 'disabled'
+    : egressChannelsQuery.isError
+      ? 'unknown'
+      : undefined
+  // F-29: after a Start is accepted (202) the daemon must act on it. Watch the
+  // state row for START_APPLY_TIMEOUT_MS; if nothing changes, tell the operator
+  // instead of leaving a silent "Stopped".
+  const [startWatch, setStartWatch] = useState<StartWatch | null>(null)
+  const [startNotApplied, setStartNotApplied] = useState<{ channelId: string; waitedSeconds: number } | null>(null)
+  const egressStateData = egressStateQuery.data
   const egressCommandMutation = useMutation({
     mutationFn: ({ channelId, action }: { channelId: string; action: EgressCommandAction }) =>
       queueEgressCommand(channelId, action),
+    onMutate: (variables) => {
+      if (variables.action === 'start') {
+        setStartNotApplied(null)
+      }
+    },
     onSuccess: (_, variables) => {
+      if (variables.action === 'start') {
+        setStartWatch({
+          channelId: variables.channelId,
+          issuedAt: Date.now(),
+          baselineKnown: egressStateData !== undefined,
+          baselineState: egressStateData?.state ?? null,
+          baselineUpdatedAt: egressStateData?.updated_at ?? null,
+        })
+      } else {
+        setStartWatch(null)
+      }
       void queryClient.invalidateQueries({ queryKey: ['egress-state', variables.channelId] })
       void queryClient.invalidateQueries({ queryKey: ['egress-health', variables.channelId] })
     },
   })
+  // The watch is derived, not cleared in the effect: once the daemon reports
+  // a start-ish state or the row moves, the watch is simply inert.
+  const startApplied = startWatchApplied(startWatch, egressStateData)
+  const activeStartWatch = startWatch != null && !startApplied ? startWatch : null
+  useEffect(() => {
+    if (!activeStartWatch) return
+    const remaining = START_APPLY_TIMEOUT_MS - (Date.now() - activeStartWatch.issuedAt)
+    const timer = window.setTimeout(() => {
+      setStartNotApplied({
+        channelId: activeStartWatch.channelId,
+        waitedSeconds: Math.round(START_APPLY_TIMEOUT_MS / 1000),
+      })
+      setStartWatch(null)
+    }, Math.max(0, remaining))
+    const poll = window.setInterval(() => {
+      void queryClient.invalidateQueries({ queryKey: ['egress-state', activeStartWatch.channelId] })
+    }, 2_000)
+    return () => {
+      window.clearTimeout(timer)
+      window.clearInterval(poll)
+    }
+  }, [activeStartWatch, queryClient])
   const egressConfigQuery = useQuery({
     queryKey: ['egress-config', channelId],
     queryFn: () => getEgressConfig(channelId ?? ''),
@@ -1755,6 +1923,9 @@ export function ChannelOpsScreen() {
             canControl={canControlEgress}
             error={egressCommandMutation.error}
             liveCaptionsEnabled={liveCaptionsEnabled}
+            configState={egressConfigState}
+            onRetryConfigCheck={() => void egressChannelsQuery.refetch()}
+            startNotApplied={startNotApplied}
             onCommand={(action) => {
               if (!channelId) return
               const channelName = selectedChannel?.branding.display_name ?? channelId
