@@ -69,9 +69,9 @@ the operator for a password and never write passwords into any file or chat.
      can clear.
    - Recovery codes: choose **Save kit** or **Print kit** and keep it off the
      computer. Do not put the codes in chat.
-7. Open **System Health** in the left navigation. Green means the install is
-   good. Live captions are OFF by default in beta.5; that is expected, and the
-   captions row says so.
+7. Open **Readiness** in the left navigation (the docs sometimes call it
+   System Health). Green means the install is good. Live captions are OFF by
+   default in beta.5; that is expected, and the captions row says so.
 
 ## 4. When something goes wrong: what to collect
 
@@ -91,7 +91,16 @@ Ask for these, in this order. They answer almost every question.
    `C:\ProgramData\CivicCast\logs\control_plane-app.log`
 6. Free space: `Get-PSDrive C`
 
-## 5. Known failures in beta.5 and exactly what to do
+## 5. Screen names
+
+The console's left navigation uses these names. Older docs use the names in
+brackets: Readiness [System Health], Channels [Channel Ops], Live [Live Room],
+Facility [Facility Router], Contributors [Contribute], CG Designer [CG Board
+Designer], Emergency Alerts [EAS], Publish [Publish Dashboard], Federation
+[ActivityPub]. Setup is split across First Setup, Control Room Setup and Cable
+Commissioning. Live captions live under Station Profile.
+
+## 6. Known failures in beta.5 and exactly what to do
 
 ### A. "corrupt/unparseable ... Extra inputs are not permitted ... nats_"
 Provisioning halts. Cause: the machine had an August 2026 (beta.1) install
@@ -157,20 +166,22 @@ own. Not an install problem.
 Known beta.5 issue. Turn live captions back off in Setup > Station Profile,
 then restart each channel.
 
-## 6. If the operator wants you to finish it
+## 7. If the operator wants you to finish it
 
 Offer this only after you have the screenshot and the log. Then do the steps in
-section 3 or the fix in section 5 yourself, one at a time, and show the
+section 3 or the fix in section 6 yourself, one at a time, and show the
 operator each result. Never type the administrator password for them. Never
 delete `C:\ProgramData\CivicCast` without saying what it holds and getting a
 yes.
 
-## 7. When it is working, confirm these and report
+## 8. When it is working, confirm these and report
 
 - `sc.exe query CivicCastSupervisor` shows RUNNING.
-- `http://127.0.0.1:8000` loads and System Health is green.
+- `http://127.0.0.1:8000` loads and Readiness is green.
 - One sample clip can be uploaded in Assets and shows as ready.
-- One channel can be started in Channel Ops and shows ON AIR.
+- One channel can be started in Channels and shows On air. For a web preview in the
+  resident portal, the channel needs an HLS output; a UDP headend preset alone does
+  not show anything in the portal in beta.5 (known issue).
 
 Tell the operator: installed version, install date, and the paths above, so
 they can find them later.

@@ -88,10 +88,17 @@ def run_attestation(*, artifact_root: Path, profile_root: Path) -> dict[str, Any
                 },
             )
         )
+        # first-admin completed setup, so from here the setup routes require
+        # the staff bearer token it just issued -- the same credential the
+        # operator console holds at this point (PR #215).
+        staff_headers = {
+            "Authorization": f"Bearer {first_admin_raw['json']['operator_console_token']}"
+        }
         acknowledged = _json_response(
             client.post(
                 "/api/setup/recovery-kit/acknowledge",
                 json={"confirmed": True},
+                headers=staff_headers,
             )
         )
         login_raw = _json_response(
@@ -100,7 +107,9 @@ def run_attestation(*, artifact_root: Path, profile_root: Path) -> dict[str, Any
                 json={"admin_username": "setup-admin", "admin_password": _PASSWORD},
             )
         )
-        station_after = _json_response(client.get("/api/setup/station-state"))
+        station_after = _json_response(
+            client.get("/api/setup/station-state", headers=staff_headers)
+        )
         public_schedule = _json_response(client.get("/api/public/schedule/coming-up"))
 
         managed_root = profile_root / "managed-storage"

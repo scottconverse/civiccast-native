@@ -79,6 +79,196 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   and `tests/native/test_provision_cli.py`
   (`test_main_adopts_a_station_with_a_legacy_august_journal_instead_of_halting`,
   `test_main_reuses_registry_credential_with_a_legacy_august_journal_present`).
+- **A finite fallback-slate plan reaching its end relaunches onto the due
+  program instead of stopping the channel, and a start says STARTING before
+  it prepares.** Clean-machine walkthrough of beta.5 (2026-09-09 MDT): the
+  Public Channel was on air on the fallback slate from 21:52 (UDP egress)
+  with an asset committed for a 22:00 five-minute slot. At 22:00:23 the
+  Channels screen showed STOPPED (not TRANSITIONING/STARTING) with the item
+  still Committed/Queued; a manual Start at 22:00:39 still read Stopped at
+  22:00:41 and 22:00:47 and only went ON AIR with the asset at 22:01:03. The
+  slate plan is finite to the next due item (`source_plan.py`), the
+  automation's slate replan enqueued the reload at the boundary, but the
+  reload's source preparation (the first-ever conform of the clip to the
+  720p profile) runs synchronously on the automation thread; the slate
+  worker reached EOS underneath it and exited 0, and `EgressDaemon.
+  _poll_process`'s clean-exit branch -- with no pending reload to bind to --
+  wrote STOPPED, which the automation then treats as "off air on purpose"
+  (only `auto_start`, off by default in the UI, restarts a dark channel).
+  Two changes in `civiccast/egress/daemon.py`: (1) the clean-exit branch now
+  asks the source-plan provider first when the exited worker was airing
+  FALLBACK_SLATE and, if a program plan resolves, relaunches onto it through
+  `_start` (recording the slate-to-program transition, and threading the
+  probed plan into `_start` so the provider is resolved once) -- capped at
+  `_SLATE_EOS_RELAUNCH_MAX_CONSECUTIVE` (1) consecutive automatic
+  relaunch(es) per channel, counted, not timed: the fallback plan the
+  bulletin filler mints is up to 120s long (12 sub-chains of 10s slides), so
+  the first-round 30s window could never have refused anything and a
+  persistently unplayable program would have flapped slate -> relaunch ->
+  slate every ~2 minutes. The count clears when a real program airing
+  (ON_AIR, not the slate) holds observed on-air evidence for the healthy-
+  uptime window, on an operator stop, and on an operator start; once hit,
+  the next clean slate exit goes STOPPED with a `last_error` naming the
+  program's media as the thing to check. The relaunch honours the crash
+  back-off the same way `_relaunch_after_crash` does: a live source that
+  crash-looped past `_LIVE_SOURCE_FAILURE_FALLBACK_STREAK` has its slate
+  RENEWED (`force_fallback_slate`) rather than retried, a renewal never
+  counts toward the cap (it is the terminal state that replaces dead air;
+  the automation's slate replan keeps retrying the source), and a slate
+  ending inside a still-armed restart cooldown defers through
+  `_backoff_relaunch` instead of bypassing the latch. A queued operator
+  `stop`/`drain` wins over the relaunch (`EgressStore.peek_pending_commands`
+  is new on the protocol and both stores: `process_once` polls before it
+  drains commands, so without the peek the relaunch spawned a worker the
+  Stop then killed after waiting behind a cold prepare). A drain still
+  stops. (2) `_start` writes STARTING with the target source label before
+  source preparation, and the post-prepare STARTING rewrite carries the
+  label too, so a start never reads Stopped while a cold conform runs and
+  the label survives to TRANSITIONING (the early fallback-slate flips keep
+  their own FALLBACK_SLATE row and `last_error`). (3) System Health's
+  per-channel "Process" row (`status-language.ts::processLabel`) says
+  "Preparing source" while STARTING/TRANSITIONING has no pid yet instead of
+  the contradictory "Starting ... Not running". Warming the conform cache at
+  Schedule commit was NOT done: `SourcePreparer` exposes only
+  `prepare`/`release`, lives in the egress control-plane process, and
+  nothing in the commit path (`civiccast/schedule/commit_service.py`) can
+  reach it without new plumbing. The Channels screen's `egress-health`
+  query already polls on `POLL_MS`; nothing changed there. Covered by
+  `tests/egress/test_daemon.py::test_slate_eos_with_a_due_program_relaunches_instead_of_stopping`
+  (plan-dir release, single resolve, label to TRANSITIONING),
+  `::test_slate_eos_relaunch_is_capped_to_one_per_boundary`,
+  `::test_persistently_unplayable_program_stops_after_the_cap_and_does_not_flap`
+  (120s slate plan),
+  `::test_a_program_that_holds_healthy_air_resets_the_slate_eos_relaunch_count`,
+  `::test_slate_eos_after_a_crash_looped_live_source_renews_the_slate_not_the_source`,
+  `::test_slate_eos_inside_the_restart_cooldown_defers_through_the_backoff_path`,
+  `::test_slate_eos_with_a_queued_operator_stop_does_not_relaunch` (stop and
+  drain), `::test_stop_and_reset_restart_tracking_clear_the_slate_eos_relaunch_count`,
+  `::test_operator_start_clears_the_slate_eos_relaunch_count`,
+  `::test_peek_pending_commands_does_not_consume`,
+  `::test_slate_eos_with_nothing_due_still_stops`,
+  `::test_slate_eos_after_an_operator_drain_does_not_relaunch`,
+  `::test_start_writes_starting_with_the_target_label_before_source_preparation`,
+  `::test_start_leaves_the_early_slate_flip_state_in_place_during_preparation`,
+  `tests/egress/test_store.py::test_postgres_egress_store_commands_are_idempotent_and_consumed`
+  (peek on the SQL store) and the "Process row during a start" cases in
+  `civiccast/apps/portal-operator/src/screens/SystemHealthAlerting.test.tsx`.
+  Sandbox-soak grading note: judge this boundary from `control_plane-app.log`
+  (the `_write_state` INFO lines) rather than the RestartClassifier's sample
+  ring alone -- the ring can miss the post-prepare TRANSITIONING sample
+  (pre-existing gap) and would then count the boundary as an unplanned pid
+  change.
+
+
+### Security
+
+- **The setup API never serves the database credential, and `/api/setup/*`
+  requires the staff token once setup is complete.** Walkthrough on a running
+  beta.5 station, 2026-09-09, verified twice from a non-admin shell:
+  `GET /api/setup/storage` answered a request with NO Authorization header
+  with HTTP 200 and the live
+  `postgresql://civiccast_svc:<PASSWORD>@127.0.0.1:5432/civiccast` connection
+  string (F-01, CRITICAL) -- PostgreSQL listens on loopback, so any local
+  process or user could open the station database. `GET
+  /api/setup/station-state` likewise returned the admin user name and display
+  name, the recovery-kit id, channel profiles and storage locations to an
+  unauthenticated caller (F-03), and `/openapi.json` enumerated every
+  `/api/staff/*` path on the LAN-only station (F-06). Fixed:
+  - Every storage route (`GET`/`POST /api/setup/storage`, `GET`/`POST
+    /api/staff/installer/storage`) now returns `ManagedStorageStatusReport`
+    instead of the internal `ManagedStorageStatus`: `database_configured`,
+    `database_kind`, and for a network database its `database_host`,
+    `database_port` and `database_name`. No user name, no password, no URL,
+    authenticated or not. The operator console's Setup screen only ever read
+    `status` and `next_step`, which are unchanged.
+  - Once `setup_complete` is true, `/api/setup/storage` (both methods),
+    `/api/setup/first-admin` and `/api/setup/recovery-kit/acknowledge`
+    require the staff bearer token (401 with `WWW-Authenticate: Bearer`
+    otherwise; the one-time first-admin guard still answers 409 to a caller
+    who has it). Before setup they are loopback-only, exactly as before.
+    `/api/setup/login` and `/api/setup/recover` stay open on loopback so a
+    signed-out operator can obtain a token; both keep their rate limit.
+  - `GET /api/setup/station-state` without a token after setup now returns
+    only `setup_complete`, `station_name` (new field; public branding) and
+    `next_step`, with `profile`/`recovery_kit_id` null and
+    `recovery_kit_acknowledged` null (withheld, not "false"). With a valid
+    token the response is the full state it always was, now also carrying
+    `station_name`. The signed-out Setup screen renders "Setup complete, sign
+    in" plus the sign-in and recovery forms from the reduced body and no
+    longer requests `/api/setup/storage` at all once setup is complete.
+  - On a LAN-only station (`CIVICCAST_LAN_ONLY_STATION=1`, set by
+    `civiccast.native.station_runtime` on both the activated and the
+    pre-activation path) `/openapi.json` is served only to a caller holding
+    the staff bearer token. Deployments without the flag keep FastAPI's
+    default, and `scripts/generate-openapi-artifacts.py` is unaffected (it
+    reads `create_app().openapi()` from the app object, not over HTTP).
+  - Regression tests: `tests/installer/test_installer_api.py`
+    (`test_setup_storage_never_serves_the_database_credential`,
+    `test_setup_endpoints_require_the_staff_token_once_setup_is_complete`,
+    `test_signed_out_station_state_after_setup_discloses_only_public_fields`),
+    `tests/installer/test_storage.py`
+    (`test_storage_report_never_carries_the_database_url`),
+    `tests/policy/test_lan_only_station_external_dependencies.py`, and the
+    signed-out `SetupScreen` vitest.
+  - Hostile review of the fix (two HIGH findings, both corrected before
+    merge): (1) the token-gated `/openapi.json` route was installed AFTER
+    `create_app` mounted the resident portal SPA at `/`, and Starlette matches
+    in registration order -- so on a real station (where
+    `civiccast.native.station_runtime` sets `CIVICCAST_PUBLIC_PORTAL_DIST`
+    alongside the LAN-only flag) the SPA answered `/openapi.json` with `200
+    text/html` and the gate did not exist; it is now installed before the
+    mount, pinned by
+    `test_f06_the_token_gate_survives_the_packaged_portal_mount_at_root`,
+    which runs with a portal dist actually mounted. (2) A browser still
+    sending an expired console token got a 401 from
+    `/api/setup/station-state` and the Setup screen rendered it as "Could not
+    read setup state." with no sign-in form and no way forward -- an operator
+    with an evicted token was locked out of their own station. The screen now
+    drops the rejected token, re-reads the state without it (the signed-out
+    view), shows the "You were signed out" notice above the sign-in card, and
+    keeps an explicit "Sign in again" button on the 401 card for a token it
+    could not discard automatically -- that button now stops sending the
+    rejected token too, so it lands on the sign-in form even while the
+    station keeps rejecting it; covered by the `SetupScreen stale staff
+    token` vitests, one of which keeps the station rejecting throughout.
+  - Round-3 corrections from the same review, all with regression tests
+    proven failing first: (1) `_describe_database_url` could still echo an
+    operator-set credential -- an unescaped `@` in the password put the
+    password tail in `database_host`, and an unparseable value was echoed as
+    `database_kind` (the user name or the password when pasted without a
+    scheme); the kind is now a whitelisted backend name or `unknown` and a
+    URL whose authority carries more than one `@` describes only its kind
+    (`test_describe_database_url_never_echoes_a_credential_fragment`, five
+    cases). (2) `POST /api/setup/storage`, `POST /api/setup/first-admin` and
+    `POST /api/setup/recovery-kit/acknowledge` now require the `setup_admin`
+    role after setup, the same role their `/api/staff/` siblings require --
+    any valid staff token used to pass, so a records-clerk token could rebind
+    the database engine through the setup path
+    (`test_mutating_setup_routes_require_setup_admin_once_setup_is_complete`:
+    403 for the clerk, 200/409 for the admin). (3) The token-gated
+    `/openapi.json` now runs the same verify-and-throttle routine as the
+    staff middleware (`civiccast.auth.middleware.authenticate_staff_request`),
+    so a wrong bearer there spends the `staff-auth-fail:<ip>` budget instead
+    of being an unthrottled token oracle
+    (`test_f06_the_gated_schema_route_spends_the_same_failure_budget_as_the_staff_routes`).
+    (4) A 429 from `/api/setup/station-state` renders a cooldown card that
+    still carries the admin sign-in form (`/api/setup/login` is budgeted
+    separately, per IP and path), instead of a dead-end error card. (5)
+    `docs/ops/staff-route-protection.md` no longer lists `/docs` and
+    `/openapi.json` as unauthenticated on a station.
+  - Gate fallout from the same fix, corrected before merge: the descriptive
+    `make_url` in `civiccast/installer/storage.py`'s new
+    `_describe_database_url` now goes through `normalize_database_url`
+    (`tests/policy/test_shipped_payload_db_driver.py` is a textual tripwire
+    by design), and `scripts/run_isolated_first_run_attestation.py` sends the
+    staff token `first-admin` just issued on its recovery-kit acknowledge and
+    final station-state calls, as the console does, now that those routes
+    require it after setup.
+- **Known issue (beta.5): beta.5 serves the database credential to local
+  unauthenticated callers on the station's loopback** (`GET
+  /api/setup/storage`, no Authorization header). Fixed in beta.6. After
+  upgrading, rotate the `civiccast_svc` PostgreSQL password -- there is no
+  documented self-service rotate procedure yet, so contact support.
 
 - **Resident live state follows the egress pipeline; Channels shows the real
   HLS URL or says web output is off; a local-rehearsal HLS preset exists.**
