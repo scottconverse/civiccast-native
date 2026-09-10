@@ -29,9 +29,9 @@ CURRENT_RELEASE_TAG = (
     )
 )
 
-# Owner decision 2026-09-04: v1.0.0-beta.4 published, a download-only
-# upgrade for stations already on v1.0.0-beta.3 (see
-# docs/releases/2026-09-03-beta4-release-notes.md). Every
+# v1.0.0-beta.5 published 2026-09-09, a download-only upgrade for
+# stations already on v1.0.0-beta.4 (see
+# docs/releases/2026-09-04-beta5-release-notes.md). Every
 # front door below must now claim publication, pinned to the exact release
 # tag, and must never fall back to a floating "releases/latest" link -- not
 # claim "owner-held unpublished" or "no installer," which would now be
@@ -40,28 +40,28 @@ CURRENT_RELEASE_TAG = (
 REQUIRED_DOCS: dict[Path, tuple[str, ...]] = {
     Path("README.md"): (
         CURRENT_RELEASE_TAG,
-        "releases/tag/v1.0.0-beta.4",
+        "releases/tag/v1.0.0-beta.5",
     ),
     Path("INSTALL-WINDOWS.md"): (
         CURRENT_RELEASE_TAG,
-        "releases/tag/v1.0.0-beta.4",
+        "releases/tag/v1.0.0-beta.5",
     ),
     Path("ARCHITECTURE.md"): (
         CURRENT_RELEASE_TAG,
-        "releases/tag/v1.0.0-beta.4",
+        "releases/tag/v1.0.0-beta.5",
     ),
     Path("SUPPORT.md"): (
         CURRENT_RELEASE_TAG,
-        "releases/tag/v1.0.0-beta.4",
+        "releases/tag/v1.0.0-beta.5",
     ),
     Path("docs/index.html"): (
         CURRENT_RELEASE_TAG,
-        "releases/tag/v1.0.0-beta.4",
+        "releases/tag/v1.0.0-beta.5",
         "Physical DeckLink SDI capture and acceptance",
     ),
     Path("docs/install-windows.html"): (
         CURRENT_RELEASE_TAG,
-        "releases/tag/v1.0.0-beta.4",
+        "releases/tag/v1.0.0-beta.5",
         "SHA-256",
         "Authenticode",
         "Physical DeckLink",
