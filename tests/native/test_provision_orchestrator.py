@@ -387,3 +387,64 @@ def test_negative_control_call_log_actually_distinguishes_ran_from_skipped(
     assert harness.calls == []
     harness.run_initdb()
     assert harness.calls == ["run_initdb"]
+
+
+# ---------------------------------------------------------------------------
+# beta.5.1 (2026-09-09): an adopted journal written by the August beta.1/beta.2
+# installer (legacy context.nats_* keys) at phase COMPLETE must take the normal
+# "already provisioned" short-circuit in run_provision -- no seam is called, so
+# nothing is re-initialized, re-written, or deleted.
+# ---------------------------------------------------------------------------
+
+_LEGACY_AUGUST_JOURNAL = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "provision"
+    / "provision-journal-2026-08-15-beta1-nats.json"
+)
+
+
+def _stage_legacy_journal(tmp_path: Path) -> str:
+    """Write the August fixture under tmp_path with ONLY its location fields
+    re-pointed at this test's temp tree; every legacy key stays on disk
+    verbatim. Returns the raw text as staged."""
+
+    import json
+
+    data = json.loads(_LEGACY_AUGUST_JOURNAL.read_text(encoding="utf-8"))
+    ctx = _context(tmp_path)
+    for key in (
+        "postgres_data_dir",
+        "postgres_config_path",
+        "postgres_hba_path",
+        "server_pack_path",
+        "state_root",
+    ):
+        data["context"][key] = getattr(ctx, key)
+    state_root = Path(ctx.state_root)
+    state_root.mkdir(parents=True)
+    raw = json.dumps(data, indent=2, sort_keys=True)
+    (state_root / "provision-journal.json").write_text(raw, encoding="utf-8")
+    return raw
+
+
+def test_legacy_complete_journal_is_adopted_without_touching_the_cluster(tmp_path: Path) -> None:
+    staged = _stage_legacy_journal(tmp_path)
+    harness = _harness(tmp_path)
+    harness.postgres_version = "17"  # the preserved cluster (PG_VERSION present)
+    harness.postgres_data_dir.mkdir(parents=True)
+    (harness.postgres_data_dir / "PG_VERSION").write_text("17", encoding="utf-8")
+
+    outcome = run_provision(_plan(), _context(tmp_path), harness.seams())
+
+    assert outcome.ok, outcome
+    assert outcome.phase is ProvisionPhase.COMPLETE
+    assert outcome.journal.history[-1][2] == "provisioning complete"
+    assert harness.calls == [], "an already-complete station must not be re-provisioned"
+    assert harness.postgres_conf_written is None
+    assert (harness.postgres_data_dir / "PG_VERSION").read_text(encoding="utf-8") == "17"
+    # The short-circuit does not rewrite the journal either: byte-identical.
+    on_disk = (Path(_context(tmp_path).state_root) / "provision-journal.json").read_text(
+        encoding="utf-8"
+    )
+    assert on_disk == staged
