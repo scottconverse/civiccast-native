@@ -96,6 +96,14 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
     view), shows the "You were signed out" notice above the sign-in card, and
     keeps an explicit "Sign in again" button on the 401 card for a token it
     cannot discard; covered by the two `SetupScreen stale staff token` vitests.
+  - Gate fallout from the same fix, corrected before merge: the descriptive
+    `make_url` in `civiccast/installer/storage.py`'s new
+    `_describe_database_url` now goes through `normalize_database_url`
+    (`tests/policy/test_shipped_payload_db_driver.py` is a textual tripwire
+    by design), and `scripts/run_isolated_first_run_attestation.py` sends the
+    staff token `first-admin` just issued on its recovery-kit acknowledge and
+    final station-state calls, as the console does, now that those routes
+    require it after setup.
 - **Known issue (beta.5): beta.5 serves the database credential to local
   unauthenticated callers on the station's loopback** (`GET
   /api/setup/storage`, no Authorization header). Fixed in beta.6. After

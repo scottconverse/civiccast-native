@@ -190,7 +190,13 @@ def _describe_database_url(database_url: str) -> tuple[str, str | None, int | No
     try:
         from sqlalchemy.engine import make_url
 
-        parsed = make_url(database_url)
+        from civiccast.db.url import normalize_database_url
+
+        # Descriptive only (no engine is built here), but every make_url in
+        # the shipped wheel goes through the normalizer -- the policy tripwire
+        # in tests/policy/test_shipped_payload_db_driver.py is textual, by
+        # design, so the class of bug that rolled back R7 cannot creep back.
+        parsed = make_url(normalize_database_url(database_url))
     except Exception:
         scheme = database_url.split(":", 1)[0].lower() if ":" in database_url else ""
         kind = scheme.split("+", 1)[0] or "unknown"
