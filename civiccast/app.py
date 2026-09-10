@@ -27,7 +27,7 @@ from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 from typing import Any, cast
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi import status as http_status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
@@ -1923,11 +1923,17 @@ def create_app() -> FastAPI:
     outbound and sometimes air-gapped, so those pages render blank there and
     hand the operator a broken screen with no explanation.
 
-    ``/openapi.json`` STAYS SERVED. The finding named it too, but that part is
-    wrong: it is JSON this app generates, it references no external host at
-    all, and it is the machine-readable contract an integrator actually needs.
-    Turning it off would remove a working, self-contained surface to fix a
-    problem it does not have.
+    ``/openapi.json`` STAYS SERVED, BEHIND THE STAFF TOKEN. The F-16 finding
+    named it too, but for the wrong reason: it is JSON this app generates, it
+    references no external host at all, and it is the machine-readable
+    contract an integrator actually needs, so the network constraint never
+    applied to it. The 2026-09-09 walkthrough of a running beta.5 station
+    (finding F-06) raised the reason that does apply: on a LAN-only station
+    it enumerated every ``/api/staff/*`` path to a caller with no credential.
+    So on a LAN-only station the schema is served by
+    :func:`_install_lan_only_openapi_route` and requires the same staff
+    bearer token every ``/api/staff/*`` route does; ``create_app().openapi()``
+    (what ``scripts/generate-openapi-artifacts.py`` uses) is unaffected.
 
     DISABLED RATHER THAN VENDORED, as a deliberate choice. Serving the UIs
     locally means shipping ``swagger-ui-dist`` and ReDoc's bundle -- roughly
@@ -1962,9 +1968,11 @@ def create_app() -> FastAPI:
         version=__version__,
         docs_url=None if lan_only_station else "/docs",
         redoc_url=None if lan_only_station else "/redoc",
-        # Never conditional: self-contained, no external host, and the one
-        # API surface an integrator on a LAN genuinely needs.
-        openapi_url="/openapi.json",
+        # On a LAN-only station the schema route is installed by
+        # _install_lan_only_openapi_route (staff token required, F-06) instead
+        # of FastAPI's unauthenticated default; every other deployment keeps
+        # the default. Self-contained either way: no external host.
+        openapi_url=None if lan_only_station else "/openapi.json",
         lifespan=_app_lifespan,
     )
     if lan_only_station:
@@ -1972,7 +1980,8 @@ def create_app() -> FastAPI:
             "%s is set, so the interactive API doc UIs (/docs, /redoc) are NOT served: "
             "their assets load from cdn.jsdelivr.net / fastapi.tiangolo.com / "
             "fonts.googleapis.com, which a LAN-only station cannot reach. The OpenAPI "
-            "schema itself is still served at /openapi.json.",
+            "schema itself is still served at /openapi.json, to callers holding a "
+            "staff bearer token.",
             LAN_ONLY_STATION_ENV_VAR,
         )
     app.middleware("http")(security_headers_middleware)
@@ -2351,6 +2360,8 @@ def create_app() -> FastAPI:
 
     _mount_packaged_portals(app)
     _install_staff_openapi_contract(app)
+    if lan_only_station:
+        _install_lan_only_openapi_route(app)
     return app
 
 
@@ -3428,6 +3439,48 @@ def _require_durable_or_explicit_ephemeral(database_url: str | None) -> None:
         "Durable storage is not ready. CivicCast is starting in local setup "
         "mode so the installer and operator Setup screen can prepare managed "
         "storage. Staff-write routes remain unavailable until storage is ready."
+    )
+
+
+def _install_lan_only_openapi_route(app: FastAPI) -> None:
+    """Serve ``/openapi.json`` on a LAN-only station to staff-token holders only.
+
+    F-06 (walkthrough on a running beta.5 station, 2026-09-09): FastAPI's
+    default schema route answered any unauthenticated caller with the full
+    list of ``/api/staff/*`` paths. The schema stays available -- it is the
+    machine-readable contract an integrator needs and has no external
+    dependency -- but the caller now proves the same staff bearer token that
+    every path it describes already requires. ``app.openapi()`` itself is
+    untouched, so the docs generator keeps working from the app object.
+    """
+
+    from civiccast.auth.tokens import StaffAuthError, verify_bearer_token
+
+    async def lan_only_openapi(request: Request) -> JSONResponse:
+        authorization = request.headers.get("Authorization")
+        if not authorization:
+            return JSONResponse(
+                status_code=http_status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Missing Authorization header. Use Bearer <staff-token>."},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        token_store = getattr(app.state, "staff_token_store", None)
+        try:
+            verify_bearer_token(authorization, token_store=token_store)
+        except StaffAuthError as exc:
+            return JSONResponse(
+                status_code=http_status.HTTP_401_UNAUTHORIZED,
+                content={"detail": str(exc)},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return JSONResponse(app.openapi())
+
+    app.add_api_route(
+        "/openapi.json",
+        lan_only_openapi,
+        methods=["GET"],
+        include_in_schema=False,
+        name="openapi",
     )
 
 

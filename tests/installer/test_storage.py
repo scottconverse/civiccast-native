@@ -447,3 +447,46 @@ def test_packaged_alembic_fallback_applies_module_migrations(
         connection.close()
     assert status.status == "ready"
     assert "assets" in tables
+
+
+def test_storage_report_never_carries_the_database_url(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """SECURITY F-01 (2026-09-09): the API shape drops ``database_url`` and
+    describes the backend instead -- kind, host, port and database name for a
+    network database; kind only for SQLite. Never the user name or password."""
+
+    monkeypatch.setenv(
+        "DATABASE_URL", "postgresql://civiccast_svc:s3cret-pw@127.0.0.1:5432/civiccast"
+    )
+    _inject_db_revision(monkeypatch, schema_check.expected_migration_head())
+
+    report = durable_storage_status(tmp_path).report()
+
+    dumped = report.model_dump_json()
+    assert "database_url" not in report.model_dump()
+    assert "s3cret-pw" not in dumped
+    assert "civiccast_svc" not in dumped
+    assert "postgresql://" not in dumped
+    assert report.status == "ready"
+    assert report.database_configured is True
+    assert report.database_kind == "postgresql"
+    assert report.database_host == "127.0.0.1"
+    assert report.database_port == 5432
+    assert report.database_name == "civiccast"
+
+    monkeypatch.delenv("DATABASE_URL")
+    monkeypatch.setattr(storage, "_run_migrations", lambda url: _touch_sqlite_url(url))
+    sqlite_report = ensure_managed_storage(storage_dir=tmp_path).report()
+    assert sqlite_report.database_kind == "sqlite"
+    assert sqlite_report.database_host is None
+    assert sqlite_report.database_port is None
+    assert sqlite_report.database_name is None
+    assert "sqlite://" not in sqlite_report.model_dump_json()
+
+    monkeypatch.setenv("DATABASE_URL", "this is not a database address")
+    storage.reset_external_database_probe_cache()
+    broken = durable_storage_status(tmp_path).report()
+    assert broken.database_kind == "unknown"
+    assert "this is not a database address" not in broken.model_dump_json()

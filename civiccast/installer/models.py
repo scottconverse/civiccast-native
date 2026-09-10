@@ -410,18 +410,51 @@ class StationAuthResponse(BaseModel):
 
 
 class StationSetupState(BaseModel):
-    """Current station setup state without secret values."""
+    """Current station setup state without secret values.
+
+    Two views exist once setup is complete. A caller holding a valid staff
+    bearer token gets the full state. A caller WITHOUT one -- the signed-out
+    operator console loading its sign-in screen, or any other process on the
+    station's loopback -- gets :meth:`signed_out_view`: ``setup_complete``,
+    ``station_name`` (public branding) and ``next_step`` only. The profile
+    (admin user name, display name, channel profiles, storage locations),
+    the recovery-kit id and the recovery-kit acknowledgement are not
+    disclosed to an unauthenticated caller (walkthrough on a running beta.5
+    station, 2026-09-09).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     status: StationSetupStatus
     setup_complete: bool
+    #: Public station branding; the one profile field the signed-out console
+    #: still needs ("<station> already has a first admin -- sign in").
+    station_name: Annotated[str, Field(min_length=1, max_length=120)] | None = None
     profile: StationProfile | None = None
     recovery_kit_created: bool = False
     recovery_kit_id: Annotated[str, Field(min_length=1, max_length=80)] | None = None
-    recovery_kit_acknowledged: bool = False
+    #: ``None`` means "not disclosed": the caller is not signed in, so whether
+    #: the one-time kit was ever confirmed is withheld along with the kit id.
+    recovery_kit_acknowledged: bool | None = False
     operator_console_url: Annotated[str, Field(min_length=1)]
     next_step: Annotated[str, Field(min_length=1)]
+
+    def signed_out_view(self) -> StationSetupState:
+        """The state an unauthenticated caller may see after setup completes."""
+
+        if not self.setup_complete:
+            return self
+        return StationSetupState(
+            status=self.status,
+            setup_complete=True,
+            station_name=self.station_name,
+            profile=None,
+            recovery_kit_created=False,
+            recovery_kit_id=None,
+            recovery_kit_acknowledged=None,
+            operator_console_url=self.operator_console_url,
+            next_step="Sign in with the local admin password to continue.",
+        )
 
 
 class RevokeOtherSessionsResponse(BaseModel):

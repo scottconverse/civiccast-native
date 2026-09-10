@@ -79,10 +79,18 @@ The app verifies the token before dispatching the request to any `/api/staff/*` 
 
 For the standard standalone setup path, the operator console Setup screen
 prepares durable local storage, applies migrations, creates the first admin,
-and generates the printable recovery kit. `/api/setup/*` is admitted by
-loopback alone (the control plane binds `127.0.0.1` only, so it is
-unreachable from the network by construction); open the console from the
-station itself before choosing **Prepare storage**.
+and generates the printable recovery kit. Before setup completes,
+`/api/setup/*` is admitted by loopback alone (the control plane binds
+`127.0.0.1` only, so it is unreachable from the network by construction);
+open the console from the station itself before choosing **Prepare
+storage**. Once setup is complete, every `/api/setup/*` route that reads or
+changes station state (`storage`, `first-admin`, `recovery-kit/acknowledge`)
+requires the same staff bearer token as `/api/staff/*`; only `login` and
+`recover` stay open on loopback so a signed-out operator can obtain one, and
+`station-state` answers a signed-out caller with `setup_complete`,
+`station_name` and `next_step` only. No route ever returns the database
+connection string: the storage routes report the backend kind, host, port
+and database name, never the user name, password or URL.
 
 The lifecycle CLI remains the technical-administrator override and recovery
 path for scripted deployments. Use it only after storage is already configured

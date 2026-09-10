@@ -17,6 +17,62 @@ came across and what deliberately did not.
 candidate; it does not change the `v1.0.0-beta.4` install story documented
 below.
 
+### Security
+
+- **The setup API never serves the database credential, and `/api/setup/*`
+  requires the staff token once setup is complete.** Walkthrough on a running
+  beta.5 station, 2026-09-09, verified twice from a non-admin shell:
+  `GET /api/setup/storage` answered a request with NO Authorization header
+  with HTTP 200 and the live
+  `postgresql://civiccast_svc:<PASSWORD>@127.0.0.1:5432/civiccast` connection
+  string (F-01, CRITICAL) -- PostgreSQL listens on loopback, so any local
+  process or user could open the station database. `GET
+  /api/setup/station-state` likewise returned the admin user name and display
+  name, the recovery-kit id, channel profiles and storage locations to an
+  unauthenticated caller (F-03), and `/openapi.json` enumerated every
+  `/api/staff/*` path on the LAN-only station (F-06). Fixed:
+  - Every storage route (`GET`/`POST /api/setup/storage`, `GET`/`POST
+    /api/staff/installer/storage`) now returns `ManagedStorageStatusReport`
+    instead of the internal `ManagedStorageStatus`: `database_configured`,
+    `database_kind`, and for a network database its `database_host`,
+    `database_port` and `database_name`. No user name, no password, no URL,
+    authenticated or not. The operator console's Setup screen only ever read
+    `status` and `next_step`, which are unchanged.
+  - Once `setup_complete` is true, `/api/setup/storage` (both methods),
+    `/api/setup/first-admin` and `/api/setup/recovery-kit/acknowledge`
+    require the staff bearer token (401 with `WWW-Authenticate: Bearer`
+    otherwise; the one-time first-admin guard still answers 409 to a caller
+    who has it). Before setup they are loopback-only, exactly as before.
+    `/api/setup/login` and `/api/setup/recover` stay open on loopback so a
+    signed-out operator can obtain a token; both keep their rate limit.
+  - `GET /api/setup/station-state` without a token after setup now returns
+    only `setup_complete`, `station_name` (new field; public branding) and
+    `next_step`, with `profile`/`recovery_kit_id` null and
+    `recovery_kit_acknowledged` null (withheld, not "false"). With a valid
+    token the response is the full state it always was, now also carrying
+    `station_name`. The signed-out Setup screen renders "Setup complete, sign
+    in" plus the sign-in and recovery forms from the reduced body and no
+    longer requests `/api/setup/storage` at all once setup is complete.
+  - On a LAN-only station (`CIVICCAST_LAN_ONLY_STATION=1`, set by
+    `civiccast.native.station_runtime` on both the activated and the
+    pre-activation path) `/openapi.json` is served only to a caller holding
+    the staff bearer token. Deployments without the flag keep FastAPI's
+    default, and `scripts/generate-openapi-artifacts.py` is unaffected (it
+    reads `create_app().openapi()` from the app object, not over HTTP).
+  - Regression tests: `tests/installer/test_installer_api.py`
+    (`test_setup_storage_never_serves_the_database_credential`,
+    `test_setup_endpoints_require_the_staff_token_once_setup_is_complete`,
+    `test_signed_out_station_state_after_setup_discloses_only_public_fields`),
+    `tests/installer/test_storage.py`
+    (`test_storage_report_never_carries_the_database_url`),
+    `tests/policy/test_lan_only_station_external_dependencies.py`, and the
+    signed-out `SetupScreen` vitest.
+- **Known issue (beta.5): beta.5 serves the database credential to local
+  unauthenticated callers on the station's loopback** (`GET
+  /api/setup/storage`, no Authorization header). Fixed in beta.6. After
+  upgrading, rotate the `civiccast_svc` PostgreSQL password -- there is no
+  documented self-service rotate procedure yet, so contact support.
+
 ### External field documentation
 
 - **Publisher-generated SmartScreen guidance now states the verification order.**

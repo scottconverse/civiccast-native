@@ -256,7 +256,11 @@ describe('SetupScreen first-admin form validation', () => {
       if (url === '/api/setup/storage') {
         return jsonResponse({
           status: 'ready',
-          database_url: 'sqlite:///tmp/civiccast.db',
+          database_configured: true,
+          database_kind: 'sqlite',
+          database_host: null,
+          database_port: null,
+          database_name: null,
           database_path: '/tmp/civiccast.db',
           upload_dir: '/tmp/uploads',
           storage_dir: '/tmp',
@@ -375,7 +379,11 @@ describe('SetupScreen first-admin recovery kit gate', () => {
       if (url === '/api/setup/storage') {
         return jsonResponse({
           status: 'ready',
-          database_url: 'sqlite:///tmp/civiccast.db',
+          database_configured: true,
+          database_kind: 'sqlite',
+          database_host: null,
+          database_port: null,
+          database_name: null,
           database_path: '/tmp/civiccast.db',
           upload_dir: '/tmp/uploads',
           storage_dir: '/tmp',
@@ -505,7 +513,11 @@ describe('SetupScreen first-admin recovery kit gate', () => {
       if (url === '/api/setup/storage') {
         return jsonResponse({
           status: 'ready',
-          database_url: 'sqlite:///tmp/civiccast.db',
+          database_configured: true,
+          database_kind: 'sqlite',
+          database_host: null,
+          database_port: null,
+          database_name: null,
           database_path: '/tmp/civiccast.db',
           upload_dir: '/tmp/uploads',
           storage_dir: '/tmp',
@@ -606,7 +618,11 @@ describe('SetupScreen returning-operator sign-in', () => {
       if (url === '/api/setup/storage') {
         return jsonResponse({
           status: 'ready',
-          database_url: 'sqlite:///tmp/civiccast.db',
+          database_configured: true,
+          database_kind: 'sqlite',
+          database_host: null,
+          database_port: null,
+          database_name: null,
           database_path: '/tmp/civiccast.db',
           upload_dir: '/tmp/uploads',
           storage_dir: '/tmp',
@@ -720,6 +736,53 @@ describe('SetupScreen returning-operator sign-in', () => {
   })
 })
 
+describe('SetupScreen signed-out after setup (setup API requires the staff token)', () => {
+  it('renders sign-in and recovery from the reduced station-state body and never asks for storage', async () => {
+    const requestedUrls: string[] = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      requestedUrls.push(`${method} ${url}`)
+      if (url === '/api/setup/station-state') {
+        // Exactly what GET /api/setup/station-state returns to a caller with
+        // no Authorization header once setup is complete: no profile, no
+        // admin username, no recovery kit id, acknowledgement withheld.
+        return jsonResponse({
+          status: 'complete',
+          setup_complete: true,
+          station_name: 'Pinegrove School Board',
+          profile: null,
+          recovery_kit_created: false,
+          recovery_kit_id: null,
+          recovery_kit_acknowledged: null,
+          operator_console_url: 'http://127.0.0.1:8000/operator/',
+          next_step: 'Sign in with the local admin password to continue.',
+        })
+      }
+      if (url === '/api/setup/storage') {
+        return jsonResponse({ detail: 'Setup is complete. Sign in first.' }, 401)
+      }
+      return jsonResponse({ detail: `Unhandled ${method} ${url}` }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderSetupScreen()
+
+    expect(await screen.findByText('Setup complete')).toBeTruthy()
+    expect(
+      screen.getByText(/Pinegrove School Board already has a first admin and recovery kit/),
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy()
+    expect(screen.getByText('Use recovery code')).toBeTruthy()
+    // recovery_kit_acknowledged is null (withheld), not false: no alert that
+    // would invite a signed-out visitor to click an endpoint they cannot use.
+    expect(screen.queryByText('Recovery kit never confirmed')).toBeNull()
+    expect(screen.queryByText('First-run defaults')).toBeNull()
+    expect(requestedUrls).not.toContain('GET /api/setup/storage')
+    expect(requestedUrls).not.toContain('GET /api/staff/auth/me')
+  })
+})
+
 describe('SetupScreen staff-identity gating (Finding MINOR-1)', () => {
   it('never calls /api/staff/auth/me for a signed-out visitor with no stored token', async () => {
     const requestedUrls: string[] = []
@@ -741,7 +804,11 @@ describe('SetupScreen staff-identity gating (Finding MINOR-1)', () => {
       if (url === '/api/setup/storage') {
         return jsonResponse({
           status: 'ready',
-          database_url: 'sqlite:///tmp/civiccast.db',
+          database_configured: true,
+          database_kind: 'sqlite',
+          database_host: null,
+          database_port: null,
+          database_name: null,
           database_path: '/tmp/civiccast.db',
           upload_dir: '/tmp/uploads',
           storage_dir: '/tmp',

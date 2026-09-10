@@ -121,6 +121,85 @@ class ManagedStorageStatus(BaseModel):
     operator_message: str = Field(min_length=1)
     next_step: str = Field(min_length=1)
 
+    def report(self) -> ManagedStorageStatusReport:
+        """The credential-free view of this state that every API route serves.
+
+        SECURITY (walkthrough on a running beta.5 station, 2026-09-09): the
+        ``database_url`` above is the live connection string, and on a native
+        station it carries the ``civiccast_svc`` PostgreSQL password. It was
+        being returned verbatim by ``GET /api/setup/storage`` to any caller on
+        the station's loopback with no Authorization header at all -- so any
+        local process or user could open the station database. Only this
+        report ever leaves the process; the URL itself stays in memory for the
+        engine binding (``civiccast.app._resolve_database_url``).
+        """
+
+        kind, host, port, name = _describe_database_url(self.database_url)
+        return ManagedStorageStatusReport(
+            status=self.status,
+            database_configured=True,
+            database_kind=kind,
+            database_host=host,
+            database_port=port,
+            database_name=name,
+            database_path=self.database_path,
+            upload_dir=self.upload_dir,
+            storage_dir=self.storage_dir,
+            migrations_applied=self.migrations_applied,
+            configured_at=self.configured_at,
+            operator_message=self.operator_message,
+            next_step=self.next_step,
+        )
+
+
+class ManagedStorageStatusReport(BaseModel):
+    """Durable storage state as served over the API: never the credential.
+
+    Same shape as :class:`ManagedStorageStatus` minus ``database_url``, which
+    is replaced by ``database_configured`` plus the backend kind and, for a
+    network database, its host, port and database name. No user name, no
+    password, no URL -- see :meth:`ManagedStorageStatus.report`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = Field(min_length=1)
+    database_configured: bool
+    database_kind: str = Field(min_length=1)
+    database_host: str | None = None
+    database_port: int | None = None
+    database_name: str | None = None
+    database_path: str = Field(min_length=1)
+    upload_dir: str = Field(min_length=1)
+    storage_dir: str = Field(min_length=1)
+    migrations_applied: bool
+    configured_at: datetime
+    operator_message: str = Field(min_length=1)
+    next_step: str = Field(min_length=1)
+
+
+def _describe_database_url(database_url: str) -> tuple[str, str | None, int | None, str | None]:
+    """Return ``(kind, host, port, database_name)`` for a URL, never its credential.
+
+    A URL that SQLAlchemy cannot parse still gets a kind derived from its
+    scheme prefix, so a misconfigured station reports ``misconfigured`` with
+    a describable backend instead of raising -- and still never echoes the
+    string it could not parse.
+    """
+
+    try:
+        from sqlalchemy.engine import make_url
+
+        parsed = make_url(database_url)
+    except Exception:
+        scheme = database_url.split(":", 1)[0].lower() if ":" in database_url else ""
+        kind = scheme.split("+", 1)[0] or "unknown"
+        return kind, None, None, None
+    kind = parsed.get_backend_name() or "unknown"
+    if kind == "sqlite":
+        return kind, None, None, None
+    return kind, parsed.host, parsed.port, parsed.database
+
 
 def default_storage_dir() -> Path:
     """Return the station-local data directory for managed storage."""

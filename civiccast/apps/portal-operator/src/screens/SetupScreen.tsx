@@ -30,7 +30,7 @@ import type {
   BackupStatus,
   FirstAdminSetupRequest,
   FirstAdminSetupResponse,
-  ManagedStorageStatus,
+  ManagedStorageStatusReport,
   ProviderConnectionTestResponse,
   ProviderReadinessItem,
   R2ConciergeResponse,
@@ -516,7 +516,7 @@ function StorageSetupPanel({
   isPreparing,
   onPrepare,
 }: {
-  storage?: ManagedStorageStatus
+  storage?: ManagedStorageStatusReport
   error: unknown
   isLoading: boolean
   isPreparing: boolean
@@ -1326,6 +1326,11 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
     queryKey: ['setup-storage-state'],
     queryFn: getPublicStorageState,
     retry: false,
+    // Storage state only drives the pre-setup flow (prepare storage, then
+    // create the first admin). Once setup is complete the server requires
+    // the staff token for /api/setup/storage, and a signed-out visitor on
+    // the sign-in screen has nothing to send -- so do not ask.
+    enabled: stateQuery.isSuccess && !stateQuery.data.setup_complete,
   })
   const staffIdentityQuery = useQuery({
     queryKey: ['staff-identity'],
@@ -1542,7 +1547,7 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
           >
             <h2 className="m-0 text-base font-semibold">Setup complete</h2>
             <p className="m-0 mt-1 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
-              {stateQuery.data.profile?.station_name ?? 'This station'} already has a first admin and recovery kit.
+              {stateQuery.data.station_name ?? stateQuery.data.profile?.station_name ?? 'This station'} already has a first admin and recovery kit.
             </p>
             <p className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
               Sign in with the local admin password if this browser lost its console token.

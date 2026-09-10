@@ -96,7 +96,7 @@ import type {
   DeliveryRetryRecord,
   FollowerRecord,
   LiveFinalizationStatusResponse,
-  ManagedStorageStatus,
+  ManagedStorageStatusReport,
   ManualDocument,
   OverlayCompositorPlan,
   OverlayCompositorRequest,
@@ -590,12 +590,12 @@ export function getStationSetupState(): Promise<StationSetupState> {
   return request<StationSetupState>('/api/setup/station-state')
 }
 
-export function getPublicStorageState(): Promise<ManagedStorageStatus> {
-  return request<ManagedStorageStatus>('/api/setup/storage')
+export function getPublicStorageState(): Promise<ManagedStorageStatusReport> {
+  return request<ManagedStorageStatusReport>('/api/setup/storage')
 }
 
-export function preparePublicStorage(): Promise<ManagedStorageStatus> {
-  return request<ManagedStorageStatus>('/api/setup/storage', {
+export function preparePublicStorage(): Promise<ManagedStorageStatusReport> {
+  return request<ManagedStorageStatusReport>('/api/setup/storage', {
     method: 'POST',
     body: {},
   })
