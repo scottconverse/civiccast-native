@@ -492,6 +492,10 @@ python scripts/release/publish_beta_candidate.py \
 
 ## 11. If you are picking this up cold, do this
 
+`HANDOFF-PROMPT.md` at the repo root carries a short paste-in prompt for a fresh session. It points
+at this document rather than repeating it.
+
+
 1. Read `docs/evidence/soak-2026-09-09-beta5/VERIFICATION-NOTE.md`.
 2. Open `docs/evidence/soak-2026-09-09-beta5/blackwell-evidence.zip`, open any
    `SOAK-evidence/<channel>/gst-worker.stdout.log`, search for `elements=56`, and compare the four
