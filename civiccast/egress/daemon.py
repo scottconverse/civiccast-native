@@ -150,6 +150,31 @@ def _default_independent_slate_strategy() -> EncoderStrategy | None:
 # intended anti-churn behavior (a persistently-dead source must not hot-loop).
 _RESTART_COOLDOWN_SECONDS = 15.0
 _RESTART_STREAK_RESET_UPTIME_S = 60.0
+# Clean-machine walkthrough of beta.5 (2026-09-09 MDT): a channel airing the
+# FALLBACK SLATE for a program committed at 22:00 showed STOPPED at 22:00:23
+# and stayed dark until an operator pressed Start. The slate plan is finite to
+# the next due item (source_plan.py); ChannelAutomationService's slate replan
+# enqueued the reload at the boundary, but the reload's prepare (the first-ever
+# conform of the clip) ran synchronously on the automation thread, the slate
+# worker reached EOS meanwhile and exited 0, and _poll_process's clean-exit
+# branch -- which had no pending reload to bind to -- wrote STOPPED. Automation
+# bails on STOPPED and only auto_start (UI default off) restarts a dark
+# channel. That branch now relaunches onto the due program itself (see
+# _relaunch_slate_eos_onto_due_program) -- at most this many CONSECUTIVE
+# automatic relaunches per channel. A COUNT, deliberately not a time window:
+# round-2 hostile review measured that the fallback plan from
+# bulletin_filler.build_filler_source_provider is at most
+# min(MAX_PLAYLIST_SUBCHAINS // len(segments), ceil(3600 / cycle)) cycles of
+# _SLIDE_SECONDS (10s) -- a hard ceiling of 120s per slate plan -- so a 30s
+# window could never refuse anything: a persistently unplayable program would
+# have flapped slate -> relaunch -> slate every ~2 minutes forever (two plan
+# resolves plus one synchronous cold prepare on the automation thread per
+# cycle). The counter clears only when a REAL program airing (ON_AIR, not the
+# slate) holds observed on-air evidence for _RESTART_STREAK_RESET_UPTIME_S,
+# and on an operator stop or start (see _reset_restart_tracking and
+# _process_command). Once the cap is hit the next clean slate exit goes STOPPED
+# with a last_error naming the program's media as the thing to check.
+_SLATE_EOS_RELAUNCH_MAX_CONSECUTIVE = 1
 # Emit an escalation proof event at this restart streak and every multiple after
 # (the S8 alerting hook — the actual alert dispatch is wired when S8 lands, build
 # step 4; until then the escalation is durably recorded as a proof event).
@@ -602,6 +627,13 @@ class EgressDaemon:
             default_cooldown_seconds=restart_cooldown_seconds, clock=self._monotonic
         )
         self._restart_streak: dict[str, int] = {}
+        # Consecutive automatic relaunches of a finite fallback-slate plan that
+        # reached EOS onto the due program (_poll_process's clean-exit branch
+        # -> _relaunch_slate_eos_onto_due_program), per channel. Capped by
+        # _SLATE_EOS_RELAUNCH_MAX_CONSECUTIVE; cleared by a real ON_AIR
+        # airing that holds healthy uptime, an operator stop, or an operator
+        # start (see _reset_restart_tracking / _process_command).
+        self._slate_eos_relaunches: dict[str, int] = {}
         # Item 82 (extended by item 84): last _monotonic() the crash-loop
         # streak was actually incremented for a "slow start" exit --
         # GST_PREROLL_TIMEOUT_EXIT_CODE or GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE
@@ -872,6 +904,9 @@ class EgressDaemon:
         # later by the automatic relaunch the operator was trying to replace.
         self._backoff_relaunch.pop(command.channel_id, None)
         if command.action == "start":
+            # An operator start is a fresh intent: the slate-EOS relaunch cap
+            # (see _SLATE_EOS_RELAUNCH_MAX_CONSECUTIVE) starts over for it.
+            self._slate_eos_relaunches.pop(command.channel_id, None)
             self._start(command.channel_id)
             return
         if command.action == "stop":
@@ -900,7 +935,16 @@ class EgressDaemon:
         previous_source_label: str | None = None,
         force_fallback_slate: bool = False,
         force_fallback_reason: str | None = None,
+        resolved_plan: EgressSourcePlan | None = None,
     ) -> None:
+        # ``resolved_plan``: a program plan the caller ALREADY resolved from
+        # ``source_plan_provider`` this same tick (the slate-EOS relaunch
+        # probes for a due program before deciding to relaunch). Threaded in
+        # so the provider is not asked twice -- under
+        # PlayoutSupervisor._next_source_plan a second call pops (and
+        # refills) _source_lookahead, running the DB lookahead twice for one
+        # start. Ignored when ``force_fallback_slate`` is set (the caller has
+        # already decided the program is not to be trusted).
         try:
             config = self._store.get_config(channel_id)
             if config is None:
@@ -988,6 +1032,8 @@ class EgressDaemon:
                 self._write_state(channel_id, "FALLBACK_SLATE", last_error=fallback_reason)
                 source_plan = self._fallback_source_provider(config)
                 using_fallback_slate = True
+            elif resolved_plan is not None:
+                source_plan = resolved_plan
             else:
                 try:
                     source_plan = self._source_plan_provider(channel_id)
@@ -1018,6 +1064,23 @@ class EgressDaemon:
                 raise ConfigInvalidError(
                     f"Source plan channel {source_plan.channel_id!r} does not match "
                     f"requested channel {channel_id!r}."
+                )
+            if not using_fallback_slate:
+                # Clean-machine walkthrough of beta.5 (2026-09-09 MDT): an
+                # operator Start at 22:00:39 still read Stopped at 22:00:41
+                # and 22:00:47 and only flipped to ON AIR at 22:01:03 -- the
+                # preparer below (a first-ever conform of the clip) ran for
+                # ~20s with NO state written yet, so the row kept whatever it
+                # said before (STOPPED). Publish STARTING with the target
+                # source label BEFORE preparation so the screen never says
+                # Stopped during a start. The early slate flips above already
+                # wrote FALLBACK_SLATE with their own last_error -- leave those
+                # in place (the slate's prepare is a cache hit anyway).
+                self._write_state(
+                    channel_id,
+                    "STARTING",
+                    current_source_label=source_plan.segments[0].label,
+                    pid=None,
                 )
             # Hostile-review follow-up, item 4: None unless the preparer
             # actually reports a discrete per-plan directory for the plan
@@ -1076,7 +1139,18 @@ class EgressDaemon:
             # recoverable only by age/budget GC, not this daemon's own faster
             # release.
             try:
-                self._write_state(channel_id, "STARTING")
+                # Round-2 hostile review, item 5: _write_state REPLACES the
+                # row, so this rewrite used to drop the label the pre-prepare
+                # STARTING write above had just published; carry it (the
+                # prepared plan's first segment -- the slate's own label when
+                # the preparer fell back) through to the TRANSITIONING/ON_AIR
+                # write below.
+                self._write_state(
+                    channel_id,
+                    "STARTING",
+                    current_source_label=source_plan.segments[0].label,
+                    pid=None,
+                )
                 branding_plan = (
                     self._branding_plan_provider(channel_id)
                     if self._branding_plan_provider is not None
@@ -1772,6 +1846,7 @@ class EgressDaemon:
                     channel_id in self._restart_streak
                     or channel_id in self._backoff_relaunch
                     or self._restart_latch.next_allowed_at(channel_id) != 0.0
+                    or (current_state == "ON_AIR" and channel_id in self._slate_eos_relaunches)
                 )
             ):
                 # The worker has held real on-air evidence for a full healthy
@@ -1785,7 +1860,16 @@ class EgressDaemon:
                 # overhead, never once reaching PLAYING, still got its streak
                 # reset here every tick -- streak stuck at 1, never escalating
                 # to fallback slate in 40 cycles).
-                self._reset_restart_tracking(channel_id)
+                #
+                # The slate-EOS relaunch counter clears here ONLY for a real
+                # program airing: a FALLBACK_SLATE worker holding healthy
+                # uptime is exactly the state the cap exists to bound (the
+                # slate plan itself runs up to 120s -- see
+                # _SLATE_EOS_RELAUNCH_MAX_CONSECUTIVE), so letting it reset
+                # the counter would re-arm the flap every cycle.
+                self._reset_restart_tracking(
+                    channel_id, slate_eos_relaunches=(current_state == "ON_AIR")
+                )
             return
         started_at = self._started_at.get(channel_id)
         uptime = None if started_at is None else max(0.0, self._monotonic() - started_at)
@@ -1832,6 +1916,11 @@ class EgressDaemon:
             )
             return
         if returncode == 0:
+            stop_error: str | None = None
+            if not was_draining:
+                relaunched, stop_error = self._relaunch_slate_eos_onto_due_program(channel_id)
+                if relaunched:
+                    return
             self._reset_restart_tracking(channel_id)  # clean exit — fresh slate
             self._clear_cg_overlay_proof(channel_id, "STOPPED")
             self._close_as_run(channel_id)  # the channel left air — close the open row
@@ -1842,7 +1931,7 @@ class EgressDaemon:
                 self._ts_relay.stop_channel(channel_id)
             if was_draining and self._hls_relay is not None:
                 self._hls_relay.stop_channel(channel_id)
-            self._write_state(channel_id, "STOPPED")
+            self._write_state(channel_id, "STOPPED", last_error=stop_error)
             self._append_health(channel_id, "STOPPED", sink_connected={})
             # Round 5 (coordinator review): a clean exit with no pending
             # reload is genuinely off-air -- unlike the pending_reload
@@ -1883,6 +1972,152 @@ class EgressDaemon:
         # branch above -- a terminal ERROR is off-air and bypasses _stop,
         # so this route must clear the entry itself.
         self._rollover_plan_end_at.pop(channel_id, None)
+
+    def _relaunch_slate_eos_onto_due_program(self, channel_id: str) -> tuple[bool, str | None]:
+        """A finite FALLBACK_SLATE plan reached EOS (clean exit, no pending
+        reload): relaunch onto the program that is now due instead of going
+        dark. Returns ``(relaunched, stop_error)``: ``(True, None)`` when the
+        relaunch was taken (``_start`` was invoked, or the relaunch was
+        handed to the crash back-off path -- either way the caller returns
+        and that path owns every state write from here), otherwise
+        ``(False, reason)`` where ``reason`` is ``None`` for the ordinary
+        STOPPED outcome (the channel was not on slate, no program is due, or
+        an operator stop/drain is already queued) and a human-readable
+        ``last_error`` when the consecutive-relaunch cap refused another one.
+
+        See ``_SLATE_EOS_RELAUNCH_MAX_CONSECUTIVE`` for the walkthrough that
+        found this. The automation's slate replan normally reloads BEFORE the
+        slate ends; this is the belt for the case where that reload's own
+        synchronous prepare (a cold conform) outlasts the slate's horizon and
+        the worker exits underneath it.
+
+        Round-2 hostile review, items 1-3, in order below:
+
+        * a queued operator ``stop``/``drain`` wins (``process_once`` polls
+          BEFORE it drains commands, so without this peek the relaunch spawned
+          a worker the Stop then had to kill, and the Stop waited behind a
+          cold prepare);
+        * the consecutive cap is a COUNT, not a time window (the slate plan
+          runs up to 120s, so a 30s window never fired);
+        * the relaunch honours the crash back-off exactly like
+          ``_relaunch_after_crash``: a streak at or past
+          ``_LIVE_SOURCE_FAILURE_FALLBACK_STREAK`` renews the slate
+          (``force_fallback_slate``) instead of retrying the dead source, and
+          a still-cooling ``_restart_latch`` defers through
+          ``_backoff_relaunch`` instead of bypassing it. A slate RENEWAL does
+          not count toward the cap: it is the B1 terminal state that replaces
+          dead air, and ``ChannelAutomationService._check_slate_replan``
+          retries the real source on its own cooldown.
+        """
+        state = self._store.read_state(channel_id)
+        if state is None or state.state != "FALLBACK_SLATE":
+            return False, None
+        queued = [
+            command.action
+            for command in self._store.peek_pending_commands(channel_id)
+            if command.action in {"stop", "drain"}
+        ]
+        if queued:
+            _LOG.info(
+                "channel %s: fallback slate reached its end with an operator %s already "
+                "queued; not relaunching (the command drains this same tick).",
+                channel_id,
+                queued[0],
+            )
+            return False, None
+        relaunches = self._slate_eos_relaunches.get(channel_id, 0)
+        if relaunches >= _SLATE_EOS_RELAUNCH_MAX_CONSECUTIVE:
+            reason = (
+                "Fallback slate reached its end again after "
+                f"{relaunches} automatic relaunch(es) onto the due program; the program's "
+                "own start keeps falling back to slate, so the channel was stopped instead "
+                "of looping. Check the program's media, then start the channel."
+            )
+            _LOG.warning("channel %s: %s", channel_id, reason)
+            return False, reason
+        streak = self._restart_streak.get(channel_id, 0)
+        force_fallback_slate = (
+            streak >= _LIVE_SOURCE_FAILURE_FALLBACK_STREAK
+            and self._fallback_source_provider is not None
+        )
+        force_fallback_reason: str | None = None
+        source_plan: EgressSourcePlan | None = None
+        if force_fallback_slate:
+            force_fallback_reason = (
+                f"Live source failed to stay on air after {streak} consecutive "
+                "crash-relaunches; the fallback slate reached its end and was renewed "
+                "rather than retrying the failed source."
+            )
+        else:
+            try:
+                source_plan = self._source_plan_provider(channel_id)
+            except SourcePrepareError as exc:
+                _LOG.info(
+                    "channel %s: fallback slate ended but the due program is not playable "
+                    "yet (%s); leaving the channel stopped.",
+                    channel_id,
+                    exc,
+                )
+                return False, None
+            if source_plan is None or source_plan.channel_id != channel_id:
+                return False, None
+            self._slate_eos_relaunches[channel_id] = relaunches + 1
+        if not self._restart_latch.should_run_now(channel_id):
+            # A crash-relaunch landed inside the cooldown just before this
+            # slate ended. Defer exactly as _relaunch_after_crash does; the
+            # deferred _begin_relaunch re-resolves the plan itself (so the
+            # probe above is not threaded through) and applies the streak
+            # rule on its own.
+            self._backoff_relaunch[channel_id] = (state.state, state.current_source_label)
+            self._write_state(
+                channel_id,
+                "STARTING",
+                current_source_label=state.current_source_label,
+                pid=None,
+                last_error=(
+                    "Fallback slate reached its end inside the crash-relaunch cooldown; "
+                    "backing off before relaunching onto the due program."
+                ),
+            )
+            self._append_health(channel_id, "STARTING", sink_connected={}, dropped_frames=0)
+            self._rollover_plan_end_at.pop(channel_id, None)
+            _LOG.info(
+                "channel %s: fallback slate reached its end inside the restart cooldown; "
+                "relaunch deferred to the back-off path.",
+                channel_id,
+            )
+            return True, None
+        if force_fallback_slate:
+            _LOG.info(
+                "channel %s: fallback slate reached its end while the live source is still "
+                "failing (streak %d); renewing the slate instead of stopping.",
+                channel_id,
+                streak,
+            )
+        else:
+            _LOG.info(
+                "channel %s: fallback slate reached its end with a scheduled program due; "
+                "relaunching onto %r instead of stopping.",
+                channel_id,
+                source_plan.segments[0].label if source_plan and source_plan.segments else "-",
+            )
+        # Mirror the pending-reload restart above: the row still carries the
+        # exited slate worker's pid -- clear it before the fresh start.
+        self._write_state(
+            channel_id,
+            "STARTING",
+            current_source_label=state.current_source_label,
+            pid=None,
+        )
+        self._start(
+            channel_id,
+            previous_state=state.state,
+            previous_source_label=state.current_source_label,
+            force_fallback_slate=force_fallback_slate,
+            force_fallback_reason=force_fallback_reason,
+            resolved_plan=source_plan,
+        )
+        return True, None
 
     def _relaunch_after_crash(
         self,
@@ -2006,6 +2241,25 @@ class EgressDaemon:
         pending = self._backoff_relaunch.get(channel_id)
         if pending is None:
             return
+        # #212 review MINOR-1: a queued operator stop/drain wins, same as the
+        # peek in _relaunch_slate_eos_onto_due_program. This runs BEFORE
+        # process_once drains commands, so without the peek the tick that
+        # opens the latch spawned a worker the Stop then had to kill. Leave
+        # the deferred entry alone: _process_command pops it for every action
+        # on this same tick.
+        queued = [
+            command.action
+            for command in self._store.peek_pending_commands(channel_id)
+            if command.action in {"stop", "drain"}
+        ]
+        if queued:
+            _LOG.info(
+                "channel %s: back-off relaunch due with an operator %s already queued; "
+                "not relaunching (the command drains this same tick).",
+                channel_id,
+                queued[0],
+            )
+            return
         if channel_id in self._processes:  # something already brought it back
             self._backoff_relaunch.pop(channel_id, None)
             return
@@ -2112,13 +2366,24 @@ class EgressDaemon:
         if callable(close_channel):
             close_channel(channel_id)
 
-    def _reset_restart_tracking(self, channel_id: str) -> None:
+    def _reset_restart_tracking(
+        self, channel_id: str, *, slate_eos_relaunches: bool = True
+    ) -> None:
         """Clear crash-relaunch back-off state — the channel reached a good state
-        (clean stop, error terminal, or a healthy run)."""
+        (clean stop, error terminal, or a healthy run).
+
+        ``slate_eos_relaunches``: also clear the slate-EOS automatic-relaunch
+        counter (round-2 hostile review, item 4: ``_stop`` and every other
+        off-air route reach this and must not leave a stale count behind).
+        The healthy-uptime caller in ``_poll_process`` passes False while the
+        channel is airing the fallback slate -- see the comment there.
+        """
         self._restart_streak.pop(channel_id, None)
         self._preroll_timeout_streak_incr_at.pop(channel_id, None)
         self._backoff_relaunch.pop(channel_id, None)
         self._restart_latch.force_reset(channel_id)
+        if slate_eos_relaunches:
+            self._slate_eos_relaunches.pop(channel_id, None)
 
     def _append_encoder_child_failure_event(
         self,
@@ -3051,7 +3316,9 @@ class EgressDaemon:
         self._started_at.pop(channel_id, None)
         self._on_air_confirmed_at.pop(channel_id, None)
         self._stderr_spawn_offset.pop(channel_id, None)
-        self._reset_restart_tracking(channel_id)  # operator stop — clear crash back-off
+        # Operator stop -- clear crash back-off AND the slate-EOS relaunch
+        # counter (round-2 hostile review, item 4).
+        self._reset_restart_tracking(channel_id, slate_eos_relaunches=True)
         self._draining_channels.discard(channel_id)
         self._pending_reloads.pop(channel_id, None)
         # Audit ENG-005: a leaked reload-kill flag would later misclassify a

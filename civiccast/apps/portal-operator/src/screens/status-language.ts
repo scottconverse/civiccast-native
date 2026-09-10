@@ -275,3 +275,14 @@ export function captionsRowLabel(
   if (liveCaptionsEnabled === false) return 'Off (switched off in the station profile)'
   return 'Not yet confirmed (waiting for the on-air check)'
 }
+
+// The "Process" row of a channel card. PR #212 round 2: the daemon now writes
+// STARTING (pid null) BEFORE it prepares the source, so a cold conform used
+// to render as "Starting ... Not running" -- contradictory to an operator
+// watching a start. No pid while STARTING means the source is being prepared,
+// not that nothing is running.
+export function processLabel(state: { state?: string | null; pid?: number | null } | null | undefined): string {
+  if (state?.pid) return `PID ${state.pid}`
+  if (state?.state === 'STARTING' || state?.state === 'TRANSITIONING') return 'Preparing source'
+  return 'Not running'
+}

@@ -36,7 +36,7 @@ import { hasOperatorRole } from '../auth/roles'
 import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { humanizeDuration } from '../format'
 import { feedCommandConfirmCopy } from './feed-command-confirm'
-import { captionsRowLabel, readinessLabel, stateLabel, toneForEgressState, toneForReadiness } from './status-language'
+import { captionsRowLabel, processLabel, readinessLabel, stateLabel, toneForEgressState, toneForReadiness } from './status-language'
 import { healthCheckAnchorId } from './health-check-anchor'
 import type {
   ChannelRuntimeStatus,
@@ -713,7 +713,7 @@ export function EgressReadinessPanel({
                 </div>
                 <div>
                   <dt className="font-semibold">Process</dt>
-                  <dd className="m-0">{state?.pid ? `PID ${state.pid}` : 'Not running'}</dd>
+                  <dd className="m-0">{processLabel(state)}</dd>
                 </div>
               </dl>
               {sinkEntries.length > 0 && (
