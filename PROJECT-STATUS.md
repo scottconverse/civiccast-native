@@ -348,7 +348,13 @@ Everything else is required. `Unit tests` takes ~40 minutes.
   must be committed with `git add -f`. It is on GitHub; it just will not stage normally.
 - **Backup branches:** 20 branches that existed **only on this disk** were pushed on 2026-09-10 to
   `backup/2026-09-10/<original-branch-name>`. They range from 1 to 58 commits. They are unreviewed
-  and unmerged — treat them as an archive, not as work in progress.
+  and unmerged — treat them as an archive, not as work in progress. Indexed in
+  `docs/evidence/trackers/ARCHIVED-BRANCHES-2026-09-10.md`.
+- **Uncommitted worktree edits:** three worktrees had uncommitted changes from earlier sessions.
+  They are captured as patches in
+  `docs/evidence/trackers/uncommitted-worktree-snapshots-2026-09-10/`. Those worktrees were **read,
+  not touched** — no commit, no stash, no checkout — because committing another session's
+  half-finished edits is how you destroy them.
 - **Reviews:** every hostile review from the 09-09/10 work is a **PR comment** on #209, #214, #215
   and #216. They contain reproductions, measured numbers and file:line citations, and are the best
   record of why each fix looks the way it does.

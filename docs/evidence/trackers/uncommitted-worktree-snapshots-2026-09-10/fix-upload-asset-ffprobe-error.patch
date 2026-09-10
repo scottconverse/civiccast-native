@@ -1,0 +1,203 @@
+diff --git a/civiccast/schedule/router.py b/civiccast/schedule/router.py
+index eb7e73cb..8632ac97 100644
+--- a/civiccast/schedule/router.py
++++ b/civiccast/schedule/router.py
+@@ -824,6 +824,25 @@ async def upload_asset(
+                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                 detail=str(exc),
+             ) from exc
++        except FfprobeError as exc:
++            # ffprobe ran but exited non-zero or produced unparseable output --
++            # exactly what a non-video file (wrong format, truncated download,
++            # renamed non-media file) does to a real ffprobe binary. Mirrors
++            # relink_asset's handling of the same exception below, but does
++            # NOT echo str(exc)/exc.stderr into the response: those can carry
++            # the uploaded file's on-disk name or raw ffprobe diagnostics, the
++            # same leak shape closed for the public contribute endpoints in
++            # #73 ("stop leaking the server's absolute path in public
++            # upload_ref"). Log the real detail server-side; the caller gets
++            # the plain-language, actionable 422 the docstring promises.
++            _LOG.exception("ffprobe could not read uploaded file for asset %s.", asset_id)
++            raise HTTPException(
++                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
++                detail=(
++                    "That file doesn't look like a video CivicCast can read. "
++                    "Try re-exporting it or choosing a different file."
++                ),
++            ) from exc
+ 
+         await asyncio.to_thread(asset_dir.mkdir, parents=True, exist_ok=True)
+         await asyncio.to_thread(os.replace, temp_path, dest_path)
+diff --git a/tests/schedule/test_upload_router.py b/tests/schedule/test_upload_router.py
+index e63f9680..5250a2b4 100644
+--- a/tests/schedule/test_upload_router.py
++++ b/tests/schedule/test_upload_router.py
+@@ -2,18 +2,25 @@
+ # Copyright (c) The CivicCast Authors
+ """Tests for the POST /api/staff/assets/upload endpoint.
+ 
+-Four classes:
+-
+-  TestUploadEndpointNoDB            — 503 when get_postgres_store returns None
+-  TestUploadEndpointFormValidation  — 422 on missing / malformed form fields
+-  TestUploadEndpointFfprobeGate     — 422 when ffprobe validation fails (mocked)
+-  TestUploadEndpointHappyPath       — 201 + UploadedAssetResponse with all fields
++Six classes:
++
++  TestUploadEndpointNoDB              — 503 when get_postgres_store returns None
++  TestUploadEndpointFormValidation    — 422 on missing / malformed form fields
++  TestUploadEndpointFfprobeGate       — 422 when ffprobe validation fails (mocked)
++  TestUploadEndpointFfprobeParseFailure
++                                       — 422 (not 500) when ffprobe itself cannot
++                                         read the file, including a real,
++                                         unmocked ffprobe run against genuinely
++                                         unparseable bytes
++  TestUploadEndpointHappyPath         — 201 + UploadedAssetResponse with all fields
++  TestUploadEndpointSecurity          — path-traversal / size-cap hardening
+ """
+ 
+ from __future__ import annotations
+ 
+ import json
+ import os
++import shutil
+ from collections.abc import Iterator
+ from pathlib import Path
+ from unittest.mock import MagicMock, patch
+@@ -22,11 +29,21 @@ import pytest
+ from fastapi.testclient import TestClient
+ 
+ from civiccast.app import create_app
+-from civiccast.schedule.ingest import FfprobeResult
++from civiccast.schedule.ingest import FfprobeError, FfprobeResult
+ from civiccast.schedule.models import ASSET_STATE_VALIDATED, UploadedAssetResponse
+ from civiccast.schedule.router import get_postgres_store
+ from civiccast.vod.store import AssetAlreadyExistsError
+ 
++# Real-ffprobe integration tests (see TestUploadEndpointFfprobeParseFailure)
++# follow the same skip convention as tests/schedule/test_ingest.py's
++# TestRunFfprobeIntegration: run the actual binary when it's on PATH, skip
++# (never fake-pass) when it isn't.
++_FFPROBE_AVAILABLE = shutil.which("ffprobe") is not None
++_FFPROBE_SKIP = pytest.mark.skipif(
++    not _FFPROBE_AVAILABLE,
++    reason="ffprobe not on PATH; integration test skipped",
++)
++
+ # ---------------------------------------------------------------------------
+ # Helpers
+ # ---------------------------------------------------------------------------
+@@ -239,6 +256,113 @@ class TestUploadEndpointFfprobeGate:
+             assert list(asset_dir.iterdir()) == []
+ 
+ 
++# ---------------------------------------------------------------------------
++# TestUploadEndpointFfprobeParseFailure
++# ---------------------------------------------------------------------------
++
++
++class TestUploadEndpointFfprobeParseFailure:
++    """422 (not 500) when ffprobe itself cannot read the uploaded file.
++
++    Distinct from TestUploadEndpointFfprobeGate above, which mocks
++    run_ffprobe to *succeed* with a rejected-by-policy FfprobeResult
++    (validate_ingest's UnsupportedFormatError path). This class covers the
++    other failure mode: ffprobe running and exiting non-zero, or producing
++    output it cannot parse -- FfprobeError, raised by run_ffprobe itself
++    before validate_ingest ever runs.
++
++    Two independent audits found every pre-existing test for this endpoint
++    mocked run_ffprobe to return a valid FfprobeResult, so nothing had ever
++    exercised a real ffprobe parse failure; one confirmed live, with the
++    real ffprobe binary and no mocking, that uploading 4KB of
++    os.urandom() bytes named garbage.mp4 raised an unhandled FfprobeError
++    that propagated out of the handler as an unmocked 500 instead of the
++    documented 422 contract. The first test below reproduces that
++    exact repro with the real binary; the second pins the response
++    contract (safe message, no leaked ffprobe internals) with a mocked
++    failure so the assertions still run in environments without ffprobe
++    on PATH.
++    """
++
++    @_FFPROBE_SKIP
++    def test_random_bytes_named_mp4_returns_422_not_500(
++        self, upload_client: TestClient, tmp_path
++    ) -> None:
++        """Real ffprobe, real garbage bytes, no mocking of run_ffprobe at all.
++
++        This is the exact field repro that surfaced the defect: an
++        operator (or a non-technical volunteer using the new "Upload
++        video" button from PR #69) picks a file that is not actually a
++        video -- here modeled as raw random bytes with a .mp4 extension,
++        the same shape as a PDF renamed to .mp4 or a corrupted download.
++        """
++        garbage = os.urandom(4096)
++        response = upload_client.post(
++            "/api/staff/assets/upload",
++            data={"asset_id": "garbage-upload-01", "title": "Garbage Upload"},
++            files={"file": ("garbage.mp4", garbage, "video/mp4")},
++        )
++
++        assert response.status_code == 422, (
++            f"Expected the documented 422 'unsupported file format' contract; "
++            f"got {response.status_code}: {response.text}"
++        )
++        detail = response.json()["detail"]
++        assert isinstance(detail, str)
++        # Plain-language and actionable for a non-technical operator -- not a
++        # bare technical failure code.
++        assert "video" in detail.lower()
++        # Must NOT echo ffprobe's raw diagnostics (exit code, "ffprobe",
++        # stderr) into the public response -- same information-disclosure
++        # shape closed for the public contribute endpoints in #73.
++        assert "ffprobe" not in detail.lower()
++        assert "exit code" not in detail.lower()
++        # Nothing kept: a rejected upload leaves no partial file behind.
++        asset_dir = (tmp_path / "garbage-upload-01").resolve()
++        if asset_dir.exists():
++            assert list(asset_dir.iterdir()) == []
++        incoming_dir = (tmp_path / ".incoming").resolve()
++        if incoming_dir.exists():
++            assert list(incoming_dir.iterdir()) == []
++
++    def test_ffprobe_error_returns_422_with_safe_message(
++        self, upload_client: TestClient, tmp_path
++    ) -> None:
++        """Portable companion to the real-ffprobe test above.
++
++        Runs even where ffprobe is not on PATH. Weaker evidence than the
++        real-binary test (it mocks the exact failure it's proving), but it
++        pins the response *contract* precisely: the raw ffprobe message and
++        stderr -- which can carry the uploaded file's on-disk name and
++        internal diagnostics -- must never reach the caller, and a failed
++        upload must not leave a partial file on disk.
++        """
++        with patch(
++            "civiccast.schedule.router.run_ffprobe",
++            side_effect=FfprobeError(
++                "ffprobe exited with code 1 on garbage2.mp4",
++                returncode=1,
++                stderr="Invalid data found when processing input -- INTERNAL_DETAIL_ONLY",
++            ),
++        ):
++            response = upload_client.post(
++                "/api/staff/assets/upload",
++                data={"asset_id": "garbage-upload-02", "title": "Garbage Upload 2"},
++                files={"file": ("garbage2.mp4", os.urandom(64), "video/mp4")},
++            )
++
++        assert response.status_code == 422
++        detail = response.json()["detail"]
++        assert "video" in detail.lower()
++        assert "INTERNAL_DETAIL_ONLY" not in detail
++        assert "garbage2.mp4" not in detail
++        assert "ffprobe" not in detail.lower()
++        assert "exit code" not in detail.lower()
++        asset_dir = (tmp_path / "garbage-upload-02").resolve()
++        if asset_dir.exists():
++            assert list(asset_dir.iterdir()) == []
++
++
+ # ---------------------------------------------------------------------------
+ # TestUploadEndpointHappyPath
+ # ---------------------------------------------------------------------------
