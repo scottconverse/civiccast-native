@@ -13,7 +13,7 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
-`v1.0.0-beta.5` is the next candidate and the current owner-held unpublished
+`v1.0.0-beta.6` is the next candidate and the current owner-held unpublished
 candidate; it does not change the `v1.0.0-beta.4` install story documented
 below.
 
