@@ -67,6 +67,24 @@ below.
     (`test_storage_report_never_carries_the_database_url`),
     `tests/policy/test_lan_only_station_external_dependencies.py`, and the
     signed-out `SetupScreen` vitest.
+  - Hostile review of the fix (two HIGH findings, both corrected before
+    merge): (1) the token-gated `/openapi.json` route was installed AFTER
+    `create_app` mounted the resident portal SPA at `/`, and Starlette matches
+    in registration order -- so on a real station (where
+    `civiccast.native.station_runtime` sets `CIVICCAST_PUBLIC_PORTAL_DIST`
+    alongside the LAN-only flag) the SPA answered `/openapi.json` with `200
+    text/html` and the gate did not exist; it is now installed before the
+    mount, pinned by
+    `test_f06_the_token_gate_survives_the_packaged_portal_mount_at_root`,
+    which runs with a portal dist actually mounted. (2) A browser still
+    sending an expired console token got a 401 from
+    `/api/setup/station-state` and the Setup screen rendered it as "Could not
+    read setup state." with no sign-in form and no way forward -- an operator
+    with an evicted token was locked out of their own station. The screen now
+    drops the rejected token, re-reads the state without it (the signed-out
+    view), shows the "You were signed out" notice above the sign-in card, and
+    keeps an explicit "Sign in again" button on the 401 card for a token it
+    cannot discard; covered by the two `SetupScreen stale staff token` vitests.
 - **Known issue (beta.5): beta.5 serves the database credential to local
   unauthenticated callers on the station's loopback** (`GET
   /api/setup/storage`, no Authorization header). Fixed in beta.6. After

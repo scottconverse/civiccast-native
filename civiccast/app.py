@@ -2358,10 +2358,16 @@ def create_app() -> FastAPI:
             upload_dir=_managed_upload_dir_if_ready(),
         )
 
-    _mount_packaged_portals(app)
     _install_staff_openapi_contract(app)
     if lan_only_station:
+        # BEFORE the portal mount, deliberately. Starlette matches in
+        # registration order and the resident portal is mounted at "/" as a
+        # catch-all; a route added after it is shadowed and /openapi.json
+        # came back as the SPA's index.html (200 text/html, no gate) on every
+        # real station, where station_runtime sets both this flag and
+        # CIVICCAST_PUBLIC_PORTAL_DIST (HIGH 1, hostile review of PR #215).
         _install_lan_only_openapi_route(app)
+    _mount_packaged_portals(app)
     return app
 
 

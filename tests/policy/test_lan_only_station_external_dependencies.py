@@ -117,6 +117,56 @@ def test_f16_the_machine_readable_contract_is_still_served_and_is_self_contained
     assert wrong.status_code == 401
 
 
+def test_f06_the_token_gate_survives_the_packaged_portal_mount_at_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """HIGH 1 (hostile review of PR #215): the gate must exist on a REAL station.
+
+    ``station_runtime.load_native_station_environment`` sets
+    ``CIVICCAST_PUBLIC_PORTAL_DIST`` alongside ``CIVICCAST_LAN_ONLY_STATION=1``,
+    and ``create_app`` then mounts the resident portal SPA at ``/``. Starlette
+    matches routes in registration order, so a token-gated ``/openapi.json``
+    added AFTER that catch-all mount is shadowed by it: the SPA's ``index.html``
+    came back as ``200 text/html`` and the gate the bare dev app passed did
+    not exist where it mattered. This test runs with the portal dist actually
+    mounted, proves the mount is live, and then asserts the gate.
+    """
+
+    public_dist = tmp_path / "portal-public"
+    public_dist.mkdir()
+    (public_dist / "index.html").write_text("<!doctype html><title>Resident portal</title>")
+    operator_dist = tmp_path / "portal-operator"
+    operator_dist.mkdir()
+    (operator_dist / "index.html").write_text("<!doctype html><title>Operator console</title>")
+    for name, value in station_runtime.lan_only_station_environment().items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("CIVICCAST_PUBLIC_PORTAL_DIST", str(public_dist))
+    monkeypatch.setenv("CIVICCAST_OPERATOR_CONSOLE_DIST", str(operator_dist))
+    client = TestClient(create_app())
+
+    # The mount is live: the resident portal answers at the root.
+    front_door = client.get("/", headers={"Accept": "text/html"})
+    assert front_door.status_code == 200
+    assert "Resident portal" in front_door.text
+
+    anonymous = client.get("/openapi.json", headers={"Accept": "*/*"})
+    assert anonymous.status_code == 401, (
+        "/openapi.json on a LAN-only station with the resident portal mounted at / was "
+        f"answered with {anonymous.status_code} {anonymous.headers.get('content-type')} for a "
+        "caller with no staff bearer token -- the SPA mount is shadowing the token-gated route"
+    )
+    assert anonymous.headers["WWW-Authenticate"] == "Bearer"
+    assert "text/html" not in anonymous.headers.get("content-type", "")
+
+    held = client.get(
+        "/openapi.json",
+        headers={"Authorization": "Bearer operator-token-a", "Accept": "*/*"},
+    )
+    assert held.status_code == 200
+    assert held.headers["content-type"].startswith("application/json")
+    assert "/api/staff/installer/storage" in held.json()["paths"]
+
+
 def test_f06_the_contract_stays_unauthenticated_where_the_station_is_not_lan_only() -> None:
     """Deliberately NARROW, like the doc UIs: a deployment without the flag
     keeps FastAPI's default unauthenticated schema route, and the docs

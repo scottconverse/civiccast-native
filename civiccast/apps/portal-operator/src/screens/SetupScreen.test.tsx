@@ -783,6 +783,118 @@ describe('SetupScreen signed-out after setup (setup API requires the staff token
   })
 })
 
+describe('SetupScreen stale staff token (HIGH 2, hostile review of PR #215)', () => {
+  const signedOutBody = {
+    status: 'complete',
+    setup_complete: true,
+    station_name: 'Pinegrove School Board',
+    profile: null,
+    recovery_kit_created: false,
+    recovery_kit_id: null,
+    recovery_kit_acknowledged: null,
+    operator_console_url: 'http://127.0.0.1:8000/operator/',
+    next_step: 'Sign in with the local admin password to continue.',
+  }
+
+  function authorizationOf(init?: RequestInit): string | null {
+    const headers = init?.headers
+    if (!headers) return null
+    if (headers instanceof Headers) return headers.get('Authorization')
+    if (Array.isArray(headers)) {
+      const pair = headers.find(([name]) => name.toLowerCase() === 'authorization')
+      return pair ? pair[1] : null
+    }
+    const record = headers as Record<string, string>
+    return record.Authorization ?? record.authorization ?? null
+  }
+
+  it('drops a token the server rejects and lands on a usable sign-in card instead of an error dead-end', async () => {
+    // An operator whose console token expired (evicted under the session
+    // cap, or the station's sign-in state reset) still has it stored.
+    window.localStorage.setItem('civiccast.staffToken', 'ccst_stale_token')
+    window.sessionStorage.setItem('civiccast.staffToken', 'ccst_stale_token')
+    const requestedUrls: string[] = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const authorization = authorizationOf(init)
+      requestedUrls.push(`${url} ${authorization ?? '(no token)'}`)
+      if (url === '/api/setup/station-state') {
+        // civiccast/installer/router.py public_station_state: a present-but-
+        // invalid token is a 401 so the browser learns to drop it; no token
+        // at all is the signed-out view.
+        if (authorization) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ detail: 'Invalid staff bearer token.' }), {
+              status: 401,
+              headers: { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer' },
+            }),
+          )
+        }
+        return jsonResponse(signedOutBody)
+      }
+      if (url === '/api/staff/auth/me') {
+        return jsonResponse({ detail: 'Invalid staff bearer token.' }, 401)
+      }
+      return jsonResponse({ detail: `Unhandled GET ${url}` }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderSetupScreen()
+
+    // The sign-in form is reachable: the operator is not stuck on
+    // "Could not read setup state. Invalid staff bearer token." with no
+    // way forward.
+    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeTruthy()
+    expect(inputById('login-admin-username')).toBeTruthy()
+    expect(screen.queryByText(/Could not read setup state/)).toBeNull()
+    // The dead token is gone from both storages, so nothing re-sends it.
+    expect(window.localStorage.getItem('civiccast.staffToken')).toBeNull()
+    expect(window.sessionStorage.getItem('civiccast.staffToken')).toBeNull()
+    // The operator is told why they are looking at a sign-in card.
+    expect(screen.getByText('You were signed out')).toBeTruthy()
+    // The state was re-read WITHOUT the stale token to get here.
+    expect(requestedUrls).toContain('/api/setup/station-state (no token)')
+  })
+
+  it('offers an explicit "Sign in again" action on the 401 card when automatic recovery cannot clear the token', async () => {
+    // A token the console cannot discard: the test-only injected one. The
+    // automatic path has nothing to clear, so the operator must still be
+    // handed a button that gets them to the sign-in card.
+    window.__CIVICCAST_STAFF_TOKEN__ = 'ccst_injected_stale'
+    try {
+      let rejectWithToken = true
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        const authorization = authorizationOf(init)
+        if (url === '/api/setup/station-state') {
+          if (authorization && rejectWithToken) {
+            return jsonResponse({ detail: 'Invalid staff bearer token.' }, 401)
+          }
+          return jsonResponse(signedOutBody)
+        }
+        if (url === '/api/staff/auth/me') {
+          return jsonResponse({ detail: 'Invalid staff bearer token.' }, 401)
+        }
+        return jsonResponse({ detail: `Unhandled GET ${url}` }, 404)
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      renderSetupScreen()
+
+      const again = await screen.findByRole('button', { name: 'Sign in again' })
+      expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull()
+      // Simulate the station accepting the next read (e.g. the operator
+      // fixed the injected token) and prove the button re-reads state.
+      rejectWithToken = false
+      fireEvent.click(again)
+      expect(await screen.findByRole('button', { name: 'Sign in' })).toBeTruthy()
+      expect(inputById('login-admin-username')).toBeTruthy()
+    } finally {
+      delete window.__CIVICCAST_STAFF_TOKEN__
+    }
+  })
+})
+
 describe('SetupScreen staff-identity gating (Finding MINOR-1)', () => {
   it('never calls /api/staff/auth/me for a signed-out visitor with no stored token', async () => {
     const requestedUrls: string[] = []
