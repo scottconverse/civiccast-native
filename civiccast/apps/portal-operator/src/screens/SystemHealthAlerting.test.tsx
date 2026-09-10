@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router'
 import type { ChannelProfile, RuntimeSafeToAirStatus, SystemResourceSample, SystemSelfTest } from '../types/api.generated'
 import type { EgressHealthSample, EgressStateRow } from '../api/client'
 import { EgressReadinessPanel, ResourceSnapshotPanel, RuntimeSafeToAirBanner, SelfTestPanel } from './SystemHealthScreen'
+import { processLabel } from './status-language'
 
 // No global afterEach in vitest config → register testing-library cleanup
 // explicitly so body-scoped queries don't match leftover renders.
@@ -310,5 +311,74 @@ describe('live captions switched off (round-2 review BLOCKER 1)', () => {
       />,
     )
     expect(on.container.textContent).toContain('Not yet confirmed (waiting for the on-air check)')
+  })
+})
+
+describe('Process row during a start (PR #212 round 2, item 8)', () => {
+  const CHANNEL = {
+    channel_id: 'public',
+    slug: 'public',
+    kind: 'public',
+    branding: { display_name: 'Public Channel' } as ChannelProfile['branding'],
+    fallback_behavior: 'slate',
+  } as ChannelProfile
+
+  function renderWith(state: EgressStateRow) {
+    return render(
+      <MemoryRouter>
+        <EgressReadinessPanel
+          channels={[CHANNEL]}
+          states={new Map<string, EgressStateRow | null>([['public', state]])}
+          health={new Map()}
+          currency={new Map()}
+          loading={false}
+          error={null}
+          pendingCommand={null}
+          canControl={false}
+          onCommand={vi.fn()}
+        />
+      </MemoryRouter>,
+    )
+  }
+
+  it('says the source is being prepared while STARTING has no pid yet', () => {
+    // The daemon writes STARTING (pid null) before it prepares the source; a
+    // cold conform used to read "Starting ... Not running" on this card.
+    const { container } = renderWith({
+      channel_id: 'public',
+      state: 'STARTING',
+      current_source_label: 'Council meeting',
+      updated_at: '2026-06-15T12:00:00Z',
+      pid: null,
+    })
+    expect(container.textContent).toContain('Preparing source')
+    expect(container.textContent).not.toContain('Not running')
+  })
+
+  it('shows the pid once the worker exists, and Not running when stopped', () => {
+    const running = renderWith({
+      channel_id: 'public',
+      state: 'ON_AIR',
+      updated_at: '2026-06-15T12:00:00Z',
+      pid: 4242,
+    })
+    expect(running.container.textContent).toContain('PID 4242')
+    running.unmount()
+    const stopped = renderWith({
+      channel_id: 'public',
+      state: 'STOPPED',
+      updated_at: '2026-06-15T12:00:00Z',
+      pid: null,
+    })
+    expect(stopped.container.textContent).toContain('Not running')
+    expect(stopped.container.textContent).not.toContain('Preparing source')
+  })
+
+  it('processLabel covers every branch', () => {
+    expect(processLabel(undefined)).toBe('Not running')
+    expect(processLabel({ state: 'STARTING', pid: null })).toBe('Preparing source')
+    expect(processLabel({ state: 'TRANSITIONING', pid: null })).toBe('Preparing source')
+    expect(processLabel({ state: 'STARTING', pid: 7 })).toBe('PID 7')
+    expect(processLabel({ state: 'ERROR', pid: null })).toBe('Not running')
   })
 })
