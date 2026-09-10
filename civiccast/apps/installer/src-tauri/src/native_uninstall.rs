@@ -779,6 +779,19 @@ impl WslPresenceEvidence {
     /// record and the recovery document): the lead has to fit the
     /// observation line's cap with a real SID and two real paths in it.
     pub fn describe_present_product(&self) -> String {
+        self.describe_present_product_with(true)
+    }
+
+    /// [`describe_present_product`] built field by field: with
+    /// `include_install_location` false the lead still carries the
+    /// UninstallString but not the InstallLocation, so a caller with a
+    /// character budget (the one-line observation) can drop a WHOLE field
+    /// instead of cutting a path in half. Round 5 (delta review of round
+    /// 4): the account name appears three times in the lead, and a 16-char
+    /// name with a real-length SID overran the line's truncation point.
+    ///
+    /// [`describe_present_product`]: Self::describe_present_product
+    pub fn describe_present_product_with(&self, include_install_location: bool) -> String {
         match self.present_product() {
             Some((observation, product)) => {
                 let mut extras = Vec::new();
@@ -786,6 +799,9 @@ impl WslPresenceEvidence {
                     ("InstallLocation", &product.install_location),
                     ("UninstallString", &product.uninstall_string),
                 ] {
+                    if label == "InstallLocation" && !include_install_location {
+                        continue;
+                    }
                     if let Some(value) = value.as_deref().filter(|s| !s.trim().is_empty()) {
                         extras.push(format!("{label} {value}"));
                     }
@@ -849,6 +865,48 @@ impl WslPresenceEvidence {
             })
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    /// Round 5 (delta review of round 4): the inert-leftover conditions
+    /// ([`classify_wsl_product_for_claim`]) that did NOT hold for this
+    /// evidence, one sentence each, for the recovery document's "What it
+    /// means" -- derived from the evidence, never asserted. Round 4 named
+    /// the per-machine cause for every Present, so a station with a live
+    /// distro was told its owner was signed out. Empty when every condition
+    /// held (that verdict is `PresentInert`, which is not a refusal).
+    pub fn unmet_inert_conditions(&self) -> Vec<String> {
+        use OtherProductState::{Absent, Present, Unknown};
+        let mut unmet = Vec::new();
+        if self.user_arp != Present {
+            unmet.push(format!(
+                "the entry was found only per-machine (HKLM) and no signed-in account's hive \
+                 carries it (user-ARP={}), so its owner may be signed out and the distro and \
+                 autostart reads below never looked at that owner's hive",
+                other_product_token(self.user_arp)
+            ));
+        }
+        match self.distro_registration {
+            Absent => {}
+            Present => unmet.push("a CivicCast distro is registered (distro-scan=present)".into()),
+            Unknown => unmet.push("the distro scan was inconclusive (distro-scan=unknown)".into()),
+        }
+        match self.autostart {
+            Absent => {}
+            Present => {
+                unmet.push("the CivicCast Autostart Run entry is set (autostart=present)".into())
+            }
+            Unknown => unmet.push("the autostart read was inconclusive (autostart=unknown)".into()),
+        }
+        match self.native_transfer_marker {
+            Present => {}
+            Absent => unmet.push(
+                "no previous native install's hand-off marker is set (transfer-marker=absent)"
+                    .into(),
+            ),
+            Unknown => unmet
+                .push("the hand-off marker could not be read (transfer-marker=unknown)".into()),
+        }
+        unmet
     }
 
     /// Every observation, one per line, for the recovery document.
@@ -3741,9 +3799,6 @@ mod runtime_ownership_evidence_tests {
         }
     }
 
-    /// A Present observation carries the ARP record in its Display, so the
-    /// observation line and the recovery document name the product, its
-    /// version, publisher, InstallLocation and UninstallString.
     /// Round 4 (hostile review of round 3): a MACHINE-scope ARP entry whose
     /// owner hive is not loaded. `distro_registration` and `autostart` are
     /// scans over LOADED user hives only, so with the HKLM entry's owner
@@ -3816,6 +3871,9 @@ mod runtime_ownership_evidence_tests {
         );
     }
 
+    /// A Present observation carries the ARP record in its Display, so the
+    /// observation line and the recovery document name the product, its
+    /// version, publisher, InstallLocation and UninstallString.
     #[test]
     fn a_present_observation_displays_the_arp_record() {
         assert_eq!(

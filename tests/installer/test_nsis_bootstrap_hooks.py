@@ -27,7 +27,10 @@ pristine Windows Sandbox that every prior proof run used:
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1210,13 +1213,77 @@ def test_the_exit_87_dialog_names_the_other_product_and_never_the_registry_edit(
     assert "WslProductVerdict::Absent | WslProductVerdict::PresentInert => {" in uninstall
 
 
+def _nsis_max_strlen() -> int:
+    """NSIS_MAX_STRLEN, MEASURED from the toolchain (`makensis -HDRINFO`)
+    whenever a makensis is reachable -- Tauri's own copy under
+    %LOCALAPPDATA%\\tauri\\NSIS first, then PATH. Only when neither exists
+    does this fall back to what that measurement gave for Tauri's NSIS 3.11
+    on 2026-09-09 (1024); a toolchain built with a different limit is then
+    caught by whoever has it installed, not by a number in this file."""
+    candidates: list[Path] = []
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        candidates.append(Path(local_app_data) / "tauri" / "NSIS" / "Bin" / "makensis.exe")
+    on_path = shutil.which("makensis")
+    if on_path:
+        candidates.append(Path(on_path))
+    for exe in candidates:
+        if not exe.is_file():
+            continue
+        try:
+            header = subprocess.run(
+                [str(exe), "-HDRINFO"], capture_output=True, text=True, timeout=60, check=False
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        measured = re.search(r"NSIS_MAX_STRLEN=(\d+)", header)
+        if measured is not None:
+            return int(measured.group(1))
+    return 1024
+
+
+def _alert_log_line_overhead(source: str) -> tuple[int, int]:
+    """The characters CIVICCAST_ALERT puts AROUND ${TEXT} in the one string
+    NSIS builds for `FileWrite $2 "$9${TEXT}$\\r$\\n"`: CIVICCAST_STEP's `$9`
+    timestamp (`[YYYY-MM-DD HH:MM:SS] `), the `ALERT: ` prefix, and the
+    trailing CRLF -- which is in the same buffer, so it counts (round 5:
+    the old model stopped at "ALERT: " and was 2 short). Returned under the
+    same two conventions the static text is counted in: runtime (`$\\r$\\n`
+    is two characters) and pessimistic source-literal (six)."""
+    step = _slice(source, "!macro CIVICCAST_STEP TEXT", "!macroend")
+    stamp_match = re.search(r'StrCpy \$9 "([^"]*)"', step)
+    assert stamp_match is not None, "CIVICCAST_STEP no longer builds its timestamp in $9"
+    # ${GetTime} "L": $2 day, $3 month, $4 year, $6 hour, $7 minute,
+    # $8 second -- four digits for the year, two for everything else.
+    stamp = stamp_match.group(1).replace("$4", "2026")
+    stamp = re.sub(r"\$[2-8]", "09", stamp)
+    assert "$" not in stamp, stamp
+    write_match = re.search(r'FileWrite \$2 "\$9\$\{TEXT\}([^"]*)"', step)
+    assert write_match is not None, "CIVICCAST_STEP no longer writes $9${TEXT} in one FileWrite"
+    trailer = write_match.group(1)
+    alert = _slice(source, "!macro CIVICCAST_ALERT TEXT", "!macroend")
+    prefix_match = re.search(r'!insertmacro CIVICCAST_STEP "([^"]*)\$\{TEXT\}"', alert)
+    assert prefix_match is not None, (
+        "CIVICCAST_ALERT no longer prefixes ${TEXT} through CIVICCAST_STEP"
+    )
+    prefix = prefix_match.group(1)
+    runtime = len(stamp) + len(prefix) + len(trailer.replace("$\\r$\\n", "\r\n"))
+    pessimistic = len(stamp) + len(prefix) + len(trailer)
+    return runtime, pessimistic
+
+
 def test_the_exit_85_and_87_dialogs_fit_the_nsis_string_budget_with_the_observation() -> None:
-    """NSIS_MAX_STRLEN is 1024 in Tauri's NSIS 3.11 (makensis -HDRINFO).
-    CIVICCAST_ALERT prefixes the dialog text with a timestamp (~29 chars)
-    before FileWrite, and the Rust writer caps the embedded observation
-    line at OWNERSHIP_OBSERVATION_LINE_MAX_CHARS. The three together must
-    stay under 1023 or the log line (and the dialog) silently truncate --
-    for BOTH ownership arms (round 3 added 87)."""
+    """The exit-85 and exit-87 dialog strings embed the observation line
+    ($R6, capped at OWNERSHIP_OBSERVATION_LINE_MAX_CHARS by the Rust writer)
+    and CIVICCAST_ALERT wraps the result in a timestamp, "ALERT: " and a CRLF
+    before ONE FileWrite; the whole string must fit NSIS_MAX_STRLEN or the
+    log line (and the dialog) silently truncate -- for BOTH ownership arms
+    (round 3 added 87). Round 5 (delta review of round 4): every number here
+    is derived -- NSIS_MAX_STRLEN from makensis when present, the log-line
+    overhead from the CIVICCAST_STEP/CIVICCAST_ALERT macros, the two static
+    strings from the arms, the cap from the Rust constant -- so none can
+    drift; the floor on the cap is owned by the Rust lead tests, not by a
+    magic number duplicated here."""
     source = _hooks_source()
     step = _d4_provision_step(source)
     registration = (
@@ -1224,7 +1291,13 @@ def test_the_exit_85_and_87_dialogs_fit_the_nsis_string_budget_with_the_observat
     ).read_text(encoding="utf-8")
     cap = re.search(r"pub const OWNERSHIP_OBSERVATION_LINE_MAX_CHARS: usize = (\d+);", registration)
     assert cap is not None
-    timestamp_prefix = len("[2026-09-09 21:16:00] ALERT: ")
+    runtime_overhead, pessimistic_overhead = _alert_log_line_overhead(source)
+    assert 0 < runtime_overhead <= pessimistic_overhead
+    max_strlen = _nsis_max_strlen()
+    # NSIS_MAX_STRLEN counts the terminating NUL, so max_strlen - 1
+    # characters fit; keep one more in hand (the `< 1023` this test has
+    # asserted since round 2, now relative to the measured limit).
+    usable = max_strlen - 2
     arms = {
         "85": (
             _slice(step, "${ElseIf} $0 == 85", "${Else}"),
@@ -1258,21 +1331,41 @@ def test_the_exit_85_and_87_dialogs_fit_the_nsis_string_budget_with_the_observat
         pessimistic = literal.replace("$COMMONPROGRAMDATA", "C:\\ProgramData").replace("$R6", "")
         static_lengths[code] = (len(runtime), len(pessimistic))
     line_cap = int(cap.group(1))
-    max_static = max(max(pair) for pair in static_lengths.values())
-    max_safe_cap = 1022 - timestamp_prefix - max_static
-    for code, (runtime_len, pessimistic_len) in static_lengths.items():
-        for label, static in (("runtime", runtime_len), ("pessimistic", pessimistic_len)):
-            total = static + line_cap + timestamp_prefix
-            assert total < 1023, (
+    # Each convention carries its own overhead: the CRLF trailer is two
+    # characters at runtime and six in the source literal, like every other
+    # `$\\r$\\n` in the string.
+    conventions = (
+        ("runtime", 0, runtime_overhead),
+        ("pessimistic", 1, pessimistic_overhead),
+    )
+    max_fixed = max(
+        lengths[index] + overhead
+        for lengths in static_lengths.values()
+        for _label, index, overhead in conventions
+    )
+    max_safe_cap = usable - max_fixed
+    for code, lengths in static_lengths.items():
+        for label, index, overhead in conventions:
+            static = lengths[index]
+            total = static + line_cap + overhead
+            assert total <= usable, (
                 f"exit-{code} dialog ({label} count {static}) + observation cap {line_cap} "
-                f"+ log prefix {timestamp_prefix} = {total} chars >= 1023; the maximum safe "
+                f"+ log-line overhead {overhead} = {total} chars > {usable} "
+                f"(NSIS_MAX_STRLEN {max_strlen} - 2); the maximum safe "
                 f"OWNERSHIP_OBSERVATION_LINE_MAX_CHARS for the current text is {max_safe_cap}"
             )
     assert line_cap <= max_safe_cap, (line_cap, max_safe_cap, static_lengths)
-    # The exit-87 lead (user, product, version, an HKU\<SID> key,
-    # InstallLocation, UninstallString) needs the round-3 cap; a shrunken
-    # cap would silently cut it.
-    assert line_cap >= 420, (line_cap, static_lengths)
+    # The FLOOR on the cap -- the exit-87 lead (user, product, version, an
+    # HKU\<SID> key, UninstallString) must survive it -- is owned by the Rust
+    # tests that build that lead at the constant's real value and assert it
+    # is whole. This is only a tripwire that those pins still exist; it
+    # duplicates no number.
+    for pin in (
+        "fn a_present_refusal_line_leads_with_the_product_and_maps_to_exit_87",
+        "fn a_long_username_never_cuts_the_exit_87_lead_mid_path",
+        "lead_end <= OWNERSHIP_OBSERVATION_LINE_MAX_CHARS - 64",
+    ):
+        assert pin in registration, f"the Rust floor pin {pin!r} is gone"
 
 
 def test_ownership_claim_runs_before_the_provisioning_engine_mutates_state() -> None:

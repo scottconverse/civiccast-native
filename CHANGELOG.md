@@ -337,16 +337,40 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
        gone. `OWNERSHIP_OBSERVATION_LINE_MAX_CHARS` 360 -> 420 so the exit-87
        lead fits.
      - Round 4 (hostile review): the round-3 dialog text had no slack under
-       the NSIS 1024 string limit (580 + 420 + 29 = 1029 counted as source),
-       so both dialogs were shortened (85: 540 + 420 + 29 = 989; 87:
-       558 + 420 + 29 = 1007) and the budget test now measures the real
-       strings under both the runtime and the source count instead of
-       trusting a number. `OWNERSHIP-RECOVERY.md` said "installer exit 127"
-       for the exit-87 refusal too; it now names 135, from constants a
-       policy test pins to the NSIS defines. The inert-leftover rule needs
-       the entry to have been found in a LOADED user hive: a per-machine ARP
-       entry whose owner is logged out cannot be proven inert (the distro
-       and autostart scans never saw that hive) and stays exit 87.
+       the NSIS 1024 string limit (584 + 420 + 35 = 1039 counted as source,
+       against a usable 1022), so both dialogs were shortened (85:
+       540 + 420 + 35 = 995; 87: 558 + 420 + 35 = 1013 as source;
+       520 + 420 + 31 = 971 and 542 + 420 + 31 = 993 at runtime) and the
+       budget test now measures the real strings under both the runtime and
+       the source count instead of trusting a number. `OWNERSHIP-RECOVERY.md`
+       said "installer exit 127" for the exit-87 refusal too; it now names
+       135, from constants a policy test pins to the NSIS defines. The
+       inert-leftover rule needs the entry to have been found in a LOADED
+       user hive: a per-machine ARP entry whose owner is logged out cannot
+       be proven inert (the distro and autostart scans never saw that hive)
+       and stays exit 87.
+     - Round 5 (delta review of round 4): `OWNERSHIP-RECOVERY.md`'s "What it
+       means" now names the inert condition(s) that actually failed, derived
+       from the evidence (a live distro, a set autostart entry, a missing
+       hand-off marker, an inconclusive read, or a per-machine entry no
+       signed-in account's hive carries) instead of asserting the per-machine
+       cause for every refusal. A machine-only (HKLM) entry -- which round 4
+       refuses for as long as its owner is signed out, and whose uninstaller
+       may be gone -- gets the two remedies that reach it: sign in as the
+       owning account and re-run setup, or delete the stale
+       `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\CivicCast Installer`
+       key (`reg delete ... /f /reg:64|32`, the view the probe found it in).
+       The exit-87 observation line is built field by field: a long account
+       name (it appears three times in the lead) no longer pushes the lead
+       past the truncation point (420 - 48 = 372) and cuts the UninstallString
+       in half -- InstallLocation is dropped first, and any cut lands on a
+       field boundary. `installer_exit_code_for` is an exhaustive match on
+       the action (a future refusal is a compile error, not a silent 127),
+       and the recovery-document test asserts the mapped code in the
+       document itself. The budget test derives the log-line overhead from
+       the NSIS macros (31 at runtime, 35 as source; the old `29` missed the
+       trailing CRLF) and `NSIS_MAX_STRLEN` from `makensis -HDRINFO` when a
+       makensis is present.
 
   Follow-up, not in this change: a setup wizard page asking the operator to
   confirm native ownership when the evidence is merely inconclusive, instead
