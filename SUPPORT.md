@@ -1,16 +1,17 @@
 # Support
 
-> **Current native release posture:** `v1.0.0-beta.4` is the current
+> **Current native release posture:** `v1.0.0-beta.5` is the current
 > release, a download-only upgrade for stations already on
-> `v1.0.0-beta.3` -- `setup.exe` and the runtime
+> `v1.0.0-beta.4` -- `setup.exe` and the runtime
 > `.ccpack` packs are attached to its
-> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4).
-> `v1.0.0-beta.3` (the first downloadable release) is now superseded.
+> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5).
+> `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable release) are
+> now superseded.
 > `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also
 > superseded. `v1.0.0-beta.2` was never published -- it exists only as an
 > internal Gate A upgrade-baseline kit. `v1.0.0-beta.6` is the next
 > candidate and the current owner-held unpublished candidate; it does not
-> change the beta.4 install story above. Community support does not turn
+> change the beta.5 install story above. Community support does not turn
 > this beta into a supported, SLA'd field release.
 
 > **This repository ships one product line: native Windows.** Earlier
@@ -76,13 +77,13 @@ development.
 
 The native Windows runtime ([ADR 0021](docs/adr/0021-native-windows-runtime.md))
 is a **public beta**, not a finished production release. Its current
-release, `v1.0.0-beta.4`, is downloadable (setup.exe and the runtime packs
-on its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4)),
-a download-only upgrade for stations already on `v1.0.0-beta.3` (now
+release, `v1.0.0-beta.5`, is downloadable (setup.exe and the runtime packs
+on its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5)),
+a download-only upgrade for stations already on `v1.0.0-beta.4` (now
 superseded), but there is still no dedicated, SLA'd support intake for it --
 the same community-driven, no-SLA posture above applies. `v1.0.0-beta.6` is
 the next candidate and the current owner-held unpublished candidate; it has
-no installer asset and does not change the beta.4 install story above.
+no installer asset and does not change the beta.5 install story above.
 
 If you are working on, evaluating, or running the native line:
 

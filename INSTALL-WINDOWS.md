@@ -9,11 +9,14 @@
 
 ## Current Release
 
-`v1.0.0-beta.4` is the current release, a download-only upgrade for
-stations already on `v1.0.0-beta.3`:
+`v1.0.0-beta.5` is the current release (published 2026-09-09), a
+download-only upgrade for stations already on `v1.0.0-beta.4`:
 `setup.exe`, per-pack runtime `.ccpack` assets, and a `SHA256SUMS.txt`
 checksum file (each asset under GitHub's 2 GB/file cap) are published as a
-prerelease at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4>.
+prerelease at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5>.
+Its verification record (Gate A run, asset/hash/signature checks, known
+issues) is
+[`docs/releases/v1.0.0-beta.5-verification.md`](docs/releases/v1.0.0-beta.5-verification.md).
 Watch that page, not `scottconverse/civiccast` (the retired, separate
 WSL2-line repository) and not any `v1.0.0-rcNN` tag, which belongs to that
 other repository. See
@@ -21,7 +24,8 @@ other repository. See
 the authored release-state record -- it is the single source of truth for
 which tag is current.
 
-`v1.0.0-beta.3` (the first downloadable release) is now superseded.
+`v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable release) are
+now superseded.
 `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also superseded.
 If you already have a USB-delivered `v1.0.0-beta.1` station, or a
 `v1.0.0-beta.3` station, it still runs, and the upgrade instructions below
@@ -33,7 +37,7 @@ never a release a station receives.
 
 `v1.0.0-beta.6` is the next candidate and the current owner-held unpublished
 candidate (unpublished; no installer asset) -- it does not change anything
-above, which still targets `v1.0.0-beta.4` as the current release to
+above, which still targets `v1.0.0-beta.5` as the current release to
 install.
 
 **First install vs. upgrade:**
@@ -48,7 +52,7 @@ install.
   with `v1.0.0-beta.3`: it reuses the AI models already on the machine. An
   upgrade keeps the station's existing recordings, database, and AI models --
   nothing already on the station is discarded by an upgrade install. This is
-  the path for `v1.0.0-beta.3` -> `v1.0.0-beta.4`: run `setup.exe` (with the
+  the path for `v1.0.0-beta.4` -> `v1.0.0-beta.5`: run `setup.exe` (with the
   runtime packs) over the existing install, no `station\` folder needed.
 
 **Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit --

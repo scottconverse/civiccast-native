@@ -9,10 +9,10 @@ with the release owner after the release gates and soak evidence are complete.
 
 ## Install
 
-> **The current published release is `v1.0.0-beta.4`.** Native beta.5 is an
-> unpublished field-test candidate until the release owner publishes it and
-> updates the release-truth record. Confirm the exact filename, size, hash,
-> and Authenticode publisher against the active handoff before running it.
+> **The current published release is `v1.0.0-beta.5`** (2026-09-09),
+> recorded as `current` in the release-truth record. Confirm the exact
+> filename, size, hash, and Authenticode publisher against the active
+> handoff before running it.
 
 1. **For a first install**, use the complete signed USB/LAN kit named in your
    handoff: installer, runtime packs, and `station\` model bundle. A GitHub

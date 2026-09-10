@@ -46,10 +46,11 @@ not scratch.
 
 ## Release identity
 
-`v1.0.0-beta.4` is the current release, a download-only upgrade for
-stations already on `v1.0.0-beta.3` (the first downloadable release, now
-superseded): `setup.exe` and the runtime `.ccpack` packs are attached to
-its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4),
+`v1.0.0-beta.5` is the current release, a download-only upgrade for
+stations already on `v1.0.0-beta.4` (now superseded, as is `v1.0.0-beta.3`,
+the first downloadable release): `setup.exe` and the runtime `.ccpack`
+packs are attached to
+its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5),
 verified by `SHA256SUMS.txt` and a signed sidecar. `v1.0.0-beta.2` was
 **never published** -- it exists only as an internal Gate A upgrade-baseline
 kit, never a release. The `v1.0.0-beta.1` owner-published
