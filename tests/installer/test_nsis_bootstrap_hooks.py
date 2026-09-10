@@ -1154,31 +1154,99 @@ def test_the_exit_85_dialog_carries_the_actual_observation_not_a_guess() -> None
     )
 
 
-def test_the_exit_85_dialog_fits_the_nsis_string_budget_with_the_observation() -> None:
+def test_the_exit_87_dialog_names_the_other_product_and_never_the_registry_edit() -> None:
+    """Round 3 of the beta.5 ownership defect (corrected field report,
+    2026-09-09): the refused box had a REAL `HKCU\\...\\Uninstall\\CivicCast
+    Installer` registration (3.0.0-beta1), not an unreadable hive, and the
+    decision table sent it through the exit-85 arm whose text told the
+    operator to set ActiveRuntime by hand. A genuinely registered other
+    product is now CLI exit 87 -> its own installer code, its own dialog:
+    the observation ($R6) leads with the product, and the remedy is to
+    uninstall it (or cutover from it) -- no registry instruction."""
+    source = _hooks_source()
+    assert "!define CIVICCAST_EXIT_D4_OTHER_PRODUCT          135" in source
+    step = _d4_provision_step(source)
+    assert "${ElseIf} $0 == 87" in step
+    arm = _slice(step, "${ElseIf} $0 == 87", "${ElseIf} $0 == 85")
+    assert "${CIVICCAST_EXIT_D4_OTHER_PRODUCT}" in arm
+    assert "What setup observed: $R6" in arm
+    assert "found another CivicCast product installed on this machine" in arm
+    assert "Settings > Apps" in arm
+    assert "cutover-to-native" in arm
+    assert OWNERSHIP_RECOVERY_DOC in arm
+    assert "$COMMONPROGRAMDATA\\CivicCast\\install-progress.log" in arm
+    assert "postgresql.conf, pg_hba.conf and your database credential were not touched" in arm
+    code_only = _code(arm)
+    assert "ActiveRuntime" not in code_only, (
+        "a real other-product refusal must not tell the operator to edit ActiveRuntime"
+    )
+    assert "permissions" not in code_only
+
+    # The 85 arm keeps the registry remedy but no longer says "could not
+    # determine" as if the cause were unknowable, and never guesses at
+    # permissions.
+    arm_85 = _code(_slice(step, "${ElseIf} $0 == 85", "${Else}"))
+    assert "permissions problem" not in arm_85
+    assert "could not establish which CivicCast runtime owns this machine" in arm_85
+    assert r"$\"native$\"" in arm_85
+    assert "Settings > Apps" not in arm_85
+
+    # The Rust side: exit 87 exists, is what a real Present maps to, and the
+    # inert-leftover claim (no distro, no autostart, previous native
+    # hand-off recorded) is a ClaimNative with a warning, not a refusal.
+    registration = (
+        BOOTSTRAP_HOOKS_NSH.parent / "src" / "native_service_registration.rs"
+    ).read_text(encoding="utf-8")
+    assert "pub const OTHER_PRODUCT_PRESENT_EXIT_CODE: i32 = 87;" in registration
+    assert (
+        "SelectorClaimAction::LeaveOtherProductPresent => Some(OTHER_PRODUCT_PRESENT_EXIT_CODE)"
+        in registration
+    )
+    uninstall = (BOOTSTRAP_HOOKS_NSH.parent / "src" / "native_uninstall.rs").read_text(
+        encoding="utf-8"
+    )
+    assert "pub fn classify_wsl_product_for_claim" in uninstall
+    assert "WslProductVerdict::PresentInert" in uninstall
+    assert "WslProductVerdict::Absent | WslProductVerdict::PresentInert => {" in uninstall
+
+
+def test_the_exit_85_and_87_dialogs_fit_the_nsis_string_budget_with_the_observation() -> None:
     """NSIS_MAX_STRLEN is 1024 in Tauri's NSIS 3.11 (makensis -HDRINFO).
     CIVICCAST_ALERT prefixes the dialog text with a timestamp (~29 chars)
     before FileWrite, and the Rust writer caps the embedded observation
     line at OWNERSHIP_OBSERVATION_LINE_MAX_CHARS. The three together must
-    stay under 1023 or the log line (and the dialog) silently truncate."""
+    stay under 1023 or the log line (and the dialog) silently truncate --
+    for BOTH ownership arms (round 3 added 87)."""
     source = _hooks_source()
-    arm = _slice(_d4_provision_step(source), "${ElseIf} $0 == 85", "${Else}")
-    text = re.search(r'CIVICCAST_FAIL \$\{CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP\} "(.*)"', arm)
-    assert text is not None
-    expanded = (
-        text.group(1)
-        .replace("$\\r$\\n", "\r\n")
-        .replace('$\\"', '"')
-        .replace("$COMMONPROGRAMDATA", "C:\\ProgramData")
-        .replace("$R6", "")
-    )
+    step = _d4_provision_step(source)
     registration = (
         BOOTSTRAP_HOOKS_NSH.parent / "src" / "native_service_registration.rs"
     ).read_text(encoding="utf-8")
     cap = re.search(r"pub const OWNERSHIP_OBSERVATION_LINE_MAX_CHARS: usize = (\d+);", registration)
     assert cap is not None
     timestamp_prefix = len("[2026-09-09 21:16:00] ALERT: ")
-    total = len(expanded) + int(cap.group(1)) + timestamp_prefix
-    assert total < 1023, f"exit-85 dialog + observation + log prefix = {total} chars"
+    arms = {
+        "85": (
+            _slice(step, "${ElseIf} $0 == 85", "${Else}"),
+            "CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP",
+        ),
+        "87": (
+            _slice(step, "${ElseIf} $0 == 87", "${ElseIf} $0 == 85"),
+            "CIVICCAST_EXIT_D4_OTHER_PRODUCT",
+        ),
+    }
+    for code, (arm, define) in arms.items():
+        text = re.search(rf'CIVICCAST_FAIL \$\{{{define}\}} "(.*)"', arm)
+        assert text is not None, code
+        expanded = (
+            text.group(1)
+            .replace("$\\r$\\n", "\r\n")
+            .replace('$\\"', '"')
+            .replace("$COMMONPROGRAMDATA", "C:\\ProgramData")
+            .replace("$R6", "")
+        )
+        total = len(expanded) + int(cap.group(1)) + timestamp_prefix
+        assert total < 1023, f"exit-{code} dialog + observation + log prefix = {total} chars"
 
 
 def test_ownership_claim_runs_before_the_provisioning_engine_mutates_state() -> None:
@@ -1193,9 +1261,11 @@ def test_ownership_claim_runs_before_the_provisioning_engine_mutates_state() -> 
     body = registration.split("pub fn run_native_provision(", 1)[1].split("\n}\n", 1)[0]
     claim_at = body.index("crate::native_uninstall::claim_install_selector()")
     spawn_at = body.index("std::process::Command::new(&python_exe)")
-    refusal_at = body.index("exit_code: SELECTOR_UNPROVABLE_EXIT_CODE")
+    # Round 3: every refusal (85 unknown/unreadable, 87 other product) goes
+    # through refusal_exit_code before the spawn.
+    refusal_at = body.index("if let Some(exit_code) = refusal_exit_code(selector_claim.action)")
     assert claim_at < refusal_at < spawn_at, (
-        "the ownership claim and its exit-85 refusal must both precede the provisioning "
+        "the ownership claim and its exit-85/87 refusal must both precede the provisioning "
         "subprocess so a refused install leaves postgresql.conf/pg_hba.conf untouched"
     )
 
@@ -1235,7 +1305,7 @@ def test_ma28_the_cli_contract_comment_names_the_codes_that_actually_exist() -> 
         "the corrected comment must name what it is correcting, or the next "
         "person picking an exit code learns nothing from it"
     )
-    for code in ("83", "84", "85"):
+    for code in ("83", "84", "85", "86", "87"):
         assert code in band_comment, f"the new CLI code {code} must be recorded in the band comment"
     assert "40 unexpected fault" in band_comment, (
         "40 must be named as what it is -- a D3 engine phase code, not a CLI code"

@@ -1933,6 +1933,22 @@ pub enum ProvisionOutcome {
 /// dialog) and `OWNERSHIP-RECOVERY.md` (every observation plus the remedy).
 pub const SELECTOR_UNPROVABLE_EXIT_CODE: i32 = 85;
 
+/// The exit code `--civiccast-provision` reports when the selector is absent
+/// and ANOTHER CivicCast product is registered on this machine
+/// (`SelectorClaimAction::LeaveOtherProductPresent`).
+///
+/// Round 3 of the beta.5 field defect (corrected report, 2026-09-09): the
+/// refused box did not have an unreadable hive -- it had the old WSL-era
+/// "CivicCast Installer" 3.0.0-beta1 ARP entry, and the decision table sent
+/// that through the same exit 85 and the same "could not determine ...
+/// permissions problem" text as the Unknown case. The remedy shares nothing
+/// with 85's (uninstall that product or run the cutover from it -- never a
+/// registry edit), so it gets its own code, for the reason the whole band
+/// exists: the exit code is the only signal a silent install's support log
+/// carries about WHICH precondition failed. 87 follows 86
+/// (`UNKNOWN_CIVICCAST_FLAG_EXIT_CODE`).
+pub const OTHER_PRODUCT_PRESENT_EXIT_CODE: i32 = 87;
+
 /// The exit code the binary reports for a `--civiccast-*` flag it does not
 /// implement.
 ///
@@ -1987,15 +2003,18 @@ pub const OWNERSHIP_OBSERVATION_FILE_NAME: &str = "ownership-observation.txt";
 /// File name of the operator recovery document written on the exit-85 path.
 pub const OWNERSHIP_RECOVERY_DOCUMENT_FILE_NAME: &str = "OWNERSHIP-RECOVERY.md";
 /// Upper bound on the one-line observation. `NSIS_MAX_STRLEN` is 1024 in
-/// Tauri's NSIS 3.11 (measured with `makensis -HDRINFO`); the exit-85
-/// dialog in `nsis-hooks-bootstrap.nsh` embeds this line inside ~560 chars
-/// of its own text and `CIVICCAST_ALERT` prefixes that with a ~29-char
-/// timestamp before writing it to `install-progress.log`, so 360 keeps the
-/// whole string under 1023 with margin (pinned by
-/// `test_the_exit_85_dialog_fits_the_nsis_string_budget_with_the_observation`).
+/// Tauri's NSIS 3.11 (measured with `makensis -HDRINFO`); the exit-85 and
+/// exit-87 dialogs in `nsis-hooks-bootstrap.nsh` embed this line inside
+/// ~564 chars of their own text and `CIVICCAST_ALERT` prefixes that with a
+/// ~29-char timestamp before writing it to `install-progress.log`, so 420
+/// keeps the whole string under 1023 (564 + 420 + 29 = 1013; pinned by
+/// `test_the_exit_85_and_87_dialogs_fit_the_nsis_string_budget_with_the_observation`).
+/// Raised from 360 in round 3 so the exit-87 lead -- user, product,
+/// version, an `HKU\<SID>` key, InstallLocation AND UninstallString (~350
+/// chars with a real SID and real paths) -- survives the truncation marker.
 /// The full observation list lives in the recovery document and the CLI's
 /// stderr.
-pub const OWNERSHIP_OBSERVATION_LINE_MAX_CHARS: usize = 360;
+pub const OWNERSHIP_OBSERVATION_LINE_MAX_CHARS: usize = 420;
 
 /// `<program_data>\CivicCast\provision` -- the SAME root the Python
 /// provisioning engine writes its journal and `PROVISION-RECOVERY.md` to
@@ -2036,21 +2055,46 @@ fn ownership_recovery_document_path(report_root: &Path) -> PathBuf {
 pub fn ownership_observation_line(
     outcome: &crate::native_uninstall::SelectorClaimOutcome,
 ) -> String {
-    use crate::native_uninstall::SelectorClaimAction;
+    use crate::native_uninstall::{SelectorClaimAction, WslProductVerdict};
+    let inert = outcome.verdict == Some(WslProductVerdict::PresentInert);
     let verdict = match (outcome.action, &outcome.write_error) {
         (SelectorClaimAction::ClaimNative, None) => "ownership claimed (ActiveRuntime=native)",
         (SelectorClaimAction::ClaimNative, Some(_)) => "ownership claim WRITE FAILED",
         (SelectorClaimAction::AlreadyNative, _) => "ownership already native",
         (SelectorClaimAction::LeaveWslOwnership, _) => "ownership is WSL's; left unchanged",
+        (SelectorClaimAction::LeaveOtherProductPresent, _) => {
+            "another CivicCast product present; left unchanged"
+        }
         (SelectorClaimAction::LeaveUnprovable, _) => "ownership NOT established; left unchanged",
+        (SelectorClaimAction::LeaveUnreadable, _) => "ActiveRuntime unreadable; left unchanged",
     };
     let raw = match &outcome.evidence {
         Some(evidence) => {
-            let mut line = format!(
-                "{verdict}; selector {:?}; {}",
-                outcome.selector,
-                evidence.explain()
-            );
+            // Round 3: the Present refusal LEADS with the product it found
+            // (user, name, version, key, InstallLocation, UninstallString) --
+            // that sentence is what the dialog and the log must show first;
+            // the inert-leftover claim leads with its WARNING for the same
+            // reason. Both survive the cap; the per-source explanation
+            // trails.
+            let mut line = match outcome.action {
+                SelectorClaimAction::LeaveOtherProductPresent => format!(
+                    "{}; {verdict}; selector {:?}; {}",
+                    evidence.describe_present_product(),
+                    outcome.selector,
+                    evidence.explain()
+                ),
+                SelectorClaimAction::ClaimNative if inert => format!(
+                    "{verdict}; {}; selector {:?}; {}",
+                    inert_leftover_log_warning(evidence),
+                    outcome.selector,
+                    evidence.explain()
+                ),
+                _ => format!(
+                    "{verdict}; selector {:?}; {}",
+                    outcome.selector,
+                    evidence.explain()
+                ),
+            };
             if let Some(error) = &outcome.write_error {
                 line.push_str(&format!("; write error: {error}"));
             }
@@ -2083,17 +2127,70 @@ pub fn ownership_observation_line(
     cut
 }
 
+/// The one-line WARNING for the install log when native was claimed over an
+/// inert WSL-product leftover: names the product, the user, and the
+/// uninstall.exe to remove it with.
+fn inert_leftover_log_warning(evidence: &crate::native_uninstall::WslPresenceEvidence) -> String {
+    let (title, user, uninstall) = evidence
+        .present_product()
+        .map(|(_, product)| {
+            (
+                product.title(),
+                product.user.clone(),
+                product.uninstall_string.clone(),
+            )
+        })
+        .unwrap_or_else(|| ("CivicCast Installer".to_string(), "(unknown)".to_string(), None));
+    let at = uninstall
+        .filter(|s| !s.trim().is_empty())
+        .map(|path| format!(" (uninstall.exe at {path})"))
+        .unwrap_or_default();
+    format!(
+        "WARNING: an old {title} registration remains for user {user} with no distro or \
+         autostart; claimed native. Remove the leftover via Apps & Features{at}"
+    )
+}
+
+/// The CLI exit code a refusal maps to (the recovery document names it).
+/// Not a refusal -> `None`.
+pub fn refusal_exit_code(action: crate::native_uninstall::SelectorClaimAction) -> Option<i32> {
+    use crate::native_uninstall::SelectorClaimAction;
+    if !action.is_refusal() {
+        return None;
+    }
+    match action {
+        SelectorClaimAction::LeaveOtherProductPresent => Some(OTHER_PRODUCT_PRESENT_EXIT_CODE),
+        SelectorClaimAction::LeaveUnprovable | SelectorClaimAction::LeaveUnreadable => {
+            Some(SELECTOR_UNPROVABLE_EXIT_CODE)
+        }
+        SelectorClaimAction::ClaimNative
+        | SelectorClaimAction::AlreadyNative
+        | SelectorClaimAction::LeaveWslOwnership => None,
+    }
+}
+
 /// The operator-facing recovery document for a refused ownership claim:
-/// the observation (every individual read, one per line), what it means,
-/// and the exact remedy. Pure; unit-tested.
+/// the observation (every individual read, one per line; the ARP record of
+/// any product found), what it means, and the exact remedy -- ONE remedy
+/// per refusal. The `Present` document never carries the registry edit:
+/// the value is not the problem, the other product is. Pure; unit-tested.
 pub fn ownership_recovery_document(
     outcome: &crate::native_uninstall::SelectorClaimOutcome,
     version: &str,
 ) -> String {
+    use crate::native_uninstall::SelectorClaimAction;
+    let present = outcome.action == SelectorClaimAction::LeaveOtherProductPresent;
+    let exit_code = refusal_exit_code(outcome.action).unwrap_or(SELECTOR_UNPROVABLE_EXIT_CODE);
     let mut doc = String::new();
-    doc.push_str("# CivicCast (Native) setup: runtime ownership could not be established\n\n");
+    if present {
+        doc.push_str("# CivicCast (Native) setup: another CivicCast product is installed\n\n");
+    } else {
+        doc.push_str(
+            "# CivicCast (Native) setup: runtime ownership could not be established\n\n",
+        );
+    }
     doc.push_str(&format!(
-        "Setup {version} stopped (exit 85 / installer exit 127) BEFORE provisioning the \
+        "Setup {version} stopped (exit {exit_code} / installer exit 127) BEFORE provisioning the \
          PostgreSQL server: postgresql.conf, pg_hba.conf and your database credential were \
          not touched by this run. (On an upgrade, the program files under the install \
          directory had already been replaced before this check ran.)\n\n"
@@ -2108,12 +2205,34 @@ pub fn ownership_recovery_document(
         Some(evidence) => {
             doc.push_str(&format!(
                 "- CivicCast WSL product evidence: user-ARP={:?}, machine-ARP={:?}, \
-                 distro-scan={:?}, wsl-service={:?}\n\n",
+                 distro-scan={:?}, wsl-service={:?}, autostart={:?}, transfer-marker={:?}\n",
                 evidence.user_arp,
                 evidence.machine_arp,
                 evidence.distro_registration,
-                evidence.wsl_service
+                evidence.wsl_service,
+                evidence.autostart,
+                evidence.native_transfer_marker
             ));
+            if let Some((observation, product)) = evidence.present_product() {
+                doc.push_str(&format!(
+                    "- Product found: registered at `{}\\Software\\Microsoft\\Windows\\\
+                     CurrentVersion\\Uninstall\\CivicCast Installer` ({} view), for user `{}`\n",
+                    observation.scope, observation.view, product.user
+                ));
+                for (label, value) in [
+                    ("DisplayName", &product.display_name),
+                    ("DisplayVersion", &product.display_version),
+                    ("Publisher", &product.publisher),
+                    ("InstallLocation", &product.install_location),
+                    ("UninstallString", &product.uninstall_string),
+                ] {
+                    doc.push_str(&format!(
+                        "  - {label}: {}\n",
+                        value.as_deref().unwrap_or("(not set)")
+                    ));
+                }
+            }
+            doc.push('\n');
             doc.push_str("Every individual read, in the order it was made:\n\n");
             if evidence.observations.is_empty() {
                 doc.push_str("- (no individual observations were recorded)\n");
@@ -2128,29 +2247,67 @@ pub fn ownership_recovery_document(
         ),
     }
     doc.push_str("## What it means\n\n");
-    doc.push_str(
-        "The LocalSystem supervisor's dual-runtime guard only starts the control plane when \
-         `ActiveRuntime` names a runtime. Setup writes `native` itself when no selector exists \
-         and it can establish that the CivicCast WSL product is not on this machine. It could \
-         not establish that here (an `unknown` above is a read that failed for a reason other \
-         than \"not found\" -- the error kind and OS error code are beside it; a `present` is \
-         a genuine WSL-product registration), so it stopped rather than finish an install \
-         whose station could never serve.\n\n",
-    );
+    if present {
+        doc.push_str(
+            "Another CivicCast product is registered on this machine (the Add/Remove Programs \
+             entry above), and `ActiveRuntime` -- the value the LocalSystem supervisor's \
+             dual-runtime guard starts the control plane on -- names no owner. Setup never \
+             takes a machine away from a CivicCast product that was there first, so it \
+             stopped rather than finish an install whose station could never serve. (If that \
+             entry were only an inert leftover -- no CivicCast distro, no autostart entry, \
+             and a previous native install's hand-off marker set -- setup would have claimed \
+             native with a warning instead; one of those three conditions did not hold, see \
+             the evidence line.)\n\n",
+        );
+    } else {
+        doc.push_str(
+            "The LocalSystem supervisor's dual-runtime guard only starts the control plane when \
+             `ActiveRuntime` names a runtime. Setup writes `native` itself when no selector \
+             exists and it can establish that the CivicCast WSL product is not on this \
+             machine. It could not establish that here (an `unknown` above is a read that \
+             failed for a reason other than \"not found\" -- the error kind and OS error code \
+             are beside it; an `Unreadable` selector is a value that exists but is not \
+             `native`/`wsl`), so it stopped rather than finish an install whose station could \
+             never serve.\n\n",
+        );
+    }
     doc.push_str("## Remedy\n\n");
+    if present {
+        let (title, uninstall) = outcome
+            .evidence
+            .as_ref()
+            .and_then(|e| e.present_product())
+            .map(|(_, p)| (p.title(), p.uninstall_string.clone()))
+            .unwrap_or_else(|| ("CivicCast Installer".to_string(), None));
+        let or_run = uninstall
+            .filter(|s| !s.trim().is_empty())
+            .map(|command| format!(" (or run `{command}`)"))
+            .unwrap_or_default();
+        doc.push_str(&format!(
+            "1. Uninstall '{title}' from Settings > Apps{or_run}, or -- if you still use that \
+             product and want THIS machine to switch to the native product -- run \
+             `civiccast-runtime cutover-to-native`.\n\n\
+             2. Run setup again.\n\n\
+             Do not edit `HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime` by hand for this case: \
+             the other product, not the value, is what setup is refusing over.\n\n"
+        ));
+    } else {
+        doc.push_str(
+            "1. If this machine has no CivicCast WSL product (the usual case), tell the guard \
+             so from an ADMINISTRATOR PowerShell:\n\n\
+             ```powershell\n\
+             New-ItemProperty -Path 'HKLM:\\SOFTWARE\\CivicCast' -Name 'ActiveRuntime' \
+             -PropertyType String -Value 'native' -Force\n\
+             ```\n\n\
+             2. Re-run setup. With the selector already `native`, the ownership step is a \
+             no-op and provisioning proceeds.\n\n\
+             3. If a `present` observation above names a real CivicCast WSL installation you \
+             still use, do NOT set the value; uninstall that product first, or run \
+             `civiccast-runtime cutover-to-native` from it, then re-run setup.\n\n",
+        );
+    }
     doc.push_str(
-        "1. If this machine has no CivicCast WSL product (the usual case), tell the guard so \
-         from an ADMINISTRATOR PowerShell:\n\n\
-         ```powershell\n\
-         New-ItemProperty -Path 'HKLM:\\SOFTWARE\\CivicCast' -Name 'ActiveRuntime' \
-         -PropertyType String -Value 'native' -Force\n\
-         ```\n\n\
-         2. Re-run setup. With the selector already `native`, the ownership step is a no-op \
-         and provisioning proceeds.\n\n\
-         3. If a `present` observation above names a real CivicCast WSL installation you \
-         still use, do NOT set the value; uninstall that product first, or run \
-         `civiccast-runtime cutover-to-native` from it, then re-run setup.\n\n\
-         The same observation is in `%ProgramData%\\CivicCast\\install-progress.log` \
+        "The same observation is in `%ProgramData%\\CivicCast\\install-progress.log` \
          (the `step d4-provision: runtime ownership:` line).\n\n\
          Follow-up (not in this release): a setup wizard page that asks the operator to \
          confirm native ownership when the evidence is merely inconclusive, instead of \
@@ -2253,14 +2410,19 @@ pub fn run_native_provision(
         )));
     }
     // <installer-path-audit BL-13> `write_error` is `Some` ONLY on
-    // ClaimNative + a failed write. `LeaveUnprovable` -- reached whenever the
-    // selector probe is Unreadable, or the selector is Absent while the
-    // corroborated WSL-product evidence is Present or still Unknown -- used
-    // to print its sentence and return Ok. Exit 0. The chain then registered
-    // the service, `sc start` succeeded, the SCM reported RUNNING (the host
-    // process runs; the guard blocks the control plane), and setup showed
-    // "installation complete" over a station that can never start.
-    if selector_claim.action == crate::native_uninstall::SelectorClaimAction::LeaveUnprovable {
+    // ClaimNative + a failed write. The refusals (selector Unreadable, or
+    // Absent while another CivicCast product is registered, or Absent with
+    // inconclusive evidence) used to print one sentence and return Ok. Exit
+    // 0. The chain then registered the service, `sc start` succeeded, the
+    // SCM reported RUNNING (the host process runs; the guard blocks the
+    // control plane), and setup showed "installation complete" over a
+    // station that can never start.
+    //
+    // Round 3 (corrected field report): the three refusals are distinct
+    // actions with distinct exit codes and remedies. A real other-product
+    // Present is 87 (uninstall it / cutover -- never a registry edit); an
+    // inconclusive read or an unreadable selector stays 85.
+    if let Some(exit_code) = refusal_exit_code(selector_claim.action) {
         match write_ownership_recovery_document(&report_root, &selector_claim) {
             Ok(path) => eprintln!(
                 "Runtime-ownership recovery document written to {}",
@@ -2270,16 +2432,26 @@ pub fn run_native_provision(
                 eprintln!("Could not write the runtime-ownership recovery document: {error}")
             }
         }
+        let remedy = match selector_claim.action {
+            crate::native_uninstall::SelectorClaimAction::LeaveOtherProductPresent => {
+                "Uninstall that product from Settings > Apps (its UninstallString is in the \
+                 observation), or run `civiccast-runtime cutover-to-native` from it, and \
+                 re-run setup."
+            }
+            _ => {
+                "An administrator must set HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime to \
+                 \"native\" (or resolve the failed read named in the observation) and re-run \
+                 setup."
+            }
+        };
         return Err(ProvisionFailure {
-            exit_code: SELECTOR_UNPROVABLE_EXIT_CODE,
+            exit_code,
             message: format!(
-                "CivicCast (Native) setup could not establish which runtime owns this machine, \
-                 so the station's control plane would be blocked from starting and setup would \
-                 otherwise have reported success over a station that can never serve. {} No \
-                 database configuration was touched. The observation above is recorded in \
-                 {} and the remedy in {}. An administrator must set \
-                 HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime to \"native\" (or resolve the \
-                 condition named in the observation) and re-run setup.",
+                "CivicCast (Native) setup stopped before provisioning: the station's control \
+                 plane would be blocked from starting and setup would otherwise have reported \
+                 success over a station that can never serve. {} No database configuration \
+                 was touched. The observation above is recorded in {} and the remedy in {}. \
+                 {remedy}",
                 selector_claim.detail,
                 ownership_observation_path(&report_root).display(),
                 ownership_recovery_document_path(&report_root).display(),
@@ -2982,13 +3154,16 @@ mod control_plane_readiness_tests {
             SERVICE_START_FAILED_EXIT_CODE,
             SERVICE_NOT_SERVING_EXIT_CODE,
             SELECTOR_UNPROVABLE_EXIT_CODE,
+            OTHER_PRODUCT_PRESENT_EXIT_CODE,
         ];
+        assert_eq!(OTHER_PRODUCT_PRESENT_EXIT_CODE, 87);
         for (index, code) in codes.iter().enumerate() {
             assert!(
-                (83..=85).contains(code),
-                "code {code} is outside the newly claimed 83-85 range"
+                (83..=87).contains(code),
+                "code {code} is outside the claimed 83-87 range"
             );
             assert_ne!(*code, ProvisionFailure::GENERIC_EXIT_CODE);
+            assert_ne!(*code, UNKNOWN_CIVICCAST_FLAG_EXIT_CODE);
             assert_ne!(*code, crate::native_uninstall::TRANSFER_ACK_REQUIRED_EXIT_CODE);
             assert!(!(110..=127).contains(code), "{code} collides with the NSIS band");
             for other in codes.iter().skip(index + 1) {
@@ -4645,8 +4820,8 @@ mod tests {
 mod runtime_ownership_report_tests {
     use super::*;
     use crate::native_uninstall::{
-        OtherProductState, ProbeObservation, SelectorClaimAction, SelectorClaimOutcome,
-        SelectorState, WslPresenceEvidence,
+        ArpProductRecord, OtherProductState, ProbeObservation, SelectorClaimAction,
+        SelectorClaimOutcome, SelectorState, WslPresenceEvidence, WslProductVerdict,
     };
 
     fn refused_outcome() -> SelectorClaimOutcome {
@@ -4655,6 +4830,8 @@ mod runtime_ownership_report_tests {
             machine_arp: OtherProductState::Unknown,
             distro_registration: OtherProductState::Absent,
             wsl_service: OtherProductState::Present,
+            autostart: OtherProductState::Absent,
+            native_transfer_marker: OtherProductState::Absent,
             observations: vec![
                 ProbeObservation::settled(
                     "user-ARP",
@@ -4669,6 +4846,7 @@ mod runtime_ownership_report_tests {
                     state: OtherProductState::Unknown,
                     error_kind: Some("PermissionDenied".to_string()),
                     raw_code: Some(5),
+                    product: None,
                 },
             ],
         };
@@ -4681,8 +4859,149 @@ mod runtime_ownership_report_tests {
                 evidence.explain()
             ),
             evidence: Some(evidence),
+            verdict: Some(WslProductVerdict::Unknown),
             write_error: None,
         }
+    }
+
+    /// The corrected field report's box, run through the real orchestration
+    /// so the report tests see the detail the CLI would actually write.
+    fn field_report_outcome(
+        autostart: OtherProductState,
+        transfer_marker: OtherProductState,
+    ) -> SelectorClaimOutcome {
+        let mut present = ProbeObservation::settled(
+            "user-ARP",
+            "HKCU".to_string(),
+            "64-bit",
+            OtherProductState::Present,
+        );
+        present.product = Some(ArpProductRecord {
+            user: "tester".to_string(),
+            display_name: Some("CivicCast Installer".to_string()),
+            display_version: Some("3.0.0-beta1".to_string()),
+            publisher: Some("civiccast".to_string()),
+            install_location: Some(
+                r"D:\Profiles\tester\AppData\Local\CivicCast Installer".to_string(),
+            ),
+            uninstall_string: Some(
+                r"D:\Profiles\tester\AppData\Local\CivicCast Installer\uninstall.exe".to_string(),
+            ),
+        });
+        let evidence = WslPresenceEvidence {
+            user_arp: OtherProductState::Present,
+            machine_arp: OtherProductState::Absent,
+            distro_registration: OtherProductState::Absent,
+            wsl_service: OtherProductState::Present,
+            autostart,
+            native_transfer_marker: transfer_marker,
+            observations: vec![present],
+        };
+        crate::native_uninstall::claim_install_selector_with(
+            || SelectorState::Absent,
+            || evidence.clone(),
+            || Ok(()),
+        )
+    }
+
+    /// Round 3: the real-Present observation line LEADS with the product
+    /// (user, name, version, key, InstallLocation, UninstallString) so the
+    /// dialog's "What setup observed:" names it, and maps to exit 87.
+    #[test]
+    fn a_present_refusal_line_leads_with_the_product_and_maps_to_exit_87() {
+        let outcome = field_report_outcome(OtherProductState::Present, OtherProductState::Absent);
+        assert_eq!(outcome.action, SelectorClaimAction::LeaveOtherProductPresent);
+        assert_eq!(refusal_exit_code(outcome.action), Some(87));
+        let line = ownership_observation_line(&outcome);
+        assert!(
+            line.starts_with(
+                r"Setup found another CivicCast product installed for user tester: CivicCast Installer 3.0.0-beta1 (registered at HKCU\...\Uninstall\CivicCast Installer; InstallLocation D:\Profiles\tester\AppData\Local\CivicCast Installer; UninstallString D:\Profiles\tester\AppData\Local\CivicCast Installer\uninstall.exe); another CivicCast product present; left unchanged"
+            ),
+            "{line}"
+        );
+        assert!(line.chars().count() <= OWNERSHIP_OBSERVATION_LINE_MAX_CHARS);
+        assert!(line.is_ascii());
+
+        // With a real HKEY_USERS SID in the scope (the elevated per-machine
+        // case) the whole lead -- through the UninstallString -- must still
+        // survive the cap: that is what the dialog shows.
+        let mut elevated = outcome.clone();
+        let evidence = elevated.evidence.as_mut().unwrap();
+        evidence.observations[0].scope = r"HKU\S-1-5-21-1111111111-2222222222-3333333333-1001".to_string();
+        let line = ownership_observation_line(&elevated);
+        let lead_end = line.find("uninstall.exe)").expect(&line) + "uninstall.exe)".len();
+        assert!(lead_end <= OWNERSHIP_OBSERVATION_LINE_MAX_CHARS - 64, "{line}");
+        assert!(line.starts_with(r"Setup found another CivicCast product installed for user tester: CivicCast Installer 3.0.0-beta1 (registered at HKU\S-1-5-21-1111111111-2222222222-3333333333-1001\...\Uninstall\CivicCast Installer; InstallLocation "), "{line}");
+
+        let doc = ownership_recovery_document(&outcome, "1.0.0-beta.5.1");
+        assert!(doc.starts_with("# CivicCast (Native) setup: another CivicCast product is installed"));
+        assert!(doc.contains("stopped (exit 87 / installer exit 127)"));
+        for expected in [
+            "  - DisplayName: CivicCast Installer\n",
+            "  - DisplayVersion: 3.0.0-beta1\n",
+            "  - Publisher: civiccast\n",
+            r"  - InstallLocation: D:\Profiles\tester\AppData\Local\CivicCast Installer",
+            r"  - UninstallString: D:\Profiles\tester\AppData\Local\CivicCast Installer\uninstall.exe",
+            r"registered at `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\CivicCast Installer` (64-bit view), for user `tester`",
+            "autostart=Present, transfer-marker=Absent",
+            "1. Uninstall 'CivicCast Installer 3.0.0-beta1' from Settings > Apps (or run `D:\\Profiles\\tester\\AppData\\Local\\CivicCast Installer\\uninstall.exe`), or",
+            "`civiccast-runtime cutover-to-native`",
+            "2. Run setup again.",
+            "Do not edit `HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime` by hand for this case",
+        ] {
+            assert!(doc.contains(expected), "missing {expected:?} in:\n{doc}");
+        }
+        assert!(
+            !doc.contains("New-ItemProperty"),
+            "a real Present must not carry the registry-edit remedy:\n{doc}"
+        );
+        assert!(!doc.contains("permissions problem"));
+    }
+
+    /// Round 3: the inert-leftover claim's line carries the WARNING (the
+    /// product, the user, the uninstall.exe) right after the verdict, so
+    /// install-progress.log cannot read it as a clean claim; it is not a
+    /// refusal and writes no recovery document.
+    #[test]
+    fn an_inert_leftover_claim_line_carries_the_warning() {
+        let outcome = field_report_outcome(OtherProductState::Absent, OtherProductState::Present);
+        assert_eq!(outcome.action, SelectorClaimAction::ClaimNative);
+        assert_eq!(outcome.verdict, Some(WslProductVerdict::PresentInert));
+        assert_eq!(refusal_exit_code(outcome.action), None);
+        let line = ownership_observation_line(&outcome);
+        assert!(
+            line.starts_with(
+                r"ownership claimed (ActiveRuntime=native); WARNING: an old CivicCast Installer 3.0.0-beta1 registration remains for user tester with no distro or autostart; claimed native. Remove the leftover via Apps & Features (uninstall.exe at D:\Profiles\tester\AppData\Local\CivicCast Installer\uninstall.exe); selector Absent; "
+            ),
+            "{line}"
+        );
+        assert!(line.chars().count() <= OWNERSHIP_OBSERVATION_LINE_MAX_CHARS);
+    }
+
+    /// Round 3: an unreadable selector is its own refusal (exit 85, its own
+    /// text) and the Unknown text no longer guesses at permissions.
+    #[test]
+    fn the_unreadable_and_unknown_refusals_keep_exit_85_and_the_registry_remedy() {
+        let unreadable = crate::native_uninstall::claim_install_selector_with(
+            || SelectorState::Unreadable,
+            || unreachable!(),
+            || Ok(()),
+        );
+        assert_eq!(unreadable.action, SelectorClaimAction::LeaveUnreadable);
+        assert_eq!(refusal_exit_code(unreadable.action), Some(85));
+        let line = ownership_observation_line(&unreadable);
+        assert!(line.starts_with("HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime exists but could not be read"), "{line}");
+        let doc = ownership_recovery_document(&unreadable, "1.0.0-beta.5.1");
+        assert!(doc.contains("stopped (exit 85 / installer exit 127)"));
+        assert!(doc.contains("New-ItemProperty"));
+        assert!(doc.contains("an `Unreadable` selector is a value that exists but is not `native`/`wsl`"));
+
+        let unknown = refused_outcome();
+        assert_eq!(refusal_exit_code(unknown.action), Some(85));
+        let doc = ownership_recovery_document(&unknown, "1.0.0-beta.5.1");
+        assert!(doc.contains("New-ItemProperty"));
+        assert!(doc.contains("autostart=Absent, transfer-marker=Absent"));
+        assert!(!doc.contains("permissions problem"));
     }
 
     #[test]
@@ -4738,6 +5057,7 @@ mod runtime_ownership_report_tests {
             action: SelectorClaimAction::AlreadyNative,
             selector: SelectorState::Native,
             evidence: None,
+            verdict: None,
             detail: "ActiveRuntime already reads \"native\"; this install left it unchanged."
                 .to_string(),
             write_error: None,
@@ -4781,9 +5101,10 @@ mod runtime_ownership_report_tests {
     #[test]
     fn a_selector_settled_outcome_documents_that_no_probe_ran() {
         let outcome = SelectorClaimOutcome {
-            action: SelectorClaimAction::LeaveUnprovable,
+            action: SelectorClaimAction::LeaveUnreadable,
             selector: SelectorState::Unreadable,
             evidence: None,
+            verdict: None,
             detail: "ActiveRuntime could not be read.".to_string(),
             write_error: None,
         };

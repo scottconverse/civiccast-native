@@ -269,6 +269,12 @@ def test_install_ownership_claim_ports_the_python_guards_wsl_probes_exactly() ->
     )
     assert "pub const ERROR_SERVICE_DOES_NOT_EXIST: i32 = 1060;" in source
     assert win_probes._ERROR_SERVICE_DOES_NOT_EXIST == 1060
+    # Round 3: the inert-leftover rule probes the WSL product's autostart
+    # Run value -- the SAME key and value name the Python guard owns.
+    assert rust_str("WSL_AUTOSTART_RUN_KEY") == runtime_guard.RUN_KEY_PATH
+    assert rust_str("WSL_AUTOSTART_RUN_VALUE") == runtime_guard.RUN_VALUE_NAME
+    assert "fn probe_wsl_autostart_observed" in source
+    assert "fn probe_native_transfer_marker_observed" in source
 
     # Machine-wide ARP: HKLM, both WOW64 views, direct winreg -- no reg.exe.
     assert "fn probe_wsl_machine_arp_observed" in source

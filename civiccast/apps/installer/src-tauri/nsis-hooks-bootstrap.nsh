@@ -445,11 +445,17 @@ Var CIVICCAST_CONTAINED
 ;     78 embedded pack trust, 79 unrepairable, 80, 81, 82 teardown
 ;     service-stop unconfirmed, 83 service registered but would not start,
 ;     84 service running but the control plane is not serving (BL-11),
-;     85 runtime ownership unprovable (BL-13).
+;     85 runtime ownership unprovable (BL-13: the selector is unreadable, or
+;        absent while some ownership read failed for a reason other than
+;        "not found"),
+;     86 unknown --civiccast-* flag (MA-22),
+;     87 another CivicCast product is registered on this machine (round 3 of
+;        the beta.5 ownership defect: a real ARP entry, remedy = uninstall it
+;        or cutover from it, never a registry edit).
 ; 74 and 75 each still carry two meanings; there is no live collision because
 ; each caller branches within one subcommand, but the duplication is recorded
 ; here rather than left for the next person to rediscover. 83/84/85 were
-; picked from the first genuinely free numbers above that band.
+; picked from the first genuinely free numbers above that band; 86/87 follow.
 !define CIVICCAST_EXIT_PACK_DELIVERY        110
 !define CIVICCAST_EXIT_D2_SERVER_BINARIES   111
 !define CIVICCAST_EXIT_D2_APP_PAYLOAD       112
@@ -569,6 +575,17 @@ Var CIVICCAST_CONTAINED
 !define CIVICCAST_EXIT_UNINSTALL_BLOCKED         132
 !define CIVICCAST_EXIT_UNINSTALL_TREES_RETAINED  133
 !define CIVICCAST_EXIT_UNINSTALL_INCOMPLETE      134
+
+; Round 3 of the beta.5 runtime-ownership defect (corrected field report,
+; 2026-09-09): --civiccast-provision exit 87 -- the selector is absent and
+; ANOTHER CivicCast product is genuinely registered on this machine (the old
+; WSL-era "CivicCast Installer" ARP entry with a distro, an autostart entry,
+; or no record of a previous native hand-off beside it). Its remedy shares
+; nothing with 127's (uninstall that product or run the cutover from it --
+; never a registry edit), so it gets its own installer code. An INERT
+; leftover (no distro, no autostart, previous native hand-off recorded) is
+; claimed over with a WARNING in the log and never reaches this code.
+!define CIVICCAST_EXIT_D4_OTHER_PRODUCT          135
 
 ; Carries the --civiccast-teardown-native-state CLI's exit code from
 ; NSIS_HOOK_PREUNINSTALL (where the teardown call must run -- see that
@@ -1318,11 +1335,27 @@ Var CIVICCAST_POSTCLEAR_ARMED
   ${ElseIf} $0 == 75
     DetailPrint "CivicCast (Native): D4 database/messaging provisioning FAILED (exit 75) — see the installer log above and $COMMONPROGRAMDATA\CivicCast\provision\PROVISION-RECOVERY.md."
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_PROVISION_FAILED} "CivicCast (Native) setup could not provision the PostgreSQL server. See the installer log and $COMMONPROGRAMDATA\CivicCast\provision\PROVISION-RECOVERY.md for details."
+  ${ElseIf} $0 == 87
+    ; Round 3 of the beta.5 ownership defect (corrected field report): the
+    ; selector is absent and ANOTHER CivicCast product is genuinely
+    ; registered -- $R6 leads with "Setup found another CivicCast product
+    ; installed for user <name>: <DisplayName DisplayVersion> (registered at
+    ; ...; InstallLocation ...; UninstallString ...)". The remedy is that
+    ; product, not the registry value, so this text carries NO
+    ; ActiveRuntime instruction. Same string budget as the 85 arm below
+    ; (563 static + 420 observation cap + 29 log prefix = 1012 < 1023,
+    ; pinned by test_the_exit_85_and_87_dialogs_fit_the_nsis_string_budget_
+    ; with_the_observation).
+    DetailPrint "CivicCast (Native): D4 found another CivicCast product installed on this machine (exit 87) — see the installer log above and $COMMONPROGRAMDATA\CivicCast\provision\OWNERSHIP-RECOVERY.md."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_OTHER_PRODUCT} "CivicCast (Native) setup found another CivicCast product installed on this machine, so it cannot claim the runtime for the native product. Setup stopped before provisioning: postgresql.conf, pg_hba.conf and your database credential were not touched.$\r$\n$\r$\nWhat setup observed: $R6$\r$\n$\r$\nUninstall that product from Settings > Apps (or run its UninstallString above), or run civiccast-runtime cutover-to-native from it, then run setup again. Every read: $COMMONPROGRAMDATA\CivicCast\provision\OWNERSHIP-RECOVERY.md; also logged in $COMMONPROGRAMDATA\CivicCast\install-progress.log."
   ${ElseIf} $0 == 85
     ; Installer-path audit BL-13: the ActiveRuntime selector could not be
     ; established. This used to be a printed sentence and an exit 0, after
     ; which setup registered and started a service whose control plane the
     ; dual-runtime guard blocks, then reported "installation complete".
+    ; Round 3: this arm is now ONLY the Unknown (a read failed for a reason
+    ; other than not-found) and Unreadable-selector cases; a genuinely
+    ; registered other product is exit 87 above.
     DetailPrint "CivicCast (Native): D4 could not establish this machine's runtime ownership (exit 85) — see the installer log above and $COMMONPROGRAMDATA\CivicCast\provision\OWNERSHIP-RECOVERY.md."
     ; beta.5.1: the text carries the CLI's actual observation ($R6, read back
     ; above) instead of the former "most often a permissions problem on
@@ -1335,12 +1368,13 @@ Var CIVICCAST_POSTCLEAR_ARMED
     ; String budget: NSIS_MAX_STRLEN is 1024 (Tauri's NSIS 3.11, measured
     ; with makensis -HDRINFO) and CIVICCAST_ALERT prefixes this text with a
     ; ~29-char timestamp before writing it to install-progress.log, so the
-    ; static text here (~564 chars) plus the observation line (capped at
-    ; OWNERSHIP_OBSERVATION_LINE_MAX_CHARS = 360 by the Rust writer) must
-    ; stay under 1023 (pinned by test_the_exit_85_dialog_fits_the_nsis_
-    ; string_budget_with_the_observation). Do not lengthen either without
-    ; re-measuring.
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP} "CivicCast (Native) setup could not determine which CivicCast runtime owns this machine. Setup stopped before provisioning: postgresql.conf, pg_hba.conf and your database credential were not touched.$\r$\n$\r$\nWhat setup observed: $R6$\r$\n$\r$\nIf this machine has no CivicCast WSL product, an administrator sets HKLM\SOFTWARE\CivicCast\ActiveRuntime to $\"native$\" and runs setup again. The exact command and every individual read are in $COMMONPROGRAMDATA\CivicCast\provision\OWNERSHIP-RECOVERY.md; the observation above is also recorded in $COMMONPROGRAMDATA\CivicCast\install-progress.log."
+    ; static text here (564 chars) plus the observation line (capped at
+    ; OWNERSHIP_OBSERVATION_LINE_MAX_CHARS = 420 by the Rust writer, raised
+    ; from 360 in round 3 so the exit-87 lead fits) must stay under 1023:
+    ; 564 + 420 + 29 = 1013 (pinned by test_the_exit_85_and_87_dialogs_fit_
+    ; the_nsis_string_budget_with_the_observation). Do not lengthen either
+    ; without re-measuring.
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP} "CivicCast (Native) setup could not establish which CivicCast runtime owns this machine. Setup stopped before provisioning: postgresql.conf, pg_hba.conf and your database credential were not touched.$\r$\n$\r$\nWhat setup observed: $R6$\r$\n$\r$\nIf this machine has no CivicCast WSL product, an administrator sets HKLM\SOFTWARE\CivicCast\ActiveRuntime to $\"native$\" and runs setup again. The exact command and every individual read are in $COMMONPROGRAMDATA\CivicCast\provision\OWNERSHIP-RECOVERY.md; the observation above is also recorded in $COMMONPROGRAMDATA\CivicCast\install-progress.log."
   ${Else}
     DetailPrint "CivicCast (Native): D4 database/messaging provisioning reported an unexpected fault (exit $0) — see the installer log above."
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_PROVISION_FAULT} "CivicCast (Native) setup hit an unexpected fault while provisioning the PostgreSQL server (exit code $0). See the installer log."

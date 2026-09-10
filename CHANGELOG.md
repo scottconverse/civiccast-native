@@ -295,6 +295,48 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
      there is no service that could auto-start onto the new payload -- not
      as "NOT confirmed".
 
+  6. **The three refusals are three different things** (round 3; the
+     corrected field report, from an elevated registry read on the failing
+     box, showed the probe had NOT returned `Unknown`: the old WSL-era
+     "CivicCast Installer" 3.0.0-beta1 entry was genuinely registered under
+     `HKCU\...\Uninstall\CivicCast Installer`, with no
+     `CivicCast-Ubuntu-24.04` distro in Lxss, no `CivicCast Autostart` Run
+     entry, and `HKLM\SOFTWARE\CivicCast\NativeUninstallTransferCompleted`
+     set from an earlier native uninstall's hand-off -- and the decision
+     table sent that `Present` through the same exit 85 and the same
+     "could not determine ..." text as the Unknown case, the only sentence
+     naming the product going to stderr). Now:
+     - A `Present` uninstall key carries its ARP record (DisplayName,
+       DisplayVersion, Publisher, InstallLocation, UninstallString, and the
+       account the hive belongs to) in the observation, the one-line
+       `ownership-observation.txt`, `install-progress.log` and
+       `OWNERSHIP-RECOVERY.md`.
+     - **Inert-leftover rule** (`classify_wsl_product_for_claim`): a
+       `Present` ARP entry with NO CivicCast distro in any loaded hive, NO
+       `CivicCast Autostart` Run entry (HKCU + every loaded HKU hive, both
+       views) AND the native transfer marker set is `PresentInert` -> setup
+       claims native and logs `WARNING: an old CivicCast Installer
+       3.0.0-beta1 registration remains for user <name> with no distro or
+       autostart; claimed native. Remove the leftover via Apps & Features
+       (uninstall.exe at <path>)`. Any of the three not confidently settled
+       keeps the refusal. Pinned by tests: Present+distro -> refuse;
+       Present+no distro+no autostart+marker -> ClaimNative with the warning;
+       Present+no distro+Unknown autostart -> refuse.
+     - A real `Present` is its own refusal: CLI exit **87** (new; installer
+       exit 135, `CIVICCAST_EXIT_D4_OTHER_PRODUCT`), observation line and
+       dialog leading with "Setup found another CivicCast product installed
+       for user <name>: CivicCast Installer 3.0.0-beta1 (registered at
+       HKU\<SID>\...\Uninstall\CivicCast Installer; InstallLocation ...;
+       UninstallString ...)", remedy "Uninstall 'CivicCast Installer
+       3.0.0-beta1' from Settings > Apps (or run <UninstallString>), or run
+       `civiccast-runtime cutover-to-native`, then run setup again" -- no
+       registry-edit instruction anywhere on that path.
+     - Exit 85 is now only the Unknown (a read failed for a reason other
+       than not-found) and Unreadable-selector cases, each with its own
+       text; the registry remedy stays there and the "permissions" guess is
+       gone. `OWNERSHIP_OBSERVATION_LINE_MAX_CHARS` 360 -> 420 so the exit-87
+       lead fits (564 + 420 + 29 = 1013 < 1023, pinned by test).
+
   Follow-up, not in this change: a setup wizard page asking the operator to
   confirm native ownership when the evidence is merely inconclusive, instead
   of stopping.
@@ -305,7 +347,20 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   administrator PowerShell
   `New-ItemProperty -Path 'HKLM:\SOFTWARE\CivicCast' -Name 'ActiveRuntime' -PropertyType String -Value 'native' -Force`
   and re-run setup; with the selector already `native` the ownership step is
-  a no-op and provisioning proceeds.
+  a no-op and provisioning proceeds. If Settings > Apps lists a "CivicCast
+  Installer" (the old WSL-era product) that you no longer use, uninstall it
+  first instead of editing the registry -- beta.5 refuses over that entry
+  with the same dialog.
+
+  **Known issue (open, not changed here): the D3 upgrade engine routed the
+  field box as a fresh install.** The same box's `install-progress.log`
+  shows `step d3-engine: begin (old=none)` and `route=FRESH_INSTALL` although
+  it carried a full August install with `%ProgramData%\CivicCast` preserved,
+  and that August run had recorded `InstalledVersion 1.0.0-beta.1` at
+  postinstall SUCCESS. Why the engine read `old=none` there (the recorded
+  InstalledVersion not consulted, or cleared by the intervening native
+  uninstall?) is not established; the routing is deliberately left as is in
+  this change and needs its own investigation before beta.5.1.
 
 - **Seamless rollover no longer runs to EOS when the outgoing leg overruns its
   projected end.** Sandbox soak 39d852e (2026-09-09) showed every government
