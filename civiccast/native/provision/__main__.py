@@ -102,9 +102,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from civiccast.native.pgdata_acl import PgDataAclError
 from civiccast.native.provision.journal import (
     JournalError,
-    ignored_journal_keys,
     journal_path,
-    load_journal,
+    load_journal_with_ignored_keys,
 )
 from civiccast.native.provision.models import (
     ProvisionContext,
@@ -903,7 +902,7 @@ def main(argv: list[str] | None = None) -> int:
     # bookkeeping file is reset here -- the preserved PostgreSQL data
     # directory (station data) is never touched by this.
     try:
-        existing_journal = load_journal(paths.state_root)
+        existing_journal, ignored = load_journal_with_ignored_keys(paths.state_root)
     except JournalError as exc:
         write_recovery_document(
             paths.state_root,
@@ -919,12 +918,17 @@ def main(argv: list[str] | None = None) -> int:
         # beta.5.1: an adopted journal may carry keys this version's models do
         # not declare (the August 2026 installers' context.nats_*; or a newer
         # installer's fields on a reinstall over preserved ProgramData).
-        # load_journal drops them; say which ones ONCE per run, here, on
-        # stderr -- the channel the NSIS d4 step captures (this CLI configures
-        # no logging, so load_journal's own INFO line reaches nothing in
-        # production). Not per load: the probes below and run_provision each
-        # load this same file again.
-        ignored = ignored_journal_keys(journal_path(paths.state_root).read_text(encoding="utf-8"))
+        # The load above drops them and hands back their names, computed
+        # from the same bytes it parsed (no second read of the file that
+        # could escape as an unguarded OSError). Say which ones ONCE per run,
+        # here, on this CLI's own stderr (this CLI configures no logging, so
+        # load_journal's INFO line reaches nothing in production). Not per
+        # load: the probes below and run_provision each load this same file
+        # again. Where the line ends up: the installer's Rust wrapper
+        # (run_native_provision, Command::output()) captures and deliberately
+        # does not forward this stream, so the note is NOT yet in
+        # install-progress.log; forwarding it is a follow-up tracked with the
+        # runtime-ownership diagnosability PR.
         if ignored:
             sys.stderr.write(
                 f"provision note: adopted provisioning journal at {paths.state_root!r} "

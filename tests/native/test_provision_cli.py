@@ -1363,6 +1363,9 @@ def test_main_does_not_reset_a_matching_adopted_journal(tmp_path, capsys, monkey
     assert code == EXIT_SUCCESS
     captured = capsys.readouterr()
     assert "STALE" not in captured.err
+    # beta.5.1 negative control: a journal that declares only current fields
+    # produces no ignored-keys note at all.
+    assert "does not declare" not in captured.err, captured.err
 
 
 def test_main_stale_journal_reset_also_protects_the_run_branch(

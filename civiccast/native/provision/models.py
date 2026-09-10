@@ -317,13 +317,17 @@ class ProvisionContext(BaseModel):
     With ``extra="forbid"`` those five keys made a valid, ``phase: complete``
     journal unparseable and halted every upgrade over such a station. The
     context is now ``extra="ignore"``: unknown keys are dropped at load and
-    named once per run on the provisioning CLI's stderr (``main()`` in
-    :mod:`civiccast.native.provision.__main__`, via
-    :func:`civiccast.native.provision.journal.ignored_journal_keys`; the
-    INFO line :func:`~civiccast.native.provision.journal.load_journal` also
-    emits reaches nothing in production because the CLI configures no
-    logging). Nothing here ever reads a field by anything but its declared
-    name, so a stray key has no path to influence provisioning.
+    named once per run on the provisioning CLI's own stderr (``main()`` in
+    :mod:`civiccast.native.provision.__main__`, from the list
+    :func:`civiccast.native.provision.journal.load_journal_with_ignored_keys`
+    returns; the INFO line
+    :func:`~civiccast.native.provision.journal.load_journal` also emits
+    reaches nothing in production because the CLI configures no logging).
+    The installer's Rust wrapper currently captures and does not forward
+    that stderr, so the note is not yet in ``install-progress.log``;
+    forwarding it is a follow-up tracked with the runtime-ownership
+    diagnosability PR. Nothing here ever reads a field by anything but its
+    declared name, so a stray key has no path to influence provisioning.
     """
 
     model_config = ConfigDict(extra="ignore")

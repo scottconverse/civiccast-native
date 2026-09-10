@@ -17,6 +17,7 @@ from civiccast.native.provision.journal import (
     ignored_journal_keys,
     journal_path,
     load_journal,
+    load_journal_with_ignored_keys,
     write_journal,
 )
 from civiccast.native.provision.models import (
@@ -279,6 +280,40 @@ def test_load_journal_tolerates_the_august_beta1_nats_context_fields(
     assert "5 field(s)" in message
     for key in _LEGACY_NATS_KEYS:
         assert key in message
+
+
+def test_load_journal_with_ignored_keys_returns_the_keys_from_the_single_read(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The ignored-key list comes back with the journal from ONE read of the
+    file (round-3 F2: main() used to re-read the file unguarded to compute
+    it). Prove the single read by counting, and prove the read failure is a
+    JournalError rather than a bare OSError."""
+
+    state_root = _stage_raw_journal(tmp_path, _LEGACY_AUGUST_JOURNAL.read_text(encoding="utf-8"))
+    reads: list[Path] = []
+    real_read_text = Path.read_text
+
+    def counting_read_text(self: Path, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if self.name == "provision-journal.json":
+            reads.append(self)
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+    journal, ignored = load_journal_with_ignored_keys(state_root)
+    assert journal is not None
+    assert journal.phase is ProvisionPhase.COMPLETE
+    assert ignored == _LEGACY_NATS_KEYS
+    assert len(reads) == 1, reads
+
+    assert load_journal_with_ignored_keys(tmp_path / "nowhere") == (None, [])
+
+    def yanked_read_text(self: Path, *args, **kwargs):  # type: ignore[no-untyped-def]
+        raise OSError("file yanked between exists() and read")
+
+    monkeypatch.setattr(Path, "read_text", yanked_read_text)
+    with pytest.raises(JournalError, match="cannot read journal"):
+        load_journal_with_ignored_keys(state_root)
 
 
 def test_ignored_journal_keys_names_exactly_the_undeclared_keys() -> None:

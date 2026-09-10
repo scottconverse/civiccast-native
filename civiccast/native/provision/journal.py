@@ -20,13 +20,19 @@ module's docstring, verbatim rationale, applies here unchanged):
   unknown keys (``extra="ignore"`` on the persisted models) and names them
   on this module's logger at INFO -- a line only a caller that configured
   logging ever sees. The provisioning CLI (:mod:`~civiccast.native.
-  provision.__main__`) configures no logging, so the line that actually
-  reaches the installer log (the NSIS d4 step captures stderr) is the ONE
-  ``sys.stderr.write`` ``main()`` emits per run from
-  :func:`ignored_journal_keys` over the raw file, right after its first
-  load. That is deliberately once per run, not once per load:
+  provision.__main__`) configures no logging, so ``main()`` writes the ONE
+  ``provision note:`` line per run to its own stderr, from the ignored-key
+  list :func:`load_journal_with_ignored_keys` returns alongside its first
+  load (computed from the same bytes that load parsed -- there is no second
+  read of the file). That is deliberately once per run, not once per load:
   ``main`` -> ``probe_resumable_journal`` -> ``probe_credential_lost_journal``
-  -> ``run_provision`` each load the same file.
+  -> ``run_provision`` each load the same file. Where that line ends up: the
+  installer's Rust wrapper (``run_native_provision`` in
+  ``native_service_registration.rs``) runs the CLI with ``Command::output()``
+  and deliberately does not forward the captured stderr, so the note is NOT
+  yet in ``install-progress.log``; forwarding it is a follow-up tracked with
+  the runtime-ownership diagnosability PR. Until then the note is visible to
+  anyone running the CLI by hand and to the CLI tests.
 
 The journal file lives under the provisioning state root (ProgramData), so a
 resuming process can find it regardless of what happened to the data
@@ -216,14 +222,36 @@ def load_journal(state_root: str | Path) -> ProvisionJournal | None:
     provisioning run must never silently start fresh over a journal it failed
     to read, because that journal may describe partially-provisioned state
     (e.g. an initdb'd data directory with no config written yet).
+
+    Undeclared keys are dropped and named on this module's logger at INFO;
+    a caller that wants the list itself uses
+    :func:`load_journal_with_ignored_keys`.
+    """
+
+    journal, _ignored = load_journal_with_ignored_keys(state_root)
+    return journal
+
+
+def load_journal_with_ignored_keys(
+    state_root: str | Path,
+) -> tuple[ProvisionJournal | None, list[str]]:
+    """:func:`load_journal`, also returning the dotted names of the keys the
+    persisted models did not declare (see :func:`ignored_journal_keys`).
+
+    The list is computed from the SAME text the journal was parsed from --
+    one ``read_text`` -- so a file yanked or made unreadable between two
+    reads cannot escape as an uncaught :class:`OSError` in a caller that
+    wanted both (the CLI's ``main()`` did exactly that before beta.5.1's
+    round-3 review). Every read failure is a :class:`JournalError`. No
+    journal -> ``(None, [])``.
     """
 
     path = journal_path(state_root)
     if not path.exists():
-        return None
+        return None, []
     try:
         raw = path.read_text(encoding="utf-8")
-    except OSError as exc:  # pragma: no cover - unreadable file is env-specific
+    except OSError as exc:
         raise JournalError(f"cannot read journal at {path}: {exc}") from exc
     try:
         journal = ProvisionJournal.model_validate_json(raw)
@@ -238,7 +266,7 @@ def load_journal(state_root: str | Path) -> ProvisionJournal | None:
             len(ignored),
             ", ".join(ignored),
         )
-    return journal
+    return journal, ignored
 
 
 def ignored_journal_keys(raw: str) -> list[str]:
@@ -341,5 +369,6 @@ __all__ = [
     "ignored_journal_keys",
     "journal_path",
     "load_journal",
+    "load_journal_with_ignored_keys",
     "write_journal",
 ]

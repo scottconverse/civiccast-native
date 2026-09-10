@@ -217,7 +217,11 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   dropped key once per run on stderr (`provision note: adopted provisioning
   journal at ... carries 5 field(s) this version does not declare; ignored
   (legacy or newer-installer keys, not corruption): context.nats_config_path,
-  ...`), the channel the installer's d4 step captures; `load_journal` also
+  ...`). That line goes to the provisioning CLI's own stderr; the
+  installer's Rust wrapper (`run_native_provision`) runs the CLI with
+  `Command::output()` and deliberately does not forward that stream, so the
+  note is not yet in `install-progress.log` -- forwarding it is a follow-up
+  tracked with the runtime-ownership diagnosability PR. `load_journal` also
   logs the same at INFO on its module logger, which the CLI does not
   configure. The legacy keys do not "migrate away": the adopt path clears
   the journal outright and the reuse path leaves it as-is; either way no
