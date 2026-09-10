@@ -5,12 +5,12 @@ Rules in force: no new features; finish and test what exists; commit after each 
 
 ## Task list, most important first
 
-1. **Publish v1.0.0-beta.5** from main 148c8d21. Blocked only on Gate A run 34423542177 lane 3 (download-only upgrade); lanes 1 and 2 passed. Command, run from the repo root once lane 3 is PASS:
+1. **Publish v1.0.0-beta.5** from main 148c8d21. Gate A 34423542177: ALL THREE LANES PASS (10:04 PM). First publish attempt was refused: rendered body > 125,000 chars (HTTP 422); fixed in the renderer (PR #210, `bound_changelog_section`) and re-run; draft release uploading at 10:13 PM. Command, run from the repo root once lane 3 is PASS:
    `python scripts/release/publish_beta_candidate.py --kit-dir C:\CivicCastTester\kit-mirror\148c8d2172dd6b63cbbb856b429b68aa020dc421 --source-sha 148c8d2172dd6b63cbbb856b429b68aa020dc421 --build-run-id 34405681086 --gate-a-run-id 34423542177 --tag v1.0.0-beta.5 --truth-status current`
    The dry run already passed layout, version and Authenticode. The publisher updates docs/releases/release-truth.yaml; commit that.
 2. **Finish release notes PR #165** (branch docs/release-beta5, worktree C:\Users\scott\Desktop\Code\cc-docs165, head 834d68f5): fill the last tokens (GATE-A-XVER = PASS, GATE-A-DLONLY, RELEASE-URL, ASSETS-TABLE; release-notes.md ~487-491, verification.md ~80-88, 112), add known issues 99 (legacy NATS journal halts August-install upgrades) and 100 (ownership check exit 85/127 on boxes with uninstall history) with the workarounds in docs/INSTALL-HELPER-PROMPT.md, then merge.
 3. **Merge PR #206** (journal tolerant of legacy NATS keys) on green CI at cdb98387. Reviewed twice; round-3 delta accepted.
-4. **Merge PR #207** (docs/INSTALL-HELPER-PROMPT.md) on green CI.
+4. DONE 10:14 PM: PR #207 (docs/INSTALL-HELPER-PROMPT.md) merged.
 5. **Ownership-check fix = PR #209** (branch fix/runtime-ownership-claim-diagnosable, worktree cc-ownership-claim, head d6d5ea2f): hostile review said MERGE with follow-ups; round 2 in progress (5 s bound on `sc query`, dialog wording on upgrades, const assert, skip-predicate pin). Merge on green after round 2. Item 101 (forward the provisioning CLI's stderr into install-progress.log) is NOT in this PR: it needs a file handoff like ownership-observation.txt plus a policy test that no stderr line can carry the database URL; do it as its own PR later.
 6. **Merge PR #208** (bump to 1.0.0-beta.6, Gate A baseline repinned to the beta.5 kit). Expect banner-line conflicts with the publisher's release-truth commit; resolve as "beta.6 held candidate, beta.5 current".
 7. **PR #202** (reload wedge off-air retirement, crash at stop; head 399c4618, draft, rebased on 148c8d21): needs a sandbox soak proving on every rollover that `stage=holds-released` precedes `stage=old-leg-disposed`, zero `reload-commit-timeout`, then 20+ loaded runs at 100% CPU (only when the box is otherwise idle), then a delta review, then merge.
