@@ -6,6 +6,9 @@ Recorded 2026-09-10, Mountain time.
 ## Source and authority
 
 - Base main: `d77b634e3685de8fb077956b8099fc92c3927243`.
+- Implementation/proof anchor: `7a468cd2e9018775926d384ac1b25ebe07ebd18d`.
+  A following documentation-only checkpoint records this anchor. This avoids
+  making a tracked file self-cite a commit hash that changes when the file does.
 - Branch: `fix/f1-reload-readiness-20260910`.
 - Scott explicitly authorized GO after the read-only takeover and repair proposal.
 - No push/PR, merge, tag, publication, station-service start, Gate A or sandbox soak.
@@ -47,6 +50,8 @@ paths; installer and sustained-operation evidence remain separate.
 - Lead red baseline: `engine-red.txt`, four failures against unchanged engine
   source: no-preroll commit, stale held/non-held readiness, duplicate hold.
   Command: `uv run --frozen --no-sync pytest tests/egress/test_gst_engine_reload_commit_ordering.py -k f1 -p no:randomly -q`.
+  The committed text transcript has trailing whitespace removed; its original
+  captured output is retained in the sibling scratch directory and proof anchor.
 - Luna reported daemon red baseline: 3 failed, 143 deselected, using
   `uv run --frozen pytest tests/egress/test_daemon.py -q -k "cleanly_on_air or queued_operator_stop_or_drain"`.
   This result was worker-reported; the lead independently executes integration checks.

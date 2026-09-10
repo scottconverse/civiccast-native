@@ -6,6 +6,12 @@ Scott authorized GO following the cold takeover. Active branch:
 `fix/f1-reload-readiness-20260910`, base `d77b634e3685de8fb077956b8099fc92c3927243`.
 Local worktree:
 `C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f1-integration`.
+Implementation/proof anchor: `7a468cd2e9018775926d384ac1b25ebe07ebd18d`.
+The following documentation checkpoint cites that anchor; it changes no code.
+Read `git rev-parse HEAD` in this worktree for the current documentation HEAD.
+Local checks: 2106 passed / 72 skipped (egress/live/policy); seven targeted native
+tests passed, 24 commits graded; mypy 675 files, Ruff lint/format, and independent
+Terra review accepted. F-1 release acceptance remains open.
 No PR, push, merge, tag, publication, station service start, Gate A, or sandbox soak
 has been performed for this work. See `docs/evidence/f1-local-2026-09-10/VERIFICATION.md`
 for the current implementation/review evidence and remaining release gates.

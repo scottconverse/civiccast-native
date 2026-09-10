@@ -18,7 +18,7 @@ capsys = <_pytest.capture.CaptureFixture object at 0x00000254F9CC5D30>
 >       assert recorder.calls == [], "an unready replacement must not switch or retire the old leg"
 E       AssertionError: an unready replacement must not switch or retire the old leg
 E       assert ['video_sel.s...video:1', ...] == []
-E         
+E
 E         Left contains 7 more items, first extra item: 'video_sel.set_property:active-pad=new-video'
 E         Use -v to get more diff
 
