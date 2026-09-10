@@ -287,9 +287,7 @@ def test_ownership_recovery_document_installer_exit_codes_are_pinned_to_the_nsis
 
     # The generator interpolates the mapped constant; a literal in the
     # format string is exactly the drift this test exists to stop.
-    generator = registration.split("pub fn ownership_recovery_document(", 1)[1].split(
-        "\n}\n", 1
-    )[0]
+    generator = registration.split("pub fn ownership_recovery_document(", 1)[1].split("\n}\n", 1)[0]
     assert "installer exit {installer_exit_code}" in generator
     assert not re.search(r"installer exit \d", generator), (
         "OWNERSHIP-RECOVERY.md must not hardcode an installer exit code"

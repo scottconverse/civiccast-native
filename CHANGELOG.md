@@ -203,6 +203,26 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
        the NSIS macros (31 at runtime, 35 as source; the old `29` missed the
        trailing CRLF) and `NSIS_MAX_STRLEN` from `makensis -HDRINFO` when a
        makensis is present.
+     - Round 6 (delta review of round 5): round 5's per-machine sentence and
+       its `reg delete` remedy were gated on the per-user read alone, so a
+       presence established by the distro scan (no ARP entry in any hive)
+       was told its cause was a stale HKLM registration -- two lines under
+       `machine-ARP=Absent` -- and handed an elevated delete for a key the
+       document had just reported absent; and a per-user probe that FAILED
+       (`user-ARP=unknown`) was described as "no signed-in account's hive
+       carries it". Both now require the per-machine probe to have found
+       the entry (with its ARP record) and the per-user probe not to have,
+       and `unknown` is written as "could not be read", never as absence;
+       every (user-ARP, machine-ARP) shape that reaches a refusal gets the
+       sentence its own evidence supports. The "What it means" opener points
+       at the read that established presence instead of always at "the
+       Add/Remove Programs entry above". The `reg delete` path is derived
+       from the probe's `WSL_ARP_KEY` constant (one command per WOW64 view
+       the entry was found in, so a key in both views no longer needs two
+       refused runs), the `; ` field-boundary cut of the exit-87 lead has
+       its own regression test (a raw character cut goes red), and the
+       recovery-document generator returns nothing for a non-refusal instead
+       of falling back to exit 85 / 127.
 
   Follow-up, not in this change: a setup wizard page asking the operator to
   confirm native ownership when the evidence is merely inconclusive, instead

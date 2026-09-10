@@ -56,7 +56,7 @@ pub const WSL_ARP_PROBE_LOADED_HIVES_ONLY: bool = true;
 
 const SELECTOR_KEY: &str = r"SOFTWARE\CivicCast";
 const SELECTOR_VALUE: &str = "ActiveRuntime";
-const WSL_ARP_KEY: &str =
+pub const WSL_ARP_KEY: &str =
     r"Software\Microsoft\Windows\CurrentVersion\Uninstall\CivicCast Installer";
 pub const SOLE_POSTCLEAR_EXIT_CODE: i32 = 73;
 /// `native_uninstall_preflight` returns `TransferAcknowledgmentRequired`
@@ -874,16 +874,54 @@ impl WslPresenceEvidence {
     /// the per-machine cause for every Present, so a station with a live
     /// distro was told its owner was signed out. Empty when every condition
     /// held (that verdict is `PresentInert`, which is not a refusal).
+    ///
+    /// Round 6 (delta review of round 5, MAJOR 2): the first condition --
+    /// the entry was found in a LOADED user hive -- is explained from BOTH
+    /// ARP reads. Round 5 gated its sentence on `user_arp != Present`
+    /// alone, so a presence established by the distro scan (no ARP entry
+    /// anywhere) was called "found only per-machine (HKLM)" two lines under
+    /// `machine-ARP=Absent`, and a per-user probe that FAILED (`Unknown`)
+    /// was called "no signed-in account's hive carries it". `Unknown` is
+    /// unknown: the sentence says the probe could not read it, never that
+    /// the entry is absent.
     pub fn unmet_inert_conditions(&self) -> Vec<String> {
         use OtherProductState::{Absent, Present, Unknown};
         let mut unmet = Vec::new();
-        if self.user_arp != Present {
-            unmet.push(format!(
+        match (self.user_arp, self.machine_arp) {
+            (Present, _) => {}
+            (Absent, Present) => unmet.push(
                 "the entry was found only per-machine (HKLM) and no signed-in account's hive \
-                 carries it (user-ARP={}), so its owner may be signed out and the distro and \
-                 autostart reads below never looked at that owner's hive",
-                other_product_token(self.user_arp)
-            ));
+                 carries it (user-ARP=absent), so its owner may be signed out and the distro \
+                 and autostart reads below never looked at that owner's hive"
+                    .into(),
+            ),
+            (Unknown, Present) => unmet.push(
+                "the entry was found per-machine (HKLM) and no signed-in account's hive could \
+                 be read (user-ARP=unknown), so setup could not look for the owner's distro or \
+                 autostart state"
+                    .into(),
+            ),
+            (Absent, Absent) => unmet.push(
+                "no Add/Remove Programs entry was found in any hive (user-ARP=absent, \
+                 machine-ARP=absent): the product's presence comes from the distro scan alone"
+                    .into(),
+            ),
+            (Absent, Unknown) => unmet.push(
+                "no signed-in account's hive carries the Add/Remove Programs entry \
+                 (user-ARP=absent) and the per-machine read was inconclusive \
+                 (machine-ARP=unknown)"
+                    .into(),
+            ),
+            (Unknown, Absent) => unmet.push(
+                "the per-user Add/Remove Programs probe could not read a hive \
+                 (user-ARP=unknown) and no per-machine entry exists (machine-ARP=absent)"
+                    .into(),
+            ),
+            (Unknown, Unknown) => unmet.push(
+                "neither Add/Remove Programs probe could be read (user-ARP=unknown, \
+                 machine-ARP=unknown)"
+                    .into(),
+            ),
         }
         match self.distro_registration {
             Absent => {}
