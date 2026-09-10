@@ -2073,6 +2073,10 @@ pub fn ownership_observation_line(
         return folded;
     }
     const MARKER: &str = " ... (full observation in OWNERSHIP-RECOVERY.md)";
+    // `keep` would underflow if the cap were ever lowered below the marker;
+    // refuse to compile rather than panic at install time.
+    const _: () = assert!(OWNERSHIP_OBSERVATION_LINE_MAX_CHARS > 64);
+    const _: () = assert!(MARKER.len() <= 64);
     let keep = OWNERSHIP_OBSERVATION_LINE_MAX_CHARS - MARKER.len();
     let mut cut: String = folded.chars().take(keep).collect();
     cut.push_str(MARKER);
@@ -2090,9 +2094,9 @@ pub fn ownership_recovery_document(
     doc.push_str("# CivicCast (Native) setup: runtime ownership could not be established\n\n");
     doc.push_str(&format!(
         "Setup {version} stopped (exit 85 / installer exit 127) BEFORE provisioning the \
-         PostgreSQL server, so nothing under `%ProgramData%\\CivicCast` was changed by this \
-         run: postgresql.conf, pg_hba.conf, the database, recordings and settings are exactly \
-         as they were.\n\n"
+         PostgreSQL server: postgresql.conf, pg_hba.conf and your database credential were \
+         not touched by this run. (On an upgrade, the program files under the install \
+         directory had already been replaced before this check ran.)\n\n"
     ));
     doc.push_str("## What setup observed\n\n");
     doc.push_str(&format!("{}\n\n", outcome.detail));
@@ -4757,7 +4761,11 @@ mod runtime_ownership_report_tests {
         let doc = ownership_recovery_document(&refused_outcome(), "1.0.0-beta.5.1");
         assert!(doc.contains("1.0.0-beta.5.1"));
         assert!(doc.contains("BEFORE provisioning"));
-        assert!(doc.contains("postgresql.conf, pg_hba.conf"));
+        assert!(doc.contains(
+            "postgresql.conf, pg_hba.conf and your database credential were not touched"
+        ));
+        assert!(!doc.contains("nothing under"));
+        assert!(!doc.contains("recordings and settings are exactly"));
         assert!(doc.contains(
             r"- user-ARP HKU\S-1-5-21-1111111111-2222222222-3333333333-1001 (64-bit view): unknown [PermissionDenied, os error 5]"
         ));

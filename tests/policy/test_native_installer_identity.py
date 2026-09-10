@@ -278,6 +278,34 @@ def test_install_ownership_claim_ports_the_python_guards_wsl_probes_exactly() ->
     assert "probe_wsl_presence_evidence" in source
     assert "reg.exe" not in source.replace("localized `reg.exe`", "")
 
+    # The SCM probe runs under the same hard deadline as the Python guard's
+    # `_run_probe_argv` (A2_TIMEOUT_SECONDS), from the absolute System32 path
+    # win_probes.SC_EXE pins, and never through an open-ended `.output()`.
+    deadline = re.search(r"pub const SC_QUERY_TIMEOUT_SECONDS: u64 = (\d+);", source)
+    assert deadline is not None
+    assert float(deadline.group(1)) == runtime_guard.A2_TIMEOUT_SECONDS
+    assert "fn wait_with_deadline(" in source
+    assert "Command::new(sc_exe_path())" in source
+    assert 'std::process::Command::new("sc.exe")' not in source
+
+    # Deliberate divergence, pinned: when enumerating HKEY_USERS the Rust
+    # port skips `.DEFAULT` and the well-known service SIDs (SYSTEM
+    # S-1-5-18, LOCAL SERVICE S-1-5-19, NETWORK SERVICE S-1-5-20) in
+    # addition to the `*_Classes` shadows Python's scan_registered_distros
+    # skips. None of those is a real user profile or a possible per-user WSL
+    # owner, so skipping them cannot hide a WSL install; it only removes
+    # reads that would otherwise fail and poison the fold with Unknown.
+    assert "fn should_skip_users_subkey(name: &str) -> bool" in source
+    assert (
+        'const WELL_KNOWN_SERVICE_SIDS: [&str; 3] = ["S-1-5-18", "S-1-5-19", "S-1-5-20"];' in source
+    )
+    skip_body = source.split("fn should_skip_users_subkey(name: &str) -> bool {", 1)[1].split(
+        "\n}\n", 1
+    )[0]
+    assert 'upper == ".DEFAULT"' in skip_body
+    assert 'upper.ends_with("_CLASSES")' in skip_body
+    assert "WELL_KNOWN_SERVICE_SIDS.iter().any(|sid| upper == *sid)" in skip_body
+
 
 # ---------------------------------------------------------------------------
 # WP2 hook-migration (2026-07-30): nsis-hooks-native.nsh's POSTINSTALL D2/D4/

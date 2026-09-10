@@ -881,23 +881,85 @@ pub fn classify_sc_query_exit_code(code: Option<i32>) -> OtherProductState {
     }
 }
 
+/// Hard deadline for one `sc query <name>` child. MUST equal the Python
+/// guard's `A2_TIMEOUT_SECONDS` (`civiccast.native.runtime_guard`), which
+/// `_run_probe_argv` applies to the same probe: capture-style probes have
+/// deadlocked live (Sandbox runs 14/15, see `pg_ctl_exec`), so the SCM read
+/// gets a watchdog rather than an open-ended `Command::output()`.
+pub const SC_QUERY_TIMEOUT_SECONDS: u64 = 5;
+
+/// `%SYSTEMROOT%\System32\sc.exe`, pinned absolute for the same
+/// CWD-hijack reason as `win_probes.SC_EXE` (a bare `sc.exe` argv[0] is
+/// resolved via the CreateProcess search order). Falls back to `C:\Windows`
+/// exactly like the Python constant.
+#[cfg(target_os = "windows")]
+fn sc_exe_path() -> std::path::PathBuf {
+    let system_root = std::env::var_os("SYSTEMROOT")
+        .unwrap_or_else(|| std::ffi::OsString::from(r"C:\Windows"));
+    std::path::PathBuf::from(system_root)
+        .join("System32")
+        .join("sc.exe")
+}
+
+/// Spawn `command` with every stdio handle detached (the probe classifies the
+/// exit status only, and inherited pipe handles are what kept the Python
+/// capture-style probes draining forever) and wait for it with a hard
+/// `deadline`. On expiry the child is killed and reaped, and the call fails
+/// with an `io::ErrorKind::TimedOut` error so the caller's existing
+/// spawn-error branch classifies it (`Unknown`, `error_kind = "TimedOut"`).
+/// Unit-tested with a prompt child and a sleeping child.
+pub fn wait_with_deadline(
+    command: &mut std::process::Command,
+    deadline: std::time::Duration,
+) -> std::io::Result<std::process::ExitStatus> {
+    use std::process::Stdio;
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let started = std::time::Instant::now();
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if started.elapsed() >= deadline {
+            // The child may exit between try_wait and kill; either way it
+            // is reaped here and the read is recorded as Unknown.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!(
+                    "probe child did not exit within {} ms and was killed",
+                    deadline.as_millis()
+                ),
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
 /// Port of `_default_wsl_service_present`: `Present` the instant any WSL
 /// service name resolves; `Absent` only when EVERY candidate is a definite
 /// 1060; `Unknown` on anything else. The SCM query is used rather than
 /// winreg because the Store-packaged `WslService` does not expose a raw
 /// `HKLM\SYSTEM\...\Services` key even while it is running.
+/// Each query runs under [`wait_with_deadline`] with
+/// [`SC_QUERY_TIMEOUT_SECONDS`]; an expired child is killed and recorded as
+/// `Unknown` with `error_kind = TimedOut`, never as `Absent`.
 #[cfg(target_os = "windows")]
 fn probe_wsl_service_observed() -> (OtherProductState, Vec<ProbeObservation>) {
     const SOURCE: &str = "wsl-service";
     let mut observations = Vec::new();
     for name in WSL_SERVICE_NAMES {
         let scope = format!("sc query {name}");
-        let observation = match std::process::Command::new("sc.exe")
-            .args(["query", name])
-            .output()
-        {
-            Ok(output) => {
-                let code = output.status.code();
+        let observation = match wait_with_deadline(
+            std::process::Command::new(sc_exe_path()).args(["query", name]),
+            std::time::Duration::from_secs(SC_QUERY_TIMEOUT_SECONDS),
+        ) {
+            Ok(status) => {
+                let code = status.code();
                 let state = classify_sc_query_exit_code(code);
                 let mut observation = ProbeObservation::settled(SOURCE, scope, "n/a", state);
                 if state != OtherProductState::Absent {
@@ -2656,6 +2718,72 @@ mod runtime_ownership_evidence_tests {
             OtherProductState::Unknown
         );
         assert_eq!(ERROR_SERVICE_DOES_NOT_EXIST, 1060);
+    }
+
+    #[test]
+    fn sc_query_deadline_matches_the_python_guard() {
+        assert_eq!(SC_QUERY_TIMEOUT_SECONDS, 5);
+    }
+
+    fn exit_7_command() -> std::process::Command {
+        let mut command;
+        if cfg!(target_os = "windows") {
+            command = std::process::Command::new("cmd.exe");
+            command.args(["/c", "exit 7"]);
+        } else {
+            command = std::process::Command::new("sh");
+            command.args(["-c", "exit 7"]);
+        }
+        command
+    }
+
+    fn sleeping_command() -> std::process::Command {
+        let mut command;
+        if cfg!(target_os = "windows") {
+            command = std::process::Command::new("ping.exe");
+            command.args(["-n", "30", "127.0.0.1"]);
+        } else {
+            command = std::process::Command::new("sleep");
+            command.arg("30");
+        }
+        command
+    }
+
+    /// A child that exits inside the deadline reports its real exit code
+    /// (the value the classifier consumes).
+    #[test]
+    fn wait_with_deadline_returns_the_exit_code_of_a_prompt_child() {
+        let status = wait_with_deadline(
+            &mut exit_7_command(),
+            std::time::Duration::from_secs(SC_QUERY_TIMEOUT_SECONDS),
+        )
+        .expect("prompt child must not time out");
+        assert_eq!(status.code(), Some(7));
+        assert_eq!(
+            classify_sc_query_exit_code(status.code()),
+            OtherProductState::Unknown
+        );
+    }
+
+    /// A child that outlives the deadline is killed, reaped, and surfaces
+    /// as a `TimedOut` error -- the branch that records `Unknown`, so a hung
+    /// SCM never reads as "no WSL service".
+    #[test]
+    fn wait_with_deadline_kills_a_hung_child_and_reports_timed_out() {
+        let started = std::time::Instant::now();
+        let error = wait_with_deadline(
+            &mut sleeping_command(),
+            std::time::Duration::from_millis(300),
+        )
+        .expect_err("a 30 s child must expire a 300 ms deadline");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(format!("{:?}", error.kind()), "TimedOut");
+        assert!(error.raw_os_error().is_none());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "the child was not killed on expiry: waited {:?}",
+            started.elapsed()
+        );
     }
 
     /// An observation names its source, hive/SID, WOW64 view, classification,

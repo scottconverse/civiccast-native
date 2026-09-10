@@ -1132,8 +1132,12 @@ def test_the_exit_85_dialog_carries_the_actual_observation_not_a_guess() -> None
     assert "What setup observed: $R6" in arm
     assert OWNERSHIP_RECOVERY_DOC in arm
     assert "$COMMONPROGRAMDATA\\CivicCast\\install-progress.log" in arm
-    assert "stopped BEFORE provisioning" in arm
-    assert "database configuration was not touched" in arm
+    assert "Setup stopped before provisioning" in arm
+    # Narrowed (PR #209 review): only the provisioning outputs are promised
+    # untouched -- on the upgrade path $INSTDIR was already replaced by
+    # d3-engine/the Tauri section, so "nothing was deleted" would be false.
+    assert "postgresql.conf, pg_hba.conf and your database credential were not touched" in arm
+    assert "Nothing was deleted" not in arm
     assert "ActiveRuntime" in arm and r"$\"native$\"" in arm
 
     # The Rust side is the writer of both files the dialog cites.

@@ -1327,16 +1327,20 @@ Var CIVICCAST_POSTCLEAR_ARMED
     ; beta.5.1: the text carries the CLI's actual observation ($R6, read back
     ; above) instead of the former "most often a permissions problem on
     ; HKEY_USERS" guess, and the claim now runs BEFORE provisioning, so the
-    ; "database configuration untouched" sentence is a fact, not a hope.
+    ; "not touched" sentence is a fact, not a hope. It names ONLY the
+    ; provisioning outputs (postgresql.conf, pg_hba.conf, the credential):
+    ; on the upgrade path d3-engine and the Tauri section have already
+    ; replaced $INSTDIR by the time this runs, so "nothing was deleted"
+    ; would be false.
     ; String budget: NSIS_MAX_STRLEN is 1024 (Tauri's NSIS 3.11, measured
     ; with makensis -HDRINFO) and CIVICCAST_ALERT prefixes this text with a
     ; ~29-char timestamp before writing it to install-progress.log, so the
-    ; static text here (~575 chars) plus the observation line (capped at
+    ; static text here (~564 chars) plus the observation line (capped at
     ; OWNERSHIP_OBSERVATION_LINE_MAX_CHARS = 360 by the Rust writer) must
     ; stay under 1023 (pinned by test_the_exit_85_dialog_fits_the_nsis_
     ; string_budget_with_the_observation). Do not lengthen either without
     ; re-measuring.
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP} "CivicCast (Native) setup could not determine which CivicCast runtime owns this machine, so it stopped BEFORE provisioning. Nothing was deleted and your database configuration was not touched.$\r$\n$\r$\nWhat setup observed: $R6$\r$\n$\r$\nIf this machine has no CivicCast WSL product, an administrator sets HKLM\SOFTWARE\CivicCast\ActiveRuntime to $\"native$\" and runs setup again. The exact command and every individual read are in $COMMONPROGRAMDATA\CivicCast\provision\OWNERSHIP-RECOVERY.md; the observation above is also recorded in $COMMONPROGRAMDATA\CivicCast\install-progress.log."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP} "CivicCast (Native) setup could not determine which CivicCast runtime owns this machine. Setup stopped before provisioning: postgresql.conf, pg_hba.conf and your database credential were not touched.$\r$\n$\r$\nWhat setup observed: $R6$\r$\n$\r$\nIf this machine has no CivicCast WSL product, an administrator sets HKLM\SOFTWARE\CivicCast\ActiveRuntime to $\"native$\" and runs setup again. The exact command and every individual read are in $COMMONPROGRAMDATA\CivicCast\provision\OWNERSHIP-RECOVERY.md; the observation above is also recorded in $COMMONPROGRAMDATA\CivicCast\install-progress.log."
   ${Else}
     DetailPrint "CivicCast (Native): D4 database/messaging provisioning reported an unexpected fault (exit $0) — see the installer log above."
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_PROVISION_FAULT} "CivicCast (Native) setup hit an unexpected fault while provisioning the PostgreSQL server (exit code $0). See the installer log."
