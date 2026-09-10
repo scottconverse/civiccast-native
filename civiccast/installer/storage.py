@@ -121,6 +121,113 @@ class ManagedStorageStatus(BaseModel):
     operator_message: str = Field(min_length=1)
     next_step: str = Field(min_length=1)
 
+    def report(self) -> ManagedStorageStatusReport:
+        """The credential-free view of this state that every API route serves.
+
+        SECURITY (walkthrough on a running beta.5 station, 2026-09-09): the
+        ``database_url`` above is the live connection string, and on a native
+        station it carries the ``civiccast_svc`` PostgreSQL password. It was
+        being returned verbatim by ``GET /api/setup/storage`` to any caller on
+        the station's loopback with no Authorization header at all -- so any
+        local process or user could open the station database. Only this
+        report ever leaves the process; the URL itself stays in memory for the
+        engine binding (``civiccast.app._resolve_database_url``).
+        """
+
+        kind, host, port, name = _describe_database_url(self.database_url)
+        return ManagedStorageStatusReport(
+            status=self.status,
+            database_configured=True,
+            database_kind=kind,
+            database_host=host,
+            database_port=port,
+            database_name=name,
+            database_path=self.database_path,
+            upload_dir=self.upload_dir,
+            storage_dir=self.storage_dir,
+            migrations_applied=self.migrations_applied,
+            configured_at=self.configured_at,
+            operator_message=self.operator_message,
+            next_step=self.next_step,
+        )
+
+
+class ManagedStorageStatusReport(BaseModel):
+    """Durable storage state as served over the API: never the credential.
+
+    Same shape as :class:`ManagedStorageStatus` minus ``database_url``, which
+    is replaced by ``database_configured`` plus the backend kind and, for a
+    network database, its host, port and database name. No user name, no
+    password, no URL -- see :meth:`ManagedStorageStatus.report`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = Field(min_length=1)
+    database_configured: bool
+    database_kind: str = Field(min_length=1)
+    database_host: str | None = None
+    database_port: int | None = None
+    database_name: str | None = None
+    database_path: str = Field(min_length=1)
+    upload_dir: str = Field(min_length=1)
+    storage_dir: str = Field(min_length=1)
+    migrations_applied: bool
+    configured_at: datetime
+    operator_message: str = Field(min_length=1)
+    next_step: str = Field(min_length=1)
+
+
+_DESCRIBABLE_DATABASE_KINDS = frozenset(
+    {"postgresql", "postgres", "sqlite", "mysql", "mariadb", "mssql", "oracle"}
+)
+
+
+def _describe_database_url(database_url: str) -> tuple[str, str | None, int | None, str | None]:
+    """Return ``(kind, host, port, database_name)`` for a URL, never its credential.
+
+    Two fail-closed rules keep an operator-set ``DATABASE_URL`` from leaking
+    through the descriptive fields (MAJOR-1, hostile review of PR #215):
+
+    * The kind is only ever a whitelisted backend name or ``"unknown"`` --
+      never a slice of the input. The old exception path returned the text
+      before the first ``:`` verbatim, which for a value pasted without its
+      scheme is the user name or the password.
+    * A URL whose part after ``://`` carries more than one ``@`` describes
+      nothing but its kind. SQLAlchemy's URL grammar captures the password
+      as ``[^@]*``, so an unescaped ``@`` inside the password splits at the
+      wrong ``@`` and the password tail lands in ``host`` (or ``database``).
+      An escaped ``%40`` password has exactly one ``@`` and is described
+      normally. A ``?password=a@b`` query is the one clean shape this also
+      withholds -- deliberately: withholding a host is cheap, echoing a
+      credential is not.
+    """
+
+    scheme, separator, remainder = database_url.partition("://")
+    kind = scheme.split("+", 1)[0].lower() if separator else ""
+    if kind not in _DESCRIBABLE_DATABASE_KINDS:
+        kind = "unknown"
+    if kind == "sqlite" or kind == "unknown":
+        return kind, None, None, None
+    if remainder.count("@") > 1:
+        return kind, None, None, None
+    try:
+        from sqlalchemy.engine import make_url
+
+        from civiccast.db.url import normalize_database_url
+
+        # Descriptive only (no engine is built here), but every make_url in
+        # the shipped wheel goes through the normalizer -- the policy tripwire
+        # in tests/policy/test_shipped_payload_db_driver.py is textual, by
+        # design, so the class of bug that rolled back R7 cannot creep back.
+        parsed = make_url(normalize_database_url(database_url))
+    except Exception:
+        return kind, None, None, None
+    host = parsed.host
+    if host is not None and "@" in host:
+        return kind, None, None, None
+    return kind, host, parsed.port, parsed.database
+
 
 def default_storage_dir() -> Path:
     """Return the station-local data directory for managed storage."""

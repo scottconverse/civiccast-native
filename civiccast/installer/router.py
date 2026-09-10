@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -17,6 +18,11 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from civiccast.alerting.router import get_alerting_session_factory
 from civiccast.auth.rate_limit import AuthRateLimiter, auth_rate_limit_config, client_ip
 from civiccast.auth.roles import require_any_role
+from civiccast.auth.tokens import (
+    StaffAuthError,
+    StaffAuthMissingCredentialError,
+    verify_bearer_token,
+)
 from civiccast.dr.models import DrillReport
 from civiccast.egress.compliance import TsduckStatus, locate_tsduck
 from civiccast.egress.router import get_egress_store
@@ -140,6 +146,7 @@ from civiccast.installer.station_state import (
 from civiccast.installer.storage import (
     ManagedStorageError,
     ManagedStorageStatus,
+    ManagedStorageStatusReport,
     durable_storage_status,
     ensure_managed_storage,
 )
@@ -162,6 +169,15 @@ _LOCAL_SETUP_ACCESS_RESPONSES: dict[int | str, dict[str, Any]] = {
             "(loopback), or the station is already configured."
         )
     }
+}
+_SETUP_AFTER_COMPLETE_RESPONSES: dict[int | str, dict[str, Any]] = {
+    **_LOCAL_SETUP_ACCESS_RESPONSES,
+    401: {
+        "description": (
+            "Setup is complete, so this endpoint now requires the staff bearer "
+            "token (sign in at /api/setup/login or recover at /api/setup/recover)."
+        )
+    },
 }
 
 
@@ -1014,27 +1030,29 @@ def beta_handoff() -> BetaHandoffSummary:
 
 @staff_router.get(
     "/storage",
-    response_model=ManagedStorageStatus,
+    response_model=ManagedStorageStatusReport,
     summary="Read installer-managed durable storage setup state",
 )
-def staff_storage_state() -> ManagedStorageStatus:
-    return durable_storage_status()
+def staff_storage_state() -> ManagedStorageStatusReport:
+    return durable_storage_status().report()
 
 
 @staff_router.post(
     "/storage",
-    response_model=ManagedStorageStatus,
+    response_model=ManagedStorageStatusReport,
     summary="Prepare installer-managed durable storage",
     dependencies=[Depends(require_any_role("setup_admin"))],
 )
-def staff_storage_setup(request: Request, payload: StorageSetupRequest) -> ManagedStorageStatus:
+def staff_storage_setup(
+    request: Request, payload: StorageSetupRequest
+) -> ManagedStorageStatusReport:
     if os.environ.get("DATABASE_URL") and payload.storage_dir is None:
-        return durable_storage_status()
+        return durable_storage_status().report()
     try:
         storage_dir = Path(payload.storage_dir).expanduser() if payload.storage_dir else None
         storage = _activate_storage(request, ensure_managed_storage(storage_dir=storage_dir))
         _ensure_storage_recording_target(request, storage)
-        return storage
+        return storage.report()
     except ManagedStorageError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1245,6 +1263,93 @@ def _is_local_client(request: Request) -> bool:
         return False
 
 
+def _verify_setup_caller(request: Request) -> bool:
+    """Verify the staff bearer token on a ``/api/setup/*`` request, if one is sent.
+
+    Returns ``True`` when a valid token was presented (and attaches the
+    operator identity to ``request.state`` the way ``staff_auth_middleware``
+    does for ``/api/staff/*``), ``False`` when no Authorization header was
+    sent at all, and raises 401 for a present-but-invalid token so a browser
+    still sending a stale console token learns to drop it (the console's
+    shared 401 handler clears the stored token).
+    """
+
+    authorization = request.headers.get("Authorization")
+    if not authorization:
+        return False
+    token_store = getattr(request.app.state, "staff_token_store", None)
+    try:
+        identity = verify_bearer_token(authorization, token_store=token_store)
+    except StaffAuthMissingCredentialError:
+        return False
+    except StaffAuthError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    request.state.operator_identity = identity
+    return True
+
+
+async def _require_setup_access(request: Request) -> None:
+    """Loopback-only before setup; loopback AND the staff token after it.
+
+    SECURITY (walkthrough on a running beta.5 station, 2026-09-09): every
+    ``/api/setup/*`` route was reachable with no credential for the whole
+    life of the station, not just during first setup -- the loopback bind
+    was the only guard, and it does nothing against another local user or
+    process on the same box. Once ``setup_complete`` is true, the routes
+    that read or change station state require the staff bearer token, the
+    same credential every ``/api/staff/*`` route already demands. Only the
+    routes a signed-out operator genuinely needs stay open after setup:
+    ``station-state`` (its :meth:`StationSetupState.signed_out_view`),
+    ``login`` and ``recover`` -- and those keep this module's existing
+    loopback gate and rate limit.
+    """
+
+    await _require_local_setup_request(request)
+    if not read_station_setup().setup_complete:
+        return
+    if _verify_setup_caller(request):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=(
+            "Setup is complete. Sign in with the station admin password to use this "
+            "endpoint; it requires the staff bearer token now."
+        ),
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _require_setup_role(*roles: str) -> Callable[[Request], Awaitable[None]]:
+    """Post-setup, demand the same product role the ``/api/staff/`` sibling demands.
+
+    MAJOR-2 (hostile review of PR #215): ``_require_setup_access`` proves a
+    staff token exists, not what it may do. ``POST /api/staff/installer/storage``
+    requires ``setup_admin``, but ``POST /api/setup/storage`` -- the same
+    ``_activate_storage`` mutation behind a different path -- accepted any
+    valid token, so a records-clerk token could rebind the engine and rewrite
+    ``DATABASE_URL`` through the weaker door. Before ``setup_complete`` there
+    is no token and no identity, so nothing to check; after it, the identity
+    ``_verify_setup_caller`` attached is checked exactly like
+    :func:`civiccast.auth.roles.require_any_role` does for staff routes
+    (401 without an identity, 403 for the wrong role). Order matters: list
+    this AFTER ``_require_setup_access`` in ``dependencies`` so the identity
+    is attached first.
+    """
+
+    role_dependency = require_any_role(*roles)
+
+    async def dependency(request: Request) -> None:
+        if not read_station_setup().setup_complete:
+            return
+        role_dependency(request)
+
+    return dependency
+
+
 @public_router.get(
     "/station-state",
     response_model=StationSetupState,
@@ -1253,37 +1358,43 @@ def _is_local_client(request: Request) -> bool:
 )
 async def public_station_state(request: Request) -> StationSetupState:
     await _require_local_setup_request(request)
-    return read_station_setup()
+    state = read_station_setup()
+    if state.setup_complete and not _verify_setup_caller(request):
+        return state.signed_out_view()
+    return state
 
 
 @public_router.get(
     "/storage",
-    response_model=ManagedStorageStatus,
+    response_model=ManagedStorageStatusReport,
     summary="Read local durable storage setup state before staff auth exists",
-    responses=_LOCAL_SETUP_ACCESS_RESPONSES,
+    responses=_SETUP_AFTER_COMPLETE_RESPONSES,
+    dependencies=[Depends(_require_setup_access)],
 )
-async def public_storage_state(request: Request) -> ManagedStorageStatus:
-    await _require_local_setup_request(request)
-    return durable_storage_status()
+def public_storage_state() -> ManagedStorageStatusReport:
+    return durable_storage_status().report()
 
 
 @public_router.post(
     "/storage",
-    response_model=ManagedStorageStatus,
+    response_model=ManagedStorageStatusReport,
     summary="Prepare installer-managed durable storage before staff auth exists",
-    responses=_LOCAL_SETUP_ACCESS_RESPONSES,
-    dependencies=[Depends(_require_local_setup_request)],
+    responses=_SETUP_AFTER_COMPLETE_RESPONSES,
+    dependencies=[
+        Depends(_require_setup_access),
+        Depends(_require_setup_role("setup_admin")),
+    ],
 )
 def public_storage_setup(
     _payload: PublicStorageSetupRequest,
     request: Request,
-) -> ManagedStorageStatus:
+) -> ManagedStorageStatusReport:
     if os.environ.get("DATABASE_URL"):
-        return durable_storage_status()
+        return durable_storage_status().report()
     try:
         storage = _activate_storage(request, ensure_managed_storage())
         _ensure_storage_recording_target(request, storage)
-        return storage
+        return storage.report()
     except ManagedStorageError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1295,8 +1406,11 @@ def public_storage_setup(
     "/first-admin",
     response_model=FirstAdminSetupResponse,
     summary="Complete local first-admin setup before staff auth exists",
-    responses=_LOCAL_SETUP_ACCESS_RESPONSES,
-    dependencies=[Depends(_require_local_setup_request)],
+    responses=_SETUP_AFTER_COMPLETE_RESPONSES,
+    dependencies=[
+        Depends(_require_setup_access),
+        Depends(_require_setup_role("setup_admin")),
+    ],
 )
 def public_first_admin_setup(
     payload: FirstAdminSetupRequest,
@@ -1324,8 +1438,11 @@ def public_first_admin_setup(
     "/recovery-kit/acknowledge",
     response_model=StationSetupState,
     summary="Record that the operator saved or printed the one-time recovery kit",
-    responses=_LOCAL_SETUP_ACCESS_RESPONSES,
-    dependencies=[Depends(_require_local_setup_request)],
+    responses=_SETUP_AFTER_COMPLETE_RESPONSES,
+    dependencies=[
+        Depends(_require_setup_access),
+        Depends(_require_setup_role("setup_admin")),
+    ],
 )
 def public_recovery_kit_acknowledge(
     payload: RecoveryKitAcknowledgeRequest,
