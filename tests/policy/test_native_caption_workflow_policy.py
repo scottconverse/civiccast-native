@@ -1172,7 +1172,11 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # Actual collect-only runs on this tree returned (1806, 2007), including
     # the CI failure and the local red reproduction of this exact assertion.
     # The workflow's minimum floors and allowed margin remain unchanged.
-    assert (collect("not windows_only"), collect()) == (1806, 2007)
+    # 2026-09-10 beta.5.1 legacy-journal tolerance (PR #206): +13 platform-
+    # independent cases across tests/native/test_provision_{journal,models,
+    # orchestrator,cli}.py. Actual collect-only run on this tree returned
+    # (1819, 2020) -- CI failed on this exact assertion at (1806, 2007).
+    assert (collect("not windows_only"), collect()) == (1819, 2020)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
