@@ -35,3 +35,14 @@ Rules in force: no new features; finish and test what exists; commit after each 
 - Gate A runner: C:\actions-runner-gate-a (start run.cmd after a reboot). Evidence: C:\actions-runner-gate-a\_work\civiccast-native\civiccast-native\sandbox-lab\evidence\<sha>\.
 - Elevated helper: queue JSON {job_id, action: RunTrustedPowerShellScript, scriptPath} in C:\dev\ClaudeElevatedHelper\queue, then Start-ScheduledTask ClaudeElevatedDevHelper; kill-orphan-sandbox.ps1 clears a leftover vmmemWindowsSandbox.
 - Shared git stash must stay at exactly 1 entry. Never `git stash`.
+
+## Verification ledger
+- VERIFIED: the upgrade routing accepts only `<major>.<minor>.<patch>[-<label>.?<number>]`, so `beta.5.1` is not a legal version and the follow-up is `1.0.0-beta.6` | civiccast/native/upgrade/routing.py:150
+- VERIFIED: Gate A is dispatched with inputs `run_id` (build run id) and `lane` (full | cross-version-only | download-only-only) | .github/workflows/gate-a-station-acceptance.yml:75-89
+- VERIFIED: the publisher requires --kit-dir, --source-sha, --build-run-id, --gate-a-run-id, --tag, --truth-status and refuses without Gate A verdict artifacts (dry run output 2026-09-09) | scripts/release/publish_beta_candidate.py:1 (--help)
+- VERIFIED: the Gate A cross-version baseline pin schema (schema_version 2, source_sha, run_id, gate_a_run_id, installer_sha256, station_index_sha256, product_version, notes) | sandbox-lab/upgrade-baseline.json:1-11
+- VERIFIED: HANDOFF.md is gitignored in this repo and must be force-added | .gitignore:146
+- VERIFIED: 1.0.0-beta.5 is the product version on main 148c8d21 | civiccast/_native_version.py:34
+- VERIFIED: the sandbox soak lane's Run-SandboxSoak.ps1 takes -SeamlessReload, -OnAirBoundMinutes, -CaptionsOff, -WorkerEnv | sandbox-lab/Run-SandboxSoak.ps1:105-135
+- UNVERIFIED: the builder-reported line numbers for PRs #202, #206, #208, #209 - taken from builder and reviewer reports, not re-read by this session
+- UNVERIFIED: Gate A run 34423542177 lane 3 verdict - still running when this file was written
