@@ -192,6 +192,15 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   been run; ..." and a `failed` one "Private rehearsal did not complete ..."
   on green and yellow too, instead of "checks passed" / "ran, but" copy
   that the red-branch fix had left in place.
+- **Operator console: warning copy on the publish dashboard now meets WCAG
+  AA contrast in the light theme.** The "N required archive surfaces not
+  selected" notice (and the three sibling warnings beside Approve and
+  Publish) were set in `--cc-warn`, a pill/border amber that measures
+  2.74:1 on the card surface; axe-core flagged it as a serious
+  `color-contrast` violation in `ci-a11y`. A new `--cc-warn-text` token
+  (5.60:1 on `--cc-surface`, 5.15:1 on `--cc-surface-2`, 5.37:1 on
+  `--cc-paper` in light; the existing 8.90:1 amber in dark) is used for
+  warning text, and the publish-dashboard axe scan now runs in both themes.
 
 ## [1.0.0-beta.5] - 2026-09-09
 

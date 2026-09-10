@@ -516,6 +516,17 @@ async function mockHealth(
         started_at: '2026-05-22T18:10:00Z',
         status: 'needs_attention',
         safe_to_broadcast: 'yellow',
+        // F-21: RehearsalReport carries the run result and the required-items
+        // gate as separate fields. HEALTH_REPORT's only yellow check is
+        // optional, so the gate is yellow with nothing blocking or needing
+        // attention -- exactly what build_broadcast_gate returns for it.
+        rehearsal_result: 'passed',
+        gate: {
+          color: 'yellow',
+          blocking: [],
+          attention: [],
+          summary: 'All required items are ready.',
+        },
         message: 'Private rehearsal passed required checks with optional items still needing attention.',
         resident_preview: HEALTH_REPORT.resident_preview,
         checks: HEALTH_REPORT.checks,
@@ -752,8 +763,12 @@ test.describe('operator first mile', () => {
     await expect(page.getByText('Backup storage passed its round-trip check')).toBeVisible()
     await page.getByRole('button', { name: 'Check broadcast readiness' }).click()
     await expect(page.getByText('Broadcast readiness check result')).toBeVisible()
-    await expect(page.getByText('Private session')).toBeVisible()
-    await expect(page.getByText('Recording proof')).toBeVisible()
+    const resultAndGate = page.getByTestId('rehearsal-result-and-gate')
+    await expect(resultAndGate).toContainText('Rehearsal result:')
+    await expect(resultAndGate).toContainText('Passed')
+    await expect(resultAndGate).toContainText('All required items ready')
+    await expect(page.getByText('Private session', { exact: true })).toBeVisible()
+    await expect(page.getByText('Recording proof', { exact: true })).toBeVisible()
     await expect(page.getByText('Finalized private recording as asset rehearsal-test.')).toBeVisible()
     await page.getByRole('button', { name: 'Create support bundle' }).click()
     await expect(page.getByText('Support bundle ready')).toBeVisible()

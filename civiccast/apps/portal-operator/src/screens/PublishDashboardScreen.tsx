@@ -180,9 +180,12 @@ function SurfaceRow({
             ) : (
               <>
                 {surface.required && (
+                  // WCAG AA: --cc-err on --cc-err-soft measures 4.43:1 in the
+                  // dark theme (axe color-contrast, serious); --cc-ink on the
+                  // tint is the pattern ReadinessBadge already uses.
                   <span
                     className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase"
-                    style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}
+                    style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-ink)' }}
                   >
                     Required
                   </span>
@@ -677,7 +680,7 @@ function AssetPanel({
           {unselectedRequiredSurfaces.length > 0 && (
             <>
               {' '}
-              <span data-testid="required-surfaces-unselected" style={{ color: 'var(--cc-warn)' }}>
+              <span data-testid="required-surfaces-unselected" style={{ color: 'var(--cc-warn-text)' }}>
                 {unselectedRequiredSurfaces.length} required archive surface
                 {unselectedRequiredSurfaces.length === 1 ? '' : 's'} not selected (
                 {unselectedRequiredSurfaces.map((surface) => surface.label).join(', ')}); this
@@ -708,13 +711,13 @@ function AssetPanel({
             </span>
           )}
           {blockedSelectedSurface && (
-            <span className="text-xs" style={{ color: 'var(--cc-warn)' }}>
+            <span className="text-xs" style={{ color: 'var(--cc-warn-text)' }}>
               The selected surface is blocked. Complete its next step or uncheck it before
               publishing other ready surfaces.
             </span>
           )}
           {notReadySelectedSurfaces.length > 0 && (
-            <span className="text-xs" style={{ color: 'var(--cc-warn)' }}>
+            <span className="text-xs" style={{ color: 'var(--cc-warn-text)' }}>
               {notReadySelectedSurfaces.map((check) => check.label).join(', ')} failed its
               readiness check: {notReadySelectedSurfaces[0].message} Fix the listed
               configuration, rerun the readiness check, or uncheck it before publishing other
@@ -722,7 +725,7 @@ function AssetPanel({
             </span>
           )}
           {!canPublish && (
-            <span className="text-xs" style={{ color: 'var(--cc-warn)' }}>
+            <span className="text-xs" style={{ color: 'var(--cc-warn-text)' }}>
               Publish operator role required to approve or retry surfaces.
             </span>
           )}
