@@ -2,14 +2,13 @@
 
 ## Current Release
 
-`v1.0.0-beta.4` is the current published release. The native beta.5 package is
-an unpublished candidate until the release owner publishes it and updates
-`release-truth.yaml`; do not treat a tester handoff or USB kit as a public
-release. For the current published beta.4 release,
+`v1.0.0-beta.5` is the current published release (2026-09-09), recorded as
+`current` in `release-truth.yaml`; do not treat a tester handoff or USB kit
+as a public release. For the current published beta.5 release,
 `setup.exe`, the five per-pack runtime `.ccpack` assets, a
 `SHA256SUMS.txt` checksum file, and `setup.exe.sidecar.json` metadata are
 attached to the
-[`v1.0.0-beta.4` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4)
+[`v1.0.0-beta.5` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5)
 as a **prerelease** -- watch
 <https://github.com/scottconverse/civiccast-native/releases> for Sergio's
 next check, not `scottconverse/civiccast` (the retired, separate WSL2-line
@@ -19,9 +18,10 @@ repository. See
 authored release-state record -- it is the single source of truth for which
 tag is current.
 
-`v1.0.0-beta.3` (the first downloadable release) is now superseded but
-still runs; see "Upgrading from `v1.0.0-beta.1`" below and "Release Build
-To Use" for the download-only path from `beta.3` to `beta.4`.
+`v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable release) are
+now superseded but still run; see "Upgrading from `v1.0.0-beta.1`" below and
+"Release Build To Use" for the download-only path from `beta.4` to `beta.5`
+(the same path `beta.3` took to `beta.4`).
 
 If Sergio/LPM is still on a USB-delivered `v1.0.0-beta.1` station, that
 install is also superseded but still runs; see "Upgrading from

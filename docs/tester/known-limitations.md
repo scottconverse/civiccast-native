@@ -2,9 +2,9 @@
 
 ## Release State
 
-`v1.0.0-beta.4` is the current release, a download-only upgrade for
-stations already on `v1.0.0-beta.3` (the first downloadable release, now
-superseded):
+`v1.0.0-beta.5` is the current release, a download-only upgrade for
+stations already on `v1.0.0-beta.4` (now superseded, as is `v1.0.0-beta.3`,
+the first downloadable release):
 `setup.exe` + `.ccpack` runtime packs + `SHA256SUMS.txt`, published as a
 prerelease at <https://github.com/scottconverse/civiccast-native/releases>.
 `v1.0.0-beta.1` (USB-delivered, no GitHub download) is also superseded.
