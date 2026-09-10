@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { getCivicCastVersion, getStaffIdentity } from '../../api/client'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router'
+import {
+  clearStoredStaffToken,
+  getCivicCastVersion,
+  getStaffIdentity,
+  signOutStaffSession,
+} from '../../api/client'
+import { RECOVERY_KIT_GATE_REASON, useRecoveryKitGateActive } from '../../auth/recoveryKitGate'
 import { ROLE_LABELS } from '../../auth/roles'
+import type { StaffIdentityResponse } from '../../types/api.generated'
 
 declare global {
   interface Window {
@@ -137,13 +145,7 @@ function operatorInitials(name: string | undefined): string {
   return parts.slice(0, 2).map((part) => part[0]?.toUpperCase()).join('')
 }
 
-function OperatorBadge() {
-  const identityQuery = useQuery({
-    queryKey: ['staff-identity'],
-    queryFn: getStaffIdentity,
-    retry: false,
-  })
-  const identity = identityQuery.data
+function OperatorBadge({ identity }: { identity: StaffIdentityResponse | undefined }) {
   const roleTitle = identity?.roles?.map((role) => ROLE_LABELS[role]).join(', ') || 'No roles'
   return (
     <div
@@ -154,6 +156,68 @@ function OperatorBadge() {
     >
       {operatorInitials(identity?.operator_display_name)}
     </div>
+  )
+}
+
+/**
+ * "Sign out" for THIS browser (2026-09-09 beta.5 walkthrough: the console had
+ * no sign-out at all -- the badge was display-only). Ends the server-side
+ * session, forgets the stored token, drops the cached identity, and lands
+ * on First Setup's sign-in card. The local half always runs, even when the
+ * server call fails: a browser that cannot reach the station must still be
+ * able to forget its token.
+ */
+function SignOutButton() {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const kitGateActive = useRecoveryKitGateActive()
+  const signOut = useMutation({
+    mutationFn: async () => {
+      try {
+        await signOutStaffSession()
+      } catch {
+        // Server unreachable or token already dead: local sign-out still happens.
+      }
+    },
+    onSettled: () => {
+      clearStoredStaffToken()
+      queryClient.removeQueries({ queryKey: ['staff-identity'] })
+      navigate('/setup', { replace: true })
+    },
+  })
+  const title = kitGateActive ? RECOVERY_KIT_GATE_REASON : 'Sign out of this browser'
+  return (
+    <button
+      type="button"
+      onClick={() => signOut.mutate()}
+      disabled={signOut.isPending || kitGateActive}
+      aria-disabled={kitGateActive || undefined}
+      title={title}
+      className="inline-flex h-8 items-center justify-center rounded-md px-2.5 text-xs font-semibold"
+      style={{
+        background: 'transparent',
+        border: '1px solid var(--cc-line)',
+        color: 'var(--cc-ink-2)',
+        opacity: kitGateActive ? 0.55 : 1,
+        cursor: kitGateActive ? 'not-allowed' : 'pointer',
+      }}
+    >
+      {signOut.isPending ? 'Signing out…' : 'Sign out'}
+    </button>
+  )
+}
+
+function SessionControls() {
+  const identityQuery = useQuery({
+    queryKey: ['staff-identity'],
+    queryFn: getStaffIdentity,
+    retry: false,
+  })
+  return (
+    <>
+      <OperatorBadge identity={identityQuery.data} />
+      {identityQuery.isSuccess && <SignOutButton />}
+    </>
   )
 }
 
@@ -222,7 +286,7 @@ export function TopBar({ showMenuButton = false, onMenuClick }: TopBarProps = {}
           className="h-6 w-px"
           style={{ background: 'var(--cc-line)' }}
         />
-        <OperatorBadge />
+        <SessionControls />
       </div>
     </header>
   )

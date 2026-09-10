@@ -91,3 +91,56 @@ describe('Sidebar role and complexity controls', () => {
     expect(setupGroup.hasAttribute('open')).toBe(true)
   })
 })
+
+describe('Sidebar recovery-kit gate (2026-09-09 walkthrough)', () => {
+  it('holds every destination, with the reason as its title, while a first-setup kit awaits confirmation', () => {
+    const onNavigate = vi.fn()
+    const { getAllByRole, getByRole } = render(
+      <MemoryRouter>
+        <Sidebar route="setup" onNavigate={onNavigate} roles={['setup_admin']} navigationLocked />
+      </MemoryRouter>,
+    )
+
+    const rows = getAllByRole('button').filter((button) => button.hasAttribute('aria-disabled'))
+    expect(rows.length).toBeGreaterThan(5)
+    for (const row of rows as HTMLButtonElement[]) {
+      expect(row.disabled).toBe(true)
+      expect(row.getAttribute('title')).toMatch(/recovery kit/i)
+    }
+    fireEvent.click(getByRole('button', { name: 'Readiness' }))
+    expect(onNavigate).not.toHaveBeenCalled()
+  })
+
+  it('leaves the Manual row live while the kit is pending -- the public manual is exempt from the bounce', () => {
+    const onNavigate = vi.fn()
+    const { getByRole } = render(
+      <MemoryRouter>
+        <Sidebar route="setup" onNavigate={onNavigate} roles={['setup_admin']} navigationLocked />
+      </MemoryRouter>,
+    )
+
+    const manual = getByRole('button', { name: 'Manual' }) as HTMLButtonElement
+    expect(manual.disabled).toBe(false)
+    expect(manual.hasAttribute('aria-disabled')).toBe(false)
+    expect(manual.getAttribute('title')).toBeNull()
+    fireEvent.click(manual)
+    expect(onNavigate).toHaveBeenCalledWith('help')
+
+    // Every other destination is still held.
+    const readiness = getByRole('button', { name: 'Readiness' }) as HTMLButtonElement
+    expect(readiness.disabled).toBe(true)
+    fireEvent.click(readiness)
+    expect(onNavigate).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves navigation live once the kit is confirmed', () => {
+    const onNavigate = vi.fn()
+    const { getByRole } = render(
+      <MemoryRouter>
+        <Sidebar route="setup" onNavigate={onNavigate} roles={['setup_admin']} navigationLocked={false} />
+      </MemoryRouter>,
+    )
+    fireEvent.click(getByRole('button', { name: 'Readiness' }))
+    expect(onNavigate).toHaveBeenCalledWith('health')
+  })
+})

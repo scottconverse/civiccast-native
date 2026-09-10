@@ -6,6 +6,7 @@
 
 import { useState } from 'react'
 import { Link } from 'react-router'
+import { RECOVERY_KIT_GATE_REASON } from '../../auth/recoveryKitGate'
 
 import type { StaffIdentityResponse } from '../../types/api.generated'
 
@@ -65,6 +66,11 @@ interface NavItem {
    *  itself must still gate by role — this filter is a UX dead-end fix
    *  (UX-1, S26 gauntletgate), not a security boundary. */
   requiredRoles?: RoleName[]
+  /** Stays clickable while the first-setup recovery kit awaits confirmation.
+   *  Only the public manual (/help) qualifies: it is one of routes.ts's
+   *  isPublicRoute paths, so App.tsx's kit bounce lets it through, and an
+   *  operator stuck on the kit may need the manual to finish saving it. */
+  availableWhileKitPending?: boolean
 }
 
 interface NavSection {
@@ -84,7 +90,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Help',
     summary: 'Operator manual, glossary, and provider setup guides',
     collapsedByDefault: true,
-    items: [{ id: 'help', label: 'Manual' }],
+    items: [{ id: 'help', label: 'Manual', availableWhileKitPending: true }],
   },
   {
     label: 'Setup',
@@ -179,6 +185,10 @@ const NAV_SECTIONS: NavSection[] = [
 interface SidebarProps {
   route: RouteId | null
   onNavigate: (id: RouteId) => void
+  /** True while a first-setup recovery kit is waiting to be confirmed in
+   *  this tab: every entry renders disabled with the reason as its title, so
+   *  the operator cannot leave the kit before saving or printing it. */
+  navigationLocked?: boolean
   /** Roles held by the current operator. When undefined, role-filtered
    *  items are hidden by default (fail-closed). Callers that don't have
    *  identity loaded yet should pass undefined and re-render once the
@@ -200,12 +210,20 @@ function NavRow({
   item,
   active,
   onClick,
+  locked = false,
 }: {
   item: NavItem
   active: boolean
   onClick: () => void
+  /** Navigation is held while the one-time recovery kit awaits confirmation. */
+  locked?: boolean
 }) {
-  const disabled = item.disabled ?? false
+  const disabled = (item.disabled ?? false) || locked
+  const title = locked
+    ? RECOVERY_KIT_GATE_REASON
+    : disabled && item.plannedLabel
+      ? `${item.label} is planned for a later public-beta update.`
+      : undefined
   return (
     <button
       type="button"
@@ -213,7 +231,7 @@ function NavRow({
       aria-current={active ? 'page' : undefined}
       aria-disabled={disabled || undefined}
       disabled={disabled}
-      title={disabled && item.plannedLabel ? `${item.label} is planned for a later public-beta update.` : undefined}
+      title={title}
       className="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm transition-colors"
       style={{
         background: active ? 'var(--cc-brand-soft)' : 'transparent',
@@ -274,6 +292,7 @@ function Section({
   route,
   onNavigate,
   collapsedByDefault = false,
+  locked = false,
 }: {
   label: string
   summary: string
@@ -281,6 +300,7 @@ function Section({
   route: RouteId | null
   onNavigate: (id: RouteId) => void
   collapsedByDefault?: boolean
+  locked?: boolean
 }) {
   // If every item in the section was filtered out by role gating, hide
   // the section header too — empty groups look like a load failure.
@@ -322,6 +342,7 @@ function Section({
               item={item}
               active={route === item.id}
               onClick={() => onNavigate(item.id)}
+              locked={locked && !item.availableWhileKitPending}
             />
           ))}
         </div>
@@ -330,7 +351,7 @@ function Section({
   )
 }
 
-export function Sidebar({ route, onNavigate, roles }: SidebarProps) {
+export function Sidebar({ route, onNavigate, roles, navigationLocked = false }: SidebarProps) {
   // Filter each section's items by the current identity's roles. The
   // PaywallScreen Forbidden banner remains the defense-in-depth for any
   // user who reaches the URL directly. See UX-1 (S26 gauntletgate).
@@ -362,6 +383,7 @@ export function Sidebar({ route, onNavigate, roles }: SidebarProps) {
             collapsedByDefault={section.collapsedByDefault}
             route={route}
             onNavigate={onNavigate}
+            locked={navigationLocked}
           />
         ))}
       </nav>

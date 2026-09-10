@@ -961,6 +961,45 @@ def revoke_other_operator_sessions(token: str) -> int:
     return revoked_count
 
 
+def revoke_operator_session(token: str) -> None:
+    """Sign out exactly the operator-console session that is calling.
+
+    The operator console's "Sign out" control (2026-09-09 beta.5 clean-machine
+    walkthrough: there was no sign-out at all -- the only way to end a
+    browser's session was to wait for 20 other sign-ins to evict it or use
+    "Sign out other sessions" from a *different* browser). This is the
+    complement of :func:`revoke_other_operator_sessions`: it removes the
+    caller's own entry from ``operator_console.tokens`` and leaves every
+    other signed-in browser untouched.
+
+    ``token`` is the caller's own already-verified bearer token (the plain
+    value, not a hash). Raises :class:`StationAuthError` when it does not
+    match any current operator-console session, so a caller authenticated
+    some other way (an env-configured or DB-issued staff token) is reported
+    back to the route, which then decides how to end *that* kind of session.
+    """
+
+    raw = _load_raw_state()
+    console = raw.get("operator_console")
+    if not isinstance(console, dict):
+        raise StationAuthError("No operator-console session exists to revoke.")
+    entries = _operator_token_entries(console)
+    remaining = [
+        entry
+        for entry in entries
+        if not hmac.compare_digest(
+            _hash_token(token, salt=entry["token_salt"]), entry["token_hash"]
+        )
+    ]
+    if len(remaining) == len(entries):
+        raise StationAuthError("Invalid staff bearer token.")
+    raw["operator_console"] = {
+        "tokens": remaining,
+        "rotated_at": datetime.now(UTC).isoformat(),
+    }
+    _save_raw_state(raw)
+
+
 def regenerate_recovery_kit() -> RecoveryKit:
     """Mint a fresh 8-code recovery kit for an already-authenticated admin.
 

@@ -265,6 +265,21 @@ station and would silently mean nothing was actually being backed up.
 
 ### Managing Your Own Sign-In {#managing-sign-in}
 
+- **Sign out.** The **Sign out** button at the top right of every console
+  screen ends *this* browser's session on the station, forgets the stored
+  sign-in, and returns you to the First Setup sign-in card. Every other
+  browser or device that is signed in stays signed in. Use it on a shared
+  or borrowed computer.
+- **The recovery kit stays on screen until you confirm it.** During
+  first-run setup the one-time recovery kit (admin username, admin
+  password, and the 8 emergency codes) remains on the First Setup screen
+  — through a reload, a stray click, or a bounce back to the screen —
+  until you have saved or printed it and pressed **Continue to the
+  console**. While it is waiting, the navigation and **Sign out** are held
+  so you cannot leave it behind by accident. Closing the browser tab
+  entirely is the one thing that discards it; if that happens, sign in and
+  use **Regenerate recovery kit** below.
+
 Open **Setup → Station Profile** and find the **Security** panel for two
 account-safety actions, both available to `setup_admin`:
 
@@ -751,8 +766,12 @@ bounded recorded-media workflow described in Section A.
 
 After install, open the operator console at `http://localhost:8000/operator/`
 (or the installer-provided operator handoff URL), confirm **System Health**
-is green, save the recovery kit, and run a private first-broadcast
-rehearsal before the first public meeting.
+is green, save the recovery kit (it stays on the First Setup screen until
+you confirm you have saved or printed it), and run a private
+first-broadcast rehearsal before the first public meeting. First Setup
+tells the browser this is a new-account form, so a saved password from
+another site is never painted into it; type the admin username and
+password yourself.
 
 ### Updating To A New Version {#upgrade-path}
 

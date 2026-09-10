@@ -12,6 +12,9 @@ interface LayoutProps {
    *  hide role-gated nav entries (UX-1, S26 gauntletgate). Undefined while
    *  identity is loading — role-gated entries fail closed in that state. */
   roles?: readonly RoleName[]
+  /** Forwarded to the Sidebar: hold every nav entry while the first-setup
+   *  recovery kit awaits confirmation (see auth/recoveryKitGate.ts). */
+  navigationLocked?: boolean
 }
 
 /** DOM id of the operator shell's `<main>` landmark. Shared by the skip
@@ -69,11 +72,13 @@ function MobileNavigationDrawer({
   onNavigate,
   onClose,
   roles,
+  navigationLocked = false,
 }: {
   route: RouteId | null
   onNavigate: (id: RouteId) => void
   onClose: () => void
   roles?: readonly RoleName[]
+  navigationLocked?: boolean
 }) {
   const drawerRef = useRef<HTMLDivElement | null>(null)
   useFocusTrap(drawerRef)
@@ -103,7 +108,7 @@ function MobileNavigationDrawer({
           boxShadow: 'var(--cc-shadow-lg)',
         }}
       >
-        <Sidebar route={route} onNavigate={onNavigate} roles={roles} />
+        <Sidebar route={route} onNavigate={onNavigate} roles={roles} navigationLocked={navigationLocked} />
       </div>
     </>
   )
@@ -130,7 +135,7 @@ function useIsMobile(): boolean {
   return isMobile
 }
 
-export function Layout({ route, onNavigate, children, roles }: LayoutProps) {
+export function Layout({ route, onNavigate, children, roles, navigationLocked = false }: LayoutProps) {
   const isMobile = useIsMobile()
   const [drawerOpen, setDrawerOpen] = useState(false)
 
@@ -178,6 +183,7 @@ export function Layout({ route, onNavigate, children, roles }: LayoutProps) {
             onNavigate={handleNavigate}
             onClose={() => setDrawerOpen(false)}
             roles={roles}
+            navigationLocked={navigationLocked}
           />
         )}
       </div>
@@ -194,7 +200,7 @@ export function Layout({ route, onNavigate, children, roles }: LayoutProps) {
     >
       <SkipToContentLink />
       <TopBar />
-      <Sidebar route={route} onNavigate={onNavigate} roles={roles} />
+      <Sidebar route={route} onNavigate={onNavigate} roles={roles} navigationLocked={navigationLocked} />
       <main
         id={MAIN_CONTENT_ID}
         tabIndex={-1}

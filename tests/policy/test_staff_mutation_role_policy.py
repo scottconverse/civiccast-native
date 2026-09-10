@@ -50,7 +50,19 @@ _SKIP_PARTS = {"tests", "test", "__pycache__", "alembic"}
 # way the 15 out-of-scope non-staff routes (setup nonce-gated, public
 # contribute/subscribe, Stripe webhook, AP inbox) are handled by simply
 # not being under /api/staff.
-ALLOWED_UNGUARDED_STAFF_MUTATION_ROUTES: frozenset[tuple[str, str]] = frozenset()
+ALLOWED_UNGUARDED_STAFF_MUTATION_ROUTES: frozenset[tuple[str, str]] = frozenset(
+    {
+        # Ending your own session is never a privileged action, so there is no
+        # role that could be required here that every authenticated caller does
+        # not already hold. `staff_auth_middleware` has already verified the
+        # bearer token before the handler runs, and the handler revokes exactly
+        # the session that called it (civiccast/auth/router.py) -- it cannot
+        # touch another operator's session. The complement action, "sign out
+        # other sessions" (POST /api/staff/installer/sessions/revoke-others),
+        # IS privileged and is role-guarded.
+        ("POST", "/api/staff/auth/sign-out"),
+    }
+)
 
 
 def _src(node: ast.AST) -> str:

@@ -209,8 +209,8 @@ test('@fullstack @realboundary loopback-only setup prepares storage and creates 
   await page.getByLabel('Station name').fill('Pinegrove School Board')
   await page.getByLabel('Admin display name').fill('Avery Admin')
   await page.getByLabel('Admin username').fill('avery')
-  await page.locator('#admin_password').fill('correct horse battery staple')
-  await page.locator('#confirm_password').fill('correct horse battery staple')
+  await page.locator('#first-setup-admin-key-phrase').fill('correct horse battery staple')
+  await page.locator('#first-setup-admin-key-phrase-confirm').fill('correct horse battery staple')
   await page
     .getByLabel('Where will you keep the recovery kit?')
     .fill('printed and stored in the clerk safe')
