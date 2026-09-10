@@ -135,6 +135,7 @@ import type {
   SourceSetupSampleUploadResponse,
   StaffEgressChannelSummary,
   StaffIdentityResponse,
+  StaffSignOutResponse,
   StationAppConfig,
   StationAppConfigUpdate,
   AppBuildRecord,
@@ -677,6 +678,18 @@ export function revokeOtherOperatorSessions(): Promise<RevokeOtherSessionsRespon
   return request<RevokeOtherSessionsResponse>('/api/staff/installer/sessions/revoke-others', {
     method: 'POST',
   })
+}
+
+/**
+ * End THIS browser's own staff session on the server (the mirror of
+ * revokeOtherOperatorSessions: that keeps the caller and ends the rest;
+ * this ends the caller and keeps the rest). Any role may call it. Callers
+ * must still clearStoredStaffToken() afterwards -- and should do so even
+ * when this request fails, because a browser that cannot reach the station
+ * must still be able to forget its token.
+ */
+export function signOutStaffSession(): Promise<StaffSignOutResponse> {
+  return request<StaffSignOutResponse>('/api/staff/auth/sign-out', { method: 'POST' })
 }
 
 /**

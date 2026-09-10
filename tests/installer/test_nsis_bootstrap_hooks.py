@@ -27,7 +27,10 @@ pristine Windows Sandbox that every prior proof run used:
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -963,6 +966,28 @@ def test_bl02_the_exit_124_message_is_conditional_on_what_containment_achieved()
     )
 
 
+def test_containment_treats_sc_config_1060_as_confirmed_not_unconfirmed() -> None:
+    """Defect 5 of the beta.5.1 batch. `sc config CivicCastSupervisor
+    start= demand` returning 1060 (ERROR_SERVICE_DOES_NOT_EXIST) means no
+    service is registered at all -- a FRESH_INSTALL failure -- so nothing can
+    auto-start onto the new payload. That IS containment. It used to be
+    logged as "NOT confirmed ... the service may still auto-start", sending
+    the operator to disarm a service that does not exist."""
+    source = _hooks_source()
+    fail_macro = _code(_slice(source, "!macro CIVICCAST_FAIL CODE TEXT", "!macroend"))
+    containment = _slice(fail_macro, '${If} $R8 == "0"', "${Else}")
+    assert '${AndIf} $R9 == "0"' in containment
+    assert '${ElseIf} $R8 == "0"' in containment and '${AndIf} $R9 == "1060"' in containment
+    assert containment.count('StrCpy $CIVICCAST_CONTAINED "1"') == 2, (
+        "both the stopped+demand case and the no-service (1060) case must set CONTAINED"
+    )
+    assert "sc config returned 1060" in containment
+    unconfirmed = _slice(fail_macro, "${Else}", "${EndIf}")
+    assert "NOT confirmed" in unconfirmed, (
+        "every OTHER combination must still be reported as unconfirmed"
+    )
+
+
 def test_ma17_the_uninstall_warns_that_it_destroys_the_pack_cache() -> None:
     r"""<installer-path-audit MA-17> KNOWN LIMITATION, stated not hidden.
 
@@ -1051,6 +1076,319 @@ def test_bl13_an_unprovable_runtime_selector_aborts_the_install() -> None:
     assert "ActiveRuntime" in arm, "the message must name the value an administrator has to set"
 
 
+OWNERSHIP_OBSERVATION_FILE = "$COMMONPROGRAMDATA\\CivicCast\\provision\\ownership-observation.txt"
+OWNERSHIP_RECOVERY_DOC = "$COMMONPROGRAMDATA\\CivicCast\\provision\\OWNERSHIP-RECOVERY.md"
+
+
+def _d4_provision_step(source: str) -> str:
+    return _slice(
+        source,
+        '!insertmacro CIVICCAST_STEP "step d4-provision: begin"',
+        "K1 FIX: FLAT-LAYOUT STATION ACTIVATION",
+    )
+
+
+def test_ownership_claim_observation_is_read_back_into_the_progress_log() -> None:
+    r"""beta.5.1 field defect (2026-09-09, dirty test box with uninstall
+    history): the Rust CLI refused the ownership claim on an `Unknown` it
+    never named -- its only detail line went to stderr, i.e. the NSIS details
+    pane, which is not persisted anywhere. The CLI now writes a one-line
+    observation file and the d4 step MUST read it back into
+    install-progress.log via CIVICCAST_STEP, on every path, so the log
+    carries the hive/SID, view, error kind and OS error code."""
+    step = _code(_d4_provision_step(_hooks_source()))
+    read_at = step.index(f'FileOpen $R7 "{OWNERSHIP_OBSERVATION_FILE}" r')
+    assert f'${{If}} ${{FileExists}} "{OWNERSHIP_OBSERVATION_FILE}"' in step
+    assert "FileRead $R7 $R6" in step
+    assert "FileClose $R7" in step
+    logged_at = step.index(
+        '!insertmacro CIVICCAST_STEP "step d4-provision: runtime ownership: $R6"'
+    )
+    returned_at = step.index('!insertmacro CIVICCAST_STEP "step d4-provision: returned $0"')
+    cleared_at = step.index(f'Delete "{OWNERSHIP_OBSERVATION_FILE}"')
+    assert cleared_at < returned_at, (
+        "a previous run's observation must be deleted before the CLI runs, so the read-back "
+        "can only report THIS run's observation"
+    )
+    first_branch_at = step.index("${If} $0 == 0")
+    assert returned_at < read_at < logged_at < first_branch_at, (
+        "the observation must be read and logged after the CLI returns and BEFORE any "
+        "exit-code branch, so every path (including the corroborated claim) is logged"
+    )
+    # A missing file must not leave $R6 empty: the dialog embeds it.
+    assert 'StrCpy $R6 "(no ownership observation file was written' in step
+    # No TrimNewLines: Tauri's NSIS 3.11 ships FileFunc without it, so the
+    # Rust writer emits the line WITHOUT a trailing newline instead.
+    assert "TrimNewLines" not in step
+
+
+def test_the_exit_85_dialog_carries_the_actual_observation_not_a_guess() -> None:
+    """Defect 4 of the beta.5.1 batch: the dialog used to say the cause was
+    "most often a permissions problem on HKEY_USERS" -- a guess that was
+    wrong on the box it was measured on. It must now embed the observation
+    the CLI recorded ($R6), say that the log and the recovery document carry
+    it (both must exist: the read-back above and the Rust writer), and state
+    the untouched-database fact the new step ORDER makes true."""
+    source = _hooks_source()
+    arm = _slice(_d4_provision_step(source), "${ElseIf} $0 == 85", "${Else}")
+    assert "permissions problem on HKEY_USERS" not in arm
+    assert "What setup observed: $R6" in arm
+    assert OWNERSHIP_RECOVERY_DOC in arm
+    assert "$COMMONPROGRAMDATA\\CivicCast\\install-progress.log" in arm
+    assert "Setup stopped before provisioning" in arm
+    # Narrowed (PR #209 review): only the provisioning outputs are promised
+    # untouched -- on the upgrade path $INSTDIR was already replaced by
+    # d3-engine/the Tauri section, so "nothing was deleted" would be false.
+    assert "postgresql.conf, pg_hba.conf and your database credential were not touched" in arm
+    assert "Nothing was deleted" not in arm
+    assert "ActiveRuntime" in arm and r"$\"native$\"" in arm
+
+    # The Rust side is the writer of both files the dialog cites.
+    registration = (
+        BOOTSTRAP_HOOKS_NSH.parent / "src" / "native_service_registration.rs"
+    ).read_text(encoding="utf-8")
+    assert (
+        'pub const OWNERSHIP_OBSERVATION_FILE_NAME: &str = "ownership-observation.txt";'
+        in registration
+    )
+    assert (
+        'pub const OWNERSHIP_RECOVERY_DOCUMENT_FILE_NAME: &str = "OWNERSHIP-RECOVERY.md";'
+        in registration
+    )
+
+
+def test_the_exit_87_dialog_names_the_other_product_and_never_the_registry_edit() -> None:
+    """Round 3 of the beta.5 ownership defect (corrected field report,
+    2026-09-09): the refused box had a REAL `HKCU\\...\\Uninstall\\CivicCast
+    Installer` registration (3.0.0-beta1), not an unreadable hive, and the
+    decision table sent it through the exit-85 arm whose text told the
+    operator to set ActiveRuntime by hand. A genuinely registered other
+    product is now CLI exit 87 -> its own installer code, its own dialog:
+    the observation ($R6) leads with the product, and the remedy is to
+    uninstall it (or cutover from it) -- no registry instruction."""
+    source = _hooks_source()
+    assert "!define CIVICCAST_EXIT_D4_OTHER_PRODUCT          135" in source
+    step = _d4_provision_step(source)
+    assert "${ElseIf} $0 == 87" in step
+    arm = _slice(step, "${ElseIf} $0 == 87", "${ElseIf} $0 == 85")
+    assert "${CIVICCAST_EXIT_D4_OTHER_PRODUCT}" in arm
+    assert "What setup observed: $R6" in arm
+    assert "found another CivicCast product installed on this machine" in arm
+    assert "Settings > Apps" in arm
+    assert "cutover-to-native" in arm
+    assert OWNERSHIP_RECOVERY_DOC in arm
+    assert "$COMMONPROGRAMDATA\\CivicCast\\install-progress.log" in arm
+    assert "postgresql.conf, pg_hba.conf and your database credential were not touched" in arm
+    code_only = _code(arm)
+    assert "ActiveRuntime" not in code_only, (
+        "a real other-product refusal must not tell the operator to edit ActiveRuntime"
+    )
+    assert "permissions" not in code_only
+
+    # The 85 arm keeps the registry remedy but no longer says "could not
+    # determine" as if the cause were unknowable, and never guesses at
+    # permissions.
+    arm_85 = _code(_slice(step, "${ElseIf} $0 == 85", "${Else}"))
+    assert "permissions problem" not in arm_85
+    assert "could not establish which CivicCast runtime owns this machine" in arm_85
+    assert r"$\"native$\"" in arm_85
+    assert "Settings > Apps" not in arm_85
+
+    # The Rust side: exit 87 exists, is what a real Present maps to, and the
+    # inert-leftover claim (no distro, no autostart, previous native
+    # hand-off recorded) is a ClaimNative with a warning, not a refusal.
+    registration = (
+        BOOTSTRAP_HOOKS_NSH.parent / "src" / "native_service_registration.rs"
+    ).read_text(encoding="utf-8")
+    assert "pub const OTHER_PRODUCT_PRESENT_EXIT_CODE: i32 = 87;" in registration
+    assert (
+        "SelectorClaimAction::LeaveOtherProductPresent => Some(OTHER_PRODUCT_PRESENT_EXIT_CODE)"
+        in registration
+    )
+    uninstall = (BOOTSTRAP_HOOKS_NSH.parent / "src" / "native_uninstall.rs").read_text(
+        encoding="utf-8"
+    )
+    assert "pub fn classify_wsl_product_for_claim" in uninstall
+    assert "WslProductVerdict::PresentInert" in uninstall
+    assert "WslProductVerdict::Absent | WslProductVerdict::PresentInert => {" in uninstall
+
+
+def _nsis_max_strlen() -> int:
+    """NSIS_MAX_STRLEN, MEASURED from the toolchain (`makensis -HDRINFO`)
+    whenever a makensis is reachable -- Tauri's own copy under
+    %LOCALAPPDATA%\\tauri\\NSIS first, then PATH. Only when neither exists
+    does this fall back to what that measurement gave for Tauri's NSIS 3.11
+    on 2026-09-09 (1024); a toolchain built with a different limit is then
+    caught by whoever has it installed, not by a number in this file."""
+    candidates: list[Path] = []
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        candidates.append(Path(local_app_data) / "tauri" / "NSIS" / "Bin" / "makensis.exe")
+    on_path = shutil.which("makensis")
+    if on_path:
+        candidates.append(Path(on_path))
+    for exe in candidates:
+        if not exe.is_file():
+            continue
+        try:
+            header = subprocess.run(
+                [str(exe), "-HDRINFO"], capture_output=True, text=True, timeout=60, check=False
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        measured = re.search(r"NSIS_MAX_STRLEN=(\d+)", header)
+        if measured is not None:
+            return int(measured.group(1))
+    return 1024
+
+
+def _alert_log_line_overhead(source: str) -> tuple[int, int]:
+    """The characters CIVICCAST_ALERT puts AROUND ${TEXT} in the one string
+    NSIS builds for `FileWrite $2 "$9${TEXT}$\\r$\\n"`: CIVICCAST_STEP's `$9`
+    timestamp (`[YYYY-MM-DD HH:MM:SS] `), the `ALERT: ` prefix, and the
+    trailing CRLF -- which is in the same buffer, so it counts (round 5:
+    the old model stopped at "ALERT: " and was 2 short). Returned under the
+    same two conventions the static text is counted in: runtime (`$\\r$\\n`
+    is two characters) and pessimistic source-literal (six)."""
+    step = _slice(source, "!macro CIVICCAST_STEP TEXT", "!macroend")
+    stamp_match = re.search(r'StrCpy \$9 "([^"]*)"', step)
+    assert stamp_match is not None, "CIVICCAST_STEP no longer builds its timestamp in $9"
+    # ${GetTime} "L": $2 day, $3 month, $4 year, $6 hour, $7 minute,
+    # $8 second -- four digits for the year, two for everything else.
+    stamp = stamp_match.group(1).replace("$4", "2026")
+    stamp = re.sub(r"\$[2-8]", "09", stamp)
+    assert "$" not in stamp, stamp
+    write_match = re.search(r'FileWrite \$2 "\$9\$\{TEXT\}([^"]*)"', step)
+    assert write_match is not None, "CIVICCAST_STEP no longer writes $9${TEXT} in one FileWrite"
+    trailer = write_match.group(1)
+    alert = _slice(source, "!macro CIVICCAST_ALERT TEXT", "!macroend")
+    prefix_match = re.search(r'!insertmacro CIVICCAST_STEP "([^"]*)\$\{TEXT\}"', alert)
+    assert prefix_match is not None, (
+        "CIVICCAST_ALERT no longer prefixes ${TEXT} through CIVICCAST_STEP"
+    )
+    prefix = prefix_match.group(1)
+    runtime = len(stamp) + len(prefix) + len(trailer.replace("$\\r$\\n", "\r\n"))
+    pessimistic = len(stamp) + len(prefix) + len(trailer)
+    return runtime, pessimistic
+
+
+def test_the_exit_85_and_87_dialogs_fit_the_nsis_string_budget_with_the_observation() -> None:
+    """The exit-85 and exit-87 dialog strings embed the observation line
+    ($R6, capped at OWNERSHIP_OBSERVATION_LINE_MAX_CHARS by the Rust writer)
+    and CIVICCAST_ALERT wraps the result in a timestamp, "ALERT: " and a CRLF
+    before ONE FileWrite; the whole string must fit NSIS_MAX_STRLEN or the
+    log line (and the dialog) silently truncate -- for BOTH ownership arms
+    (round 3 added 87). Round 5 (delta review of round 4): every number here
+    is derived -- NSIS_MAX_STRLEN from makensis when present, the log-line
+    overhead from the CIVICCAST_STEP/CIVICCAST_ALERT macros, the two static
+    strings from the arms, the cap from the Rust constant -- so none can
+    drift; the floor on the cap is owned by the Rust lead tests, not by a
+    magic number duplicated here."""
+    source = _hooks_source()
+    step = _d4_provision_step(source)
+    registration = (
+        BOOTSTRAP_HOOKS_NSH.parent / "src" / "native_service_registration.rs"
+    ).read_text(encoding="utf-8")
+    cap = re.search(r"pub const OWNERSHIP_OBSERVATION_LINE_MAX_CHARS: usize = (\d+);", registration)
+    assert cap is not None
+    runtime_overhead, pessimistic_overhead = _alert_log_line_overhead(source)
+    assert 0 < runtime_overhead <= pessimistic_overhead
+    max_strlen = _nsis_max_strlen()
+    # NSIS_MAX_STRLEN counts the terminating NUL, so max_strlen - 1
+    # characters fit; keep one more in hand (the `< 1023` this test has
+    # asserted since round 2, now relative to the measured limit).
+    usable = max_strlen - 2
+    arms = {
+        "85": (
+            _slice(step, "${ElseIf} $0 == 85", "${Else}"),
+            "CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP",
+        ),
+        "87": (
+            _slice(step, "${ElseIf} $0 == 87", "${ElseIf} $0 == 85"),
+            "CIVICCAST_EXIT_D4_OTHER_PRODUCT",
+        ),
+    }
+    # Round 4 (hostile review of round 3): the budget is MEASURED from the
+    # real static strings on every run, under BOTH ways of counting them --
+    # the runtime expansion (`$\r$\n` -> CRLF, `$\"` -> `"`,
+    # `$COMMONPROGRAMDATA` -> C:\ProgramData, `$R6` -> the observation) and
+    # the pessimistic source-literal count (every `$\r$\n` at its six
+    # source characters, `$\"` at three), which is what a reviewer counting
+    # the .nsh by hand gets. The cap must fit under the LARGER of the two,
+    # so no hardcoded "564" can drift again. Whoever lengthens either dialog
+    # gets the exact numbers in the failure message.
+    static_lengths: dict[str, tuple[int, int]] = {}
+    for code, (arm, define) in arms.items():
+        text = re.search(rf'CIVICCAST_FAIL \$\{{{define}\}} "(.*)"', arm)
+        assert text is not None, code
+        literal = text.group(1)
+        runtime = (
+            literal.replace("$\\r$\\n", "\r\n")
+            .replace('$\\"', '"')
+            .replace("$COMMONPROGRAMDATA", "C:\\ProgramData")
+            .replace("$R6", "")
+        )
+        pessimistic = literal.replace("$COMMONPROGRAMDATA", "C:\\ProgramData").replace("$R6", "")
+        static_lengths[code] = (len(runtime), len(pessimistic))
+    line_cap = int(cap.group(1))
+    # Each convention carries its own overhead: the CRLF trailer is two
+    # characters at runtime and six in the source literal, like every other
+    # `$\\r$\\n` in the string.
+    conventions = (
+        ("runtime", 0, runtime_overhead),
+        ("pessimistic", 1, pessimistic_overhead),
+    )
+    max_fixed = max(
+        lengths[index] + overhead
+        for lengths in static_lengths.values()
+        for _label, index, overhead in conventions
+    )
+    max_safe_cap = usable - max_fixed
+    for code, lengths in static_lengths.items():
+        for label, index, overhead in conventions:
+            static = lengths[index]
+            total = static + line_cap + overhead
+            assert total <= usable, (
+                f"exit-{code} dialog ({label} count {static}) + observation cap {line_cap} "
+                f"+ log-line overhead {overhead} = {total} chars > {usable} "
+                f"(NSIS_MAX_STRLEN {max_strlen} - 2); the maximum safe "
+                f"OWNERSHIP_OBSERVATION_LINE_MAX_CHARS for the current text is {max_safe_cap}"
+            )
+    assert line_cap <= max_safe_cap, (line_cap, max_safe_cap, static_lengths)
+    # The FLOOR on the cap -- the exit-87 lead (user, product, version, an
+    # HKU\<SID> key, UninstallString) must survive it -- is owned by the Rust
+    # tests that build that lead at the constant's real value and assert it
+    # is whole. This is only a tripwire that those pins still exist; it
+    # duplicates no number.
+    for pin in (
+        "fn a_present_refusal_line_leads_with_the_product_and_maps_to_exit_87",
+        "fn a_long_username_never_cuts_the_exit_87_lead_mid_path",
+        "lead_end <= OWNERSHIP_OBSERVATION_LINE_MAX_CHARS - 64",
+    ):
+        assert pin in registration, f"the Rust floor pin {pin!r} is gone"
+
+
+def test_ownership_claim_runs_before_the_provisioning_engine_mutates_state() -> None:
+    """Defect 3: the claim used to run AFTER the Python engine had rewritten
+    postgresql.conf/pg_hba.conf and completed its journal, so a refused
+    install (exit 85) left the database configuration changed on a machine
+    setup then declared unowned. In run_native_provision the claim must now
+    precede the subprocess spawn."""
+    registration = (
+        BOOTSTRAP_HOOKS_NSH.parent / "src" / "native_service_registration.rs"
+    ).read_text(encoding="utf-8")
+    body = registration.split("pub fn run_native_provision(", 1)[1].split("\n}\n", 1)[0]
+    claim_at = body.index("crate::native_uninstall::claim_install_selector()")
+    spawn_at = body.index("std::process::Command::new(&python_exe)")
+    # Round 3: every refusal (85 unknown/unreadable, 87 other product) goes
+    # through refusal_exit_code before the spawn.
+    refusal_at = body.index("if let Some(exit_code) = refusal_exit_code(selector_claim.action)")
+    assert claim_at < refusal_at < spawn_at, (
+        "the ownership claim and its exit-85/87 refusal must both precede the provisioning "
+        "subprocess so a refused install leaves postgresql.conf/pg_hba.conf untouched"
+    )
+
+
 def test_ma08_activation_exit_codes_do_not_collapse_to_one_message() -> None:
     """MA-08. Five distinct activation exit codes shared one sentence about
     the station folder and the pack cache -- correct for 66-with-a-cache-miss
@@ -1086,7 +1424,7 @@ def test_ma28_the_cli_contract_comment_names_the_codes_that_actually_exist() -> 
         "the corrected comment must name what it is correcting, or the next "
         "person picking an exit code learns nothing from it"
     )
-    for code in ("83", "84", "85"):
+    for code in ("83", "84", "85", "86", "87"):
         assert code in band_comment, f"the new CLI code {code} must be recorded in the band comment"
     assert "40 unexpected fault" in band_comment, (
         "40 must be named as what it is -- a D3 engine phase code, not a CLI code"

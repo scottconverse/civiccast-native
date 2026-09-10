@@ -53,6 +53,7 @@ def _assert_staff_routes_registered() -> None:
     [
         ("POST", "/api/staff/records", {"summary_id": "summary-1", "summary_status": "approved"}),
         ("GET", "/api/staff/installer/first-run-plan", None),
+        ("POST", "/api/staff/auth/sign-out", None),
     ],
 )
 def test_missing_bearer_token_returns_401_for_registered_staff_routes(
@@ -428,3 +429,91 @@ def test_station_operator_token_always_carries_admin_scope(
         "publish_operator",
         "support_admin",
     }
+
+
+_FIRST_ADMIN_SETUP = {
+    "station_name": "Pinegrove School Board",
+    "admin_display_name": "Avery Admin",
+    "admin_username": "avery",
+    "admin_password": "correct horse battery staple",
+    "recovery_kit_destination": "printed and stored in the clerk safe",
+}
+_FIRST_ADMIN_LOGIN = {"admin_username": "avery", "admin_password": "correct horse battery staple"}
+
+
+def test_sign_out_revokes_only_the_calling_station_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """2026-09-09 walkthrough: the console had no sign-out. POST /api/staff/auth/
+    sign-out must end exactly the caller's operator-console session and leave
+    every other signed-in browser valid (the mirror of sessions/revoke-others)."""
+
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    client = TestClient(create_app())
+    setup = client.post("/api/setup/first-admin", json=_FIRST_ADMIN_SETUP)
+    assert setup.status_code == 200
+    other_browser_token = setup.json()["operator_console_token"]
+    caller_token = client.post("/api/setup/login", json=_FIRST_ADMIN_LOGIN).json()[
+        "operator_console_token"
+    ]
+
+    caller = TestClient(create_app(), headers={"Authorization": f"Bearer {caller_token}"})
+    other = TestClient(create_app(), headers={"Authorization": f"Bearer {other_browser_token}"})
+    assert caller.get("/api/staff/auth/me").status_code == 200
+
+    response = caller.post("/api/staff/auth/sign-out")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "signed_out"
+    assert body["session_revoked"] is True
+    # The caller's token is dead...
+    assert caller.get("/api/staff/auth/me").status_code == 401
+    # ...and the other browser is untouched.
+    assert other.get("/api/staff/auth/me").status_code == 200
+    # Signing out twice with the dead token is an ordinary 401, not a 500.
+    assert caller.post("/api/staff/auth/sign-out").status_code == 401
+
+
+def test_sign_out_revokes_a_lifecycle_store_token_through_the_store() -> None:
+    from civiccast.auth.store import InMemoryStaffTokenStore
+
+    store = InMemoryStaffTokenStore()
+    issued = store.issue_token(operator_id="operator-a", operator_display_name="Operator A")
+    app = create_app()
+    app.state.staff_token_store = store
+    client = TestClient(app, headers={"Authorization": f"Bearer {issued.secret}"})
+    assert client.get("/api/staff/auth/me").status_code == 200
+
+    response = client.post("/api/staff/auth/sign-out")
+
+    assert response.status_code == 200
+    assert response.json()["session_revoked"] is True
+    revoked = client.get("/api/staff/auth/me")
+    assert revoked.status_code == 401
+    assert "revoked" in revoked.json()["detail"]
+    assert any(
+        event.token_id == issued.metadata.token_id and event.event_type == "revoked"
+        for event in store.audit_events()
+    )
+
+
+def test_sign_out_with_an_env_configured_token_reports_it_cannot_be_revoked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "CIVICCAST_STAFF_TOKENS",
+        f"{_PUBLISH_TOKEN}:publish-1:Publish Operator:publish_operator,records_clerk",
+    )
+    client = TestClient(create_app(), headers={"Authorization": f"Bearer {_PUBLISH_TOKEN}"})
+
+    response = client.post("/api/staff/auth/sign-out")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "signed_out"
+    assert body["session_revoked"] is False
+    assert "CIVICCAST_STAFF_TOKENS" in body["message"]
+    # An env token has no server-side record to revoke: it still authenticates.
+    assert client.get("/api/staff/auth/me").status_code == 200

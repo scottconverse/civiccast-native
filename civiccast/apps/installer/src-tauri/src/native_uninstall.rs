@@ -56,7 +56,7 @@ pub const WSL_ARP_PROBE_LOADED_HIVES_ONLY: bool = true;
 
 const SELECTOR_KEY: &str = r"SOFTWARE\CivicCast";
 const SELECTOR_VALUE: &str = "ActiveRuntime";
-const WSL_ARP_KEY: &str =
+pub const WSL_ARP_KEY: &str =
     r"Software\Microsoft\Windows\CurrentVersion\Uninstall\CivicCast Installer";
 pub const SOLE_POSTCLEAR_EXIT_CODE: i32 = 73;
 /// `native_uninstall_preflight` returns `TransferAcknowledgmentRequired`
@@ -421,31 +421,48 @@ where
 }
 
 #[cfg(target_os = "windows")]
-fn probe_wsl_arp_view(access: u32) -> OtherProductState {
+pub(crate) fn probe_wsl_arp() -> OtherProductState {
+    probe_wsl_arp_observed().0
+}
+
+/// [`probe_wsl_arp`] with every individual registry observation it made
+/// kept alongside the combined verdict, so a caller that has to explain a
+/// refusal (the install-time ownership claim) can name the hive, view, error
+/// kind and raw error code instead of the bare word `Unknown`.
+///
+/// Field defect (beta.5, 2026-09-09): an elevated install on a machine with
+/// uninstall history got `Unknown` back from this probe, refused to claim
+/// ownership, and the only line naming WHY went to stderr -> the NSIS
+/// details pane -> nowhere. A non-elevated mirror of the probe read
+/// NotFound everywhere, so the failing observation was never identified.
+#[cfg(target_os = "windows")]
+fn probe_wsl_arp_observed() -> (OtherProductState, Vec<ProbeObservation>) {
+    const SOURCE: &str = "user-ARP";
+    let mut observations = Vec::new();
+
+    // Same-user, un-elevated case: both HKCU ARP views must agree Absent
+    // before we trust it; any denied/broken view is Unknown and blocks.
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    match hkcu.open_subkey_with_flags(WSL_ARP_KEY, KEY_READ | access) {
-        Ok(_) => OtherProductState::Present,
-        Err(error) => classify_registry_error(&error),
+    let current_user = current_user_name();
+    for (view, access) in [("64-bit", KEY_WOW64_64KEY), ("32-bit", KEY_WOW64_32KEY)] {
+        observations.push(observe_registry_open(
+            SOURCE,
+            "HKCU".to_string(),
+            view,
+            &hkcu,
+            WSL_ARP_KEY,
+            KEY_READ | access,
+            &current_user,
+        ));
     }
-}
-
-/// Probe one WOW64 view of the WSL ARP key under an arbitrary root (used for
-/// `HKEY_USERS\<SID>` roots; `subkey_prefix` is the SID subkey name).
-#[cfg(target_os = "windows")]
-fn probe_wsl_arp_view_under(root: &RegKey, subkey_prefix: &str, access: u32) -> OtherProductState {
-    let path = format!("{subkey_prefix}\\{WSL_ARP_KEY}");
-    match root.open_subkey_with_flags(&path, KEY_READ | access) {
-        Ok(_) => OtherProductState::Present,
-        Err(error) => classify_registry_error(&error),
+    let hkcu_state = combine_probe_results(observations.iter().map(|o| o.state));
+    if hkcu_state == OtherProductState::Present {
+        return (OtherProductState::Present, observations);
     }
-}
 
-/// Enumerate every other *loaded* user hive under `HKEY_USERS` and probe
-/// each (both WOW64 views) for the WSL ARP entry. See the module doc-comment
-/// and [`WSL_ARP_PROBE_LOADED_HIVES_ONLY`] for the loaded-hives-only
-/// limitation this intentionally does not solve.
-#[cfg(target_os = "windows")]
-fn probe_wsl_arp_hkey_users() -> OtherProductState {
+    // Elevated per-machine case: HKCU is the elevating admin's hive, so also
+    // check every other loaded user hive via HKEY_USERS (see module
+    // doc-comment for the loaded-hives-only limitation this does not solve).
     let hkey_users = RegKey::predef(HKEY_USERS);
     let names: Vec<String> = match hkey_users
         .enum_keys()
@@ -454,39 +471,1019 @@ fn probe_wsl_arp_hkey_users() -> OtherProductState {
         Ok(names) => names,
         // Enumeration itself failing (e.g. access denied) must fail closed:
         // it means we cannot rule out another loaded user owning WSL.
-        Err(_) => return OtherProductState::Unknown,
+        Err(error) => {
+            observations.push(ProbeObservation::from_registry_error(
+                SOURCE,
+                "HKU (hive enumeration)".to_string(),
+                "n/a",
+                &error,
+            ));
+            return (OtherProductState::Unknown, observations);
+        }
     };
-
-    combine_probe_results(
-        names
-            .into_iter()
-            .filter(|name| !should_skip_users_subkey(name))
-            .flat_map(|name| {
-                [
-                    probe_wsl_arp_view_under(&hkey_users, &name, KEY_WOW64_64KEY),
-                    probe_wsl_arp_view_under(&hkey_users, &name, KEY_WOW64_32KEY),
-                ]
-            }),
-    )
+    for name in names
+        .into_iter()
+        .filter(|name| !should_skip_users_subkey(name))
+    {
+        let owner = hive_owner_name(&hkey_users, &name);
+        for (view, access) in [("64-bit", KEY_WOW64_64KEY), ("32-bit", KEY_WOW64_32KEY)] {
+            observations.push(observe_registry_open(
+                SOURCE,
+                format!("HKU\\{name}"),
+                view,
+                &hkey_users,
+                &format!("{name}\\{WSL_ARP_KEY}"),
+                KEY_READ | access,
+                &owner,
+            ));
+        }
+    }
+    let state = combine_probe_results(observations.iter().map(|o| o.state));
+    (state, observations)
 }
 
-#[cfg(target_os = "windows")]
-pub(crate) fn probe_wsl_arp() -> OtherProductState {
-    // Same-user, un-elevated case: both HKCU ARP views must agree Absent
-    // before we trust it; any denied/broken view is Unknown and blocks.
-    let hkcu_state = combine_probe_results([
-        probe_wsl_arp_view(KEY_WOW64_64KEY),
-        probe_wsl_arp_view(KEY_WOW64_32KEY),
-    ]);
-    if hkcu_state == OtherProductState::Present {
-        return OtherProductState::Present;
+// ---------------------------------------------------------------------------
+// Install-time runtime-ownership evidence
+// ---------------------------------------------------------------------------
+
+/// The CivicCast WSL distro's registered `DistributionName`. MUST equal
+/// `civiccast.native.runtime_guard.WSL_DISTRO_NAME`; pinned cross-language
+/// by `tests/policy/test_native_installer_identity.py`.
+pub const WSL_DISTRO_NAME: &str = "CivicCast-Ubuntu-24.04";
+/// Per-user WSL distro registration subtree (relative to a loaded
+/// `HKEY_USERS\<SID>` hive). MUST equal
+/// `civiccast.native.win_probes.WSL_LXSS_KEY_PATH`.
+pub const WSL_LXSS_KEY_PATH: &str = r"Software\Microsoft\Windows\CurrentVersion\Lxss";
+/// Service names `sc query` is asked about, in order (modern, then legacy).
+/// MUST equal `civiccast.native.win_probes.WSL_SERVICE_NAMES`.
+pub const WSL_SERVICE_NAMES: [&str; 2] = ["WslService", "LxssManager"];
+/// Win32 `ERROR_SERVICE_DOES_NOT_EXIST`: the ONE `sc query` exit code that
+/// definitively means "no such service".
+pub const ERROR_SERVICE_DOES_NOT_EXIST: i32 = 1060;
+/// The WSL product's per-user autostart entry: `Run` key (relative to a user
+/// hive) and value name. MUST equal
+/// `civiccast.native.runtime_guard.RUN_KEY_PATH` / `RUN_VALUE_NAME`; pinned
+/// cross-language by `tests/policy/test_native_installer_identity.py`.
+pub const WSL_AUTOSTART_RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+pub const WSL_AUTOSTART_RUN_VALUE: &str = "CivicCast Autostart";
+
+/// The Add/Remove Programs values read from a WSL-product uninstall key the
+/// moment it is found `Present`, so the refusal (or the inert-leftover
+/// warning) can name the product instead of the bare word `present`.
+///
+/// Field report (2026-09-09, corrected): the refused box had a real
+/// `HKCU\...\Uninstall\CivicCast Installer` registration -- DisplayName
+/// "CivicCast Installer", DisplayVersion 3.0.0-beta1, Publisher civiccast,
+/// InstallLocation under the user's `AppData\Local`, UninstallString ending
+/// in `uninstall.exe` -- and nothing that reached the log said so.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ArpProductRecord {
+    /// The account the hive belongs to: `%USERNAME%` for `HKCU`, the
+    /// hive's `Volatile Environment\USERNAME` for `HKU\<SID>` (the SID itself
+    /// when that value is not loaded), `(per-machine)` for `HKLM`.
+    pub user: String,
+    pub display_name: Option<String>,
+    pub display_version: Option<String>,
+    pub publisher: Option<String>,
+    pub install_location: Option<String>,
+    pub uninstall_string: Option<String>,
+}
+
+impl ArpProductRecord {
+    /// `CivicCast Installer 3.0.0-beta1` -- DisplayName then DisplayVersion,
+    /// falling back to the uninstall key's own name when ARP carries none.
+    pub fn title(&self) -> String {
+        let name = self
+            .display_name
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("CivicCast Installer");
+        match self
+            .display_version
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+        {
+            Some(version) => format!("{name} {version}"),
+            None => name.to_string(),
+        }
     }
 
-    // Elevated per-machine case: HKCU is the elevating admin's hive, so also
-    // check every other loaded user hive via HKEY_USERS (see module
-    // doc-comment for the loaded-hives-only limitation this does not solve).
-    let hkey_users_state = probe_wsl_arp_hkey_users();
-    combine_probe_results([hkcu_state, hkey_users_state])
+    /// `CivicCast Installer 3.0.0-beta1; Publisher civiccast; InstallLocation
+    /// ...; UninstallString ...` -- every value ARP carried, none invented.
+    pub fn summary(&self) -> String {
+        let mut parts = vec![format!("user {}", self.user), self.title()];
+        for (label, value) in [
+            ("Publisher", &self.publisher),
+            ("InstallLocation", &self.install_location),
+            ("UninstallString", &self.uninstall_string),
+        ] {
+            if let Some(value) = value.as_deref().filter(|s| !s.trim().is_empty()) {
+                parts.push(format!("{label} {value}"));
+            }
+        }
+        parts.join("; ")
+    }
+
+    /// Reads the five ARP values from an already-open uninstall key. A
+    /// missing value is `None`; a read error other than not-found is ALSO
+    /// `None` here (the key opened, so `Present` already stands -- the
+    /// record is descriptive, never a classifier).
+    #[cfg(target_os = "windows")]
+    fn read_from(key: &RegKey, user: String) -> Self {
+        let read = |name: &str| key.get_value::<String, _>(name).ok();
+        Self {
+            user,
+            display_name: read("DisplayName"),
+            display_version: read("DisplayVersion"),
+            publisher: read("Publisher"),
+            install_location: read("InstallLocation"),
+            uninstall_string: read("UninstallString"),
+        }
+    }
+}
+
+/// One registry or SCM observation made while establishing whether the
+/// CivicCast WSL product is on this machine. Carries enough to reproduce
+/// the failing read by hand: WHICH source, WHICH hive/SID (or service),
+/// WHICH WOW64 view, what it classified to, and the raw error behind an
+/// `Unknown`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProbeObservation {
+    /// `user-ARP`, `machine-ARP`, `distro-scan` or `wsl-service`.
+    pub source: &'static str,
+    /// `HKCU`, `HKU\<SID>`, `HKLM`, `HKU (hive enumeration)`,
+    /// `sc query <name>` ...
+    pub scope: String,
+    /// `64-bit`, `32-bit`, or `n/a` where the view does not apply.
+    pub view: &'static str,
+    pub state: OtherProductState,
+    /// `io::ErrorKind` debug name (e.g. `PermissionDenied`) when the read
+    /// errored with anything other than a clean not-found.
+    pub error_kind: Option<String>,
+    /// Raw OS error code (`raw_os_error`) or `sc.exe` exit code.
+    pub raw_code: Option<i32>,
+    /// The ARP values behind a `Present` uninstall-key observation (user-ARP
+    /// and machine-ARP sources only); `None` for every other observation.
+    pub product: Option<ArpProductRecord>,
+}
+
+impl ProbeObservation {
+    pub fn settled(
+        source: &'static str,
+        scope: String,
+        view: &'static str,
+        state: OtherProductState,
+    ) -> Self {
+        Self {
+            source,
+            scope,
+            view,
+            state,
+            error_kind: None,
+            raw_code: None,
+            product: None,
+        }
+    }
+
+    /// Classifies exactly like [`classify_registry_error`] (NotFound ->
+    /// Absent, anything else -> Unknown) but keeps the error's kind and raw
+    /// code for the report. A NotFound carries no error detail: it is the
+    /// expected, readable absence.
+    #[cfg(target_os = "windows")]
+    pub fn from_registry_error(
+        source: &'static str,
+        scope: String,
+        view: &'static str,
+        error: &io::Error,
+    ) -> Self {
+        let state = classify_registry_error(error);
+        let (error_kind, raw_code) = if state == OtherProductState::Absent {
+            (None, None)
+        } else {
+            (Some(format!("{:?}", error.kind())), error.raw_os_error())
+        };
+        Self {
+            source,
+            scope,
+            view,
+            state,
+            error_kind,
+            raw_code,
+            product: None,
+        }
+    }
+}
+
+fn other_product_token(state: OtherProductState) -> &'static str {
+    match state {
+        OtherProductState::Present => "present",
+        OtherProductState::Absent => "absent",
+        OtherProductState::Unknown => "unknown",
+    }
+}
+
+impl std::fmt::Display for ProbeObservation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{} {}", self.source, self.scope)?;
+        if self.view != "n/a" {
+            write!(formatter, " ({} view)", self.view)?;
+        }
+        write!(formatter, ": {}", other_product_token(self.state))?;
+        match (&self.error_kind, self.raw_code) {
+            (Some(kind), Some(code)) => write!(formatter, " [{kind}, os error {code}]")?,
+            (Some(kind), None) => write!(formatter, " [{kind}]")?,
+            (None, Some(code)) => write!(formatter, " [exit {code}]")?,
+            (None, None) => {}
+        }
+        if let Some(product) = &self.product {
+            write!(formatter, " [{}]", product.summary())?;
+        }
+        Ok(())
+    }
+}
+
+/// Everything the install-time ownership claim looked at before deciding
+/// whether the CivicCast WSL product is on this machine.
+///
+/// `wsl_service` is NOT product evidence: `Present` there means only that a
+/// WSL service (`WslService`/`LxssManager`) is registered at all -- WSL may
+/// be installed for something unrelated. `Absent` there IS dispositive the
+/// other way: with no WSL service on the machine, no CivicCast WSL product
+/// can exist or transmit (the same rule
+/// `civiccast.native.win_probes._confirm_absence_via_service` applies).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WslPresenceEvidence {
+    /// The per-user ARP probe ([`probe_wsl_arp`]): HKCU plus every loaded
+    /// `HKEY_USERS` hive, both WOW64 views.
+    pub user_arp: OtherProductState,
+    /// The WSL product's uninstall key under `HKLM`, both WOW64 views.
+    pub machine_arp: OtherProductState,
+    /// [`WSL_DISTRO_NAME`] registered under any loaded hive's Lxss subtree
+    /// -- the LocalSystem-safe inventory the runtime guard itself trusts.
+    pub distro_registration: OtherProductState,
+    /// Whether ANY WSL service is registered with the SCM (see above).
+    pub wsl_service: OtherProductState,
+    /// The WSL product's `CivicCast Autostart` Run value
+    /// ([`WSL_AUTOSTART_RUN_VALUE`]) under HKCU or any loaded `HKEY_USERS`
+    /// hive. Only consulted by the inert-leftover rule
+    /// ([`classify_wsl_product_for_claim`]); never product evidence on its
+    /// own.
+    pub autostart: OtherProductState,
+    /// `HKLM\SOFTWARE\CivicCast\NativeUninstallTransferCompleted`: `Present`
+    /// means a previous NATIVE install existed on this machine and its
+    /// uninstall handed `ActiveRuntime` to the WSL product (the acknowledged
+    /// transfer). Only consulted by the inert-leftover rule.
+    pub native_transfer_marker: OtherProductState,
+    pub observations: Vec<ProbeObservation>,
+}
+
+impl WslPresenceEvidence {
+    /// Evidence consisting of the per-user ARP verdict alone, every
+    /// corroborating source unconsulted (`Unknown`). Reproduces the
+    /// pre-corroboration decision table exactly, which is what the
+    /// orchestration tests pin. Test-only by construction (production
+    /// always gathers the full evidence), hence the lint exemption.
+    #[allow(dead_code)]
+    pub fn user_arp_only(user_arp: OtherProductState) -> Self {
+        Self {
+            user_arp,
+            machine_arp: OtherProductState::Unknown,
+            distro_registration: OtherProductState::Unknown,
+            wsl_service: OtherProductState::Unknown,
+            autostart: OtherProductState::Unknown,
+            native_transfer_marker: OtherProductState::Unknown,
+            observations: Vec::new(),
+        }
+    }
+
+    /// The first `Present` uninstall-key observation that carried an ARP
+    /// record -- the product the refusal (or the inert-leftover warning)
+    /// names. `None` when presence came only from the distro scan, or when
+    /// no observation carried a record.
+    pub fn present_product(&self) -> Option<(&ProbeObservation, &ArpProductRecord)> {
+        self.observations
+            .iter()
+            .filter(|o| o.state == OtherProductState::Present)
+            .find_map(|o| o.product.as_ref().map(|p| (o, p)))
+    }
+
+    /// The sentence the `Present` refusal leads with, in the exact shape
+    /// the field report asked for:
+    ///
+    /// `Setup found another CivicCast product installed for user scott:
+    /// CivicCast Installer 3.0.0-beta1 (registered at HKU\<SID>\...\Uninstall\
+    /// CivicCast Installer; InstallLocation ...; UninstallString ...)`
+    ///
+    /// Falls back to naming the evidence when no ARP record was captured.
+    /// Publisher is deliberately NOT in the lead (it is in the observation
+    /// record and the recovery document): the lead has to fit the
+    /// observation line's cap with a real SID and two real paths in it.
+    pub fn describe_present_product(&self) -> String {
+        self.describe_present_product_with(true)
+    }
+
+    /// [`describe_present_product`] built field by field: with
+    /// `include_install_location` false the lead still carries the
+    /// UninstallString but not the InstallLocation, so a caller with a
+    /// character budget (the one-line observation) can drop a WHOLE field
+    /// instead of cutting a path in half. Round 5 (delta review of round
+    /// 4): the account name appears three times in the lead, and a 16-char
+    /// name with a real-length SID overran the line's truncation point.
+    ///
+    /// [`describe_present_product`]: Self::describe_present_product
+    pub fn describe_present_product_with(&self, include_install_location: bool) -> String {
+        match self.present_product() {
+            Some((observation, product)) => {
+                let mut extras = Vec::new();
+                for (label, value) in [
+                    ("InstallLocation", &product.install_location),
+                    ("UninstallString", &product.uninstall_string),
+                ] {
+                    if label == "InstallLocation" && !include_install_location {
+                        continue;
+                    }
+                    if let Some(value) = value.as_deref().filter(|s| !s.trim().is_empty()) {
+                        extras.push(format!("{label} {value}"));
+                    }
+                }
+                let extras = if extras.is_empty() {
+                    String::new()
+                } else {
+                    format!("; {}", extras.join("; "))
+                };
+                format!(
+                    "Setup found another CivicCast product installed for user {}: {} \
+                     (registered at {}\\...\\Uninstall\\CivicCast Installer{extras})",
+                    product.user,
+                    product.title(),
+                    observation.scope
+                )
+            }
+            None => format!(
+                "Setup found another CivicCast product (the CivicCast WSL product) installed on \
+                 this machine: {}",
+                self.explain()
+            ),
+        }
+    }
+
+    /// One line per source, each source followed by the individual
+    /// observations that were NOT a clean absence (a hive that read
+    /// `absent` explains nothing; the one that read `unknown` is the whole
+    /// story). Example:
+    ///
+    /// `user-ARP=unknown [user-ARP HKU\S-1-5-21-...-1001 (64-bit view):
+    /// unknown [PermissionDenied, os error 5]], machine-ARP=absent,
+    /// distro-scan=absent, wsl-service=present`
+    pub fn explain(&self) -> String {
+        let sources = [
+            ("user-ARP", self.user_arp),
+            ("machine-ARP", self.machine_arp),
+            ("distro-scan", self.distro_registration),
+            ("wsl-service", self.wsl_service),
+            ("autostart", self.autostart),
+            ("transfer-marker", self.native_transfer_marker),
+        ];
+        sources
+            .iter()
+            .map(|(source, state)| {
+                let notable: Vec<String> = self
+                    .observations
+                    .iter()
+                    .filter(|o| o.source == *source && o.state != OtherProductState::Absent)
+                    .map(ToString::to_string)
+                    .collect();
+                if notable.is_empty() {
+                    format!("{source}={}", other_product_token(*state))
+                } else {
+                    format!(
+                        "{source}={} [{}]",
+                        other_product_token(*state),
+                        notable.join("; ")
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Round 5 (delta review of round 4): the inert-leftover conditions
+    /// ([`classify_wsl_product_for_claim`]) that did NOT hold for this
+    /// evidence, one sentence each, for the recovery document's "What it
+    /// means" -- derived from the evidence, never asserted. Round 4 named
+    /// the per-machine cause for every Present, so a station with a live
+    /// distro was told its owner was signed out. Empty when every condition
+    /// held (that verdict is `PresentInert`, which is not a refusal).
+    ///
+    /// Round 6 (delta review of round 5, MAJOR 2): the first condition --
+    /// the entry was found in a LOADED user hive -- is explained from BOTH
+    /// ARP reads. Round 5 gated its sentence on `user_arp != Present`
+    /// alone, so a presence established by the distro scan (no ARP entry
+    /// anywhere) was called "found only per-machine (HKLM)" two lines under
+    /// `machine-ARP=Absent`, and a per-user probe that FAILED (`Unknown`)
+    /// was called "no signed-in account's hive carries it". `Unknown` is
+    /// unknown: the sentence says the probe could not read it, never that
+    /// the entry is absent.
+    pub fn unmet_inert_conditions(&self) -> Vec<String> {
+        use OtherProductState::{Absent, Present, Unknown};
+        let mut unmet = Vec::new();
+        match (self.user_arp, self.machine_arp) {
+            (Present, _) => {}
+            (Absent, Present) => unmet.push(
+                "the entry was found only per-machine (HKLM) and no signed-in account's hive \
+                 carries it (user-ARP=absent), so its owner may be signed out and the distro \
+                 and autostart reads below never looked at that owner's hive"
+                    .into(),
+            ),
+            (Unknown, Present) => unmet.push(
+                "the entry was found per-machine (HKLM) and no signed-in account's hive could \
+                 be read (user-ARP=unknown), so setup could not look for the owner's distro or \
+                 autostart state"
+                    .into(),
+            ),
+            (Absent, Absent) => unmet.push(
+                "no Add/Remove Programs entry was found in any hive (user-ARP=absent, \
+                 machine-ARP=absent): the product's presence comes from the distro scan alone"
+                    .into(),
+            ),
+            (Absent, Unknown) => unmet.push(
+                "no signed-in account's hive carries the Add/Remove Programs entry \
+                 (user-ARP=absent) and the per-machine read was inconclusive \
+                 (machine-ARP=unknown)"
+                    .into(),
+            ),
+            (Unknown, Absent) => unmet.push(
+                "the per-user Add/Remove Programs probe could not read a hive \
+                 (user-ARP=unknown) and no per-machine entry exists (machine-ARP=absent)"
+                    .into(),
+            ),
+            (Unknown, Unknown) => unmet.push(
+                "neither Add/Remove Programs probe could be read (user-ARP=unknown, \
+                 machine-ARP=unknown)"
+                    .into(),
+            ),
+        }
+        match self.distro_registration {
+            Absent => {}
+            Present => unmet.push("a CivicCast distro is registered (distro-scan=present)".into()),
+            Unknown => unmet.push("the distro scan was inconclusive (distro-scan=unknown)".into()),
+        }
+        match self.autostart {
+            Absent => {}
+            Present => {
+                unmet.push("the CivicCast Autostart Run entry is set (autostart=present)".into())
+            }
+            Unknown => unmet.push("the autostart read was inconclusive (autostart=unknown)".into()),
+        }
+        match self.native_transfer_marker {
+            Present => {}
+            Absent => unmet.push(
+                "no previous native install's hand-off marker is set (transfer-marker=absent)"
+                    .into(),
+            ),
+            Unknown => unmet
+                .push("the hand-off marker could not be read (transfer-marker=unknown)".into()),
+        }
+        unmet
+    }
+
+    /// Every observation, one per line, for the recovery document.
+    pub fn observation_lines(&self) -> Vec<String> {
+        self.observations.iter().map(ToString::to_string).collect()
+    }
+}
+
+/// Fold the four evidence sources into the single `OtherProductState` the
+/// claim decision ([`decide_install_selector_claim`]) consumes.
+///
+/// | user-ARP  | machine-ARP | distro-scan | wsl-service | verdict   |
+/// |-----------|-------------|-------------|-------------|-----------|
+/// | Present   | any         | any         | any         | Present   |
+/// | any       | Present     | any         | any         | Present   |
+/// | any       | any         | Present     | any         | Present   |
+/// | Absent    | not Present | not Present | any         | Absent    |
+/// | Unknown   | any         | any         | Absent      | Absent    |
+/// | Unknown   | Absent      | Absent      | not Absent  | Absent    |
+/// | Unknown   | otherwise                               | Unknown   |
+///
+/// The `Absent` user-ARP row is the pre-existing contract, unchanged: it
+/// was sufficient on its own before corroboration existed, so a machine
+/// where `sc.exe` happens to misbehave does not regress. The two new
+/// `Unknown`-user-ARP rows are the field defect: the per-user probe could
+/// not read some hive, but machine-wide evidence (no WSL service at all, or
+/// no product ARP under HKLM AND no CivicCast distro registered anywhere)
+/// rules the WSL product out, so the install claims ownership and logs the
+/// hive it could not read. Anything else stays `Unknown` and the install
+/// refuses with the observation.
+pub fn corroborate_wsl_product_state(evidence: &WslPresenceEvidence) -> OtherProductState {
+    if [
+        evidence.user_arp,
+        evidence.machine_arp,
+        evidence.distro_registration,
+    ]
+    .contains(&OtherProductState::Present)
+    {
+        return OtherProductState::Present;
+    }
+    match evidence.user_arp {
+        OtherProductState::Present => OtherProductState::Present,
+        OtherProductState::Absent => OtherProductState::Absent,
+        OtherProductState::Unknown => {
+            if evidence.wsl_service == OtherProductState::Absent {
+                return OtherProductState::Absent;
+            }
+            if evidence.machine_arp == OtherProductState::Absent
+                && evidence.distro_registration == OtherProductState::Absent
+            {
+                OtherProductState::Absent
+            } else {
+                OtherProductState::Unknown
+            }
+        }
+    }
+}
+
+/// The install-time verdict about the CivicCast WSL product, one step past
+/// [`corroborate_wsl_product_state`]'s tri-state: `Present` splits into a
+/// product that is really there and an inert Add/Remove Programs leftover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WslProductVerdict {
+    /// A CivicCast WSL product registration that setup must not take the
+    /// machine away from (uninstall key AND something alive beside it, or a
+    /// distro, or a leftover whose inertness could not be confirmed).
+    Present,
+    /// An old WSL-product uninstall registration with NOTHING alive behind
+    /// it -- see [`classify_wsl_product_for_claim`] for the three conditions
+    /// -- on a machine a previous native install once owned. Claimable, with
+    /// a warning naming the leftover.
+    PresentInert,
+    Absent,
+    Unknown,
+}
+
+impl WslProductVerdict {
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::Present => "present",
+            Self::PresentInert => "present-inert",
+            Self::Absent => "absent",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Fold the evidence into the verdict [`decide_install_selector_claim`]
+/// consumes: [`corroborate_wsl_product_state`] first, then the
+/// **inert-leftover rule** on its `Present`:
+///
+/// | corroborated | user-ARP | distro-scan | autostart | transfer-marker | verdict      |
+/// |--------------|----------|-------------|-----------|-----------------|--------------|
+/// | Absent       | any      | any         | any       | any             | Absent       |
+/// | Unknown      | any      | any         | any       | any             | Unknown      |
+/// | Present      | Present  | Absent      | Absent    | Present         | PresentInert |
+/// | Present      | otherwise                                            | Present      |
+///
+/// The `user-ARP = Present` column (round 4, hostile review of round 3):
+/// the distro scan and the autostart read only see hives Windows has
+/// LOADED. A per-user ARP entry that read `Present` was found in a loaded
+/// hive, so an `Absent` distro/autostart covers the hive that owns the
+/// leftover. A MACHINE-scope entry (HKLM) names no hive: its owner may be
+/// logged out, in which case the two per-user absences are reads of hives
+/// that are not the owner's and prove nothing about inertness. That case is
+/// "inertness unknown", which is `Present` (exit 87) -- never `PresentInert`.
+///
+/// Field report (2026-09-09, corrected): the refused box had the old WSL-era
+/// "CivicCast Installer" 3.0.0-beta1 ARP entry under HKCU (-> `Present`),
+/// no `CivicCast-Ubuntu-24.04` distro in any loaded hive, no
+/// `CivicCast Autostart` Run entry, and
+/// `NativeUninstallTransferCompleted` set -- a native install had been there
+/// and handed off, then been uninstalled. Any tester who used the WSL
+/// product, then native, then uninstalled native looks exactly like that,
+/// and the ARP entry alone cannot transmit. All three conditions must be
+/// CONFIDENT (`Absent`/`Absent`/`Present`): an `Unknown` in any of them
+/// keeps the refusal.
+pub fn classify_wsl_product_for_claim(evidence: &WslPresenceEvidence) -> WslProductVerdict {
+    match corroborate_wsl_product_state(evidence) {
+        OtherProductState::Absent => WslProductVerdict::Absent,
+        OtherProductState::Unknown => WslProductVerdict::Unknown,
+        OtherProductState::Present => {
+            // The owner hive is known to be loaded only when the per-user
+            // probe itself found the entry there; a machine-scope-only
+            // Present leaves the per-user absences uncorroborated.
+            let owner_hive_loaded = evidence.user_arp == OtherProductState::Present;
+            if owner_hive_loaded
+                && evidence.distro_registration == OtherProductState::Absent
+                && evidence.autostart == OtherProductState::Absent
+                && evidence.native_transfer_marker == OtherProductState::Present
+            {
+                WslProductVerdict::PresentInert
+            } else {
+                WslProductVerdict::Present
+            }
+        }
+    }
+}
+
+/// Open the WSL product's uninstall `subkey` under `root` and classify the
+/// result as one observation; a `Present` key also carries its ARP record
+/// ([`ArpProductRecord::read_from`]) attributed to `owner`.
+#[cfg(target_os = "windows")]
+fn observe_registry_open(
+    source: &'static str,
+    scope: String,
+    view: &'static str,
+    root: &RegKey,
+    subkey: &str,
+    access: u32,
+    owner: &str,
+) -> ProbeObservation {
+    match root.open_subkey_with_flags(subkey, access) {
+        Ok(key) => {
+            let mut observation =
+                ProbeObservation::settled(source, scope, view, OtherProductState::Present);
+            observation.product = Some(ArpProductRecord::read_from(&key, owner.to_string()));
+            observation
+        }
+        Err(error) => ProbeObservation::from_registry_error(source, scope, view, &error),
+    }
+}
+
+/// Open `subkey` under `root` and read the string value `value_name`:
+/// `Present` when the value exists, `Absent` when the key OR the value is
+/// not found, `Unknown` (error recorded) on anything else.
+#[cfg(target_os = "windows")]
+fn observe_registry_value(
+    source: &'static str,
+    scope: String,
+    view: &'static str,
+    root: &RegKey,
+    subkey: &str,
+    value_name: &str,
+    access: u32,
+) -> ProbeObservation {
+    let key = match root.open_subkey_with_flags(subkey, access) {
+        Ok(key) => key,
+        Err(error) => return ProbeObservation::from_registry_error(source, scope, view, &error),
+    };
+    match key.get_value::<String, _>(value_name) {
+        Ok(_) => ProbeObservation::settled(source, scope, view, OtherProductState::Present),
+        Err(error) => ProbeObservation::from_registry_error(source, scope, view, &error),
+    }
+}
+
+/// The account name behind `HKEY_CURRENT_USER` (the elevating admin during a
+/// per-machine install).
+#[cfg(target_os = "windows")]
+fn current_user_name() -> String {
+    std::env::var("USERNAME")
+        .ok()
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "(current user)".to_string())
+}
+
+/// The account name behind a loaded `HKEY_USERS\<SID>` hive, read from its
+/// `Volatile Environment\USERNAME` (present for every logged-on profile);
+/// the SID itself when that value is not there. A registry read, like every
+/// other observation in this module -- no LookupAccountSid dependency.
+#[cfg(target_os = "windows")]
+fn hive_owner_name(hkey_users: &RegKey, sid: &str) -> String {
+    hkey_users
+        .open_subkey_with_flags(format!("{sid}\\Volatile Environment"), KEY_READ)
+        .and_then(|key| key.get_value::<String, _>("USERNAME"))
+        .ok()
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| sid.to_string())
+}
+
+/// The WSL product's `CivicCast Autostart` Run value under HKCU and every
+/// loaded `HKEY_USERS` hive (both WOW64 views, same skip list as the ARP
+/// probe). Consulted only by the inert-leftover rule; an enumeration
+/// failure is `Unknown`, which keeps the refusal.
+#[cfg(target_os = "windows")]
+fn probe_wsl_autostart_observed() -> (OtherProductState, Vec<ProbeObservation>) {
+    const SOURCE: &str = "autostart";
+    let mut observations = Vec::new();
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    for (view, access) in [("64-bit", KEY_WOW64_64KEY), ("32-bit", KEY_WOW64_32KEY)] {
+        observations.push(observe_registry_value(
+            SOURCE,
+            "HKCU\\...\\Run".to_string(),
+            view,
+            &hkcu,
+            WSL_AUTOSTART_RUN_KEY,
+            WSL_AUTOSTART_RUN_VALUE,
+            KEY_READ | access,
+        ));
+    }
+    let hkey_users = RegKey::predef(HKEY_USERS);
+    let names: Vec<String> = match hkey_users
+        .enum_keys()
+        .collect::<Result<Vec<String>, io::Error>>()
+    {
+        Ok(names) => names,
+        Err(error) => {
+            observations.push(ProbeObservation::from_registry_error(
+                SOURCE,
+                "HKU (hive enumeration)".to_string(),
+                "n/a",
+                &error,
+            ));
+            return (OtherProductState::Unknown, observations);
+        }
+    };
+    for name in names
+        .into_iter()
+        .filter(|name| !should_skip_users_subkey(name))
+    {
+        for (view, access) in [("64-bit", KEY_WOW64_64KEY), ("32-bit", KEY_WOW64_32KEY)] {
+            observations.push(observe_registry_value(
+                SOURCE,
+                format!("HKU\\{name}\\...\\Run"),
+                view,
+                &hkey_users,
+                &format!("{name}\\{WSL_AUTOSTART_RUN_KEY}"),
+                WSL_AUTOSTART_RUN_VALUE,
+                KEY_READ | access,
+            ));
+        }
+    }
+    let state = combine_probe_results(observations.iter().map(|o| o.state));
+    (state, observations)
+}
+
+/// `HKLM\SOFTWARE\CivicCast\NativeUninstallTransferCompleted` (64-bit view,
+/// the view every writer in this module uses): `Present` when a previous
+/// native uninstall recorded an acknowledged hand-off to the WSL product.
+#[cfg(target_os = "windows")]
+fn probe_native_transfer_marker_observed() -> (OtherProductState, Vec<ProbeObservation>) {
+    const SOURCE: &str = "transfer-marker";
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let observation = observe_registry_value(
+        SOURCE,
+        format!("HKLM\\{SELECTOR_KEY}\\{TRANSFER_MARKER}"),
+        "64-bit",
+        &hklm,
+        SELECTOR_KEY,
+        TRANSFER_MARKER,
+        KEY_READ | KEY_WOW64_64KEY,
+    );
+    let state = observation.state;
+    (state, vec![observation])
+}
+
+/// The WSL product's uninstall key under `HKLM` (a per-machine install of
+/// the WSL product, or a per-machine remnant), both WOW64 views.
+#[cfg(target_os = "windows")]
+fn probe_wsl_machine_arp_observed() -> (OtherProductState, Vec<ProbeObservation>) {
+    const SOURCE: &str = "machine-ARP";
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let observations: Vec<ProbeObservation> =
+        [("64-bit", KEY_WOW64_64KEY), ("32-bit", KEY_WOW64_32KEY)]
+            .into_iter()
+            .map(|(view, access)| {
+                observe_registry_open(
+                    SOURCE,
+                    "HKLM".to_string(),
+                    view,
+                    &hklm,
+                    WSL_ARP_KEY,
+                    KEY_READ | access,
+                    "(per-machine)",
+                )
+            })
+            .collect();
+    let state = combine_probe_results(observations.iter().map(|o| o.state));
+    (state, observations)
+}
+
+/// Port of `civiccast.native.win_probes.scan_registered_distros`: is
+/// [`WSL_DISTRO_NAME`] the `DistributionName` of any `{guid}` subkey under
+/// any loaded hive's [`WSL_LXSS_KEY_PATH`]? Same tri-state, same rule that
+/// NotFound is the ONLY readable absence (a hive with no Lxss key, or a
+/// `{guid}` without a `DistributionName`, is clean); every other error
+/// downgrades that hive to `Unknown` with the error recorded.
+#[cfg(target_os = "windows")]
+fn probe_wsl_distro_registration_observed() -> (OtherProductState, Vec<ProbeObservation>) {
+    const SOURCE: &str = "distro-scan";
+    let hkey_users = RegKey::predef(HKEY_USERS);
+    let names: Vec<String> = match hkey_users
+        .enum_keys()
+        .collect::<Result<Vec<String>, io::Error>>()
+    {
+        Ok(names) => names,
+        Err(error) => {
+            return (
+                OtherProductState::Unknown,
+                vec![ProbeObservation::from_registry_error(
+                    SOURCE,
+                    "HKU (hive enumeration)".to_string(),
+                    "n/a",
+                    &error,
+                )],
+            );
+        }
+    };
+    let mut observations = Vec::new();
+    for name in names
+        .into_iter()
+        .filter(|name| !should_skip_users_subkey(name))
+    {
+        let scope = format!("HKU\\{name}\\...\\Lxss");
+        let lxss = match hkey_users
+            .open_subkey_with_flags(format!("{name}\\{WSL_LXSS_KEY_PATH}"), KEY_READ)
+        {
+            Ok(key) => key,
+            Err(error) => {
+                observations.push(ProbeObservation::from_registry_error(
+                    SOURCE, scope, "n/a", &error,
+                ));
+                continue;
+            }
+        };
+        observations.push(scan_lxss_hive(SOURCE, scope, &lxss));
+    }
+    let state = combine_probe_results(observations.iter().map(|o| o.state));
+    (state, observations)
+}
+
+/// One hive's Lxss subtree, folded to a single observation.
+#[cfg(target_os = "windows")]
+fn scan_lxss_hive(source: &'static str, scope: String, lxss: &RegKey) -> ProbeObservation {
+    for guid in lxss.enum_keys() {
+        let guid = match guid {
+            Ok(guid) => guid,
+            Err(error) => {
+                return ProbeObservation::from_registry_error(source, scope, "n/a", &error);
+            }
+        };
+        let distro = match lxss.open_subkey_with_flags(&guid, KEY_READ) {
+            Ok(key) => key,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return ProbeObservation::from_registry_error(source, scope, "n/a", &error);
+            }
+        };
+        match distro.get_value::<String, _>("DistributionName") {
+            Ok(value) if value == WSL_DISTRO_NAME => {
+                return ProbeObservation::settled(
+                    source,
+                    format!("{scope}\\{guid}"),
+                    "n/a",
+                    OtherProductState::Present,
+                );
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return ProbeObservation::from_registry_error(source, scope, "n/a", &error);
+            }
+        }
+    }
+    ProbeObservation::settled(source, scope, "n/a", OtherProductState::Absent)
+}
+
+/// Classify one `sc query <name>` exit status the way
+/// `civiccast.native.win_probes._default_wsl_service_present` does: 0 ->
+/// the service exists (any state); 1060 -> definitively does not exist;
+/// anything else -> Unknown. Pure; unit-tested.
+pub fn classify_sc_query_exit_code(code: Option<i32>) -> OtherProductState {
+    match code {
+        Some(0) => OtherProductState::Present,
+        Some(ERROR_SERVICE_DOES_NOT_EXIST) => OtherProductState::Absent,
+        _ => OtherProductState::Unknown,
+    }
+}
+
+/// Hard deadline for one `sc query <name>` child. MUST equal the Python
+/// guard's `A2_TIMEOUT_SECONDS` (`civiccast.native.runtime_guard`), which
+/// `_run_probe_argv` applies to the same probe: capture-style probes have
+/// deadlocked live (Sandbox runs 14/15, see `pg_ctl_exec`), so the SCM read
+/// gets a watchdog rather than an open-ended `Command::output()`.
+pub const SC_QUERY_TIMEOUT_SECONDS: u64 = 5;
+
+/// `%SYSTEMROOT%\System32\sc.exe`, pinned absolute for the same
+/// CWD-hijack reason as `win_probes.SC_EXE` (a bare `sc.exe` argv[0] is
+/// resolved via the CreateProcess search order). Falls back to `C:\Windows`
+/// exactly like the Python constant.
+#[cfg(target_os = "windows")]
+fn sc_exe_path() -> std::path::PathBuf {
+    let system_root = std::env::var_os("SYSTEMROOT")
+        .unwrap_or_else(|| std::ffi::OsString::from(r"C:\Windows"));
+    std::path::PathBuf::from(system_root)
+        .join("System32")
+        .join("sc.exe")
+}
+
+/// Spawn `command` with every stdio handle detached (the probe classifies the
+/// exit status only, and inherited pipe handles are what kept the Python
+/// capture-style probes draining forever) and wait for it with a hard
+/// `deadline`. On expiry the child is killed and reaped, and the call fails
+/// with an `io::ErrorKind::TimedOut` error so the caller's existing
+/// spawn-error branch classifies it (`Unknown`, `error_kind = "TimedOut"`).
+/// Unit-tested with a prompt child and a sleeping child.
+pub fn wait_with_deadline(
+    command: &mut std::process::Command,
+    deadline: std::time::Duration,
+) -> std::io::Result<std::process::ExitStatus> {
+    use std::process::Stdio;
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let started = std::time::Instant::now();
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if started.elapsed() >= deadline {
+            // The child may exit between try_wait and kill; either way it
+            // is reaped here and the read is recorded as Unknown.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!(
+                    "probe child did not exit within {} ms and was killed",
+                    deadline.as_millis()
+                ),
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
+/// Port of `_default_wsl_service_present`: `Present` the instant any WSL
+/// service name resolves; `Absent` only when EVERY candidate is a definite
+/// 1060; `Unknown` on anything else. The SCM query is used rather than
+/// winreg because the Store-packaged `WslService` does not expose a raw
+/// `HKLM\SYSTEM\...\Services` key even while it is running.
+/// Each query runs under [`wait_with_deadline`] with
+/// [`SC_QUERY_TIMEOUT_SECONDS`]; an expired child is killed and recorded as
+/// `Unknown` with `error_kind = TimedOut`, never as `Absent`.
+#[cfg(target_os = "windows")]
+fn probe_wsl_service_observed() -> (OtherProductState, Vec<ProbeObservation>) {
+    const SOURCE: &str = "wsl-service";
+    let mut observations = Vec::new();
+    for name in WSL_SERVICE_NAMES {
+        let scope = format!("sc query {name}");
+        let observation = match wait_with_deadline(
+            std::process::Command::new(sc_exe_path()).args(["query", name]),
+            std::time::Duration::from_secs(SC_QUERY_TIMEOUT_SECONDS),
+        ) {
+            Ok(status) => {
+                let code = status.code();
+                let state = classify_sc_query_exit_code(code);
+                let mut observation = ProbeObservation::settled(SOURCE, scope, "n/a", state);
+                if state != OtherProductState::Absent {
+                    observation.raw_code = code;
+                }
+                observation
+            }
+            Err(error) => ProbeObservation {
+                source: SOURCE,
+                scope,
+                view: "n/a",
+                state: OtherProductState::Unknown,
+                error_kind: Some(format!("{:?}", error.kind())),
+                raw_code: error.raw_os_error(),
+                product: None,
+            },
+        };
+        let state = observation.state;
+        observations.push(observation);
+        if state != OtherProductState::Absent {
+            return (state, observations);
+        }
+    }
+    (OtherProductState::Absent, observations)
+}
+
+/// Production evidence gathering for the install-time claim: the per-user
+/// ARP probe plus the three machine-wide corroborating sources, every
+/// individual observation retained.
+#[cfg(target_os = "windows")]
+pub(crate) fn probe_wsl_presence_evidence() -> WslPresenceEvidence {
+    let (user_arp, mut observations) = probe_wsl_arp_observed();
+    let (machine_arp, machine_observations) = probe_wsl_machine_arp_observed();
+    let (distro_registration, distro_observations) = probe_wsl_distro_registration_observed();
+    let (wsl_service, service_observations) = probe_wsl_service_observed();
+    let (autostart, autostart_observations) = probe_wsl_autostart_observed();
+    let (native_transfer_marker, marker_observations) = probe_native_transfer_marker_observed();
+    observations.extend(machine_observations);
+    observations.extend(distro_observations);
+    observations.extend(service_observations);
+    observations.extend(autostart_observations);
+    observations.extend(marker_observations);
+    WslPresenceEvidence {
+        user_arp,
+        machine_arp,
+        distro_registration,
+        wsl_service,
+        autostart,
+        native_transfer_marker,
+        observations,
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -610,10 +1607,30 @@ pub enum SelectorClaimAction {
     AlreadyNative,
     /// The WSL product owns the machine. An install NEVER steals that.
     LeaveWslOwnership,
-    /// Ownership cannot be established from here -- the selector could not be
-    /// read, or it is absent while a WSL product is (or may be) installed.
-    /// The selector is left exactly as found.
+    /// No selector, and another CivicCast product IS registered on this
+    /// machine (a real `Present`, not an inert leftover). The install has no
+    /// authority to decide which of two installed products transmits; the
+    /// remedy is to uninstall that product or run the cutover from it. The
+    /// selector is left exactly as found.
+    LeaveOtherProductPresent,
+    /// No selector, and the evidence is inconclusive: some read failed for a
+    /// reason other than not-found (its error kind and code are in the
+    /// observation). The selector is left exactly as found.
     LeaveUnprovable,
+    /// The selector exists but could not be read as `native`/`wsl`. Left
+    /// exactly as found; no evidence is gathered.
+    LeaveUnreadable,
+}
+
+impl SelectorClaimAction {
+    /// The three refusals -- every action that neither wrote nor found the
+    /// selector already settled.
+    pub fn is_refusal(self) -> bool {
+        matches!(
+            self,
+            Self::LeaveOtherProductPresent | Self::LeaveUnprovable | Self::LeaveUnreadable
+        )
+    }
 }
 
 /// Chain G's whole decision, pure and total over `SelectorState` x
@@ -649,26 +1666,41 @@ pub enum SelectorClaimAction {
 /// silently take a machine away from a WSL install that was there first.
 /// Every other cell is left exactly as found:
 ///
-/// | selector     | WSL product         | action             |
-/// |--------------|---------------------|--------------------|
-/// | `Native`     | any                 | `AlreadyNative`    |
-/// | `Wsl`        | any                 | `LeaveWslOwnership`|
-/// | `Absent`     | `Absent`            | `ClaimNative`      |
-/// | `Absent`     | `Present`/`Unknown` | `LeaveUnprovable`  |
-/// | `Unreadable` | any                 | `LeaveUnprovable`  |
+/// | selector     | WSL product    | action                     |
+/// |--------------|----------------|----------------------------|
+/// | `Native`     | any            | `AlreadyNative`            |
+/// | `Wsl`        | any            | `LeaveWslOwnership`        |
+/// | `Absent`     | `Absent`       | `ClaimNative`              |
+/// | `Absent`     | `PresentInert` | `ClaimNative` (+ warning)  |
+/// | `Absent`     | `Present`      | `LeaveOtherProductPresent` |
+/// | `Absent`     | `Unknown`      | `LeaveUnprovable`          |
+/// | `Unreadable` | any            | `LeaveUnreadable`          |
+///
+/// The `WSL product` column is the [`WslProductVerdict`]
+/// ([`classify_wsl_product_for_claim`] over
+/// [`corroborate_wsl_product_state`]): since beta.5.1 a per-user ARP probe
+/// that could not read some hive no longer decides the row on its own --
+/// machine-wide ARP, the Lxss distro registration scan and the WSL service
+/// presence are consulted before the row settles on `Unknown` -- and a
+/// `Present` that is only an inert ARP leftover of a product this machine's
+/// previous native install once handed off to is claimable with a warning.
+/// The three refusals are distinct actions because their operator remedies
+/// share nothing: uninstall the other product (or cutover from it), fix the
+/// read that failed, or repair the selector value.
 pub fn decide_install_selector_claim(
     selector: SelectorState,
-    other_product: OtherProductState,
+    other_product: WslProductVerdict,
 ) -> SelectorClaimAction {
     match selector {
         SelectorState::Native => SelectorClaimAction::AlreadyNative,
         SelectorState::Wsl => SelectorClaimAction::LeaveWslOwnership,
-        SelectorState::Unreadable => SelectorClaimAction::LeaveUnprovable,
+        SelectorState::Unreadable => SelectorClaimAction::LeaveUnreadable,
         SelectorState::Absent => match other_product {
-            OtherProductState::Absent => SelectorClaimAction::ClaimNative,
-            OtherProductState::Present | OtherProductState::Unknown => {
-                SelectorClaimAction::LeaveUnprovable
+            WslProductVerdict::Absent | WslProductVerdict::PresentInert => {
+                SelectorClaimAction::ClaimNative
             }
+            WslProductVerdict::Present => SelectorClaimAction::LeaveOtherProductPresent,
+            WslProductVerdict::Unknown => SelectorClaimAction::LeaveUnprovable,
         },
     }
 }
@@ -682,10 +1714,24 @@ pub fn decide_install_selector_claim(
 #[derive(Debug, Clone)]
 pub struct SelectorClaimOutcome {
     pub action: SelectorClaimAction,
+    /// What the selector read as.
+    pub selector: SelectorState,
+    /// The WSL-product evidence that was gathered -- `Some` exactly when the
+    /// selector was `Absent` (the one cell where evidence can change the
+    /// answer), `None` otherwise. Carries every per-hive observation.
+    pub evidence: Option<WslPresenceEvidence>,
+    /// [`classify_wsl_product_for_claim`] over `evidence`; `Some` exactly
+    /// when `evidence` is. `PresentInert` with `ClaimNative` is the
+    /// inert-leftover claim, whose warning the log must carry.
+    pub verdict: Option<WslProductVerdict>,
     /// One operator-readable sentence naming what was observed and what was
     /// done about it. Printed into the install log on EVERY path, including
     /// the ones that write nothing: a station whose selector was left alone
-    /// will not start, and this line is the only place that says why.
+    /// will not start, and this line is the only place that says why. On
+    /// the paths that consulted evidence it embeds
+    /// [`WslPresenceEvidence::explain`] -- the hive/SID, WOW64 view, error
+    /// kind and raw error code of every observation that was not a clean
+    /// absence.
     pub detail: String,
     pub write_error: Option<String>,
 }
@@ -695,36 +1741,54 @@ pub struct SelectorClaimOutcome {
 /// touching a real registry (this module's HARD RULE).
 pub fn claim_install_selector_with(
     probe_selector: impl Fn() -> SelectorState,
-    probe_other_product: impl Fn() -> OtherProductState,
+    probe_wsl_presence: impl Fn() -> WslPresenceEvidence,
     write_native: impl Fn() -> Result<(), String>,
 ) -> SelectorClaimOutcome {
     let selector = probe_selector();
     // Only consulted in the ONE cell where it can change the answer, so a
     // slow/ambiguous ARP enumeration cannot affect an install whose selector
     // already settles the question.
-    let other_product = if selector == SelectorState::Absent {
-        probe_other_product()
+    let evidence = if selector == SelectorState::Absent {
+        Some(probe_wsl_presence())
     } else {
-        OtherProductState::Unknown
+        None
     };
+    let verdict = evidence.as_ref().map(classify_wsl_product_for_claim);
+    let other_product = verdict.unwrap_or(WslProductVerdict::Unknown);
+    let explained = evidence
+        .as_ref()
+        .map(WslPresenceEvidence::explain)
+        .unwrap_or_else(|| "not consulted".to_string());
     let action = decide_install_selector_claim(selector, other_product);
     let (detail, write_error) = match action {
-        SelectorClaimAction::ClaimNative => match write_native() {
-            Ok(()) => (
-                "ActiveRuntime was absent and no CivicCast WSL product is registered; this \
-                 install claimed native ownership (ActiveRuntime = \"native\", read-back \
-                 verified)."
-                    .to_string(),
-                None,
-            ),
-            Err(error) => (
-                format!(
-                    "ActiveRuntime was absent and no CivicCast WSL product is registered, but \
-                     claiming native ownership failed: {error}"
+        SelectorClaimAction::ClaimNative => {
+            // The inert-leftover warning is the FIRST thing in the sentence:
+            // it survives the observation line's cap and is what the log
+            // must carry (the field report's box would otherwise read as a
+            // clean claim).
+            let basis = if other_product == WslProductVerdict::PresentInert {
+                inert_leftover_warning(evidence.as_ref())
+            } else {
+                "ActiveRuntime was absent and the CivicCast WSL product is not on this machine"
+                    .to_string()
+            };
+            match write_native() {
+                Ok(()) => (
+                    format!(
+                        "{basis} ({explained}); this install claimed native ownership \
+                         (ActiveRuntime = \"native\", read-back verified).{}",
+                        inert_leftover_removal_hint(other_product, evidence.as_ref())
+                    ),
+                    None,
                 ),
-                Some(error),
-            ),
-        },
+                Err(error) => (
+                    format!(
+                        "{basis} ({explained}), but claiming native ownership failed: {error}"
+                    ),
+                    Some(error),
+                ),
+            }
+        }
         SelectorClaimAction::AlreadyNative => (
             "ActiveRuntime already reads \"native\"; this install left it unchanged.".to_string(),
             None,
@@ -736,32 +1800,113 @@ pub fn claim_install_selector_with(
                 .to_string(),
             None,
         ),
+        SelectorClaimAction::LeaveOtherProductPresent => {
+            let found = evidence
+                .as_ref()
+                .map(WslPresenceEvidence::describe_present_product)
+                .unwrap_or_else(|| {
+                    "Setup found another CivicCast product installed on this machine".to_string()
+                });
+            (
+                format!(
+                    "{found}. ActiveRuntime was left unchanged: setup never takes a machine \
+                     away from a CivicCast product that was there first. {} Evidence: \
+                     {explained}.",
+                    other_product_present_remedy(evidence.as_ref())
+                ),
+                None,
+            )
+        }
         SelectorClaimAction::LeaveUnprovable => (
             format!(
-                "ActiveRuntime was left unchanged: observed selector {selector:?} with WSL \
-                 product state {other_product:?}, which does not establish that this machine's \
-                 runtime ownership is the native product's to claim. The native runtime will \
-                 not start until an operator sets it; inspect \
-                 HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime."
+                "ActiveRuntime was left unchanged: observed selector {selector:?}; WSL product \
+                 evidence: {explained}; combined WSL product state {}. A read failed for a \
+                 reason other than \"not found\" (its error kind and OS error code are beside \
+                 it), so setup cannot establish that this machine's runtime ownership is the \
+                 native product's to claim. The native runtime will not start until an \
+                 operator sets HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime.",
+                other_product.token()
             ),
+            None,
+        ),
+        SelectorClaimAction::LeaveUnreadable => (
+            "HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime exists but could not be read as \
+             \"native\" or \"wsl\" (observed selector Unreadable; WSL product evidence: not \
+             consulted); this install left it unchanged. The native runtime will not start \
+             until an administrator corrects that value."
+                .to_string(),
             None,
         ),
     };
     SelectorClaimOutcome {
         action,
+        selector,
+        evidence,
+        verdict,
         detail,
         write_error,
     }
 }
 
+/// The inert-leftover warning, leading with WARNING so it survives the
+/// observation line's cap and cannot be read as a clean claim.
+fn inert_leftover_warning(evidence: Option<&WslPresenceEvidence>) -> String {
+    let (title, user) = evidence
+        .and_then(WslPresenceEvidence::present_product)
+        .map(|(_, product)| (product.title(), product.user.clone()))
+        .unwrap_or_else(|| ("CivicCast Installer".to_string(), "(unknown)".to_string()));
+    format!(
+        "WARNING: an old {title} registration remains for user {user} with no CivicCast distro \
+         or autostart entry, and a previous native install had already handed this machine \
+         off (NativeUninstallTransferCompleted is set); ActiveRuntime was absent"
+    )
+}
+
+/// `Remove the leftover via Apps & Features (uninstall.exe at <path>).` --
+/// appended to a successful inert-leftover claim; empty for a clean claim.
+fn inert_leftover_removal_hint(
+    verdict: WslProductVerdict,
+    evidence: Option<&WslPresenceEvidence>,
+) -> String {
+    if verdict != WslProductVerdict::PresentInert {
+        return String::new();
+    }
+    let at = evidence
+        .and_then(WslPresenceEvidence::present_product)
+        .and_then(|(_, product)| product.uninstall_string.clone())
+        .filter(|s| !s.trim().is_empty())
+        .map(|path| format!(" (uninstall.exe at {path})"))
+        .unwrap_or_default();
+    format!(" Remove the leftover via Apps & Features{at}.")
+}
+
+/// The remedy sentence for a real `Present`: uninstall that product, or
+/// cut over from it. NO registry-edit instruction -- the value is not the
+/// problem, the other product is.
+fn other_product_present_remedy(evidence: Option<&WslPresenceEvidence>) -> String {
+    let product = evidence.and_then(WslPresenceEvidence::present_product);
+    let title = product
+        .map(|(_, p)| p.title())
+        .unwrap_or_else(|| "CivicCast Installer".to_string());
+    let or_run = product
+        .and_then(|(_, p)| p.uninstall_string.clone())
+        .filter(|s| !s.trim().is_empty())
+        .map(|command| format!(" (or run {command})"))
+        .unwrap_or_default();
+    format!(
+        "Uninstall '{title}' from Settings > Apps{or_run}, or run `civiccast-runtime \
+         cutover-to-native`, then run setup again."
+    )
+}
+
 /// Production wiring of [`claim_install_selector_with`]: the real registry
-/// selector probe, the real WSL-product ARP probe, and the real
-/// write + read-back-verify.
+/// selector probe, the real WSL-presence evidence gathering
+/// ([`probe_wsl_presence_evidence`]), and the real write + read-back-verify.
 #[cfg(target_os = "windows")]
 pub fn claim_install_selector() -> SelectorClaimOutcome {
     claim_install_selector_with(
         probe_active_runtime_selector,
-        probe_wsl_arp,
+        probe_wsl_presence_evidence,
         write_selector_native,
     )
 }
@@ -1747,7 +2892,19 @@ mod install_selector_claim_tests {
     #[test]
     fn a_fresh_native_install_with_no_selector_and_no_wsl_product_claims_native() {
         assert_eq!(
-            decide_install_selector_claim(SelectorState::Absent, OtherProductState::Absent),
+            decide_install_selector_claim(SelectorState::Absent, WslProductVerdict::Absent),
+            SelectorClaimAction::ClaimNative
+        );
+    }
+
+    /// Round 3 (corrected field report): an inert ARP leftover of the WSL
+    /// product on a machine a previous native install once handed off is
+    /// claimable -- the warning is the orchestration's job, the decision
+    /// simply writes.
+    #[test]
+    fn an_inert_wsl_leftover_is_claimed_over() {
+        assert_eq!(
+            decide_install_selector_claim(SelectorState::Absent, WslProductVerdict::PresentInert),
             SelectorClaimAction::ClaimNative
         );
     }
@@ -1759,9 +2916,10 @@ mod install_selector_claim_tests {
     #[test]
     fn an_install_never_steals_an_existing_wsl_ownership_claim() {
         for other in [
-            OtherProductState::Absent,
-            OtherProductState::Present,
-            OtherProductState::Unknown,
+            WslProductVerdict::Absent,
+            WslProductVerdict::PresentInert,
+            WslProductVerdict::Present,
+            WslProductVerdict::Unknown,
         ] {
             assert_eq!(
                 decide_install_selector_claim(SelectorState::Wsl, other),
@@ -1778,9 +2936,10 @@ mod install_selector_claim_tests {
     #[test]
     fn an_install_over_an_existing_native_claim_is_a_no_op() {
         for other in [
-            OtherProductState::Absent,
-            OtherProductState::Present,
-            OtherProductState::Unknown,
+            WslProductVerdict::Absent,
+            WslProductVerdict::PresentInert,
+            WslProductVerdict::Present,
+            WslProductVerdict::Unknown,
         ] {
             assert_eq!(
                 decide_install_selector_claim(SelectorState::Native, other),
@@ -1796,13 +2955,14 @@ mod install_selector_claim_tests {
     #[test]
     fn an_unreadable_selector_is_never_overwritten_by_an_install() {
         for other in [
-            OtherProductState::Absent,
-            OtherProductState::Present,
-            OtherProductState::Unknown,
+            WslProductVerdict::Absent,
+            WslProductVerdict::PresentInert,
+            WslProductVerdict::Present,
+            WslProductVerdict::Unknown,
         ] {
             assert_eq!(
                 decide_install_selector_claim(SelectorState::Unreadable, other),
-                SelectorClaimAction::LeaveUnprovable,
+                SelectorClaimAction::LeaveUnreadable,
                 "other={other:?}"
             );
         }
@@ -1815,18 +2975,32 @@ mod install_selector_claim_tests {
     /// operator to run the cutover.
     #[test]
     fn an_absent_selector_with_a_wsl_product_present_or_unknown_is_left_to_the_operator() {
-        for other in [OtherProductState::Present, OtherProductState::Unknown] {
-            assert_eq!(
-                decide_install_selector_claim(SelectorState::Absent, other),
-                SelectorClaimAction::LeaveUnprovable,
-                "other={other:?}"
-            );
+        for (other, expected) in [
+            (
+                WslProductVerdict::Present,
+                SelectorClaimAction::LeaveOtherProductPresent,
+            ),
+            (WslProductVerdict::Unknown, SelectorClaimAction::LeaveUnprovable),
+        ] {
+            let action = decide_install_selector_claim(SelectorState::Absent, other);
+            assert_eq!(action, expected, "other={other:?}");
+            assert!(action.is_refusal());
         }
+        // Round 3: the three refusals are distinct actions because their
+        // remedies share nothing (uninstall the other product / fix the
+        // failed read / repair the value).
+        assert!(
+            decide_install_selector_claim(SelectorState::Unreadable, WslProductVerdict::Absent)
+                .is_refusal()
+        );
+        assert!(!SelectorClaimAction::ClaimNative.is_refusal());
+        assert!(!SelectorClaimAction::AlreadyNative.is_refusal());
+        assert!(!SelectorClaimAction::LeaveWslOwnership.is_refusal());
     }
 
-    /// Totality over the whole 4x3 input product -- the same property
-    /// `decide_selector_repair_action`'s own table carries. Exactly ONE cell
-    /// writes.
+    /// Totality over the whole 4x4 input product -- the same property
+    /// `decide_selector_repair_action`'s own table carries. Exactly TWO cells
+    /// write: the clean claim and the inert-leftover claim.
     #[test]
     fn the_claim_decision_is_total_and_exactly_one_cell_writes() {
         let selectors = [
@@ -1836,9 +3010,10 @@ mod install_selector_claim_tests {
             SelectorState::Unreadable,
         ];
         let others = [
-            OtherProductState::Absent,
-            OtherProductState::Present,
-            OtherProductState::Unknown,
+            WslProductVerdict::Absent,
+            WslProductVerdict::PresentInert,
+            WslProductVerdict::Present,
+            WslProductVerdict::Unknown,
         ];
         let mut writes = 0;
         for selector in selectors {
@@ -1851,8 +3026,9 @@ mod install_selector_claim_tests {
             }
         }
         assert_eq!(
-            writes, 1,
-            "only (Absent, Absent) may write; every other cell leaves the selector alone"
+            writes, 2,
+            "only (Absent, Absent) and (Absent, PresentInert) may write; every other cell \
+             leaves the selector alone"
         );
     }
 
@@ -1890,7 +3066,7 @@ mod install_selector_claim_orchestration_tests {
         let writes = RefCell::new(0usize);
         let outcome = claim_install_selector_with(
             || selector,
-            || other,
+            || WslPresenceEvidence::user_arp_only(other),
             || {
                 *writes.borrow_mut() += 1;
                 write_result.clone()
@@ -1918,6 +3094,7 @@ mod install_selector_claim_orchestration_tests {
             (SelectorState::Absent, OtherProductState::Unknown),
         ] {
             let (outcome, writes) = run(selector, other, Ok(()));
+            assert_eq!(outcome.verdict.is_some(), selector == SelectorState::Absent);
             assert_eq!(writes, 0, "selector={selector:?}, other={other:?}");
             assert_ne!(outcome.action, SelectorClaimAction::ClaimNative);
         }
@@ -1964,5 +3141,857 @@ mod install_selector_claim_orchestration_tests {
             5,
             "each observed (selector, other-product) pair explains itself distinctly"
         );
+    }
+}
+
+#[cfg(test)]
+mod runtime_ownership_evidence_tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    /// The four pre-round-3 sources; the two inert-leftover sources default
+    /// to `Unknown` (unconsulted), which can never make a `Present` inert.
+    fn evidence(
+        user_arp: OtherProductState,
+        machine_arp: OtherProductState,
+        distro_registration: OtherProductState,
+        wsl_service: OtherProductState,
+    ) -> WslPresenceEvidence {
+        WslPresenceEvidence {
+            user_arp,
+            machine_arp,
+            distro_registration,
+            wsl_service,
+            autostart: OtherProductState::Unknown,
+            native_transfer_marker: OtherProductState::Unknown,
+            observations: Vec::new(),
+        }
+    }
+
+    /// The corrected field report's box: the old WSL-era ARP entry under
+    /// HKCU with its real values, no distro, no autostart, transfer marker
+    /// set, WSL service present (stock Ubuntu-24.04 is installed).
+    fn field_report_present_observation() -> ProbeObservation {
+        let mut observation = ProbeObservation::settled(
+            "user-ARP",
+            "HKCU".to_string(),
+            "64-bit",
+            OtherProductState::Present,
+        );
+        observation.product = Some(ArpProductRecord {
+            user: "tester".to_string(),
+            display_name: Some("CivicCast Installer".to_string()),
+            display_version: Some("3.0.0-beta1".to_string()),
+            publisher: Some("civiccast".to_string()),
+            install_location: Some(r"D:\Profiles\tester\AppData\Local\CivicCast Installer".to_string()),
+            uninstall_string: Some(
+                r"D:\Profiles\tester\AppData\Local\CivicCast Installer\uninstall.exe".to_string(),
+            ),
+        });
+        observation
+    }
+
+    fn field_report_evidence(
+        autostart: OtherProductState,
+        native_transfer_marker: OtherProductState,
+    ) -> WslPresenceEvidence {
+        WslPresenceEvidence {
+            user_arp: OtherProductState::Present,
+            machine_arp: OtherProductState::Absent,
+            distro_registration: OtherProductState::Absent,
+            wsl_service: OtherProductState::Present,
+            autostart,
+            native_transfer_marker,
+            observations: vec![field_report_present_observation()],
+        }
+    }
+
+    fn denied_hive_observation() -> ProbeObservation {
+        ProbeObservation {
+            source: "user-ARP",
+            scope: r"HKU\S-1-5-21-1111111111-2222222222-3333333333-1001".to_string(),
+            view: "64-bit",
+            state: OtherProductState::Unknown,
+            error_kind: Some("PermissionDenied".to_string()),
+            raw_code: Some(5),
+            product: None,
+        }
+    }
+
+    /// The field defect (beta.5, dirty test box with uninstall history): the
+    /// per-user ARP probe came back Unknown from a hive it could not read,
+    /// and on that alone the install refused to claim ownership. With every
+    /// machine-wide source confidently Absent, the claim proceeds.
+    #[test]
+    fn unknown_user_arp_is_outweighed_by_confidently_absent_machine_wide_evidence() {
+        let e = evidence(
+            OtherProductState::Unknown,
+            OtherProductState::Absent,
+            OtherProductState::Absent,
+            OtherProductState::Absent,
+        );
+        assert_eq!(corroborate_wsl_product_state(&e), OtherProductState::Absent);
+        assert_eq!(
+            decide_install_selector_claim(SelectorState::Absent, classify_wsl_product_for_claim(&e)),
+            SelectorClaimAction::ClaimNative
+        );
+    }
+
+    /// No WSL service registered at all means no CivicCast WSL product can
+    /// exist or transmit -- dispositive on its own, the same rule the Python
+    /// guard's `_confirm_absence_via_service` applies.
+    #[test]
+    fn an_absent_wsl_service_alone_rules_the_wsl_product_out() {
+        for (machine, distro) in [
+            (OtherProductState::Unknown, OtherProductState::Unknown),
+            (OtherProductState::Absent, OtherProductState::Unknown),
+            (OtherProductState::Unknown, OtherProductState::Absent),
+        ] {
+            let e = evidence(
+                OtherProductState::Unknown,
+                machine,
+                distro,
+                OtherProductState::Absent,
+            );
+            assert_eq!(
+                corroborate_wsl_product_state(&e),
+                OtherProductState::Absent,
+                "machine={machine:?} distro={distro:?}"
+            );
+        }
+    }
+
+    /// WSL installed for something unrelated (service Present) is not
+    /// evidence of the CivicCast product: with no product ARP under HKLM
+    /// and no CivicCast distro registered anywhere, the claim proceeds.
+    #[test]
+    fn a_present_wsl_service_without_product_or_distro_still_claims_native() {
+        let e = evidence(
+            OtherProductState::Unknown,
+            OtherProductState::Absent,
+            OtherProductState::Absent,
+            OtherProductState::Present,
+        );
+        assert_eq!(corroborate_wsl_product_state(&e), OtherProductState::Absent);
+    }
+
+    /// A genuine WSL-product observation anywhere -- per-user ARP, machine
+    /// ARP or the distro registration -- still refuses, whatever the other
+    /// sources say.
+    #[test]
+    fn any_genuine_wsl_product_observation_still_refuses() {
+        let present_cases = [
+            evidence(
+                OtherProductState::Present,
+                OtherProductState::Absent,
+                OtherProductState::Absent,
+                OtherProductState::Absent,
+            ),
+            evidence(
+                OtherProductState::Unknown,
+                OtherProductState::Present,
+                OtherProductState::Absent,
+                OtherProductState::Absent,
+            ),
+            evidence(
+                OtherProductState::Absent,
+                OtherProductState::Absent,
+                OtherProductState::Present,
+                OtherProductState::Unknown,
+            ),
+            evidence(
+                OtherProductState::Unknown,
+                OtherProductState::Absent,
+                OtherProductState::Present,
+                OtherProductState::Absent,
+            ),
+        ];
+        for e in present_cases {
+            assert_eq!(
+                corroborate_wsl_product_state(&e),
+                OtherProductState::Present,
+                "{e:?}"
+            );
+            assert_eq!(
+                decide_install_selector_claim(
+                    SelectorState::Absent,
+                    classify_wsl_product_for_claim(&e)
+                ),
+                SelectorClaimAction::LeaveOtherProductPresent
+            );
+        }
+    }
+
+    /// Unknown user-ARP with the corroborating sources themselves unable to
+    /// answer stays fail-closed -- the install refuses with the observation
+    /// rather than guessing.
+    #[test]
+    fn unknown_user_arp_without_confident_corroboration_stays_unknown() {
+        for (machine, distro, service) in [
+            (
+                OtherProductState::Unknown,
+                OtherProductState::Unknown,
+                OtherProductState::Unknown,
+            ),
+            (
+                OtherProductState::Absent,
+                OtherProductState::Unknown,
+                OtherProductState::Present,
+            ),
+            (
+                OtherProductState::Unknown,
+                OtherProductState::Absent,
+                OtherProductState::Unknown,
+            ),
+        ] {
+            let e = evidence(OtherProductState::Unknown, machine, distro, service);
+            assert_eq!(
+                corroborate_wsl_product_state(&e),
+                OtherProductState::Unknown,
+                "machine={machine:?} distro={distro:?} service={service:?}"
+            );
+        }
+    }
+
+    /// The pre-corroboration contract is preserved bit for bit: an Absent
+    /// per-user ARP verdict was sufficient before, and still is, even when
+    /// the new sources cannot answer (so a machine where `sc.exe` misbehaves
+    /// does not regress a fresh install).
+    #[test]
+    fn user_arp_only_evidence_reproduces_the_original_decision_table() {
+        for (user_arp, expected) in [
+            (OtherProductState::Absent, OtherProductState::Absent),
+            (OtherProductState::Present, OtherProductState::Present),
+            (OtherProductState::Unknown, OtherProductState::Unknown),
+        ] {
+            assert_eq!(
+                corroborate_wsl_product_state(&WslPresenceEvidence::user_arp_only(user_arp)),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn sc_query_exit_classification_matches_the_python_guard() {
+        assert_eq!(
+            classify_sc_query_exit_code(Some(0)),
+            OtherProductState::Present
+        );
+        assert_eq!(
+            classify_sc_query_exit_code(Some(1060)),
+            OtherProductState::Absent
+        );
+        assert_eq!(
+            classify_sc_query_exit_code(Some(5)),
+            OtherProductState::Unknown
+        );
+        assert_eq!(
+            classify_sc_query_exit_code(Some(1)),
+            OtherProductState::Unknown
+        );
+        assert_eq!(
+            classify_sc_query_exit_code(None),
+            OtherProductState::Unknown
+        );
+        assert_eq!(ERROR_SERVICE_DOES_NOT_EXIST, 1060);
+    }
+
+    #[test]
+    fn sc_query_deadline_matches_the_python_guard() {
+        assert_eq!(SC_QUERY_TIMEOUT_SECONDS, 5);
+    }
+
+    fn exit_7_command() -> std::process::Command {
+        let mut command;
+        if cfg!(target_os = "windows") {
+            command = std::process::Command::new("cmd.exe");
+            command.args(["/c", "exit 7"]);
+        } else {
+            command = std::process::Command::new("sh");
+            command.args(["-c", "exit 7"]);
+        }
+        command
+    }
+
+    fn sleeping_command() -> std::process::Command {
+        let mut command;
+        if cfg!(target_os = "windows") {
+            command = std::process::Command::new("ping.exe");
+            command.args(["-n", "30", "127.0.0.1"]);
+        } else {
+            command = std::process::Command::new("sleep");
+            command.arg("30");
+        }
+        command
+    }
+
+    /// A child that exits inside the deadline reports its real exit code
+    /// (the value the classifier consumes).
+    #[test]
+    fn wait_with_deadline_returns_the_exit_code_of_a_prompt_child() {
+        let status = wait_with_deadline(
+            &mut exit_7_command(),
+            std::time::Duration::from_secs(SC_QUERY_TIMEOUT_SECONDS),
+        )
+        .expect("prompt child must not time out");
+        assert_eq!(status.code(), Some(7));
+        assert_eq!(
+            classify_sc_query_exit_code(status.code()),
+            OtherProductState::Unknown
+        );
+    }
+
+    /// A child that outlives the deadline is killed, reaped, and surfaces
+    /// as a `TimedOut` error -- the branch that records `Unknown`, so a hung
+    /// SCM never reads as "no WSL service".
+    #[test]
+    fn wait_with_deadline_kills_a_hung_child_and_reports_timed_out() {
+        let started = std::time::Instant::now();
+        let error = wait_with_deadline(
+            &mut sleeping_command(),
+            std::time::Duration::from_millis(300),
+        )
+        .expect_err("a 30 s child must expire a 300 ms deadline");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(format!("{:?}", error.kind()), "TimedOut");
+        assert!(error.raw_os_error().is_none());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "the child was not killed on expiry: waited {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// An observation names its source, hive/SID, WOW64 view, classification,
+    /// error kind and raw error code -- everything needed to reproduce the
+    /// failing read by hand from the install log.
+    #[test]
+    fn an_observation_formats_hive_view_kind_and_raw_code() {
+        let text = denied_hive_observation().to_string();
+        assert_eq!(
+            text,
+            r"user-ARP HKU\S-1-5-21-1111111111-2222222222-3333333333-1001 (64-bit view): unknown [PermissionDenied, os error 5]"
+        );
+        let settled = ProbeObservation::settled(
+            "machine-ARP",
+            "HKLM".to_string(),
+            "32-bit",
+            OtherProductState::Absent,
+        );
+        assert_eq!(
+            settled.to_string(),
+            "machine-ARP HKLM (32-bit view): absent"
+        );
+        let service = ProbeObservation {
+            source: "wsl-service",
+            scope: "sc query WslService".to_string(),
+            view: "n/a",
+            state: OtherProductState::Unknown,
+            error_kind: None,
+            raw_code: Some(1722),
+            product: None,
+        };
+        assert_eq!(
+            service.to_string(),
+            "wsl-service sc query WslService: unknown [exit 1722]"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn a_registry_observation_keeps_error_detail_only_for_non_absent_reads() {
+        let denied = ProbeObservation::from_registry_error(
+            "user-ARP",
+            "HKCU".to_string(),
+            "64-bit",
+            &std::io::Error::from_raw_os_error(5),
+        );
+        assert_eq!(denied.state, OtherProductState::Unknown);
+        assert_eq!(denied.error_kind.as_deref(), Some("PermissionDenied"));
+        assert_eq!(denied.raw_code, Some(5));
+
+        let not_found = ProbeObservation::from_registry_error(
+            "user-ARP",
+            "HKCU".to_string(),
+            "64-bit",
+            &std::io::Error::from_raw_os_error(2),
+        );
+        assert_eq!(not_found.state, OtherProductState::Absent);
+        assert_eq!(not_found.error_kind, None);
+        assert_eq!(not_found.raw_code, None);
+    }
+
+    /// `explain` names every source's verdict and, for any source that was
+    /// not a clean absence, the individual observations behind it -- and
+    /// stays quiet about hives that read absent (they explain nothing).
+    #[test]
+    fn explain_names_every_source_and_only_the_notable_observations() {
+        let mut e = evidence(
+            OtherProductState::Unknown,
+            OtherProductState::Absent,
+            OtherProductState::Absent,
+            OtherProductState::Present,
+        );
+        e.observations = vec![
+            ProbeObservation::settled(
+                "user-ARP",
+                "HKCU".to_string(),
+                "64-bit",
+                OtherProductState::Absent,
+            ),
+            denied_hive_observation(),
+            ProbeObservation::settled(
+                "machine-ARP",
+                "HKLM".to_string(),
+                "64-bit",
+                OtherProductState::Absent,
+            ),
+            ProbeObservation {
+                source: "wsl-service",
+                scope: "sc query WslService".to_string(),
+                view: "n/a",
+                state: OtherProductState::Present,
+                error_kind: None,
+                raw_code: Some(0),
+                product: None,
+            },
+        ];
+        let text = e.explain();
+        assert_eq!(
+            text,
+            r"user-ARP=unknown [user-ARP HKU\S-1-5-21-1111111111-2222222222-3333333333-1001 (64-bit view): unknown [PermissionDenied, os error 5]], machine-ARP=absent, distro-scan=absent, wsl-service=present [wsl-service sc query WslService: present [exit 0]], autostart=unknown, transfer-marker=unknown"
+        );
+        assert!(
+            !text.contains("HKCU"),
+            "an absent hive must not clutter the report"
+        );
+        assert_eq!(e.observation_lines().len(), 4);
+    }
+
+    /// End to end through the orchestration: the field defect's evidence
+    /// shape writes the selector exactly once and the detail names the hive
+    /// that could not be read.
+    #[test]
+    fn the_field_defect_evidence_claims_native_and_names_the_unreadable_hive() {
+        let writes = RefCell::new(0usize);
+        let mut e = evidence(
+            OtherProductState::Unknown,
+            OtherProductState::Absent,
+            OtherProductState::Absent,
+            OtherProductState::Absent,
+        );
+        e.observations = vec![denied_hive_observation()];
+        let outcome = claim_install_selector_with(
+            || SelectorState::Absent,
+            || e.clone(),
+            || {
+                *writes.borrow_mut() += 1;
+                Ok(())
+            },
+        );
+        assert_eq!(outcome.action, SelectorClaimAction::ClaimNative);
+        assert_eq!(*writes.borrow(), 1);
+        assert_eq!(outcome.selector, SelectorState::Absent);
+        assert_eq!(outcome.evidence.as_ref(), Some(&e));
+        assert!(outcome
+            .detail
+            .contains("S-1-5-21-1111111111-2222222222-3333333333-1001"));
+        assert!(outcome.detail.contains("PermissionDenied, os error 5"));
+        assert!(outcome.detail.contains("wsl-service=absent"));
+    }
+
+    /// The refusal detail carries the same observation, so the install log
+    /// and the recovery document name the exact read that failed instead of
+    /// the bare word `Unknown`.
+    #[test]
+    fn a_refusal_detail_carries_the_per_hive_observation() {
+        let mut e = evidence(
+            OtherProductState::Unknown,
+            OtherProductState::Unknown,
+            OtherProductState::Unknown,
+            OtherProductState::Present,
+        );
+        e.observations = vec![denied_hive_observation()];
+        let outcome =
+            claim_install_selector_with(|| SelectorState::Absent, || e.clone(), || Ok(()));
+        assert_eq!(outcome.action, SelectorClaimAction::LeaveUnprovable);
+        assert!(
+            outcome.detail.contains("PermissionDenied, os error 5"),
+            "{}",
+            outcome.detail
+        );
+        assert!(
+            outcome.detail.contains("machine-ARP=unknown"),
+            "{}",
+            outcome.detail
+        );
+        assert!(outcome
+            .detail
+            .contains("HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime"));
+    }
+
+    /// Evidence is gathered ONLY when the selector is absent; every other
+    /// selector state settles the question without a single probe.
+    #[test]
+    fn evidence_is_not_gathered_when_the_selector_settles_the_question() {
+        for selector in [
+            SelectorState::Native,
+            SelectorState::Wsl,
+            SelectorState::Unreadable,
+        ] {
+            let probes = RefCell::new(0usize);
+            let outcome = claim_install_selector_with(
+                || selector,
+                || {
+                    *probes.borrow_mut() += 1;
+                    WslPresenceEvidence::user_arp_only(OtherProductState::Absent)
+                },
+                || Ok(()),
+            );
+            assert_eq!(*probes.borrow(), 0, "{selector:?}");
+            assert_eq!(outcome.evidence, None);
+        }
+    }
+
+    /// Cross-language pins: the Rust port must look for exactly what the
+    /// Python guard looks for (also asserted from the Python side by
+    /// tests/policy/test_native_installer_identity.py).
+    #[test]
+    fn the_ported_probe_constants_match_the_python_guard() {
+        assert_eq!(WSL_DISTRO_NAME, "CivicCast-Ubuntu-24.04");
+        assert_eq!(
+            WSL_LXSS_KEY_PATH,
+            r"Software\Microsoft\Windows\CurrentVersion\Lxss"
+        );
+        assert_eq!(WSL_SERVICE_NAMES, ["WslService", "LxssManager"]);
+        assert_eq!(
+            WSL_AUTOSTART_RUN_KEY,
+            r"Software\Microsoft\Windows\CurrentVersion\Run"
+        );
+        assert_eq!(WSL_AUTOSTART_RUN_VALUE, "CivicCast Autostart");
+    }
+
+    // -----------------------------------------------------------------
+    // Round 3: the corrected field report (Present, not Unknown)
+    // -----------------------------------------------------------------
+
+    /// Pin 1: a Present ARP entry WITH the distro registered is a real
+    /// product, whatever the autostart/marker say -- refuse, and refuse as
+    /// `LeaveOtherProductPresent`, never as the Unknown text.
+    #[test]
+    fn a_present_product_with_a_registered_distro_refuses() {
+        let mut e = field_report_evidence(OtherProductState::Absent, OtherProductState::Present);
+        e.distro_registration = OtherProductState::Present;
+        assert_eq!(classify_wsl_product_for_claim(&e), WslProductVerdict::Present);
+        let outcome =
+            claim_install_selector_with(|| SelectorState::Absent, || e.clone(), || Ok(()));
+        assert_eq!(outcome.action, SelectorClaimAction::LeaveOtherProductPresent);
+        assert_eq!(outcome.verdict, Some(WslProductVerdict::Present));
+        assert!(
+            outcome.detail.starts_with(
+                "Setup found another CivicCast product installed for user tester: CivicCast \
+                 Installer 3.0.0-beta1 (registered at HKCU\\...\\Uninstall\\CivicCast Installer; \
+                 InstallLocation D:\\Profiles\\tester\\AppData\\Local\\CivicCast Installer; \
+                 UninstallString D:\\Profiles\\tester\\AppData\\Local\\CivicCast \
+                 Installer\\uninstall.exe)"
+            ),
+            "{}",
+            outcome.detail
+        );
+        assert!(outcome.detail.contains(
+            "Uninstall 'CivicCast Installer 3.0.0-beta1' from Settings > Apps (or run \
+             D:\\Profiles\\tester\\AppData\\Local\\CivicCast Installer\\uninstall.exe), or run \
+             `civiccast-runtime cutover-to-native`, then run setup again."
+        ));
+        assert!(
+            !outcome.detail.contains("sets HKLM"),
+            "a real Present must not carry the registry-edit remedy: {}",
+            outcome.detail
+        );
+        assert!(!outcome.detail.contains("permission"));
+    }
+
+    /// Pin 2: the field report's exact shape -- Present ARP entry, no
+    /// distro, no autostart, transfer marker set -- is an inert leftover:
+    /// claim native, exactly one write, and the detail leads with the
+    /// WARNING naming the leftover and how to remove it.
+    #[test]
+    fn a_present_entry_with_no_distro_no_autostart_and_the_transfer_marker_claims_with_a_warning()
+    {
+        let e = field_report_evidence(OtherProductState::Absent, OtherProductState::Present);
+        assert_eq!(corroborate_wsl_product_state(&e), OtherProductState::Present);
+        assert_eq!(
+            classify_wsl_product_for_claim(&e),
+            WslProductVerdict::PresentInert
+        );
+        let writes = RefCell::new(0usize);
+        let outcome = claim_install_selector_with(
+            || SelectorState::Absent,
+            || e.clone(),
+            || {
+                *writes.borrow_mut() += 1;
+                Ok(())
+            },
+        );
+        assert_eq!(outcome.action, SelectorClaimAction::ClaimNative);
+        assert_eq!(outcome.verdict, Some(WslProductVerdict::PresentInert));
+        assert_eq!(*writes.borrow(), 1);
+        assert_eq!(outcome.write_error, None);
+        assert!(
+            outcome.detail.starts_with(
+                "WARNING: an old CivicCast Installer 3.0.0-beta1 registration remains for user \
+                 tester with no CivicCast distro or autostart entry, and a previous native \
+                 install had already handed this machine off (NativeUninstallTransferCompleted \
+                 is set); ActiveRuntime was absent ("
+            ),
+            "{}",
+            outcome.detail
+        );
+        assert!(outcome
+            .detail
+            .contains("this install claimed native ownership (ActiveRuntime = \"native\", read-back verified)."));
+        assert!(outcome.detail.ends_with(
+            "Remove the leftover via Apps & Features (uninstall.exe at \
+             D:\\Profiles\\tester\\AppData\\Local\\CivicCast Installer\\uninstall.exe)."
+        ), "{}", outcome.detail);
+        assert!(outcome.detail.contains("transfer-marker=present"));
+
+        // A failed write on the inert path is still surfaced, still warned.
+        let failed = claim_install_selector_with(
+            || SelectorState::Absent,
+            || e.clone(),
+            || Err("access denied".to_string()),
+        );
+        assert_eq!(failed.write_error.as_deref(), Some("access denied"));
+        assert!(failed.detail.starts_with("WARNING: an old CivicCast Installer 3.0.0-beta1"));
+        assert!(failed.detail.contains("claiming native ownership failed: access denied"));
+    }
+
+    /// Pin 3: every one of the three inert conditions must be CONFIDENT.
+    /// No distro but an Unknown autostart (or an Unknown/Absent marker, or
+    /// an Unknown distro scan) keeps the refusal.
+    #[test]
+    fn a_present_entry_with_any_inert_condition_not_confident_refuses() {
+        let cases = [
+            ("autostart unknown", field_report_evidence(OtherProductState::Unknown, OtherProductState::Present)),
+            ("autostart present", field_report_evidence(OtherProductState::Present, OtherProductState::Present)),
+            ("marker unknown", field_report_evidence(OtherProductState::Absent, OtherProductState::Unknown)),
+            ("marker absent", field_report_evidence(OtherProductState::Absent, OtherProductState::Absent)),
+            ("distro unknown", {
+                let mut e = field_report_evidence(OtherProductState::Absent, OtherProductState::Present);
+                e.distro_registration = OtherProductState::Unknown;
+                e
+            }),
+        ];
+        for (label, e) in cases {
+            assert_eq!(
+                classify_wsl_product_for_claim(&e),
+                WslProductVerdict::Present,
+                "{label}"
+            );
+            let (outcome, writes) = {
+                let writes = RefCell::new(0usize);
+                let outcome = claim_install_selector_with(
+                    || SelectorState::Absent,
+                    || e.clone(),
+                    || {
+                        *writes.borrow_mut() += 1;
+                        Ok(())
+                    },
+                );
+                let count = *writes.borrow();
+                (outcome, count)
+            };
+            assert_eq!(
+                outcome.action,
+                SelectorClaimAction::LeaveOtherProductPresent,
+                "{label}"
+            );
+            assert_eq!(writes, 0, "{label}");
+            assert!(
+                outcome.detail.starts_with("Setup found another CivicCast product installed for user tester"),
+                "{label}: {}",
+                outcome.detail
+            );
+        }
+    }
+
+    /// The inert rule never fires on the pre-round-3 evidence shapes (the
+    /// two new sources unconsulted = Unknown), so every earlier pin holds.
+    #[test]
+    fn the_inert_rule_needs_both_new_sources_and_never_fires_on_absent_or_unknown() {
+        for user_arp in [
+            OtherProductState::Absent,
+            OtherProductState::Present,
+            OtherProductState::Unknown,
+        ] {
+            let verdict =
+                classify_wsl_product_for_claim(&WslPresenceEvidence::user_arp_only(user_arp));
+            assert_ne!(verdict, WslProductVerdict::PresentInert, "{user_arp:?}");
+            assert_eq!(
+                verdict.token(),
+                other_product_token(corroborate_wsl_product_state(
+                    &WslPresenceEvidence::user_arp_only(user_arp)
+                ))
+            );
+        }
+    }
+
+    /// Round 4 (hostile review of round 3): a MACHINE-scope ARP entry whose
+    /// owner hive is not loaded. `distro_registration` and `autostart` are
+    /// scans over LOADED user hives only, so with the HKLM entry's owner
+    /// logged out both read `Absent` for a hive they never looked at. That
+    /// absence proves nothing about the leftover's inertness: the verdict
+    /// must be `Present` (exit 87, zero writes), never `PresentInert`.
+    #[test]
+    fn a_machine_arp_entry_with_no_loaded_owner_hive_is_never_inert() {
+        let mut hklm = ProbeObservation::settled(
+            "machine-ARP",
+            "HKLM".to_string(),
+            "64-bit",
+            OtherProductState::Present,
+        );
+        hklm.product = Some(ArpProductRecord {
+            user: "(per-machine)".to_string(),
+            display_name: Some("CivicCast Installer".to_string()),
+            display_version: Some("3.0.0-beta1".to_string()),
+            ..ArpProductRecord::default()
+        });
+        // Exactly the field report's inert shape (no distro in any loaded
+        // hive, no autostart in any loaded hive, hand-off marker set) --
+        // except the entry is per-machine and no loaded user hive carries it.
+        let e = WslPresenceEvidence {
+            user_arp: OtherProductState::Absent,
+            machine_arp: OtherProductState::Present,
+            distro_registration: OtherProductState::Absent,
+            wsl_service: OtherProductState::Present,
+            autostart: OtherProductState::Absent,
+            native_transfer_marker: OtherProductState::Present,
+            observations: vec![hklm],
+        };
+        assert_eq!(corroborate_wsl_product_state(&e), OtherProductState::Present);
+        assert_eq!(
+            classify_wsl_product_for_claim(&e),
+            WslProductVerdict::Present,
+            "an ARP entry whose owner hive is not loaded cannot be proven inert"
+        );
+        let writes = RefCell::new(0usize);
+        let outcome = claim_install_selector_with(
+            || SelectorState::Absent,
+            || e.clone(),
+            || {
+                *writes.borrow_mut() += 1;
+                Ok(())
+            },
+        );
+        assert_eq!(outcome.action, SelectorClaimAction::LeaveOtherProductPresent);
+        assert_eq!(outcome.verdict, Some(WslProductVerdict::Present));
+        assert_eq!(*writes.borrow(), 0);
+        assert!(!outcome.detail.starts_with("WARNING"), "{}", outcome.detail);
+
+        // The same evidence with the user-ARP probe also Unknown (a hive it
+        // could not read) is no more inert than Absent.
+        let mut unknown_user = e.clone();
+        unknown_user.user_arp = OtherProductState::Unknown;
+        assert_eq!(
+            classify_wsl_product_for_claim(&unknown_user),
+            WslProductVerdict::Present
+        );
+
+        // Control: the owner hive IS loaded (the per-user entry was found in
+        // it), so the per-user absences are real reads -> inert, as round 3.
+        let mut loaded_owner = e.clone();
+        loaded_owner.user_arp = OtherProductState::Present;
+        loaded_owner.observations.push(field_report_present_observation());
+        assert_eq!(
+            classify_wsl_product_for_claim(&loaded_owner),
+            WslProductVerdict::PresentInert
+        );
+    }
+
+    /// A Present observation carries the ARP record in its Display, so the
+    /// observation line and the recovery document name the product, its
+    /// version, publisher, InstallLocation and UninstallString.
+    #[test]
+    fn a_present_observation_displays_the_arp_record() {
+        assert_eq!(
+            field_report_present_observation().to_string(),
+            r"user-ARP HKCU (64-bit view): present [user tester; CivicCast Installer 3.0.0-beta1; Publisher civiccast; InstallLocation D:\Profiles\tester\AppData\Local\CivicCast Installer; UninstallString D:\Profiles\tester\AppData\Local\CivicCast Installer\uninstall.exe]"
+        );
+        let bare = ArpProductRecord {
+            user: "S-1-5-21-1-2-3-1001".to_string(),
+            ..ArpProductRecord::default()
+        };
+        assert_eq!(bare.title(), "CivicCast Installer");
+        assert_eq!(bare.summary(), "user S-1-5-21-1-2-3-1001; CivicCast Installer");
+        let e = field_report_evidence(OtherProductState::Absent, OtherProductState::Present);
+        assert!(e.explain().starts_with("user-ARP=present [user-ARP HKCU (64-bit view): present [user tester; CivicCast Installer 3.0.0-beta1;"));
+        assert!(e.explain().ends_with("wsl-service=present, autostart=absent, transfer-marker=present"), "{}", e.explain());
+        // Presence from the distro scan alone has no record to describe.
+        let mut distro_only = evidence(
+            OtherProductState::Absent,
+            OtherProductState::Absent,
+            OtherProductState::Present,
+            OtherProductState::Present,
+        );
+        distro_only.observations = vec![ProbeObservation::settled(
+            "distro-scan",
+            r"HKU\S-1-5-21-1-2-3-1001\...\Lxss\{guid}".to_string(),
+            "n/a",
+            OtherProductState::Present,
+        )];
+        assert_eq!(distro_only.present_product(), None);
+        assert!(distro_only
+            .describe_present_product()
+            .starts_with("Setup found another CivicCast product (the CivicCast WSL product) installed on this machine: "));
+    }
+
+    /// The three refusals explain themselves with three different texts:
+    /// the Present one names the product and never the registry edit; the
+    /// Unknown one names the failed read and the registry value; the
+    /// Unreadable one names the value and no evidence.
+    #[test]
+    fn the_three_refusals_have_three_different_details() {
+        let present = claim_install_selector_with(
+            || SelectorState::Absent,
+            || field_report_evidence(OtherProductState::Present, OtherProductState::Absent),
+            || Ok(()),
+        );
+        let unknown = claim_install_selector_with(
+            || SelectorState::Absent,
+            || {
+                let mut e = evidence(
+                    OtherProductState::Unknown,
+                    OtherProductState::Unknown,
+                    OtherProductState::Unknown,
+                    OtherProductState::Present,
+                );
+                e.observations = vec![denied_hive_observation()];
+                e
+            },
+            || Ok(()),
+        );
+        let unreadable = claim_install_selector_with(
+            || SelectorState::Unreadable,
+            || unreachable!("no evidence is gathered for an unreadable selector"),
+            || Ok(()),
+        );
+        assert_eq!(present.action, SelectorClaimAction::LeaveOtherProductPresent);
+        assert_eq!(unknown.action, SelectorClaimAction::LeaveUnprovable);
+        assert_eq!(unreadable.action, SelectorClaimAction::LeaveUnreadable);
+        assert!(present.detail.starts_with("Setup found another CivicCast product"));
+        assert!(!present.detail.contains("sets HKLM"));
+        assert!(unknown.detail.contains("A read failed for a reason other than \"not found\""));
+        assert!(unknown.detail.contains("PermissionDenied, os error 5"));
+        assert!(unknown.detail.contains("operator sets HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime"));
+        assert!(unreadable
+            .detail
+            .starts_with("HKLM\\SOFTWARE\\CivicCast\\ActiveRuntime exists but could not be read"));
+        assert_eq!(unreadable.evidence, None);
+        assert_eq!(unreadable.verdict, None);
+        for outcome in [&present, &unknown, &unreadable] {
+            assert!(outcome.action.is_refusal());
+            assert!(!outcome.detail.contains("permissions problem"));
+        }
     }
 }

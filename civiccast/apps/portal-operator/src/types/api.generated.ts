@@ -4297,6 +4297,13 @@ export interface StaffIdentityResponse {
   roles?: Array<'setup_admin' | 'meeting_operator' | 'records_clerk' | 'publish_operator' | 'support_admin'>
 }
 
+export interface StaffSignOutResponse {
+  status: string
+  session_revoked: boolean
+  message: string
+  next_step: string
+}
+
 export interface StationAppConfig {
   station_id: string
   station_name: string

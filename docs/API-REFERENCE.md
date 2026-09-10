@@ -1377,6 +1377,15 @@ Return the verified staff identity and product roles.
 - Request body: none
 - Responses: 200 `StaffIdentityResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `POST /api/staff/auth/sign-out`
+
+Sign out this browser's own staff session, leaving every other session signed in.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `StaffSignOutResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `GET /api/staff/auto-schedule/blocks`
 
 List daypart blocks.
@@ -8776,6 +8785,13 @@ rule (S13 §5.1).
 - `roles` (optional): `Array<'setup_admin' | 'meeting_operator' | 'records_clerk' | 'publish_operator' | 'support_admin'>`
 - `scopes` (optional): `Array<string>`
 - `token_id` (optional): `string | null`
+
+### `StaffSignOutResponse`
+
+- `message` (required): `string`
+- `next_step` (required): `string`
+- `session_revoked` (required): `boolean`
+- `status` (required): `string`
 
 ### `StationAppConfig`
 

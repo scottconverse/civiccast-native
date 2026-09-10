@@ -84,7 +84,7 @@ async function anInvalidAdminPassword(): Promise<HTMLInputElement> {
   renderSetupScreen()
   await screen.findByText('Storage ready')
 
-  const password = inputById('admin_password')
+  const password = inputById('first-setup-admin-key-phrase')
   fireEvent.change(password, { target: { value: 'tooshort' } })
   fireEvent.blur(password)
   // Wait for the ERROR, not the help text: the help line reads "Use at
@@ -129,7 +129,7 @@ describe('Field error state is exposed to assistive technology', () => {
     renderSetupScreen()
     await screen.findByText('Storage ready')
 
-    const stationName = inputById('station_name')
+    const stationName = inputById('first-setup-station-name')
     expect(stationName.getAttribute('aria-invalid')).not.toBe('true')
     expect(stationName.getAttribute('aria-describedby')).toBeNull()
   })

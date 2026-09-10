@@ -284,19 +284,19 @@ describe('SetupScreen first-admin form validation', () => {
     renderSetupScreen()
     await screen.findByText('Station name')
 
-    fireEvent.change(inputById('station_name'), { target: { value: 'Test Station' } })
-    fireEvent.change(inputById('admin_display_name'), { target: { value: 'Test Admin' } })
-    fireEvent.change(inputById('admin_username'), { target: { value: 'testadmin' } })
-    fireEvent.change(inputById('admin_password'), { target: { value: 'correct horse battery staple' } })
-    fireEvent.change(inputById('confirm_password'), { target: { value: 'different password entirely' } })
-    fireEvent.blur(inputById('confirm_password'))
-    fireEvent.change(inputById('recovery_kit_destination'), { target: { value: 'printed and stored offline' } })
+    fireEvent.change(inputById('first-setup-station-name'), { target: { value: 'Test Station' } })
+    fireEvent.change(inputById('first-setup-admin-display-name'), { target: { value: 'Test Admin' } })
+    fireEvent.change(inputById('first-setup-admin-handle'), { target: { value: 'testadmin' } })
+    fireEvent.change(inputById('first-setup-admin-key-phrase'), { target: { value: 'correct horse battery staple' } })
+    fireEvent.change(inputById('first-setup-admin-key-phrase-confirm'), { target: { value: 'different password entirely' } })
+    fireEvent.blur(inputById('first-setup-admin-key-phrase-confirm'))
+    fireEvent.change(inputById('first-setup-recovery-kit-destination'), { target: { value: 'printed and stored offline' } })
 
     expect(await screen.findByText('Passwords do not match.')).toBeTruthy()
     const submit = screen.getByRole('button', { name: 'Create first admin' }) as HTMLButtonElement
     expect(submit.disabled).toBe(true)
 
-    fireEvent.change(inputById('confirm_password'), { target: { value: 'correct horse battery staple' } })
+    fireEvent.change(inputById('first-setup-admin-key-phrase-confirm'), { target: { value: 'correct horse battery staple' } })
     expect(screen.queryByText('Passwords do not match.')).toBeNull()
     expect(submit.disabled).toBe(false)
   })
@@ -306,7 +306,7 @@ describe('SetupScreen first-admin form validation', () => {
     renderSetupScreen()
     await screen.findByText('Station name')
 
-    const passwordInput = inputById('admin_password')
+    const passwordInput = inputById('first-setup-admin-key-phrase')
     expect(passwordInput.type).toBe('password')
 
     const revealButtons = screen.getAllByRole('button', { name: 'Show' })
@@ -322,15 +322,15 @@ describe('SetupScreen first-admin form validation', () => {
     renderSetupScreen()
     await screen.findByText('Station name')
 
-    fireEvent.blur(inputById('station_name'))
+    fireEvent.blur(inputById('first-setup-station-name'))
     expect(await screen.findByText('Station name is required.')).toBeTruthy()
 
-    fireEvent.change(inputById('admin_password'), { target: { value: 'short' } })
-    fireEvent.blur(inputById('admin_password'))
+    fireEvent.change(inputById('first-setup-admin-key-phrase'), { target: { value: 'short' } })
+    fireEvent.blur(inputById('first-setup-admin-key-phrase'))
     expect(await screen.findByText('Needs at least 12 characters (5/12 so far).')).toBeTruthy()
     expect(screen.getByText('Use at least 12 characters (5/12).')).toBeTruthy()
 
-    fireEvent.blur(inputById('recovery_kit_destination'))
+    fireEvent.blur(inputById('first-setup-recovery-kit-destination'))
     expect(await screen.findByText('Tell us where the recovery kit will be kept.')).toBeTruthy()
   })
 })
@@ -439,22 +439,22 @@ describe('SetupScreen first-admin recovery kit gate', () => {
     renderSetupScreen()
 
     await screen.findByText('Station name')
-    fireEvent.change(inputById('station_name'), {
+    fireEvent.change(inputById('first-setup-station-name'), {
       target: { value: profile.station_name },
     })
-    fireEvent.change(inputById('admin_display_name'), {
+    fireEvent.change(inputById('first-setup-admin-display-name'), {
       target: { value: profile.admin_display_name },
     })
-    fireEvent.change(inputById('admin_username'), {
+    fireEvent.change(inputById('first-setup-admin-handle'), {
       target: { value: profile.admin_username },
     })
-    fireEvent.change(inputById('admin_password'), {
+    fireEvent.change(inputById('first-setup-admin-key-phrase'), {
       target: { value: 'correct horse battery staple' },
     })
-    fireEvent.change(inputById('confirm_password'), {
+    fireEvent.change(inputById('first-setup-admin-key-phrase-confirm'), {
       target: { value: 'correct horse battery staple' },
     })
-    fireEvent.change(inputById('recovery_kit_destination'), {
+    fireEvent.change(inputById('first-setup-recovery-kit-destination'), {
       target: { value: 'printed and stored offline' },
     })
 
@@ -560,12 +560,12 @@ describe('SetupScreen first-admin recovery kit gate', () => {
     renderSetupScreen()
 
     await screen.findByText('Station name')
-    fireEvent.change(inputById('station_name'), { target: { value: profile.station_name } })
-    fireEvent.change(inputById('admin_display_name'), { target: { value: profile.admin_display_name } })
-    fireEvent.change(inputById('admin_username'), { target: { value: profile.admin_username } })
-    fireEvent.change(inputById('admin_password'), { target: { value: 'correct horse battery staple' } })
-    fireEvent.change(inputById('confirm_password'), { target: { value: 'correct horse battery staple' } })
-    fireEvent.change(inputById('recovery_kit_destination'), {
+    fireEvent.change(inputById('first-setup-station-name'), { target: { value: profile.station_name } })
+    fireEvent.change(inputById('first-setup-admin-display-name'), { target: { value: profile.admin_display_name } })
+    fireEvent.change(inputById('first-setup-admin-handle'), { target: { value: profile.admin_username } })
+    fireEvent.change(inputById('first-setup-admin-key-phrase'), { target: { value: 'correct horse battery staple' } })
+    fireEvent.change(inputById('first-setup-admin-key-phrase-confirm'), { target: { value: 'correct horse battery staple' } })
+    fireEvent.change(inputById('first-setup-recovery-kit-destination'), {
       target: { value: 'printed and stored offline' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Create first admin' }))
@@ -998,5 +998,378 @@ describe('SetupScreen staff-identity gating (Finding MINOR-1)', () => {
     // fired on every fresh boot regardless of token presence (console 401s
     // on the very first First Setup paint, per the 2026-09-03 walkthrough).
     expect(requestedUrls).not.toContain('/api/staff/auth/me')
+  })
+})
+
+describe('SetupScreen recovery kit survives navigation until confirmed (2026-09-09 walkthrough)', () => {
+  const PENDING_KEY = 'civiccast.pendingRecoveryKit'
+  const setupResponse = {
+    status: 'complete',
+    profile,
+    recovery_kit: {
+      kit_id: 'rk_test',
+      generated_at: '2026-06-28T00:00:00Z',
+      station_name: profile.station_name,
+      admin_username: profile.admin_username,
+      recovery_codes: ['CC-ONE', 'CC-TWO'],
+      instructions: ['Store the kit offline.'],
+      excludes: ['staff bearer token values'],
+    },
+    operator_console_url: 'http://127.0.0.1:8000/operator/',
+    operator_console_token: 'ccst_test_operator_console_token',
+    next_step: 'Save the recovery kit.',
+  }
+
+  function stationState(setupComplete: boolean, acknowledged: boolean) {
+    return {
+      status: setupComplete ? 'complete' : 'not_started',
+      setup_complete: setupComplete,
+      profile: setupComplete ? profile : null,
+      recovery_kit_created: setupComplete,
+      recovery_kit_id: setupComplete ? 'rk_test' : null,
+      recovery_kit_acknowledged: acknowledged,
+      operator_console_url: 'http://127.0.0.1:8000/operator/',
+      next_step: setupComplete ? 'Open System Health.' : 'Create the first admin.',
+    }
+  }
+
+  function stubStationFetch(state: { setupComplete: boolean; acknowledged: boolean }) {
+    const calls: string[] = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      calls.push(`${method} ${url}`)
+      if (url === '/api/setup/station-state') {
+        return jsonResponse(stationState(state.setupComplete, state.acknowledged))
+      }
+      if (url === '/api/setup/storage') {
+        return jsonResponse({
+          status: 'ready',
+          database_url: 'sqlite:///tmp/civiccast.db',
+          database_path: '/tmp/civiccast.db',
+          upload_dir: '/tmp/uploads',
+          storage_dir: '/tmp',
+          migrations_applied: true,
+          configured_at: '2026-06-28T00:00:00Z',
+          operator_message: 'Storage ready',
+          next_step: 'Create the first admin.',
+        })
+      }
+      if (url === '/api/staff/auth/me') {
+        return jsonResponse({
+          operator_id: 'testadmin',
+          operator_display_name: 'Test Admin',
+          roles: ['setup_admin'],
+        })
+      }
+      if (url === '/api/setup/first-admin' && method === 'POST') {
+        state.setupComplete = true
+        return jsonResponse(setupResponse)
+      }
+      if (url === '/api/setup/recovery-kit/acknowledge' && method === 'POST') {
+        state.acknowledged = true
+        return jsonResponse(stationState(true, true))
+      }
+      return jsonResponse({ detail: `Unhandled ${method} ${url}` }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return calls
+  }
+
+  function fillFirstAdminForm() {
+    fireEvent.change(inputById('first-setup-station-name'), { target: { value: profile.station_name } })
+    fireEvent.change(inputById('first-setup-admin-display-name'), {
+      target: { value: profile.admin_display_name },
+    })
+    fireEvent.change(inputById('first-setup-admin-handle'), { target: { value: profile.admin_username } })
+    fireEvent.change(inputById('first-setup-admin-key-phrase'), {
+      target: { value: 'correct horse battery staple' },
+    })
+    fireEvent.change(inputById('first-setup-admin-key-phrase-confirm'), {
+      target: { value: 'correct horse battery staple' },
+    })
+    fireEvent.change(inputById('first-setup-recovery-kit-destination'), {
+      target: { value: 'printed and stored offline' },
+    })
+  }
+
+  it('keeps the kit (codes and password) across unmount and remount, then clears it on acknowledge', async () => {
+    window.history.replaceState(null, '', '/operator/#/setup')
+    vi.spyOn(window, 'print').mockImplementation(() => {})
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:civiccast-recovery-kit'),
+      revokeObjectURL: vi.fn(),
+    })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const state = { setupComplete: false, acknowledged: false }
+    stubStationFetch(state)
+
+    const first = renderSetupScreen()
+    await screen.findByText('Station name')
+    fillFirstAdminForm()
+    fireEvent.click(screen.getByRole('button', { name: 'Create first admin' }))
+    expect(await screen.findByText('Recovery kit ready')).toBeTruthy()
+
+    // The codes are persisted the moment they exist -- before Save/Print.
+    const stored = JSON.parse(window.sessionStorage.getItem(PENDING_KEY) ?? 'null')
+    expect(stored?.setup?.recovery_kit?.recovery_codes).toEqual(['CC-ONE', 'CC-TWO'])
+    expect(stored?.admin_password).toBe('correct horse battery staple')
+
+    // Any unmount used to lose the kit for good: a Sidebar click, the
+    // shell's missing-session bounce, a reload. Simulate it and remount.
+    first.unmount()
+    renderSetupScreen()
+
+    expect(await screen.findByText('Recovery kit ready')).toBeTruthy()
+    expect(screen.getByText('CC-ONE')).toBeTruthy()
+    expect(screen.getByText('CC-TWO')).toBeTruthy()
+    expect(screen.getByText('correct horse battery staple')).toBeTruthy()
+    // ...and the stale "never confirmed" scolding must NOT paint over it.
+    expect(screen.queryByText('Recovery kit never confirmed')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save kit' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /I have saved or printed this kit/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to the console' }))
+
+    await waitFor(() => {
+      expect(screen.queryByText('Recovery kit ready')).toBeNull()
+      expect(screen.getByText('Setup complete')).toBeTruthy()
+    })
+    expect(window.sessionStorage.getItem(PENDING_KEY)).toBeNull()
+  })
+
+  it('rehydrates a stored kit on a fresh load even though the station already reports setup complete', async () => {
+    window.history.replaceState(null, '', '/operator/#/setup')
+    window.localStorage.setItem('civiccast.staffToken', 'ccst_test_operator_console_token')
+    window.sessionStorage.setItem(
+      PENDING_KEY,
+      JSON.stringify({
+        setup: setupResponse,
+        admin_password: 'correct horse battery staple',
+        stored_at: Date.now(),
+      }),
+    )
+    stubStationFetch({ setupComplete: true, acknowledged: false })
+
+    renderSetupScreen()
+
+    expect(await screen.findByText('Recovery kit ready')).toBeTruthy()
+    expect(screen.getByText('CC-ONE')).toBeTruthy()
+    expect(screen.queryByText('Recovery kit never confirmed')).toBeNull()
+    expect(screen.queryByText('Admin sign-in')).toBeNull()
+  })
+
+  it('forgets a stored kit once the station says it was already confirmed', async () => {
+    window.history.replaceState(null, '', '/operator/#/setup')
+    window.localStorage.setItem('civiccast.staffToken', 'ccst_test_operator_console_token')
+    window.sessionStorage.setItem(
+      PENDING_KEY,
+      JSON.stringify({
+        setup: setupResponse,
+        admin_password: 'correct horse battery staple',
+        stored_at: Date.now(),
+      }),
+    )
+    stubStationFetch({ setupComplete: true, acknowledged: true })
+
+    renderSetupScreen()
+
+    await waitFor(() => {
+      expect(window.sessionStorage.getItem(PENDING_KEY)).toBeNull()
+    })
+    expect(screen.queryByText('Recovery kit ready')).toBeNull()
+    expect(await screen.findByText('Setup complete')).toBeTruthy()
+  })
+
+  it('ignores garbage in the pending-kit slot', async () => {
+    window.history.replaceState(null, '', '/operator/#/setup')
+    window.sessionStorage.setItem(PENDING_KEY, '{not json')
+    stubStationFetch({ setupComplete: false, acknowledged: false })
+
+    renderSetupScreen()
+
+    expect(await screen.findByText('Station name')).toBeTruthy()
+    expect(screen.queryByText('Recovery kit ready')).toBeNull()
+  })
+
+  // ackMutation.onError: a 409 (station reset/reinstalled under this tab)
+  // or 401 (this browser's session rejected) can never be confirmed from
+  // here, so the gate releases and the ordinary sign-in card takes over.
+  // Any other failure keeps the kit on screen so the codes are not lost.
+  function stubAckFailure(status: number) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        const method = init?.method ?? 'GET'
+        if (url === '/api/setup/station-state') {
+          return jsonResponse(stationState(true, false))
+        }
+        if (url === '/api/setup/storage') {
+          return jsonResponse({ status: 'ready', message: 'ready', next_step: 'Create the first admin.' })
+        }
+        if (url === '/api/staff/auth/me') {
+          return jsonResponse({ detail: 'Unauthorized' }, 401)
+        }
+        if (url === '/api/setup/recovery-kit/acknowledge' && method === 'POST') {
+          return jsonResponse({ detail: `ack failed with ${status}` }, status)
+        }
+        return jsonResponse({ detail: `Unhandled ${method} ${url}` }, 404)
+      }),
+    )
+  }
+
+  async function renderPendingKitAndAcknowledge() {
+    window.history.replaceState(null, '', '/operator/#/setup')
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:civiccast-recovery-kit'),
+      revokeObjectURL: vi.fn(),
+    })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    window.sessionStorage.setItem(
+      PENDING_KEY,
+      JSON.stringify({
+        setup: setupResponse,
+        admin_password: 'correct horse battery staple',
+        stored_at: Date.now(),
+      }),
+    )
+    renderSetupScreen()
+    expect(await screen.findByText('Recovery kit ready')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Save kit' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /I have saved or printed this kit/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to the console' }))
+  }
+
+  for (const status of [409, 401]) {
+    it(`releases the gate and shows the sign-in card when the acknowledge call returns ${status}`, async () => {
+      stubAckFailure(status)
+      await renderPendingKitAndAcknowledge()
+
+      await waitFor(() => {
+        expect(window.sessionStorage.getItem(PENDING_KEY)).toBeNull()
+      })
+      await waitFor(() => {
+        expect(screen.queryByText('Recovery kit ready')).toBeNull()
+        expect(screen.getByText('Admin sign-in')).toBeTruthy()
+      })
+      expect(screen.queryByText('CC-ONE')).toBeNull()
+    })
+  }
+
+  it('keeps the gate and the kit panel when the acknowledge call fails with a 500', async () => {
+    stubAckFailure(500)
+    await renderPendingKitAndAcknowledge()
+
+    expect(await screen.findByText(/ack failed with 500/)).toBeTruthy()
+    expect(screen.getByText('Recovery kit ready')).toBeTruthy()
+    expect(screen.getByText('CC-ONE')).toBeTruthy()
+    expect(screen.queryByText('Admin sign-in')).toBeNull()
+    const stored = JSON.parse(window.sessionStorage.getItem(PENDING_KEY) ?? 'null')
+    expect(stored?.setup?.recovery_kit?.recovery_codes).toEqual(['CC-ONE', 'CC-TWO'])
+  })
+})
+
+describe('SetupScreen keeps browser autofill out of account creation (2026-09-09 owner lockout)', () => {
+  it('marks the first-admin form as a new-account form with non-guessable field names', async () => {
+    window.history.replaceState(null, '', '/operator/#/setup')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url === '/api/setup/storage') {
+          return jsonResponse({ status: 'ready', message: 'ready', next_step: 'Create the first admin.' })
+        }
+        if (url === '/api/setup/station-state') {
+          return jsonResponse({ status: 'not_started', setup_complete: false, recovery_kit_acknowledged: false })
+        }
+        return jsonResponse({ detail: 'not stubbed' }, 404)
+      }),
+    )
+
+    renderSetupScreen()
+    await screen.findByText('Station name')
+
+    const form = inputById('first-setup-admin-key-phrase').closest('form')
+    expect(form?.getAttribute('autocomplete')).toBe('off')
+
+    const password = inputById('first-setup-admin-key-phrase')
+    const confirm = inputById('first-setup-admin-key-phrase-confirm')
+    expect(password.type).toBe('password')
+    expect(confirm.type).toBe('password')
+    expect(password.getAttribute('autocomplete')).toBe('new-password')
+    expect(confirm.getAttribute('autocomplete')).toBe('new-password')
+
+    const username = inputById('first-setup-admin-handle')
+    expect(username.getAttribute('autocomplete')).toBe('off')
+
+    // Chrome's address autofill paints organisation and person names into
+    // free-text fields it recognises: the station and display-name fields
+    // must opt out explicitly, not just rely on the form-level token.
+    expect(inputById('first-setup-station-name').getAttribute('autocomplete')).toBe('off')
+    expect(inputById('first-setup-admin-display-name').getAttribute('autocomplete')).toBe('off')
+
+    // Browser autofill heuristics key on name/id tokens like "username",
+    // "login", "password", "pwd": none of the credential fields may carry them.
+    for (const input of [username, password, confirm]) {
+      for (const attr of ['id', 'name']) {
+        const value = input.getAttribute(attr) ?? ''
+        expect(value).not.toBe('')
+        expect(value).not.toMatch(/user|login|pass|pwd|email/i)
+      }
+    }
+
+    // The confirm check still works with the renamed fields.
+    fireEvent.change(password, { target: { value: 'correct horse battery staple' } })
+    fireEvent.change(confirm, { target: { value: 'something else entirely' } })
+    fireEvent.blur(confirm)
+    expect(await screen.findByText('Passwords do not match.')).toBeTruthy()
+  })
+
+  it('lets a real routine sign-in autofill, but keeps saved credentials out of recovery', async () => {
+    window.history.replaceState(null, '', '/operator/#/setup')
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url === '/api/setup/station-state') {
+          return jsonResponse({
+            status: 'complete',
+            setup_complete: true,
+            profile,
+            recovery_kit_created: true,
+            recovery_kit_id: 'rk_test',
+            recovery_kit_acknowledged: true,
+            operator_console_url: 'http://127.0.0.1:8000/operator/',
+            next_step: 'Open System Health.',
+          })
+        }
+        if (url === '/api/setup/storage') {
+          return jsonResponse({ status: 'ready', message: 'ready', next_step: 'Create the first admin.' })
+        }
+        if (url === '/api/staff/auth/me') {
+          return jsonResponse({ detail: 'Missing Authorization header.' }, 401)
+        }
+        return jsonResponse({ detail: 'not stubbed' }, 404)
+      }),
+    )
+
+    renderSetupScreen()
+    await screen.findByText('Admin sign-in')
+
+    // Routine sign-in IS the one place a saved credential belongs.
+    expect(inputById('login-admin-username').getAttribute('autocomplete')).toBe('username')
+    expect(inputById('login-admin-password').getAttribute('autocomplete')).toBe('current-password')
+
+    // Recovery sets a NEW password and burns a one-time code.
+    const recoveryForm = inputById('recover-code').closest('form')
+    expect(recoveryForm?.getAttribute('autocomplete')).toBe('off')
+    expect(inputById('recover-admin-username').getAttribute('autocomplete')).toBe('off')
+    expect(inputById('recover-code').getAttribute('autocomplete')).toBe('one-time-code')
+    expect(inputById('recover-new-password').getAttribute('autocomplete')).toBe('new-password')
+    expect(inputById('recover-confirm-new-password').getAttribute('autocomplete')).toBe('new-password')
+    expect(inputById('recover-admin-username').getAttribute('name')).not.toMatch(/user|login/i)
   })
 })
