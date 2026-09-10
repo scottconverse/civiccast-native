@@ -92,6 +92,14 @@ class TestPublishBrokerSeam:
             json={
                 "operator_id": "staff-1",
                 "operator_display_name": "Avery Operator",
+                # archive_verified needs the archive surfaces named: an omitted
+                # selection is the canonical Portal surface only (F-23 / B3).
+                "approved_surface_ids": [
+                    "portal",
+                    "internet-archive",
+                    "local-nas-rsync",
+                    "local-nas-zfs",
+                ],
             },
         )
 
