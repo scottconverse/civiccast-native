@@ -6077,7 +6077,7 @@
           "channels"
         ],
         "summary": "Read public now/next state for a channel",
-        "description": "Resident-safe now/next: no daemon ``last_error`` or free-text source label.\n\nThis route is unauthenticated. The daemon's ``last_error`` is raw\n``str(exc)`` / child stderr (file paths, NAS mounts, headend host:port)\nand ``current_source_label`` is operator free text; both stay on the\nstaff projection only.",
+        "description": "Resident-safe now/next: no daemon ``last_error`` or free-text source label.\n\nThis route is unauthenticated. The daemon's ``last_error`` is raw\n``str(exc)`` / child stderr (file paths, NAS mounts, headend host:port)\nand ``current_source_label`` is operator free text; this route withholds\nboth and serves the scheduled program title (already public via the\nschedule routes) or the channel display name instead. The sibling\n``GET /api/public/egress/channels/{id}/now`` (``civiccast/egress/router.py``)\nstill serves ``current_source_label`` unauthenticated; that is outside this\nbuilder and tracked as a follow-up.",
         "operationId": "public_channel_now_next_api_public_channels__channel_id__now_next_get",
         "parameters": [
           {
@@ -52403,7 +52403,7 @@
               }
             ],
             "title": "Approved Surface Ids",
-            "description": "Surface ids to publish. Omitted or null means the canonical Portal surface only; archive and reach surfaces must be listed explicitly."
+            "description": "Surface ids to publish. Omitted or null means the canonical Portal surface only; archive and reach surfaces must be listed explicitly. An empty list is accepted only together with overrides; on its own it is refused (422) because nothing would be published."
           },
           "overrides": {
             "items": {

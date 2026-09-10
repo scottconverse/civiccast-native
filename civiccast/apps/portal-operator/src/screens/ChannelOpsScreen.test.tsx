@@ -85,6 +85,7 @@ import {
 } from './ChannelOpsScreen'
 import {
   START_APPLY_TIMEOUT_MS,
+  configCheckFailedReason,
   startDisabledConfigReason,
   startWatchApplied,
   startWithoutConfigReason,
@@ -523,6 +524,24 @@ describe('EgressControlPanel Start gating (F-29)', () => {
     expect(onCommand).not.toHaveBeenCalled()
   })
 
+  it('says the check failed, not that the configuration is missing, when the list fetch errored (m7)', () => {
+    const onCommand = vi.fn()
+    const onRetryConfigCheck = vi.fn()
+    const { getByRole, getByText, queryByText } = renderPanel({
+      configState: 'unknown',
+      onCommand,
+      onRetryConfigCheck,
+    })
+    const start = getByRole('button', { name: 'Start' }) as HTMLButtonElement
+    expect(start.disabled).toBe(true)
+    expect(getByText(configCheckFailedReason('public'))).toBeTruthy()
+    expect(queryByText(startWithoutConfigReason('public'))).toBeNull()
+    fireEvent.click(start)
+    expect(onCommand).not.toHaveBeenCalled()
+    fireEvent.click(getByRole('button', { name: 'Retry check' }))
+    expect(onRetryConfigCheck).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps Start disabled with a checking notice until the configuration list has loaded', () => {
     const { getByRole, getByText } = renderPanel({ configState: undefined })
     expect((getByRole('button', { name: 'Start' }) as HTMLButtonElement).disabled).toBe(true)
@@ -713,6 +732,20 @@ describe('startWatchApplied (M3)', () => {
     expect(startWatchApplied(unknown, stateRow('STOPPED', '2026-06-15T12:00:01Z'))).toBe(false)
     expect(startWatchApplied(unknown, stateRow('ON_AIR', '2026-06-15T11:00:00Z'))).toBe(true)
   })
+
+  it('never treats an unchanged ERROR or FALLBACK_SLATE row as an applied start (M4)', () => {
+    const stuckInError = { ...watch, baselineState: 'ERROR' }
+    expect(startWatchApplied(stuckInError, stateRow('ERROR', '2026-06-15T11:00:00Z'))).toBe(false)
+    // The daemon re-tried and re-failed: the row moved, so the start was acted on.
+    expect(startWatchApplied(stuckInError, stateRow('ERROR', '2026-06-15T12:00:01Z'))).toBe(true)
+    expect(startWatchApplied(stuckInError, stateRow('STARTING', '2026-06-15T11:00:00Z'))).toBe(true)
+    const parkedOnSlate = { ...watch, baselineState: 'FALLBACK_SLATE' }
+    expect(startWatchApplied(parkedOnSlate, stateRow('FALLBACK_SLATE', '2026-06-15T11:00:00Z'))).toBe(false)
+    // Stopped -> slate is a real transition the daemon made in answer to the Start.
+    expect(startWatchApplied(watch, stateRow('FALLBACK_SLATE', '2026-06-15T11:00:00Z'))).toBe(true)
+    const unknown = { ...watch, baselineKnown: false, baselineState: null, baselineUpdatedAt: null }
+    expect(startWatchApplied(unknown, stateRow('ERROR', '2026-06-15T12:00:01Z'))).toBe(false)
+  })
 })
 
 describe('ChannelOpsScreen Start watchdog (M3)', () => {
@@ -770,5 +803,82 @@ describe('ChannelOpsScreen Start watchdog (M3)', () => {
 
     const alert = await screen.findByText(NOT_APPLIED)
     expect(alert.closest('[role="alert"]')?.textContent).toContain('within 20s')
+  })
+
+  // Hostile review M4: the F-29 case itself -- a valid, enabled configuration,
+  // so the API answers 202, but the daemon cannot launch and left the row in
+  // ERROR. It drops the Start and never rewrites the row.
+  it('raises the alert when a Start is dropped on a channel already sitting in ERROR (M4)', async () => {
+    vi.setSystemTime(new Date('2026-06-15T12:00:00Z'))
+    vi.mocked(getEgressState).mockResolvedValue({
+      ...stateRow('ERROR', '2026-06-15T11:00:00Z'),
+      last_error: 'encoder unavailable: srt sink refused',
+    })
+    renderScreen()
+    await pressStartAndConfirm()
+
+    expect(screen.queryByText(NOT_APPLIED)).toBeNull()
+    await act(async () => {
+      vi.advanceTimersByTime(START_APPLY_TIMEOUT_MS + 1_000)
+    })
+
+    const alert = await screen.findByText(NOT_APPLIED)
+    const text = alert.closest('[role="alert"]')?.textContent ?? ''
+    expect(text).toContain('within 20s')
+    expect(text).toContain('encoder unavailable: srt sink refused')
+  })
+
+  it('raises the alert when a Start is dropped on a channel parked on FALLBACK_SLATE (M4)', async () => {
+    vi.setSystemTime(new Date('2026-06-15T12:00:00Z'))
+    vi.mocked(getEgressState).mockResolvedValue(stateRow('FALLBACK_SLATE', '2026-06-15T09:00:00Z'))
+    renderScreen()
+    await pressStartAndConfirm()
+
+    await act(async () => {
+      vi.advanceTimersByTime(START_APPLY_TIMEOUT_MS + 1_000)
+    })
+
+    await screen.findByText(NOT_APPLIED)
+  })
+
+  it('does not cry wolf when a parked ERROR row moves after the Start (M4)', async () => {
+    vi.setSystemTime(new Date('2026-06-15T12:00:00Z'))
+    vi.mocked(getEgressState)
+      .mockResolvedValueOnce(stateRow('ERROR', '2026-06-15T11:00:00Z'))
+      .mockResolvedValue(stateRow('ERROR', '2026-06-15T11:00:30Z'))
+    renderScreen()
+    await pressStartAndConfirm()
+
+    await act(async () => {
+      vi.advanceTimersByTime(START_APPLY_TIMEOUT_MS + 1_000)
+    })
+
+    expect(screen.queryByText(NOT_APPLIED)).toBeNull()
+  })
+})
+
+describe('ChannelOpsScreen configuration check failure (m7)', () => {
+  beforeEach(() => {
+    stubScreenQueries()
+  })
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('disables Start with the failed-check reason, never the missing-configuration reason', async () => {
+    vi.mocked(listEgressChannels).mockRejectedValue(new Error('gateway timeout'))
+    renderScreen()
+
+    await screen.findByText(configCheckFailedReason('public'))
+    expect(screen.queryByText(startWithoutConfigReason('public'))).toBeNull()
+    expect((screen.getByRole('button', { name: 'Start' }) as HTMLButtonElement).disabled).toBe(true)
+
+    vi.mocked(listEgressChannels).mockResolvedValue([
+      { channel_id: 'public', enabled: true, sink_count: 1, state: null, latest_health: null },
+    ] as unknown as Awaited<ReturnType<typeof listEgressChannels>>)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry check' }))
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Start' }) as HTMLButtonElement).disabled).toBe(false),
+    )
   })
 })

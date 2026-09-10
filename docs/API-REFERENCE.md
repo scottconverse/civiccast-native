@@ -7836,7 +7836,7 @@ rule (S13 §5.1).
 
 ### `PublishApprovalRequest`
 
-- `approved_surface_ids` (optional): `Array<string> | null` -- Surface ids to publish. Omitted or null means the canonical Portal surface only; archive and reach surfaces must be listed explicitly.
+- `approved_surface_ids` (optional): `Array<string> | null` -- Surface ids to publish. Omitted or null means the canonical Portal surface only; archive and reach surfaces must be listed explicitly. An empty list is accepted only together with overrides; on its own it is refused (422) because nothing would be published.
 - `operator_display_name` (required): `string`
 - `operator_id` (required): `string`
 - `overrides` (optional): `Array<PublishSurfaceOverride>`

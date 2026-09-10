@@ -25,6 +25,7 @@ from civiccast.cable.channel import (
 )
 from civiccast.captions.live_sidecar import active_caption_sidecar
 from civiccast.egress.automation import default_egress_work_dir
+from civiccast.egress.models import EgressStateRow
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.store import EgressStore
 from civiccast.schedule.models import SCHEDULE_STATE_SCHEDULED, ScheduleItemResponse
@@ -104,8 +105,12 @@ def public_channel_now_next(
 
     This route is unauthenticated. The daemon's ``last_error`` is raw
     ``str(exc)`` / child stderr (file paths, NAS mounts, headend host:port)
-    and ``current_source_label`` is operator free text; both stay on the
-    staff projection only.
+    and ``current_source_label`` is operator free text; this route withholds
+    both and serves the scheduled program title (already public via the
+    schedule routes) or the channel display name instead. The sibling
+    ``GET /api/public/egress/channels/{id}/now`` (``civiccast/egress/router.py``)
+    still serves ``current_source_label`` unauthenticated; that is outside this
+    builder and tracked as a follow-up.
     """
     return _channel_now_next_or_404(
         channel_id, egress_store, schedule_store, include_operator_detail=False
@@ -212,6 +217,40 @@ def _scheduled_rows(schedule_store: Any, channel_id: str) -> list[ScheduleItemRe
     )
 
 
+# How many recent proof events the now/next join scans for the one the state
+# row points at. Every start and transition appends one; a handful covers
+# any realistic gap between the row and its event.
+_PROOF_EVENT_JOIN_LIMIT = 50
+
+
+def _current_source_ref(
+    egress_store: EgressStore | None, state: EgressStateRow | None
+) -> str | None:
+    """The asset id the daemon's own proof event recorded for what it handed off.
+
+    Identity comes from the daemon's persisted records, never from a substring
+    of the free-text label (hostile review M5): the proof event the state row
+    points at when the row still carries ``current_proof_event_id``, else the
+    newest proof event whose ``source_label`` equals the row's label (both are
+    the same segment label, folded by ``db_safe_text`` at their own choke
+    points). ``None`` when there is no such event -- the builder then refuses
+    to borrow caption refs from the schedule.
+    """
+    if egress_store is None or state is None:
+        return None
+    events = egress_store.recent_proof_events(state.channel_id, _PROOF_EVENT_JOIN_LIMIT)
+    if state.current_proof_event_id is not None:
+        for event in events:
+            if event.event_id == state.current_proof_event_id:
+                return event.source_ref
+    if state.current_source_label is None:
+        return None
+    for event in events:
+        if event.source_label == state.current_source_label:
+            return event.source_ref
+    return None
+
+
 def _channel_now_next_or_404(
     channel_id: str,
     egress_store: EgressStore | None,
@@ -231,4 +270,5 @@ def _channel_now_next_or_404(
         schedule_items=_scheduled_rows(schedule_store, channel_id),
         egress_state=egress_state,
         include_operator_detail=include_operator_detail,
+        current_source_ref=_current_source_ref(egress_store, egress_state),
     )

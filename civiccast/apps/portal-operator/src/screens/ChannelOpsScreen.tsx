@@ -34,6 +34,7 @@ import {
   type EgressConfigState,
   START_APPLY_TIMEOUT_MS,
   type StartWatch,
+  configCheckFailedReason,
   startDisabledConfigReason,
   startWatchApplied,
   startWithoutConfigReason,
@@ -598,6 +599,7 @@ export function EgressControlPanel({
   onCommand,
   liveCaptionsEnabled,
   configState,
+  onRetryConfigCheck,
   startNotApplied = null,
 }: {
   channelId: string | undefined
@@ -615,6 +617,8 @@ export function EgressControlPanel({
   // an unconfigured channel and the API refuses it with 409 (a disabled
   // configuration gets its own 409).
   configState?: EgressConfigState
+  // Re-runs the configuration-list fetch after it failed ('unknown').
+  onRetryConfigCheck?: () => void
   // Set by the screen when a queued Start was not acted on by the daemon
   // within START_APPLY_TIMEOUT_MS (state still Stopped / no state row).
   startNotApplied?: { channelId: string; waitedSeconds: number } | null
@@ -632,7 +636,9 @@ export function EgressControlPanel({
           ? null
           : configState === 'disabled'
             ? startDisabledConfigReason(channelId)
-            : startWithoutConfigReason(channelId)
+            : configState === 'unknown'
+              ? configCheckFailedReason(channelId)
+              : startWithoutConfigReason(channelId)
   const rawEgressState = state?.state ?? 'STOPPED'
   // Tone comes from the shared toneForEgressState so this pill cannot disagree
   // with the same feed's pill on System Health. A not-on-air feed is amber
@@ -740,8 +746,18 @@ export function EgressControlPanel({
         })}
       </div>
       {startDisabledReason && (
-        <div id="egress-start-reason" className="mt-2 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
-          {startDisabledReason}
+        <div id="egress-start-reason" className="mt-2 flex flex-wrap items-center gap-2 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
+          <span>{startDisabledReason}</span>
+          {configState === 'unknown' && onRetryConfigCheck && (
+            <button
+              type="button"
+              onClick={onRetryConfigCheck}
+              className="rounded-md px-2 py-1 text-xs font-semibold"
+              style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink)', border: '1px solid var(--cc-line)' }}
+            >
+              Retry check
+            </button>
+          )}
         </div>
       )}
       {startNotApplied && startNotApplied.channelId === channelId && (
@@ -1723,7 +1739,7 @@ export function ChannelOpsScreen() {
         ? 'configured'
         : 'disabled'
     : egressChannelsQuery.isError
-      ? 'missing'
+      ? 'unknown'
       : undefined
   // F-29: after a Start is accepted (202) the daemon must act on it. Watch the
   // state row for START_APPLY_TIMEOUT_MS; if nothing changes, tell the operator
@@ -1908,6 +1924,7 @@ export function ChannelOpsScreen() {
             error={egressCommandMutation.error}
             liveCaptionsEnabled={liveCaptionsEnabled}
             configState={egressConfigState}
+            onRetryConfigCheck={() => void egressChannelsQuery.refetch()}
             startNotApplied={startNotApplied}
             onCommand={(action) => {
               if (!channelId) return

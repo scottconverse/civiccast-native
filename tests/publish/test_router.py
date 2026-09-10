@@ -502,6 +502,27 @@ def test_explicit_empty_surface_selection_does_not_publish_every_surface(
     assert draft is not None and draft.published_at is None
 
 
+def test_empty_surface_selection_without_overrides_is_refused_with_422(
+    client: TestClient, store: FakeAssetStore
+) -> None:
+    """Hostile review m8: ``[]`` with nothing else to do used to return 200 and
+    publish nothing, indistinguishable from an omitted field (Portal only)."""
+    response = client.post(
+        "/api/staff/publish/assets/concert-archive/approve",
+        json={
+            "operator_id": "staff-1",
+            "operator_display_name": "Avery Operator",
+            "approved_surface_ids": [],
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert "nothing would be published" in response.text
+    assert "Omit the field to publish the Portal surface only" in response.text
+    draft = store.get_staff_row("concert-archive")
+    assert draft is not None and draft.published_at is None
+
+
 def test_unpackaged_asset_blocks_approval_with_actionable_409(client: TestClient) -> None:
     response = client.post(
         "/api/staff/publish/assets/training-clip/approve",

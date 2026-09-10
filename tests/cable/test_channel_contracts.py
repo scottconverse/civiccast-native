@@ -32,6 +32,7 @@ from civiccast.egress.models import EgressCaptionProofSample, EgressProofEvent, 
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.store import InMemoryEgressStore
 from civiccast.schedule.models import ScheduleItemResponse
+from civiccast.schedule.router import get_schedule_store
 
 _NOW = datetime(2026, 5, 31, 18, 0, tzinfo=UTC)
 
@@ -112,8 +113,8 @@ def test_channel_now_next_reports_the_daemon_source_while_on_air() -> None:
 
 
 def test_channel_now_next_borrows_the_scheduled_block_only_when_the_daemon_airs_it() -> None:
-    """The daemon's source label names the scheduled asset: same program, so
-    the block lends its timing and caption refs and the title is the daemon's."""
+    """The daemon's proof event names the scheduled asset: same program, so
+    the block lends its id, timing and caption refs and the title is the daemon's."""
     on_air = EgressStateRow(
         channel_id="public",
         state="ON_AIR",
@@ -124,6 +125,7 @@ def test_channel_now_next_borrows_the_scheduled_block_only_when_the_daemon_airs_
         "public",
         now=_NOW,
         egress_state=on_air,
+        current_source_ref="council",
         schedule_items=[
             _schedule_item("council", "Council Meeting", _NOW - timedelta(minutes=10), 1800),
             _schedule_item("board", "Board Replay", _NOW + timedelta(hours=1), 1200),
@@ -138,14 +140,92 @@ def test_channel_now_next_borrows_the_scheduled_block_only_when_the_daemon_airs_
     assert now_next.schedule_note is None
     assert now_next.next is not None
     assert now_next.next.title == "Board Replay"
+    assert now_next.next.starts_at > _NOW
 
 
-def test_channel_now_next_matches_the_scheduled_block_by_asset_id_in_the_daemon_label() -> None:
+def test_channel_now_next_matches_the_scheduled_block_by_proof_event_source_ref_not_label() -> None:
+    """Hostile review M5: identity is the daemon's proof-event ``source_ref``.
+    The same conformed-file label with no proof event is NOT the scheduled
+    block -- no borrowed slot, no borrowed caption refs, and the note fires."""
     on_air = EgressStateRow(
         channel_id="public",
         state="ON_AIR",
         current_source_label="council (conformed)",
         updated_at=_NOW,
+    )
+    schedule = [_schedule_item("council", "Council Meeting", _NOW - timedelta(minutes=10), 1800)]
+
+    proven = build_channel_now_next(
+        "public",
+        now=_NOW,
+        egress_state=on_air,
+        schedule_items=schedule,
+        current_source_ref="council",
+    )
+    assert proven.current is not None
+    assert proven.current.block_id.startswith("schedule-")
+    assert proven.current.title == "council (conformed)"
+    assert proven.current.caption_refs == ["council.vtt"]
+    assert proven.schedule_note is None
+
+    unproven = build_channel_now_next(
+        "public", now=_NOW, egress_state=on_air, schedule_items=schedule
+    )
+    assert unproven.current is not None
+    assert unproven.current.block_id == "public-egress-on_air"
+    assert unproven.current.title == "council (conformed)"
+    assert unproven.current.caption_refs == []
+    assert unproven.schedule_note is not None
+    assert "Council Meeting" in unproven.schedule_note
+
+    other_asset = build_channel_now_next(
+        "public",
+        now=_NOW,
+        egress_state=on_air,
+        schedule_items=schedule,
+        current_source_ref="bulletin",
+    )
+    assert other_asset.current is not None
+    assert other_asset.current.block_id == "public-egress-on_air"
+    assert other_asset.current.caption_refs == []
+    assert other_asset.schedule_note is not None
+
+
+def test_channel_now_next_never_matches_a_short_asset_id_inside_the_label() -> None:
+    """Hostile review M5 (wrong match): asset id ``live`` must not own
+    "Live takeover from Studio B" -- the takeover keeps its own timing, the
+    meeting's caption refs are never grafted on, and the note fires."""
+    on_air = EgressStateRow(
+        channel_id="public",
+        state="ON_AIR",
+        current_source_label="Live takeover from Studio B",
+        updated_at=_NOW - timedelta(minutes=2),
+    )
+    now_next = build_channel_now_next(
+        "public",
+        now=_NOW,
+        egress_state=on_air,
+        schedule_items=[_schedule_item("live", "Live", _NOW - timedelta(minutes=10), 1800)],
+    )
+
+    assert now_next.current is not None
+    assert now_next.current.block_id == "public-egress-on_air"
+    assert now_next.current.starts_at == _NOW - timedelta(minutes=2)
+    assert now_next.current.caption_refs == []
+    assert now_next.schedule_note is not None
+    assert "not what is airing" in now_next.schedule_note
+    assert now_next.next is None
+
+
+def test_channel_now_next_exact_title_match_without_proof_lends_the_slot_but_not_captions() -> None:
+    """Hostile review M5 (wrong miss): the ordinary case where the daemon's
+    label is the asset title and no proof event is available borrows the slot,
+    but a caption claim never rests on a title heuristic."""
+    on_air = EgressStateRow(
+        channel_id="public",
+        state="ON_AIR",
+        current_source_label="Council Meeting",
+        updated_at=_NOW - timedelta(minutes=10),
     )
     now_next = build_channel_now_next(
         "public",
@@ -158,7 +238,7 @@ def test_channel_now_next_matches_the_scheduled_block_by_asset_id_in_the_daemon_
 
     assert now_next.current is not None
     assert now_next.current.block_id.startswith("schedule-")
-    assert now_next.current.title == "council (conformed)"
+    assert now_next.current.caption_refs == []
     assert now_next.schedule_note is None
 
 
@@ -191,6 +271,9 @@ def test_channel_now_next_reports_the_daemon_source_over_a_covering_schedule_blo
     assert "Council Meeting" in now_next.schedule_note
     assert "Emergency bulletin" in now_next.schedule_note
     assert "not what is airing" in now_next.schedule_note
+    # B4: the covering premiere started ten minutes ago and is not airing;
+    # it is named in the note, never re-advertised as "Next".
+    assert now_next.next is None
 
 
 def test_channel_now_next_unlabelled_daemon_row_never_adopts_the_scheduled_title() -> None:
@@ -212,6 +295,11 @@ def test_channel_now_next_unlabelled_daemon_row_never_adopts_the_scheduled_title
     assert now_next.current.block_id == "public-egress-on_air"
     assert now_next.schedule_note is not None
     assert "Council Meeting" in now_next.schedule_note
+    # B4: Next is the premiere that has not started, not the one already
+    # ten minutes into its slot.
+    assert now_next.next is not None
+    assert now_next.next.title == "Board Replay"
+    assert now_next.next.starts_at > _NOW
 
 
 def test_channel_now_next_reports_fallback_slate_from_daemon_state() -> None:
@@ -287,12 +375,206 @@ def test_public_now_next_carries_no_daemon_error_or_source_label() -> None:
     assert "Council chamber camera" not in body
 
 
-def _client_with_egress_store(monkeypatch, store: InMemoryEgressStore) -> TestClient:
+def test_public_now_next_names_the_scheduled_program_when_the_daemon_airs_it() -> None:
+    """Hostile review M6: the scheduled title is already public via the
+    schedule routes, so the resident surface says it instead of blanking the
+    program to the channel name; the daemon's own label still never leaks."""
+    on_air = EgressStateRow(
+        channel_id="public",
+        state="ON_AIR",
+        current_source_label="Council Meeting (NAS-2 conform)",
+        updated_at=_NOW - timedelta(minutes=10),
+    )
+    schedule = [
+        _schedule_item("council", "Council Meeting", _NOW - timedelta(minutes=10), 1800),
+        _schedule_item("board", "Board Replay", _NOW + timedelta(hours=1), 1200),
+    ]
+    staff = build_channel_now_next(
+        "public",
+        now=_NOW,
+        egress_state=on_air,
+        schedule_items=schedule,
+        current_source_ref="council",
+    )
+    public = build_channel_now_next(
+        "public",
+        now=_NOW,
+        egress_state=on_air,
+        schedule_items=schedule,
+        current_source_ref="council",
+        include_operator_detail=False,
+    )
+
+    assert staff.current is not None
+    assert staff.current.title == "Council Meeting (NAS-2 conform)"
+    assert public.current is not None
+    assert public.current.title == "Council Meeting"
+    assert public.current.source_ref == "egress-public"
+    assert public.current.failover_reason is None
+    assert public.next is not None
+    assert public.next.title == "Board Replay"
+    assert public.schedule_note is None
+    assert "NAS-2" not in public.model_dump_json()
+
+
+def test_public_now_next_falls_back_to_the_display_name_and_never_readvertises_the_airing_slot() -> (
+    None
+):
+    """B4 on the resident surface: during a takeover the public body must not
+    say "Coming up: Council Meeting" for a slot that started in the past."""
+    on_air = EgressStateRow(
+        channel_id="public",
+        state="ON_AIR",
+        current_source_label="Emergency bulletin",
+        updated_at=_NOW - timedelta(minutes=2),
+    )
+    public = build_channel_now_next(
+        "public",
+        now=_NOW,
+        egress_state=on_air,
+        schedule_items=[
+            _schedule_item("council", "Council Meeting", _NOW - timedelta(minutes=10), 1800)
+        ],
+        include_operator_detail=False,
+    )
+
+    assert public.current is not None
+    assert public.current.title == public.channel.branding.display_name
+    assert public.next is None
+    assert public.schedule_note is None
+    assert "Emergency bulletin" not in public.model_dump_json()
+
+
+class _ScheduleStoreStub:
+    """The only schedule-store call the now/next routes make is ``list``."""
+
+    def __init__(self, items: list[ScheduleItemResponse]) -> None:
+        self._items = items
+
+    def list(self, *, channel_id=None, states=None):  # type: ignore[no-untyped-def]
+        return [
+            item
+            for item in self._items
+            if (channel_id is None or item.channel_id == channel_id)
+            and (states is None or item.state in states)
+        ]
+
+
+def _client_with_egress_store(
+    monkeypatch,
+    store: InMemoryEgressStore,
+    schedule_items: list[ScheduleItemResponse] | None = None,
+) -> TestClient:
     monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
     monkeypatch.setenv("CIVICCAST_STAFF_TOKENS", "operator-token-a:operator-a:Operator A:operator")
     app = create_app()
     app.dependency_overrides[get_egress_store] = lambda: store
+    if schedule_items is not None:
+        app.dependency_overrides[get_schedule_store] = lambda: _ScheduleStoreStub(schedule_items)
     return TestClient(app, headers={"Authorization": "Bearer operator-token-a"})
+
+
+def _daemon_proof_event(
+    channel_id: str, source_label: str, source_ref: str | None, observed_at: datetime
+) -> EgressProofEvent:
+    return EgressProofEvent(
+        event_id=f"egress-proof-{source_label.lower().replace(' ', '-')}",
+        observed_at=observed_at,
+        channel_id=channel_id,
+        state="ON_AIR",
+        source_label=source_label,
+        source_path="C:/CivicCast/media/source.ts",
+        source_ref=source_ref,
+        proof_boundary="civiccast-egress-handoff-boundary",
+        machine_summary=f"{channel_id}: ON_AIR {source_label}",
+    )
+
+
+def test_now_next_routes_join_identity_from_the_daemon_proof_event(monkeypatch) -> None:
+    """M5 + M6 + B4 through the real routes: the router joins the state row to
+    the daemon's proof event for the asset id, the staff body borrows the
+    scheduled slot and caption refs on that proof, the public body names the
+    scheduled program, and Next is the premiere that has not started."""
+    now = datetime.now(UTC)
+    store = InMemoryEgressStore()
+    store.append_proof_event(
+        _daemon_proof_event("public", "Council Meeting", "council", now - timedelta(minutes=10))
+    )
+    store.write_state(
+        EgressStateRow(
+            channel_id="public",
+            state="ON_AIR",
+            current_source_label="Council Meeting",
+            updated_at=now - timedelta(minutes=10),
+        )
+    )
+    client = _client_with_egress_store(
+        monkeypatch,
+        store,
+        schedule_items=[
+            _schedule_item("council", "Council Meeting", now - timedelta(minutes=10), 1800),
+            _schedule_item("board", "Board Replay", now + timedelta(hours=1), 1200),
+        ],
+    )
+
+    staff = client.get("/api/staff/cable/channels/public/now-next")
+    assert staff.status_code == 200, staff.text
+    staff_body = staff.json()
+    assert staff_body["current"]["block_id"].startswith("schedule-")
+    assert staff_body["current"]["caption_refs"] == ["council.vtt"]
+    assert staff_body["schedule_note"] is None
+    assert staff_body["next"]["title"] == "Board Replay"
+
+    public = client.get("/api/public/channels/public/now-next", headers={})
+    assert public.status_code == 200, public.text
+    body = public.json()
+    assert body["current"]["title"] == "Council Meeting"
+    assert body["current"]["source_ref"] == "egress-public"
+    assert body["next"]["title"] == "Board Replay"
+    assert body["next"]["starts_at"] > body["generated_at"]
+
+
+def test_now_next_routes_never_readvertise_the_covering_slot_during_a_takeover(
+    monkeypatch,
+) -> None:
+    """B4 through the real routes: the daemon airs a bulletin over the
+    scheduled meeting. Neither body lists the ten-minutes-old meeting as Next,
+    and the public body names neither the bulletin nor the meeting."""
+    now = datetime.now(UTC)
+    store = InMemoryEgressStore()
+    store.append_proof_event(
+        _daemon_proof_event("public", "Emergency bulletin", None, now - timedelta(minutes=2))
+    )
+    store.write_state(
+        EgressStateRow(
+            channel_id="public",
+            state="ON_AIR",
+            current_source_label="Emergency bulletin",
+            updated_at=now - timedelta(minutes=2),
+        )
+    )
+    client = _client_with_egress_store(
+        monkeypatch,
+        store,
+        schedule_items=[
+            _schedule_item("council", "Council Meeting", now - timedelta(minutes=10), 1800)
+        ],
+    )
+
+    staff = client.get("/api/staff/cable/channels/public/now-next")
+    assert staff.status_code == 200, staff.text
+    assert staff.json()["current"]["title"] == "Emergency bulletin"
+    assert staff.json()["current"]["caption_refs"] == []
+    assert staff.json()["next"] is None
+    assert "not what is airing" in staff.json()["schedule_note"]
+
+    public = client.get("/api/public/channels/public/now-next", headers={})
+    assert public.status_code == 200, public.text
+    body = public.json()
+    assert body["current"]["title"] == body["channel"]["branding"]["display_name"]
+    assert body["next"] is None
+    assert body["schedule_note"] is None
+    assert "Emergency bulletin" not in public.text
 
 
 def test_now_next_routes_survive_a_long_daemon_error_and_public_route_redacts_it(

@@ -30,18 +30,36 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
 
 ### Changed (breaking)
 
-- **Public `GET /api/public/channels/{id}/now-next`: `current` and
-  `ChannelProofEvent.captions_attached` are now nullable.**
-  `ChannelNowNext.current` went from `PlayoutBlock` to `PlayoutBlock | null`
-  (null while nothing is on air) and `ChannelProofEvent.captions_attached`
-  from `boolean` to `boolean | null` (null means "not verified"). A signage
-  page or CTV client written against beta.5 that reads `current.title`
-  without a null check will throw; read `fallback_active` and null-check
-  `current` first. The public block is also a resident-safe projection now:
-  its title is the channel display name or "Fallback slate", and it never
-  carries the daemon's `failover_reason` or free-text source label (those
-  stay on the authenticated staff route). `ChannelNowNext` gains an optional
+- **Public `GET /api/public/channels/{id}/now-next`: `current` is now
+  nullable, its title is no longer the daemon's label, and `next` only lists
+  premieres that start after now.** `ChannelNowNext.current` went from
+  `PlayoutBlock` to `PlayoutBlock | null` (null while nothing is on air): a
+  signage page or CTV client written against beta.5 that reads
+  `current.title` without a null check will throw; read `fallback_active`
+  and null-check `current` first. When `current` is non-null its `title` is
+  the scheduled program's title when the daemon's own proof event says it is
+  airing that scheduled asset (the same string
+  `GET /api/public/schedule/coming-up` serves), the channel's display name
+  when the daemon airs something else or reports no label, or "Fallback
+  slate" -- never the daemon's free-text source label, and the block never
+  carries `failover_reason` or the daemon's `last_error`. A client that
+  rendered `current.title` as the program name will show the channel name
+  during a live takeover or an unlabelled start; read the display name as
+  "on air, program not named". `next` is the first premiere whose
+  `starts_at` is after `generated_at`; a premiere that already started but is
+  not what is airing is never re-advertised as Next (it is named in the
+  staff-only `schedule_note`). `ChannelNowNext` gains an optional
   `schedule_note` (staff route only; always null on the public route).
+- **Staff `GET /api/staff/cable/channels/{id}/proof-log`:
+  `ChannelProofEvent.captions_attached` is now `boolean | null`** (null means
+  "not verified"). This is the operator proof log behind
+  `require_any_role(*ALL_OPERATOR_ROLES)`, not the public route.
+- **`POST /api/staff/publish/assets/{id}/approve` refuses
+  `approved_surface_ids: []` with no overrides (422).** Omitting the field
+  means the Portal surface only; an empty list used to mean "publish
+  nothing" and returned 200, so a JS client that dropped an `undefined`
+  selection and one that sent `[]` got the same status for opposite
+  outcomes. An empty list is still accepted alongside overrides.
 
 ### Fixed
 
@@ -123,12 +141,19 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   feed was Stopped and captions Off. The operator builders now read the
   egress daemon's state row and persisted proof events plus the schedule
   store: `ChannelNowNext.current` is `null` unless the daemon reports the
-  feed on air, `next` is the next scheduled premiere or `null`, and an
-  empty schedule is an empty plan (no synthetic "channel slate" block). The
-  daemon is the authority on what is on air: the Now slot's title is the
-  daemon's `current_source_label`, and a scheduled block covering the wall
-  clock lends its timing and caption refs only when its asset id or title
-  appears in that label. When they disagree (live takeover, manual start,
+  feed on air, `next` is the first scheduled premiere that starts after now
+  or `null` (a slot that already started but is not airing is never
+  re-advertised as Next), and an empty schedule is an empty plan (no
+  synthetic "channel slate" block). The daemon is the authority on what is
+  on air: the Now slot's title is the daemon's `current_source_label`, and a
+  scheduled block covering the wall clock lends its block id, timing and
+  caption refs only when the daemon's own proof event for the handoff names
+  that block's asset (`EgressProofEvent.source_ref`, joined by the router on
+  the state row's `current_proof_event_id` or its label). With no proof
+  event, a label that equals the block's title whole lends the slot but
+  never the caption refs; identity is never inferred from a substring of the
+  label (asset id `live` does not own "Live takeover from Studio B"). When
+  they disagree (live takeover, manual start,
   bulletin fill) the block is built from the daemon row and
   `ChannelNowNext.schedule_note` names the disagreement ("Schedule lists
   'Council Meeting' from 17:50 UTC, but the outgoing feed reports
@@ -192,6 +217,21 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   been run; ..." and a `failed` one "Private rehearsal did not complete ..."
   on green and yellow too, instead of "checks passed" / "ran, but" copy
   that the red-branch fix had left in place.
+- **Channels: the Start watchdog no longer goes silent on a channel already
+  sitting in `ERROR` or parked on `FALLBACK_SLATE`.** After a Start was
+  accepted, a state row in `ERROR` or `FALLBACK_SLATE` counted as "the start
+  was applied" unconditionally, so a daemon that dropped the command on a
+  channel it had already failed (bad sink, missing encoder) never raised the
+  "Start was queued but the feed did not start" alert -- the exact silent
+  drop F-29 named. Only `STARTING`, `ON_AIR` and `TRANSITIONING` count as
+  applied on their own; any other state counts only when the row actually
+  changed from the snapshot taken when the Start was accepted.
+- **Channels: a failed outgoing-feed configuration check no longer reads as
+  "No outgoing-feed configuration".** When the configuration list itself
+  failed to load, Start was disabled with the missing-configuration reason
+  and its remedy (apply a preset), which is wrong when the configuration is
+  fine and the fetch was the problem. Start stays disabled with "Could not
+  check the outgoing-feed configuration" and a Retry check button.
 - **Operator console: warning copy on the publish dashboard now meets WCAG
   AA contrast in the light theme.** The "N required archive surfaces not
   selected" notice (and the three sibling warnings beside Approve and

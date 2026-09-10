@@ -294,21 +294,37 @@ def build_channel_now_next(
     schedule_items: list[ScheduleItemResponse] | None = None,
     egress_state: EgressStateRow | None = None,
     include_operator_detail: bool = True,
+    current_source_ref: str | None = None,
 ) -> ChannelNowNext:
     """Build now/next from what the egress daemon and schedule store really report.
 
     ``current`` is only populated while the daemon reports the feed on air
     (``ON_AIR``/``TRANSITIONING``/``FALLBACK_SLATE``/``DRAINING``). A stopped
     feed, a missing state row, or a channel with no daemon at all yields
-    ``current=None`` -- the console says "No program on air". ``next`` is the
-    first scheduled premiere that has not finished yet, or ``None``.
+    ``current=None`` -- the console says "No program on air".
+
+    ``next`` is the first scheduled premiere whose ``starts_at`` is after
+    ``now``, or ``None``. A premiere that already started but is not what the
+    daemon airs is named in ``schedule_note``; it is never re-advertised as
+    "Next" with a start time in the past (hostile review B4).
+
+    ``current_source_ref`` is the asset id the daemon's own proof event
+    recorded for the source it handed off (``EgressProofEvent.source_ref``,
+    joined by the router on the state row). It is the only thing that lets a
+    scheduled block lend its block id, timing and caption refs to the on-air
+    block; identity is never inferred from a substring of the free-text
+    label (hostile review M5). With no proof event, an exact whole-label
+    match lends the slot but never the caption refs.
 
     ``include_operator_detail=False`` is the unauthenticated public
     projection: the daemon's ``last_error`` (raw ``str(exc)`` / stderr with
     file paths and headend host:port) and its free-text source label never
-    leave the station. The public block carries the channel's display name
-    (or "Fallback slate") and no ``failover_reason``; ``schedule_note`` is
-    also withheld because it repeats the daemon label.
+    leave the station. The public block's title is the scheduled program's
+    title when the daemon is proven to be airing that scheduled asset (the
+    same string the public schedule routes already serve), the channel's
+    display name when the daemon airs something else or reports no label,
+    or "Fallback slate"; it carries no ``failover_reason``. ``schedule_note``
+    is withheld because it repeats the daemon label.
     """
 
     profile = _require_profile(channel_id)
@@ -322,18 +338,17 @@ def build_channel_now_next(
     current: PlayoutBlock | None = None
     schedule_note: str | None = None
     if egress_state is not None and egress_state.state in _ON_AIR_EGRESS_STATES:
-        current, schedule_note = _block_from_egress_state(
-            profile, egress_state, upcoming, current_time
+        current, schedule_note, scheduled_title = _block_from_egress_state(
+            profile, egress_state, upcoming, current_time, current_source_ref
         )
         if not include_operator_detail:
-            current = _public_projection(profile, current)
+            current = _public_projection(profile, current, scheduled_title)
             schedule_note = None
-    next_block: PlayoutBlock | None = None
-    for block in upcoming:
-        if current is not None and block.block_id == current.block_id:
-            continue
-        next_block = block
-        break
+    # B4: only a premiere that has not started yet is "Next". A block whose
+    # window already covers ``now`` is either what is airing (borrowed into
+    # ``current``) or what the schedule claims against the daemon (named in
+    # ``schedule_note``); either way it is not coming up.
+    next_block = next((block for block in upcoming if block.starts_at > current_time), None)
     return ChannelNowNext(
         generated_at=current_time,
         channel=profile,
@@ -494,35 +509,55 @@ def _block_from_egress_state(
     state: EgressStateRow,
     upcoming: list[PlayoutBlock],
     now: datetime,
-) -> tuple[PlayoutBlock, str | None]:
+    source_ref: str | None = None,
+) -> tuple[PlayoutBlock, str | None, str | None]:
     """Project the daemon's on-air state onto a playout block.
 
     The daemon is the authority on what is on air. Its ``current_source_label``
-    is the title; a scheduled block covering ``now`` lends its timing and
-    caption refs only when it is the same program (its asset id or title
-    appears in the daemon's label). When the schedule says one thing and the
-    daemon another (live takeover, manual start, bulletin fill), the block is
-    built from the daemon row alone and the second return value names the
-    disagreement. A daemon row without a label never adopts the scheduled
-    title as "Playing" -- that was the F-27 fabrication in a new coat.
+    is the title. A scheduled block covering ``now`` lends its block id,
+    timing and caption refs only when the daemon's own proof event names that
+    block's asset (``source_ref``). Without a proof event, a label that equals
+    the block's title whole lends the slot but not the caption refs -- a
+    title is a heuristic, and a caption claim on the proof surface must not
+    rest on one (hostile review M5). Identity is never a substring of the
+    label: asset id ``live`` does not own "Live takeover from Studio B".
+
+    When the schedule says one thing and the daemon another (live takeover,
+    manual start, bulletin fill), the block is built from the daemon row
+    alone and the second return value names the disagreement. A daemon row
+    without a label never adopts the scheduled title as "Playing" -- that was
+    the F-27 fabrication in a new coat. The third return value is the
+    scheduled program's title when the block was borrowed, for the public
+    projection (M6).
     """
 
     fallback = state.state == "FALLBACK_SLATE"
     label = state.current_source_label
     reason = operator_reason(state.last_error) if fallback else None
     covering = next((block for block in upcoming if block.starts_at <= now), None)
-    if covering is not None and label is not None and _block_matches_label(covering, label):
+    proven = (
+        covering is not None and source_ref is not None and _block_airs_asset(covering, source_ref)
+    )
+    same_title = (
+        covering is not None
+        and source_ref is None
+        and label is not None
+        and _label_equals_title(covering, label)
+    )
+    if covering is not None and (proven or same_title):
         return (
             covering.model_copy(
                 update={
-                    "title": label,
+                    "title": label or covering.title,
                     "status": "fallback" if fallback else "playing",
                     "kind": "fallback" if fallback else covering.kind,
                     "failover_from": covering.source_ref if fallback else None,
                     "failover_reason": reason,
+                    "caption_refs": list(covering.caption_refs) if proven else [],
                 }
             ),
             None,
+            covering.title,
         )
     started = state.updated_at.astimezone(UTC)
     elapsed = max(1, int((now - started).total_seconds()))
@@ -546,26 +581,36 @@ def _block_from_egress_state(
             f"{covering.starts_at.strftime('%H:%M')} UTC, but the outgoing feed "
             f"reports {airing} on air. The schedule is not what is airing."
         )
-    return block, note
+    return block, note, None
 
 
-def _block_matches_label(block: PlayoutBlock, label: str) -> bool:
-    """True when the daemon's source label names the scheduled block's program."""
+def _block_airs_asset(block: PlayoutBlock, source_ref: str) -> bool:
+    """True when the daemon's proof-event ``source_ref`` is this block's asset."""
+
+    asset_id = source_ref.strip()
+    return bool(asset_id) and block.source_ref == f"asset-{asset_id}"
+
+
+def _label_equals_title(block: PlayoutBlock, label: str) -> bool:
+    """True only when the whole label is the block's title (never a substring)."""
 
     folded = label.strip().casefold()
-    if not folded:
-        return False
-    if folded == block.title.strip().casefold():
-        return True
-    asset_id = block.source_ref.removeprefix("asset-").strip().casefold()
-    return bool(asset_id) and asset_id in folded
+    return bool(folded) and folded == block.title.strip().casefold()
 
 
-def _public_projection(profile: ChannelProfile, block: PlayoutBlock) -> PlayoutBlock:
-    """Resident-safe copy of an on-air block: no daemon free text."""
+def _public_projection(
+    profile: ChannelProfile, block: PlayoutBlock, scheduled_title: str | None
+) -> PlayoutBlock:
+    """Resident-safe copy of an on-air block: no daemon free text.
+
+    ``scheduled_title`` is the schedule store's title for the block the daemon
+    is proven to be airing -- already public via the schedule routes -- so
+    the resident surface names the program instead of blanking it to the
+    channel name and contradicting ``next`` (hostile review M6).
+    """
 
     fallback = block.status == "fallback"
-    title = "Fallback slate" if fallback else profile.branding.display_name
+    title = "Fallback slate" if fallback else (scheduled_title or profile.branding.display_name)
     return block.model_copy(
         update={
             "title": title,
