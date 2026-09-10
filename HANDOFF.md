@@ -1,5 +1,23 @@
 # HANDOFF
 
+## 2026-09-10 local F-1 implementation update
+
+Scott authorized GO following the cold takeover. Active branch:
+`fix/f1-reload-readiness-20260910`, base `d77b634e3685de8fb077956b8099fc92c3927243`.
+Local worktree:
+`C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f1-integration`.
+No PR, push, merge, tag, publication, station service start, Gate A, or sandbox soak
+has been performed for this work. See `docs/evidence/f1-local-2026-09-10/VERIFICATION.md`
+for the current implementation/review evidence and remaining release gates.
+
+F-1 changes bind preroll callbacks to their reload, require every replacement
+stream before retirement, and recover unexpected clean worker exits while honoring
+Stop/Drain. F-4 exit and fire logging is included. F-2 remains unstarted. The
+existing `795cdab5` beta.6 kit is unchanged and still must not be published.
+
+Older task lists below are historical; they do not authorize starting old work
+or publishing the existing kit. The current owner per-action authority governs.
+
 > **2026-09-10 11:10 AM — READ `PROJECT-STATUS.md` FIRST.** It is tracked in git (this file is
 > gitignored) and it is the full cold-start handoff: where the project is, both overnight soak
 > results with independent verification, the blocker that stops beta.6 shipping, every fix with its

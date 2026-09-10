@@ -1,5 +1,13 @@
 # CivicCast Native — full project status and cold-start handoff
 
+> **2026-09-10 update: F-1 local implementation is under verification.** Scott
+> authorized GO after the cold takeover. Work is isolated on
+> `fix/f1-reload-readiness-20260910`, based on `d77b634e3685de8fb077956b8099fc92c3927243`.
+> See `docs/evidence/f1-local-2026-09-10/VERIFICATION.md` for source, tests and gaps.
+> This is not a merged or release-accepted fix. F-2 remains unstarted. The built
+> kit at `795cdab5` is unchanged and must not be published. Older progress notes
+> below describe the pre-takeover snapshot unless explicitly updated.
+
 **Written 2026-09-10, ~11:10 AM Mountain.** Times in this document are Mountain (America/Denver),
 12-hour where they are user-facing.
 
@@ -46,8 +54,9 @@ So: **beta.6 must not be published as-is.** See §5.
 
 ### What is NOT done — the whole list, in one place
 
-- **F-1 and F-2 are unstarted.** The silent-death bug and the missed schedule boundaries. **Those
-  two are the release.** Every fix in §5 is unstarted; nothing below §5's heading has been begun.
+- **F-1 is being verified locally; F-2 is unstarted.** The silent-death bug and the missed
+  schedule boundaries remain release blockers. F-1 includes related F-4 exit/fire logging;
+  the remaining section 5 work is unstarted. No new candidate has passed release gates.
 - **The beta.6 kit is built and byte-verified but unsoaked, ungated and unpublished.** It sits at
   `C:\CivicCastTester\kit-safe\795cdab5065e3b1b1d9df69c6fc06658f481c8d4\`. Leave it there.
 - **No soak has been run against beta.6 at all.** The two failed soaks were of **beta.5**.
@@ -172,7 +181,8 @@ states. It also showed **15 × "reload superseding a still-settling reload"**, w
 
 ## 5. What has to be fixed, and what "done" means
 
-Ordered by importance. Nothing below is started.
+Ordered by importance. F-1 and its related F-4 logging are under local verification;
+no finding below has met its full release acceptance criteria.
 
 ### F-1 — BLOCKER: seamless reload can commit a half-built pipeline
 
@@ -188,12 +198,14 @@ Ordered by importance. Nothing below is started.
   disposed and the commit does **not** happen — proven failing before the fix.
 - A test asserts a worker exiting `error: None` while the desired state is on-air **is relaunched**
   — proven failing before the fix.
-- A grep-style assertion (policy test) that no commit path can emit `committed (elements=N)` without
-  a preceding preroll-hold line, so this cannot regress silently.
+- A grep-style assertion (policy test) that no commit path can emit `committed (elements=N)`
+  without transaction-specific proof that every replacement stream produced its first buffer.
+  Held file legs additionally require their completed preroll-hold line. Immediate and
+  clock-timed legs stay unheld and use the all-stream `preroll verified` proof instead.
 - `python -m pytest tests/egress tests/live -p no:randomly -q` green.
 - **A ≥2-hour sandbox soak with zero `error: None` worker exits and zero undersized commits.**
   Grade from `gst-worker.stdout.log`: every `committed (elements=…)` must be the healthy count for
-  that machine and must be preceded by preroll-hold lines.
+  that machine and topology and must have the matching preroll proof above.
 
 ### F-2 — BLOCKER: scheduled programme changes do not happen
 

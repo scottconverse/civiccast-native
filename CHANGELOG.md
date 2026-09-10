@@ -13,6 +13,19 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+### F-1 local correction (release validation outstanding)
+
+- Reload readiness belongs to its original transaction; stale callbacks and timers
+  cannot ready, commit, or abort a replacement. Every replacement A/V stream must
+  produce a first buffer before the old leg can be retired. Live streams remain
+  unheld and keep their running-time base.
+- Unexpected clean worker exits while ON_AIR or TRANSITIONING now enter bounded
+  fault recovery. Queued Stop/Drain wins for any exit code, including a pending
+  restart. Exit logs name the channel and state; clean-exit recovery records an
+  explicit fault. Reload logs identify preroll and the actual commit attempt.
+- Added local regression and native-worker evidence plus a per-transaction log
+  grader. These changes do not validate the existing beta.6 kit or resolve F-2.
+
 `v1.0.0-beta.6` is the next candidate and the current owner-held unpublished
 candidate; it does not change the `v1.0.0-beta.4` install story documented
 below.

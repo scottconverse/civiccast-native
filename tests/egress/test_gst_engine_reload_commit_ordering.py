@@ -32,6 +32,8 @@ from typing import Any
 
 import pytest
 
+from scripts.ops.check_reload_preroll import check_log
+
 _ENGINE_MODULE_NAME = "civiccast.egress.gst.engine"
 
 
@@ -266,6 +268,180 @@ def _index_of(calls: list[str], prefix: str) -> int:
         if call.startswith(prefix):
             return i
     raise AssertionError(f"{prefix!r} never called; calls={calls}")
+
+
+def _unready_reload(recorder: _Recorder, txn_id: int = 1) -> dict[str, Any]:
+    video = _FakeHoldPad("new-video", recorder)
+    audio = _FakeHoldPad("new-audio", recorder)
+    return {
+        "txn_id": txn_id,
+        "new_leg_ready": False,
+        "holds_awaited": 2,
+        "held_pads": set(),
+        "ready_pads": set(),
+        "readiness_probes": [],
+        "new_src_pads": [video, audio],
+        "hold_probes": [(video, 1), (audio, 2)],
+        "new_video_pad": video,
+        "new_audio_pad": audio,
+        "new_elements": [],
+        "old_video_pad": _FakeOldPad("old-video", recorder, None),
+        "old_audio_pad": None,
+        "old_elements": [_FakeOldElement("old-program", recorder)],
+        "switch_at_end_of_current": True,
+        "old_leg_eos": True,
+        "rebase_new_leg": False,
+        "boundary_probes": [],
+        "timeout_id": None,
+        "defer_timeout_id": None,
+        "on_settled": None,
+    }
+
+
+def test_f1_never_prerolled_reload_cannot_dispose_or_commit(engine_module, capsys) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.commit_timeout_s = 5.0
+    pending = _unready_reload(recorder)
+    engine._pending_reload = pending
+    assert engine._commit_reload() is False
+    thread = engine._reload_commit_thread
+    if thread is not None:
+        thread.join(timeout=1.0)
+    assert recorder.calls == [], "an unready replacement must not switch or retire the old leg"
+    assert engine._pending_reload is pending
+    assert "committed (elements=" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("held", [False, True])
+def test_f1_queued_readiness_cannot_ready_a_superseding_reload(
+    engine_module, monkeypatch, held
+) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    old = _unready_reload(recorder)
+    current = _unready_reload(recorder, txn_id=2)
+    if not held:
+        for pending in (old, current):
+            pending["hold_probes"] = []
+            pending["holds_awaited"] = 0
+            pending["readiness_probes"] = [
+                (pad, i) for i, pad in enumerate(pending["new_src_pads"])
+            ]
+    engine._pending_reload = old
+    queued: list[tuple[Any, tuple[Any, ...]]] = []
+    monkeypatch.setattr(engine_module.GLib, "idle_add", lambda fn, *args: queued.append((fn, args)))
+    commits: list[str] = []
+    engine._commit_reload = lambda: commits.append("commit")
+    if held:
+        engine._on_new_leg_hold(old["new_src_pads"][0], None, old["txn_id"])
+    else:
+        # The non-held path also queues a callback from a streaming thread.
+        engine_module.Gst.PadProbeReturn.REMOVE = "REMOVE"
+        engine._on_reload_first_buffer(old["new_video_pad"], None, old["txn_id"])
+    engine._pending_reload = current
+    for callback, args in queued:
+        callback(*args)
+    assert current["new_leg_ready"] is False
+    assert current["holds_awaited"] == (2 if held else 0)
+    assert commits == []
+
+
+@pytest.mark.parametrize("deferred", [False, True])
+def test_f1_unheld_video_cannot_commit_before_audio_prerolls(engine_module, deferred) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending = _unready_reload(recorder)
+    pending["hold_probes"] = []
+    pending["holds_awaited"] = 0
+    pending["switch_at_end_of_current"] = deferred
+    pending["readiness_probes"] = [(pad, i) for i, pad in enumerate(pending["new_src_pads"])]
+    engine._pending_reload = pending
+    engine_module.Gst.PadProbeReturn.REMOVE = "REMOVE"
+    commits: list[str] = []
+    engine._commit_reload = lambda: commits.append("commit")
+    video, audio = pending["new_src_pads"]
+    engine._on_reload_first_buffer(video, None, pending["txn_id"])
+    engine._on_reload_first_buffer(video, None, pending["txn_id"])
+    assert pending["new_leg_ready"] is False
+    assert commits == []
+    engine._on_reload_first_buffer(audio, None, pending["txn_id"])
+    assert pending["new_leg_ready"] is True
+    assert commits == ["commit"]
+
+
+def test_f1_duplicate_hold_cannot_substitute_for_unprerolled_audio(engine_module) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending = _unready_reload(recorder)
+    engine._pending_reload = pending
+    commits: list[str] = []
+    engine._commit_reload = lambda: commits.append("commit")
+    video, audio = pending["new_src_pads"]
+    engine._on_new_leg_hold(video, None, pending["txn_id"])
+    engine._on_new_leg_hold(video, None, pending["txn_id"])
+    assert pending["new_leg_ready"] is False
+    assert pending["holds_awaited"] == 1
+    assert commits == []
+    engine._on_new_leg_hold(audio, None, pending["txn_id"])
+    assert pending["new_leg_ready"] is True
+    assert commits == ["commit"]
+
+
+@pytest.mark.parametrize("timer", ["_on_reload_timeout", "_on_defer_switch_timeout"])
+def test_f1_stale_timer_cannot_abort_or_commit_new_transaction(engine_module, timer) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending = _unready_reload(recorder, txn_id=2)
+    pending["old_leg_eos"] = False
+    engine._pending_reload = pending
+    actions: list[str] = []
+    engine._commit_reload = lambda: actions.append("commit")
+    engine._abort_pending_reload = actions.append
+    assert getattr(engine, timer)(1) is False
+    assert actions == []
+    assert engine._pending_reload is pending
+    assert pending["old_leg_eos"] is False
+
+
+@pytest.mark.parametrize("missing", ["audio", "boundary"])
+def test_f1_commit_requires_all_streams_and_due_boundary(engine_module, missing) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending = _unready_reload(recorder)
+    pending["new_leg_ready"] = True
+    if missing == "boundary":
+        pending["holds_awaited"] = 0
+        pending["old_leg_eos"] = False
+    engine._pending_reload = pending
+    engine._begin_reload_commit = lambda _pending: pytest.fail("premature selector switch")
+    assert engine._commit_reload() is False
+    assert engine._reload_commit_thread is None
+    assert recorder.calls == []
+
+
+def test_f1_commit_log_requires_current_preroll_holds(engine_module, capsys) -> None:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.commit_timeout_s = 5.0
+    pending = _unready_reload(recorder)
+    engine._pending_reload = pending
+    video, audio = pending["new_src_pads"]
+    engine._on_new_leg_hold(video, None, pending["txn_id"])
+    assert engine._reload_commit_thread is None
+    engine._on_new_leg_hold(audio, None, pending["txn_id"])
+    thread = engine._reload_commit_thread
+    if thread is not None:
+        thread.join(timeout=1.0)
+    lines = capsys.readouterr().out.splitlines()
+    hold = next(i for i, line in enumerate(lines) if "(0 stream(s) still to preroll)" in line)
+    proof = next(i for i, line in enumerate(lines) if "preroll verified (reload_id=1)" in line)
+    fire = next(i for i, line in enumerate(lines) if "firing (reload_id=1)" in line)
+    disposed = next(i for i, line in enumerate(lines) if "old leg disposed" in line)
+    commit = next(i for i, line in enumerate(lines) if "committed (elements=" in line)
+    assert hold < proof < fire < disposed < commit
+    assert check_log("\n".join(lines)) == (1, [])
+    assert engine._pending_reload is None
 
 
 # --- (1) settle only the current reload's first A/V boundary --------------------
@@ -857,6 +1033,11 @@ def test_retirement_thread_start_failure_aborts_before_selector_switch(
     results: list[tuple[bool, str | None]] = []
     new_pad = _FakeOldPad("new-video", recorder, peer=None)
     engine._pending_reload = {
+        "txn_id": 1,
+        "new_leg_ready": True,
+        "holds_awaited": 0,
+        "switch_at_end_of_current": False,
+        "old_leg_eos": True,
         "timeout_id": None,
         "defer_timeout_id": None,
         "probe_id": None,
@@ -893,6 +1074,11 @@ def test_commit_watchdog_start_failure_cancels_retirement_and_aborts_before_swit
     results: list[tuple[bool, str | None]] = []
     new_pad = _FakeOldPad("new-video", recorder, peer=None)
     engine._pending_reload = {
+        "txn_id": 1,
+        "new_leg_ready": True,
+        "holds_awaited": 0,
+        "switch_at_end_of_current": False,
+        "old_leg_eos": True,
         "timeout_id": None,
         "defer_timeout_id": None,
         "probe_id": None,
@@ -1056,6 +1242,11 @@ def test_commit_watchdog_is_a_no_op_when_the_commit_finishes_in_time(
     engine = _bare_engine_for_commit(engine_module, recorder)
     engine.commit_timeout_s = 5.0
     engine._pending_reload = {
+        "txn_id": 1,
+        "new_leg_ready": True,
+        "holds_awaited": 0,
+        "switch_at_end_of_current": False,
+        "old_leg_eos": True,
         "timeout_id": None,
         "defer_timeout_id": None,
         "new_video_pad": object(),

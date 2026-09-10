@@ -706,6 +706,7 @@ def test_daemon_clears_active_cg_overlay_when_encoder_exits(tmp_path: Path) -> N
     )
 
     daemon.process_once("gov")
+    store.enqueue_command(_command("stop").model_copy(update={"command_id": "cmd-stop-on-exit"}))
     process.returncode = 0
     daemon.process_once("gov")
 
@@ -890,6 +891,9 @@ def test_daemon_records_fallback_slate_exit_on_reload(tmp_path: Path) -> None:
     )
 
     daemon.process_once("gov")
+    daemon.record_rollover_plan_end(
+        "gov", datetime.now(UTC) + timedelta(minutes=5), command_id="cmd-reload"
+    )
     store.enqueue_command(_command("reload"))
     source_available = True
     daemon.process_once("gov")
@@ -1722,7 +1726,7 @@ def test_request_reload_worker_missing_or_dead_pops_the_recorded_plan_end(tmp_pa
     store.enqueue_command(_command("reload"))
     daemon.process_once("gov")
 
-    assert strategy.reload_calls == []  # _try_content_reload was never reached
+    assert strategy.reload_calls == ["Mayor interview"]  # recovery restored a live worker first
     assert len(started) == 2  # restarted instead
     assert daemon._rollover_plan_end_at == {}
 
@@ -1928,6 +1932,7 @@ def test_worker_clean_exit_then_restart_then_plain_reload_does_not_leak_stale_ro
     # command_id=None: unscoped -- the clean-exit branch's own pop (like
     # ``_stop``'s) is unconditional, so no id needs to match here.
     daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
+    store.enqueue_command(_command("stop").model_copy(update={"command_id": "cmd-stop-on-exit"}))
     started[0].returncode = 0  # a clean exit, e.g. the channel's own plan ran out
     daemon.process_once("gov")  # _poll_process's clean-exit branch -> STOPPED
 
@@ -3011,13 +3016,35 @@ def test_pending_reload_does_not_terminate_the_worker_while_awaiting_settlement(
     # The reload NOW settles (a real worker's on_settled finally fires).
     _write_fake_reload_status(tmp_path, "gov", strategy.reload_ids[-1], "applied")
     daemon.process_once("gov")
-
-    assert started[0].terminated is False  # still never terminated
-    assert len(started) == 1  # still never restarted -- truly seamless
+    assert started[0].terminated is False
+    assert len(started) == 1
     state = store.read_state("gov")
     assert state is not None
     assert state.state == "ON_AIR"
     assert state.current_source_label == "Mayor interview"
+
+
+def test_queued_stop_wins_over_pending_reload_after_clean_worker_exit(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        encoder_strategy=strategy,
+    )
+    daemon.process_once("gov")
+    daemon._pending_reloads["gov"] = ("ON_AIR", "Council meeting")  # type: ignore[attr-defined]
+    assert daemon._pending_reloads  # type: ignore[attr-defined]
+    store.enqueue_command(_command("stop").model_copy(update={"command_id": "cmd-stop"}))
+    started[0].returncode = 0
+    daemon.process_once("gov")
+    assert store.read_state("gov").state == "STOPPED"  # type: ignore[union-attr]
+    assert len(started) == 1
 
 
 def test_pending_reload_settlement_deadline_falls_back_to_restart(tmp_path: Path) -> None:
@@ -3486,6 +3513,7 @@ def test_start_tracks_and_releases_its_active_plan_dir_on_worker_exit(tmp_path: 
     assert daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-1"})
     assert released == []
 
+    store.enqueue_command(_command("stop").model_copy(update={"command_id": "cmd-stop-on-exit"}))
     process.returncode = 0  # a clean exit (e.g. an operator-issued stop landed)
     daemon.process_once("gov")
 
@@ -4185,6 +4213,130 @@ def test_daemon_relaunches_running_encoder_when_child_exits_nonzero(tmp_path: Pa
     assert "started encoder relaunch" in proof_events[2].machine_summary
 
 
+def test_daemon_relaunches_running_encoder_when_child_exits_cleanly_on_air(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A worker's rc=0 is still a fault while the channel is supposed to air.
+
+    Regression for F-1(b): the old clean-exit branch wrote STOPPED, making an
+    unexpected worker death indistinguishable from an operator stop.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111, returncode=None), _FakeProcess(pid=222, returncode=None)]
+    started: list[_FakeProcess] = []
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+    )
+
+    daemon.process_once("gov")
+    started[0].returncode = 0
+    with caplog.at_level("INFO", logger="civiccast.egress.daemon"):
+        daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+    assert state.pid == 222
+    assert len(started) == 2
+    assert store.recent_health("gov", 2)[1].state == "STARTING"
+    failure = store.recent_proof_events("gov", 4)[2]
+    assert failure.state == "STARTING"
+    assert "exited cleanly while the channel was expected to stay on air" in failure.machine_summary
+    assert "worker exited (exit_code=0, state=ON_AIR, desired=ACTIVE" in caplog.text
+    assert "Worker exited cleanly while the channel was expected to stay on air" in caplog.text
+
+
+def test_daemon_relaunches_clean_exit_while_transitioning(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+    )
+    daemon.process_once("gov")
+    row = store.read_state("gov")
+    assert row is not None
+    store.write_state(row.model_copy(update={"state": "TRANSITIONING"}))
+    started[0].returncode = 0
+    daemon.process_once("gov")
+    assert store.read_state("gov").state == "ON_AIR"  # type: ignore[union-attr]
+    assert len(started) == 2
+
+
+def test_repeated_clean_exits_use_existing_backoff_and_retain_fault(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222), _FakeProcess(pid=333)]
+    started: list[_FakeProcess] = []
+    clock = [100.0]
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+        monotonic=lambda: clock[0],
+        restart_cooldown_seconds=15.0,
+    )
+    daemon.process_once("gov")
+    started[0].returncode = 0
+    daemon.process_once("gov")  # immediate relaunch
+    started[1].returncode = 0
+    daemon.process_once("gov")  # second exit is inside the cooldown
+    row = store.read_state("gov")
+    assert row is not None
+    assert row.state == "STARTING"
+    assert "cleanly repeatedly" in (row.last_error or "")
+    assert len(started) == 2
+
+
+@pytest.mark.parametrize("action", ["stop", "drain"])
+@pytest.mark.parametrize("exit_code", [0, 1])
+@pytest.mark.parametrize("pending_restart", [False, True])
+def test_queued_operator_stop_or_drain_wins_over_clean_worker_exit(
+    tmp_path: Path, action: str, exit_code: int, pending_restart: bool
+) -> None:
+    """A deliberate command queued before polling suppresses clean-exit recovery."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111, returncode=None)]
+    started: list[_FakeProcess] = []
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+    )
+
+    daemon.process_once("gov")
+    store.enqueue_command(_command(action).model_copy(update={"command_id": f"cmd-{action}"}))
+    if pending_restart:
+        daemon._pending_reloads["gov"] = ("ON_AIR", "Mayor interview")
+        daemon._reload_kills.add("gov")
+    started[0].returncode = exit_code
+    daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state is not None
+    # Polling reaps the exited worker before the queued command is drained;
+    # the command still wins by preventing an automatic relaunch, and then
+    # observes the already-gone worker as a normal stopped channel.
+    assert state.state == "STOPPED"
+    assert len(started) == 1
+
+
 def test_daemon_records_error_for_unresolved_secret(tmp_path: Path) -> None:
     store = InMemoryEgressStore()
     store.upsert_config(_config(secret_ref="EGRESS_SRT_PASSPHRASE"))
@@ -4797,7 +4949,10 @@ def test_deferred_relaunch_fires_once_cooldown_elapses(tmp_path: Path) -> None:
     assert store.read_state("gov").state == "ON_AIR"
 
 
-def test_restart_escalation_event_fires_at_threshold_and_every_multiple(tmp_path: Path) -> None:
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_restart_escalation_event_fires_at_threshold_and_every_multiple(
+    tmp_path: Path, exit_code: int
+) -> None:
     """A distinct restart-escalation proof event (the S8 alerting hook seam) fires at the
     escalation streak AND RE-FIRES at every multiple (n, 2n, …) so a long crash loop keeps
     alerting. The in-between streaks emit nothing — this pins the modulo boundary so a
@@ -4817,7 +4972,7 @@ def test_restart_escalation_event_fires_at_threshold_and_every_multiple(tmp_path
     daemon.process_once("gov")  # start (streak 0)
     counts: list[int] = []
     for _ in range(2 * n):
-        started[-1].returncode = 1
+        started[-1].returncode = exit_code
         daemon.process_once("gov")  # cooldown=0 → every crash relaunches; streak climbs 1..2n
         counts.append(escalation_count())
 
@@ -6326,6 +6481,7 @@ def test_a_program_that_holds_healthy_air_resets_the_slate_eos_relaunch_count(
 
     # The program ends cleanly -> STOPPED as before; an operator start with
     # nothing due lands on slate; that slate's EOS gets its own relaunch.
+    store.enqueue_command(_command("stop").model_copy(update={"command_id": "cmd-stop-program"}))
     started[1].returncode = 0
     program_plan[0] = None
     daemon.process_once("gov")

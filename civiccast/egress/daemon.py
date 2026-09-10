@@ -1992,11 +1992,22 @@ class EgressDaemon:
         # ffmpeg; it still flows into the pending reload, not crash relaunch.
         deliberate_kill = channel_id in self._reload_kills
         self._reload_kills.discard(channel_id)
-        pending_reload = (
-            self._pending_reloads.pop(channel_id, None)
-            if returncode == 0 or deliberate_kill
-            else None
+        queued_terminal_command = any(
+            command.action in {"stop", "drain"}
+            for command in self._store.peek_pending_commands(channel_id)
         )
+        exited_state = self._store.read_state(channel_id)
+        _LOG.info(
+            "channel %s: worker exited (exit_code=%s, state=%s, desired=%s, pending_reload=%s)",
+            channel_id,
+            returncode,
+            exited_state.state if exited_state is not None else "UNKNOWN",
+            "STOPPED" if was_draining or queued_terminal_command else "ACTIVE",
+            channel_id in self._pending_reloads,
+        )
+        pending_reload = self._pending_reloads.pop(channel_id, None)
+        if (returncode != 0 and not deliberate_kill) or was_draining or queued_terminal_command:
+            pending_reload = None
         _process_close(process)
         # Hostile-review follow-up, items 1 & 4: the worker that would have
         # settled any armed reload (and that was reading the currently-active
@@ -2024,7 +2035,22 @@ class EgressDaemon:
                 previous_source_label=previous_source_label,
             )
             return
-        if returncode == 0:
+        # A queued operator stop/drain is an explicit intent to leave air and
+        # must win over recovery, even when the worker exits between command
+        # enqueue and this poll.  The command is drained below against the
+        # already-gone worker and records STOPPED.
+        state = self._store.read_state(channel_id)
+        active_intent = state is not None and state.state in {"ON_AIR", "TRANSITIONING"}
+        if (
+            returncode == 0
+            and state is not None
+            and active_intent
+            and not was_draining
+            and not queued_terminal_command
+        ):
+            self._relaunch_after_crash(channel_id, state, uptime, returncode)
+            return
+        if returncode == 0 or was_draining or queued_terminal_command:
             stop_error: str | None = None
             if not was_draining:
                 relaunched, stop_error = self._relaunch_slate_eos_onto_due_program(channel_id)
@@ -2302,7 +2328,9 @@ class EgressDaemon:
         else:
             streak += 1
             self._restart_streak[channel_id] = streak
-        failure_event = self._append_encoder_child_failure_event(channel_id, state)
+        failure_event = self._append_encoder_child_failure_event(
+            channel_id, state, clean_exit=(returncode == 0)
+        )
         proof_event_id = failure_event.event_id
         if streak >= _RESTART_ESCALATION_STREAK and streak % _RESTART_ESCALATION_STREAK == 0:
             # S8 hook: durably record the escalation now; alert dispatch lands in S8.
@@ -2325,7 +2353,8 @@ class EgressDaemon:
                 current_source_label=state.current_source_label,
                 current_proof_event_id=proof_event_id,
                 last_error=(
-                    f"Encoder exited non-zero repeatedly (restart #{streak}); backing off "
+                    f"Encoder exited {'cleanly' if returncode == 0 else 'non-zero'} repeatedly "
+                    f"(restart #{streak}); backing off "
                     "before relaunch to avoid a crash loop."
                 ),
             )
@@ -2443,7 +2472,13 @@ class EgressDaemon:
             current_source_label=previous_source_label,
             current_proof_event_id=proof_event_id,
             last_error=(
-                force_fallback_reason or self._child_exit_error(channel_id, suffix=relaunch_suffix)
+                force_fallback_reason
+                or (
+                    "Worker exited cleanly while the channel was expected to stay on air; "
+                    "relaunching encoder."
+                    if returncode == 0
+                    else self._child_exit_error(channel_id, suffix=relaunch_suffix)
+                )
             ),
         )
         self._append_health(channel_id, "STARTING", sink_connected={}, dropped_frames=0)
@@ -2498,18 +2533,24 @@ class EgressDaemon:
         self,
         channel_id: str,
         state: EgressStateRow,
+        *,
+        clean_exit: bool = False,
     ) -> EgressProofEvent:
+        exit_source = "ffmpeg-child:clean-exit" if clean_exit else "ffmpeg-child:nonzero-exit"
         event = EgressProofEvent(
             event_id=f"egress-encoder-child-relaunch-{uuid.uuid4()}",
             observed_at=datetime.now(UTC),
             channel_id=channel_id,
             state="STARTING",
             source_label=state.current_source_label or "Unknown egress source",
-            source_path="ffmpeg-child:nonzero-exit",
+            source_path=exit_source,
             source_ref=state.current_proof_event_id,
             proof_boundary="civiccast-egress-handoff-boundary",
             machine_summary=(
-                "CivicCast detected a non-zero FFmpeg child exit while the channel was "
+                "CivicCast detected a worker that exited cleanly while the channel was "
+                "expected to stay on air; the daemon kept running and started encoder relaunch."
+                if clean_exit
+                else "CivicCast detected a non-zero FFmpeg child exit while the channel was "
                 "expected to stay on air; the daemon kept running and started encoder relaunch."
             ),
         )

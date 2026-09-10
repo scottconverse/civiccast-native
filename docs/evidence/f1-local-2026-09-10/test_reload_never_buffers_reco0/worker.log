@@ -1,0 +1,15 @@
+CTRL preroll: reached PLAYING after 0.0s pid=4160
+CTRL reload superseding a still-settling reload
+CTRL first-output: first buffer after 1.7s pid=4160
+CTRL reload aborted: new program produced no buffer within 2s; keeping current program
+CTRL reload: new leg preroll verified (reload_id=3) held_streams=0
+CTRL reload: firing (reload_id=3)
+CTRL reload: switching selector
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload: old leg disposed
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload: holds released
+CTRL reload diagnostic: stage=holds-released
+CTRL reload committed (elements=15)
+CTRL reload diagnostic: stage=committed elements=15
+WORKER_RESULT {'error': None, 'teardown_clean': True}
