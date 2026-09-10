@@ -28,6 +28,11 @@ overnight soaks of beta.5 both failed and found a blocker that kit does not fix.
 
 DO NOT publish the built beta.6 kit.
 
+Nothing is in flight. Every fix in PROJECT-STATUS.md section 5 is unstarted, no soak has been run
+against beta.6 at all, and the kit LAN file server and the Gate A runner are both down after a
+reboot -- which does not matter yet, so do not spend time restarting them until there is a fixed
+candidate worth testing. The full not-done list is in PROJECT-STATUS.md section 2.
+
 The blocker, so you know what you are looking at: a seamless programme change can dispose the old
 video leg before the new one has prerolled and commit a half-built pipeline (56 or 74 elements
 against a healthy 146). The worker then has nothing to play and exits cleanly with error: None.
@@ -40,6 +45,10 @@ To see it yourself in twelve lines: open
 docs/evidence/soak-2026-09-09-beta5/blackwell-evidence.zip, open any
 SOAK-evidence/<channel>/gst-worker.stdout.log, search for elements=56, and compare the four lines
 above it with the eight lines above any elements=146.
+
+AUTHORITY: the owner grants it explicitly, per action. Do NOT open pull requests, push branches,
+or write to the repository on your own initiative. A PR costs a full CI cycle. Ask first, every
+time.
 
 Owner's standing rules are in PROJECT-STATUS.md section 10. The ones that bite soonest:
 no new features; commit after each task and update HANDOFF.md; agents never merge, the
