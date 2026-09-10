@@ -1,6 +1,6 @@
 # CivicCast Native — full project status and cold-start handoff
 
-> **2026-09-10 update: F-1 local implementation is under verification.** Scott
+> **2026-09-10 update: F-1 local implementation passed local verification.** Scott
 > authorized GO after the cold takeover. Work is isolated on
 > `fix/f1-reload-readiness-20260910`, based on `d77b634e3685de8fb077956b8099fc92c3927243`.
 > See `docs/evidence/f1-local-2026-09-10/VERIFICATION.md` for source, tests and gaps.
@@ -54,7 +54,7 @@ So: **beta.6 must not be published as-is.** See §5.
 
 ### What is NOT done — the whole list, in one place
 
-- **F-1 is being verified locally; F-2 is unstarted.** The silent-death bug and the missed
+- **F-1 passed local verification; F-2 is unstarted.** The silent-death bug and the missed
   schedule boundaries remain release blockers. F-1 includes related F-4 exit/fire logging;
   the remaining section 5 work is unstarted. No new candidate has passed release gates.
 - **The beta.6 kit is built and byte-verified but unsoaked, ungated and unpublished.** It sits at
@@ -181,7 +181,7 @@ states. It also showed **15 × "reload superseding a still-settling reload"**, w
 
 ## 5. What has to be fixed, and what "done" means
 
-Ordered by importance. F-1 and its related F-4 logging are under local verification;
+Ordered by importance. F-1 and its related F-4 logging passed local verification;
 no finding below has met its full release acceptance criteria.
 
 ### F-1 — BLOCKER: seamless reload can commit a half-built pipeline

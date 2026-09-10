@@ -1,6 +1,6 @@
 # HANDOFF
 
-## 2026-09-10 local F-1 implementation update
+## 2026-09-10 local F-1 implementation update (pre-push snapshot)
 
 Scott authorized GO following the cold takeover. Active branch:
 `fix/f1-reload-readiness-20260910`, base `d77b634e3685de8fb077956b8099fc92c3927243`.
@@ -9,6 +9,9 @@ Local worktree:
 Implementation/proof anchor: `7a468cd2e9018775926d384ac1b25ebe07ebd18d`.
 The following documentation checkpoint cites that anchor; it changes no code.
 Read `git rev-parse HEAD` in this worktree for the current documentation HEAD.
+Scott subsequently authorized pushing this branch and opening one F-1 PR. The
+pre-push audit clarified that the existing deferred-boundary watchdog can force
+a switch only after current all-stream preroll. Code and checked hashes are unchanged.
 Local checks: 2106 passed / 72 skipped (egress/live/policy); seven targeted native
 tests passed, 24 commits graded; mypy 675 files, Ruff lint/format, and independent
 Terra review accepted. F-1 release acceptance remains open.

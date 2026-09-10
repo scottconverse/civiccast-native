@@ -22,7 +22,9 @@ produced their first buffers for the same reload transaction. Held file legs
 remain held through retirement; immediate and clock-timed legs are observed
 without blocking or rebasing them. Delayed readiness and timeout callbacks carry
 the transaction ID, and repeated hold callbacks cannot substitute for another
-stream. Deferred commit also requires the outgoing boundary.
+stream. Deferred commit normally waits for the outgoing boundary; the existing
+defer watchdog may force that boundary after its timeout, but still cannot bypass
+the current transaction's all-stream readiness requirement.
 
 The daemon treats a clean exit in ON_AIR or TRANSITIONING as a fault. Existing
 crash pacing and escalation apply. Queued Stop/Drain and an active drain suppress
