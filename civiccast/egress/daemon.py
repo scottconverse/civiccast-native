@@ -68,6 +68,7 @@ from civiccast.egress.models import (
     EgressStateRow,
     redact_source_uri,
     redact_uris_in_text,
+    slate_restart_guard_state,
 )
 from civiccast.egress.pacing import UniformPacingLatch
 from civiccast.egress.preparer import SourcePreparationReport
@@ -675,6 +676,18 @@ class EgressDaemon:
         # _poll_hls_relay) so a relay death (disk full / ffmpeg missing / OOM)
         # is visible even while the main encoder keeps sending fine.
         self._hls_relay_dead: dict[str, bool] = {}
+        # The STORED config each live pipeline was built from (review round 3
+        # delta, MAJOR 2). Health samples key ``sink_connected`` by sink label
+        # from this, not from whatever the config row says NOW: a sink saved
+        # after the build is not on air, and reporting it as connected is the
+        # "working-but-invisible" lie. The headend-preset route reads the
+        # latest sample's labels to decide whether an identical re-apply is
+        # truly ``unchanged`` on air (``router._running_pipeline_delivers``).
+        # The keying happens inside ``_sink_connected`` so that EVERY health
+        # appender -- including a content reload's settlement, which carries
+        # the config row it read when it armed -- reports the built set
+        # (review round 4 delta, MAJOR 1).
+        self._built_configs: dict[str, EgressConfig] = {}
         self._last_loudness_lufs: dict[str, float] = {}
         self._active_cg_overlay_ids: dict[str, str] = {}
         self._last_cg_overlay_event_keys: dict[str, tuple[str, str, str | None]] = {}
@@ -903,6 +916,25 @@ class EgressDaemon:
         # then ERRORs (e.g. an unresolved secret) can't be silently resurrected
         # later by the automatic relaunch the operator was trying to replace.
         self._backoff_relaunch.pop(command.channel_id, None)
+        required_state = slate_restart_guard_state(command)
+        if required_state is not None:
+            # The headend-preset route's slate restart: run this half only
+            # while the channel is still in the state the half assumes, so a
+            # program that committed to air between the route's state read
+            # and this drain is never cut (see SLATE_RESTART_COMMAND_PREFIX).
+            row = self._store.read_state(command.channel_id)
+            actual_state = row.state if row is not None else None
+            if actual_state != required_state:
+                _LOG.warning(
+                    "channel %s: skipped slate-restart %s (%s): the channel is %s, not %s; "
+                    "the preset stays saved and lands at the channel's next start.",
+                    command.channel_id,
+                    command.action,
+                    command.command_id,
+                    actual_state or "not running",
+                    required_state,
+                )
+                return
         if command.action == "start":
             # An operator start is a fresh intent: the slate-EOS relaunch cap
             # (see _SLATE_EOS_RELAUNCH_MAX_CONSECUTIVE) starts over for it.
@@ -917,6 +949,7 @@ class EgressDaemon:
                 self._ts_relay.stop_channel(command.channel_id)
             if self._hls_relay is not None:
                 self._hls_relay.stop_channel(command.channel_id)
+            self._discard_stale_hls_playlists(command.channel_id)
             self._write_state(command.channel_id, "STOPPED")
             return
         if command.action == "drain":
@@ -926,6 +959,60 @@ class EgressDaemon:
             self._request_reload(command.channel_id, command_id=command.command_id)
             return
         raise ConfigInvalidError(f"unsupported egress command action: {command.action}")
+
+    def _discard_stale_hls_playlists(
+        self, channel_id: str, *, config: EgressConfig | None = None
+    ) -> None:
+        """Remove ``playlist.m3u8`` from each of the channel's ``hls`` sink folders.
+
+        The live-HLS writers (``hls_relay`` / ``sinks.HlsSink``) rewrite the
+        playlist in place and never remove it, so once a channel has aired
+        once the file exists forever -- and ``/api/public/live/current``
+        advertises the manifest URL on the strength of that file existing
+        (``live.router._local_live_manifest_url``). Without this, every start
+        after the first advertised the PREVIOUS broadcast's playlist at t=0
+        (review round 3 delta, MINOR 3). Called on an operator ``stop`` (the
+        writer is gone with the channel) and on a start that finds no live
+        relay. Segments are left for the next writer's own rolling window.
+        Folders that fail containment are skipped: the API never advertises
+        those anyway. This is the one consumer of the resolver that WRITES,
+        so it bypasses the resolver's memo: a folder swapped for a junction
+        inside the TTL is refused here as it would be uncached, never
+        followed to an ``unlink`` outside the root (review round 4 delta,
+        MINOR 5). It runs on a stop or a start, never on a hot path.
+        """
+        from civiccast.egress.headend import resolve_local_hls_directory
+
+        if config is None:
+            config = self._store.get_config(channel_id)
+        if config is None:
+            return
+        for sink in config.sinks:
+            if sink.kind != "hls":
+                continue
+            try:
+                playlist = resolve_local_hls_directory(sink.uri, use_cache=False) / "playlist.m3u8"
+            except ValueError:
+                continue
+            try:
+                playlist.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                _LOG.warning(
+                    "channel %s: could not remove the previous broadcast's %s (%s); residents "
+                    "may be offered it until the new pipeline overwrites it.",
+                    channel_id,
+                    playlist,
+                    exc,
+                )
+                continue
+            _LOG.info(
+                "channel %s: removed the previous broadcast's %s so the web preview is not "
+                "advertised until the new pipeline writes it.",
+                channel_id,
+                playlist,
+            )
 
     def _start(
         self,
@@ -955,6 +1042,12 @@ class EgressDaemon:
                 # #151: route udp-ts sinks through the channel-lifetime relay so
                 # this (re)launch splices into ONE continuous mux session.
                 config = self._ts_relay.apply(config)
+            # Read BEFORE ``apply`` below starts a relay: "was anything writing
+            # this channel's HLS window when this start began?"
+            hls_relay_was_alive = (
+                self._hls_relay is not None and self._hls_relay.is_alive(channel_id) is True
+            )
+            stored_config = config
             if self._hls_relay is not None:
                 # DEFECT A: route hls sinks through the supervised ffmpeg relay
                 # that actually writes segments + a manifest for this engine.
@@ -994,6 +1087,19 @@ class EgressDaemon:
             self._discard_pending_reload_settlement(channel_id, reason="channel restarting")
             self._discard_active_prepared_plan_dir(channel_id)
             self._reap_orphan(channel_id)
+            # From here on a pipeline is being BUILT from ``stored_config``.
+            self._built_configs[channel_id] = stored_config
+            if not hls_relay_was_alive:
+                # No relay was writing this channel's HLS window when this
+                # start began (a fresh daemon, an unclean death, or a native
+                # HlsSink worker that is gone): whatever playlist.m3u8 is on
+                # disk belongs to a previous broadcast. Remove it before the
+                # new writer produces anything so /api/public/live/current does
+                # not advertise it. A relay that was already alive
+                # (crash-relaunch of the encoder alone) keeps writing the same
+                # window and is left alone. Uses the STORED config: ``apply``
+                # above rewrote hls sinks to their relay's local-ts uri.
+                self._discard_stale_hls_playlists(channel_id, config=stored_config)
             using_fallback_slate = False
             fallback_reason: str | None = None
             if force_fallback_slate and self._fallback_source_provider is not None:
@@ -1803,7 +1909,10 @@ class EgressDaemon:
         returncode = _process_poll(process)
         if returncode is None:
             state = self._store.read_state(channel_id)
-            config = self._store.get_config(channel_id)
+            # _sink_connected keys health by the sinks the RUNNING pipeline was
+            # built with (see _built_configs) for every appender; the config
+            # row is only its fallback for a process without a recorded build.
+            config = self._built_configs.get(channel_id) or self._store.get_config(channel_id)
             if channel_id in self._draining_channels:
                 current_state: EgressState = "DRAINING"
             elif channel_id in self._pending_reloads:
@@ -3346,6 +3455,7 @@ class EgressDaemon:
             self._discard_active_prepared_plan_dir(channel_id)
         self._stderr_logs.pop(channel_id, None)
         self._hls_relay_dead.pop(channel_id, None)
+        self._built_configs.pop(channel_id, None)
         self._clear_cg_overlay_proof(channel_id, "DRAINING" if draining else "STOPPING")
         # Operator stop — the channel comes off air now; close the open as-run
         # row. The encoder is popped from _processes here, so _poll_process will
@@ -3554,6 +3664,15 @@ class EgressDaemon:
         *,
         state: EgressState,
     ) -> dict[str, bool]:
+        # Health is keyed by the sinks the RUNNING pipeline was built with,
+        # decided HERE so every appender gets it -- the start, the poll tick,
+        # the fallback-slate transition and the content-reload settlement
+        # (review round 4 delta, MAJOR 1: the settlement passed the config
+        # row as it stood NOW, so a program-boundary reload made a sink saved
+        # after the build read as "delivering" for one automation tick). The
+        # caller's config is only the fallback for a process this daemon has
+        # no recorded build for.
+        config = self._built_configs.get(channel_id) or config
         metrics = self._health_metrics(channel_id, state=state)
         if self._sink_health_provider is not None:
             health = self._sink_health_provider(channel_id, config, metrics)

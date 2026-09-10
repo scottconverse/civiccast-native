@@ -176,6 +176,32 @@ class TestGetEndpoint:
         assert response.json()["manifest_url"] == "/media/vod/local-package/playlist.m3u8"
         assert "127.0.0.1" not in response.text
 
+    def test_asset_list_rewrites_beta5_loopback_manifest_rows_for_residents(
+        self, client: TestClient, store: InMemoryAssetStore
+    ) -> None:
+        # Review round 3 delta, MINOR 5: rows finalized under beta.5 still carry
+        # the absolute ``http://127.0.0.1:8000`` base. There is no migration;
+        # ``public_manifest_reference`` rewrites them at read time on every
+        # public route, so the Recordings screen (which reads this list) never
+        # sends a LAN resident to their own loopback. CDN rows pass through.
+        store.put(
+            _make_asset(
+                asset_id="beta5-row",
+                manifest_url="http://127.0.0.1:8000/media/vod/beta5-row/playlist.m3u8",
+            )
+        )
+        store.put(
+            _make_asset(asset_id="cdn-row", manifest_url="https://cdn.example/x/playlist.m3u8")
+        )
+
+        response = client.get("/api/public/assets", headers={"Host": "civiccast.lpm.test"})
+
+        assert response.status_code == 200
+        by_id = {row["asset_id"]: row["manifest_url"] for row in response.json()}
+        assert by_id["beta5-row"] == "/media/vod/beta5-row/playlist.m3u8"
+        assert by_id["cdn-row"] == "https://cdn.example/x/playlist.m3u8"
+        assert "127.0.0.1" not in response.text
+
 
 class TestCreateEndpoint:
     """Locks: POST /api/staff/assets persists, returns canonical, 422s on

@@ -6,7 +6,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { fetchJson, formatDateTime, formatDuration, postForm, postJson } from '../api'
 import { HlsPlayer } from '../HlsPlayer'
 import { buildRecordingsHash, buildWatchHash } from '../router'
-import { LIVE_POLL_SECONDS, sameLiveStatus } from './homeLive'
+import { LIVE_POLL_SECONDS, LIVE_REASON_HLS_NOT_SERVING, sameLiveStatus } from './homeLive'
 import type {
   AssetMetadata,
   ContributorSubmissionReceipt,
@@ -326,11 +326,41 @@ export function HomeScreen() {
     }
   }
 
-  const liveManifest = data.live?.manifest_url
+  // The pipeline is up on its fallback slate, not a program. That is not
+  // "On air": the idle page stays up and the slate manifest is not autoplayed.
+  const liveStandingBy = data.live?.state === 'standing_by'
+  const liveManifest = liveStandingBy ? null : data.live?.manifest_url
+  // On air on the headend, but the station has not enabled an HLS web output
+  // for this channel. Say exactly that rather than "Offline" (beta.5
+  // walkthrough: the channel was visibly on air while Home said Offline).
+  const liveNoWebOutput = data.live?.state === 'on_air_no_web_output'
+  // Same state, different truth: the station HAS enabled the web preview but
+  // the running pipeline is not serving it yet (review round 3 delta, MAJOR 3
+  // -- "not enabled" was false here, and it is the steady state after the
+  // station enables the preview during a program until the channel restarts).
+  const liveWebPreviewPending =
+    liveNoWebOutput && data.live?.reason === LIVE_REASON_HLS_NOT_SERVING
+  const liveStateLabel =
+    data.live?.state === 'on_air'
+      ? 'On air'
+      : liveWebPreviewPending
+        ? 'On air (web preview starting)'
+        : liveNoWebOutput
+          ? 'On air (no web preview)'
+          : liveStandingBy
+            ? 'Standing by'
+            : 'Offline'
   const isPartial = state === 'ready' && errors.length > 0
+  // "Nothing is posted yet" is for a station with no live output, no
+  // schedule and no recordings. A channel that is on air (with or without a
+  // web preview) or standing by on its slate IS something -- the live card
+  // already says what (review round 2 delta, MINOR 6: standing by and
+  // "Nothing is posted yet" used to render together on a bare station).
+  const liveIsSomething =
+    Boolean(liveManifest) || liveNoWebOutput || liveStandingBy
   const isEmpty =
     state === 'ready' &&
-    !liveManifest &&
+    !liveIsSomething &&
     data.comingUp.length === 0 &&
     data.recordings.length === 0
   const recentRecordings = data.recordings.slice(0, HOME_RECORDING_COUNT)
@@ -375,7 +405,13 @@ export function HomeScreen() {
             <p className="text-sm text-stone-300">
               {data.live?.state === 'on_air'
                 ? `${data.live.title ?? 'Broadcast'} is on air.`
-                : 'No live broadcast is on air.'}
+                : liveWebPreviewPending
+                  ? `${data.live?.title ?? 'The station'} is on air. The web preview is turned on but not serving yet.`
+                  : liveNoWebOutput
+                    ? `${data.live?.title ?? 'The station'} is on air, but web preview is not enabled for this channel.`
+                    : liveStandingBy
+                      ? 'The station is standing by. No program is on air right now.'
+                      : 'No live broadcast is on air.'}
             </p>
           </div>
           {liveManifest ? (
@@ -383,6 +419,33 @@ export function HomeScreen() {
               manifestUrl={liveManifest}
               analytics={{ channelId: data.live?.channel_id ?? null }}
             />
+          ) : liveWebPreviewPending ? (
+            <div
+              role="status"
+              className="flex aspect-video flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-stone-500 bg-[#172018] p-6 text-center text-sm text-stone-200"
+            >
+              <span className="font-semibold text-stone-100">
+                On air. The web preview is turned on but not serving yet.
+              </span>
+              <span className="text-stone-300">
+                The broadcast is going out on the cable channel. The station has enabled the
+                web preview; it appears here once the channel&apos;s output restarts. This page
+                checks again on its own.
+              </span>
+            </div>
+          ) : liveNoWebOutput ? (
+            <div
+              role="status"
+              className="flex aspect-video flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-stone-500 bg-[#172018] p-6 text-center text-sm text-stone-200"
+            >
+              <span className="font-semibold text-stone-100">
+                On air, but web preview is not enabled for this channel.
+              </span>
+              <span className="text-stone-300">
+                The broadcast is going out on the cable channel. Ask the station to turn on
+                HLS web output to watch it here.
+              </span>
+            </div>
           ) : idlePage ? (
             <IdlePanel idlePage={idlePage} />
           ) : (
@@ -395,7 +458,7 @@ export function HomeScreen() {
         <aside className="rounded-lg border border-stone-500/30 bg-[#172018] p-5">
           <h3 className="text-base font-semibold">Broadcast status</h3>
           <dl className="mt-4 space-y-3 text-sm">
-            <StatusRow label="State" value={data.live?.state === 'on_air' ? 'On air' : 'Offline'} />
+            <StatusRow label="State" value={liveStateLabel} />
             <StatusRow label="Channel" value={data.live?.channel_id ?? 'None yet'} />
             <StatusRow label="Started" value={formatDateTime(data.live?.started_at ?? null)} />
           </dl>

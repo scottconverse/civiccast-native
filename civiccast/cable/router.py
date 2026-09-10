@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import RedirectResponse
 
 from civiccast.auth.roles import ALL_OPERATOR_ROLES, require_any_role
 from civiccast.cable.channel import (
+    HLS_OUTPUT_NOT_ENABLED_NEXT_STEP,
     ChannelNowNext,
     ChannelPlayoutPlan,
     ChannelProfile,
@@ -20,8 +22,11 @@ from civiccast.cable.channel import (
     build_channel_playout_plan,
     build_channel_proof_log,
     build_ctv_feed,
+    channel_has_hls_sink,
     default_channel_profiles,
     get_channel_profile,
+    local_live_manifest_path,
+    resolve_live_outputs,
 )
 from civiccast.captions.live_sidecar import active_caption_sidecar
 from civiccast.egress.automation import default_egress_work_dir
@@ -40,8 +45,47 @@ staff_router = APIRouter(prefix="/api/staff/cable/channels", tags=["staff", "cab
     response_model=list[ChannelProfile],
     summary="List public linear channel profiles",
 )
-def list_public_channels() -> list[ChannelProfile]:
-    return default_channel_profiles()
+def list_public_channels(egress_store: Any = Depends(get_egress_store)) -> list[ChannelProfile]:
+    return resolve_live_outputs(default_channel_profiles(), egress_store)
+
+
+@public_router.get(
+    "/{channel_id}/live.m3u8",
+    response_class=RedirectResponse,
+    status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    summary="Redirect to the channel's live HLS manifest",
+    responses={
+        307: {"description": "Redirects to /media/live/{channel_id}/playlist.m3u8"},
+        404: {"description": "Unknown channel, or HLS web output is not enabled for it"},
+    },
+)
+def public_channel_live_manifest(
+    channel_id: str,
+    egress_store: Any = Depends(get_egress_store),
+) -> RedirectResponse:
+    """Make the advertised ``/api/public/channels/{id}/live.m3u8`` URL true.
+
+    The Channels screen, the CTV feed and the app-platform schedule feed all
+    print this URL. It used to be a bare string with no route behind it (404
+    for every channel, on air or not — beta.5 walkthrough). Now it redirects
+    to the manifest ``civiccast.stream.media_router`` really serves when the
+    channel has an ``hls`` egress sink, and otherwise answers 404 with a
+    ``detail`` that names the fix.
+    """
+    if get_channel_profile(channel_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Channel profile not found: {channel_id}",
+        )
+    if not channel_has_hls_sink(channel_id, egress_store):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{HLS_OUTPUT_NOT_ENABLED_NEXT_STEP} (channel: {channel_id})",
+        )
+    return RedirectResponse(
+        url=local_live_manifest_path(channel_id),
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    )
 
 
 @public_router.get(
@@ -123,8 +167,8 @@ def public_channel_now_next(
     summary="List operator channel profiles",
     dependencies=[Depends(require_any_role(*ALL_OPERATOR_ROLES))],
 )
-def list_staff_channels() -> list[ChannelProfile]:
-    return default_channel_profiles()
+def list_staff_channels(egress_store: Any = Depends(get_egress_store)) -> list[ChannelProfile]:
+    return resolve_live_outputs(default_channel_profiles(), egress_store)
 
 
 @staff_router.get(

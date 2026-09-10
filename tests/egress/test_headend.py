@@ -9,13 +9,23 @@ encoding profiles) — never tailored to any one station.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Callable
+from pathlib import Path
+
 import pytest
 
 from civiccast.egress.headend import (
     HEADEND_PROFILES,
+    LOCAL_HLS_PROFILE_ID,
+    LOCAL_HLS_ROOT_ENV,
+    LOCAL_HLS_SINK_LABEL,
     apply_headend_profile,
+    clear_local_hls_resolution_cache,
+    default_local_hls_directory,
     get_headend_profile,
     list_headend_profiles,
+    resolve_local_hls_directory,
 )
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
 
@@ -26,6 +36,7 @@ EXPECTED_PROFILE_IDS = {
     "telvue-hypercaster-ip",
     "harmonic-spectrum-ts",
     "leightronix-file-drop",
+    "local-rehearsal-hls",
 }
 
 
@@ -201,3 +212,340 @@ def test_apply_headend_profile_normalises_channel_to_atsc_a85() -> None:
     cable = next(s for s in plan.sinks if s.label == headend_sink.label)
     assert cable.effective_target_lufs == -24.0
     assert cable.requires_reencode is False
+
+
+# ---------------------------------------------------------------------------
+# Local rehearsal (web preview, HLS): the one preset that is not a cable
+# delivery. It exists so a first-time operator can watch the channel in the
+# resident portal with no headend and no CDN (beta.5 walkthrough: on air on a
+# UDP preset, resident Home "Offline", advertised HLS URL 404).
+# ---------------------------------------------------------------------------
+
+
+def test_local_hls_profile_is_registered_and_honest() -> None:
+    profile = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert profile is not None
+    assert profile.label == "Local rehearsal (web preview, HLS)"
+    assert profile.transport == "local-hls"
+    assert profile.muxrate_kbps == 0
+    assert profile.recommended_loudness_regime == "streaming"
+    # Says out loud that it is not a cable delivery and not a CDN.
+    assert any("headend" in claim.lower() for claim in profile.not_claimed)
+    assert any("cdn" in claim.lower() for claim in profile.not_claimed)
+    # The operator has to supply nothing (the folder is optional).
+    assert profile.operator_must_supply and profile.operator_must_supply[0].startswith("Nothing")
+
+
+def test_apply_local_hls_profile_with_blank_destination_uses_station_work_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    work_dir = tmp_path / "egress"
+    monkeypatch.setenv("CIVICCAST_EGRESS_WORK_DIR", str(work_dir))
+    monkeypatch.delenv(LOCAL_HLS_ROOT_ENV, raising=False)
+    profile = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert profile is not None
+    base = _base_config(channel_id="government")
+
+    config = apply_headend_profile(base, profile, destination_uri="")
+
+    assert len(config.sinks) == 1
+    sink = config.sinks[0]
+    assert sink.kind == "hls"
+    assert sink.label == LOCAL_HLS_SINK_LABEL
+    assert Path(sink.uri) == Path(default_local_hls_directory("government")).resolve()
+    assert Path(sink.uri) == (work_dir / "live-hls" / "government").resolve()
+    assert sink.loudness_regime == "streaming"
+    assert "-muxrate" not in sink.extra_output_args
+
+
+def test_apply_local_hls_profile_never_rewrites_encode_or_loudness() -> None:
+    # Applying the web preview AFTER a cable preset must leave the cable feed's
+    # canonical profile and -24 LKFS channel target exactly as they were.
+    cable = get_headend_profile("comcast-mtd-hd")
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert cable is not None and local is not None
+    with_cable = apply_headend_profile(
+        _base_config(), cable, destination_uri="udp://239.20.30.40:5000"
+    )
+
+    config = apply_headend_profile(with_cable, local, destination_uri="", keep_existing_sinks=True)
+
+    assert config.canonical_profile == with_cable.canonical_profile
+    assert config.loudness_target_lufs == with_cable.loudness_target_lufs == -24.0
+    kinds = sorted(sink.kind for sink in config.sinks)
+    assert kinds == ["hls", "udp-ts"]
+
+
+def test_apply_local_hls_profile_replaces_a_previous_hls_sink_but_keeps_others(
+    hls_root: Path,
+) -> None:
+    # media_router serves ONE hls sink per channel, so re-applying with a new
+    # folder swaps the old hls sink instead of stacking a second one.
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    base = _base_config().model_copy(
+        update={
+            "sinks": [
+                EgressSinkSpec(kind="file", label="Proof", uri="build/proof.ts"),
+                EgressSinkSpec(kind="hls", label="Old web", uri=str(hls_root / "old-hls")),
+            ]
+        }
+    )
+
+    config = apply_headend_profile(
+        base, local, destination_uri=str(hls_root / "new-hls"), keep_existing_sinks=True
+    )
+
+    labels = sorted(sink.label for sink in config.sinks)
+    assert labels == sorted(["Proof", LOCAL_HLS_SINK_LABEL])
+    hls = next(sink for sink in config.sinks if sink.kind == "hls")
+    assert Path(hls.uri) == (hls_root / "new-hls").resolve()
+
+
+@pytest.fixture
+def hls_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """An explicit ``CIVICCAST_LIVE_HLS_ROOT`` the tests may write under."""
+    root = tmp_path / "hls-root"
+    root.mkdir()
+    monkeypatch.setenv(LOCAL_HLS_ROOT_ENV, str(root))
+    return root
+
+
+@pytest.mark.parametrize(
+    "spell",
+    [
+        lambda root: str(root / "public"),  # plain absolute path
+        lambda root: (root / "public").as_uri(),  # file:///... uri
+        lambda root: str(root),  # the root itself
+        lambda root: str(root / "a" / ".." / "public"),  # traversal that stays inside
+    ],
+)
+def test_apply_local_hls_profile_accepts_folders_under_the_root(
+    hls_root: Path, spell: Callable[[Path], str]
+) -> None:
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    destination = spell(hls_root)
+    config = apply_headend_profile(_base_config(), local, destination_uri=destination)
+    assert config.sinks[-1].kind == "hls"
+    # Persisted as the normalised absolute path, never the raw spelling.
+    stored = Path(config.sinks[-1].uri)
+    assert stored.is_absolute()
+    assert stored == stored.resolve()
+    assert stored == hls_root.resolve() or stored.is_relative_to(hls_root.resolve())
+
+
+def test_blank_destination_lands_under_an_explicit_root(hls_root: Path) -> None:
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    config = apply_headend_profile(_base_config(channel_id="gov"), local, destination_uri="")
+    assert Path(config.sinks[-1].uri) == (hls_root / "gov").resolve()
+
+
+# ---------------------------------------------------------------------------
+# Review round 2, MAJOR 4: ``/media/live/{channel}/{file_path}`` is a PUBLIC,
+# unauthenticated file server for whatever directory the hls sink names. The
+# local-hls preset is ONE of the operator-input write paths into that sink
+# (``PUT .../config`` is the other -- round-2 delta review, BLOCKER 2 -- and
+# ``media_router`` re-checks containment at serve time; see
+# ``tests/egress/test_router.py`` and ``tests/stream/test_media_router_live.py``).
+# This is the resolver's own contract: it must refuse anything outside the
+# configured root: UNC paths, relative paths, absolute paths elsewhere, and
+# traversal out of the root. Each case below failed open before
+# ``resolve_local_hls_directory``.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        r"\\fileserver\share\hls",
+        "//fileserver/share/hls",
+        "file://fileserver/share/hls",
+    ],
+)
+def test_local_hls_rejects_unc_destinations(hls_root: Path, destination: str) -> None:
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    with pytest.raises(ValueError, match="UNC/network path is not allowed"):
+        apply_headend_profile(_base_config(), local, destination_uri=destination)
+
+
+@pytest.mark.parametrize("destination", ["relative/hls", "./hls", "hls"])
+def test_local_hls_rejects_relative_destinations(hls_root: Path, destination: str) -> None:
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    with pytest.raises(ValueError, match="is a relative path"):
+        apply_headend_profile(_base_config(), local, destination_uri=destination)
+
+
+def test_local_hls_rejects_absolute_destination_outside_the_root(
+    hls_root: Path, tmp_path: Path
+) -> None:
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    elsewhere = tmp_path / "elsewhere"  # a sibling of the root, not under it
+    with pytest.raises(ValueError, match="outside the allowed root"):
+        apply_headend_profile(_base_config(), local, destination_uri=str(elsewhere))
+    # A drive/filesystem root is the worst case: it would serve the whole disk.
+    with pytest.raises(ValueError, match="outside the allowed root"):
+        apply_headend_profile(_base_config(), local, destination_uri=str(hls_root.anchor))
+
+
+@pytest.mark.parametrize(
+    "spell",
+    [
+        lambda root: str(root / ".." / "escape"),
+        lambda root: str(root / "inner" / ".." / ".." / "escape"),
+        lambda root: (root / ".." / "escape").as_uri(),
+    ],
+)
+def test_local_hls_rejects_traversal_out_of_the_root(
+    hls_root: Path, spell: Callable[[Path], str]
+) -> None:
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    with pytest.raises(ValueError, match="outside the allowed root"):
+        apply_headend_profile(_base_config(), local, destination_uri=spell(hls_root))
+
+
+def test_resolve_local_hls_directory_is_the_containment_boundary(hls_root: Path) -> None:
+    # Direct unit check on the resolver the preset and the apply endpoint share.
+    inside = resolve_local_hls_directory(str(hls_root / "x" / ".." / "y"))
+    assert inside == (hls_root / "y").resolve()
+    with pytest.raises(ValueError, match="outside the allowed root"):
+        resolve_local_hls_directory(str(hls_root.parent))
+    with pytest.raises(ValueError, match="blank"):
+        resolve_local_hls_directory("   ")
+
+
+def test_resolve_local_hls_directory_memoises_a_successful_resolution(
+    hls_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Review round 3 delta, MINOR 6: the resolver sits on the public
+    # /media/live and /api/public/live/current hot paths. A success must be
+    # served from memory inside the TTL (no further Path.resolve round trips);
+    # a rejection must NOT be cached, so a corrected folder is seen at once.
+    clear_local_hls_resolution_cache()
+    resolves: list[str] = []
+    real_resolve = Path.resolve
+
+    def counting_resolve(self: Path, strict: bool = False) -> Path:
+        resolves.append(str(self))
+        return real_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", counting_resolve)
+    destination = str(hls_root / "gov")
+
+    first = resolve_local_hls_directory(destination)
+    after_first = len(resolves)
+    second = resolve_local_hls_directory(destination)
+
+    assert after_first >= 1
+    assert second == first
+    assert len(resolves) == after_first, "the second call must not resolve again"
+
+    with pytest.raises(ValueError, match="outside the allowed root"):
+        resolve_local_hls_directory(str(hls_root.parent / "elsewhere"))
+    rejected_count = len(resolves)
+    with pytest.raises(ValueError, match="outside the allowed root"):
+        resolve_local_hls_directory(str(hls_root.parent / "elsewhere"))
+    assert len(resolves) > rejected_count, "rejections are re-evaluated every call"
+
+    clear_local_hls_resolution_cache()
+    resolve_local_hls_directory(destination)
+    assert len(resolves) > rejected_count + 1, "clearing the cache forces a fresh resolve"
+
+
+def test_resolve_local_hls_directory_cache_is_keyed_by_the_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Review round 4 delta, MINOR 3: this used to pass with the memo removed
+    # (an uncached resolver also answers per root). It now proves BOTH halves:
+    # the same destination under the same root is served from memory, and a
+    # root change is a cache miss -- a key without the root env would hand
+    # back the root_a resolution under root_b instead of raising.
+    clear_local_hls_resolution_cache()
+    resolves: list[str] = []
+    real_resolve = Path.resolve
+
+    def counting_resolve(self: Path, strict: bool = False) -> Path:
+        resolves.append(str(self))
+        return real_resolve(self, strict=strict)
+
+    root_a = tmp_path / "a"
+    root_b = tmp_path / "b"
+    root_a.mkdir()
+    root_b.mkdir()
+    expected = (root_a / "gov").resolve()
+    monkeypatch.setattr(Path, "resolve", counting_resolve)
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(root_a))
+    assert resolve_local_hls_directory(str(root_a / "gov")) == expected
+    after_first = len(resolves)
+    assert after_first >= 1
+    assert resolve_local_hls_directory(str(root_a / "gov")) == expected
+    assert len(resolves) == after_first, "same destination, same root: served from memory"
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(root_b))
+    with pytest.raises(ValueError, match="outside the allowed root"):
+        resolve_local_hls_directory(str(root_a / "gov"))
+    assert len(resolves) > after_first, "a root change must be a cache miss"
+
+
+def test_resolve_local_hls_directory_cache_key_is_the_destination_and_both_roots(
+    hls_root: Path,
+) -> None:
+    # Review round 4 delta, CI note: CI's ``mypy civiccast`` went red because
+    # the key was built by star-unpacking a generator over ``_ROOT_ENV_NAMES``,
+    # which infers ``tuple[str, ...]`` and loses the arity the memo dict is
+    # annotated with. The build is spelled out now; this pins the shape at
+    # runtime so a future refactor back to an unpack fails here as well as
+    # under mypy.
+    from civiccast.egress import headend
+
+    clear_local_hls_resolution_cache()
+    resolve_local_hls_directory(str(hls_root / "gov"))
+
+    key = next(iter(headend._resolve_cache))
+    assert len(key) == 1 + len(headend._ROOT_ENV_NAMES) == 3, key
+    assert all(isinstance(part, str) for part in key), key
+    assert key[0] == str(hls_root / "gov")
+    assert key[1] == os.environ.get(headend._ROOT_ENV_NAMES[0], "")
+    assert key[2] == os.environ.get(headend._ROOT_ENV_NAMES[1], "")
+
+
+def test_resolve_local_hls_directory_can_bypass_the_cache(
+    hls_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Review round 4 delta, MINOR 5: the one memo consumer that WRITES (the
+    # daemon's stale-playlist removal) must not act on a resolution cached
+    # before a junction swap. ``use_cache=False`` re-resolves every call and
+    # refreshes the memo for the hot-path readers.
+    from civiccast.egress import headend
+
+    clear_local_hls_resolution_cache()
+    destination = str(hls_root / "gov")
+    resolved = resolve_local_hls_directory(destination)
+    key = next(iter(headend._resolve_cache))
+    stale = hls_root.parent / "elsewhere"
+    headend._resolve_cache[key] = (headend._resolve_cache[key][0], stale)
+
+    assert resolve_local_hls_directory(destination) == stale, "the test's stale seed"
+    assert resolve_local_hls_directory(destination, use_cache=False) == resolved
+    assert resolve_local_hls_directory(destination) == resolved, "the fresh result refreshes"
+
+
+@pytest.mark.parametrize("destination", ["udp://239.0.0.1:5000", "srt://host:9000", "https://cdn"])
+def test_apply_local_hls_profile_rejects_network_destinations(destination: str) -> None:
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    with pytest.raises(ValueError, match="local folder"):
+        apply_headend_profile(_base_config(), local, destination_uri=destination)
+
+
+def test_cable_profiles_still_require_a_destination() -> None:
+    # Making destination_uri optional at the API is for the local preset ONLY;
+    # a blank destination on a cable transport must still fail loudly.
+    cable = get_headend_profile("generic-udp-spts")
+    assert cable is not None
+    with pytest.raises(ValueError, match="udp"):
+        apply_headend_profile(_base_config(), cable, destination_uri="")

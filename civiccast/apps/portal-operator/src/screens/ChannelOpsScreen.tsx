@@ -30,6 +30,7 @@ import {
 import { hasOperatorRole } from '../auth/roles'
 import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { feedCommandConfirmCopy } from './feed-command-confirm'
+import { headendApplyConfirm } from './headendConfirm'
 import {
   type EgressConfigState,
   START_APPLY_TIMEOUT_MS,
@@ -61,6 +62,7 @@ import type {
   GraphicsOverlayStateResponse,
   GraphicsOverlayUpdateRequest,
   HeadendProfile,
+  HeadendProfileApplyResponse,
   PlayoutBlock,
   StationAppConfig,
   StationAppConfigUpdate,
@@ -559,27 +561,45 @@ export function PlayoutPanel({ nowNext }: { nowNext: ChannelNowNext | undefined 
   )
 }
 
-function OutputsPanel({ outputs }: { outputs: ChannelOutput[] }) {
+export function OutputsPanel({ outputs }: { outputs: ChannelOutput[] }) {
   return (
     <section className="rounded-md p-4" style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}>
       <h2 className="m-0 text-lg font-semibold">Software outputs</h2>
       <div className="mt-3 grid gap-3">
-        {outputs.map((output) => (
-          <div
-            key={`${output.kind}-${output.target}`}
-            className="rounded-md p-3 text-sm"
-            style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-semibold">{output.label}</span>
-              <span className="cc-mono rounded-full px-1.5 py-0.5 text-[10px]" style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}>
-                {output.kind}
-              </span>
+        {outputs.map((output) => {
+          // `enabled === false` means the product advertises this output but
+          // the station has not wired it (an hls output with no hls sink). Never
+          // print its target as if it were a working link -- beta.5 walkthrough:
+          // the Channels screen printed a live.m3u8 URL that answered 404.
+          const notEnabled = output.enabled === false
+          return (
+            <div
+              key={`${output.kind}-${output.target}`}
+              className="rounded-md p-3 text-sm"
+              style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold">{output.label}</span>
+                <span className="cc-mono rounded-full px-1.5 py-0.5 text-[10px]" style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}>
+                  {output.kind}
+                </span>
+                {notEnabled && (
+                  <span className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold" style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-warn)' }}>
+                    Not enabled
+                  </span>
+                )}
+              </div>
+              {notEnabled ? (
+                <div className="mt-2 text-xs" style={{ color: 'var(--cc-warn)' }}>
+                  HLS web output is not enabled for this channel.
+                </div>
+              ) : (
+                <div className="cc-mono mt-1 break-all text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>{output.target}</div>
+              )}
+              <div className="mt-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>{output.next_step}</div>
             </div>
-            <div className="cc-mono mt-1 break-all text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>{output.target}</div>
-            <div className="mt-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>{output.next_step}</div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </section>
   )
@@ -1230,13 +1250,14 @@ export function GraphicsOverlayPanel({
   )
 }
 
-function HeadendDeliveryPanel({
+export function HeadendDeliveryPanel({
   channelId,
   profiles,
   config,
   applying,
   canEdit,
   applyError,
+  applyResult,
   onApply,
   verifying,
   verifyResult,
@@ -1249,6 +1270,10 @@ function HeadendDeliveryPanel({
   applying: boolean
   canEdit: boolean
   applyError: unknown
+  // The last successful apply, if any. Its `on_air_detail` is the operator's
+  // answer to "is this on air now?" -- a saved config alone says nothing about
+  // that, and a running pipeline does not pick up output changes.
+  applyResult: HeadendProfileApplyResponse | undefined
   onApply: (payload: {
     profile_id: string
     destination_uri: string
@@ -1270,11 +1295,16 @@ function HeadendDeliveryPanel({
   const effectiveProfileId = profileId || profiles[0]?.profile_id || ''
   const selected = profiles.find((p) => p.profile_id === effectiveProfileId)
   const isFileDrop = selected?.transport === 'file-drop'
+  // "Local rehearsal (web preview, HLS)": not a cable delivery. Adds an hls
+  // sink the resident portal plays; the folder is optional (blank = the
+  // station's egress work folder) and there is no mux rate to set.
+  const isLocalHls = selected?.transport === 'local-hls'
   const headendSink = (config?.sinks ?? []).find(
     (sink) => sink.label === 'Cable headend' || sink.kind === 'udp-ts',
   )
+  const webPreviewSink = (config?.sinks ?? []).find((sink) => sink.kind === 'hls')
   const disabled =
-    !canEdit || applying || !channelId || !selected || !destination.trim()
+    !canEdit || applying || !channelId || !selected || (!isLocalHls && !destination.trim())
 
   return (
     <section
@@ -1339,20 +1369,30 @@ function HeadendDeliveryPanel({
             className="mb-1 block text-[11px] font-semibold uppercase tracking-wider"
             style={{ color: 'var(--cc-ink-3)' }}
           >
-            {isFileDrop ? 'Drop folder / file path' : 'Destination (udp://address:port)'}
+            {isLocalHls
+              ? 'Output folder (optional)'
+              : isFileDrop
+                ? 'Drop folder / file path'
+                : 'Destination (udp://address:port)'}
           </span>
           <input
             type="text"
             value={destination}
             disabled={!canEdit}
             onChange={(e) => setDestination(e.target.value)}
-            placeholder={isFileDrop ? 'file:///D:/headend-drop/channel.ts' : 'udp://239.255.0.1:5000'}
+            placeholder={
+              isLocalHls
+                ? "Leave blank to use the station's egress work folder (a typed folder must be under it)"
+                : isFileDrop
+                  ? 'file:///D:/headend-drop/channel.ts'
+                  : 'udp://239.255.0.1:5000'
+            }
             className={fieldClass + ' w-full'}
             style={fieldStyle}
           />
         </label>
 
-        {!isFileDrop && (
+        {!isFileDrop && !isLocalHls && (
           <label className="block">
             <span
               className="mb-1 block text-[11px] font-semibold uppercase tracking-wider"
@@ -1402,13 +1442,44 @@ function HeadendDeliveryPanel({
               color: disabled ? 'var(--cc-ink-3)' : 'var(--cc-brand-ink)',
             }}
           >
-            {applying ? 'Applying…' : 'Apply headend preset'}
+            {applying ? 'Applying…' : isLocalHls ? 'Enable web preview' : 'Apply headend preset'}
           </button>
         </div>
 
         {headendSink && (
           <div className="cc-mono text-[11px]" style={{ color: 'var(--cc-ink-2)' }}>
             Current headend output: {headendSink.kind} → {headendSink.uri}
+          </div>
+        )}
+
+        {webPreviewSink && (
+          <div className="cc-mono text-[11px]" style={{ color: 'var(--cc-ink-2)' }}>
+            Web preview (HLS) folder: {webPreviewSink.uri}
+          </div>
+        )}
+
+        {applyResult && (
+          <div
+            role="status"
+            className="rounded-md p-2 text-sm"
+            style={{
+              background:
+                applyResult.on_air_effect === 'restart_required'
+                  ? 'var(--cc-warn-soft)'
+                  : 'var(--cc-ok-soft)',
+              color: 'var(--cc-ink)',
+            }}
+          >
+            <div className="font-semibold">
+              {applyResult.on_air_effect === 'restart_queued'
+                ? 'Preset applied and going on air'
+                : applyResult.on_air_effect === 'restart_required'
+                  ? 'Preset saved. Restart the channel to put it on air'
+                  : applyResult.on_air_effect === 'unchanged'
+                    ? 'Nothing to change'
+                    : 'Preset saved for the next start'}
+            </div>
+            <div className="mt-1">{applyResult.on_air_detail}</div>
           </div>
         )}
 
@@ -1831,6 +1902,9 @@ export function ChannelOpsScreen() {
     }) => applyHeadendProfile(channelId ?? '', payload),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['egress-config', channelId] })
+      // The Software outputs card reads the hls output's real state from the
+      // channel-profile list, which the backend resolves against egress config.
+      void queryClient.invalidateQueries({ queryKey: ['channel-profiles'] })
     },
   })
   const complianceProbeMutation = useMutation({
@@ -1952,15 +2026,14 @@ export function ChannelOpsScreen() {
             applying={headendApplyMutation.isPending}
             canEdit={canEditEgressConfig}
             applyError={headendApplyMutation.error}
+            applyResult={headendApplyMutation.data}
             onApply={(payload) => {
               const channelName = selectedChannel?.branding.display_name ?? channelId ?? 'this channel'
+              // The copy lives in headendConfirm.ts so it is tested word for
+              // word: it is the operator's consent to a slate restart that
+              // drops every output, cable included, for a few seconds.
               setPendingConfirm({
-                title: 'Apply this headend preset?',
-                body: payload.keep_existing_sinks
-                  ? `Sends ${channelName}'s outgoing feed to the selected headend profile and keeps the channel's other outputs running alongside it.`
-                  : `Sends ${channelName}'s outgoing feed to the selected headend profile and removes the channel's other outputs — only the headend feed keeps running.`,
-                confirmLabel: 'Apply preset',
-                tone: 'brand',
+                ...headendApplyConfirm(payload, channelName),
                 run: () => headendApplyMutation.mutate(payload),
               })
             }}

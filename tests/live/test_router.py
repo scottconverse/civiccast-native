@@ -26,8 +26,11 @@ this module exercises the HTTP-contract surface.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -45,7 +48,7 @@ import civiccast.live.models
 import civiccast.schedule.models  # noqa: F401
 from civiccast.app import create_app
 from civiccast.db import Base, bind_engine, reset_engine
-from civiccast.egress.models import EgressConfig, EgressSinkSpec
+from civiccast.egress.models import EgressConfig, EgressSinkSpec, EgressStateRow
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.store import InMemoryEgressStore
 from civiccast.live.finalization_worker import LiveFinalizationWorker
@@ -119,6 +122,25 @@ def session_factory(engine: Engine):  # type: ignore[no-untyped-def]
             yield session
 
     return factory
+
+
+@pytest.fixture(autouse=True)
+def _live_hls_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``/api/public/live/current`` advertises a local manifest only when the
+    ``hls`` sink's folder is inside the root the media router may serve AND
+    ``playlist.m3u8`` exists there (round-2 delta review, BLOCKER 1). Point
+    the root at this test's temp dir; ``_hls_dir`` writes the playlist."""
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(tmp_path))
+
+
+def _hls_dir(channel_id: str, *, serving: bool = True) -> str:
+    """An ``hls`` sink folder under the served root; ``serving`` writes the
+    playlist a running pipeline would have written."""
+    directory = Path(os.environ["CIVICCAST_LIVE_HLS_ROOT"]) / channel_id
+    directory.mkdir(parents=True, exist_ok=True)
+    if serving:
+        (directory / "playlist.m3u8").write_text("#EXTM3U\n", encoding="utf-8")
+    return str(directory)
 
 
 @pytest.fixture
@@ -338,6 +360,7 @@ class TestPublicCurrentLive:
             "title": None,
             "started_at": None,
             "manifest_url": None,
+            "reason": None,
         }
 
     def test_returns_newest_on_air_session_with_optional_manifest_url(
@@ -379,7 +402,7 @@ class TestPublicCurrentLive:
                 channel_id="gov-ch12",
                 enabled=True,
                 slate_message="Off air",
-                sinks=[EgressSinkSpec(kind="hls", label="Web", uri="/var/civiccast/live/gov-ch12")],
+                sinks=[EgressSinkSpec(kind="hls", label="Web", uri=_hls_dir("gov-ch12"))],
             )
         )
         client.app.dependency_overrides[get_egress_store] = lambda: egress_store  # type: ignore[attr-defined]
@@ -403,7 +426,47 @@ class TestPublicCurrentLive:
         assert r.status_code == 200
         body = r.json()
         assert body["state"] == "on_air"
-        assert body["manifest_url"] == "http://127.0.0.1:8000/media/live/gov-ch12/playlist.m3u8"
+        # Site-relative (review round 2, BLOCKER 1): the old absolute
+        # http://127.0.0.1:8000 default sent every LAN resident to their own
+        # loopback. The portal and the media router share an origin.
+        assert body["manifest_url"] == "/media/live/gov-ch12/playlist.m3u8"
+
+    def test_local_live_url_is_absolute_only_with_an_explicit_operator_base(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        egress_store = InMemoryEgressStore()
+        egress_store.upsert_config(
+            EgressConfig(
+                channel_id="gov-ch12",
+                enabled=True,
+                slate_message="Off air",
+                sinks=[EgressSinkSpec(kind="hls", label="Web", uri=_hls_dir("gov-ch12"))],
+            )
+        )
+        client.app.dependency_overrides[get_egress_store] = lambda: egress_store  # type: ignore[attr-defined]
+        egress_store.write_state(
+            EgressStateRow(
+                channel_id="gov-ch12", state="ON_AIR", updated_at=datetime(2026, 5, 15, tzinfo=UTC)
+            )
+        )
+
+        # Unset (the stock install) and blank both mean site-relative.
+        for value in (None, "", "   "):
+            if value is None:
+                monkeypatch.delenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", raising=False)
+            else:
+                monkeypatch.setenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", value)
+            body = client.get("/api/public/live/current").json()
+            assert body["manifest_url"] == "/media/live/gov-ch12/playlist.m3u8", value
+
+        # An operator-configured absolute base wins, trailing slash or not.
+        for base in ("https://media.town.example", "https://media.town.example/"):
+            monkeypatch.setenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", base)
+            body = client.get("/api/public/live/current").json()
+            assert (
+                body["manifest_url"]
+                == "https://media.town.example/media/live/gov-ch12/playlist.m3u8"
+            ), base
 
     def test_explicit_manifest_url_param_still_wins_over_local_default(
         self, client: TestClient
@@ -414,7 +477,7 @@ class TestPublicCurrentLive:
                 channel_id="gov-ch12",
                 enabled=True,
                 slate_message="Off air",
-                sinks=[EgressSinkSpec(kind="hls", label="Web", uri="/var/civiccast/live/gov-ch12")],
+                sinks=[EgressSinkSpec(kind="hls", label="Web", uri=_hls_dir("gov-ch12"))],
             )
         )
         client.app.dependency_overrides[get_egress_store] = lambda: egress_store  # type: ignore[attr-defined]
@@ -452,7 +515,7 @@ class TestPublicCurrentLive:
                 channel_id="gov-ch12",
                 enabled=True,
                 slate_message="Off air",
-                sinks=[EgressSinkSpec(kind="hls", label="Web", uri="/var/civiccast/live/gov-ch12")],
+                sinks=[EgressSinkSpec(kind="hls", label="Web", uri=_hls_dir("gov-ch12"))],
             )
         )
         client.app.dependency_overrides[get_egress_store] = lambda: egress_store  # type: ignore[attr-defined]
@@ -508,6 +571,337 @@ class TestPublicCurrentLive:
 
         assert r.status_code == 200
         assert r.json()["manifest_url"] is None
+
+    # ------------------------------------------------------------------
+    # Egress fall-through (beta.5 clean-machine walkthrough): the channel was
+    # visibly on air (slate, then a scheduled asset) on a UDP headend preset
+    # while the resident Home said "Offline", because only live-SESSION rows
+    # were consulted. With no session on air, /current now follows the egress
+    # daemon's state.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _egress_store(
+        *,
+        channel_id: str = "gov-ch12",
+        state: str = "ON_AIR",
+        hls: bool = True,
+        source_label: str | None = "Council meeting 2026-05-15",
+        serving: bool = True,
+    ) -> InMemoryEgressStore:
+        store = InMemoryEgressStore()
+        sinks = [EgressSinkSpec(kind="udp-ts", label="Cable headend", uri="udp://10.0.0.9:5000")]
+        if hls:
+            sinks.append(
+                EgressSinkSpec(kind="hls", label="Web", uri=_hls_dir(channel_id, serving=serving))
+            )
+        store.upsert_config(
+            EgressConfig(channel_id=channel_id, enabled=True, slate_message="Off air", sinks=sinks)
+        )
+        store.write_state(
+            EgressStateRow(
+                channel_id=channel_id,
+                state=state,  # type: ignore[arg-type]
+                current_source_label=source_label,
+                updated_at=datetime(2026, 5, 15, 18, 0, tzinfo=UTC),
+            )
+        )
+        return store
+
+    def test_egress_on_air_with_hls_sink_reports_on_air_without_a_session(
+        self, client: TestClient
+    ) -> None:
+        store = self._egress_store()
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        r = client.get("/api/public/live/current")
+
+        assert r.status_code == 200
+        body = r.json()
+        assert body["state"] == "on_air"
+        assert body["live_session_id"] is None
+        assert body["channel_id"] == "gov-ch12"
+        assert body["title"] == "Council meeting 2026-05-15"
+        assert body["started_at"] == "2026-05-15T18:00:00+00:00"
+        assert body["manifest_url"].endswith("/media/live/gov-ch12/playlist.m3u8")
+        assert body["reason"] is None
+
+    # Review round 2, MAJOR 3: a FALLBACK_SLATE pipeline used to project as
+    # ``on_air``, so a slate read "On air" to residents and hid the idle page.
+    # It is its own honest state now.
+
+    def test_egress_fallback_slate_is_standing_by_not_on_air(self, client: TestClient) -> None:
+        store = self._egress_store(state="FALLBACK_SLATE", source_label="Slate")
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "standing_by"
+        assert body["state"] != "on_air"
+        assert body["channel_id"] == "gov-ch12"
+        assert body["title"] == "Slate"
+        assert body["started_at"] == "2026-05-15T18:00:00+00:00"
+        assert body["reason"] == "fallback slate, no program on air"
+        # The slate IS being served, so the manifest is still reported.
+        assert body["manifest_url"] == "/media/live/gov-ch12/playlist.m3u8"
+
+    def test_egress_fallback_slate_without_hls_is_still_standing_by(
+        self, client: TestClient
+    ) -> None:
+        store = self._egress_store(state="FALLBACK_SLATE", hls=False, source_label="Slate")
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "standing_by"
+        assert body["manifest_url"] is None
+        assert body["reason"] == "fallback slate, no program on air"
+
+    def test_egress_program_channel_outranks_a_slate_channel(self, client: TestClient) -> None:
+        # Two channels: the id-first one is on its slate WITH web output, the
+        # other airs a program WITHOUT. The program wins the unfiltered pick.
+        store = InMemoryEgressStore()
+        for channel_id, state, hls in (
+            ("aaa-slate", "FALLBACK_SLATE", True),
+            ("zzz-program", "ON_AIR", False),
+        ):
+            sinks = [
+                EgressSinkSpec(kind="udp-ts", label="Cable headend", uri="udp://10.0.0.9:5000")
+            ]
+            if hls:
+                sinks.append(EgressSinkSpec(kind="hls", label="Web", uri=_hls_dir(channel_id)))
+            store.upsert_config(
+                EgressConfig(channel_id=channel_id, enabled=True, slate_message="x", sinks=sinks)
+            )
+            store.write_state(
+                EgressStateRow(
+                    channel_id=channel_id,
+                    state=state,  # type: ignore[arg-type]
+                    updated_at=datetime.now(tz=UTC),
+                )
+            )
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+        assert (body["state"], body["channel_id"]) == ("on_air_no_web_output", "zzz-program")
+
+        body = client.get("/api/public/live/current", params={"channel_id": "aaa-slate"}).json()
+        assert (body["state"], body["channel_id"]) == ("standing_by", "aaa-slate")
+
+    def test_egress_on_air_without_hls_sink_is_on_air_no_web_output(
+        self, client: TestClient
+    ) -> None:
+        store = self._egress_store(hls=False)
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "on_air_no_web_output"
+        assert body["channel_id"] == "gov-ch12"
+        assert body["manifest_url"] is None
+        assert body["reason"] == "no HLS output configured"
+
+    def test_egress_no_hls_sink_still_honours_a_valid_cdn_override(
+        self, client: TestClient
+    ) -> None:
+        # A deployer fronting the headend feed with their own CDN can still
+        # hand residents that URL even though no local hls sink exists.
+        store = self._egress_store(hls=False)
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get(
+            "/api/public/live/current",
+            params={"manifest_url": "https://cdn.example/live/playlist.m3u8"},
+        ).json()
+
+        assert body["state"] == "on_air"
+        assert body["manifest_url"] == "https://cdn.example/live/playlist.m3u8"
+
+    @pytest.mark.parametrize("state", ["STOPPED", "STARTING", "DRAINING", "STOPPING", "ERROR"])
+    def test_egress_not_emitting_states_stay_offline(self, client: TestClient, state: str) -> None:
+        store = self._egress_store(state=state)
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "offline"
+        assert body["channel_id"] is None
+
+    # Round-2 delta review, MAJOR 1: ``TRANSITIONING`` is an emitting state
+    # (the daemon writes it on the restart-reload path while the outgoing
+    # worker is still on air, and never on the seamless path because output
+    # stays up) yet it projected to ``offline`` -- a resident watching a live
+    # meeting saw "Offline" and the player vanish at every handoff boundary.
+
+    def test_egress_transitioning_keeps_the_program_on_air(self, client: TestClient) -> None:
+        store = self._egress_store(state="TRANSITIONING")
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "on_air"
+        assert body["channel_id"] == "gov-ch12"
+        assert body["title"] == "Council meeting 2026-05-15"
+        assert body["manifest_url"] == "/media/live/gov-ch12/playlist.m3u8"
+        assert body["reason"] is None
+
+    def test_egress_transitioning_without_hls_is_on_air_no_web_output(
+        self, client: TestClient
+    ) -> None:
+        store = self._egress_store(state="TRANSITIONING", hls=False)
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "on_air_no_web_output"
+        assert body["channel_id"] == "gov-ch12"
+
+    def test_egress_transitioning_program_outranks_a_slate_channel(
+        self, client: TestClient
+    ) -> None:
+        store = InMemoryEgressStore()
+        for channel_id, state in (
+            ("aaa-slate", "FALLBACK_SLATE"),
+            ("zzz-handoff", "TRANSITIONING"),
+        ):
+            store.upsert_config(
+                EgressConfig(
+                    channel_id=channel_id,
+                    enabled=True,
+                    slate_message="x",
+                    sinks=[EgressSinkSpec(kind="hls", label="Web", uri=_hls_dir(channel_id))],
+                )
+            )
+            store.write_state(
+                EgressStateRow(
+                    channel_id=channel_id,
+                    state=state,  # type: ignore[arg-type]
+                    updated_at=datetime.now(tz=UTC),
+                )
+            )
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+        assert (body["state"], body["channel_id"]) == ("on_air", "zzz-handoff")
+
+    # Round-2 delta review, BLOCKER 1: the manifest URL is advertised only
+    # when it is really servable -- the sink's folder is inside the served
+    # root and ``playlist.m3u8`` exists. A sink added to a channel whose
+    # running pipeline was built without it used to hand residents a player
+    # pointed at a 404.
+
+    def test_hls_sink_configured_but_no_playlist_yet_is_on_air_no_web_output(
+        self, client: TestClient
+    ) -> None:
+        store = self._egress_store(serving=False)
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "on_air_no_web_output"
+        assert body["manifest_url"] is None
+        assert body["reason"] == "HLS output configured but not serving yet"
+        assert body["title"] == "Council meeting 2026-05-15"
+
+        # The moment the pipeline writes the manifest, residents get it.
+        Path(_hls_dir("gov-ch12"))  # writes playlist.m3u8
+        body = client.get("/api/public/live/current").json()
+        assert body["state"] == "on_air"
+        assert body["manifest_url"] == "/media/live/gov-ch12/playlist.m3u8"
+
+    def test_standing_by_with_no_playlist_yet_reports_no_manifest(self, client: TestClient) -> None:
+        store = self._egress_store(state="FALLBACK_SLATE", source_label="Slate", serving=False)
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "standing_by"
+        assert body["manifest_url"] is None
+
+    def test_hls_sink_outside_the_served_root_is_never_advertised(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        # The media router would 404 this folder (containment on the resolved
+        # path), so /current must not hand residents a URL for it.
+        outside = tmp_path.parent / f"{tmp_path.name}-outside"
+        outside.mkdir(exist_ok=True)
+        (outside / "playlist.m3u8").write_text("#EXTM3U\n", encoding="utf-8")
+        store = InMemoryEgressStore()
+        store.upsert_config(
+            EgressConfig(
+                channel_id="gov-ch12",
+                enabled=True,
+                slate_message="x",
+                sinks=[EgressSinkSpec(kind="hls", label="Web", uri=str(outside))],
+            )
+        )
+        store.write_state(
+            EgressStateRow(channel_id="gov-ch12", state="ON_AIR", updated_at=datetime.now(tz=UTC))
+        )
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "on_air_no_web_output"
+        assert body["manifest_url"] is None
+        assert body["reason"] == "HLS output configured but not serving yet"
+
+    def test_live_session_keeps_precedence_over_egress_state(self, client: TestClient) -> None:
+        store = self._egress_store(source_label="Slate")
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+        _seed_source_and_target(client)
+        _seed_session(client)
+        assert (
+            client.post("/api/staff/live/sessions/council-2026-05-15/start-preflight").status_code
+            == 200
+        )
+        assert (
+            client.post(
+                "/api/staff/live/sessions/council-2026-05-15/go-on-air",
+                json=_all_pass_inputs("council-2026-05-15"),
+            ).status_code
+            == 200
+        )
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "on_air"
+        assert body["live_session_id"] == "council-2026-05-15"
+        assert (
+            body["title"] == "City Council Meeting"
+        )  # the session's title, not the daemon's label
+
+    def test_egress_channel_filter_and_web_enabled_preference(self, client: TestClient) -> None:
+        store = InMemoryEgressStore()
+        for channel_id, hls in (("aaa-cable-only", False), ("zzz-web", True)):
+            sinks = [
+                EgressSinkSpec(kind="udp-ts", label="Cable headend", uri="udp://10.0.0.9:5000")
+            ]
+            if hls:
+                sinks.append(EgressSinkSpec(kind="hls", label="Web", uri=_hls_dir(channel_id)))
+            store.upsert_config(
+                EgressConfig(channel_id=channel_id, enabled=True, slate_message="x", sinks=sinks)
+            )
+            store.write_state(
+                EgressStateRow(
+                    channel_id=channel_id, state="ON_AIR", updated_at=datetime.now(tz=UTC)
+                )
+            )
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        # No filter: the web-playable channel wins even though it sorts last.
+        body = client.get("/api/public/live/current").json()
+        assert (body["state"], body["channel_id"]) == ("on_air", "zzz-web")
+
+        # Explicit filter: the cable-only channel reports its own truth.
+        body = client.get(
+            "/api/public/live/current", params={"channel_id": "aaa-cable-only"}
+        ).json()
+        assert (body["state"], body["channel_id"]) == ("on_air_no_web_output", "aaa-cable-only")
+
+        # Filter for a channel with no egress config at all: offline.
+        body = client.get("/api/public/live/current", params={"channel_id": "nope"}).json()
+        assert body["state"] == "offline"
 
     def test_channel_filter_limits_current_session(self, client: TestClient) -> None:
         _seed_source_and_target(client, channel_id="gov", live_source_id="gov-camera")

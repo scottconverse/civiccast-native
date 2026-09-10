@@ -10,7 +10,7 @@ full-duration evidence.
 
 from __future__ import annotations
 
-from civiccast.load.live_soak import Sample, analyze, render_evidence
+from civiccast.load.live_soak import Sample, absolute_manifest_url, analyze, render_evidence
 
 
 def _sample(t: float, **overrides: int) -> Sample:
@@ -149,3 +149,28 @@ def test_render_pass_contains_measured_numbers() -> None:
     assert "`deadbeef`" in text
     assert "soak.samples.jsonl" in text
     assert "generated from measured samples" in text
+
+
+# Round-2 delta review, MAJOR 2: ``/api/public/live/current`` now reports the
+# local manifest site-relative, and the viewer handed that straight to
+# ``httpx`` (which refuses a URL with no host), breaking every viewer task in
+# the non-CDN baseline. The viewer resolves it against the soak origin.
+
+
+def test_relative_manifest_url_is_resolved_against_the_soak_origin() -> None:
+    assert (
+        absolute_manifest_url("http://127.0.0.1:8123", "/media/live/gov/playlist.m3u8")
+        == "http://127.0.0.1:8123/media/live/gov/playlist.m3u8"
+    )
+    assert (
+        absolute_manifest_url("http://127.0.0.1:8123/", "/media/live/gov/playlist.m3u8")
+        == "http://127.0.0.1:8123/media/live/gov/playlist.m3u8"
+    )
+
+
+def test_absolute_manifest_urls_pass_through_untouched() -> None:
+    cdn = "http://127.0.0.1:8123/cdn-edge/gov/playlist.m3u8"
+    assert absolute_manifest_url("http://127.0.0.1:8123", cdn) == cdn
+    assert absolute_manifest_url("http://lab", "https://media.town.example/x.m3u8") == (
+        "https://media.town.example/x.m3u8"
+    )

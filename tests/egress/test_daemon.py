@@ -541,6 +541,153 @@ def test_daemon_clears_active_cg_overlay_on_stop(tmp_path: Path) -> None:
     assert overlay_events[0].state == "STOPPING"
 
 
+def _hls_config(folder: Path) -> EgressConfig:
+    return EgressConfig(
+        channel_id="gov",
+        enabled=True,
+        slate_message="CivicCast is preparing the channel.",
+        sinks=[
+            EgressSinkSpec(kind="file", label="Proof", uri="build/out.ts"),
+            EgressSinkSpec(kind="hls", label="Web preview (HLS)", uri=str(folder)),
+        ],
+    )
+
+
+def test_operator_stop_removes_the_previous_broadcasts_hls_playlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Review round 3 delta, MINOR 3: the HLS writers rewrite playlist.m3u8 in
+    # place and never remove it, and /api/public/live/current advertises the
+    # manifest on the strength of that file existing -- so every start after
+    # the first advertised the PREVIOUS broadcast's playlist. The operator stop
+    # is where the writer goes away with the channel; the playlist goes too.
+    root = tmp_path / "hls-root"
+    folder = root / "gov"
+    folder.mkdir(parents=True)
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(root))
+    store = InMemoryEgressStore()
+    store.upsert_config(_hls_config(folder))
+    store.enqueue_command(_command())
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path / "work",
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _FakeProcess(),
+    )
+    assert daemon.process_once("gov") == 1
+    (folder / "playlist.m3u8").write_text("#EXTM3U\n", encoding="utf-8")
+    (folder / "seg000000001.ts").write_bytes(b"ts")
+
+    store.enqueue_command(_command("stop"))
+    assert daemon.process_once("gov") == 1
+
+    assert not (folder / "playlist.m3u8").exists()
+    assert (folder / "seg000000001.ts").exists()  # segments are the next writer's business
+    state = store.read_state("gov")
+    assert state is not None and state.state == "STOPPED"
+
+
+def test_start_with_no_live_relay_removes_a_stale_hls_playlist_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A daemon that comes up over a folder holding an older broadcast's
+    # playlist (unclean death, service restart) must not leave it there for
+    # /api/public/live/current to advertise at t=0 of the new pipeline.
+    root = tmp_path / "hls-root"
+    folder = root / "gov"
+    folder.mkdir(parents=True)
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(root))
+    (folder / "playlist.m3u8").write_text("#EXTM3U\n#stale\n", encoding="utf-8")
+    store = InMemoryEgressStore()
+    store.upsert_config(_hls_config(folder))
+    store.enqueue_command(_command())
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path / "work",
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _FakeProcess(),
+    )
+
+    assert daemon.process_once("gov") == 1
+
+    assert not (folder / "playlist.m3u8").exists()
+    state = store.read_state("gov")
+    assert state is not None and state.state == "ON_AIR"
+
+
+def test_stale_playlist_removal_never_acts_on_a_cached_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Review round 4 delta, MINOR 5: the resolver memo is fine for the public
+    # READ paths (the media router re-checks every file it serves), but the
+    # daemon's playlist removal WRITES. A resolution cached before the sink
+    # folder was swapped for a junction pointing outside the root must not
+    # steer an unlink() outside the root. The cache is seeded with exactly
+    # that stale state; the removal must re-resolve and touch only the real
+    # in-root folder.
+    from civiccast.egress import headend
+
+    root = tmp_path / "hls-root"
+    folder = root / "gov"
+    folder.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(root))
+    (folder / "playlist.m3u8").write_text("#EXTM3U\n#stale\n", encoding="utf-8")
+    (outside / "playlist.m3u8").write_text("#EXTM3U\n#not yours\n", encoding="utf-8")
+    headend.clear_local_hls_resolution_cache()
+    headend.resolve_local_hls_directory(str(folder))
+    key = next(iter(headend._resolve_cache))
+    headend._resolve_cache[key] = (headend._resolve_cache[key][0], outside.resolve())
+    store = InMemoryEgressStore()
+    store.upsert_config(_hls_config(folder))
+    store.enqueue_command(_command())
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path / "work",
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _FakeProcess(),
+    )
+
+    assert daemon.process_once("gov") == 1
+
+    assert (outside / "playlist.m3u8").is_file(), "unlinked through a stale cached resolution"
+    assert not (folder / "playlist.m3u8").exists()
+
+
+def test_start_leaves_the_playlist_alone_while_the_hls_relay_is_still_alive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A crash-relaunch of the encoder alone: the relay child keeps writing the
+    # same rolling window, so residents' players must not lose the manifest.
+    from civiccast.egress.hls_relay import HlsRelaySupervisor
+
+    root = tmp_path / "hls-root"
+    folder = root / "gov"
+    folder.mkdir(parents=True)
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(root))
+    store = InMemoryEgressStore()
+    store.upsert_config(_hls_config(folder))
+    store.enqueue_command(_command())
+    relay = HlsRelaySupervisor(starter=lambda _args: _FakeProcess(pid=9001))
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path / "work",
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _FakeProcess(),
+        hls_relay_supervisor=relay,
+    )
+    assert daemon.process_once("gov") == 1
+    assert relay.is_alive("gov") is True
+    (folder / "playlist.m3u8").write_text("#EXTM3U\n", encoding="utf-8")
+
+    # The encoder is gone but the relay is not: an in-place relaunch.
+    daemon._processes["gov"].returncode = 1  # type: ignore[attr-defined]
+    daemon.process_once("gov")
+
+    assert (folder / "playlist.m3u8").exists()
+
+
 def test_daemon_clears_active_cg_overlay_when_encoder_exits(tmp_path: Path) -> None:
     store = InMemoryEgressStore()
     store.upsert_config(_config())

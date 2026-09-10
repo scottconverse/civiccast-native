@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import tempfile
 import time
 from collections.abc import Callable, Sequence
@@ -318,6 +319,9 @@ async def run_ramp(
     """
     with tempfile.TemporaryDirectory(prefix="civiccast-loadlab-") as tmp:
         directory = Path(tmp) / "live"
+        # The media router serves only folders inside CIVICCAST_LIVE_HLS_ROOT
+        # (or the egress work dir); the lab's temp station must be inside it.
+        os.environ["CIVICCAST_LIVE_HLS_ROOT"] = tmp
         station = RollingStation(directory, window=window, segment_bytes=segment_bytes)
         station.bootstrap()
         app = build_lab_app(directory)

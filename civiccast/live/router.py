@@ -59,15 +59,17 @@ posture established in v0.3.
 
 from __future__ import annotations
 
-import os
+import logging
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 
 from civiccast.auth.roles import require_any_role
+from civiccast.cable.channel import LOCAL_MEDIA_BASE_URL_ENV, local_live_manifest_path
 from civiccast.common.trusted_proxy import resolve_client_ip
+from civiccast.egress.headend import resolve_local_hls_directory
 from civiccast.egress.router import get_egress_store
 from civiccast.live.models import (
     LIVE_SESSION_STATE_ON_AIR,
@@ -193,8 +195,53 @@ def _translate_state_error(exc: Any, *, attempted_transition: str) -> HTTPExcept
     )
 
 
+PUBLIC_LIVE_STATE_OFFLINE = "offline"
+PUBLIC_LIVE_STATE_ON_AIR = "on_air"
+# The channel's egress pipeline is on air (program or fallback slate) but no
+# ``hls`` sink is configured, so there is no web-playable manifest. Distinct from
+# ``offline`` so the resident portal can say "on air, web preview not enabled"
+# instead of lying that the station is dark.
+PUBLIC_LIVE_STATE_ON_AIR_NO_WEB_OUTPUT = "on_air_no_web_output"
+# The channel's egress pipeline is up but emitting its fallback slate, not a
+# program (egress ``FALLBACK_SLATE``). Reported as its own state (review round
+# 2, MAJOR 3): a slate must never read "On air" to residents, and the portal
+# keeps its between-streams idle page up instead of hiding it behind a player.
+# ``manifest_url`` is still filled in when an ``hls`` sink exists -- the slate
+# IS being served -- so a client that wants to show it can.
+PUBLIC_LIVE_STATE_STANDING_BY = "standing_by"
+PUBLIC_LIVE_REASON_NO_HLS_OUTPUT = "no HLS output configured"
+# An ``hls`` sink IS configured but its playlist does not exist on disk yet
+# (the channel is running a pipeline built before the sink was added, the
+# relay has not written its first segment, or the folder is outside the
+# served root). Reported instead of a manifest URL that would 404 (review
+# round 2 delta, BLOCKER 1: a preset applied to a running channel used to
+# hand residents a player pointed at a manifest that never existed).
+PUBLIC_LIVE_REASON_HLS_NOT_SERVING = "HLS output configured but not serving yet"
+PUBLIC_LIVE_REASON_FALLBACK_SLATE = "fallback slate, no program on air"
+# Re-exported for callers that historically imported it from here; the one
+# owner is ``civiccast.cable.channel`` (review round 2 delta, MINOR 2).
+__all__ = ["LOCAL_MEDIA_BASE_URL_ENV"]
+# Egress states that mean "the channel is emitting a program right now".
+# ``TRANSITIONING`` is emitting (review round 2 delta, MAJOR 1): the daemon
+# writes it on the restart-reload path while the outgoing worker is still on
+# air, and deliberately never writes it on the seamless path because output
+# stays up -- so it must not project to ``offline``. Its ``current_source_label``
+# is carried over from the state it is leaving.
+_EGRESS_STATES_PROGRAM = frozenset({"ON_AIR", "TRANSITIONING"})
+# Egress state that means "the pipeline is up on its fallback slate".
+_EGRESS_STATE_STANDING_BY = "FALLBACK_SLATE"
+_EGRESS_STATES_EMITTING = _EGRESS_STATES_PROGRAM | {_EGRESS_STATE_STANDING_BY}
+_LOG = logging.getLogger(__name__)
+
+
 class PublicLiveStatus(BaseModel):
-    """Resident-safe live-session projection for the public portal."""
+    """Resident-safe live-session projection for the public portal.
+
+    ``state`` is one of ``offline`` / ``on_air`` / ``on_air_no_web_output`` /
+    ``standing_by``. ``reason`` is set for the last two and names, in plain
+    words, why there is no ``manifest_url`` although the channel is on air, or
+    why a channel with a manifest is not called on air (it is on its slate).
+    """
 
     state: str
     live_session_id: str | None = None
@@ -202,6 +249,7 @@ class PublicLiveStatus(BaseModel):
     title: str | None = None
     started_at: str | None = None
     manifest_url: str | None = None
+    reason: str | None = None
 
 
 @public_router.get(
@@ -220,7 +268,20 @@ def get_current_live_session(
     egress_store: Any = Depends(get_egress_store),
     surge: Any = Depends(get_surge_switch_service),
 ) -> PublicLiveStatus:
-    """Return the newest on-air session, or ``offline`` when none exists.
+    """Return the newest on-air session, else the egress pipeline's live state.
+
+    Precedence: a live SESSION that is ``on_air`` always wins (its title and
+    ``live_session_id`` are the resident-facing record). When no session is on
+    air, the channel's EGRESS state is consulted: a channel whose pipeline is
+    ``ON_AIR`` (scheduled playout) reports ``on_air`` when it has an ``hls``
+    sink to serve residents from, and ``on_air_no_web_output`` (with
+    ``reason``) when it is on air on the headend only; a channel on its
+    ``FALLBACK_SLATE`` reports ``standing_by`` (with ``reason``, and with
+    ``manifest_url`` when an ``hls`` sink exists) -- a slate is not a program
+    and is never called on air. Before this fall-through the resident portal
+    said "Offline" for a channel that was visibly on air on a UDP headend
+    preset (beta.5 clean-machine walkthrough) because only session rows were
+    ever consulted.
 
     The public contract exposes only resident-safe fields. Precedence for
     ``manifest_url`` (Sprint 0.4 Phase 2): an explicit ``manifest_url`` query
@@ -251,7 +312,13 @@ def get_current_live_session(
         states=(LIVE_SESSION_STATE_ON_AIR,),
     )
     if not rows:
-        return PublicLiveStatus(state="offline")
+        return _egress_live_status(
+            request,
+            channel_id=channel_id,
+            manifest_url_override=manifest_url,
+            egress_store=egress_store,
+            surge=surge,
+        )
     current = rows[0]
     # Feed + advance the surge switch on every resolution poll, before reading
     # the resolved URL, so the delay buffer elapsing on this very poll hands the
@@ -271,11 +338,87 @@ def get_current_live_session(
         or _local_live_manifest_url(current.channel_id, egress_store)
     )
     return PublicLiveStatus(
-        state="on_air",
+        state=PUBLIC_LIVE_STATE_ON_AIR,
         live_session_id=current.live_session_id,
         channel_id=current.channel_id,
         title=current.title,
         started_at=current.started_at.isoformat() if current.started_at else None,
+        manifest_url=resolved_manifest_url,
+    )
+
+
+def _egress_live_status(
+    request: Request,
+    *,
+    channel_id: str | None,
+    manifest_url_override: str | None,
+    egress_store: Any,
+    surge: Any,
+) -> PublicLiveStatus:
+    """Project the egress daemon's state for residents when no session is on air.
+
+    Picks the emitting channel (``ON_AIR`` / ``FALLBACK_SLATE``) — the requested
+    ``channel_id`` when given, otherwise the first such channel by id,
+    preferring a channel airing a program over one on its slate, then one that
+    has an ``hls`` sink so a multi-channel station with one web-enabled channel
+    resolves to something playable. ``title`` carries the daemon's current
+    source label (asset name or slate) and ``started_at`` the moment the
+    pipeline entered its current state (``EgressStateRow.updated_at`` is
+    written only on state transitions). ``FALLBACK_SLATE`` projects to
+    ``standing_by``, never ``on_air``: the slate is not a program.
+    """
+    if egress_store is None:
+        return PublicLiveStatus(state=PUBLIC_LIVE_STATE_OFFLINE)
+    if channel_id is not None:
+        config = egress_store.get_config(channel_id)
+        configs = [config] if config is not None else []
+    else:
+        configs = sorted(egress_store.list_configs(), key=lambda cfg: cfg.channel_id)
+    candidates: list[tuple[bool, bool, Any, Any]] = []
+    for config in configs:
+        row = egress_store.read_state(config.channel_id)
+        if row is None or row.state not in _EGRESS_STATES_EMITTING:
+            continue
+        has_hls = any(sink.kind == "hls" for sink in config.sinks)
+        is_program = row.state in _EGRESS_STATES_PROGRAM
+        candidates.append((is_program, has_hls, config, row))
+    if not candidates:
+        return PublicLiveStatus(state=PUBLIC_LIVE_STATE_OFFLINE)
+    # Program-airing channels first, then web-playable ones; the sort above
+    # already fixed the id order for ties.
+    is_program, has_hls, config, row = max(candidates, key=lambda item: (item[0], item[1]))
+    if surge is not None and has_hls:
+        surge.observe(config.channel_id, resolve_client_ip(request))
+    resolved_manifest_url = (
+        _safe_override_url(manifest_url_override)
+        or (surge.manifest_url(config.channel_id) if surge is not None and has_hls else None)
+        or _local_live_manifest_url(config.channel_id, egress_store)
+    )
+    started_at = row.updated_at.isoformat() if row.updated_at else None
+    if not is_program:
+        return PublicLiveStatus(
+            state=PUBLIC_LIVE_STATE_STANDING_BY,
+            channel_id=config.channel_id,
+            title=row.current_source_label,
+            started_at=started_at,
+            manifest_url=resolved_manifest_url,
+            reason=PUBLIC_LIVE_REASON_FALLBACK_SLATE,
+        )
+    if resolved_manifest_url is None:
+        return PublicLiveStatus(
+            state=PUBLIC_LIVE_STATE_ON_AIR_NO_WEB_OUTPUT,
+            channel_id=config.channel_id,
+            title=row.current_source_label,
+            started_at=started_at,
+            reason=(
+                PUBLIC_LIVE_REASON_HLS_NOT_SERVING if has_hls else PUBLIC_LIVE_REASON_NO_HLS_OUTPUT
+            ),
+        )
+    return PublicLiveStatus(
+        state=PUBLIC_LIVE_STATE_ON_AIR,
+        channel_id=config.channel_id,
+        title=row.current_source_label,
+        started_at=started_at,
         manifest_url=resolved_manifest_url,
     )
 
@@ -304,24 +447,50 @@ def _safe_override_url(url: str | None) -> str | None:
 
 
 def _local_live_manifest_url(channel_id: str, egress_store: Any) -> str | None:
-    """The channel's local live-HLS manifest URL, or ``None`` if unconfigured.
+    """The channel's local live-HLS manifest URL, or ``None`` if not servable.
 
-    Reuses the finalization worker's local-serve base URL convention
-    (``CIVICCAST_LOCAL_MEDIA_BASE_URL``, default ``http://127.0.0.1:8000``)
-    so VOD and live share one "how does a stock install reach itself" knob.
+    Servable means all of: an ``hls`` sink is configured, its folder is inside
+    the root ``civiccast.stream.media_router`` is allowed to serve (the same
+    :func:`resolve_local_hls_directory` check the media router runs, so this
+    never advertises a folder that route would 404), and ``playlist.m3u8``
+    exists there right now. The last check is what keeps the URL honest when
+    the sink was added to a channel whose running pipeline was built without
+    it (review round 2 delta, BLOCKER 1): until a pipeline actually writes
+    the manifest, residents get ``on_air_no_web_output`` -- never a player
+    pointed at a 404. The writers never remove the playlist themselves, so
+    the daemon removes it on an operator ``stop`` and on a start that finds
+    no live relay (``daemon._discard_stale_hls_playlists``, review round 3
+    delta, MINOR 3); what remains uncovered is a daemon that died uncleanly
+    and has not yet restarted the channel -- its last playlist is advertised
+    until the channel's next start removes it, and a player that loads it
+    stalls on the missing segments rather than 404ing the manifest.
+
+    The URL itself is spelled by :func:`civiccast.cable.channel.
+    local_live_manifest_path` -- site-relative by default, absolute only with
+    an operator-set ``CIVICCAST_LOCAL_MEDIA_BASE_URL`` (review round 2,
+    BLOCKER 1: an absolute ``http://127.0.0.1:8000`` default sent every LAN
+    resident to their own loopback).
     """
     if egress_store is None:
         return None
     config = egress_store.get_config(channel_id)
-    if config is None or not any(sink.kind == "hls" for sink in config.sinks):
+    if config is None:
         return None
-
-    from civiccast.live.finalization_worker import DEFAULT_LOCAL_MEDIA_BASE_URL
-
-    base_url = os.environ.get("CIVICCAST_LOCAL_MEDIA_BASE_URL", "").strip() or (
-        DEFAULT_LOCAL_MEDIA_BASE_URL
-    )
-    return f"{base_url.rstrip('/')}/media/live/{quote(channel_id)}/playlist.m3u8"
+    hls_sink = next((sink for sink in config.sinks if sink.kind == "hls"), None)
+    if hls_sink is None:
+        return None
+    try:
+        directory = resolve_local_hls_directory(hls_sink.uri)
+    except ValueError as exc:
+        _LOG.warning(
+            "channel %s: hls sink folder is not servable, no manifest advertised: %s",
+            channel_id,
+            exc,
+        )
+        return None
+    if not (directory / "playlist.m3u8").is_file():
+        return None
+    return local_live_manifest_path(channel_id)
 
 
 # ===========================================================================

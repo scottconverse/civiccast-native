@@ -495,6 +495,9 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["CIVICCAST_LOCAL_MEDIA_BASE_URL"] = "http://lab"
     with tempfile.TemporaryDirectory(prefix="civiccast-switchlab-") as tmp:
         root = Path(tmp)
+        # The lab's live folder must be inside the root the media router is
+        # allowed to serve (it refuses anything else with a 404).
+        os.environ["CIVICCAST_LIVE_HLS_ROOT"] = str(root)
         clock = ManualClock()
         lab = build_switch_lab(
             root / "live",

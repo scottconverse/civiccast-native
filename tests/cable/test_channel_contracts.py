@@ -462,7 +462,7 @@ class _ScheduleStoreStub:
 
 def _client_with_egress_store(
     monkeypatch,
-    store: InMemoryEgressStore,
+    store: InMemoryEgressStore | None,
     schedule_items: list[ScheduleItemResponse] | None = None,
 ) -> TestClient:
     monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
@@ -910,3 +910,115 @@ def test_public_caption_feed_rejects_channel_path_escape(monkeypatch, tmp_path: 
         public_channel_captions_vtt("government", work_dir=tmp_path)
 
     assert exc_info.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# The advertised HLS URL must be true (beta.5 walkthrough: Channels printed
+# /api/public/channels/public/live.m3u8 and it answered 404 while on air).
+# ---------------------------------------------------------------------------
+
+
+def test_static_profile_hls_output_is_marked_not_enabled() -> None:
+    # With no egress store there is no hls sink; the output says so instead of
+    # pretending the URL is wired.
+    profile = next(p for p in default_channel_profiles() if p.channel_id == "public")
+    hls = next(output for output in profile.outputs if output.kind == "hls")
+    assert hls.enabled is False
+    assert hls.target == "/api/public/channels/public/live.m3u8"
+    assert hls.next_step.startswith("HLS web output is not enabled for this channel.")
+    assert "Local rehearsal (web preview, HLS)" in hls.next_step
+
+
+def test_live_m3u8_redirects_to_media_router_when_hls_sink_configured(monkeypatch) -> None:
+    from civiccast.egress.models import EgressConfig, EgressSinkSpec
+    from civiccast.egress.store import InMemoryEgressStore
+
+    store = InMemoryEgressStore()
+    store.upsert_config(
+        EgressConfig(
+            channel_id="public",
+            enabled=True,
+            slate_message="x",
+            sinks=[EgressSinkSpec(kind="hls", label="Web preview (HLS)", uri="/srv/live/public")],
+        )
+    )
+    client = _client_with_egress_store(monkeypatch, store)
+
+    r = client.get("/api/public/channels/public/live.m3u8", follow_redirects=False)
+    assert r.status_code == 307
+    assert r.headers["location"] == "/media/live/public/playlist.m3u8"
+
+    # Both channel lists now print the REAL manifest and mark the output wired.
+    for path in ("/api/public/channels", "/api/staff/cable/channels"):
+        profiles = client.get(path).json()
+        public = next(p for p in profiles if p["channel_id"] == "public")
+        hls = next(o for o in public["outputs"] if o["kind"] == "hls")
+        assert hls["enabled"] is True, path
+        assert hls["target"] == "/media/live/public/playlist.m3u8", path
+        assert hls["proof_boundary"] == "hls-sink-configured", path
+        # Other channels have no sink: still honest.
+        government = next(p for p in profiles if p["channel_id"] == "government")
+        gov_hls = next(o for o in government["outputs"] if o["kind"] == "hls")
+        assert gov_hls["enabled"] is False, path
+        assert gov_hls["target"] == "/api/public/channels/government/live.m3u8", path
+
+
+def test_live_m3u8_404_names_the_fix_when_hls_output_not_enabled(monkeypatch) -> None:
+    from civiccast.egress.models import EgressConfig, EgressSinkSpec
+    from civiccast.egress.store import InMemoryEgressStore
+
+    store = InMemoryEgressStore()
+    store.upsert_config(
+        EgressConfig(
+            channel_id="public",
+            enabled=True,
+            slate_message="x",
+            sinks=[EgressSinkSpec(kind="udp-ts", label="Cable headend", uri="udp://10.0.0.9:5000")],
+        )
+    )
+    client = _client_with_egress_store(monkeypatch, store)
+
+    r = client.get("/api/public/channels/public/live.m3u8", follow_redirects=False)
+    assert r.status_code == 404
+    detail = r.json()["detail"]
+    assert detail.startswith("HLS web output is not enabled for this channel.")
+    assert "Local rehearsal (web preview, HLS)" in detail
+    assert "(channel: public)" in detail
+
+    # Unknown channel is a plain 404 too, never a redirect into /media/live.
+    r = client.get("/api/public/channels/nope/live.m3u8", follow_redirects=False)
+    assert r.status_code == 404
+    assert "Channel profile not found" in r.json()["detail"]
+
+
+def test_live_m3u8_404_without_any_egress_store(monkeypatch) -> None:
+    client = _client_with_egress_store(monkeypatch, None)
+    r = client.get("/api/public/channels/public/live.m3u8", follow_redirects=False)
+    assert r.status_code == 404
+    assert "HLS web output is not enabled" in r.json()["detail"]
+
+
+# Round-2 delta review, MINOR 2: ``local_live_manifest_path`` ignored
+# ``CIVICCAST_LOCAL_MEDIA_BASE_URL`` and never quoted the channel id, so the
+# Channels screen and ``/api/public/live/current`` disagreed whenever an
+# operator base was configured. One helper owns the URL now.
+
+
+def test_local_live_manifest_path_is_site_relative_and_quoted_by_default(monkeypatch) -> None:
+    from civiccast.cable.channel import local_live_manifest_path
+
+    monkeypatch.delenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", raising=False)
+    assert local_live_manifest_path("public") == "/media/live/public/playlist.m3u8"
+    assert local_live_manifest_path("gov ch/12") == "/media/live/gov%20ch%2F12/playlist.m3u8"
+
+
+def test_local_live_manifest_path_honours_an_operator_base_like_the_live_api(monkeypatch) -> None:
+    from civiccast.cable.channel import local_live_manifest_path
+
+    for base in ("https://media.town.example", "https://media.town.example/"):
+        monkeypatch.setenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", base)
+        assert local_live_manifest_path("public") == (
+            "https://media.town.example/media/live/public/playlist.m3u8"
+        ), base
+    monkeypatch.setenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", "   ")
+    assert local_live_manifest_path("public") == "/media/live/public/playlist.m3u8"

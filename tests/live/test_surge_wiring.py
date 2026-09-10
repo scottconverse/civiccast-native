@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -32,6 +33,12 @@ class _FixedPeerASGI:
         if scope["type"] == "http":
             scope = {**scope, "client": (self._host, 40000)}
         await self._app(scope, receive, send)
+
+
+@pytest.fixture(autouse=True)
+def _live_hls_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The media router serves only folders inside CIVICCAST_LIVE_HLS_ROOT.
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(tmp_path))
 
 
 def _app(tmp_path: Path) -> tuple[FastAPI, SurgeSwitchService]:

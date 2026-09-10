@@ -202,10 +202,13 @@ def _read_segment_names(manifest_text: str) -> set[str]:
 
 
 def test_gstreamer_fed_hls_directory_serves_an_advancing_manifest_over_http(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The composition proof: GStreamer -> HlsRelaySupervisor -> media_router
     -> ffprobe over a real socket, with observed rotation between two fetches."""
+
+    # The media router serves only folders inside CIVICCAST_LIVE_HLS_ROOT.
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(tmp_path))
 
     import gi
 

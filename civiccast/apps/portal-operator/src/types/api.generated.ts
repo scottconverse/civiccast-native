@@ -2235,7 +2235,7 @@ export interface HeadendProfile {
   source_urls: Array<string>
   canonical_profile: CanonicalProfile
   muxrate_kbps: number
-  transport: 'udp-unicast' | 'udp-multicast' | 'file-drop'
+  transport: 'udp-unicast' | 'udp-multicast' | 'file-drop' | 'local-hls'
   recommended_loudness_regime?: 'streaming' | 'atsc-a85' | 'ebu-r128' | 'inherit'
   pkt_size?: number
   min_port?: number
@@ -2246,9 +2246,15 @@ export interface HeadendProfile {
 
 export interface HeadendProfileApplyRequest {
   profile_id: string
-  destination_uri: string
+  destination_uri?: string
   muxrate_kbps?: number | null
   keep_existing_sinks?: boolean
+}
+
+export interface HeadendProfileApplyResponse {
+  config: EgressConfig
+  on_air_effect: 'restart_queued' | 'restart_required' | 'next_start' | 'unchanged'
+  on_air_detail: string
 }
 
 export interface HeadendReadinessResponse {
@@ -3327,6 +3333,7 @@ export interface PublicLiveStatus {
   title?: string | null
   started_at?: string | null
   manifest_url?: string | null
+  reason?: string | null
 }
 
 export interface PublicMeetingAgenda {
@@ -5073,4 +5080,5 @@ export interface civiccast__cable__channel__ChannelOutput {
   target: string
   proof_boundary: string
   next_step: string
+  enabled?: boolean
 }

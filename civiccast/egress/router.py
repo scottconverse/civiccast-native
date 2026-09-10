@@ -5,9 +5,9 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -24,6 +24,7 @@ from civiccast.egress.compliance import (
     read_last_probe,
     run_compliance_probe,
 )
+from civiccast.egress.dispatcher import RUNNING_STATES
 from civiccast.egress.engine_select import gstreamer_engine_selected
 from civiccast.egress.gst.bridge import SUPPORTED_SINK_KINDS as GST_SUPPORTED_SINK_KINDS
 from civiccast.egress.headend import (
@@ -31,9 +32,11 @@ from civiccast.egress.headend import (
     apply_headend_profile,
     get_headend_profile,
     list_headend_profiles,
+    resolve_local_hls_directory,
 )
 from civiccast.egress.loudness_plan import ChannelLoudnessPlan, build_loudness_plan
 from civiccast.egress.models import (
+    SLATE_RESTART_COMMAND_PREFIX,
     CaptionStatus,
     EgressCaptionProofSample,
     EgressCommand,
@@ -363,6 +366,7 @@ def upsert_config(
             ),
         )
     _reject_unsupported_sink_kinds(payload)
+    _reject_uncontained_hls_sinks(payload)
     store.upsert_config(payload)
     result = store.get_config(channel_id)
     if result is None:
@@ -371,6 +375,31 @@ def upsert_config(
             detail="Egress config was not readable after save.",
         )
     return result
+
+
+def _reject_uncontained_hls_sinks(config: EgressConfig) -> None:
+    """Refuse an ``hls`` sink whose folder the media router would not serve.
+
+    ``/media/live/{channel}/...`` is public and unauthenticated and serves
+    whatever folder the channel's ``hls`` sink names. The preset route
+    already resolves its destination through ``resolve_local_hls_directory``;
+    this PUT takes a whole ``EgressConfig`` body and used to run only the
+    model's shape check, which accepted ``C:\\Windows``, a UNC share, ``/etc``
+    and ``file:///C:/Windows`` (review round 2 delta, BLOCKER 2 -- executed by
+    the reviewer). Every operator-input write path into that sink now goes
+    through the same resolver, and ``media_router._live_dir_for_channel``
+    re-checks at serve time so no future writer can reopen it.
+    """
+    for sink in config.sinks:
+        if sink.kind != "hls":
+            continue
+        try:
+            resolve_local_hls_directory(sink.uri)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"hls sink {sink.label!r}: {exc}",
+            ) from exc
 
 
 @staff_router.get(
@@ -587,7 +616,10 @@ class HeadendProfileApplyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     profile_id: str
-    destination_uri: str
+    # Required for every cable transport (the profile validates it). Optional
+    # for ``local-rehearsal-hls``: blank means "the station's egress work
+    # folder", see ``civiccast.egress.headend.default_local_hls_directory``.
+    destination_uri: str = ""
     muxrate_kbps: int | None = None
     keep_existing_sinks: bool = False
 
@@ -603,9 +635,60 @@ def headend_profiles() -> list[HeadendProfile]:
     return list_headend_profiles()
 
 
+HeadendProfileOnAirEffect = Literal["restart_queued", "restart_required", "next_start", "unchanged"]
+
+
+class HeadendProfileApplyResponse(BaseModel):
+    """What a preset apply changed, and when it reaches the air.
+
+    ``on_air_effect`` is the honest answer to "is this on air now?":
+
+    - ``restart_queued`` -- the channel was standing by on its fallback slate,
+      so a ``stop`` + ``start`` pair was queued (one durable write; the daemon
+      runs each half only while the channel is still in the state that half
+      assumes, see ``models.slate_restart_guard_state``); the daemon rebuilds
+      the pipeline with the new outputs within one poll cycle. No program is
+      interrupted -- but the restart terminates the ONE worker that produces
+      every sink, so every output, the cable headend feed included, drops for
+      the length of a pipeline rebuild (a few seconds). Portal residents were
+      watching the slate; cable subscribers were too.
+    - ``restart_required`` -- the channel is airing (or starting / handing
+      off) a program. A running pipeline never picks up an output change (the
+      GStreamer engine's reload re-applies only the program source and the
+      graphics overlay -- see ``civiccast/egress/gst/engine.py``), and cutting
+      a program is the operator's call, not this route's. The preset lands at
+      the next ``start``; the operator can Stop then Start now.
+    - ``next_start`` -- the channel is not running (or is going off air); its
+      next ``start`` reads the new config.
+    - ``unchanged`` -- the stored config already matched AND nothing needs to
+      reach the air: the channel is not running, or its running pipeline was
+      built with every output this preset asks for (measured from the
+      daemon's latest health sample, which is keyed by the sink labels of the
+      config the pipeline was BUILT with -- in every appender that writes a
+      sample, a content reload's settlement included, because the keying is
+      applied inside ``_sink_connected`` and not at each call site). A
+      content reload is issued at every program boundary and does not
+      rebuild sinks, so an appender keyed off the config row as it stands
+      now would report a sink saved after the build as connected for one
+      ~2 s poll tick (review round 4 delta, MAJOR 1). A config that matches on disk but
+      not on air -- the sequence ``restart_required`` -> program ends ->
+      re-apply -- is NOT ``unchanged``; it takes the normal path above
+      (review round 3 delta, MAJOR 2).
+
+    ``on_air_detail`` says the same in one operator-readable sentence, and
+    the Channels screen shows it verbatim after the apply.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    config: EgressConfig
+    on_air_effect: HeadendProfileOnAirEffect
+    on_air_detail: str
+
+
 @staff_router.post(
     "/channels/{channel_id}/config/headend-profile",
-    response_model=EgressConfig,
+    response_model=HeadendProfileApplyResponse,
     summary="Apply a headend delivery profile to a channel's egress config",
     dependencies=[Depends(require_any_role("setup_admin"))],
     responses={
@@ -617,8 +700,28 @@ def headend_profiles() -> list[HeadendProfile]:
 def apply_headend_profile_to_channel(
     channel_id: str,
     payload: HeadendProfileApplyRequest,
+    request: Request,
     egress_store: EgressStore | None = Depends(get_egress_store),
-) -> EgressConfig:
+) -> HeadendProfileApplyResponse:
+    """Apply a headend preset to the channel's config and say when it airs.
+
+    Persisting the config alone changes nothing on air: the daemon reads a
+    channel's sinks, encode profile and loudness target only when it BUILDS a
+    pipeline. A ``reload`` does not rebuild them -- on the default GStreamer
+    engine it re-applies only the program source and the graphics overlay
+    (``gst/engine.py`` / ``gst/worker.py``), while ``daemon.py`` would still
+    start the HLS relay child for the new sink, leaving a relay fed nothing
+    and a manifest URL that 404s (review round 2 delta, BLOCKER 1). So this
+    route never queues a ``reload``. What it does instead depends on the
+    channel's state and is reported back in ``on_air_effect``:
+    ``FALLBACK_SLATE`` gets a real restart (``stop`` + ``start``) because no
+    program is interrupted -- though every output, the cable feed included,
+    drops for the rebuild, and the response says so; a program on air is left
+    alone and the response says a restart is required; a dark channel just
+    gets the config. An identical config is ``unchanged`` only when the
+    running channel is measured to already deliver it. See
+    ``HeadendProfileApplyResponse``.
+    """
     store = _require_store(egress_store, surface="headend profile")
     profile = get_headend_profile(payload.profile_id)
     if profile is None:
@@ -657,14 +760,166 @@ def apply_headend_profile_to_channel(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
         ) from exc
     _reject_unsupported_sink_kinds(updated)
-    store.upsert_config(updated)
+    _reject_uncontained_hls_sinks(updated)
+    config_changed = fresh or updated != base
+    if config_changed:
+        store.upsert_config(updated)
     result = store.get_config(channel_id)
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Egress config was not readable after save.",
         )
-    return result
+    effect, detail = _apply_preset_on_air(
+        store,
+        result,
+        config_changed=config_changed,
+        issued_by=_staff_operator_id(request),
+    )
+    return HeadendProfileApplyResponse(config=result, on_air_effect=effect, on_air_detail=detail)
+
+
+# The egress state in which a pipeline restart interrupts nothing but the
+# fallback slate, so the route may restart the channel to put a new output on
+# air without asking. Any other running state is a program (or one starting /
+# handing off) and the restart is the operator's decision.
+_HEADEND_AUTO_RESTART_STATE = "FALLBACK_SLATE"
+# Running states that are not yet (or no longer) a steady program, each with
+# its own true sentence (review round 3 delta, MINOR 4: "The channel is on
+# air" was shown for STARTING, and "not running" for STOPPING / DRAINING,
+# which still have a worker emitting).
+_HEADEND_STARTING_STATE = "STARTING"
+_HEADEND_GOING_OFF_AIR_STATES = frozenset({"STOPPING", "DRAINING"})
+
+_RESTART_QUEUED_DETAIL = (
+    "The channel was standing by on its slate, so it is being restarted with the new "
+    "output. Every output, including the cable feed, drops for a few seconds while the "
+    "pipeline rebuilds; the channel is back on air right after."
+)
+_RESTART_REQUIRED_DETAIL = (
+    "The channel is on air. A running pipeline does not pick up output changes, so "
+    "this preset takes effect when the channel is next started. To put it on air now, "
+    "Stop and then Start the channel."
+)
+_RESTART_REQUIRED_WHILE_STARTING_DETAIL = (
+    "The channel is starting up. The pipeline being built does not pick up output "
+    "changes, so this preset takes effect when the channel is next started. Once it is "
+    "up, Stop and then Start the channel to put it on air now."
+)
+_NEXT_START_DETAIL = (
+    "The channel is not running. The preset takes effect when the channel is next started."
+)
+_NEXT_START_WHILE_GOING_OFF_AIR_DETAIL = (
+    "The channel is going off air. The preset takes effect when the channel is next started."
+)
+_UNCHANGED_NOT_RUNNING_DETAIL = (
+    "The channel's saved outputs already matched this preset and the channel is not "
+    "running; nothing was queued. It reads this config when it is next started."
+)
+_UNCHANGED_ON_AIR_DETAIL = (
+    "The channel's outputs already matched this preset and the running channel is "
+    "already delivering them; nothing changed on air."
+)
+
+
+def _apply_preset_on_air(
+    store: EgressStore, config: EgressConfig, *, config_changed: bool, issued_by: str
+) -> tuple[HeadendProfileOnAirEffect, str]:
+    """Put a just-saved preset on air where that is safe; say what happened.
+
+    Returns the ``(on_air_effect, on_air_detail)`` pair for
+    ``HeadendProfileApplyResponse``. Uses ``dispatcher.RUNNING_STATES`` (the
+    commit-to-air nudge's own definition of "running") rather than a copy.
+
+    ``config_changed`` is False when the stored config already matched the
+    preset byte for byte. That alone is NOT ``unchanged``: the state is read
+    FIRST, and an identical config short-circuits only when nothing needs to
+    reach the air -- the channel is not running, or the running pipeline is
+    measured to carry every output the preset asks for
+    (:func:`_running_pipeline_delivers`). Otherwise the identical apply takes
+    the same path a changed one would, which is exactly what an operator
+    re-applying a preset after ``restart_required`` needs (review round 3
+    delta, MAJOR 2: it used to answer "nothing changed on air" and queue
+    nothing while the web preview stayed off air).
+    """
+    state = store.read_state(config.channel_id)
+    if state is None or state.state not in RUNNING_STATES:
+        if not config_changed:
+            return ("unchanged", _UNCHANGED_NOT_RUNNING_DETAIL)
+        if state is not None and state.state in _HEADEND_GOING_OFF_AIR_STATES:
+            return ("next_start", _NEXT_START_WHILE_GOING_OFF_AIR_DETAIL)
+        return ("next_start", _NEXT_START_DETAIL)
+    if not config_changed and _running_pipeline_delivers(store, config):
+        return ("unchanged", _UNCHANGED_ON_AIR_DETAIL)
+    if state.state == _HEADEND_STARTING_STATE:
+        return ("restart_required", _RESTART_REQUIRED_WHILE_STARTING_DETAIL)
+    if state.state != _HEADEND_AUTO_RESTART_STATE:
+        return ("restart_required", _RESTART_REQUIRED_DETAIL)
+    _enqueue_restart(store, config.channel_id, issued_by=issued_by)
+    return ("restart_queued", _RESTART_QUEUED_DETAIL)
+
+
+def _running_pipeline_delivers(store: EgressStore, config: EgressConfig) -> bool:
+    """True when the daemon's running pipeline was built with every sink in ``config``.
+
+    The daemon stamps nothing on the state row about which config built the
+    pipeline, but every health sample it appends carries ``sink_connected``
+    keyed by the sink LABELS of the config the pipeline was built with
+    (``EgressDaemon._built_configs`` -> ``_sink_connected`` /
+    ``health.build_default_sink_health``; the config row as it stands NOW is
+    only the fallback for a process adopted without a recorded build). That
+    keying lives inside ``_sink_connected``, so it holds for EVERY appender
+    -- the start, the poll tick, the fallback-slate transition and a content
+    reload's settlement, which carries the config row it read when it armed
+    (review round 4 delta, MAJOR 1). A sample is appended at start and on
+    every poll tick. So "the latest sample
+    knows every label this preset asks for" is a measurement of what is on
+    air, not a guess from the config row. No sample at all (a state row
+    written by something other than a daemon) reads as "not delivering", so
+    the route errs toward putting the preset on air. Limit: two configs whose
+    sinks differ only in URI share labels and are indistinguishable here --
+    but an identical stored config is the precondition for this check, so
+    the only way to hit that is a config edited to the same labels between
+    the build and the apply.
+    """
+    samples = store.recent_health(config.channel_id, 1)
+    if not samples:
+        return False
+    delivered = samples[0].sink_connected
+    return all(sink.label in delivered for sink in config.sinks)
+
+
+def _enqueue_restart(store: EgressStore, channel_id: str, *, issued_by: str) -> None:
+    """Queue ``stop`` then ``start`` so the daemon rebuilds the pipeline.
+
+    There is no ``restart`` command action; the daemon drains a channel's
+    pending commands in ``(issued_at, command_id)`` order and runs each in
+    turn, so a ``stop`` (terminates the worker, ends the HLS relay session)
+    followed by a ``start`` (reads the saved config, starts the relay for the
+    new sink, builds the pipeline with it) is one restart. Both the timestamp
+    and the id suffix order the pair so neither store can drain them swapped.
+
+    The pair is ONE durable write (``enqueue_commands``): a poll can never
+    drain the ``stop`` alone, and a process death here leaves nothing queued
+    rather than a ``stop`` with no ``start`` (review round 3 delta, MINOR 1).
+    The ids carry :data:`SLATE_RESTART_COMMAND_PREFIX`, so the daemon runs
+    the ``stop`` only while the channel is still on its slate and the
+    ``start`` only after that ``stop`` ran (MINOR 2).
+    """
+    now = datetime.now(UTC)
+    token = uuid.uuid4().hex
+    store.enqueue_commands(
+        [
+            EgressCommand(
+                channel_id=channel_id,
+                action=action,  # type: ignore[arg-type]
+                issued_at=now + timedelta(microseconds=offset),
+                issued_by=issued_by,
+                command_id=f"{SLATE_RESTART_COMMAND_PREFIX}{token}-{offset}-{action}",
+            )
+            for offset, action in enumerate(("stop", "start"))
+        ]
+    )
 
 
 class ComplianceProbeRequest(BaseModel):

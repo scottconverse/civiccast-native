@@ -54,6 +54,8 @@ import type {
   ChannelProofLog,
   EgressStateRow,
   GraphicsOverlayStateResponse,
+  HeadendProfile,
+  HeadendProfileApplyResponse,
   StaffIdentityResponse,
 } from '../types/api.generated'
 import {
@@ -76,20 +78,24 @@ import {
   queueEgressCommand,
 } from '../api/client'
 import {
-  ChannelOpsScreen,
-  EgressControlPanel,
-  GraphicsOverlayPanel,
-  PlayoutPanel,
-  PlayoutPlanPanel,
-  ProofPanel,
-} from './ChannelOpsScreen'
-import {
   START_APPLY_TIMEOUT_MS,
   configCheckFailedReason,
   startDisabledConfigReason,
   startWatchApplied,
   startWithoutConfigReason,
 } from './egress-start'
+import {
+  ChannelOpsScreen,
+  EgressControlPanel,
+  GraphicsOverlayPanel,
+  HeadendDeliveryPanel,
+  OutputsPanel,
+  PlayoutPanel,
+  PlayoutPlanPanel,
+  ProofPanel,
+} from './ChannelOpsScreen'
+
+type ChannelOutput = NonNullable<ChannelProfile['outputs']>[number]
 
 afterEach(cleanup)
 
@@ -368,6 +374,130 @@ describe('EgressControlPanel captions row', () => {
     expect(renderCaptions(true).container.textContent).toContain('Not yet confirmed (waiting for the on-air check)')
     cleanup()
     expect(renderCaptions(undefined).container.textContent).toContain('Not yet confirmed (waiting for the on-air check)')
+  })
+})
+
+describe('OutputsPanel', () => {
+  // beta.5 clean-machine walkthrough: the Channels screen printed
+  // /api/public/channels/public/live.m3u8 as a working URL while it answered
+  // 404. The backend now marks an hls output `enabled: false` when the channel
+  // has no hls sink; this card must say so instead of printing the link.
+  const notEnabled: ChannelOutput = {
+    kind: 'hls',
+    label: 'Resident and CTV HLS',
+    target: '/api/public/channels/public/live.m3u8',
+    proof_boundary: 'hls-output-not-enabled',
+    next_step:
+      "HLS web output is not enabled for this channel. Apply the 'Local rehearsal (web preview, HLS)' preset under Cable headend delivery, or add an hls sink to the channel's egress config, and this URL starts serving.",
+    enabled: false,
+  }
+  const enabled: ChannelOutput = {
+    kind: 'hls',
+    label: 'Resident and CTV HLS',
+    target: '/media/live/public/playlist.m3u8',
+    proof_boundary: 'hls-sink-configured',
+    next_step: 'Serves the channel\'s hls egress sink while the channel is on air.',
+    enabled: true,
+  }
+
+  it('says web output is not enabled instead of printing a dead URL', () => {
+    const { getByText, queryByText } = render(<OutputsPanel outputs={[notEnabled]} />)
+    expect(getByText('HLS web output is not enabled for this channel.')).toBeTruthy()
+    expect(getByText('Not enabled')).toBeTruthy()
+    expect(queryByText('/api/public/channels/public/live.m3u8')).toBeNull()
+    // The fix is still spelled out.
+    expect(getByText(/Local rehearsal \(web preview, HLS\)/)).toBeTruthy()
+  })
+
+  it('prints the real manifest URL when the hls sink is configured', () => {
+    const { getByText, queryByText } = render(<OutputsPanel outputs={[enabled]} />)
+    expect(getByText('/media/live/public/playlist.m3u8')).toBeTruthy()
+    expect(queryByText('Not enabled')).toBeNull()
+    expect(queryByText('HLS web output is not enabled for this channel.')).toBeNull()
+  })
+
+  it('treats a missing enabled flag as enabled (older API payloads)', () => {
+    const legacy = { ...enabled } as Partial<ChannelOutput>
+    delete legacy.enabled
+    const { getByText, queryByText } = render(<OutputsPanel outputs={[legacy as ChannelOutput]} />)
+    expect(getByText('/media/live/public/playlist.m3u8')).toBeTruthy()
+    expect(queryByText('Not enabled')).toBeNull()
+  })
+})
+
+describe('HeadendDeliveryPanel', () => {
+  // Round-2 delta review, BLOCKER 1: a saved preset says nothing about the
+  // air. The apply response now carries `on_air_effect` + `on_air_detail`
+  // (restarted from the slate / restart required for a program on air / next
+  // start) and the card must show it, or the operator is left believing the
+  // web preview is live when the running pipeline never picked it up.
+  const localHls: HeadendProfile = {
+    profile_id: 'local-rehearsal-hls',
+    label: 'Local rehearsal (web preview, HLS)',
+    vendor: 'CivicCast',
+    source_urls: ['https://example.invalid/rfc8216'],
+    canonical_profile: {} as HeadendProfile['canonical_profile'],
+    muxrate_kbps: 0,
+    transport: 'local-hls',
+  }
+  const result = (
+    effect: HeadendProfileApplyResponse['on_air_effect'],
+    detail: string,
+  ): HeadendProfileApplyResponse => ({
+    config: {
+      channel_id: 'public',
+      enabled: true,
+      slate_message: 'x',
+      sinks: [{ kind: 'hls', label: 'Web preview (HLS)', uri: 'C:\\CivicCast\\egress\\live-hls\\public' }],
+    } as HeadendProfileApplyResponse['config'],
+    on_air_effect: effect,
+    on_air_detail: detail,
+  })
+  const renderPanel = (applyResult: HeadendProfileApplyResponse | undefined) =>
+    render(
+      <HeadendDeliveryPanel
+        channelId="public"
+        profiles={[localHls]}
+        config={applyResult?.config}
+        applying={false}
+        canEdit
+        applyError={null}
+        applyResult={applyResult}
+        onApply={() => {}}
+        verifying={false}
+        verifyResult={undefined}
+        verifyError={null}
+        onVerify={() => {}}
+      />,
+    )
+
+  it('shows nothing about the air before an apply', () => {
+    const { queryByRole } = renderPanel(undefined)
+    expect(queryByRole('status')).toBeNull()
+  })
+
+  it('tells the operator a program on air needs a restart, in the API\'s own words', () => {
+    const detail =
+      'The channel is on air. A running pipeline does not pick up output changes, so this preset takes effect when the channel is next started. To put it on air now, Stop and then Start the channel.'
+    const { getByRole, getByText } = renderPanel(result('restart_required', detail))
+    expect(getByRole('status').textContent).toContain('Restart the channel to put it on air')
+    expect(getByText(detail)).toBeTruthy()
+  })
+
+  it('says the slate channel was restarted and is going on air', () => {
+    const detail =
+      'The channel was standing by on its slate, so it is being restarted with the new output. It is back on air within a few seconds.'
+    const { getByRole, getByText } = renderPanel(result('restart_queued', detail))
+    expect(getByRole('status').textContent).toContain('going on air')
+    expect(getByText(detail)).toBeTruthy()
+  })
+
+  it('says a dark channel picks the preset up at its next start', () => {
+    const detail =
+      'The channel is not running. The preset takes effect when the channel is next started.'
+    const { getByRole } = renderPanel(result('next_start', detail))
+    expect(getByRole('status').textContent).toContain('next start')
+    expect(getByRole('status').textContent).toContain(detail)
   })
 })
 

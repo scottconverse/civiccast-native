@@ -73,13 +73,18 @@ WORKER_MODE_OFF = "off"
 _WORKER_MODES = (WORKER_MODE_INLINE, WORKER_MODE_EXTERNAL, WORKER_MODE_OFF)
 
 # VOD local-serve default (no external CDN, no manual config): the app's own
-# ``civiccast.stream.media_router`` mount, at the host:port the README's
-# documented run command binds (``uvicorn civiccast.app:app`` defaults to
-# 127.0.0.1:8000). Loopback http:// is exempted from the manifest_url
-# https-only rule (see civiccast.vod.models._is_loopback_http_url).
-# Operators fronting the app with a real reverse proxy / domain set
-# CIVICCAST_LOCAL_MEDIA_BASE_URL to override.
-DEFAULT_LOCAL_MEDIA_BASE_URL = "http://127.0.0.1:8000"
+# ``civiccast.stream.media_router`` mount, spelled SITE-RELATIVE
+# (``/media/vod/{asset}/playlist.m3u8``, the same shape the staff package
+# route stores and ``vod.models._validate_manifest_reference`` accepts). The
+# resident portal is served from the same origin as the media router, so a
+# relative URL resolves to whatever host the resident actually reached. The
+# old default was the absolute ``http://127.0.0.1:8000`` -- a LAN resident
+# clicking a recording was sent to their own loopback (review round 2 delta,
+# MINOR 1; the identical live-manifest defect was BLOCKER 1 of round 2). An
+# operator whose media origin differs from the portal's sets
+# CIVICCAST_LOCAL_MEDIA_BASE_URL, which then means the same thing for VOD as
+# it does for live (``civiccast.cable.channel.local_live_manifest_path``).
+DEFAULT_LOCAL_MEDIA_BASE_URL = ""
 
 
 @dataclass(frozen=True)
@@ -903,6 +908,8 @@ class LiveFinalizationWorker:
         """
         if self._public_manifest_base_url is not None:
             return f"{self._public_manifest_base_url}/{quote(live_session_id)}/playlist.m3u8"
+        # Site-relative unless an operator base is configured (see
+        # DEFAULT_LOCAL_MEDIA_BASE_URL); the base is already rstripped of "/".
         return f"{self._local_media_base_url}/media/vod/{quote(asset_id)}/playlist.m3u8"
 
 

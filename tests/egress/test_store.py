@@ -277,6 +277,106 @@ def test_postgres_egress_store_commands_are_idempotent_and_consumed(
     assert store.pop_pending_commands("gov") == []
 
 
+def test_postgres_egress_store_enqueue_commands_is_one_commit(engine: Engine) -> None:
+    # Review round 3 delta, MINOR 1: the headend-preset route's stop + start
+    # pair must be one durable write. Count commits through the session
+    # factory the store is given; the batch must produce exactly one.
+    commits: list[int] = []
+
+    class _CountingSession(Session):
+        def commit(self) -> None:
+            commits.append(1)
+            super().commit()
+
+    @contextmanager
+    def factory() -> Iterator[Session]:
+        with _CountingSession(bind=engine) as session:
+            yield session
+
+    store = PostgresEgressStore(factory)
+    now = datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
+    pair = [
+        EgressCommand(
+            channel_id="gov",
+            action=action,  # type: ignore[arg-type]
+            issued_at=now + timedelta(microseconds=offset),
+            issued_by="operator",
+            command_id=f"restart-{offset}-{action}",
+        )
+        for offset, action in enumerate(("stop", "start"))
+    ]
+
+    store.enqueue_commands(pair)
+
+    assert len(commits) == 1
+    assert [cmd.action for cmd in store.pop_pending_commands("gov")] == ["stop", "start"]
+    # Idempotent like the single path: a replayed batch adds nothing.
+    store.enqueue_commands(pair)
+    assert store.pop_pending_commands("gov") == []
+
+
+def test_in_memory_egress_store_enqueue_commands_keeps_order_and_dedupes() -> None:
+    from civiccast.egress.store import InMemoryEgressStore
+
+    store = InMemoryEgressStore()
+    now = datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
+    pair = [
+        EgressCommand(
+            channel_id="gov",
+            action=action,  # type: ignore[arg-type]
+            issued_at=now + timedelta(microseconds=offset),
+            issued_by="operator",
+            command_id=f"restart-{offset}-{action}",
+        )
+        for offset, action in enumerate(("stop", "start"))
+    ]
+
+    store.enqueue_commands(pair)
+    store.enqueue_commands(pair)
+
+    assert [cmd.action for cmd in store.pop_pending_commands("gov")] == ["stop", "start"]
+    assert store.pop_pending_commands("gov") == []
+
+
+def test_in_memory_egress_store_enqueue_commands_is_one_list_swap() -> None:
+    """Review round 4 delta, MINOR 3: the "one list swap in memory" claim.
+
+    A reader interleaved between the batch's items must see NONE of it: the
+    batch becomes visible in one assignment, never as a prefix. The batch is
+    a sequence whose iteration peeks at the store between the ``stop`` and
+    the ``start``; a per-item ``append`` shows the reader a lone ``stop``.
+    """
+    from civiccast.egress.store import InMemoryEgressStore
+
+    store = InMemoryEgressStore()
+    now = datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
+    pair = [
+        EgressCommand(
+            channel_id="gov",
+            action=action,  # type: ignore[arg-type]
+            issued_at=now + timedelta(microseconds=offset),
+            issued_by="operator",
+            command_id=f"restart-{offset}-{action}",
+        )
+        for offset, action in enumerate(("stop", "start"))
+    ]
+    seen_between_items: list[list[str]] = []
+
+    class _PeekingBatch(list[EgressCommand]):
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            for index, cmd in enumerate(list.__iter__(self)):
+                if index:
+                    seen_between_items.append(
+                        [c.action for c in store.peek_pending_commands("gov")]
+                    )
+                yield cmd
+
+    store.enqueue_commands(_PeekingBatch(pair))
+
+    assert seen_between_items == [[]], "a reader between the items saw a prefix of the batch"
+    assert [cmd.action for cmd in store.pop_pending_commands("gov")] == ["stop", "start"]
+
+
 def test_postgres_egress_store_state_and_recent_health(store: PostgresEgressStore) -> None:
     now = datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
     state = EgressStateRow(

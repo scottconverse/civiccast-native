@@ -55,12 +55,18 @@ export interface PortalStationConfig {
 }
 
 export interface PublicLiveStatus {
-  state: 'offline' | 'on_air' | string
+  // 'on_air_no_web_output': the channel is on air on the headend but has no
+  // hls sink, so there is nothing web-playable; `reason` says why in words.
+  // 'standing_by': the channel's pipeline is up on its fallback slate, not a
+  // program. Never rendered as "On air"; the idle page stays up. manifest_url
+  // may still be set (the slate is being served) — Home does not autoplay it.
+  state: 'offline' | 'on_air' | 'on_air_no_web_output' | 'standing_by' | string
   live_session_id: string | null
   channel_id: string | null
   title: string | null
   started_at: string | null
   manifest_url: string | null
+  reason?: string | null
 }
 
 export interface IdlePage {

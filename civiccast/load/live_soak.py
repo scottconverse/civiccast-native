@@ -48,6 +48,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -319,6 +320,20 @@ class _Counters:
         self.active_viewers = 0
 
 
+def absolute_manifest_url(base_url: str, manifest_url: str) -> str:
+    """Resolve the ``manifest_url`` ``/current`` hands a viewer against the soak origin.
+
+    ``/api/public/live/current`` reports the local manifest SITE-RELATIVE
+    (``/media/live/{channel}/playlist.m3u8``) unless an operator base URL is
+    configured -- a browser resolves that against the page origin, but
+    ``httpx`` refuses a request with no host. Absolute URLs (a CDN edge, an
+    operator base) pass through untouched.
+    """
+    if urlsplit(manifest_url).scheme:
+        return manifest_url
+    return urljoin(base_url.rstrip("/") + "/", manifest_url)
+
+
 def _viewer_ip(index: int) -> str:
     return f"11.{(index >> 16) & 0xFF}.{(index >> 8) & 0xFF}.{index & 0xFF}"
 
@@ -346,6 +361,7 @@ async def _viewer(
                     counters.server_5xx += 1
                 url = resp.json().get("manifest_url") if resp.status_code == 200 else None
                 if url:
+                    url = absolute_manifest_url(base_url, url)
                     is_cdn = "/cdn-edge/" in url
                     if last_src is not None and is_cdn != last_src:
                         if is_cdn:
@@ -460,6 +476,9 @@ async def run_soak(
             "CIVICCAST_SOAK_BASE_URL": base_url,
             "CIVICCAST_SOAK_THRESHOLD": str(_DEFAULT_THRESHOLD),
             "CIVICCAST_LOCAL_MEDIA_BASE_URL": base_url,
+            # The lab's live folder must be inside the root the media router
+            # is allowed to serve (it refuses anything else with a 404).
+            "CIVICCAST_LIVE_HLS_ROOT": str(work_root),
             "CIVICCAST_LIVE_SURGE_THRESHOLD": "",  # app-level env not used; lab wires surge
         }
     )

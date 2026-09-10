@@ -59,6 +59,17 @@ class EgressStore(Protocol):
 
     def enqueue_command(self, cmd: EgressCommand) -> None: ...
 
+    def enqueue_commands(self, cmds: Sequence[EgressCommand]) -> None:
+        """Enqueue several commands as ONE durable write: all land or none do.
+
+        For a pair that only makes sense together -- the headend-preset
+        route's ``stop`` + ``start`` restart of a slate channel -- two
+        separate ``enqueue_command`` commits leave two gaps (review round 3
+        delta, MINOR 1): a daemon poll between them drains only the ``stop``
+        and the channel is dark for a whole poll interval, and an API-process
+        death between them leaves the channel STOPPED with no start queued."""
+        ...
+
     def pop_pending_commands(self, channel_id: str) -> list[EgressCommand]: ...
 
     def peek_pending_commands(self, channel_id: str) -> list[EgressCommand]:
@@ -116,11 +127,19 @@ class InMemoryEgressStore:
         self._configs[config.channel_id] = config
 
     def enqueue_command(self, cmd: EgressCommand) -> None:
-        if cmd.command_id in self._consumed_command_ids:
-            return
-        if any(existing.command_id == cmd.command_id for existing in self._commands):
-            return
-        self._commands.append(cmd)
+        self.enqueue_commands([cmd])
+
+    def enqueue_commands(self, cmds: Sequence[EgressCommand]) -> None:
+        # One list assignment at the end: a reader on another thread sees
+        # either none of the batch or all of it, never a prefix.
+        pending = list(self._commands)
+        for cmd in cmds:
+            if cmd.command_id in self._consumed_command_ids:
+                continue
+            if any(existing.command_id == cmd.command_id for existing in pending):
+                continue
+            pending.append(cmd)
+        self._commands = pending
 
     def pop_pending_commands(self, channel_id: str) -> list[EgressCommand]:
         pending = [cmd for cmd in self._commands if cmd.channel_id == channel_id]
@@ -344,21 +363,32 @@ class PostgresEgressStore:
             session.commit()
 
     def enqueue_command(self, cmd: EgressCommand) -> None:
+        self.enqueue_commands([cmd])
+
+    def enqueue_commands(self, cmds: Sequence[EgressCommand]) -> None:
+        # One session, one commit: the whole batch becomes visible to
+        # ``pop_pending_commands`` atomically, and a crash before the commit
+        # leaves none of it behind (see the Protocol docstring).
         with self._session_factory() as session:
-            existing = session.execute(
-                select(EgressCommandDb).where(EgressCommandDb.command_id == cmd.command_id)
-            ).scalar_one_or_none()
-            if existing is not None:
-                return
-            session.add(
-                EgressCommandDb(
-                    command_id=cmd.command_id,
-                    channel_id=cmd.channel_id,
-                    action=cmd.action,
-                    issued_at=cmd.issued_at,
-                    issued_by=cmd.issued_by,
+            added = False
+            for cmd in cmds:
+                existing = session.execute(
+                    select(EgressCommandDb).where(EgressCommandDb.command_id == cmd.command_id)
+                ).scalar_one_or_none()
+                if existing is not None:
+                    continue
+                session.add(
+                    EgressCommandDb(
+                        command_id=cmd.command_id,
+                        channel_id=cmd.channel_id,
+                        action=cmd.action,
+                        issued_at=cmd.issued_at,
+                        issued_by=cmd.issued_by,
+                    )
                 )
-            )
+                added = True
+            if not added:
+                return
             try:
                 session.commit()
             except IntegrityError:
