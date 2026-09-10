@@ -1,6 +1,6 @@
 ---
 title: CivicCast User Manual
-subtitle: For station operators, clerks, and IT staff - v1.0.0-beta.5 (native Windows line)
+subtitle: For station operators, clerks, and IT staff - v1.0.0-beta.6 (native Windows line)
 author: The CivicCast Authors
 date: 2026-09-08
 # Layout, fonts, and colours live in docs/assets/manual.pandoc.yaml so the
@@ -43,7 +43,7 @@ work (see
 [Comparative Capability Status](#comparative-capability-status) in
 Section C). These source capabilities and their lab evidence are not stock
 acceptance claims and do not establish station-device, provider, app-store, or
-production proof. This manual describes the `v1.0.0-beta.5` native-Windows
+production proof. This manual describes the `v1.0.0-beta.6` native-Windows
 software. A bundled manual does not itself establish publication or installation acceptance.
 Before installing, check the exact
 [GitHub Release](https://github.com/scottconverse/civiccast-native/releases),
