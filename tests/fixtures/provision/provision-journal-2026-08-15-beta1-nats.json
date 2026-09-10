@@ -6,50 +6,50 @@
     "nats_port": 4222,
     "nats_store_dir": "C:\\ProgramData\\CivicCast\\data\\nats-store",
     "nats_tls": null,
-    "owner_run_id": "provision-20260815T203112Z-7f3a",
+    "owner_run_id": "nsis-5899728",
     "postgres_config_path": "C:\\ProgramData\\CivicCast\\data\\pgdata\\postgresql.conf",
     "postgres_data_dir": "C:\\ProgramData\\CivicCast\\data\\pgdata",
     "postgres_hba_path": "C:\\ProgramData\\CivicCast\\data\\pgdata\\pg_hba.conf",
     "postgres_host": "127.0.0.1",
     "postgres_port": 5432,
-    "server_pack_path": "C:\\Program Files\\CivicCast\\packs\\native-server-binaries.ccpack",
+    "server_pack_path": "C:\\Program Files\\CivicCast (Native)\\packs\\native-server-binaries.ccpack",
     "state_root": "C:\\ProgramData\\CivicCast\\provision"
   },
   "error": null,
   "history": [
     [
       "pack_verified",
-      "2026-08-15T20:31:14.207311+00:00",
+      "2026-08-15T23:48:13.523532+00:00",
       "server-binaries pack signature and byte inventory verified"
     ],
     [
       "postgres_cluster_ready",
-      "2026-08-15T20:31:21.884602+00:00",
-      "initdb completed; new cluster is PostgreSQL 17"
+      "2026-08-15T23:48:18.052532+00:00",
+      "no PG_VERSION file found; the data directory is uninitialized"
     ],
     [
       "postgres_config_written",
-      "2026-08-15T20:31:21.951873+00:00",
+      "2026-08-15T23:48:18.056562+00:00",
       "postgresql.conf and pg_hba.conf written"
     ],
     [
       "database_ready",
-      "2026-08-15T20:31:26.410558+00:00",
-      "created"
+      "2026-08-15T23:48:19.583439+00:00",
+      "database 'civiccast' created (owner 'civiccast_svc')"
     ],
     [
       "nats_store_ready",
-      "2026-08-15T20:31:26.428104+00:00",
+      "2026-08-15T23:48:19.585437+00:00",
       "NATS JetStream store directory does not exist yet"
     ],
     [
       "nats_config_written",
-      "2026-08-15T20:31:26.439977+00:00",
+      "2026-08-15T23:48:19.587437+00:00",
       "nats-server config written"
     ],
     [
       "complete",
-      "2026-08-15T20:31:26.451230+00:00",
+      "2026-08-15T23:48:19.588438+00:00",
       "provisioning complete"
     ]
   ],
@@ -60,7 +60,7 @@
     "postgres_major_version": "17",
     "server_pack_compatible_core": "1.0.0-beta.1",
     "server_pack_product_version": "1.0.0-beta.1",
-    "server_pack_signing_key_id": "civiccast-pack-2026"
+    "server_pack_signing_key_id": "civiccast-production-2026-beta1"
   },
   "recovery_document_path": null,
   "schema_version": 1
