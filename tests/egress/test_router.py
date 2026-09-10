@@ -1339,20 +1339,285 @@ def test_apply_headend_profile_while_starting_or_handing_off_requires_a_restart(
 
 
 def test_apply_headend_profile_twice_is_unchanged_and_queues_no_second_restart(
-    client: TestClient, store: PostgresEgressStore
+    client: TestClient, store: PostgresEgressStore, tmp_path: Path
 ) -> None:
-    _write_egress_state(store, "gov", "FALLBACK_SLATE")
+    # A real daemon runs the slate pipeline, so its health samples carry the
+    # labels of the sinks the pipeline was BUILT with -- the evidence the route
+    # needs before it may answer "unchanged" for a running channel.
+    daemon, strategy = _daemon_on_slate(store, tmp_path)
     payload = {"profile_id": "generic-udp-spts", "destination_uri": "udp://10.0.0.9:5000"}
     first = client.post("/api/staff/egress/channels/gov/config/headend-profile", json=payload)
     assert first.status_code == 200, first.text
-    assert first.json()["on_air_effect"] == "restart_queued"
-    assert [cmd.action for cmd in store.pop_pending_commands("gov")] == ["stop", "start"]
+    assert first.json()["on_air_effect"] == "next_start"
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="start",
+            issued_at=datetime.now(UTC),
+            issued_by="operator",
+            command_id="cmd-start",
+        )
+    )
+    assert daemon.process_once("gov") == 1
+    assert [sink.kind for sink in strategy.starts[0].config.sinks] == ["udp-ts"]
+    state = store.read_state("gov")
+    assert state is not None and state.state == "FALLBACK_SLATE"
 
     second = client.post("/api/staff/egress/channels/gov/config/headend-profile", json=payload)
 
     assert second.status_code == 200, second.text
     assert second.json()["on_air_effect"] == "unchanged"
+    assert "already delivering" in second.json()["on_air_detail"]
     assert second.json()["config"] == first.json()["config"]
+    assert store.pop_pending_commands("gov") == []
+    assert daemon.process_once("gov") == 0
+    assert len(strategy.starts) == 1
+
+
+def test_identical_apply_on_a_dark_channel_is_unchanged_and_says_so(
+    client: TestClient, store: PostgresEgressStore
+) -> None:
+    payload = {"profile_id": "generic-udp-spts", "destination_uri": "udp://10.0.0.9:5000"}
+    first = client.post("/api/staff/egress/channels/gov/config/headend-profile", json=payload)
+    assert first.status_code == 200, first.text
+    assert first.json()["on_air_effect"] == "next_start"
+
+    second = client.post("/api/staff/egress/channels/gov/config/headend-profile", json=payload)
+
+    assert second.status_code == 200, second.text
+    assert second.json()["on_air_effect"] == "unchanged"
+    assert "not running" in second.json()["on_air_detail"]
+    assert store.pop_pending_commands("gov") == []
+
+
+def test_reapplying_the_preset_after_the_program_ends_puts_the_preview_on_air(
+    client: TestClient, store: PostgresEgressStore, tmp_path: Path, hls_root: Path
+) -> None:
+    """Review round 3 delta, MAJOR 2 -- the reviewer's executed sequence.
+
+    1. A program is on air; the operator enables the web preview ->
+       ``restart_required``, nothing queued (correct: never cut a program).
+    2. The program ends; the SAME worker drops to ``FALLBACK_SLATE``. Its
+       pipeline was built before the ``hls`` sink existed.
+    3. The operator re-applies the same preset -- the obvious next move.
+
+    Before the fix, step 3 short-circuited on the byte-identical config,
+    answered ``unchanged`` / "nothing changed on air", queued nothing, and
+    the preview stayed off air with no way out but a manual Stop/Start.
+    """
+    assert (
+        client.put("/api/staff/egress/channels/gov/config", json=_config_payload()).status_code
+        == 200
+    )
+    daemon, strategy = _daemon_on_slate(store, tmp_path)
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="start",
+            issued_at=datetime.now(UTC),
+            issued_by="operator",
+            command_id="cmd-start",
+        )
+    )
+    assert daemon.process_once("gov") == 1
+    # Step 1: the program commits to air on the running worker.
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="ON_AIR",
+            current_source_label="Council meeting",
+            updated_at=datetime.now(UTC),
+            pid=strategy.processes[0].pid,
+        )
+    )
+    payload = {"profile_id": "local-rehearsal-hls", "keep_existing_sinks": True}
+    first = client.post("/api/staff/egress/channels/gov/config/headend-profile", json=payload)
+    assert first.status_code == 200, first.text
+    assert first.json()["on_air_effect"] == "restart_required"
+    assert store.pop_pending_commands("gov") == []
+
+    # Step 2: the program ends; the same worker is back on its slate.
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="FALLBACK_SLATE",
+            current_source_label="Fallback slate",
+            updated_at=datetime.now(UTC),
+            pid=strategy.processes[0].pid,
+        )
+    )
+    assert daemon.process_once("gov") == 0  # a poll tick: health for the srt-only pipeline
+
+    # Step 3: the operator applies the same preset again.
+    second = client.post("/api/staff/egress/channels/gov/config/headend-profile", json=payload)
+
+    assert second.status_code == 200, second.text
+    assert second.json()["on_air_effect"] == "restart_queued", second.json()
+    assert second.json()["config"] == first.json()["config"]
+    # The daemon rebuilds the pipeline WITH the hls sink this time.
+    assert daemon.process_once("gov") == 2
+    assert strategy.processes[0].terminated is True
+    assert [sink.kind for sink in strategy.starts[-1].config.sinks] == ["srt", "hls"]
+    state = store.read_state("gov")
+    assert state is not None and state.state == "FALLBACK_SLATE"
+
+    # And now a third apply IS unchanged: the running pipeline carries the sink.
+    third = client.post("/api/staff/egress/channels/gov/config/headend-profile", json=payload)
+    assert third.json()["on_air_effect"] == "unchanged"
+    assert store.pop_pending_commands("gov") == []
+
+
+def test_restart_queued_tells_the_operator_every_output_drops_including_cable(
+    client: TestClient, store: PostgresEgressStore, tmp_path: Path, hls_root: Path
+) -> None:
+    # Review round 3 delta, MAJOR 1: the restart terminates the one worker that
+    # produces every sink, cable headend feed included. The detail must say so.
+    assert (
+        client.put("/api/staff/egress/channels/gov/config", json=_config_payload()).status_code
+        == 200
+    )
+    _write_egress_state(store, "gov", "FALLBACK_SLATE")
+
+    r = client.post(
+        "/api/staff/egress/channels/gov/config/headend-profile",
+        json={"profile_id": "local-rehearsal-hls", "keep_existing_sinks": True},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["on_air_effect"] == "restart_queued"
+    detail = r.json()["on_air_detail"]
+    assert "including the cable feed" in detail
+    assert "drops" in detail
+    assert "keep running" not in detail
+
+
+@pytest.mark.parametrize(
+    ("state", "effect", "phrase", "never"),
+    [
+        ("STOPPING", "next_start", "going off air", "not running"),
+        ("DRAINING", "next_start", "going off air", "not running"),
+        ("STOPPED", "next_start", "not running", "going off air"),
+        ("ERROR", "next_start", "not running", "going off air"),
+        ("STARTING", "restart_required", "starting up", "is on air"),
+        ("ON_AIR", "restart_required", "is on air", "starting up"),
+        ("TRANSITIONING", "restart_required", "is on air", "starting up"),
+    ],
+)
+def test_apply_headend_profile_detail_sentence_matches_the_state(
+    client: TestClient,
+    store: PostgresEgressStore,
+    state: str,
+    effect: str,
+    phrase: str,
+    never: str,
+) -> None:
+    # Review round 3 delta, MINOR 4: STOPPING / DRAINING still have a worker
+    # emitting ("not running" was false); STARTING is not on air yet.
+    assert (
+        client.put("/api/staff/egress/channels/gov/config", json=_config_payload()).status_code
+        == 200
+    )
+    _write_egress_state(store, "gov", state)
+
+    r = client.post(
+        "/api/staff/egress/channels/gov/config/headend-profile",
+        json={"profile_id": "generic-udp-spts", "destination_uri": "udp://10.0.0.9:5000"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["on_air_effect"] == effect
+    assert phrase in r.json()["on_air_detail"]
+    assert never not in r.json()["on_air_detail"]
+    assert store.pop_pending_commands("gov") == []
+
+
+def test_slate_restart_is_one_durable_write(
+    client: TestClient, store: PostgresEgressStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Review round 3 delta, MINOR 1: stop + start were two committed writes; a
+    # poll between them darkened the channel for a whole interval and a process
+    # death between them left it STOPPED with no start queued. The route must
+    # hand the pair to the store as ONE batch and never use the single-command
+    # path for it.
+    assert (
+        client.put("/api/staff/egress/channels/gov/config", json=_config_payload()).status_code
+        == 200
+    )
+    _write_egress_state(store, "gov", "FALLBACK_SLATE")
+    batches: list[list[str]] = []
+    real_enqueue_commands = store.enqueue_commands
+
+    def single(_cmd: EgressCommand) -> None:
+        raise AssertionError("the restart pair must not be written one command at a time")
+
+    def batch(cmds: list[EgressCommand]) -> None:
+        batches.append([cmd.action for cmd in cmds])
+        real_enqueue_commands(cmds)
+
+    monkeypatch.setattr(store, "enqueue_command", single)
+    monkeypatch.setattr(store, "enqueue_commands", batch)
+
+    r = client.post(
+        "/api/staff/egress/channels/gov/config/headend-profile",
+        json={"profile_id": "generic-udp-spts", "destination_uri": "udp://10.0.0.9:5000"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["on_air_effect"] == "restart_queued"
+    assert batches == [["stop", "start"]]
+    assert [cmd.action for cmd in store.pop_pending_commands("gov")] == ["stop", "start"]
+
+
+def test_slate_restart_never_cuts_a_program_that_committed_to_air_before_the_drain(
+    client: TestClient, store: PostgresEgressStore, tmp_path: Path, hls_root: Path
+) -> None:
+    """Review round 3 delta, MINOR 2 -- the TOCTOU between the route's state
+    read and the daemon's drain. The route read FALLBACK_SLATE and queued the
+    restart; a program then committed to air on the running worker before the
+    daemon drained the pair. Neither half may run: the stop would cut the
+    program, and a start after a skipped stop is a stray."""
+    assert (
+        client.put("/api/staff/egress/channels/gov/config", json=_config_payload()).status_code
+        == 200
+    )
+    daemon, strategy = _daemon_on_slate(store, tmp_path)
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="start",
+            issued_at=datetime.now(UTC),
+            issued_by="operator",
+            command_id="cmd-start",
+        )
+    )
+    assert daemon.process_once("gov") == 1
+
+    r = client.post(
+        "/api/staff/egress/channels/gov/config/headend-profile",
+        json={"profile_id": "local-rehearsal-hls", "keep_existing_sinks": True},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["on_air_effect"] == "restart_queued"
+    # ... and in the window before the daemon polls, a program commits to air.
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="ON_AIR",
+            current_source_label="Council meeting",
+            updated_at=datetime.now(UTC),
+            pid=strategy.processes[0].pid,
+        )
+    )
+
+    drained = daemon.process_once("gov")
+
+    assert drained == 2  # both halves consumed ...
+    assert strategy.processes[0].terminated is False  # ... but the program was not cut
+    assert len(strategy.starts) == 1
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Council meeting"
     assert store.pop_pending_commands("gov") == []
 
 

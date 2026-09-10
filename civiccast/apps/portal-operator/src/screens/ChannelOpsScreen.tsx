@@ -30,6 +30,7 @@ import {
 import { hasOperatorRole } from '../auth/roles'
 import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { feedCommandConfirmCopy } from './feed-command-confirm'
+import { headendApplyConfirm } from './headendConfirm'
 import { humanizeDuration } from '../format'
 import { RadioCardGroup } from '../components/RadioCardGroup'
 import { CableVerificationCard } from './CableVerificationCard'
@@ -1857,28 +1858,13 @@ export function ChannelOpsScreen() {
             applyResult={headendApplyMutation.data}
             onApply={(payload) => {
               const channelName = selectedChannel?.branding.display_name ?? channelId ?? 'this channel'
-              const isLocalHls = payload.profile_id === 'local-rehearsal-hls'
-              setPendingConfirm(
-                isLocalHls
-                  ? {
-                      title: 'Enable web preview for this channel?',
-                      body: payload.keep_existing_sinks
-                        ? `Adds an HLS web output so residents can watch ${channelName} in the portal. The channel's cable and other outputs keep running unchanged.`
-                        : `Adds an HLS web output so residents can watch ${channelName} in the portal, and removes the channel's other outputs — only the web preview keeps running.`,
-                      confirmLabel: 'Enable web preview',
-                      tone: 'brand',
-                      run: () => headendApplyMutation.mutate(payload),
-                    }
-                  : {
-                      title: 'Apply this headend preset?',
-                      body: payload.keep_existing_sinks
-                        ? `Sends ${channelName}'s outgoing feed to the selected headend profile and keeps the channel's other outputs running alongside it.`
-                        : `Sends ${channelName}'s outgoing feed to the selected headend profile and removes the channel's other outputs — only the headend feed keeps running.`,
-                      confirmLabel: 'Apply preset',
-                      tone: 'brand',
-                      run: () => headendApplyMutation.mutate(payload),
-                    },
-              )
+              // The copy lives in headendConfirm.ts so it is tested word for
+              // word: it is the operator's consent to a slate restart that
+              // drops every output, cable included, for a few seconds.
+              setPendingConfirm({
+                ...headendApplyConfirm(payload, channelName),
+                run: () => headendApplyMutation.mutate(payload),
+              })
             }}
             verifying={complianceProbeMutation.isPending}
             verifyResult={complianceProbeMutation.data}

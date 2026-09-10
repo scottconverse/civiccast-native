@@ -417,6 +417,82 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
       fails with the fix reverted. The runbook's `local-rehearsal-hls` row
       states the `CIVICCAST_LIVE_HLS_ROOT` default shape (`<root>/<channel>`,
       no `live-hls/`) and the apply's on-air contract.
+  - Round-3 delta review (three majors, seven minors -- all fixed, each with a
+    regression test proven red on `4523d9e5` unless noted):
+    - **The confirm dialog promised the opposite of the restart.** "The
+      channel's cable and other outputs keep running unchanged" was still the
+      consent text while a `FALLBACK_SLATE` apply queues `stop` + `start`,
+      which terminates the one worker producing every sink -- the cable
+      headend feed included. `portal-operator/src/screens/headendConfirm.ts`
+      now owns the copy for all four variants (web preview / cable preset, keep
+      / replace outputs) and says before the click that a slate channel is
+      restarted right away and every output, including the cable feed, drops
+      for a few seconds; the `restart_queued` detail says the same
+      (`headendConfirm.test.ts`; `tests/egress/test_router.py::test_restart_queued_tells_the_operator_every_output_drops_including_cable`).
+    - **`unchanged` was decided before the state was read, and dead-ended the
+      headline workflow.** `restart_required` (program on air) -> program ends
+      -> re-apply the same preset answered `unchanged` / "nothing changed on
+      air" and queued nothing, with the web preview still off air. The route
+      now reads the state first; an identical config is `unchanged` only when
+      the channel is not running, or when the daemon's latest health sample
+      shows the running pipeline was built with every sink the preset asks
+      for. For that the daemon now keys `sink_connected` by the config each
+      pipeline was BUILT from (`EgressDaemon._built_configs`), not by the
+      config row as it stands now -- so a sink saved after the build is no
+      longer reported as connected either. The reviewer's exact sequence is
+      `test_reapplying_the_preset_after_the_program_ends_puts_the_preview_on_air`.
+    - **Residents were told "web preview is not enabled" while it was.**
+      `on_air_no_web_output` carries two `reason`s and Home read neither.
+      Resident Home now renders `HLS output configured but not serving yet`
+      as "is on air. The web preview is turned on but not serving yet." /
+      "On air (web preview starting)" and keeps "not enabled" for `no HLS
+      output configured`; the live-poll dedupe compares `reason` so the copy
+      follows a reason change (`HomeScreen.noWebOutput.test.tsx`,
+      `HomeScreen.liveResolve.test.tsx`).
+    - The restart pair is one durable write: `EgressStore.enqueue_commands`
+      (one transaction in `PostgresEgressStore`, one list swap in memory), so
+      a poll can never drain the `stop` alone and a process death queues
+      nothing rather than a `stop` with no `start`
+      (`test_slate_restart_is_one_durable_write`,
+      `tests/egress/test_store.py::test_postgres_egress_store_enqueue_commands_is_one_commit`).
+    - The state-read -> enqueue window is closed on the daemon side: the pair's
+      ids carry `SLATE_RESTART_COMMAND_PREFIX`, and the daemon runs the `stop`
+      only while the persisted state is still `FALLBACK_SLATE` and the `start`
+      only while it is `STOPPED` (the state that `stop` writes), logging a
+      skipped half. A program that commits to air between the route's read
+      and the drain is not cut
+      (`test_slate_restart_never_cuts_a_program_that_committed_to_air_before_the_drain`).
+    - `playlist.m3u8` was a one-way latch (the writers never remove it), so the
+      "never a player pointed at a 404" claim held only for a channel's first
+      start. The daemon removes it on an operator `stop` and on a start that
+      finds no live HLS relay (a live relay across an encoder relaunch is left
+      alone); the docstring and runbook now state the remaining gap (an
+      unclean daemon death leaves its last playlist until the next start)
+      (`tests/egress/test_daemon.py` "hls_playlist" cases).
+    - Detail sentences are three-way: `STOPPING` / `DRAINING` say "going off
+      air" (a worker is still emitting), `STARTING` says "starting up" (not on
+      air yet) (`test_apply_headend_profile_detail_sentence_matches_the_state`).
+    - beta.5-era VOD `manifest_url` rows carrying the loopback base need no
+      migration: `civiccast.vod.models.public_manifest_reference` already
+      rewrites `http://127.0.0.1|localhost|::1/media/vod/{asset}/playlist.m3u8`
+      to the site-relative path on every public read (`/api/public/assets`,
+      `/api/public/assets/{id}`, `/api/public/embed/{id}`). Pinned, not
+      newly fixed: `tests/schedule/test_router.py::test_asset_list_rewrites_beta5_loopback_manifest_rows_for_residents`.
+    - `resolve_local_hls_directory` on the public hot paths is memoised per
+      (destination, root env) for 5 s; only successes are cached. Measured on
+      the dev box, 5000 calls: 161.6 us/call uncached -> 1.1 us/call memoised
+      (the playlist `is_file` check beside it is 19.4 us). Containment is
+      unchanged: the media router re-resolves each file against the cached
+      folder (`tests/egress/test_headend.py::test_resolve_local_hls_directory_memoises_a_successful_resolution`).
+    - Not closed in this PR, stated plainly: there is no config generation on
+      `EgressStateRow` and no `If-Match` on the config PUT, so a second apply
+      or any config PUT between a `restart_required` and the operator's
+      Stop/Start silently overwrites what they were shown. The built-config
+      record above lives in the daemon's memory and is not the durable stamp
+      that would close this; adding one is a schema change to tables created
+      by `Base.metadata.create_all` with no migration path for installed
+      stations, and is out of scope for a beta.6 fix PR. Single-operator
+      station; the config screen shows the current config before any Start.
 
 ## [1.0.0-beta.5] - 2026-09-09
 

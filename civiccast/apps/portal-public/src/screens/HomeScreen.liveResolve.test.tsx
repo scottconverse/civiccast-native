@@ -35,4 +35,19 @@ describe('sameLiveStatus', () => {
   it('is false when there is no prior status yet', () => {
     expect(sameLiveStatus(null, base)).toBe(false)
   })
+
+  it('is false when only the reason changes (the copy depends on it)', () => {
+    // Review round 3 delta, MAJOR 3: `on_air_no_web_output` keeps the same
+    // state and null manifest whether the web preview is unconfigured or
+    // configured-but-not-serving; only `reason` moves, and Home's copy with it.
+    const noOutput: PublicLiveStatus = {
+      ...base,
+      state: 'on_air_no_web_output',
+      manifest_url: null,
+      reason: 'no HLS output configured',
+    }
+    const notServing = { ...noOutput, reason: 'HLS output configured but not serving yet' }
+    expect(sameLiveStatus(noOutput, { ...noOutput })).toBe(true)
+    expect(sameLiveStatus(noOutput, notServing)).toBe(false)
+  })
 })

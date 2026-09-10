@@ -414,18 +414,36 @@ never rebuilds them. The apply response says what happened in
 `on_air_effect` / `on_air_detail`, and the card shows it:
 
 - `restart_queued` -- the channel was standing by on its fallback slate, so a
-  `stop` + `start` pair was queued and the pipeline comes back with the new
-  output within one daemon poll (nothing but the slate is interrupted).
-- `restart_required` -- a program is on air. The preset is saved and lands at
-  the channel's next start; to put it on air now, **Stop** then **Start** the
-  channel. The route never cuts a program on its own.
-- `next_start` -- the channel is not running; its next start reads the config.
-- `unchanged` -- the stored config already matched; nothing was queued.
+  `stop` + `start` pair was queued (one durable write) and the pipeline comes
+  back with the new output within one daemon poll. No program is interrupted,
+  but the restart terminates the one worker that produces **every** output:
+  the cable headend feed drops for the few seconds of the rebuild, and cable
+  subscribers watching the slate see that. The Channels screen says so before
+  the operator confirms. The daemon runs the `stop` only while the channel is
+  still on its slate and the `start` only after that `stop` ran, so a program
+  that commits to air in between is never cut.
+- `restart_required` -- a program is on air (or the channel is starting up /
+  handing off). The preset is saved and lands at the channel's next start; to
+  put it on air now, **Stop** then **Start** the channel. The route never cuts
+  a program on its own.
+- `next_start` -- the channel is not running (or is going off air); its next
+  start reads the config.
+- `unchanged` -- the stored config already matched AND the channel is either
+  not running or measured to be delivering those outputs already (the
+  daemon's latest health sample is keyed by the sinks the running pipeline
+  was built with). Re-applying a preset after `restart_required`, once the
+  program has ended and the channel is back on its slate, is therefore NOT
+  `unchanged` -- it restarts the channel and puts the output on air.
 
 Until a pipeline built with the `hls` sink writes `playlist.m3u8`,
 `/api/public/live/current` reports `on_air_no_web_output` with
 `reason: "HLS output configured but not serving yet"` rather than a manifest
-URL that would 404.
+URL that would 404; the resident Home renders that reason as "the web preview
+is turned on but not serving yet" (distinct from "not enabled"). The daemon
+removes the previous broadcast's `playlist.m3u8` on an operator stop and on a
+start that finds no live relay, so a restarted channel is not advertised on
+the strength of a stale playlist; a daemon that died uncleanly leaves its last
+playlist in place until the channel's next start.
 
 | Preset | Encode | Mux rate | Transport | Built from |
 | --- | --- | --- | --- | --- |

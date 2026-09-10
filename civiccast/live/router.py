@@ -457,7 +457,13 @@ def _local_live_manifest_url(channel_id: str, egress_store: Any) -> str | None:
     the sink was added to a channel whose running pipeline was built without
     it (review round 2 delta, BLOCKER 1): until a pipeline actually writes
     the manifest, residents get ``on_air_no_web_output`` -- never a player
-    pointed at a 404.
+    pointed at a 404. The writers never remove the playlist themselves, so
+    the daemon removes it on an operator ``stop`` and on a start that finds
+    no live relay (``daemon._discard_stale_hls_playlists``, review round 3
+    delta, MINOR 3); what remains uncovered is a daemon that died uncleanly
+    and has not yet restarted the channel -- its last playlist is advertised
+    until the channel's next start removes it, and a player that loads it
+    stalls on the missing segments rather than 404ing the manifest.
 
     The URL itself is spelled by :func:`civiccast.cable.channel.
     local_live_manifest_path` -- site-relative by default, absolute only with

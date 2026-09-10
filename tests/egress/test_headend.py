@@ -20,6 +20,7 @@ from civiccast.egress.headend import (
     LOCAL_HLS_ROOT_ENV,
     LOCAL_HLS_SINK_LABEL,
     apply_headend_profile,
+    clear_local_hls_resolution_cache,
     default_local_hls_directory,
     get_headend_profile,
     list_headend_profiles,
@@ -415,6 +416,59 @@ def test_resolve_local_hls_directory_is_the_containment_boundary(hls_root: Path)
         resolve_local_hls_directory(str(hls_root.parent))
     with pytest.raises(ValueError, match="blank"):
         resolve_local_hls_directory("   ")
+
+
+def test_resolve_local_hls_directory_memoises_a_successful_resolution(
+    hls_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Review round 3 delta, MINOR 6: the resolver sits on the public
+    # /media/live and /api/public/live/current hot paths. A success must be
+    # served from memory inside the TTL (no further Path.resolve round trips);
+    # a rejection must NOT be cached, so a corrected folder is seen at once.
+    clear_local_hls_resolution_cache()
+    resolves: list[str] = []
+    real_resolve = Path.resolve
+
+    def counting_resolve(self: Path, strict: bool = False) -> Path:
+        resolves.append(str(self))
+        return real_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", counting_resolve)
+    destination = str(hls_root / "gov")
+
+    first = resolve_local_hls_directory(destination)
+    after_first = len(resolves)
+    second = resolve_local_hls_directory(destination)
+
+    assert after_first >= 1
+    assert second == first
+    assert len(resolves) == after_first, "the second call must not resolve again"
+
+    with pytest.raises(ValueError, match="outside the allowed root"):
+        resolve_local_hls_directory(str(hls_root.parent / "elsewhere"))
+    rejected_count = len(resolves)
+    with pytest.raises(ValueError, match="outside the allowed root"):
+        resolve_local_hls_directory(str(hls_root.parent / "elsewhere"))
+    assert len(resolves) > rejected_count, "rejections are re-evaluated every call"
+
+    clear_local_hls_resolution_cache()
+    resolve_local_hls_directory(destination)
+    assert len(resolves) > rejected_count + 1, "clearing the cache forces a fresh resolve"
+
+
+def test_resolve_local_hls_directory_cache_is_keyed_by_the_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clear_local_hls_resolution_cache()
+    root_a = tmp_path / "a"
+    root_b = tmp_path / "b"
+    root_a.mkdir()
+    root_b.mkdir()
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(root_a))
+    assert resolve_local_hls_directory(str(root_a / "gov")) == (root_a / "gov").resolve()
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(root_b))
+    with pytest.raises(ValueError, match="outside the allowed root"):
+        resolve_local_hls_directory(str(root_a / "gov"))
 
 
 @pytest.mark.parametrize("destination", ["udp://239.0.0.1:5000", "srt://host:9000", "https://cdn"])

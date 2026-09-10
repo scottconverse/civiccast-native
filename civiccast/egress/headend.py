@@ -31,6 +31,8 @@ target, so applying it after a cable preset leaves the cable feed untouched.
 from __future__ import annotations
 
 import os
+import threading
+import time
 from pathlib import Path, PureWindowsPath
 from typing import Annotated, Literal
 from urllib.parse import unquote, urlsplit
@@ -503,6 +505,30 @@ def _local_path_from_uri(value: str) -> str:
     return raw
 
 
+# Successful resolutions are memoised for this long, keyed by the destination
+# AND the two environment variables that decide the root. ``resolve()`` is a
+# ``_getfinalpathname`` round trip per call (measured 194 us on the beta
+# station class of box, against ~13 us for the playlist ``is_file`` check next
+# to it), and round 3 put this call on the two public hot paths the surge
+# switch exists to survive: ``/media/live/{channel}/{file}`` (every segment
+# fetch) and ``/api/public/live/current`` (every resident's 4 s poll). Only
+# successes are cached: a rejection is the rare operator-error path and must
+# stay live so a corrected root or folder is seen at once. A junction swapped
+# under a cached folder inside the TTL is still caught, because the media
+# router re-resolves each FILE against the cached directory and 404s anything
+# that leaves it (review round 3 delta, MINOR 6).
+_RESOLVE_CACHE_TTL_SECONDS = 5.0
+_ROOT_ENV_NAMES = (LOCAL_HLS_ROOT_ENV, "CIVICCAST_EGRESS_WORK_DIR")
+_resolve_cache: dict[tuple[str, str, str], tuple[float, Path]] = {}
+_resolve_cache_lock = threading.Lock()
+
+
+def clear_local_hls_resolution_cache() -> None:
+    """Forget memoised resolutions (tests; a root moved under a live process)."""
+    with _resolve_cache_lock:
+        _resolve_cache.clear()
+
+
 def resolve_local_hls_directory(destination_uri: str) -> Path:
     """Resolve a ``local-hls`` destination to an absolute path under the root.
 
@@ -512,7 +538,21 @@ def resolve_local_hls_directory(destination_uri: str) -> Path:
     Channels screen's error line reads as an instruction, not a stack trace.
     ``/media/live/{channel}/...`` serves this folder to the public with no
     authentication, so this is the containment boundary for that file server.
+    A successful resolution is memoised for ``_RESOLVE_CACHE_TTL_SECONDS``.
     """
+    key = (destination_uri, *(os.environ.get(name, "") for name in _ROOT_ENV_NAMES))
+    now = time.monotonic()
+    with _resolve_cache_lock:
+        cached = _resolve_cache.get(key)
+        if cached is not None and cached[0] > now:
+            return cached[1]
+    resolved = _resolve_local_hls_directory_uncached(destination_uri)
+    with _resolve_cache_lock:
+        _resolve_cache[key] = (now + _RESOLVE_CACHE_TTL_SECONDS, resolved)
+    return resolved
+
+
+def _resolve_local_hls_directory_uncached(destination_uri: str) -> Path:
     raw = destination_uri.strip()
     if not raw:
         raise ValueError("local HLS folder: the destination is blank")

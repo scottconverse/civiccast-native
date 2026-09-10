@@ -74,6 +74,59 @@ describe('HomeScreen when the channel is on air without an HLS web output', () =
     expect(screen.queryByTestId('player-src')).toBeNull()
   })
 
+  // Review round 3 delta, MAJOR 3: `on_air_no_web_output` now also covers "an
+  // hls sink IS configured but is not serving yet" (the steady state after the
+  // station enables the web preview during a program, until the channel
+  // restarts). The API says which in `reason`; Home must read it, or residents
+  // are told the preview is "not enabled" while it is.
+  it('says the web preview is turned on but not serving yet when the reason says so', async () => {
+    liveBody = {
+      state: 'on_air_no_web_output',
+      live_session_id: null,
+      channel_id: 'public',
+      title: 'Council meeting',
+      started_at: '2026-09-08T18:00:00+00:00',
+      manifest_url: null,
+      reason: 'HLS output configured but not serving yet',
+    }
+    render(<HomeScreen />)
+
+    expect(
+      await screen.findByText(
+        'Council meeting is on air. The web preview is turned on but not serving yet.',
+      ),
+    ).toBeTruthy()
+    expect(screen.getByText('On air (web preview starting)')).toBeTruthy()
+    expect(screen.queryByText('Offline')).toBeNull()
+    const slot = screen.getByRole('status').textContent ?? ''
+    expect(slot).toContain('On air. The web preview is turned on but not serving yet.')
+    expect(slot).toContain('The station has enabled the web preview')
+    // Never the "not enabled" sentence: the station DID enable it.
+    expect(screen.queryByText(/web preview is not enabled/)).toBeNull()
+    expect(slot).not.toContain('Ask the station to turn on')
+    expect(screen.queryByTestId('player-src')).toBeNull()
+  })
+
+  it('keeps the "not enabled" copy for the no-HLS-output reason only', async () => {
+    liveBody = {
+      state: 'on_air_no_web_output',
+      live_session_id: null,
+      channel_id: 'public',
+      title: 'Council meeting',
+      started_at: '2026-09-08T18:00:00+00:00',
+      manifest_url: null,
+      reason: 'no HLS output configured',
+    }
+    render(<HomeScreen />)
+
+    expect(
+      await screen.findByText('Council meeting is on air, but web preview is not enabled for this channel.'),
+    ).toBeTruthy()
+    expect(screen.getByText('On air (no web preview)')).toBeTruthy()
+    expect(screen.queryByText(/not serving yet/)).toBeNull()
+    expect(screen.queryByText('On air (web preview starting)')).toBeNull()
+  })
+
   it('still says Offline when the API says offline', async () => {
     liveBody = {
       state: 'offline',

@@ -10,12 +10,23 @@ import type { PublicLiveStatus } from '../types'
 // a stale count would make the switch's release decision unsafe.
 export const LIVE_POLL_SECONDS = 4
 
+// `reason` strings /api/public/live/current sends with `on_air_no_web_output`
+// (civiccast/live/router.py PUBLIC_LIVE_REASON_*). The state covers two
+// different situations and Home must say which (review round 3 delta,
+// MAJOR 3): no HLS output configured at all, versus one configured but not
+// serving yet -- the steady state after the station enables the web preview
+// on a channel whose running pipeline predates it, until the channel restarts.
+export const LIVE_REASON_NO_HLS_OUTPUT = 'no HLS output configured'
+export const LIVE_REASON_HLS_NOT_SERVING = 'HLS output configured but not serving yet'
+
 export function sameLiveStatus(a: PublicLiveStatus | null, b: PublicLiveStatus): boolean {
   return (
     a !== null &&
     a.state === b.state &&
     a.manifest_url === b.manifest_url &&
     a.live_session_id === b.live_session_id &&
-    a.title === b.title
+    a.title === b.title &&
+    // The reason changes the copy (see above) even when nothing else does.
+    (a.reason ?? null) === (b.reason ?? null)
   )
 }

@@ -503,6 +503,40 @@ class EgressCommand(BaseModel):
     command_id: Annotated[str, Field(min_length=1, max_length=120)]
 
 
+# Command-id prefix of the ``stop`` + ``start`` pair the headend-preset route
+# queues to restart a channel that is standing by on its fallback slate
+# (``civiccast.egress.router._enqueue_restart``). The pair is GUARDED: the
+# route decided to restart because it read ``FALLBACK_SLATE``, but that read
+# and the enqueue are not one transaction, and the daemon drains the pair one
+# poll later. If the channel committed a program to air in between, draining
+# the ``stop`` would cut that program -- the one thing the route promises it
+# never does (review round 3 delta, MINOR 2). So the daemon runs each half
+# only while the persisted state is still the one the half assumes:
+# ``FALLBACK_SLATE`` for the ``stop``, ``STOPPED`` (the state the ``stop``
+# half itself writes) for the ``start``. A mismatch skips the half and logs
+# it; a skipped ``stop`` therefore also skips its ``start``. The guard rides
+# on the command id rather than a new column because the egress tables are
+# created by ``Base.metadata.create_all`` with no migration path for a
+# column added to an installed station.
+SLATE_RESTART_COMMAND_PREFIX = "headend-profile-restart-"
+
+
+def slate_restart_guard_state(command: EgressCommand) -> EgressState | None:
+    """The persisted state a slate-restart half requires, or ``None`` if unguarded.
+
+    ``None`` means "an ordinary command: run it unconditionally". Only the
+    two actions the route queues are guarded; any other action carrying the
+    prefix is treated as unguarded rather than refused.
+    """
+    if not command.command_id.startswith(SLATE_RESTART_COMMAND_PREFIX):
+        return None
+    if command.action == "stop":
+        return "FALLBACK_SLATE"
+    if command.action == "start":
+        return "STOPPED"
+    return None
+
+
 class EgressStateRow(BaseModel):
     """Last-known daemon state for one channel."""
 
