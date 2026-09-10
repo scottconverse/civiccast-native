@@ -958,6 +958,84 @@ describe('SetupScreen recovery kit survives navigation until confirmed (2026-09-
     expect(await screen.findByText('Station name')).toBeTruthy()
     expect(screen.queryByText('Recovery kit ready')).toBeNull()
   })
+
+  // ackMutation.onError: a 409 (station reset/reinstalled under this tab)
+  // or 401 (this browser's session rejected) can never be confirmed from
+  // here, so the gate releases and the ordinary sign-in card takes over.
+  // Any other failure keeps the kit on screen so the codes are not lost.
+  function stubAckFailure(status: number) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        const method = init?.method ?? 'GET'
+        if (url === '/api/setup/station-state') {
+          return jsonResponse(stationState(true, false))
+        }
+        if (url === '/api/setup/storage') {
+          return jsonResponse({ status: 'ready', message: 'ready', next_step: 'Create the first admin.' })
+        }
+        if (url === '/api/staff/auth/me') {
+          return jsonResponse({ detail: 'Unauthorized' }, 401)
+        }
+        if (url === '/api/setup/recovery-kit/acknowledge' && method === 'POST') {
+          return jsonResponse({ detail: `ack failed with ${status}` }, status)
+        }
+        return jsonResponse({ detail: `Unhandled ${method} ${url}` }, 404)
+      }),
+    )
+  }
+
+  async function renderPendingKitAndAcknowledge() {
+    window.history.replaceState(null, '', '/operator/#/setup')
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:civiccast-recovery-kit'),
+      revokeObjectURL: vi.fn(),
+    })
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    window.sessionStorage.setItem(
+      PENDING_KEY,
+      JSON.stringify({
+        setup: setupResponse,
+        admin_password: 'correct horse battery staple',
+        stored_at: Date.now(),
+      }),
+    )
+    renderSetupScreen()
+    expect(await screen.findByText('Recovery kit ready')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Save kit' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /I have saved or printed this kit/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to the console' }))
+  }
+
+  for (const status of [409, 401]) {
+    it(`releases the gate and shows the sign-in card when the acknowledge call returns ${status}`, async () => {
+      stubAckFailure(status)
+      await renderPendingKitAndAcknowledge()
+
+      await waitFor(() => {
+        expect(window.sessionStorage.getItem(PENDING_KEY)).toBeNull()
+      })
+      await waitFor(() => {
+        expect(screen.queryByText('Recovery kit ready')).toBeNull()
+        expect(screen.getByText('Admin sign-in')).toBeTruthy()
+      })
+      expect(screen.queryByText('CC-ONE')).toBeNull()
+    })
+  }
+
+  it('keeps the gate and the kit panel when the acknowledge call fails with a 500', async () => {
+    stubAckFailure(500)
+    await renderPendingKitAndAcknowledge()
+
+    expect(await screen.findByText(/ack failed with 500/)).toBeTruthy()
+    expect(screen.getByText('Recovery kit ready')).toBeTruthy()
+    expect(screen.getByText('CC-ONE')).toBeTruthy()
+    expect(screen.queryByText('Admin sign-in')).toBeNull()
+    const stored = JSON.parse(window.sessionStorage.getItem(PENDING_KEY) ?? 'null')
+    expect(stored?.setup?.recovery_kit?.recovery_codes).toEqual(['CC-ONE', 'CC-TWO'])
+  })
 })
 
 describe('SetupScreen keeps browser autofill out of account creation (2026-09-09 owner lockout)', () => {
@@ -992,6 +1070,12 @@ describe('SetupScreen keeps browser autofill out of account creation (2026-09-09
 
     const username = inputById('first-setup-admin-handle')
     expect(username.getAttribute('autocomplete')).toBe('off')
+
+    // Chrome's address autofill paints organisation and person names into
+    // free-text fields it recognises: the station and display-name fields
+    // must opt out explicitly, not just rely on the form-level token.
+    expect(inputById('first-setup-station-name').getAttribute('autocomplete')).toBe('off')
+    expect(inputById('first-setup-admin-display-name').getAttribute('autocomplete')).toBe('off')
 
     // Browser autofill heuristics key on name/id tokens like "username",
     // "login", "password", "pwd": none of the credential fields may carry them.

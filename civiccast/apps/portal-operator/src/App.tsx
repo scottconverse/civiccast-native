@@ -215,7 +215,11 @@ function AppContent() {
     document.getElementById(MAIN_CONTENT_ID)?.focus({ preventScroll: false })
   }, [location.pathname])
 
-  if (kitGateActive && location.pathname !== '/setup') {
+  // The public manual (/help, see routes.ts isPublicRoute) stays reachable
+  // while the kit is pending: an operator stuck on the kit may need "how do
+  // I print this" and the Sidebar's Manual row is left live for the same
+  // reason. Every other route bounces back to the kit.
+  if (kitGateActive && !isPublicRoute(location.pathname)) {
     return <Navigate to="/setup" replace />
   }
 

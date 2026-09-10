@@ -15,10 +15,16 @@
  * (codes included) plus the admin password the kit prints are written to
  * sessionStorage the moment first-admin setup succeeds and removed only
  * when the acknowledge call succeeds (or the station reports the kit is
- * already confirmed). sessionStorage is tab-scoped and dies with the tab --
- * the same lifetime as the on-screen kit it protects. While a pending kit
- * exists the shell locks navigation and bounces every other route back to
- * /setup, so the operator cannot leave the kit without confirming it.
+ * already confirmed). sessionStorage is tab-scoped and normally ends with
+ * the tab, though browser session-restore can bring a closed tab's copy
+ * back -- so a kit may reappear after a crash or "reopen closed tab", which
+ * is the desired outcome for the operator and the reason the ack is what
+ * clears it. If storage is unavailable (blocked, full, or throwing) the
+ * gate degrades to the `beforeunload` guard only: the kit lives in React
+ * state for that one mount and any unmount still loses it. While a pending
+ * kit exists the shell locks navigation and bounces every other route
+ * (except the public manual, /help) back to /setup, so the operator cannot
+ * leave the kit without confirming it.
  */
 import { useSyncExternalStore } from 'react'
 

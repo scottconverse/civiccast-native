@@ -71,55 +71,87 @@ function stubFetch() {
       if (url === '/api/staff/auth/me') {
         return jsonResponse({ operator_id: 'testadmin', operator_display_name: 'Test Admin', roles: ['setup_admin'] })
       }
+      if (url === '/api/public/manual') {
+        return jsonResponse({ title: 'CivicCast operator manual', html: '<p>Print the kit.</p>', toc: [] })
+      }
       return jsonResponse({ detail: `Unhandled ${url}` }, 404)
     }),
   )
 }
 
+function seedPendingKit() {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
+  })
+  window.localStorage.setItem('civiccast.staffToken', 'ccst_test_operator_console_token')
+  window.sessionStorage.setItem(
+    'civiccast.pendingRecoveryKit',
+    JSON.stringify({
+      setup: {
+        status: 'complete',
+        profile,
+        recovery_kit: {
+          kit_id: 'rk_test',
+          generated_at: '2026-06-28T00:00:00Z',
+          station_name: profile.station_name,
+          admin_username: profile.admin_username,
+          recovery_codes: ['CC-ONE', 'CC-TWO'],
+          instructions: ['Store the kit offline.'],
+          excludes: [],
+        },
+        operator_console_url: 'http://127.0.0.1:8000/operator/',
+        operator_console_token: 'ccst_test_operator_console_token',
+        next_step: 'Save the recovery kit.',
+      },
+      admin_password: 'correct horse battery staple',
+      stored_at: Date.now(),
+    }),
+  )
+  stubFetch()
+}
+
+function renderApp(initialPath: string) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialPath]}>
+        <App />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
 describe('App recovery-kit route guard', () => {
   it('bounces a direct visit to another route back to First Setup and renders the stored kit', async () => {
-    Object.defineProperty(window, 'matchMedia', {
-      configurable: true,
-      value: vi.fn().mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }),
-    })
-    window.localStorage.setItem('civiccast.staffToken', 'ccst_test_operator_console_token')
-    window.sessionStorage.setItem(
-      'civiccast.pendingRecoveryKit',
-      JSON.stringify({
-        setup: {
-          status: 'complete',
-          profile,
-          recovery_kit: {
-            kit_id: 'rk_test',
-            generated_at: '2026-06-28T00:00:00Z',
-            station_name: profile.station_name,
-            admin_username: profile.admin_username,
-            recovery_codes: ['CC-ONE', 'CC-TWO'],
-            instructions: ['Store the kit offline.'],
-            excludes: [],
-          },
-          operator_console_url: 'http://127.0.0.1:8000/operator/',
-          operator_console_token: 'ccst_test_operator_console_token',
-          next_step: 'Save the recovery kit.',
-        },
-        admin_password: 'correct horse battery staple',
-        stored_at: Date.now(),
-      }),
-    )
-    stubFetch()
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-
-    render(
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter initialEntries={['/health']}>
-          <App />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    )
+    seedPendingKit()
+    renderApp('/health')
 
     expect(await screen.findByText('Recovery kit ready')).toBeTruthy()
     expect(screen.getByText('CC-ONE')).toBeTruthy()
     // The shell's navigation is held for the same reason.
+    const readiness = screen.getByRole('button', { name: 'Readiness' }) as HTMLButtonElement
+    expect(readiness.disabled).toBe(true)
+  })
+
+  it('still bounces a non-public route such as /schedule while the kit is pending', async () => {
+    seedPendingKit()
+    renderApp('/schedule')
+
+    expect(await screen.findByText('Recovery kit ready')).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Operator manual' })).toBeNull()
+  })
+
+  it('lets the public manual (/help) through the bounce and keeps its Sidebar row live', async () => {
+    seedPendingKit()
+    renderApp('/help')
+
+    expect(await screen.findByRole('heading', { name: 'Operator manual' })).toBeTruthy()
+    expect(screen.queryByText('Recovery kit ready')).toBeNull()
+    // The kit is still pending: storage untouched, the rest of the shell held.
+    expect(window.sessionStorage.getItem('civiccast.pendingRecoveryKit')).not.toBeNull()
+    const manual = screen.getByRole('button', { name: 'Manual' }) as HTMLButtonElement
+    expect(manual.disabled).toBe(false)
     const readiness = screen.getByRole('button', { name: 'Readiness' }) as HTMLButtonElement
     expect(readiness.disabled).toBe(true)
   })

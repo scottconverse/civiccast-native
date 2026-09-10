@@ -66,6 +66,11 @@ interface NavItem {
    *  itself must still gate by role — this filter is a UX dead-end fix
    *  (UX-1, S26 gauntletgate), not a security boundary. */
   requiredRoles?: RoleName[]
+  /** Stays clickable while the first-setup recovery kit awaits confirmation.
+   *  Only the public manual (/help) qualifies: it is one of routes.ts's
+   *  isPublicRoute paths, so App.tsx's kit bounce lets it through, and an
+   *  operator stuck on the kit may need the manual to finish saving it. */
+  availableWhileKitPending?: boolean
 }
 
 interface NavSection {
@@ -85,7 +90,7 @@ const NAV_SECTIONS: NavSection[] = [
     label: 'Help',
     summary: 'Operator manual, glossary, and provider setup guides',
     collapsedByDefault: true,
-    items: [{ id: 'help', label: 'Manual' }],
+    items: [{ id: 'help', label: 'Manual', availableWhileKitPending: true }],
   },
   {
     label: 'Setup',
@@ -337,7 +342,7 @@ function Section({
               item={item}
               active={route === item.id}
               onClick={() => onNavigate(item.id)}
-              locked={locked}
+              locked={locked && !item.availableWhileKitPending}
             />
           ))}
         </div>

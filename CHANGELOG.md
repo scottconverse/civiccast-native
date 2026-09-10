@@ -289,7 +289,9 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   `one-time-code`, and the first-admin credential fields use deliberately
   non-guessable `id`/`name` values (`first-setup-admin-handle`,
   `first-setup-admin-key-phrase`, `-confirm`) that match none of the
-  username/password autofill heuristics. The routine Admin sign-in form is
+  name/id autofill heuristics; the Station name and Admin display name
+  fields carry `autocomplete="off"` too, so Chrome's address autofill
+  cannot paint an organisation or person name into them. The routine Admin sign-in form is
   the one place a saved credential belongs and is marked
   `username`/`current-password`. The confirm-password check is unchanged.
   Playwright specs that targeted `#admin_password`/`#confirm_password` were

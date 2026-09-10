@@ -200,8 +200,11 @@ function RecoveryKitPanel({
   /**
    * The password the operator just chose on the previous step. CivicCast's
    * server never stores or returns this in readable form (it is hashed
-   * before the response the wizard receives even exists) -- it lives only
-   * in this browser's React state for the length of this one screen. It is
+   * before the response the wizard receives even exists) -- it lives in
+   * this browser's React state and, so a Sidebar click or bounce cannot
+   * lose the kit, in tab-scoped sessionStorage under
+   * `civiccast.pendingRecoveryKit` until the kit is acknowledged (see
+   * ../auth/recoveryKitGate.ts for the lifetime and its limits). It is
    * included on the printed/saved kit deliberately: field evidence
    * (candidate #17, board-meeting test) showed operators who only got the
    * username + 8 emergency recovery codes had no routine way to sign in,
@@ -1823,6 +1826,7 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
         >
           <Field
             id="first-setup-station-name"
+            autoComplete="off"
             label="Station name"
             help="The name residents will recognize."
             value={form.station_name}
@@ -1833,6 +1837,7 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
           />
           <Field
             id="first-setup-admin-display-name"
+            autoComplete="off"
             label="Admin display name"
             help="The person responsible for setup and recovery."
             value={form.admin_display_name}

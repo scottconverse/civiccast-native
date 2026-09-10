@@ -111,6 +111,28 @@ describe('Sidebar recovery-kit gate (2026-09-09 walkthrough)', () => {
     expect(onNavigate).not.toHaveBeenCalled()
   })
 
+  it('leaves the Manual row live while the kit is pending -- the public manual is exempt from the bounce', () => {
+    const onNavigate = vi.fn()
+    const { getByRole } = render(
+      <MemoryRouter>
+        <Sidebar route="setup" onNavigate={onNavigate} roles={['setup_admin']} navigationLocked />
+      </MemoryRouter>,
+    )
+
+    const manual = getByRole('button', { name: 'Manual' }) as HTMLButtonElement
+    expect(manual.disabled).toBe(false)
+    expect(manual.hasAttribute('aria-disabled')).toBe(false)
+    expect(manual.getAttribute('title')).toBeNull()
+    fireEvent.click(manual)
+    expect(onNavigate).toHaveBeenCalledWith('help')
+
+    // Every other destination is still held.
+    const readiness = getByRole('button', { name: 'Readiness' }) as HTMLButtonElement
+    expect(readiness.disabled).toBe(true)
+    fireEvent.click(readiness)
+    expect(onNavigate).toHaveBeenCalledTimes(1)
+  })
+
   it('leaves navigation live once the kit is confirmed', () => {
     const onNavigate = vi.fn()
     const { getByRole } = render(
