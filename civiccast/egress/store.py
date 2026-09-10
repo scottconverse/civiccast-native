@@ -61,6 +61,14 @@ class EgressStore(Protocol):
 
     def pop_pending_commands(self, channel_id: str) -> list[EgressCommand]: ...
 
+    def peek_pending_commands(self, channel_id: str) -> list[EgressCommand]:
+        """The channel's not-yet-consumed commands WITHOUT marking them consumed
+        (same order as ``pop_pending_commands``). For a decision that must
+        yield to a queued operator command -- e.g. the daemon's automatic
+        slate-EOS relaunch stepping aside for a queued ``stop``/``drain``
+        that ``process_once`` will drain later this same tick."""
+        ...
+
     def write_state(self, row: EgressStateRow) -> None: ...
 
     def read_state(self, channel_id: str) -> EgressStateRow | None: ...
@@ -121,6 +129,10 @@ class InMemoryEgressStore:
         pending_ids = {cmd.command_id for cmd in pending}
         self._commands = [cmd for cmd in self._commands if cmd.command_id not in pending_ids]
         self._consumed_command_ids.update(pending_ids)
+        return sorted(pending, key=lambda cmd: (cmd.issued_at, cmd.command_id))
+
+    def peek_pending_commands(self, channel_id: str) -> list[EgressCommand]:
+        pending = [cmd for cmd in self._commands if cmd.channel_id == channel_id]
         return sorted(pending, key=lambda cmd: (cmd.issued_at, cmd.command_id))
 
     def write_state(self, row: EgressStateRow) -> None:
@@ -374,6 +386,20 @@ class PostgresEgressStore:
                 .values(consumed_at=consumed_at)
             )
             session.commit()
+            return [_command_from_row(row) for row in rows]
+
+    def peek_pending_commands(self, channel_id: str) -> list[EgressCommand]:
+        with self._session_factory() as session:
+            rows = (
+                session.execute(
+                    select(EgressCommandDb)
+                    .where(EgressCommandDb.channel_id == channel_id)
+                    .where(EgressCommandDb.consumed_at.is_(None))
+                    .order_by(EgressCommandDb.issued_at.asc(), EgressCommandDb.command_id.asc())
+                )
+                .scalars()
+                .all()
+            )
             return [_command_from_row(row) for row in rows]
 
     def write_state(self, row: EgressStateRow) -> None:

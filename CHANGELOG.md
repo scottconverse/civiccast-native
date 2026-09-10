@@ -79,6 +79,86 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   and `tests/native/test_provision_cli.py`
   (`test_main_adopts_a_station_with_a_legacy_august_journal_instead_of_halting`,
   `test_main_reuses_registry_credential_with_a_legacy_august_journal_present`).
+- **A finite fallback-slate plan reaching its end relaunches onto the due
+  program instead of stopping the channel, and a start says STARTING before
+  it prepares.** Clean-machine walkthrough of beta.5 (2026-09-09 MDT): the
+  Public Channel was on air on the fallback slate from 21:52 (UDP egress)
+  with an asset committed for a 22:00 five-minute slot. At 22:00:23 the
+  Channels screen showed STOPPED (not TRANSITIONING/STARTING) with the item
+  still Committed/Queued; a manual Start at 22:00:39 still read Stopped at
+  22:00:41 and 22:00:47 and only went ON AIR with the asset at 22:01:03. The
+  slate plan is finite to the next due item (`source_plan.py`), the
+  automation's slate replan enqueued the reload at the boundary, but the
+  reload's source preparation (the first-ever conform of the clip to the
+  720p profile) runs synchronously on the automation thread; the slate
+  worker reached EOS underneath it and exited 0, and `EgressDaemon.
+  _poll_process`'s clean-exit branch -- with no pending reload to bind to --
+  wrote STOPPED, which the automation then treats as "off air on purpose"
+  (only `auto_start`, off by default in the UI, restarts a dark channel).
+  Two changes in `civiccast/egress/daemon.py`: (1) the clean-exit branch now
+  asks the source-plan provider first when the exited worker was airing
+  FALLBACK_SLATE and, if a program plan resolves, relaunches onto it through
+  `_start` (recording the slate-to-program transition, and threading the
+  probed plan into `_start` so the provider is resolved once) -- capped at
+  `_SLATE_EOS_RELAUNCH_MAX_CONSECUTIVE` (1) consecutive automatic
+  relaunch(es) per channel, counted, not timed: the fallback plan the
+  bulletin filler mints is up to 120s long (12 sub-chains of 10s slides), so
+  the first-round 30s window could never have refused anything and a
+  persistently unplayable program would have flapped slate -> relaunch ->
+  slate every ~2 minutes. The count clears when a real program airing
+  (ON_AIR, not the slate) holds observed on-air evidence for the healthy-
+  uptime window, on an operator stop, and on an operator start; once hit,
+  the next clean slate exit goes STOPPED with a `last_error` naming the
+  program's media as the thing to check. The relaunch honours the crash
+  back-off the same way `_relaunch_after_crash` does: a live source that
+  crash-looped past `_LIVE_SOURCE_FAILURE_FALLBACK_STREAK` has its slate
+  RENEWED (`force_fallback_slate`) rather than retried, a renewal never
+  counts toward the cap (it is the terminal state that replaces dead air;
+  the automation's slate replan keeps retrying the source), and a slate
+  ending inside a still-armed restart cooldown defers through
+  `_backoff_relaunch` instead of bypassing the latch. A queued operator
+  `stop`/`drain` wins over the relaunch (`EgressStore.peek_pending_commands`
+  is new on the protocol and both stores: `process_once` polls before it
+  drains commands, so without the peek the relaunch spawned a worker the
+  Stop then killed after waiting behind a cold prepare). A drain still
+  stops. (2) `_start` writes STARTING with the target source label before
+  source preparation, and the post-prepare STARTING rewrite carries the
+  label too, so a start never reads Stopped while a cold conform runs and
+  the label survives to TRANSITIONING (the early fallback-slate flips keep
+  their own FALLBACK_SLATE row and `last_error`). (3) System Health's
+  per-channel "Process" row (`status-language.ts::processLabel`) says
+  "Preparing source" while STARTING/TRANSITIONING has no pid yet instead of
+  the contradictory "Starting ... Not running". Warming the conform cache at
+  Schedule commit was NOT done: `SourcePreparer` exposes only
+  `prepare`/`release`, lives in the egress control-plane process, and
+  nothing in the commit path (`civiccast/schedule/commit_service.py`) can
+  reach it without new plumbing. The Channels screen's `egress-health`
+  query already polls on `POLL_MS`; nothing changed there. Covered by
+  `tests/egress/test_daemon.py::test_slate_eos_with_a_due_program_relaunches_instead_of_stopping`
+  (plan-dir release, single resolve, label to TRANSITIONING),
+  `::test_slate_eos_relaunch_is_capped_to_one_per_boundary`,
+  `::test_persistently_unplayable_program_stops_after_the_cap_and_does_not_flap`
+  (120s slate plan),
+  `::test_a_program_that_holds_healthy_air_resets_the_slate_eos_relaunch_count`,
+  `::test_slate_eos_after_a_crash_looped_live_source_renews_the_slate_not_the_source`,
+  `::test_slate_eos_inside_the_restart_cooldown_defers_through_the_backoff_path`,
+  `::test_slate_eos_with_a_queued_operator_stop_does_not_relaunch` (stop and
+  drain), `::test_stop_and_reset_restart_tracking_clear_the_slate_eos_relaunch_count`,
+  `::test_operator_start_clears_the_slate_eos_relaunch_count`,
+  `::test_peek_pending_commands_does_not_consume`,
+  `::test_slate_eos_with_nothing_due_still_stops`,
+  `::test_slate_eos_after_an_operator_drain_does_not_relaunch`,
+  `::test_start_writes_starting_with_the_target_label_before_source_preparation`,
+  `::test_start_leaves_the_early_slate_flip_state_in_place_during_preparation`,
+  `tests/egress/test_store.py::test_postgres_egress_store_commands_are_idempotent_and_consumed`
+  (peek on the SQL store) and the "Process row during a start" cases in
+  `civiccast/apps/portal-operator/src/screens/SystemHealthAlerting.test.tsx`.
+  Sandbox-soak grading note: judge this boundary from `control_plane-app.log`
+  (the `_write_state` INFO lines) rather than the RestartClassifier's sample
+  ring alone -- the ring can miss the post-prepare TRANSITIONING sample
+  (pre-existing gap) and would then count the boundary as an unplanned pid
+  change.
+
 
 - **Installer: the runtime-ownership claim runs first, gathers machine-wide
   evidence, and records why it refused** (beta.5 field defect, measured
