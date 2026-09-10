@@ -1,4 +1,4 @@
-# v1.0.0-beta.5 -- draft, not yet published
+# v1.0.0-beta.5 -- published 2026-09-09 (10:14 PM Mountain)
 
 **Status: PUBLISHED.** `v1.0.0-beta.5` was published 2026-09-09 at 10:14 PM Mountain (2026-09-10 04:14Z) as a GitHub prerelease: https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5 (source `148c8d21`, build run 34405681086, Gate A run 34423542177 all three lanes PASS, 8 assets). `docs/releases/release-truth.yaml` now carries `v1.0.0-beta.5` as `current` and `v1.0.0-beta.4` as `superseded`. The dated sections below are the honest history of how the candidate got here.
 
