@@ -1363,6 +1363,9 @@ def test_main_does_not_reset_a_matching_adopted_journal(tmp_path, capsys, monkey
     assert code == EXIT_SUCCESS
     captured = capsys.readouterr()
     assert "STALE" not in captured.err
+    # beta.5.1 negative control: a journal that declares only current fields
+    # produces no ignored-keys note at all.
+    assert "does not declare" not in captured.err, captured.err
 
 
 def test_main_stale_journal_reset_also_protects_the_run_branch(
@@ -2154,3 +2157,205 @@ def test_probe_returns_false_when_a_live_listener_refuses_the_credential() -> No
 # (civiccast.installer.router._require_local_setup_request). The tests that
 # used to live in this section covered civiccast.native.setup_nonce and the
 # provision CLI's SETUP_NONCE_MARKER_PREFIX handoff line, both removed.
+
+
+# ---------------------------------------------------------------------------
+# beta.5.1 (2026-09-09): upgrading a station installed from the August
+# beta.1/beta.2 kits. Its ProgramData journal carries context.nats_* keys the
+# model dropped in 85ffe6c0; with extra="forbid" main() halted at the very
+# first load_journal ("corrupt/unparseable ... Extra inputs are not
+# permitted", EXIT_UNEXPECTED, recovery document written) before ever looking
+# at the cluster. It must now take the ordinary already-provisioned paths.
+# ---------------------------------------------------------------------------
+
+
+def _stage_legacy_august_journal(paths) -> str:
+    """Write the real-shape August journal at ``paths.state_root`` with only
+    its location fields re-pointed at THIS run's paths (so the N-16 staleness
+    check sees a matching server_pack_path, exactly like an in-place upgrade
+    to the same install root). Every legacy nats_* key stays on disk."""
+
+    import json
+    import pathlib
+
+    fixture = (
+        pathlib.Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "provision"
+        / "provision-journal-2026-08-15-beta1-nats.json"
+    )
+    data = json.loads(fixture.read_text(encoding="utf-8"))
+    assert {"nats_config_path", "nats_host", "nats_port", "nats_store_dir", "nats_tls"} <= set(
+        data["context"]
+    )
+    for key in (
+        "postgres_data_dir",
+        "postgres_config_path",
+        "postgres_hba_path",
+        "server_pack_path",
+        "state_root",
+    ):
+        data["context"][key] = getattr(paths, key)
+    state_root = pathlib.Path(paths.state_root)
+    state_root.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(data, indent=2, sort_keys=True)
+    (state_root / "provision-journal.json").write_text(raw, encoding="utf-8")
+    return raw
+
+
+_LEGACY_NATS_KEYS = (
+    "context.nats_config_path",
+    "context.nats_host",
+    "context.nats_port",
+    "context.nats_store_dir",
+    "context.nats_tls",
+)
+
+
+def _assert_one_ignored_keys_line(err: str, state_root: str) -> None:
+    """Exactly one stderr line reports the ignored legacy keys, naming all
+    five, and it is the CLI's own line (the module logger's INFO line reaches
+    no stream here: main() configures no logging)."""
+
+    lines = [line for line in err.splitlines() if "does not declare" in line]
+    assert len(lines) == 1, err
+    (line,) = lines
+    assert line.startswith("provision note: adopted provisioning journal at "), line
+    assert repr(state_root) in line, line
+    assert "5 field(s)" in line, line
+    assert "not corruption" in line, line
+    for key in _LEGACY_NATS_KEYS:
+        assert key in line, (key, line)
+
+
+def test_main_adopts_a_station_with_a_legacy_august_journal_instead_of_halting(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """Registry credential gone (uninstall/reinstall over preserved
+    ProgramData) + PG_VERSION 17 + the August journal -> ADOPT_EXISTING: the
+    surviving cluster gets a fresh credential, nothing is re-initialized, no
+    recovery document is written, the ignored legacy keys are named ONCE on
+    stderr, and (pre-existing ADOPT_EXISTING behaviour) the prior journal is
+    cleared for the engine's fresh forward run."""
+
+    import pathlib
+
+    import civiccast.native.provision.__main__ as provision_main
+    import civiccast.native.provision.seams as seams_module
+    from civiccast.native.provision.seams import CredentialAdoptionResult
+
+    monkeypatch.setattr(seams_module, "verify_server_binaries_pack", lambda *a, **k: None)
+
+    install_root = tmp_path / "install"
+    program_data_root = tmp_path / "pd"
+    scratch_url = f"sqlite:///{(tmp_path / 'scratch.db').as_posix()}"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
+
+    data_dir = pathlib.Path(paths.postgres_data_dir)
+    data_dir.mkdir(parents=True)
+    (data_dir / "PG_VERSION").write_text("17", encoding="utf-8")
+    (data_dir / "base-marker").write_text("station data", encoding="utf-8")
+    staged = _stage_legacy_august_journal(paths)
+
+    reset_calls: list[str] = []
+
+    def fake_reset(context, plan, *, pg_ctl_path, psql_path):
+        reset_calls.append(context.postgres_data_dir)
+        return CredentialAdoptionResult(detail="re-established credential (faked)")
+
+    monkeypatch.setattr(provision_main, "reset_cluster_credential", fake_reset)
+    engine_calls = _wire_fresh_install_run_path(monkeypatch, scratch_url)
+
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(install_root),
+                "--program-data-root": str(program_data_root),
+                "--existing-database-url": "",
+                "--pack-public-key-base64": _valid_pack_key_b64(),
+            },
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert code == EXIT_SUCCESS, captured.err
+    assert "corrupt/unparseable" not in captured.err
+    assert "Extra inputs are not permitted" not in captured.err
+    assert "STALE" not in captured.err
+    assert not (pathlib.Path(paths.state_root) / "PROVISION-RECOVERY.md").exists()
+    assert f"{HANDOFF_MARKER_PREFIX}{scratch_url}" in captured.out
+    assert reset_calls == [paths.postgres_data_dir], "the surviving cluster is adopted"
+    assert engine_calls, "adoption still drives the (faked) engine over the preserved journal"
+    # Station data untouched.
+    assert (data_dir / "PG_VERSION").read_text(encoding="utf-8") == "17"
+    assert (data_dir / "base-marker").read_text(encoding="utf-8") == "station data"
+    # Exactly one stderr line names the five ignored keys -- emitted by main()
+    # after its first load, not by every load_journal call (the probes and the
+    # engine load the same file again).
+    _assert_one_ignored_keys_line(captured.err, paths.state_root)
+    # ADOPT_EXISTING clears the prior terminal journal (provisioning-run
+    # bookkeeping only, per N-15) so the engine drives a fresh forward run over
+    # the credential-reset cluster; the faked engine writes none, so the file
+    # is absent afterwards. Pinned: the legacy keys do not "migrate" here --
+    # the whole file (history included) is discarded.
+    journal_file = pathlib.Path(paths.state_root) / "provision-journal.json"
+    assert not journal_file.exists(), journal_file.read_text(encoding="utf-8")
+    assert "nats_host" in staged  # the staged file really carried them
+
+
+def test_main_reuses_registry_credential_with_a_legacy_august_journal_present(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """The in-place UPGRADE shape measured 2026-09-09: DatabaseUrl still in
+    the registry, cluster present, August journal present ->
+    NOOP_REUSE_EXISTING + schema migration. Before the fix main() never got
+    past load_journal."""
+
+    import pathlib
+
+    monkeypatch.setattr(provision_main, "probe_reused_database_url", lambda _url: None)
+    migrated: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        provision_main,
+        "migrate_provisioned_schema",
+        lambda context, **kwargs: migrated.append(kwargs),
+    )
+    install_root = tmp_path / "install"
+    program_data_root = tmp_path / "pd"
+    paths = resolve_provision_paths(
+        install_root=str(install_root), program_data_root=str(program_data_root)
+    )
+    data_dir = pathlib.Path(paths.postgres_data_dir)
+    data_dir.mkdir(parents=True)
+    (data_dir / "PG_VERSION").write_text("17", encoding="utf-8")
+    staged = _stage_legacy_august_journal(paths)
+
+    code = main(
+        _required_args(
+            tmp_path,
+            **{
+                "--install-root": str(install_root),
+                "--program-data-root": str(program_data_root),
+                "--existing-database-url": "postgresql://u:p@127.0.0.1:5432/civiccast",
+            },
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert code == EXIT_SUCCESS, captured.err
+    assert "corrupt/unparseable" not in captured.err
+    assert not (pathlib.Path(paths.state_root) / "PROVISION-RECOVERY.md").exists()
+    assert migrated, "the reuse path must still bring the schema to head"
+    assert (data_dir / "PG_VERSION").read_text(encoding="utf-8") == "17"
+    _assert_one_ignored_keys_line(captured.err, paths.state_root)
+    # NOOP_REUSE_EXISTING never writes the journal: the legacy file is left
+    # exactly as-is, nats_* keys included (they are dropped again on every
+    # load, so they cannot influence a later run).
+    on_disk = (pathlib.Path(paths.state_root) / "provision-journal.json").read_text(
+        encoding="utf-8"
+    )
+    assert on_disk == staged
+    assert "nats_host" in on_disk
