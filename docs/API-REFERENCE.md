@@ -5503,6 +5503,7 @@ Read CivicCast local federation metadata.
 - `generated_at` (required): `string`
 - `next` (required): `PlayoutBlock | null`
 - `proof_boundary` (required): `string`
+- `schedule_note` (optional): `string | null`
 
 ### `ChannelPlayoutPlan`
 
@@ -7835,7 +7836,7 @@ rule (S13 §5.1).
 
 ### `PublishApprovalRequest`
 
-- `approved_surface_ids` (optional): `Array<string> | null`
+- `approved_surface_ids` (optional): `Array<string> | null` -- Surface ids to publish. Omitted or null means the canonical Portal surface only; archive and reach surfaces must be listed explicitly.
 - `operator_display_name` (required): `string`
 - `operator_id` (required): `string`
 - `overrides` (optional): `Array<PublishSurfaceOverride>`

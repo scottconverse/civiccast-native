@@ -50,6 +50,7 @@ from civiccast.app_platform.store import (
 )
 from civiccast.auth.roles import require_any_role
 from civiccast.cable.channel import (
+    ChannelNowNext,
     ChannelProfile,
     PlayoutBlock,
     build_sample_channel_now_next,
@@ -216,8 +217,7 @@ def read_channel_live_state(channel_id: str) -> LiveState:
     # Seeded/sample feed by contract (proof_boundary says so below); the
     # operator console's now/next uses the honest egress-state builder instead.
     now_next = build_sample_channel_now_next(profile.channel_id)
-    assert now_next.current is not None  # sample contract always seeds a block
-    return _live_state_from_block(profile, now_next.current)
+    return _live_state_from_block(profile, _seeded_current_block(now_next))
 
 
 @public_router.get(
@@ -229,8 +229,7 @@ def read_channel_live_state(channel_id: str) -> LiveState:
 def read_channel_schedule_feed(channel_id: str) -> list[ScheduleFeedItem]:
     profile = _profile_or_404(channel_id)
     now_next = build_sample_channel_now_next(profile.channel_id)
-    assert now_next.current is not None  # sample contract always seeds a block
-    blocks = [now_next.current]
+    blocks = [_seeded_current_block(now_next)]
     if now_next.next is not None:
         blocks.append(now_next.next)
     return [_schedule_item_from_block(profile, block) for block in blocks]
@@ -668,6 +667,20 @@ def _channel_not_found(channel_id: str) -> HTTPException:
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"Channel {channel_id!r} not found.",
     )
+
+
+def _seeded_current_block(now_next: ChannelNowNext) -> PlayoutBlock:
+    """The sample contract always seeds a current block; say so loudly if not.
+
+    An explicit raise, not ``assert``: ``python -O`` strips asserts, and this
+    guards a public endpoint.
+    """
+    if now_next.current is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Seeded channel feed has no current block.",
+        )
+    return now_next.current
 
 
 def _live_state_from_block(profile: ChannelProfile, block: PlayoutBlock) -> LiveState:

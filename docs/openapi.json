@@ -6077,6 +6077,7 @@
           "channels"
         ],
         "summary": "Read public now/next state for a channel",
+        "description": "Resident-safe now/next: no daemon ``last_error`` or free-text source label.\n\nThis route is unauthenticated. The daemon's ``last_error`` is raw\n``str(exc)`` / child stderr (file paths, NAS mounts, headend host:port)\nand ``current_source_label`` is operator free text; both stay on the\nstaff projection only.",
         "operationId": "public_channel_now_next_api_public_channels__channel_id__now_next_get",
         "parameters": [
           {
@@ -37496,6 +37497,18 @@
           "proof_boundary": {
             "type": "string",
             "title": "Proof Boundary"
+          },
+          "schedule_note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Note"
           }
         },
         "additionalProperties": false,
@@ -52389,7 +52402,8 @@
                 "type": "null"
               }
             ],
-            "title": "Approved Surface Ids"
+            "title": "Approved Surface Ids",
+            "description": "Surface ids to publish. Omitted or null means the canonical Portal surface only; archive and reach surfaces must be listed explicitly."
           },
           "overrides": {
             "items": {

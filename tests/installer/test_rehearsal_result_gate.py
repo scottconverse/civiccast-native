@@ -202,3 +202,82 @@ def test_gate_without_red_items_has_no_blocking_entries() -> None:
         assert gate.summary.startswith(f"{len(gate.attention)} required {needs} attention")
     else:
         assert gate.summary == "All required items are ready."
+
+
+# Hostile review of PR #216, m3: F-21 was fixed for the red branch only. The
+# green and yellow branches of _rehearsal_outcome ignored rehearsal_result, so
+# a not_run result still read "Private rehearsal ran, but ..." / "checks
+# passed". No headline may claim a run that did not happen.
+
+
+def _health_with_color(color: str, *, required_yellow: bool = False):  # type: ignore[no-untyped-def]
+    health = _blocked_health()
+    checks = []
+    for check in health.checks:
+        if check.required and check.color == "red":
+            new_color = "yellow" if (required_yellow and color == "yellow") else "green"
+            checks.append(check.model_copy(update={"color": new_color, "state": "ready"}))
+        else:
+            checks.append(check)
+    return health.model_copy(update={"checks": checks, "safe_to_broadcast": color})
+
+
+@pytest.mark.parametrize(
+    ("color", "required_yellow"),
+    [("green", False), ("yellow", True), ("yellow", False)],
+)
+def test_not_run_result_never_claims_a_run_on_green_or_yellow(
+    color: str, required_yellow: bool
+) -> None:
+    health = _health_with_color(color, required_yellow=required_yellow)
+    report = _rehearsal_report_from_health(
+        rehearsal_id="rehearsal-test",
+        started_at=health.generated_at,
+        health=health,
+        evidence=[],
+        rehearsal_result="not_run",
+    )
+
+    assert report.rehearsal_result == "not_run"
+    assert report.safe_to_broadcast == color
+    assert "has not been run" in report.message
+    for claim in ("rehearsal ran", "checks passed", "rehearsal passed"):
+        assert claim not in report.message.lower(), report.message
+
+
+@pytest.mark.parametrize("color", ["green", "yellow"])
+def test_failed_result_never_claims_a_pass_on_green_or_yellow(color: str) -> None:
+    health = _health_with_color(color)
+    report = _rehearsal_report_from_health(
+        rehearsal_id="rehearsal-test",
+        started_at=health.generated_at,
+        health=health,
+        evidence=[],
+        rehearsal_result="failed",
+    )
+
+    assert report.rehearsal_result == "failed"
+    assert "did not complete" in report.message
+    assert "passed" not in report.message.lower()
+
+
+def test_passed_result_keeps_the_green_and_yellow_headlines() -> None:
+    green = _rehearsal_report_from_health(
+        rehearsal_id="rehearsal-test",
+        started_at=_health_with_color("green").generated_at,
+        health=_health_with_color("green"),
+        evidence=[],
+        rehearsal_result="passed",
+    )
+    assert green.status == "ready"
+    assert green.message.startswith("Private rehearsal checks passed.")
+
+    yellow = _rehearsal_report_from_health(
+        rehearsal_id="rehearsal-test",
+        started_at=_health_with_color("yellow").generated_at,
+        health=_health_with_color("yellow", required_yellow=True),
+        evidence=[],
+        rehearsal_result="passed",
+    )
+    assert yellow.status == "needs_attention"
+    assert yellow.message.startswith("Private rehearsal ran, but")

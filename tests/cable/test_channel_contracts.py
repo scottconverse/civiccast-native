@@ -14,6 +14,8 @@ from fastapi.testclient import TestClient
 
 from civiccast.app import create_app
 from civiccast.cable.channel import (
+    CAPTION_PROOF_JOIN_WINDOW_SECONDS,
+    OPERATOR_REASON_MAX_CHARS,
     build_channel_now_next,
     build_channel_playout_plan,
     build_channel_proof_log,
@@ -26,7 +28,9 @@ from civiccast.cable.channel import (
 from civiccast.cable.router import public_channel_captions_vtt
 from civiccast.captions.live_sidecar import active_caption_sidecar
 from civiccast.egress.automation import default_egress_work_dir
-from civiccast.egress.models import EgressProofEvent, EgressStateRow
+from civiccast.egress.models import EgressCaptionProofSample, EgressProofEvent, EgressStateRow
+from civiccast.egress.router import get_egress_store
+from civiccast.egress.store import InMemoryEgressStore
 from civiccast.schedule.models import ScheduleItemResponse
 
 _NOW = datetime(2026, 5, 31, 18, 0, tzinfo=UTC)
@@ -107,8 +111,15 @@ def test_channel_now_next_reports_the_daemon_source_while_on_air() -> None:
     assert now_next.fallback_active is False
 
 
-def test_channel_now_next_on_air_uses_the_scheduled_block_covering_now() -> None:
-    on_air = EgressStateRow(channel_id="public", state="ON_AIR", updated_at=_NOW)
+def test_channel_now_next_borrows_the_scheduled_block_only_when_the_daemon_airs_it() -> None:
+    """The daemon's source label names the scheduled asset: same program, so
+    the block lends its timing and caption refs and the title is the daemon's."""
+    on_air = EgressStateRow(
+        channel_id="public",
+        state="ON_AIR",
+        current_source_label="Council Meeting",
+        updated_at=_NOW - timedelta(minutes=10),
+    )
     now_next = build_channel_now_next(
         "public",
         now=_NOW,
@@ -122,8 +133,85 @@ def test_channel_now_next_on_air_uses_the_scheduled_block_covering_now() -> None
     assert now_next.current is not None
     assert now_next.current.title == "Council Meeting"
     assert now_next.current.status == "playing"
+    assert now_next.current.block_id.startswith("schedule-")
+    assert now_next.current.caption_refs == ["council.vtt"]
+    assert now_next.schedule_note is None
     assert now_next.next is not None
     assert now_next.next.title == "Board Replay"
+
+
+def test_channel_now_next_matches_the_scheduled_block_by_asset_id_in_the_daemon_label() -> None:
+    on_air = EgressStateRow(
+        channel_id="public",
+        state="ON_AIR",
+        current_source_label="council (conformed)",
+        updated_at=_NOW,
+    )
+    now_next = build_channel_now_next(
+        "public",
+        now=_NOW,
+        egress_state=on_air,
+        schedule_items=[
+            _schedule_item("council", "Council Meeting", _NOW - timedelta(minutes=10), 1800)
+        ],
+    )
+
+    assert now_next.current is not None
+    assert now_next.current.block_id.startswith("schedule-")
+    assert now_next.current.title == "council (conformed)"
+    assert now_next.schedule_note is None
+
+
+def test_channel_now_next_reports_the_daemon_source_over_a_covering_schedule_block() -> None:
+    """Hostile review M1: a live takeover / manual start / bulletin fill while a
+    premiere covers the wall clock must render what the daemon has on air, not
+    the scheduled title as "Playing", and must say the two disagree."""
+    on_air = EgressStateRow(
+        channel_id="public",
+        state="ON_AIR",
+        current_source_label="Emergency bulletin",
+        updated_at=_NOW - timedelta(minutes=2),
+    )
+    now_next = build_channel_now_next(
+        "public",
+        now=_NOW,
+        egress_state=on_air,
+        schedule_items=[
+            _schedule_item("council", "Council Meeting", _NOW - timedelta(minutes=10), 1800)
+        ],
+    )
+
+    assert now_next.current is not None
+    assert now_next.current.title == "Emergency bulletin"
+    assert now_next.current.status == "playing"
+    assert now_next.current.kind == "live"
+    assert now_next.current.block_id == "public-egress-on_air"
+    assert now_next.current.duration_seconds == 120
+    assert now_next.schedule_note is not None
+    assert "Council Meeting" in now_next.schedule_note
+    assert "Emergency bulletin" in now_next.schedule_note
+    assert "not what is airing" in now_next.schedule_note
+
+
+def test_channel_now_next_unlabelled_daemon_row_never_adopts_the_scheduled_title() -> None:
+    """A daemon row with no source label says nothing about which program is
+    airing; the scheduled title is not promoted to "Playing" on its behalf."""
+    on_air = EgressStateRow(channel_id="public", state="ON_AIR", updated_at=_NOW)
+    now_next = build_channel_now_next(
+        "public",
+        now=_NOW,
+        egress_state=on_air,
+        schedule_items=[
+            _schedule_item("council", "Council Meeting", _NOW - timedelta(minutes=10), 1800),
+            _schedule_item("board", "Board Replay", _NOW + timedelta(hours=1), 1200),
+        ],
+    )
+
+    assert now_next.current is not None
+    assert now_next.current.title == "Public outgoing feed"
+    assert now_next.current.block_id == "public-egress-on_air"
+    assert now_next.schedule_note is not None
+    assert "Council Meeting" in now_next.schedule_note
 
 
 def test_channel_now_next_reports_fallback_slate_from_daemon_state() -> None:
@@ -141,6 +229,110 @@ def test_channel_now_next_reports_fallback_slate_from_daemon_state() -> None:
     assert now_next.current.failover_reason == "live source missing heartbeat"
 
 
+_LONG_LAST_ERROR = (
+    "egress encoder unavailable; aired fallback slate: SourcePrepareError: "
+    "C:\\station\\media\\council-2026-05-31.ts: ffmpeg exited 1 -- "
+) + "stderr tail line with codec detail; " * 20
+assert len(_LONG_LAST_ERROR) > OPERATOR_REASON_MAX_CHARS
+assert len(_LONG_LAST_ERROR) <= 1000
+
+
+def test_channel_now_next_truncates_a_long_daemon_error_at_the_contract_boundary() -> None:
+    """Hostile review B1: ``EgressStateRow.last_error`` is up to 1000 chars,
+    ``PlayoutBlock.failover_reason`` is 500; the builder used to raise a
+    ValidationError (a 500 on both now/next routes) during an incident."""
+    fallback = EgressStateRow(
+        channel_id="government",
+        state="FALLBACK_SLATE",
+        last_error=_LONG_LAST_ERROR,
+        updated_at=_NOW,
+    )
+    now_next = build_channel_now_next("government", now=_NOW, egress_state=fallback)
+
+    assert now_next.current is not None
+    reason = now_next.current.failover_reason
+    assert reason is not None
+    assert len(reason) == OPERATOR_REASON_MAX_CHARS
+    assert reason.endswith("\u2026")
+    assert reason.startswith("egress encoder unavailable; aired fallback slate")
+
+
+def test_public_now_next_carries_no_daemon_error_or_source_label() -> None:
+    """Hostile review B2: the public now/next is unauthenticated. The daemon's
+    ``last_error`` (raw str(exc) with file paths / headend host:port) and its
+    free-text source label stay on the staff projection."""
+    fallback = EgressStateRow(
+        channel_id="government",
+        state="FALLBACK_SLATE",
+        current_source_label="Council chamber camera (NAS-2)",
+        last_error="SourcePrepareError: \\\\nas-2\\media\\council.ts -> srt://headend.lan:9000",
+        updated_at=_NOW,
+    )
+    staff = build_channel_now_next("government", now=_NOW, egress_state=fallback)
+    public = build_channel_now_next(
+        "government", now=_NOW, egress_state=fallback, include_operator_detail=False
+    )
+
+    assert staff.current is not None
+    assert staff.current.failover_reason is not None
+    assert staff.current.failover_reason.startswith("SourcePrepareError")
+    assert public.current is not None
+    assert public.fallback_active is True
+    assert public.current.status == "fallback"
+    assert public.current.failover_reason is None
+    assert public.current.title == "Fallback slate"
+    body = public.model_dump_json()
+    assert "nas-2" not in body
+    assert "headend.lan" not in body
+    assert "Council chamber camera" not in body
+
+
+def _client_with_egress_store(monkeypatch, store: InMemoryEgressStore) -> TestClient:
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    monkeypatch.setenv("CIVICCAST_STAFF_TOKENS", "operator-token-a:operator-a:Operator A:operator")
+    app = create_app()
+    app.dependency_overrides[get_egress_store] = lambda: store
+    return TestClient(app, headers={"Authorization": "Bearer operator-token-a"})
+
+
+def test_now_next_routes_survive_a_long_daemon_error_and_public_route_redacts_it(
+    monkeypatch,
+) -> None:
+    """m5 + B1 + B2 through the real routes with a populated state row."""
+    store = InMemoryEgressStore()
+    store.write_state(
+        EgressStateRow(
+            channel_id="government",
+            state="FALLBACK_SLATE",
+            current_source_label="Council chamber camera (NAS-2)",
+            last_error=_LONG_LAST_ERROR,
+            updated_at=_NOW,
+        )
+    )
+    client = _client_with_egress_store(monkeypatch, store)
+
+    staff = client.get("/api/staff/cable/channels/government/now-next")
+    assert staff.status_code == 200, staff.text
+    staff_reason = staff.json()["current"]["failover_reason"]
+    assert len(staff_reason) == OPERATOR_REASON_MAX_CHARS
+    assert staff_reason.endswith("\u2026")
+    assert staff.json()["current"]["title"] == "Council chamber camera (NAS-2)"
+
+    public = client.get("/api/public/channels/government/now-next", headers={})
+    assert public.status_code == 200, public.text
+    body = public.json()
+    assert body["fallback_active"] is True
+    assert body["current"]["status"] == "fallback"
+    assert body["current"]["failover_reason"] is None
+    assert body["current"]["title"] == "Fallback slate"
+    assert body["schedule_note"] is None
+    text = public.text
+    assert "SourcePrepareError" not in text
+    assert "council-2026-05-31.ts" not in text
+    assert "Council chamber camera" not in text
+    assert "NAS-2" not in text
+
+
 def test_channel_proof_log_is_empty_without_daemon_events() -> None:
     proof = build_channel_proof_log("public", now=_NOW)
 
@@ -148,10 +340,10 @@ def test_channel_proof_log_is_empty_without_daemon_events() -> None:
     assert "SDI or DeckLink output" in proof.not_claimed
 
 
-def test_channel_proof_log_maps_daemon_events_and_never_claims_captions() -> None:
-    event = EgressProofEvent(
-        event_id="proof-1",
-        observed_at=_NOW,
+def _proof_event(event_id: str = "proof-1", observed_at: datetime = _NOW) -> EgressProofEvent:
+    return EgressProofEvent(
+        event_id=event_id,
+        observed_at=observed_at,
         channel_id="public",
         state="ON_AIR",
         source_label="Council chamber camera",
@@ -159,6 +351,27 @@ def test_channel_proof_log_maps_daemon_events_and_never_claims_captions() -> Non
         proof_boundary="egress-daemon",
         machine_summary="public:ON_AIR:chamber",
     )
+
+
+def _caption_sample(
+    sampled_at: datetime, status: str = "PASS", channel_id: str = "public"
+) -> EgressCaptionProofSample:
+    return EgressCaptionProofSample(
+        channel_id=channel_id,
+        sampled_at=sampled_at,
+        status=status,  # type: ignore[arg-type]
+        caption_status="on" if status == "PASS" else "not-verified",
+        mode="cea-708",
+        decoder_name="ccextractor",
+        expected_cue_count=4,
+        decoded_cue_count=4 if status == "PASS" else 0,
+        matched_cue_count=4 if status == "PASS" else 0,
+        proof_boundary="egress-caption-decode-back",
+    )
+
+
+def test_channel_proof_log_maps_daemon_events_and_never_claims_captions() -> None:
+    event = _proof_event()
     other = event.model_copy(update={"event_id": "proof-2", "channel_id": "education"})
     proof = build_channel_proof_log("public", now=_NOW, proof_events=[event, other])
 
@@ -167,6 +380,64 @@ def test_channel_proof_log_maps_daemon_events_and_never_claims_captions() -> Non
     assert proof.events[0].scheduled_block_id is None
     assert proof.events[0].captions_attached is None
     assert proof.events[0].source_ref == "Council chamber camera"
+    assert any(f"{CAPTION_PROOF_JOIN_WINDOW_SECONDS}s" in claim for claim in proof.not_claimed)
+
+
+def test_channel_proof_log_joins_the_nearest_caption_decode_back_verdict() -> None:
+    """Hostile review M2: the daemon's caption proof samples carry a real
+    PASS/FAIL; the nearest sample within the join window decides the column."""
+    event = _proof_event()
+    proof = build_channel_proof_log(
+        "public",
+        now=_NOW,
+        proof_events=[event],
+        caption_proof_samples=[
+            _caption_sample(_NOW + timedelta(seconds=90), status="FAIL"),
+            _caption_sample(_NOW + timedelta(seconds=30), status="PASS"),
+        ],
+    )
+    assert proof.events[0].captions_attached is True
+
+    failed = build_channel_proof_log(
+        "public",
+        now=_NOW,
+        proof_events=[event],
+        caption_proof_samples=[_caption_sample(_NOW + timedelta(seconds=45), status="FAIL")],
+    )
+    assert failed.events[0].captions_attached is False
+
+
+def test_channel_proof_log_leaves_captions_unverified_outside_the_join_window() -> None:
+    event = _proof_event()
+    proof = build_channel_proof_log(
+        "public",
+        now=_NOW,
+        proof_events=[event],
+        caption_proof_samples=[
+            _caption_sample(_NOW + timedelta(seconds=CAPTION_PROOF_JOIN_WINDOW_SECONDS + 1)),
+            _caption_sample(_NOW - timedelta(minutes=10)),
+            # Another channel's PASS inside the window must not count.
+            _caption_sample(_NOW + timedelta(seconds=5), channel_id="education"),
+        ],
+    )
+    assert proof.events[0].captions_attached is None
+
+
+def test_staff_proof_log_route_joins_caption_samples_from_the_store(monkeypatch) -> None:
+    store = InMemoryEgressStore()
+    store.append_proof_event(_proof_event("proof-1", _NOW))
+    store.append_proof_event(_proof_event("proof-2", _NOW + timedelta(hours=1)))
+    store.append_caption_proof_sample(_caption_sample(_NOW + timedelta(seconds=20), "PASS"))
+    store.append_caption_proof_sample(
+        _caption_sample(_NOW + timedelta(hours=1, seconds=20), "FAIL")
+    )
+    client = _client_with_egress_store(monkeypatch, store)
+
+    response = client.get("/api/staff/cable/channels/public/proof-log")
+
+    assert response.status_code == 200, response.text
+    by_id = {row["event_id"]: row["captions_attached"] for row in response.json()["events"]}
+    assert by_id == {"proof-1": True, "proof-2": False}
 
 
 def test_channel_playout_plan_is_empty_without_schedule_rows() -> None:

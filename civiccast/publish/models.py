@@ -56,7 +56,18 @@ class PublishApprovalRequest(BaseModel):
 
     operator_id: Annotated[str, Field(min_length=1, max_length=160)]
     operator_display_name: Annotated[str, Field(min_length=1, max_length=200)]
-    approved_surface_ids: list[str] | None = None
+    # Omitted (``None``) means the canonical Portal surface only. It used to
+    # mean EVERY surface -- Internet Archive, both NAS archives, YouTube
+    # Live/VOD, cable package -- so an API approval with the field left out
+    # permanently published a closed session (beta.5 walkthrough F-23,
+    # safety). Archive and reach surfaces are opt-in by id.
+    approved_surface_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "Surface ids to publish. Omitted or null means the canonical Portal "
+            "surface only; archive and reach surfaces must be listed explicitly."
+        ),
+    )
     overrides: list[PublishSurfaceOverride] = Field(default_factory=list)
 
     @model_validator(mode="after")

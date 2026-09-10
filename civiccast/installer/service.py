@@ -4077,22 +4077,46 @@ def _rehearsal_outcome(
     rehearsal_result: RehearsalResult = "not_run",
     gate: BroadcastGate | None = None,
 ) -> tuple[Literal["ready", "needs_attention", "blocked"], str, str]:
+    # F-21: every branch states the rehearsal result it was given. A headline
+    # must never claim a run ("ran", "passed") on a not_run or failed result;
+    # the green and yellow branches used to ignore rehearsal_result entirely.
     if safe_to_broadcast == "green":
+        if rehearsal_result == "passed":
+            return (
+                "ready",
+                "Private rehearsal checks passed. The station can run the first broadcast flow.",
+                "Use Run Meeting for the live event and keep System Health open.",
+            )
+        if rehearsal_result == "failed":
+            return (
+                "needs_attention",
+                "Private rehearsal did not complete, although every required broadcast item is ready.",
+                "Run private rehearsal again and keep System Health open.",
+            )
         return (
             "ready",
-            "Private rehearsal checks passed. The station can run the first broadcast flow.",
-            "Use Run Meeting for the live event and keep System Health open.",
+            "Private rehearsal has not been run; every required broadcast item is ready.",
+            "Run private rehearsal before the first public broadcast.",
         )
     if safe_to_broadcast == "yellow":
+        if rehearsal_result == "passed":
+            ran = "Private rehearsal ran, but"
+            passed = "Private rehearsal passed required checks with"
+        elif rehearsal_result == "failed":
+            ran = "Private rehearsal did not complete, and"
+            passed = "Private rehearsal did not complete; required checks are ready with"
+        else:
+            ran = "Private rehearsal has not been run, and"
+            passed = "Private rehearsal has not been run; required checks are ready with"
         if required_needs_attention:
             return (
                 "needs_attention",
-                "Private rehearsal ran, but a required item still needs live proof before the public broadcast.",
+                f"{ran} a required item still needs live proof before the public broadcast.",
                 "Review the yellow required items, then run rehearsal again.",
             )
         return (
             "needs_attention",
-            "Private rehearsal passed required checks with optional items still needing attention.",
+            f"{passed} optional items still needing attention.",
             "Review the yellow items, then run rehearsal again if station policy requires them.",
         )
     blocking = gate.blocking if gate is not None else []

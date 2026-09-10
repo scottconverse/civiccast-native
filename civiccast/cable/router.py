@@ -100,7 +100,16 @@ def public_channel_now_next(
     egress_store: EgressStore | None = Depends(get_egress_store),
     schedule_store: Any = Depends(get_schedule_store),
 ) -> ChannelNowNext:
-    return _channel_now_next_or_404(channel_id, egress_store, schedule_store)
+    """Resident-safe now/next: no daemon ``last_error`` or free-text source label.
+
+    This route is unauthenticated. The daemon's ``last_error`` is raw
+    ``str(exc)`` / child stderr (file paths, NAS mounts, headend host:port)
+    and ``current_source_label`` is operator free text; both stay on the
+    staff projection only.
+    """
+    return _channel_now_next_or_404(
+        channel_id, egress_store, schedule_store, include_operator_detail=False
+    )
 
 
 @staff_router.get(
@@ -151,7 +160,14 @@ def staff_channel_proof_log(
         if egress_store is not None
         else None
     )
-    return build_channel_proof_log(channel_id, proof_events=proof_events)
+    caption_samples = (
+        egress_store.recent_caption_proof_samples(channel_id, _CAPTION_PROOF_LIMIT)
+        if egress_store is not None
+        else None
+    )
+    return build_channel_proof_log(
+        channel_id, proof_events=proof_events, caption_proof_samples=caption_samples
+    )
 
 
 @staff_router.get(
@@ -172,6 +188,9 @@ def staff_channel_playout_plan(
 
 
 _PROOF_LOG_LIMIT = 200
+# Caption decode-back samples are taken every few seconds while on air; this
+# is enough to cover the join window around each of the last 200 proof events.
+_CAPTION_PROOF_LIMIT = 2000
 
 
 def _require_channel_profile(channel_id: str) -> ChannelProfile:
@@ -197,6 +216,8 @@ def _channel_now_next_or_404(
     channel_id: str,
     egress_store: EgressStore | None,
     schedule_store: Any,
+    *,
+    include_operator_detail: bool = True,
 ) -> ChannelNowNext:
     """Now/next from the daemon state row plus scheduled premieres.
 
@@ -209,4 +230,5 @@ def _channel_now_next_or_404(
         channel_id,
         schedule_items=_scheduled_rows(schedule_store, channel_id),
         egress_state=egress_state,
+        include_operator_detail=include_operator_detail,
     )

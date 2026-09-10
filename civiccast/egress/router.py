@@ -201,6 +201,17 @@ def start_without_config_reason(channel_id: str) -> str:
     )
 
 
+def start_disabled_config_reason(channel_id: str) -> str:
+    """Operator-facing reason for refusing ``start`` on a disabled configuration.
+
+    Mirrored by ``startDisabledConfigReason`` in the Channels screen.
+    """
+    return (
+        f"Outgoing feed for {channel_id} is disabled in its egress configuration. "
+        "Enable it in Outgoing feed configuration, then start."
+    )
+
+
 def _reject_unsupported_sink_kinds(config: EgressConfig) -> None:
     """DEFECT B: refuse an unsupported sink kind AT CONFIG TIME, with a clear
     message naming the supported kinds -- instead of accepting it with 200 OK
@@ -929,10 +940,7 @@ def queue_command(
         if not config.enabled:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    f"Outgoing feed for {channel_id} is disabled in its egress "
-                    "configuration. Enable it in Outgoing feed configuration, then start."
-                ),
+                detail=start_disabled_config_reason(channel_id),
             )
     command = EgressCommand(
         channel_id=channel_id,

@@ -1037,6 +1037,7 @@ export interface ChannelNowNext {
   next: PlayoutBlock | null
   fallback_active: boolean
   proof_boundary: string
+  schedule_note?: string | null
 }
 
 export interface ChannelPlayoutPlan {

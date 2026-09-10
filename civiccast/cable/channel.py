@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from civiccast.egress.models import EgressProofEvent, EgressStateRow
+from civiccast.egress.models import EgressCaptionProofSample, EgressProofEvent, EgressStateRow
 from civiccast.schedule.models import ScheduleItemResponse
 
 ChannelKind = Literal["public", "education", "government", "community"]
@@ -88,6 +88,11 @@ class ChannelNowNext(BaseModel):
     next: PlayoutBlock | None
     fallback_active: bool
     proof_boundary: str
+    # Set when a scheduled block covers "now" but the egress daemon reports a
+    # different source on air (live takeover, manual start, bulletin fill).
+    # The daemon is the authority on what is airing; this names the
+    # disagreement instead of rendering the scheduled title as "Playing".
+    schedule_note: str | None = Field(default=None, max_length=500)
 
 
 class ChannelProofEvent(BaseModel):
@@ -107,8 +112,10 @@ class ChannelProofEvent(BaseModel):
     source_ref: str = Field(min_length=1, max_length=500)
     failover_from: str | None = Field(default=None, max_length=120)
     failover_reason: str | None = Field(default=None, max_length=500)
-    # ``None`` means "not verified": the egress proof event does not carry a
-    # caption decode-back verdict, and the console must not print "Attached"
+    # Joined from the daemon's CEA-608/708 caption decode-back proof samples:
+    # ``True`` when the nearest sample within CAPTION_PROOF_JOIN_WINDOW_SECONDS
+    # of the event is a PASS, ``False`` on a FAIL, ``None`` ("not verified")
+    # when no sample covers the event. The console must not print "Attached"
     # for captions nobody proved (F-27).
     captions_attached: bool | None
     machine_summary: str = Field(min_length=1)
@@ -240,11 +247,39 @@ NOW_NEXT_PROOF_BOUNDARY = "egress-state-and-schedule-store"
 PLAYOUT_PLAN_PROOF_BOUNDARY = "software-schedule-to-playout-plan"
 SAMPLE_PROOF_BOUNDARY = "sample-contract"
 
+# Free text from the egress daemon (``last_error`` is up to 1000 chars and
+# carries ``str(exc)`` / a child-stderr tail) is cut to the contract field's
+# ``max_length`` at this boundary. Without it the now/next endpoints raised a
+# pydantic ValidationError -- a 500 -- exactly during a fallback incident.
+OPERATOR_REASON_MAX_CHARS = 500
+_ELLIPSIS = "\u2026"
+
+# A caption decode-back proof sample counts for a proof event only when it was
+# taken within this many seconds of the event; matches the daemon's own
+# caption freshness window (``civiccast.egress.caption_proof``).
+CAPTION_PROOF_JOIN_WINDOW_SECONDS = 120
+
 _PROOF_LOG_NOT_CLAIMED = [
     "SDI or DeckLink output",
     "Comcast/headend delivery proof",
     "Roku Channel Store publication",
+    (
+        "caption verdicts more than "
+        f"{CAPTION_PROOF_JOIN_WINDOW_SECONDS}s from the event (reported as not verified)"
+    ),
 ]
+
+
+def operator_reason(text: str | None, limit: int = OPERATOR_REASON_MAX_CHARS) -> str | None:
+    """Cut daemon free text to ``limit`` characters with a trailing ellipsis."""
+
+    if text is None:
+        return None
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)] + _ELLIPSIS
+
+
 _PLAYOUT_PLAN_NOT_CLAIMED = [
     "hardware playout device control",
     "SDI or DeckLink output",
@@ -258,6 +293,7 @@ def build_channel_now_next(
     now: datetime | None = None,
     schedule_items: list[ScheduleItemResponse] | None = None,
     egress_state: EgressStateRow | None = None,
+    include_operator_detail: bool = True,
 ) -> ChannelNowNext:
     """Build now/next from what the egress daemon and schedule store really report.
 
@@ -266,6 +302,13 @@ def build_channel_now_next(
     feed, a missing state row, or a channel with no daemon at all yields
     ``current=None`` -- the console says "No program on air". ``next`` is the
     first scheduled premiere that has not finished yet, or ``None``.
+
+    ``include_operator_detail=False`` is the unauthenticated public
+    projection: the daemon's ``last_error`` (raw ``str(exc)`` / stderr with
+    file paths and headend host:port) and its free-text source label never
+    leave the station. The public block carries the channel's display name
+    (or "Fallback slate") and no ``failover_reason``; ``schedule_note`` is
+    also withheld because it repeats the daemon label.
     """
 
     profile = _require_profile(channel_id)
@@ -277,8 +320,14 @@ def build_channel_now_next(
         if block.starts_at + timedelta(seconds=block.duration_seconds) > current_time
     ]
     current: PlayoutBlock | None = None
+    schedule_note: str | None = None
     if egress_state is not None and egress_state.state in _ON_AIR_EGRESS_STATES:
-        current = _block_from_egress_state(profile, egress_state, upcoming, current_time)
+        current, schedule_note = _block_from_egress_state(
+            profile, egress_state, upcoming, current_time
+        )
+        if not include_operator_detail:
+            current = _public_projection(profile, current)
+            schedule_note = None
     next_block: PlayoutBlock | None = None
     for block in upcoming:
         if current is not None and block.block_id == current.block_id:
@@ -292,6 +341,7 @@ def build_channel_now_next(
         next=next_block,
         fallback_active=egress_state is not None and egress_state.state == "FALLBACK_SLATE",
         proof_boundary=NOW_NEXT_PROOF_BOUNDARY,
+        schedule_note=schedule_note,
     )
 
 
@@ -300,17 +350,27 @@ def build_channel_proof_log(
     *,
     now: datetime | None = None,
     proof_events: list[EgressProofEvent] | None = None,
+    caption_proof_samples: list[EgressCaptionProofSample] | None = None,
 ) -> ChannelProofLog:
     """Build the operator proof log from persisted egress daemon proof events.
 
     No daemon events means an empty log -- the console says "No proof events
-    yet". Nothing here is synthesised from the plan.
+    yet". Nothing here is synthesised from the plan. ``captions_attached`` is
+    joined from ``caption_proof_samples`` (the daemon's decode-back verdicts):
+    the nearest sample within :data:`CAPTION_PROOF_JOIN_WINDOW_SECONDS` of the
+    event decides PASS -> ``True`` / FAIL -> ``False``; no sample in the window
+    leaves ``None`` ("Not verified").
     """
 
     profile = _require_profile(channel_id)
     current_time = (now or datetime.now(UTC)).astimezone(UTC)
+    samples = [
+        sample
+        for sample in (caption_proof_samples or [])
+        if sample.channel_id == profile.channel_id
+    ]
     events = [
-        _proof_event_from_egress(profile, event)
+        _proof_event_from_egress(profile, event, samples)
         for event in sorted(proof_events or [], key=lambda row: row.observed_at, reverse=True)
         if event.channel_id == profile.channel_id
     ]
@@ -434,43 +494,111 @@ def _block_from_egress_state(
     state: EgressStateRow,
     upcoming: list[PlayoutBlock],
     now: datetime,
-) -> PlayoutBlock:
+) -> tuple[PlayoutBlock, str | None]:
     """Project the daemon's on-air state onto a playout block.
 
-    If a scheduled block covers ``now`` it is reported as the playing block
-    (its title and duration are real). Otherwise the block is built from the
-    daemon row alone: its title is the daemon's source label and its duration
-    is the time on air so far -- nothing is invented about what comes next.
+    The daemon is the authority on what is on air. Its ``current_source_label``
+    is the title; a scheduled block covering ``now`` lends its timing and
+    caption refs only when it is the same program (its asset id or title
+    appears in the daemon's label). When the schedule says one thing and the
+    daemon another (live takeover, manual start, bulletin fill), the block is
+    built from the daemon row alone and the second return value names the
+    disagreement. A daemon row without a label never adopts the scheduled
+    title as "Playing" -- that was the F-27 fabrication in a new coat.
     """
 
     fallback = state.state == "FALLBACK_SLATE"
-    for block in upcoming:
-        if block.starts_at <= now:
-            return block.model_copy(
+    label = state.current_source_label
+    reason = operator_reason(state.last_error) if fallback else None
+    covering = next((block for block in upcoming if block.starts_at <= now), None)
+    if covering is not None and label is not None and _block_matches_label(covering, label):
+        return (
+            covering.model_copy(
                 update={
+                    "title": label,
                     "status": "fallback" if fallback else "playing",
-                    "kind": "fallback" if fallback else block.kind,
-                    "failover_from": block.source_ref if fallback else None,
-                    "failover_reason": state.last_error if fallback else None,
+                    "kind": "fallback" if fallback else covering.kind,
+                    "failover_from": covering.source_ref if fallback else None,
+                    "failover_reason": reason,
                 }
-            )
+            ),
+            None,
+        )
     started = state.updated_at.astimezone(UTC)
     elapsed = max(1, int((now - started).total_seconds()))
-    label = state.current_source_label or f"{profile.branding.short_name} outgoing feed"
-    return PlayoutBlock(
+    title = label or f"{profile.branding.short_name} outgoing feed"
+    block = PlayoutBlock(
         block_id=f"{profile.channel_id}-egress-{state.state.lower()}",
         channel_id=profile.channel_id,
         kind="fallback" if fallback else "live",
-        title=label,
+        title=title,
         starts_at=started,
         duration_seconds=elapsed,
-        source_ref=state.current_source_label or f"egress-{profile.channel_id}",
+        source_ref=label or f"egress-{profile.channel_id}",
         status="fallback" if fallback else "playing",
-        failover_reason=state.last_error if fallback else None,
+        failover_reason=reason,
+    )
+    note: str | None = None
+    if covering is not None:
+        airing = f"'{label}'" if label else "an unlabelled source"
+        note = operator_reason(
+            f"Schedule lists '{covering.title}' from "
+            f"{covering.starts_at.strftime('%H:%M')} UTC, but the outgoing feed "
+            f"reports {airing} on air. The schedule is not what is airing."
+        )
+    return block, note
+
+
+def _block_matches_label(block: PlayoutBlock, label: str) -> bool:
+    """True when the daemon's source label names the scheduled block's program."""
+
+    folded = label.strip().casefold()
+    if not folded:
+        return False
+    if folded == block.title.strip().casefold():
+        return True
+    asset_id = block.source_ref.removeprefix("asset-").strip().casefold()
+    return bool(asset_id) and asset_id in folded
+
+
+def _public_projection(profile: ChannelProfile, block: PlayoutBlock) -> PlayoutBlock:
+    """Resident-safe copy of an on-air block: no daemon free text."""
+
+    fallback = block.status == "fallback"
+    title = "Fallback slate" if fallback else profile.branding.display_name
+    return block.model_copy(
+        update={
+            "title": title,
+            "source_ref": f"egress-{profile.channel_id}",
+            "failover_from": None,
+            "failover_reason": None,
+        }
     )
 
 
-def _proof_event_from_egress(profile: ChannelProfile, event: EgressProofEvent) -> ChannelProofEvent:
+def _captions_verdict(
+    event: EgressProofEvent, samples: list[EgressCaptionProofSample]
+) -> bool | None:
+    window = timedelta(seconds=CAPTION_PROOF_JOIN_WINDOW_SECONDS)
+    observed = event.observed_at.astimezone(UTC)
+    nearest: EgressCaptionProofSample | None = None
+    nearest_delta: timedelta | None = None
+    for sample in samples:
+        delta = abs(sample.sampled_at.astimezone(UTC) - observed)
+        if delta > window:
+            continue
+        if nearest_delta is None or delta < nearest_delta:
+            nearest, nearest_delta = sample, delta
+    if nearest is None:
+        return None
+    return nearest.status == "PASS"
+
+
+def _proof_event_from_egress(
+    profile: ChannelProfile,
+    event: EgressProofEvent,
+    caption_samples: list[EgressCaptionProofSample] | None = None,
+) -> ChannelProofEvent:
     fallback = event.state == "FALLBACK_SLATE"
     on_air = event.state in _ON_AIR_EGRESS_STATES
     status: PlayoutStatus = "fallback" if fallback else ("playing" if on_air else "completed")
@@ -485,7 +613,7 @@ def _proof_event_from_egress(profile: ChannelProfile, event: EgressProofEvent) -
         actual_status=status,
         title=event.source_label,
         source_ref=event.source_ref or event.source_label,
-        captions_attached=None,
+        captions_attached=_captions_verdict(event, caption_samples or []),
         machine_summary=event.machine_summary,
     )
 

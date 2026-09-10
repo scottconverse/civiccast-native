@@ -1,7 +1,51 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) The CivicCast Authors
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+// The screen-level Start watchdog tests below mount ChannelOpsScreen itself,
+// which imports every one of these. The panel-level tests never call them.
+vi.mock('../api/client', () => ({
+  ApiError: class ApiError extends Error {
+    status: number
+    detail?: string
+    constructor(message: string, status = 0, detail?: string) {
+      super(message)
+      this.status = status
+      this.detail = detail
+    }
+  },
+  applyHeadendProfile: vi.fn(),
+  runComplianceProbe: vi.fn(),
+  getAppPlatformConfig: vi.fn(),
+  getChannelNowNext: vi.fn(),
+  getChannelPlayoutPlan: vi.fn(),
+  getChannelProofLog: vi.fn(),
+  getCtvFeed: vi.fn(),
+  getEgressConfig: vi.fn(),
+  getEgressHealth: vi.fn(),
+  getEgressState: vi.fn(),
+  getGraphicsOverlay: vi.fn(),
+  listEgressChannels: vi.fn(),
+  getStaffIdentity: vi.fn(),
+  getStationProfile: vi.fn(),
+  listChannelProfiles: vi.fn(),
+  listHeadendProfiles: vi.fn(),
+  queueEgressCommand: vi.fn(),
+  updateAppPlatformChannelBranding: vi.fn(),
+  updateAppPlatformConfig: vi.fn(),
+  updateEgressConfig: vi.fn(),
+  updateGraphicsOverlay: vi.fn(),
+}))
+// Sibling cards own their own API surface and their own tests; keep them out
+// of the screen-level watchdog tests.
+vi.mock('./CableVerificationCard', () => ({ CableVerificationCard: () => null }))
+vi.mock('./LoudnessPlanCard', () => ({ LoudnessPlanCard: () => null }))
+vi.mock('./CaptionStatusCard', () => ({ CaptionStatusCard: () => null }))
+vi.mock('./AudioTracksCard', () => ({ AudioTracksCard: () => null }))
+vi.mock('./CommitToAirPanel', () => ({ CommitToAirPanel: () => null }))
+vi.mock('./TakeoverCard', () => ({ TakeoverCard: () => null }))
 
 import type {
   ChannelNowNext,
@@ -10,16 +54,41 @@ import type {
   ChannelProofLog,
   EgressStateRow,
   GraphicsOverlayStateResponse,
+  StaffIdentityResponse,
 } from '../types/api.generated'
-import { ApiError, type EgressHealthSample } from '../api/client'
 import {
+  ApiError,
+  type EgressHealthSample,
+  getAppPlatformConfig,
+  getChannelNowNext,
+  getChannelPlayoutPlan,
+  getChannelProofLog,
+  getCtvFeed,
+  getEgressConfig,
+  getEgressHealth,
+  getEgressState,
+  getGraphicsOverlay,
+  getStaffIdentity,
+  getStationProfile,
+  listChannelProfiles,
+  listEgressChannels,
+  listHeadendProfiles,
+  queueEgressCommand,
+} from '../api/client'
+import {
+  ChannelOpsScreen,
   EgressControlPanel,
   GraphicsOverlayPanel,
   PlayoutPanel,
   PlayoutPlanPanel,
   ProofPanel,
-  START_WITHOUT_CONFIG_REASON,
 } from './ChannelOpsScreen'
+import {
+  START_APPLY_TIMEOUT_MS,
+  startDisabledConfigReason,
+  startWatchApplied,
+  startWithoutConfigReason,
+} from './egress-start'
 
 afterEach(cleanup)
 
@@ -433,10 +502,10 @@ describe('EgressControlPanel Start gating (F-29)', () => {
 
   it('disables Start with the inline reason when the channel has no egress configuration', () => {
     const onCommand = vi.fn()
-    const { getByRole, getByText } = renderPanel({ configured: false, onCommand })
+    const { getByRole, getByText } = renderPanel({ configState: 'missing', onCommand })
     const start = getByRole('button', { name: 'Start' }) as HTMLButtonElement
     expect(start.disabled).toBe(true)
-    expect(getByText(START_WITHOUT_CONFIG_REASON)).toBeTruthy()
+    expect(getByText(startWithoutConfigReason('public'))).toBeTruthy()
     expect(start.getAttribute('aria-describedby')).toBe('egress-start-reason')
     fireEvent.click(start)
     expect(onCommand).not.toHaveBeenCalled()
@@ -444,25 +513,35 @@ describe('EgressControlPanel Start gating (F-29)', () => {
     expect((getByRole('button', { name: 'Stop' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
+  it('disables Start with its own reason when the configuration exists but is disabled (m1)', () => {
+    const onCommand = vi.fn()
+    const { getByRole, getByText } = renderPanel({ configState: 'disabled', onCommand })
+    const start = getByRole('button', { name: 'Start' }) as HTMLButtonElement
+    expect(start.disabled).toBe(true)
+    expect(getByText(startDisabledConfigReason('public'))).toBeTruthy()
+    fireEvent.click(start)
+    expect(onCommand).not.toHaveBeenCalled()
+  })
+
   it('keeps Start disabled with a checking notice until the configuration list has loaded', () => {
-    const { getByRole, getByText } = renderPanel({ configured: undefined })
+    const { getByRole, getByText } = renderPanel({ configState: undefined })
     expect((getByRole('button', { name: 'Start' }) as HTMLButtonElement).disabled).toBe(true)
     expect(getByText('Checking for an outgoing-feed configuration...')).toBeTruthy()
   })
 
   it('enables Start once a configuration exists', () => {
     const onCommand = vi.fn()
-    const { getByRole, queryByText } = renderPanel({ configured: true, onCommand })
+    const { getByRole, queryByText } = renderPanel({ configState: 'configured', onCommand })
     const start = getByRole('button', { name: 'Start' }) as HTMLButtonElement
     expect(start.disabled).toBe(false)
-    expect(queryByText(START_WITHOUT_CONFIG_REASON)).toBeNull()
+    expect(queryByText(startWithoutConfigReason('public'))).toBeNull()
     fireEvent.click(start)
     expect(onCommand).toHaveBeenCalledWith('start')
   })
 
   it('surfaces a not-applied alert when the daemon never left Stopped after a queued Start', () => {
     const { getByRole } = renderPanel({
-      configured: true,
+      configState: 'configured',
       startNotApplied: { channelId: 'public', waitedSeconds: 20 },
     })
     const alert = getByRole('alert')
@@ -472,13 +551,224 @@ describe('EgressControlPanel Start gating (F-29)', () => {
 
   it('shows the API 409 reason when the router refuses the start', () => {
     const { getByRole } = renderPanel({
-      configured: true,
-      error: new ApiError(
-        'Conflict',
-        409,
-        'No outgoing-feed configuration for public. Apply a headend preset or the local rehearsal preset first.',
-      ),
+      configState: 'configured',
+      error: new ApiError('Conflict', 409, startWithoutConfigReason('public')),
     })
     expect(getByRole('alert').textContent).toContain('No outgoing-feed configuration for public.')
+  })
+})
+
+// Hostile review M1: the daemon is the authority on what is on air. When the
+// schedule covers "now" with a different program, the API says so in
+// schedule_note and the panel must show it next to the daemon's block.
+describe('PlayoutPanel schedule disagreement (M1)', () => {
+  it('renders the schedule_note when the daemon airs something other than the scheduled block', () => {
+    const nowNext: ChannelNowNext = {
+      generated_at: '2026-06-15T12:00:00Z',
+      channel: CHANNEL,
+      current: {
+        block_id: 'public-egress-on_air',
+        channel_id: 'public',
+        kind: 'live',
+        title: 'Emergency bulletin',
+        starts_at: '2026-06-15T11:58:00Z',
+        duration_seconds: 120,
+        source_ref: 'Emergency bulletin',
+        status: 'playing',
+        caption_refs: [],
+        failover_from: null,
+        failover_reason: null,
+      },
+      next: null,
+      fallback_active: false,
+      proof_boundary: 'egress-state-and-schedule-store',
+      schedule_note:
+        "Schedule lists 'Council Meeting' from 11:50 UTC, but the outgoing feed reports 'Emergency bulletin' on air. The schedule is not what is airing.",
+    }
+    const { getByRole, getByText, queryByText } = render(<PlayoutPanel nowNext={nowNext} />)
+    expect(getByText('Emergency bulletin')).toBeTruthy()
+    expect(getByRole('note').textContent).toContain('Schedule differs from what is on air.')
+    expect(getByRole('note').textContent).toContain("Schedule lists 'Council Meeting'")
+    expect(queryByText('Council Meeting')).toBeNull()
+  })
+})
+
+// Hostile review M3: the Start watchdog compared the station server's
+// updated_at against the browser clock, so a station clock >60s behind, or a
+// Start on an already-on-air channel (the daemon no-ops, updated_at stays
+// old), raised "Start was queued but the feed did not start." on a channel
+// that was airing. These mount ChannelOpsScreen itself.
+function identity(roles: string[]): StaffIdentityResponse {
+  return { operator_display_name: 'Dana', roles } as unknown as StaffIdentityResponse
+}
+
+function stateRow(state: EgressStateRow['state'], updatedAt: string): EgressStateRow {
+  return { channel_id: 'public', state, updated_at: updatedAt }
+}
+
+function stubScreenQueries() {
+  vi.mocked(listChannelProfiles).mockResolvedValue([CHANNEL])
+  vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))
+  vi.mocked(getAppPlatformConfig).mockResolvedValue({
+    station_id: 'station-1',
+    station_name: 'Test Station',
+    generated_at: '2026-06-15T12:00:00Z',
+    default_channel_id: 'public',
+    build_profile: { tier: 'unbranded', app_name: 'Test Station', platform_targets: ['web_pwa'] },
+    channels: [],
+    support_url: 'https://example.test/support',
+    privacy_url: 'https://example.test/privacy',
+  } as unknown as Awaited<ReturnType<typeof getAppPlatformConfig>>)
+  vi.mocked(getChannelNowNext).mockResolvedValue({
+    generated_at: '2026-06-15T12:00:00Z',
+    channel: CHANNEL,
+    current: null,
+    next: null,
+    fallback_active: false,
+    proof_boundary: 'egress-state-and-schedule-store',
+  } as ChannelNowNext)
+  vi.mocked(getChannelProofLog).mockResolvedValue({
+    generated_at: '2026-06-15T12:00:00Z',
+    channel: CHANNEL,
+    events: [],
+    export_formats: ['json'],
+    not_claimed: [],
+  } as unknown as ChannelProofLog)
+  vi.mocked(getChannelPlayoutPlan).mockResolvedValue({
+    generated_at: '2026-06-15T12:00:00Z',
+    channel: CHANNEL,
+    source: 'schedule-store',
+    blocks: [],
+    gap_blocks: [],
+    export_formats: ['json'],
+    proof_boundary: 'software-schedule-to-playout-plan',
+    not_claimed: [],
+  } as unknown as ChannelPlayoutPlan)
+  vi.mocked(getEgressHealth).mockResolvedValue([])
+  vi.mocked(listEgressChannels).mockResolvedValue([
+    { channel_id: 'public', enabled: true, sink_count: 1, state: null, latest_health: null },
+  ] as unknown as Awaited<ReturnType<typeof listEgressChannels>>)
+  vi.mocked(getEgressConfig).mockResolvedValue({
+    channel_id: 'public',
+    enabled: true,
+    slate_message: '',
+    sinks: [],
+  } as unknown as Awaited<ReturnType<typeof getEgressConfig>>)
+  vi.mocked(getGraphicsOverlay).mockResolvedValue({} as unknown as GraphicsOverlayStateResponse)
+  vi.mocked(listHeadendProfiles).mockResolvedValue([])
+  vi.mocked(getCtvFeed).mockResolvedValue({
+    station_name: 'Test Station',
+    items: [],
+  } as unknown as Awaited<ReturnType<typeof getCtvFeed>>)
+  vi.mocked(getStationProfile).mockResolvedValue({
+    live_captions_enabled: false,
+  } as unknown as Awaited<ReturnType<typeof getStationProfile>>)
+  vi.mocked(queueEgressCommand).mockResolvedValue({
+    accepted: true,
+  } as unknown as Awaited<ReturnType<typeof queueEgressCommand>>)
+}
+
+function renderScreen() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={client}>
+      <ChannelOpsScreen />
+    </QueryClientProvider>,
+  )
+}
+
+async function pressStartAndConfirm() {
+  const start = (await screen.findByRole('button', { name: 'Start' })) as HTMLButtonElement
+  await waitFor(() => expect(start.disabled).toBe(false))
+  fireEvent.click(start)
+  fireEvent.click(await screen.findByRole('button', { name: 'Start feed' }))
+  await waitFor(() => expect(vi.mocked(queueEgressCommand)).toHaveBeenCalledWith('public', 'start'))
+}
+
+const NOT_APPLIED = 'Start was queued but the feed did not start.'
+
+describe('startWatchApplied (M3)', () => {
+  const watch = {
+    channelId: 'public',
+    issuedAt: Date.parse('2026-06-15T12:00:00Z'),
+    baselineKnown: true,
+    baselineState: 'STOPPED',
+    baselineUpdatedAt: '2026-06-15T11:00:00Z',
+  }
+
+  it('treats a start-ish state as applied even when updated_at is far behind the browser clock', () => {
+    expect(startWatchApplied(watch, stateRow('ON_AIR', '2026-06-15T11:50:00Z'))).toBe(true)
+    expect(startWatchApplied(watch, stateRow('STARTING', '2026-06-15T11:00:00Z'))).toBe(true)
+  })
+
+  it('treats a changed row as applied and an unchanged row as not applied', () => {
+    expect(startWatchApplied(watch, stateRow('STOPPED', '2026-06-15T11:00:00Z'))).toBe(false)
+    expect(startWatchApplied(watch, stateRow('STOPPED', '2026-06-15T12:00:01Z'))).toBe(true)
+    expect(startWatchApplied(watch, null)).toBe(true)
+    expect(startWatchApplied(watch, undefined)).toBe(false)
+  })
+
+  it('never lets a late first load pass as a change when the baseline was unknown', () => {
+    const unknown = { ...watch, baselineKnown: false, baselineState: null, baselineUpdatedAt: null }
+    expect(startWatchApplied(unknown, stateRow('STOPPED', '2026-06-15T12:00:01Z'))).toBe(false)
+    expect(startWatchApplied(unknown, stateRow('ON_AIR', '2026-06-15T11:00:00Z'))).toBe(true)
+  })
+})
+
+describe('ChannelOpsScreen Start watchdog (M3)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    stubScreenQueries()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.clearAllMocks()
+  })
+
+  it('does not cry wolf when the station clock is more than 60s behind the browser', async () => {
+    vi.setSystemTime(new Date('2026-06-15T12:00:00Z'))
+    // Station clock five minutes behind the workstation: even the post-start
+    // ON_AIR row carries an updated_at older than the command's issuedAt.
+    vi.mocked(getEgressState)
+      .mockResolvedValueOnce(stateRow('STOPPED', '2026-06-15T11:40:00Z'))
+      .mockResolvedValue(stateRow('ON_AIR', '2026-06-15T11:55:00Z'))
+    renderScreen()
+    await pressStartAndConfirm()
+
+    await waitFor(() => expect(screen.getAllByText(/On air/).length).toBeGreaterThan(0))
+    await act(async () => {
+      vi.advanceTimersByTime(START_APPLY_TIMEOUT_MS + 1_000)
+    })
+
+    expect(screen.queryByText(NOT_APPLIED)).toBeNull()
+  })
+
+  it('does not cry wolf on a Start pressed while the channel is already on air', async () => {
+    vi.setSystemTime(new Date('2026-06-15T12:00:00Z'))
+    // The daemon no-ops a start on an airing channel: the row never changes.
+    vi.mocked(getEgressState).mockResolvedValue(stateRow('ON_AIR', '2026-06-15T09:00:00Z'))
+    renderScreen()
+    await pressStartAndConfirm()
+
+    await act(async () => {
+      vi.advanceTimersByTime(START_APPLY_TIMEOUT_MS + 1_000)
+    })
+
+    expect(screen.queryByText(NOT_APPLIED)).toBeNull()
+  })
+
+  it('raises the alert when the row never moves after an accepted Start', async () => {
+    vi.setSystemTime(new Date('2026-06-15T12:00:00Z'))
+    vi.mocked(getEgressState).mockResolvedValue(stateRow('STOPPED', '2026-06-15T11:00:00Z'))
+    renderScreen()
+    await pressStartAndConfirm()
+
+    expect(screen.queryByText(NOT_APPLIED)).toBeNull()
+    await act(async () => {
+      vi.advanceTimersByTime(START_APPLY_TIMEOUT_MS + 1_000)
+    })
+
+    const alert = await screen.findByText(NOT_APPLIED)
+    expect(alert.closest('[role="alert"]')?.textContent).toContain('within 20s')
   })
 })

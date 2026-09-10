@@ -30,6 +30,14 @@ import {
 import { hasOperatorRole } from '../auth/roles'
 import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { feedCommandConfirmCopy } from './feed-command-confirm'
+import {
+  type EgressConfigState,
+  START_APPLY_TIMEOUT_MS,
+  type StartWatch,
+  startDisabledConfigReason,
+  startWatchApplied,
+  startWithoutConfigReason,
+} from './egress-start'
 import { humanizeDuration } from '../format'
 import { RadioCardGroup } from '../components/RadioCardGroup'
 import { CableVerificationCard } from './CableVerificationCard'
@@ -59,21 +67,6 @@ import type {
 import { captionsRowLabel, stateLabel, toneForEgressState } from './status-language'
 
 const POLL_MS = 30_000
-
-// Mirrors civiccast/egress/router.py start_without_config_reason so the
-// disabled-button reason and the API's 409 detail say the same thing (F-29).
-export const START_WITHOUT_CONFIG_REASON =
-  'No outgoing-feed configuration. Apply a headend preset or the local rehearsal preset first.'
-// How long the screen waits for the daemon to move a channel out of Stopped
-// after a queued Start before it tells the operator the start was not applied.
-export const START_APPLY_TIMEOUT_MS = 20_000
-const START_PENDING_STATES: ReadonlySet<string> = new Set([
-  'STARTING',
-  'ON_AIR',
-  'TRANSITIONING',
-  'FALLBACK_SLATE',
-  'ERROR',
-])
 
 function apiMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.detail ?? fallback
@@ -509,6 +502,15 @@ export function PlayoutPanel({ nowNext }: { nowNext: ChannelNowNext | undefined 
           </span>
         )}
       </div>
+      {nowNext.schedule_note && (
+        <div
+          role="note"
+          className="mt-3 rounded-md p-3 text-sm"
+          style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-warn)', border: '1px solid var(--cc-line)' }}
+        >
+          <strong>Schedule differs from what is on air.</strong> {nowNext.schedule_note}
+        </div>
+      )}
       <div className="mt-4 grid gap-3">
         {slots.map(({ slot, block, empty }) => block == null ? (
           <div
@@ -595,7 +597,7 @@ export function EgressControlPanel({
   error,
   onCommand,
   liveCaptionsEnabled,
-  configured,
+  configState,
   startNotApplied = null,
 }: {
   channelId: string | undefined
@@ -607,11 +609,12 @@ export function EgressControlPanel({
   onCommand: (action: EgressCommandAction) => void
   // Station-profile live-captions switch; undefined until it loads.
   liveCaptionsEnabled?: boolean
-  // beta.5 walkthrough F-29: whether this channel has an outgoing-feed
+  // beta.5 walkthrough F-29: whether this channel has an enabled outgoing-feed
   // (egress) configuration. `undefined` while the list is still loading --
   // Start stays disabled until we know, because the daemon drops a start on
-  // an unconfigured channel and the API now refuses it with 409.
-  configured?: boolean
+  // an unconfigured channel and the API refuses it with 409 (a disabled
+  // configuration gets its own 409).
+  configState?: EgressConfigState
   // Set by the screen when a queued Start was not acted on by the daemon
   // within START_APPLY_TIMEOUT_MS (state still Stopped / no state row).
   startNotApplied?: { channelId: string; waitedSeconds: number } | null
@@ -619,15 +622,17 @@ export function EgressControlPanel({
   const latestHealth = health[0]
   const sending = pendingCommand !== null
   const commandDisabled = !channelId || sending || !canControl
-  const startDisabled = commandDisabled || configured !== true
+  const startDisabled = commandDisabled || configState !== 'configured'
   const startDisabledReason =
     !channelId || sending || !canControl
       ? null
-      : configured === undefined
+      : configState === undefined
         ? 'Checking for an outgoing-feed configuration...'
-        : configured
+        : configState === 'configured'
           ? null
-          : START_WITHOUT_CONFIG_REASON
+          : configState === 'disabled'
+            ? startDisabledConfigReason(channelId)
+            : startWithoutConfigReason(channelId)
   const rawEgressState = state?.state ?? 'STOPPED'
   // Tone comes from the shared toneForEgressState so this pill cannot disagree
   // with the same feed's pill on System Health. A not-on-air feed is amber
@@ -1703,17 +1708,29 @@ export function ChannelOpsScreen() {
     retry: false,
   })
   const liveCaptionsEnabled = stationProfileQuery.data?.live_captions_enabled
-  const egressConfigured = useMemo(() => {
-    return Boolean(
-      channelId &&
-        (egressChannelsQuery.data ?? []).some((channel) => channel.channel_id === channelId),
-    )
+  const egressChannelRow = useMemo(() => {
+    if (!channelId) return undefined
+    return (egressChannelsQuery.data ?? []).find((channel) => channel.channel_id === channelId)
   }, [channelId, egressChannelsQuery.data])
-  // F-29: after a Start is accepted (202) the daemon must move the channel out
-  // of Stopped. Watch the state row for START_APPLY_TIMEOUT_MS; if it never
-  // changes, tell the operator instead of leaving a silent "Stopped".
-  const [startWatch, setStartWatch] = useState<{ channelId: string; issuedAt: number } | null>(null)
+  // A configuration row exists (config editor, loudness plan, overlay).
+  const egressConfigured = egressChannelRow != null
+  // Start needs the row to exist AND be enabled: the router answers 409 to
+  // either a missing or a disabled configuration (hostile review m1).
+  const egressConfigState: EgressConfigState | undefined = egressChannelsQuery.isSuccess
+    ? egressChannelRow == null
+      ? 'missing'
+      : egressChannelRow.enabled
+        ? 'configured'
+        : 'disabled'
+    : egressChannelsQuery.isError
+      ? 'missing'
+      : undefined
+  // F-29: after a Start is accepted (202) the daemon must act on it. Watch the
+  // state row for START_APPLY_TIMEOUT_MS; if nothing changes, tell the operator
+  // instead of leaving a silent "Stopped".
+  const [startWatch, setStartWatch] = useState<StartWatch | null>(null)
   const [startNotApplied, setStartNotApplied] = useState<{ channelId: string; waitedSeconds: number } | null>(null)
+  const egressStateData = egressStateQuery.data
   const egressCommandMutation = useMutation({
     mutationFn: ({ channelId, action }: { channelId: string; action: EgressCommandAction }) =>
       queueEgressCommand(channelId, action),
@@ -1724,7 +1741,13 @@ export function ChannelOpsScreen() {
     },
     onSuccess: (_, variables) => {
       if (variables.action === 'start') {
-        setStartWatch({ channelId: variables.channelId, issuedAt: Date.now() })
+        setStartWatch({
+          channelId: variables.channelId,
+          issuedAt: Date.now(),
+          baselineKnown: egressStateData !== undefined,
+          baselineState: egressStateData?.state ?? null,
+          baselineUpdatedAt: egressStateData?.updated_at ?? null,
+        })
       } else {
         setStartWatch(null)
       }
@@ -1732,16 +1755,9 @@ export function ChannelOpsScreen() {
       void queryClient.invalidateQueries({ queryKey: ['egress-health', variables.channelId] })
     },
   })
-  const egressStateData = egressStateQuery.data
-  const egressStateValue = egressStateData?.state
-  const egressStateUpdatedAt = egressStateData?.updated_at
   // The watch is derived, not cleared in the effect: once the daemon reports
-  // a start-ish state newer than the command, the watch is simply inert.
-  const startApplied =
-    startWatch != null &&
-    egressStateValue != null &&
-    START_PENDING_STATES.has(egressStateValue) &&
-    (egressStateUpdatedAt == null || Date.parse(egressStateUpdatedAt) >= startWatch.issuedAt - 60_000)
+  // a start-ish state or the row moves, the watch is simply inert.
+  const startApplied = startWatchApplied(startWatch, egressStateData)
   const activeStartWatch = startWatch != null && !startApplied ? startWatch : null
   useEffect(() => {
     if (!activeStartWatch) return
@@ -1891,7 +1907,7 @@ export function ChannelOpsScreen() {
             canControl={canControlEgress}
             error={egressCommandMutation.error}
             liveCaptionsEnabled={liveCaptionsEnabled}
-            configured={egressChannelsQuery.isSuccess ? egressConfigured : egressChannelsQuery.isError ? false : undefined}
+            configState={egressConfigState}
             startNotApplied={startNotApplied}
             onCommand={(action) => {
               if (!channelId) return

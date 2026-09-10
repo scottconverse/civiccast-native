@@ -70,6 +70,21 @@ below.
   deliberately not true, so no environment value can re-enable captions
   against the operator's switch.
 
+### Changed (breaking)
+
+- **Public `GET /api/public/channels/{id}/now-next`: `current` and
+  `ChannelProofEvent.captions_attached` are now nullable.**
+  `ChannelNowNext.current` went from `PlayoutBlock` to `PlayoutBlock | null`
+  (null while nothing is on air) and `ChannelProofEvent.captions_attached`
+  from `boolean` to `boolean | null` (null means "not verified"). A signage
+  page or CTV client written against beta.5 that reads `current.title`
+  without a null check will throw; read `fallback_active` and null-check
+  `current` first. The public block is also a resident-safe projection now:
+  its title is the channel display name or "Fallback slate", and it never
+  carries the daemon's `failover_reason` or free-text source label (those
+  stay on the authenticated staff route). `ChannelNowNext` gains an optional
+  `schedule_note` (staff route only; always null on the public route).
+
 ### Changed
 
 - **Live captions are OFF by default for beta.5 (temporary).** The
@@ -200,7 +215,13 @@ below.
   says so ("3 required archive surfaces not selected (...); this public-record
   asset stays archive-pending until they are approved."). Vitest pins the
   default selection, the warning, and that the confirm-dialog count matches
-  the request the API receives.
+  the request the API receives. The server shares the default: `POST
+  /api/staff/publish/assets/{id}/approve` with `approved_surface_ids`
+  omitted (or null) now publishes the canonical Portal surface only -- it
+  used to mean every surface, so an API approval that named none put a
+  closed session on Internet Archive for good. Archive and reach surfaces
+  must be listed by id. Python tests pin that an omitted selection approves
+  no archive/reach surface and resolves no provider client.
 
 - **Channels shows real playout state, never sample-contract rows (F-27).**
   `civiccast/cable/channel.py`'s `build_channel_now_next` /
@@ -210,16 +231,33 @@ below.
   feed was Stopped and captions Off. The operator builders now read the
   egress daemon's state row and persisted proof events plus the schedule
   store: `ChannelNowNext.current` is `null` unless the daemon reports the
-  feed on air, `next` is the next scheduled premiere or `null`, the proof
-  log is the daemon's proof events (empty until the first start) with
-  `captions_attached: null` ("Not verified") because no caption decode-back
-  verdict travels with them, and an empty schedule is an empty plan (no
-  synthetic "channel slate" block). The sample contract survives only as
-  `build_sample_channel_*` for fixtures and the seeded app-platform feed,
-  labelled `proof_boundary="sample-contract"`. The Channels screen renders
-  "No program on air", "Nothing scheduled" and "No proof events yet" for
-  those states. Python tests cover the builders and the API shape on
-  ephemeral stores; vitest covers the empty states.
+  feed on air, `next` is the next scheduled premiere or `null`, and an
+  empty schedule is an empty plan (no synthetic "channel slate" block). The
+  daemon is the authority on what is on air: the Now slot's title is the
+  daemon's `current_source_label`, and a scheduled block covering the wall
+  clock lends its timing and caption refs only when its asset id or title
+  appears in that label. When they disagree (live takeover, manual start,
+  bulletin fill) the block is built from the daemon row and
+  `ChannelNowNext.schedule_note` names the disagreement ("Schedule lists
+  'Council Meeting' from 17:50 UTC, but the outgoing feed reports
+  'Emergency bulletin' on air."); the Channels screen shows it under
+  "Schedule differs from what is on air." The proof log is the daemon's
+  proof events (empty until the first start), and its captions column is
+  joined from the daemon's CEA-608/708 decode-back proof samples: the
+  nearest sample within 120s of the event decides `captions_attached`
+  (`true` on PASS, `false` on FAIL, `null` "Not verified" when no sample
+  covers it; the window is stated in `not_claimed`). The daemon's
+  `last_error` (up to 1000 characters of `str(exc)` / stderr) is cut to the
+  contract's 500-character `failover_reason` with an ellipsis at the
+  boundary -- it used to raise a pydantic ValidationError, a 500 on both
+  now/next routes, exactly during a fallback incident. The sample contract
+  survives only as `build_sample_channel_*` for fixtures and the seeded
+  app-platform feed, labelled `proof_boundary="sample-contract"`. The
+  Channels screen renders "No program on air", "Nothing scheduled" and "No
+  proof events yet" for those states. Python tests cover the builders, the
+  boundary truncation, the public redaction and the caption join through
+  the real routes with a populated state row; vitest covers the empty
+  states and the schedule note.
 
 - **Outgoing feed Start refuses without an egress configuration (F-29).**
   `POST /api/staff/egress/channels/{id}/commands` accepted a `start` (202)
@@ -227,11 +265,24 @@ below.
   (`ConfigInvalidError` into its own log) and the console stayed "Stopped"
   with no reason. The router now answers 409 with the reason ("No
   outgoing-feed configuration for {id}. Apply a headend preset or the local
-  rehearsal preset first."; disabled configs get their own 409). Stop/drain
-  stay accepted. The Channels screen disables Start with the same inline
-  reason until a configuration exists, and after an accepted Start it watches
-  the daemon state row for 20s and raises an alert ("Start was queued but
-  the feed did not start.") if the channel never leaves Stopped.
+  rehearsal preset first."; disabled configs get their own 409: "Outgoing
+  feed for {id} is disabled in its egress configuration. Enable it in
+  Outgoing feed configuration, then start."). Stop/drain stay accepted. The
+  Channels screen disables Start with the identical inline reason for each
+  case -- a missing configuration and a disabled one (the screen used to
+  offer Start on a disabled configuration and get a surprise 409); a policy
+  test evaluates the screen's template against the router's function so the
+  two strings cannot drift. After an accepted Start the screen watches the
+  daemon state row for 20s and raises an alert ("Start was queued but the
+  feed did not start.") if nothing changes. The watch snapshots the row's
+  `state` and `updated_at` when the command is accepted and treats the
+  start as applied when the daemon reports a start-ish state or either
+  value changes; it never compares the station server's timestamp with the
+  browser clock, which false-alarmed on a station clock more than 60s
+  behind the workstation and on a Start pressed on an already-on-air
+  channel. Vitest drives `ChannelOpsScreen` itself with fake timers for the
+  skewed clock, the already-on-air no-op, and the genuine never-started
+  case.
 
 - **Broadcast readiness separates the rehearsal result from the gate (F-21).**
   The readiness card's headline said "Private rehearsal is blocked because a
@@ -244,7 +295,11 @@ below.
   broadcast gate has N required item(s) not ready: Backup destination." and
   the next step names the item and its fix. System Health renders
   "Rehearsal result" and "Broadcast gate" as separate lines, and each
-  blocking item links to its check row.
+  blocking item links to its check row. Every colour branch states the
+  result it was given: a `not_run` result reads "Private rehearsal has not
+  been run; ..." and a `failed` one "Private rehearsal did not complete ..."
+  on green and yellow too, instead of "checks passed" / "ran, but" copy
+  that the red-branch fix had left in place.
 
 - **Seamless rollover no longer runs to EOS when the outgoing leg overruns its
   projected end.** Sandbox soak 39d852e (2026-09-09) showed every government
