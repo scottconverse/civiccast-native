@@ -22,6 +22,12 @@ import {
   STAFF_SIGNED_OUT_NOTICE_KEY,
   testProviderConnection,
 } from '../api/client'
+import {
+  clearPendingRecoveryKit,
+  readPendingRecoveryKit,
+  storePendingRecoveryKit,
+} from '../auth/recoveryKitGate'
+import type { PendingRecoveryKit } from '../auth/recoveryKitGate'
 import { hasOperatorRole } from '../auth/roles'
 import { SourceUploadWizard } from '../components/setup/SourceUploadWizard'
 import { manualLink } from './manual-link'
@@ -42,6 +48,11 @@ import type {
 // Setup-wizard provider ids that expose a live "Test connection" (CDN
 // providers). Pairs with the backend's CDN_CREDENTIAL_PROVIDER_IDS.
 const CDN_TEST_PROVIDER_IDS: readonly string[] = ['cloudflare-r2', 'bunny']
+
+// How long after a recovery kit is stored a "setup not complete" station
+// state must have been fetched before it counts as a station reset rather
+// than a stale read that overlapped the setup request.
+const STATION_RESET_GRACE_MS = 30_000
 
 const INITIAL_FORM: FirstAdminSetupRequest = {
   station_name: '',
@@ -95,6 +106,8 @@ function Field({
   onChange,
   onBlur,
   error,
+  name,
+  autoComplete,
 }: {
   id: string
   label: string
@@ -102,6 +115,14 @@ function Field({
   value: string
   secret?: boolean
   inputRef?: Ref<HTMLInputElement>
+  /** Form-field name. Defaults to `id`. The first-admin form passes
+   *  deliberately non-guessable names so browser autofill heuristics do not
+   *  recognise these as a saved sign-in (2026-09-09 owner lockout). */
+  name?: string
+  /** HTML autocomplete token. "new-password" on the first-admin password
+   *  fields tells the browser this is account CREATION, never a place to
+   *  paint a previously saved credential. */
+  autoComplete?: string
   onChange: (value: string) => void
   onBlur?: () => void
   error?: string
@@ -113,6 +134,8 @@ function Field({
       <span className="flex gap-2">
         <input
           id={id}
+          name={name ?? id}
+          autoComplete={autoComplete}
           ref={inputRef}
           type={secret && !revealed ? 'password' : 'text'}
           value={value}
@@ -1314,7 +1337,12 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
   const [recoveryForm, setRecoveryForm] = useState<StationRecoveryRequest>(INITIAL_RECOVERY)
   const [recoveryConfirmPassword, setRecoveryConfirmPassword] = useState('')
   const [recoveryArmed, setRecoveryArmed] = useState(false)
-  const [completed, setCompleted] = useState<FirstAdminSetupResponse | null>(null)
+  // The one-time recovery kit survives unmount/remount and reload until the
+  // operator confirms it (2026-09-09 walkthrough: it used to vanish within
+  // seconds, before Save/Print). See ../auth/recoveryKitGate.ts.
+  const [pendingKit, setPendingKit] = useState<PendingRecoveryKit | null>(() =>
+    readPendingRecoveryKit(),
+  )
   const [authenticated, setAuthenticated] = useState<StationAuthResponse | null>(null)
 
   const stateQuery = useQuery({
@@ -1350,10 +1378,14 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
   })
   const mutation = useMutation({
     mutationFn: completePublicFirstAdminSetup,
-    onSuccess: (response) => {
+    onSuccess: (response, variables) => {
       window.localStorage.setItem('civiccast.staffToken', response.operator_console_token)
       window.sessionStorage.setItem('civiccast.staffToken', response.operator_console_token)
-      setCompleted(response)
+      // Persist BEFORE any state update: from here on the codes exist only in
+      // this browser, and the next render may be a remount.
+      setPendingKit(
+        storePendingRecoveryKit({ setup: response, admin_password: variables.admin_password }),
+      )
       void queryClient.resetQueries({ queryKey: ['staff-identity'] })
       void queryClient.invalidateQueries({ queryKey: ['station-setup-state'] })
       void queryClient.invalidateQueries({ queryKey: ['system-health'] })
@@ -1390,16 +1422,50 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
   const ackMutation = useMutation({
     mutationFn: acknowledgeRecoveryKit,
     onSuccess: () => {
+      clearPendingRecoveryKit()
       setKitAcknowledged(true)
       void queryClient.invalidateQueries({ queryKey: ['station-setup-state'] })
+    },
+    onError: (error) => {
+      // 409: the station no longer has a completed setup to confirm a kit for
+      // (reset/reinstalled under this tab); 401: this browser's session was
+      // rejected. Holding the gate would trap the operator on a kit they can
+      // never confirm: release it so the ordinary First Setup surfaces --
+      // the setup form, or the sign-in card with its own "Recovery kit never
+      // confirmed" reminder and confirm button -- take over.
+      if (error instanceof ApiError && (error.status === 401 || error.status === 409)) {
+        clearPendingRecoveryKit()
+        setPendingKit(null)
+      }
     },
   })
 
   const storageReady = storageQuery.data?.status === 'ready'
+  // A kit stored before the station was reset belongs to nothing: treat it
+  // as absent (and the effect below forgets it). A fresh setup is safe here
+  // because the pre-setup station-state was fetched BEFORE the kit was
+  // stored, so its dataUpdatedAt is older than stored_at; the grace period
+  // also covers a station-state GET that was already in flight when the
+  // setup POST returned and resolves a moment after the kit was stored.
+  const stationResetSinceStored =
+    pendingKit != null &&
+    stateQuery.data?.setup_complete === false &&
+    stateQuery.dataUpdatedAt > pendingKit.stored_at + STATION_RESET_GRACE_MS
+  const completed = stationResetSinceStored ? null : (pendingKit?.setup ?? null)
+  const completedAdminPassword = pendingKit?.admin_password ?? ''
   const recoveryKitAcknowledged = kitAcknowledged || stateQuery.data?.recovery_kit_acknowledged === true
   const kitGateActive = Boolean(completed) && !recoveryKitAcknowledged
   const showAdminTools =
     Boolean(stateQuery.data?.setup_complete || completed || authenticated) && !kitGateActive
+
+  // Forget a persisted kit the station no longer needs: another tab (or the
+  // sign-in card's own reminder) already confirmed it, or the station was
+  // reset after the kit was stored. Storage only -- no React state here.
+  const confirmedElsewhere =
+    pendingKit != null && stateQuery.data?.recovery_kit_acknowledged === true
+  useEffect(() => {
+    if (confirmedElsewhere || stationResetSinceStored) clearPendingRecoveryKit()
+  }, [confirmedElsewhere, stationResetSinceStored])
 
   useEffect(() => {
     if (!kitGateActive) return
@@ -1570,6 +1636,8 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
               <span className="font-semibold">Admin username</span>
               <input
                 id="login-admin-username"
+                name="username"
+                autoComplete="username"
                 value={loginForm.admin_username}
                 onChange={(event) => setLoginForm((current) => ({ ...current, admin_username: event.target.value }))}
                 className="rounded-md px-3 py-2"
@@ -1580,7 +1648,9 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
               <span className="font-semibold">Admin password</span>
               <input
                 id="login-admin-password"
+                name="password"
                 type="password"
+                autoComplete="current-password"
                 value={loginForm.admin_password}
                 onChange={(event) => setLoginForm((current) => ({ ...current, admin_password: event.target.value }))}
                 className="rounded-md px-3 py-2"
@@ -1605,6 +1675,10 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
           <form
             className="grid gap-3 rounded-md p-4"
             style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+            // Recovery SETS a new password and burns a one-time code; a saved
+            // credential painted in here is exactly how the owner locked
+            // himself out (2026-09-09). Keep autofill out, same as first setup.
+            autoComplete="off"
             onSubmit={(event) => {
               event.preventDefault()
               if (!recoveryArmed) {
@@ -1626,6 +1700,8 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
               <span className="font-semibold">Admin username</span>
               <input
                 id="recover-admin-username"
+                name="recovery-admin-handle"
+                autoComplete="off"
                 value={recoveryForm.admin_username}
                 onChange={(event) => {
                   setRecoveryArmed(false)
@@ -1639,6 +1715,8 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
               <span className="font-semibold">Recovery code</span>
               <input
                 id="recover-code"
+                name="recovery-code"
+                autoComplete="one-time-code"
                 value={recoveryForm.recovery_code}
                 onChange={(event) => {
                   setRecoveryArmed(false)
@@ -1652,7 +1730,9 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
               <span className="font-semibold">New admin password</span>
               <input
                 id="recover-new-password"
+                name="recovery-new-key-phrase"
                 type="password"
+                autoComplete="new-password"
                 value={recoveryForm.new_admin_password}
                 onChange={(event) => {
                   setRecoveryArmed(false)
@@ -1666,7 +1746,9 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
               <span className="font-semibold">Confirm new admin password</span>
               <input
                 id="recover-confirm-new-password"
+                name="recovery-new-key-phrase-confirm"
                 type="password"
+                autoComplete="new-password"
                 value={recoveryConfirmPassword}
                 onChange={(event) => {
                   setRecoveryArmed(false)
@@ -1726,13 +1808,21 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
         <form
           className="grid gap-4 rounded-md p-4 lg:grid-cols-2"
           style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+          // This form CREATES the station's only admin account. Browser
+          // autofill painted a previously saved username and a masked
+          // password into it on a clean machine (beta.5 walkthrough; the
+          // owner locked himself out the same way on 2026-09-09), so the
+          // account was created with credentials nobody had typed.
+          // autoComplete="off" on the form, "new-password" on both password
+          // fields, and non-guessable field names keep autofill out.
+          autoComplete="off"
           onSubmit={(event) => {
             event.preventDefault()
             mutation.mutate(form)
           }}
         >
           <Field
-            id="station_name"
+            id="first-setup-station-name"
             label="Station name"
             help="The name residents will recognize."
             value={form.station_name}
@@ -1742,7 +1832,7 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
             inputRef={stationNameRef}
           />
           <Field
-            id="admin_display_name"
+            id="first-setup-admin-display-name"
             label="Admin display name"
             help="The person responsible for setup and recovery."
             value={form.admin_display_name}
@@ -1755,7 +1845,8 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
             }
           />
           <Field
-            id="admin_username"
+            id="first-setup-admin-handle"
+            autoComplete="off"
             label="Admin username"
             help="A local sign-in name for the first admin."
             value={form.admin_username}
@@ -1764,7 +1855,8 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
             error={touched.admin_username && form.admin_username.trim() === '' ? 'Admin username is required.' : undefined}
           />
           <Field
-            id="admin_password"
+            id="first-setup-admin-key-phrase"
+            autoComplete="new-password"
             label="Admin password"
             help={`Use at least 12 characters (${form.admin_password.length}/12).`}
             value={form.admin_password}
@@ -1778,7 +1870,8 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
             }
           />
           <Field
-            id="confirm_password"
+            id="first-setup-admin-key-phrase-confirm"
+            autoComplete="new-password"
             label="Confirm admin password"
             help="Retype the password above to confirm it."
             value={confirmPassword}
@@ -1788,7 +1881,8 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
             error={touched.confirm_password && passwordsMismatch ? 'Passwords do not match.' : undefined}
           />
           <Field
-            id="recovery_kit_destination"
+            id="first-setup-recovery-kit-destination"
+            autoComplete="off"
             label="Where will you keep the recovery kit?"
             help="A note for your records (e.g. 'printed, stored in the clerk safe') — not a file path. After you submit, you'll get one chance to save or print the recovery kit."
             value={form.recovery_kit_destination}
@@ -1801,7 +1895,8 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
             }
           />
           <Field
-            id="public_base_url"
+            id="first-setup-public-base-url"
+            autoComplete="off"
             label="Resident portal URL"
             help="Optional for local rehearsal; set before public launch."
             value={form.public_base_url ?? ''}
@@ -1831,7 +1926,7 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
       {completed && kitGateActive && (
         <RecoveryKitPanel
           setup={completed}
-          adminPassword={form.admin_password}
+          adminPassword={completedAdminPassword}
           onAcknowledge={() => ackMutation.mutate()}
           ackPending={ackMutation.isPending}
           ackError={ackMutation.error}

@@ -197,6 +197,47 @@
         ]
       }
     },
+    "/api/staff/auth/sign-out": {
+      "post": {
+        "tags": [
+          "staff-auth"
+        ],
+        "summary": "Sign out this browser's own staff session, leaving every other session signed in",
+        "description": "End exactly the session that is calling.\n\n2026-09-09 beta.5 clean-machine walkthrough: the operator console had no\nsign-out control at all. The complement of the Station Profile \"Sign out\nother sessions\" action (``POST /api/staff/installer/sessions/revoke-\nothers``): that one keeps the caller and revokes the rest; this one\nrevokes the caller and keeps the rest. Any role may call it -- ending\nyour own session is never privileged.\n\nThree kinds of staff token can reach here, and each ends differently:\n\n* a station operator-console token (first-admin login/recovery) -- its\n  entry is removed from ``operator_console.tokens``;\n* a lifecycle-store token (``app.state.staff_token_store``) -- revoked\n  through the store, which also writes the audit event;\n* an env-configured ``CIVICCAST_STAFF_TOKENS`` token -- has no\n  server-side revocation record, so the response says\n  ``session_revoked=false`` and the browser simply forgets it.",
+        "operationId": "sign_out_staff_session_api_staff_auth_sign_out_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffSignOutResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/public/assets": {
       "get": {
         "tags": [
@@ -58473,6 +58514,39 @@
         ],
         "title": "StaffIdentityResponse",
         "description": "Staff identity and v1.4 product roles returned to the operator console."
+      },
+      "StaffSignOutResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "signed_out",
+            "title": "Status"
+          },
+          "session_revoked": {
+            "type": "boolean",
+            "title": "Session Revoked"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Message"
+          },
+          "next_step": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Next Step"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status",
+          "session_revoked",
+          "message",
+          "next_step"
+        ],
+        "title": "StaffSignOutResponse",
+        "description": "Result of ending the calling browser's own staff session."
       },
       "StationAppConfig": {
         "properties": {

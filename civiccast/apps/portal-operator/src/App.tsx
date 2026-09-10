@@ -15,6 +15,7 @@ import { ApiError, getStaffIdentity } from './api/client'
 import type { StaffIdentityResponse } from './types/api.generated'
 import { ToastProvider } from './components/Toast'
 import { isPublicRoute, isTrimEditorRoute, routeForPath, routePath } from './routes'
+import { useRecoveryKitGateActive } from './auth/recoveryKitGate'
 import { SetupScreen } from './screens/SetupScreen'
 import { TrimEditorScreen } from './screens/TrimEditorScreen'
 
@@ -160,6 +161,10 @@ function AppContent() {
     retry: false,
   })
   const roles: readonly RoleName[] | undefined = identityQuery.data?.roles
+  // While the one-time first-setup recovery kit is waiting to be confirmed,
+  // every other route bounces back to First Setup and the Sidebar is held
+  // (2026-09-09 walkthrough: leaving the screen lost the codes for good).
+  const kitGateActive = useRecoveryKitGateActive()
 
   // Move focus to the main landmark on route change so keyboard and
   // screen-reader users land on the new screen's content instead of stale
@@ -210,6 +215,10 @@ function AppContent() {
     document.getElementById(MAIN_CONTENT_ID)?.focus({ preventScroll: false })
   }, [location.pathname])
 
+  if (kitGateActive && location.pathname !== '/setup') {
+    return <Navigate to="/setup" replace />
+  }
+
   if (trimEditorRoute) {
     return (
       <Routes>
@@ -225,7 +234,12 @@ function AppContent() {
   }
 
   return (
-    <Layout route={route} onNavigate={(id) => navigate(routePath(id))} roles={roles}>
+    <Layout
+      route={route}
+      onNavigate={(id) => navigate(routePath(id))}
+      roles={roles}
+      navigationLocked={kitGateActive}
+    >
       <SampleSeedNotice enabled={location.pathname !== '/setup'} />
       <Suspense
         fallback={(

@@ -91,3 +91,34 @@ describe('Sidebar role and complexity controls', () => {
     expect(setupGroup.hasAttribute('open')).toBe(true)
   })
 })
+
+describe('Sidebar recovery-kit gate (2026-09-09 walkthrough)', () => {
+  it('holds every destination, with the reason as its title, while a first-setup kit awaits confirmation', () => {
+    const onNavigate = vi.fn()
+    const { getAllByRole, getByRole } = render(
+      <MemoryRouter>
+        <Sidebar route="setup" onNavigate={onNavigate} roles={['setup_admin']} navigationLocked />
+      </MemoryRouter>,
+    )
+
+    const rows = getAllByRole('button').filter((button) => button.hasAttribute('aria-disabled'))
+    expect(rows.length).toBeGreaterThan(5)
+    for (const row of rows as HTMLButtonElement[]) {
+      expect(row.disabled).toBe(true)
+      expect(row.getAttribute('title')).toMatch(/recovery kit/i)
+    }
+    fireEvent.click(getByRole('button', { name: 'Readiness' }))
+    expect(onNavigate).not.toHaveBeenCalled()
+  })
+
+  it('leaves navigation live once the kit is confirmed', () => {
+    const onNavigate = vi.fn()
+    const { getByRole } = render(
+      <MemoryRouter>
+        <Sidebar route="setup" onNavigate={onNavigate} roles={['setup_admin']} navigationLocked={false} />
+      </MemoryRouter>,
+    )
+    fireEvent.click(getByRole('button', { name: 'Readiness' }))
+    expect(onNavigate).toHaveBeenCalledWith('health')
+  })
+})

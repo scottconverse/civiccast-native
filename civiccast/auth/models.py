@@ -38,3 +38,16 @@ class StaffIdentityResponse(BaseModel):
     token_id: str | None = None
     scopes: tuple[str, ...] = Field(default_factory=tuple)
     roles: tuple[OperatorRole, ...] = Field(default_factory=tuple)
+
+
+class StaffSignOutResponse(BaseModel):
+    """Result of ending the calling browser's own staff session."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["signed_out"]
+    # False only for an env-configured (CIVICCAST_STAFF_TOKENS) token, which
+    # has no server-side revocation record: the browser still forgets it.
+    session_revoked: bool
+    message: Annotated[str, Field(min_length=1)]
+    next_step: Annotated[str, Field(min_length=1)]
