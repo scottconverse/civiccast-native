@@ -14,8 +14,10 @@ import pytest
 from civiccast.native.provision.journal import (
     JournalError,
     advance,
+    ignored_journal_keys,
     journal_path,
     load_journal,
+    load_journal_with_ignored_keys,
     write_journal,
 )
 from civiccast.native.provision.models import (
@@ -115,13 +117,18 @@ def test_load_corrupt_journal_raises_fail_loud(tmp_path: Path) -> None:
         load_journal(str(state_root))
 
 
-def test_load_schema_drifted_journal_raises(tmp_path: Path) -> None:
+def test_load_journal_missing_required_sections_raises(tmp_path: Path) -> None:
+    """``plan`` and ``context`` are required. (Before beta.5.1 this case also
+    failed on ``unexpected_field``; unknown keys are tolerated now, so the
+    ONLY thing keeping this journal unparseable is the missing sections --
+    pinned by matching the message on them.)"""
+
     state_root = tmp_path / "state"
     state_root.mkdir()
     journal_path(state_root).write_text(
         '{"schema_version": 1, "unexpected_field": true}', encoding="utf-8"
     )
-    with pytest.raises(JournalError):
+    with pytest.raises(JournalError, match=r"(?s)corrupt/unparseable.*\bplan\b.*\bcontext\b"):
         load_journal(str(state_root))
 
 
@@ -211,3 +218,211 @@ def test_write_journal_invokes_state_root_acl_hardening(
     write_journal(j)
 
     assert calls == [Path(j.context.state_root)]
+
+
+# --- legacy / unknown keys (beta.5.1, 2026-09-09) -----------------------------
+
+_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "provision"
+_LEGACY_AUGUST_JOURNAL = _FIXTURES / "provision-journal-2026-08-15-beta1-nats.json"
+_LEGACY_NATS_KEYS = [
+    "context.nats_config_path",
+    "context.nats_host",
+    "context.nats_port",
+    "context.nats_store_dir",
+    "context.nats_tls",
+]
+
+
+def _stage_raw_journal(tmp_path: Path, raw: str) -> Path:
+    """Put ``raw`` on disk exactly as a prior installer would have left it
+    (NOT through write_journal, which only ever serialises declared fields)."""
+
+    state_root = tmp_path / "state"
+    state_root.mkdir()
+    path = journal_path(state_root)
+    path.write_text(raw, encoding="utf-8")
+    return state_root
+
+
+def test_load_journal_tolerates_the_august_beta1_nats_context_fields(
+    tmp_path: Path, caplog
+) -> None:
+    """The measured upgrade halt: a valid ``phase: complete`` journal written
+    by the August 2026 installer carries five ``context.nats_*`` keys the
+    model dropped in 85ffe6c0. It must LOAD (so the upgrade adopts the
+    station), drop the keys, and say so once at INFO."""
+
+    import logging
+
+    state_root = _stage_raw_journal(tmp_path, _LEGACY_AUGUST_JOURNAL.read_text(encoding="utf-8"))
+
+    with caplog.at_level(logging.INFO, logger="civiccast.native.provision.journal"):
+        loaded = load_journal(state_root)
+
+    assert loaded is not None
+    assert loaded.phase is ProvisionPhase.COMPLETE
+    assert loaded.schema_version == 1
+    assert loaded.history[-1][2] == "provisioning complete"
+    # The legacy history phases are plain strings and load unchanged.
+    assert [entry[0] for entry in loaded.history[4:6]] == [
+        "nats_store_ready",
+        "nats_config_written",
+    ]
+    for key in _LEGACY_NATS_KEYS:
+        assert not hasattr(loaded.context, key.removeprefix("context.")), key
+    assert loaded.context.postgres_data_dir.endswith(r"\data\pgdata")
+
+    info_lines = [
+        r for r in caplog.records if r.levelno == logging.INFO and "ignored" in r.getMessage()
+    ]
+    assert len(info_lines) == 1, caplog.text
+    message = info_lines[0].getMessage()
+    assert "5 field(s)" in message
+    for key in _LEGACY_NATS_KEYS:
+        assert key in message
+
+
+def test_load_journal_with_ignored_keys_returns_the_keys_from_the_single_read(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The ignored-key list comes back with the journal from ONE read of the
+    file (round-3 F2: main() used to re-read the file unguarded to compute
+    it). Prove the single read by counting, and prove the read failure is a
+    JournalError rather than a bare OSError."""
+
+    state_root = _stage_raw_journal(tmp_path, _LEGACY_AUGUST_JOURNAL.read_text(encoding="utf-8"))
+    reads: list[Path] = []
+    real_read_text = Path.read_text
+
+    def counting_read_text(self: Path, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if self.name == "provision-journal.json":
+            reads.append(self)
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+    journal, ignored = load_journal_with_ignored_keys(state_root)
+    assert journal is not None
+    assert journal.phase is ProvisionPhase.COMPLETE
+    assert ignored == _LEGACY_NATS_KEYS
+    assert len(reads) == 1, reads
+
+    assert load_journal_with_ignored_keys(tmp_path / "nowhere") == (None, [])
+
+    def yanked_read_text(self: Path, *args, **kwargs):  # type: ignore[no-untyped-def]
+        raise OSError("file yanked between exists() and read")
+
+    monkeypatch.setattr(Path, "read_text", yanked_read_text)
+    with pytest.raises(JournalError, match="cannot read journal"):
+        load_journal_with_ignored_keys(state_root)
+
+
+def test_ignored_journal_keys_names_exactly_the_undeclared_keys() -> None:
+    raw = _LEGACY_AUGUST_JOURNAL.read_text(encoding="utf-8")
+    assert ignored_journal_keys(raw) == _LEGACY_NATS_KEYS
+    assert ignored_journal_keys("{not json") == []
+    assert ignored_journal_keys("[1, 2]") == []
+
+
+def test_load_journal_tolerates_a_genuinely_unknown_future_field(tmp_path: Path, caplog) -> None:
+    """A journal from a NEWER installer (a downgrade/reinstall over preserved
+    ProgramData) may carry keys this version has never heard of. Same rule:
+    load, drop, log -- never halt."""
+
+    import json
+    import logging
+
+    data = json.loads(_LEGACY_AUGUST_JOURNAL.read_text(encoding="utf-8"))
+    for key in ("nats_config_path", "nats_host", "nats_port", "nats_store_dir", "nats_tls"):
+        del data["context"][key]
+    data["future_top_level_field"] = {"anything": True}
+    data["context"]["future_context_field"] = "x"
+    data["plan"]["future_plan_field"] = 7
+    state_root = _stage_raw_journal(tmp_path, json.dumps(data))
+
+    with caplog.at_level(logging.INFO, logger="civiccast.native.provision.journal"):
+        loaded = load_journal(state_root)
+
+    assert loaded is not None
+    assert loaded.phase is ProvisionPhase.COMPLETE
+    assert ignored_journal_keys(json.dumps(data)) == [
+        "context.future_context_field",
+        "future_top_level_field",
+        "plan.future_plan_field",
+    ]
+    assert (
+        "context.future_context_field, future_top_level_field, plan.future_plan_field"
+        in caplog.text
+    )
+
+
+def test_load_journal_logs_nothing_about_ignored_keys_for_a_current_journal(
+    tmp_path: Path, caplog
+) -> None:
+    import logging
+
+    write_journal(_journal(tmp_path))
+    with caplog.at_level(logging.INFO, logger="civiccast.native.provision.journal"):
+        assert load_journal(tmp_path / "state") is not None
+    assert "ignored" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (lambda d: d.__setitem__("phase", "nats_store_ready"), "phase"),
+        (
+            lambda d: d["context"].__setitem__("postgres_port", "five-four-three-two"),
+            "postgres_port",
+        ),
+        (lambda d: d["plan"].pop("postgres_major_version"), "postgres_major_version"),
+    ],
+    ids=["unknown-phase", "type-drift", "missing-required"],
+)
+def test_load_journal_still_fails_loud_on_real_corruption(tmp_path: Path, mutate, match) -> None:
+    """Tolerance is for unknown KEY NAMES only. An unknown phase value, a
+    wrong type, or a missing required field is still a value we cannot
+    trust, and still a JournalError (never a silent fresh start)."""
+
+    import json
+
+    data = json.loads(_LEGACY_AUGUST_JOURNAL.read_text(encoding="utf-8"))
+    mutate(data)
+    state_root = _stage_raw_journal(tmp_path, json.dumps(data))
+    with pytest.raises(JournalError, match=match):
+        load_journal(state_root)
+
+
+def test_write_journal_serialises_only_declared_fields_over_a_loaded_legacy_journal(
+    tmp_path: Path,
+) -> None:
+    """A UNIT property of write_journal, not a CLI path: a journal loaded
+    from the legacy file and written back contains only declared fields, so
+    the nats_* keys are gone and the next load has nothing to ignore.
+    Neither real CLI path over such a station exercises this -- ADOPT_EXISTING
+    unlinks the journal before the engine writes a fresh one, and
+    NOOP_REUSE_EXISTING never writes it (see
+    tests/native/test_provision_cli.py)."""
+
+    import json
+
+    data = json.loads(_LEGACY_AUGUST_JOURNAL.read_text(encoding="utf-8"))
+    state_root = tmp_path / "state"
+    for key in (
+        "postgres_data_dir",
+        "postgres_config_path",
+        "postgres_hba_path",
+        "server_pack_path",
+    ):
+        data["context"][key] = str(tmp_path / key)
+    data["context"]["state_root"] = str(state_root)
+    _stage_raw_journal(tmp_path, json.dumps(data))
+
+    loaded = load_journal(state_root)
+    assert loaded is not None
+    path = write_journal(loaded)
+    rewritten = path.read_text(encoding="utf-8")
+    rewritten_context = json.loads(rewritten)["context"]
+    assert not [k for k in rewritten_context if k.startswith("nats_")], rewritten_context
+    assert ignored_journal_keys(rewritten) == []
+    reloaded = load_journal(state_root)
+    assert reloaded is not None and reloaded.phase is ProvisionPhase.COMPLETE
