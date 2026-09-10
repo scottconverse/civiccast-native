@@ -1,0 +1,153 @@
+.F                                                                       [100%]
+================================== FAILURES ===================================
+____________ test_guard_fails_a_test_that_writes_real_state[True] _____________
+
+request = <FixtureRequest for <Function test_guard_fails_a_test_that_writes_real_state[True]>>
+reject_application_imports = True
+
+    @pytest.mark.parametrize("reject_application_imports", [False, True])
+    def test_guard_fails_a_test_that_writes_real_state(
+        request: pytest.FixtureRequest, reject_application_imports: bool
+    ) -> None:
+        """End-to-end: an unmarked test writing under the real root fails at teardown.
+
+        Runs a throwaway pytest session in a subprocess whose "real" profile is a
+        directory under this test's tmp_path, using a verbatim copy of the root
+        conftest, so the guard is exercised exactly as the suite installs it.
+        """
+
+        request.config.pluginmanager.import_plugin("pytester")
+        pytester: pytest.Pytester = request.getfixturevalue("pytester")
+        fake_profile = pytester.mkdir("fake-profile")
+        fake_local = fake_profile / "AppData" / "Local"
+        fake_local.mkdir(parents=True)
+        pytester.makeconftest((Path(__file__).parent / "conftest.py").read_text(encoding="utf-8"))
+        if reject_application_imports:
+            # The nested guard proof needs no application imports. In mutation CI,
+            # importing instrumented application code from this temporary cwd can
+            # initialize mutmut without its configuration and fail during setup.
+            # Reject that dependency directly without emulating a mutation score.
+            with (pytester.path / "conftest.py").open("a", encoding="utf-8") as conftest:
+                conftest.write(
+                    "\nimport sys\n"
+                    "class RejectApplicationImports:\n"
+                    "    def find_spec(self, fullname, path=None, target=None):\n"
+                    "        if fullname == 'civiccast' or fullname.startswith('civiccast.'):\n"
+                    "            raise AssertionError('guard proof imported application: ' + fullname)\n"
+                    "sys.meta_path.insert(0, RejectApplicationImports())\n"
+                )
+        pytester.makepyfile(
+            test_offender=f"""
+            import os
+            from pathlib import Path
+
+            def test_writes_into_the_real_profile():
+                real = Path({str(fake_local)!r}) / "CivicCast"
+                real.mkdir(parents=True, exist_ok=True)
+                (real / "civiccast.sqlite3").write_text("oops")
+
+            def test_writes_into_tmp_path(tmp_path):
+                (Path(os.environ["LOCALAPPDATA"]) / "CivicCast").mkdir(parents=True)
+                assert Path(os.environ["LOCALAPPDATA"]).is_relative_to(tmp_path)
+            """
+        )
+        env_override = {"LOCALAPPDATA": str(fake_local)}
+        if os.name == "nt":
+            env_override["USERPROFILE"] = str(fake_profile)
+        else:
+            env_override["HOME"] = str(fake_profile)
+        env_override["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+        result = _run_with_env(pytester, env_override)
+        # The offender's call phase passes; the guard fires at teardown, which pytest
+        # reports as an error on that same test -- so 2 passed AND 1 error.
+>       result.assert_outcomes(passed=2, errors=1)
+E       AssertionError: assert {'errors': 2,...pped': 0, ...} == {'errors': 1,...pped': 0, ...}
+E
+E         Omitting 4 identical items, use -vv to show
+E         Differing items:
+E         {'passed': 0} != {'passed': 2}
+E         {'errors': 2} != {'errors': 1}
+E         Use -v to get more diff
+
+conftest   = <_io.TextIOWrapper name='C:\\Users\\scott\\AppData\\Local\\Temp\\pytest-of-scott\\pytest-3641\\test_guard_fails_a_test_that_writes_real_state1\\conftest.py' mode='a' encoding='utf-8'>
+env_override = {'LOCALAPPDATA': 'C:\\Users\\scott\\AppData\\Local\\Temp\\pytest-of-scott\\pytest-3641\\test_guard_fails_a_test_that_w...tt\\AppData\\Local\\Temp\\pytest-of-scott\\pytest-3641\\test_guard_fails_a_test_that_writes_real_state1\\fake-profile'}
+fake_local = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3641/test_guard_fails_a_test_that_writes_real_state1/fake-profile/AppData/Local')
+fake_profile = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3641/test_guard_fails_a_test_that_writes_real_state1/fake-profile')
+pytester   = <Pytester WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3641/test_guard_fails_a_test_that_writes_real_state1')>
+reject_application_imports = True
+request    = <FixtureRequest for <Function test_guard_fails_a_test_that_writes_real_state[True]>>
+result     = <RunResult ret=1 len(stdout.lines)=66 len(stderr.lines)=0 duration=3.68s>
+
+C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f1-integration\tests\test_hermetic_state_guard.py:149: AssertionError
+---------------------------- Captured stdout call -----------------------------
+running: C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f1-integration\.venv312\Scripts\python.exe -mpytest --basetemp=C:\Users\scott\AppData\Local\Temp\pytest-of-scott\pytest-3641\test_guard_fails_a_test_that_writes_real_state1\runpytest-0 -p no:cacheprovider -p no:randomly -p no:mutmut -c nul -q
+     in: C:\Users\scott\AppData\Local\Temp\pytest-of-scott\pytest-3641\test_guard_fails_a_test_that_writes_real_state1
+EE                                                                       [100%]
+=================================== ERRORS ====================================
+_____________ ERROR at setup of test_writes_into_the_real_profile _____________
+
+fixturedef = <FixtureDef argname='_clear_external_database_probe_cache' scope='function' baseid=''>
+request = <SubRequest '_clear_external_database_probe_cache' for <Function test_writes_into_the_real_profile>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+>               return (yield)
+                        ^^^^^
+
+C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f1-integration\.venv312\Lib\site-packages\pytest_asyncio\plugin.py:728:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+conftest.py:97: in _clear_external_database_probe_cache
+    from civiccast.installer.storage import reset_external_database_probe_cache
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <conftest.RejectApplicationImports object at 0x00000134381FF2F0>
+fullname = 'civiccast', path = None, target = None
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'civiccast' or fullname.startswith('civiccast.'):
+>           raise AssertionError('guard proof imported application: ' + fullname)
+E           AssertionError: guard proof imported application: civiccast
+
+conftest.py:196: AssertionError
+_________________ ERROR at setup of test_writes_into_tmp_path _________________
+
+fixturedef = <FixtureDef argname='_clear_external_database_probe_cache' scope='function' baseid=''>
+request = <SubRequest '_clear_external_database_probe_cache' for <Function test_writes_into_tmp_path>>
+
+    @pytest.hookimpl(wrapper=True)
+    def pytest_fixture_setup(fixturedef: FixtureDef, request) -> object | None:
+        asyncio_mode = _get_asyncio_mode(request.config)
+        if not _is_asyncio_fixture_function(fixturedef.func):
+            if asyncio_mode == Mode.STRICT:
+                # Ignore async fixtures without explicit asyncio mark in strict mode
+                # This applies to pytest_trio fixtures, for example
+>               return (yield)
+                        ^^^^^
+
+C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f1-integration\.venv312\Lib\site-packages\pytest_asyncio\plugin.py:728:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+conftest.py:97: in _clear_external_database_probe_cache
+    from civiccast.installer.storage import reset_external_database_probe_cache
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <conftest.RejectApplicationImports object at 0x00000134381FF2F0>
+fullname = 'civiccast', path = None, target = None
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'civiccast' or fullname.startswith('civiccast.'):
+>           raise AssertionError('guard proof imported application: ' + fullname)
+E           AssertionError: guard proof imported application: civiccast
+
+conftest.py:196: AssertionError
+=========================== short test summary info ===========================
+ERROR \\.\nul\test_offender.py::test_writes_into_the_real_profile - Assertion...
+ERROR \\.\nul\test_offender.py::test_writes_into_tmp_path - AssertionError: g...
+2 errors in 3.16s
+=========================== short test summary info ===========================
+FAILED tests/test_hermetic_state_guard.py::test_guard_fails_a_test_that_writes_real_state[True]
+1 failed, 1 passed, 5 deselected in 10.87s

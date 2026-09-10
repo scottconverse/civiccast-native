@@ -1036,11 +1036,16 @@ entries:
       # beta5-caption-flow evidence record. These ordinary-user native runs
       # are NOT installed-service or boot/pre-login acceptance. This update
       # also adds caption_flow.py to D2 and every-module drift falsification.
+      # F-1 source review: current engine/test bindings below are backed by
+      # docs/evidence/f1-local-2026-09-10/VERIFICATION.md and its source hashes.
+      # These local source/runtime checks do not rerun either historical
+      # claim node or provide installed-service, boot/pre-login or field
+      # acceptance. Rebinding restores D2 change detection only.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: e5baeb27dd7c053233407286085e2b0f594d4b64
         - path: civiccast/egress/gst/engine.py
-          blob: 472f6ec66b28d2d22d91ac25aad8e9c76c3bdd6f
+          blob: e6868282a4645d3a95c618c1e8ef8cc556436444
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -1053,7 +1058,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: e285ee64790f3d8152c0a679285a5451b9bd8ed0
+        blob: f9191cd11d871ba97bd284ea057c516c68e544a4
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -1923,11 +1928,16 @@ entries:
       # beta5-caption-flow evidence record. These ordinary-user native runs
       # are NOT installed-service or boot/pre-login acceptance. This update
       # also adds caption_flow.py to D2 and every-module drift falsification.
+      # F-1 source review: current engine/test bindings below are backed by
+      # docs/evidence/f1-local-2026-09-10/VERIFICATION.md and its source hashes.
+      # These local source/runtime checks do not rerun either historical
+      # claim node or provide installed-service, boot/pre-login or field
+      # acceptance. Rebinding restores D2 change detection only.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: e5baeb27dd7c053233407286085e2b0f594d4b64
         - path: civiccast/egress/gst/engine.py
-          blob: 472f6ec66b28d2d22d91ac25aad8e9c76c3bdd6f
+          blob: e6868282a4645d3a95c618c1e8ef8cc556436444
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -1940,7 +1950,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: e285ee64790f3d8152c0a679285a5451b9bd8ed0
+        blob: f9191cd11d871ba97bd284ea057c516c68e544a4
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py

@@ -2,6 +2,11 @@
 
 Recorded 2026-09-10 after all jobs completed.
 
+Later local corrections are recorded in
+`../f1-ci-repair-2026-09-10/VERIFICATION.md`. They have not been pushed and do
+not replace this failed CI cycle. The later execution matrix establishes the
+launcher cause that was only a reproduction lead when this record was written.
+
 - PR: https://github.com/scottconverse/civiccast-native/pull/219
 - Pushed HEAD / CI source: `f9b5e1aa71e8860e8fff41c1cb572b80bbbc8e2b`.
 - Local implementation proof anchor: `7a468cd2e9018775926d384ac1b25ebe07ebd18d`.

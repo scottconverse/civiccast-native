@@ -1238,6 +1238,96 @@ def _launcher_script_zip(script: str) -> bytes:
     return output.getvalue()
 
 
+def _pe_rcdata(path: Path, name: str) -> bytes:
+    """Read one named, language-neutral uv launcher RCDATA resource."""
+
+    if os.name != "nt":
+        _fail("console-launcher PE normalization requires Windows")
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    load = kernel32.LoadLibraryExW
+    load.argtypes = [ctypes.c_wchar_p, ctypes.c_void_p, ctypes.c_uint]
+    load.restype = ctypes.c_void_p
+    free = kernel32.FreeLibrary
+    free.argtypes = [ctypes.c_void_p]
+    free.restype = ctypes.c_bool
+    find = kernel32.FindResourceExW
+    find.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ushort]
+    find.restype = ctypes.c_void_p
+    size_of = kernel32.SizeofResource
+    size_of.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    size_of.restype = ctypes.c_uint
+    load_resource = kernel32.LoadResource
+    load_resource.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    load_resource.restype = ctypes.c_void_p
+    lock_resource = kernel32.LockResource
+    lock_resource.argtypes = [ctypes.c_void_p]
+    lock_resource.restype = ctypes.c_void_p
+    handle = load(str(path), None, 0x00000002)  # LOAD_LIBRARY_AS_DATAFILE
+    if not handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        name_buffer = ctypes.create_unicode_buffer(name)
+        resource = find(
+            handle,
+            ctypes.c_void_p(10),  # RT_RCDATA / MAKEINTRESOURCE(10)
+            ctypes.cast(name_buffer, ctypes.c_void_p),
+            0,
+        )
+        if not resource:
+            raise ctypes.WinError(ctypes.get_last_error())
+        data = load_resource(handle, resource)
+        pointer = lock_resource(data)
+        if not pointer:
+            raise ctypes.WinError(ctypes.get_last_error())
+        return ctypes.string_at(pointer, size_of(handle, resource))
+    finally:
+        free(handle)
+
+
+def _discard_retained_pe_resource_data(path: Path, old: bytes, active: bytes) -> None:
+    """Discard stale full RCDATA payload copies retained by newer uv stubs.
+
+    uv reads its script with zipimport from the executable rather than
+    through the resource API. With uv 0.12.13, ``UpdateResourceW`` can retain
+    an old ZIP that wins zipimport's end-of-directory search.
+    Discarding only complete pre-update script payloads leaves the new active
+    resource untouched and avoids a broad interpreter-path substitution.
+    """
+
+    if not old or not active:
+        _fail("uv launcher script resource is empty")
+    try:
+        with zipfile.ZipFile(io.BytesIO(old)) as archive:
+            archive.read("__main__.py")
+        with zipfile.ZipFile(io.BytesIO(active)) as archive:
+            archive.read("__main__.py")
+    except (KeyError, zipfile.BadZipFile) as exc:
+        _fail(f"uv launcher script resource is malformed: {exc}")
+    if old == active:
+        return  # A second normalization must not erase the active script.
+    if active.find(old) >= 0:
+        _fail("retained uv launcher script overlaps the active resource")
+    contents = bytearray(path.read_bytes())
+    active_start = contents.find(active)
+    if active_start < 0 or contents.find(active, active_start + 1) >= 0:
+        _fail("uv launcher active script payload is missing or ambiguous")
+    active_end = active_start + len(active)
+    offsets: list[int] = []
+    offset = 0
+    while True:
+        offset = contents.find(old, offset)
+        if offset < 0:
+            break
+        if offset < active_end and offset + len(old) > active_start:
+            _fail("retained uv launcher script overlaps the active resource")
+        offsets.append(offset)
+        offset += len(old)
+    for offset in offsets:
+        contents[offset : offset + len(old)] = b"\0" * len(old)
+    if offsets:
+        path.write_bytes(contents)
+
+
 def _update_pe_rcdata(path: Path, resources: Mapping[str, bytes]) -> None:
     """Replace named RT_RCDATA resources without rebuilding the uv stub."""
 
@@ -1290,13 +1380,24 @@ def normalize_console_launcher(launcher: Path, entrypoint: str) -> None:
 
     if not launcher.is_file():
         _fail(f"generated console launcher is missing: {launcher}")
-    _update_pe_rcdata(
-        launcher,
-        {
-            "UV_PYTHON_PATH": b"..\\..\\..\\python.exe",
-            "UV_SCRIPT_DATA": _launcher_script_zip(render_console_launcher_script(entrypoint)),
-        },
-    )
+    resources = {
+        "UV_PYTHON_PATH": b"..\\..\\..\\python.exe",
+        "UV_SCRIPT_DATA": _launcher_script_zip(render_console_launcher_script(entrypoint)),
+    }
+    previous_script = _pe_rcdata(launcher, "UV_SCRIPT_DATA")
+    _update_pe_rcdata(launcher, resources)
+    active_script = _pe_rcdata(launcher, "UV_SCRIPT_DATA")
+    if active_script != resources["UV_SCRIPT_DATA"]:
+        _fail("uv launcher script resource did not update")
+    _discard_retained_pe_resource_data(launcher, previous_script, active_script)
+    if _pe_rcdata(launcher, "UV_SCRIPT_DATA") != active_script:
+        _fail("uv launcher script resource changed while clearing retained data")
+    if _pe_rcdata(launcher, "UV_PYTHON_PATH") != resources["UV_PYTHON_PATH"]:
+        _fail("uv launcher interpreter resource did not update")
+    with zipfile.ZipFile(launcher) as archive:
+        selected_script = archive.read("__main__.py")
+    if selected_script != render_console_launcher_script(entrypoint).encode("utf-8"):
+        _fail("uv launcher whole-file ZIP still selects a different script")
 
 
 def normalize_pywin32_service_host_exe(out: Path, site_packages: Path) -> list[str]:

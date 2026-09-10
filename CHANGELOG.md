@@ -25,6 +25,14 @@ came across and what deliberately did not.
   explicit fault. Reload logs identify preroll and the actual commit attempt.
 - Added local regression and native-worker evidence plus a per-transaction log
   grader. These changes do not validate the existing beta.6 kit or resolve F-2.
+- Corrected the four current-source claims bindings and isolated the state-guard
+  child regression from unrelated application fixtures after PR #219's first
+  CI failure. Local checks do not provide a new mutation or CI verdict.
+- Windows console-launcher normalization now removes retained old script ZIPs
+  that can override the replacement script with uv 0.12.13. The regression
+  executes the relocated launcher and repeats normalization with bytecode
+  disabled. Local evidence is in `docs/evidence/f1-ci-repair-2026-09-10/`;
+  the changed builder still requires new CI and candidate verification.
 
 `v1.0.0-beta.6` is the next candidate and the current owner-held unpublished
 candidate; it does not change the `v1.0.0-beta.4` install story documented
