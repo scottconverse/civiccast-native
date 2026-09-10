@@ -29,7 +29,7 @@ the GitHub releases page daily.
 
 | | |
 |---|---|
-| **main** | `795cdab5065e3b1b1d9df69c6fc06658f481c8d4` — green |
+| **main** | `6de69b8e` — green. (`795cdab5` was main when the beta.6 kit was built; the only commits since are this document and the soak evidence.) |
 | **Latest public release** | **v1.0.0-beta.5**, published 2026-09-09 10:14 PM |
 | **`docs/releases/release-truth.yaml` `current:`** | `v1.0.0-beta.5` |
 | **Product version in source** | `1.0.0-beta.6` (release-prep bump already landed) |
@@ -43,6 +43,20 @@ found a blocker that silently kills a channel and never recovers it. **The beta.
 already built does not fix it** — the bug was found after those changes were written.
 
 So: **beta.6 must not be published as-is.** See §5.
+
+### What is NOT done — the whole list, in one place
+
+- **F-1 and F-2 are unstarted.** The silent-death bug and the missed schedule boundaries. **Those
+  two are the release.** Every fix in §5 is unstarted; nothing below §5's heading has been begun.
+- **The beta.6 kit is built and byte-verified but unsoaked, ungated and unpublished.** It sits at
+  `C:\CivicCastTester\kit-safe\795cdab5065e3b1b1d9df69c6fc06658f481c8d4\`. Leave it there.
+- **No soak has been run against beta.6 at all.** The two failed soaks were of **beta.5**.
+- **The kit LAN file server (port 8766) and the Gate A runner are both down** after the 2026-09-10
+  reboot. **This does not matter yet** — neither is needed until there is a fixed candidate worth
+  testing. Do not spend time restarting them before then. §8 step 0 and §7.2 say how, when you do.
+- **The five follow-ups in §3 are unstarted**, and none of them block the release.
+- **Not measured, do not assume either way:** picture quality between failures (beta.5 emits no
+  drop metric), and anything involving a **physical cable headend** — both soaks used loopback UDP.
 
 ---
 
@@ -387,7 +401,7 @@ Verified at 10:50 AM:
 
 - Kit intact — all 19 files match `SHA256SUMS.txt`; installer sha256
   `ac1429b9657b6654a1a5eff697dd2cd1b246b401e7a90012e48e399790e79f8e`
-- Repo clean, main `795cdab5`
+- Repo clean. Main was `795cdab5` at that moment; it is `6de69b8e` now — the difference is docs only.
 - Elevated helper scheduled task: `Ready`
 - **Dead and needing a restart:** the kit LAN file server on port 8766, the Gate A runner, and any
   monitors. A probe for Windows Sandbox processes found none.
