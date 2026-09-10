@@ -663,6 +663,20 @@ export interface Body_upload_contributor_media_api_public_contribute_uploads_pos
   file: string
 }
 
+export interface BroadcastGate {
+  color: 'green' | 'yellow' | 'red'
+  blocking?: Array<BroadcastGateItem>
+  attention?: Array<BroadcastGateItem>
+  summary: string
+}
+
+export interface BroadcastGateItem {
+  id: string
+  label: string
+  color: 'green' | 'yellow' | 'red'
+  next_step: string
+}
+
 export interface BrokenMediaGateResult {
   state?: 'not_run' | 'passed' | 'failed' | 'override_accepted'
   checked_at?: string | null
@@ -1019,7 +1033,7 @@ export interface ChannelLoudnessPlan {
 export interface ChannelNowNext {
   generated_at: string
   channel: ChannelProfile
-  current: PlayoutBlock
+  current: PlayoutBlock | null
   next: PlayoutBlock | null
   fallback_active: boolean
   proof_boundary: string
@@ -1051,14 +1065,14 @@ export interface ChannelProofEvent {
   event_id: string
   observed_at: string
   channel_id: string
-  scheduled_block_id: string
+  scheduled_block_id?: string | null
   actual_kind: 'live' | 'file' | 'slate' | 'bulletin' | 'rerun' | 'fallback'
   actual_status: 'scheduled' | 'playing' | 'completed' | 'failed' | 'fallback'
   title: string
   source_ref: string
   failover_from?: string | null
   failover_reason?: string | null
-  captions_attached: boolean
+  captions_attached: boolean | null
   machine_summary: string
 }
 
@@ -3617,6 +3631,8 @@ export interface RehearsalReport {
   started_at: string
   status: 'ready' | 'needs_attention' | 'blocked'
   safe_to_broadcast: 'green' | 'yellow' | 'red'
+  rehearsal_result: 'passed' | 'failed' | 'not_run'
+  gate: BroadcastGate
   message: string
   resident_preview: ResidentPreview
   checks: Array<SystemHealthCheck>

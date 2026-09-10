@@ -31,6 +31,8 @@ from civiccast.installer.models import (
     AcceptancePacketResponse,
     BackupSetupRequest,
     BackupStatus,
+    BroadcastGate,
+    BroadcastGateItem,
     DeploymentProfile,
     DiagnosticBundleRequest,
     DiagnosticBundleResponse,
@@ -61,6 +63,7 @@ from civiccast.installer.models import (
     RecoveryKitContract,
     RecoveryKitRegenerateResponse,
     RehearsalReport,
+    RehearsalResult,
     ResidentPreview,
     RestoreProofItem,
     RestoreStatus,
@@ -3749,19 +3752,14 @@ def build_rehearsal_report(
         recording_write_probe_ready=recording_write_probe_ready,
         resident_preview_confirmed=resident_preview_confirmed,
     )
-    status, message, next_step = _rehearsal_outcome(
-        health.safe_to_broadcast,
-        required_needs_attention=_has_required_yellow_check(health),
-    )
-    return RehearsalReport(
+    # This path evaluates readiness without running a private session, so the
+    # rehearsal itself is reported as not run; only the gate is evaluated.
+    return _rehearsal_report_from_health(
         rehearsal_id="rehearsal-" + uuid4().hex[:12],
         started_at=health.generated_at,
-        status=status,
-        safe_to_broadcast=health.safe_to_broadcast,
-        message=message,
-        resident_preview=health.resident_preview,
-        checks=health.checks,
-        next_step=next_step,
+        health=health,
+        evidence=[],
+        rehearsal_result="not_run",
     )
 
 
@@ -3938,6 +3936,7 @@ def run_private_rehearsal(
                     health=health,
                     evidence=evidence,
                     private_session_id=session_id,
+                    rehearsal_result="failed",
                     message_override=(
                         "Private rehearsal stopped because the configured source did not "
                         "pass every server-side preflight check. No broadcast or recording "
@@ -3974,6 +3973,7 @@ def run_private_rehearsal(
                 health=health,
                 evidence=evidence,
                 private_session_id=session_id,
+                rehearsal_result="failed",
                 message_override=(
                     "Private rehearsal stopped because CivicCast could not run server-side "
                     "preflight. No broadcast or recording asset was created."
@@ -4036,6 +4036,7 @@ def run_private_rehearsal(
             evidence=[*evidence, f"Rehearsal stopped: {exc}"],
             recording_uri=recording_path.as_uri(),
             resident_preview_proof=resident_preview_proof,
+            rehearsal_result="failed",
             message_override=f"Private rehearsal could not complete: {str(exc).rstrip('.')}.",
             next_step_override="Fix the named issue, then run private rehearsal again.",
         )
@@ -4073,6 +4074,8 @@ def _rehearsal_outcome(
     safe_to_broadcast: SafeToBroadcastColor,
     *,
     required_needs_attention: bool = False,
+    rehearsal_result: RehearsalResult = "not_run",
+    gate: BroadcastGate | None = None,
 ) -> tuple[Literal["ready", "needs_attention", "blocked"], str, str]:
     if safe_to_broadcast == "green":
         return (
@@ -4092,10 +4095,78 @@ def _rehearsal_outcome(
             "Private rehearsal passed required checks with optional items still needing attention.",
             "Review the yellow items, then run rehearsal again if station policy requires them.",
         )
+    blocking = gate.blocking if gate is not None else []
+    names = ", ".join(item.label for item in blocking)
+    count = len(blocking)
+    plural = "item" if count == 1 else "items"
+    fix_hint = f" ({blocking[0].next_step.rstrip('.')})" if count == 1 else ""
+    next_step = (
+        f"Fix {names}{fix_hint}, then run the check again."
+        if names
+        else "Fix the red items in System Health, then run rehearsal again."
+    )
+    if rehearsal_result == "passed":
+        # F-21: the run itself succeeded; say so, and name what the gate is
+        # waiting on instead of calling the rehearsal "blocked".
+        return (
+            "blocked",
+            (
+                f"Rehearsal passed, but the broadcast gate has {count} required {plural} "
+                f"not ready: {names}."
+                if names
+                else "Rehearsal passed, but the broadcast gate has a required item not ready."
+            ),
+            next_step,
+        )
     return (
         "blocked",
-        "Private rehearsal is blocked because a required broadcast item is not ready.",
-        "Fix the red items in System Health, then run rehearsal again.",
+        (
+            f"Private rehearsal is blocked because a required broadcast {plural} is not "
+            f"ready: {names}."
+            if names
+            else "Private rehearsal is blocked because a required broadcast item is not ready."
+        ),
+        next_step,
+    )
+
+
+def build_broadcast_gate(health: SystemHealthReport) -> BroadcastGate:
+    """Summarise the required-items gate from a System Health report."""
+
+    blocking = [
+        BroadcastGateItem(
+            id=check.id, label=check.label, color=check.color, next_step=check.next_step
+        )
+        for check in health.checks
+        if check.required and check.color == "red"
+    ]
+    attention = [
+        BroadcastGateItem(
+            id=check.id, label=check.label, color=check.color, next_step=check.next_step
+        )
+        for check in health.checks
+        if check.required and check.color == "yellow"
+    ]
+    if blocking:
+        plural = "item" if len(blocking) == 1 else "items"
+        summary = (
+            f"{len(blocking)} required {plural} not ready: "
+            + ", ".join(item.label for item in blocking)
+            + "."
+        )
+    elif attention:
+        needs = "item still needs" if len(attention) == 1 else "items still need"
+        summary = (
+            f"{len(attention)} required {needs} attention before the public "
+            "broadcast: " + ", ".join(item.label for item in attention) + "."
+        )
+    else:
+        summary = "All required items are ready."
+    return BroadcastGate(
+        color=health.safe_to_broadcast,
+        blocking=blocking,
+        attention=attention,
+        summary=summary,
     )
 
 
@@ -4111,16 +4182,26 @@ def _rehearsal_report_from_health(
     resident_preview_proof: str | None = None,
     message_override: str | None = None,
     next_step_override: str | None = None,
+    rehearsal_result: RehearsalResult | None = None,
 ) -> RehearsalReport:
+    # A finalized recording asset is the proof the rehearsal ran end to end.
+    # Callers that stopped a started run pass rehearsal_result="failed".
+    if rehearsal_result is None:
+        rehearsal_result = "passed" if recording_asset_id else "not_run"
+    gate = build_broadcast_gate(health)
     status, message, next_step = _rehearsal_outcome(
         health.safe_to_broadcast,
         required_needs_attention=_has_required_yellow_check(health),
+        rehearsal_result=rehearsal_result,
+        gate=gate,
     )
     return RehearsalReport(
         rehearsal_id=rehearsal_id,
         started_at=started_at,
         status=status,
         safe_to_broadcast=health.safe_to_broadcast,
+        rehearsal_result=rehearsal_result,
+        gate=gate,
         message=message_override or message,
         resident_preview=health.resident_preview,
         checks=health.checks,

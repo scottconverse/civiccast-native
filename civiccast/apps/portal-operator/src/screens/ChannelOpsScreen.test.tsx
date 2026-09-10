@@ -4,13 +4,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render } from '@testing-library/react'
 
 import type {
+  ChannelNowNext,
   ChannelPlayoutPlan,
   ChannelProfile,
+  ChannelProofLog,
   EgressStateRow,
   GraphicsOverlayStateResponse,
 } from '../types/api.generated'
-import type { EgressHealthSample } from '../api/client'
-import { EgressControlPanel, GraphicsOverlayPanel, PlayoutPlanPanel } from './ChannelOpsScreen'
+import { ApiError, type EgressHealthSample } from '../api/client'
+import {
+  EgressControlPanel,
+  GraphicsOverlayPanel,
+  PlayoutPanel,
+  PlayoutPlanPanel,
+  ProofPanel,
+  START_WITHOUT_CONFIG_REASON,
+} from './ChannelOpsScreen'
 
 afterEach(cleanup)
 
@@ -289,5 +298,187 @@ describe('EgressControlPanel captions row', () => {
     expect(renderCaptions(true).container.textContent).toContain('Not yet confirmed (waiting for the on-air check)')
     cleanup()
     expect(renderCaptions(undefined).container.textContent).toContain('Not yet confirmed (waiting for the on-air check)')
+  })
+})
+
+// beta.5 walkthrough F-27: Channels used to render sample-contract rows
+// ("Public live programming -- Playing", "Captions: Attached") on a channel
+// whose feed was Stopped. The API now reports nulls/empties until something
+// real exists, and these panels must say so in plain words.
+describe('PlayoutPanel honest empty states (F-27)', () => {
+  it('says "No program on air" and "Nothing scheduled" when both slots are null', () => {
+    const nowNext: ChannelNowNext = {
+      generated_at: '2026-06-15T12:00:00Z',
+      channel: CHANNEL,
+      current: null,
+      next: null,
+      fallback_active: false,
+      proof_boundary: 'egress-state-and-schedule-store',
+    }
+    const { getByText, queryByText } = render(<PlayoutPanel nowNext={nowNext} />)
+    expect(getByText('No program on air')).toBeTruthy()
+    expect(getByText('Nothing scheduled')).toBeTruthy()
+    expect(queryByText(/live programming/)).toBeNull()
+    expect(queryByText('Playing')).toBeNull()
+  })
+
+  it('renders a real on-air block in the Now slot and still says Nothing scheduled for Next', () => {
+    const nowNext: ChannelNowNext = {
+      generated_at: '2026-06-15T12:00:00Z',
+      channel: CHANNEL,
+      current: {
+        block_id: 'public-egress-on_air',
+        channel_id: 'public',
+        kind: 'live',
+        title: 'Council chamber camera',
+        starts_at: '2026-06-15T11:55:00Z',
+        duration_seconds: 300,
+        source_ref: 'Council chamber camera',
+        status: 'playing',
+      },
+      next: null,
+      fallback_active: false,
+      proof_boundary: 'egress-state-and-schedule-store',
+    }
+    const { getByText, queryByText } = render(<PlayoutPanel nowNext={nowNext} />)
+    expect(getByText('Council chamber camera')).toBeTruthy()
+    expect(getByText('Playing')).toBeTruthy()
+    expect(queryByText('No program on air')).toBeNull()
+    expect(getByText('Nothing scheduled')).toBeTruthy()
+  })
+})
+
+describe('PlayoutPlanPanel honest empty state (F-27)', () => {
+  it('says "Nothing scheduled" for an empty schedule-store plan', () => {
+    const plan: ChannelPlayoutPlan = {
+      generated_at: '2026-06-15T12:00:00Z',
+      channel: CHANNEL,
+      source: 'schedule-store',
+      blocks: [],
+      gap_blocks: [],
+      export_formats: ['json'],
+      proof_boundary: 'software-schedule-to-playout-plan',
+      not_claimed: [],
+    }
+    const { getByText, queryByText } = render(<PlayoutPlanPanel plan={plan} />)
+    expect(getByText('Nothing scheduled')).toBeTruthy()
+    expect(queryByText(/channel slate/)).toBeNull()
+    expect(queryByText('Loading schedule-to-playout plan...')).toBeNull()
+  })
+})
+
+describe('ProofPanel honest empty state (F-27)', () => {
+  const emptyProof: ChannelProofLog = {
+    generated_at: '2026-06-15T12:00:00Z',
+    channel: CHANNEL,
+    events: [],
+    export_formats: ['json', 'csv-ready'],
+    not_claimed: ['SDI or DeckLink output'],
+  }
+
+  it('says "No proof events yet" and hides the empty table', () => {
+    const { getByText, queryByText, container } = render(<ProofPanel proof={emptyProof} />)
+    expect(getByText('No proof events yet')).toBeTruthy()
+    expect(queryByText('Attached')).toBeNull()
+    const table = container.querySelector('table')
+    expect(table?.closest('[hidden]')).toBeTruthy()
+  })
+
+  it('renders a daemon proof event with captions "Not verified", never "Attached", when unproven', () => {
+    const proof: ChannelProofLog = {
+      ...emptyProof,
+      events: [
+        {
+          event_id: 'proof-1',
+          observed_at: '2026-06-15T12:00:00Z',
+          channel_id: 'public',
+          scheduled_block_id: null,
+          actual_kind: 'live',
+          actual_status: 'playing',
+          title: 'Council chamber camera',
+          source_ref: 'Council chamber camera',
+          failover_from: null,
+          failover_reason: null,
+          captions_attached: null,
+          machine_summary: 'public:ON_AIR:chamber',
+        },
+      ],
+    }
+    const { getByText, queryByText } = render(<ProofPanel proof={proof} />)
+    expect(getByText('Council chamber camera')).toBeTruthy()
+    expect(getByText('Not verified')).toBeTruthy()
+    expect(queryByText('Attached')).toBeNull()
+    expect(queryByText('No proof events yet')).toBeNull()
+  })
+})
+
+// beta.5 walkthrough F-29: Start was enabled (and accepted with 202) on a
+// channel with no outgoing-feed configuration; the daemon dropped it and the
+// state stayed Stopped with no reason shown.
+describe('EgressControlPanel Start gating (F-29)', () => {
+  function renderPanel(props: Partial<Parameters<typeof EgressControlPanel>[0]> = {}) {
+    return render(
+      <EgressControlPanel
+        channelId="public"
+        state={egressState('STOPPED')}
+        health={[]}
+        pendingCommand={null}
+        canControl
+        error={null}
+        onCommand={() => {}}
+        {...props}
+      />,
+    )
+  }
+
+  it('disables Start with the inline reason when the channel has no egress configuration', () => {
+    const onCommand = vi.fn()
+    const { getByRole, getByText } = renderPanel({ configured: false, onCommand })
+    const start = getByRole('button', { name: 'Start' }) as HTMLButtonElement
+    expect(start.disabled).toBe(true)
+    expect(getByText(START_WITHOUT_CONFIG_REASON)).toBeTruthy()
+    expect(start.getAttribute('aria-describedby')).toBe('egress-start-reason')
+    fireEvent.click(start)
+    expect(onCommand).not.toHaveBeenCalled()
+    // Stop stays available: it is a harmless no-op the daemon accepts.
+    expect((getByRole('button', { name: 'Stop' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('keeps Start disabled with a checking notice until the configuration list has loaded', () => {
+    const { getByRole, getByText } = renderPanel({ configured: undefined })
+    expect((getByRole('button', { name: 'Start' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(getByText('Checking for an outgoing-feed configuration...')).toBeTruthy()
+  })
+
+  it('enables Start once a configuration exists', () => {
+    const onCommand = vi.fn()
+    const { getByRole, queryByText } = renderPanel({ configured: true, onCommand })
+    const start = getByRole('button', { name: 'Start' }) as HTMLButtonElement
+    expect(start.disabled).toBe(false)
+    expect(queryByText(START_WITHOUT_CONFIG_REASON)).toBeNull()
+    fireEvent.click(start)
+    expect(onCommand).toHaveBeenCalledWith('start')
+  })
+
+  it('surfaces a not-applied alert when the daemon never left Stopped after a queued Start', () => {
+    const { getByRole } = renderPanel({
+      configured: true,
+      startNotApplied: { channelId: 'public', waitedSeconds: 20 },
+    })
+    const alert = getByRole('alert')
+    expect(alert.textContent).toContain('Start was queued but the feed did not start.')
+    expect(alert.textContent).toContain('within 20s')
+  })
+
+  it('shows the API 409 reason when the router refuses the start', () => {
+    const { getByRole } = renderPanel({
+      configured: true,
+      error: new ApiError(
+        'Conflict',
+        409,
+        'No outgoing-feed configuration for public. Apply a headend preset or the local rehearsal preset first.',
+      ),
+    })
+    expect(getByRole('alert').textContent).toContain('No outgoing-feed configuration for public.')
   })
 })

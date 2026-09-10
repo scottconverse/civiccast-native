@@ -52,7 +52,7 @@ from civiccast.auth.roles import require_any_role
 from civiccast.cable.channel import (
     ChannelProfile,
     PlayoutBlock,
-    build_channel_now_next,
+    build_sample_channel_now_next,
     default_channel_profiles,
 )
 from civiccast.platform.stores import resolve_app_store
@@ -213,7 +213,10 @@ def update_staff_channel_branding(
 )
 def read_channel_live_state(channel_id: str) -> LiveState:
     profile = _profile_or_404(channel_id)
-    now_next = build_channel_now_next(profile.channel_id)
+    # Seeded/sample feed by contract (proof_boundary says so below); the
+    # operator console's now/next uses the honest egress-state builder instead.
+    now_next = build_sample_channel_now_next(profile.channel_id)
+    assert now_next.current is not None  # sample contract always seeds a block
     return _live_state_from_block(profile, now_next.current)
 
 
@@ -225,7 +228,8 @@ def read_channel_live_state(channel_id: str) -> LiveState:
 )
 def read_channel_schedule_feed(channel_id: str) -> list[ScheduleFeedItem]:
     profile = _profile_or_404(channel_id)
-    now_next = build_channel_now_next(profile.channel_id)
+    now_next = build_sample_channel_now_next(profile.channel_id)
+    assert now_next.current is not None  # sample contract always seeds a block
     blocks = [now_next.current]
     if now_next.next is not None:
         blocks.append(now_next.next)

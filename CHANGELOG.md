@@ -188,6 +188,64 @@ below.
 
 ### Fixed
 
+- **Publish dashboard defaults to the Portal surface only (beta.5 walkthrough
+  F-23, safety).** Every approvable surface used to be pre-checked, so a
+  one-click "Approve and Publish selected" read "7 selected surface(s) publish
+  for real" -- Internet Archive, both local NAS archives, YouTube Live/VOD and
+  the cable file package included. `PublishDashboardScreen` now pre-checks
+  only the canonical Portal surface; archive and reach surfaces are opt-in
+  per approval. The confirm dialog names the surfaces it will publish
+  ("1 selected surface publishes for real: Portal.") instead of a bare count,
+  and a public-record asset with required archive surfaces left unselected
+  says so ("3 required archive surfaces not selected (...); this public-record
+  asset stays archive-pending until they are approved."). Vitest pins the
+  default selection, the warning, and that the confirm-dialog count matches
+  the request the API receives.
+
+- **Channels shows real playout state, never sample-contract rows (F-27).**
+  `civiccast/cable/channel.py`'s `build_channel_now_next` /
+  `build_channel_proof_log` / `build_channel_playout_plan` served the
+  deterministic sample contract ("Public live programming -- Playing",
+  "Captions: Attached") to the operator console on a channel whose outgoing
+  feed was Stopped and captions Off. The operator builders now read the
+  egress daemon's state row and persisted proof events plus the schedule
+  store: `ChannelNowNext.current` is `null` unless the daemon reports the
+  feed on air, `next` is the next scheduled premiere or `null`, the proof
+  log is the daemon's proof events (empty until the first start) with
+  `captions_attached: null` ("Not verified") because no caption decode-back
+  verdict travels with them, and an empty schedule is an empty plan (no
+  synthetic "channel slate" block). The sample contract survives only as
+  `build_sample_channel_*` for fixtures and the seeded app-platform feed,
+  labelled `proof_boundary="sample-contract"`. The Channels screen renders
+  "No program on air", "Nothing scheduled" and "No proof events yet" for
+  those states. Python tests cover the builders and the API shape on
+  ephemeral stores; vitest covers the empty states.
+
+- **Outgoing feed Start refuses without an egress configuration (F-29).**
+  `POST /api/staff/egress/channels/{id}/commands` accepted a `start` (202)
+  on a channel with no egress config; the daemon dropped it
+  (`ConfigInvalidError` into its own log) and the console stayed "Stopped"
+  with no reason. The router now answers 409 with the reason ("No
+  outgoing-feed configuration for {id}. Apply a headend preset or the local
+  rehearsal preset first."; disabled configs get their own 409). Stop/drain
+  stay accepted. The Channels screen disables Start with the same inline
+  reason until a configuration exists, and after an accepted Start it watches
+  the daemon state row for 20s and raises an alert ("Start was queued but
+  the feed did not start.") if the channel never leaves Stopped.
+
+- **Broadcast readiness separates the rehearsal result from the gate (F-21).**
+  The readiness card's headline said "Private rehearsal is blocked because a
+  required broadcast item is not ready" while its detail lines said the
+  rehearsal ran, passed preflight, finalized a recording and loaded the
+  resident preview. `RehearsalReport` now carries `rehearsal_result`
+  (`passed` / `failed` / `not_run`) and a `gate` object listing the required
+  items that block (red) or need attention (yellow), each with its next
+  step. A passed run behind a red gate reads "Rehearsal passed, but the
+  broadcast gate has N required item(s) not ready: Backup destination." and
+  the next step names the item and its fix. System Health renders
+  "Rehearsal result" and "Broadcast gate" as separate lines, and each
+  blocking item links to its check row.
+
 - **Seamless rollover no longer runs to EOS when the outgoing leg overruns its
   projected end.** Sandbox soak 39d852e (2026-09-09) showed every government
   channel rollover taking the 20s planned restart: with a boundary-aligned

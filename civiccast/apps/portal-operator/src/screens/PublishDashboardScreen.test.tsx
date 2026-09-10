@@ -796,3 +796,140 @@ describe('PublishDashboardScreen publish preflight panel', () => {
     expect(await findByText('Ready')).toBeTruthy()
   })
 })
+
+// beta.5 walkthrough F-23 (MAJOR, safety): the default selection used to be
+// every approvable surface, so a one-click approval read "7 selected
+// surface(s) publish for real" -- Internet Archive, both NAS archives, YouTube
+// Live/VOD and the cable package included. Default is Portal only; the rest
+// are opt-in per approval, and the confirm dialog names what it publishes.
+function sevenSurfaceDashboard(): PublishDashboardResponse {
+  const pending = (
+    id: string,
+    label: string,
+    kind: 'canonical' | 'archive' | 'reach' | 'record',
+    required: boolean,
+  ) => ({
+    id,
+    label,
+    kind,
+    state: 'pending' as const,
+    approval: 'pending' as const,
+    required,
+    url: null,
+    last_attempt_at: null,
+    completed_at: null,
+    health: 'unknown' as const,
+    message: `${label} is waiting for approval.`,
+    next_step: 'Approve publish.',
+    simulated: false,
+  })
+  return {
+    summary: {
+      total_assets: 1,
+      draft: 1,
+      portal_live: 0,
+      archive_verified: 0,
+      degraded: 0,
+      needs_operator_action: 0,
+    },
+    assets: [
+      {
+        asset_id: 'sample-asset',
+        title: 'Sample asset',
+        dashboard_state: 'draft',
+        dashboard_label: 'Draft',
+        canonical_public: false,
+        archive_verified: false,
+        reach_degraded: false,
+        needs_operator_action: false,
+        public_record_required: true,
+        published_at: null,
+        surfaces: [
+          pending('portal', 'Portal', 'canonical', true),
+          pending('internet-archive', 'Internet Archive', 'archive', true),
+          pending('local-nas-rsync', 'Local NAS rsync', 'archive', true),
+          pending('local-nas-zfs', 'Local NAS ZFS', 'archive', true),
+          pending('youtube-live', 'YouTube Live', 'reach', false),
+          pending('youtube-vod', 'YouTube VOD', 'reach', false),
+          pending('cable-file-package', 'Cable file package', 'record', false),
+        ],
+      },
+    ],
+  }
+}
+
+describe('PublishDashboardScreen default surface selection (F-23)', () => {
+  beforeEach(() => {
+    vi.mocked(listPublishAssets).mockResolvedValue(sevenSurfaceDashboard())
+  })
+
+  it('pre-checks the Portal surface only; archive and reach surfaces start unchecked', async () => {
+    const { findAllByLabelText } = renderScreen()
+
+    const boxes = (await findAllByLabelText(/Approve this surface/i)) as HTMLInputElement[]
+    expect(boxes).toHaveLength(7)
+    const checked = boxes.filter((box) => box.checked)
+    expect(checked).toHaveLength(1)
+    // The checked box belongs to the Portal row.
+    expect(checked[0].closest('[data-surface-id]')?.getAttribute('data-surface-id')).toBe('portal')
+  })
+
+  it('warns that required archive surfaces are not selected', async () => {
+    const { findByTestId } = renderScreen()
+
+    const warning = await findByTestId('required-surfaces-unselected')
+    expect(warning.textContent).toContain('3 required archive surfaces not selected')
+    expect(warning.textContent).toContain('Internet Archive, Local NAS rsync, Local NAS ZFS')
+    expect(warning.textContent).toContain('stays archive-pending')
+  })
+
+  it('confirm dialog count and names match the default selection and the request', async () => {
+    vi.mocked(approvePublishAsset).mockResolvedValue({} as never)
+    const { findByRole, findByText } = renderScreen()
+
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish selected' }))
+    expect(await findByText(/1 selected surface publishes for real: Portal\./)).toBeTruthy()
+    expect(
+      await findByText(/becomes publicly visible to residents immediately/),
+    ).toBeTruthy()
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish' }))
+
+    await waitFor(() =>
+      expect(approvePublishAsset).toHaveBeenCalledWith(
+        'sample-asset',
+        expect.objectContaining({ approved_surface_ids: ['portal'], overrides: [] }),
+      ),
+    )
+  })
+
+  it('an opted-in archive surface is named in the confirm dialog and sent with the request', async () => {
+    vi.mocked(approvePublishAsset).mockResolvedValue({} as never)
+    const { findAllByLabelText, findByRole, findByText, queryByTestId } = renderScreen()
+
+    const boxes = (await findAllByLabelText(/Approve this surface/i)) as HTMLInputElement[]
+    const iaBox = boxes.find(
+      (box) => box.closest('[data-surface-id]')?.getAttribute('data-surface-id') === 'internet-archive',
+    )
+    expect(iaBox).toBeTruthy()
+    expect((iaBox as HTMLInputElement).checked).toBe(false)
+    fireEvent.click(iaBox as HTMLInputElement)
+    await waitFor(() =>
+      expect(queryByTestId('required-surfaces-unselected')?.textContent).toContain(
+        '2 required archive surfaces not selected (Local NAS rsync, Local NAS ZFS)',
+      ),
+    )
+
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish selected' }))
+    expect(
+      await findByText(/2 selected surfaces publish for real: Portal, Internet Archive\./),
+    ).toBeTruthy()
+    fireEvent.click(await findByRole('button', { name: 'Approve and Publish' }))
+
+    await waitFor(() =>
+      expect(approvePublishAsset).toHaveBeenCalledWith(
+        'sample-asset',
+        expect.objectContaining({ approved_surface_ids: ['portal', 'internet-archive'] }),
+      ),
+    )
+  })
+})

@@ -2401,7 +2401,7 @@ Queue an egress daemon command.
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `channel_id` (path, required): `string`
 - Request body: `EgressCommandRequest`
-- Responses: 202 `EgressCommandResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
+- Responses: 202 `EgressCommandResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 409 Start refused: the channel has no outgoing-feed configuration (or it is disabled); 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
 ### `POST /api/staff/egress/channels/{channel_id}/compliance-probe`
 
@@ -5128,6 +5128,20 @@ Read CivicCast local federation metadata.
 
 - `file` (required): `string`
 
+### `BroadcastGate`
+
+- `attention` (optional): `Array<BroadcastGateItem>`
+- `blocking` (optional): `Array<BroadcastGateItem>`
+- `color` (required): `'green' | 'yellow' | 'red'`
+- `summary` (required): `string`
+
+### `BroadcastGateItem`
+
+- `color` (required): `'green' | 'yellow' | 'red'`
+- `id` (required): `string`
+- `label` (required): `string`
+- `next_step` (required): `string`
+
 ### `BrokenMediaGateResult`
 
 - `blocking_findings` (optional): `Array<string>`
@@ -5484,7 +5498,7 @@ Read CivicCast local federation metadata.
 ### `ChannelNowNext`
 
 - `channel` (required): `ChannelProfile`
-- `current` (required): `PlayoutBlock`
+- `current` (required): `PlayoutBlock | null`
 - `fallback_active` (required): `boolean`
 - `generated_at` (required): `string`
 - `next` (required): `PlayoutBlock | null`
@@ -5516,14 +5530,14 @@ Read CivicCast local federation metadata.
 
 - `actual_kind` (required): `'live' | 'file' | 'slate' | 'bulletin' | 'rerun' | 'fallback'`
 - `actual_status` (required): `'scheduled' | 'playing' | 'completed' | 'failed' | 'fallback'`
-- `captions_attached` (required): `boolean`
+- `captions_attached` (required): `boolean | null`
 - `channel_id` (required): `string`
 - `event_id` (required): `string`
 - `failover_from` (optional): `string | null`
 - `failover_reason` (optional): `string | null`
 - `machine_summary` (required): `string`
 - `observed_at` (required): `string`
-- `scheduled_block_id` (required): `string`
+- `scheduled_block_id` (optional): `string | null`
 - `source_ref` (required): `string`
 - `title` (required): `string`
 
@@ -8087,12 +8101,14 @@ rule (S13 §5.1).
 
 - `checks` (required): `Array<SystemHealthCheck>`
 - `evidence` (optional): `Array<string>`
+- `gate` (required): `BroadcastGate`
 - `message` (required): `string`
 - `next_step` (required): `string`
 - `private_session_id` (optional): `string | null`
 - `recording_asset_id` (optional): `string | null`
 - `recording_uri` (optional): `string | null`
 - `rehearsal_id` (required): `string`
+- `rehearsal_result` (required): `'passed' | 'failed' | 'not_run'`
 - `resident_preview` (required): `ResidentPreview`
 - `resident_preview_proof` (optional): `string | null`
 - `safe_to_broadcast` (required): `'green' | 'yellow' | 'red'`

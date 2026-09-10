@@ -21,9 +21,12 @@ from civiccast.cable.channel import (
     build_channel_proof_log,
     build_ctv_feed,
     default_channel_profiles,
+    get_channel_profile,
 )
 from civiccast.captions.live_sidecar import active_caption_sidecar
 from civiccast.egress.automation import default_egress_work_dir
+from civiccast.egress.router import get_egress_store
+from civiccast.egress.store import EgressStore
 from civiccast.schedule.models import SCHEDULE_STATE_SCHEDULED, ScheduleItemResponse
 from civiccast.schedule.router import get_schedule_store
 
@@ -65,7 +68,7 @@ def public_channel_captions_vtt(
     channel_id: str,
     work_dir: Path = Depends(default_egress_work_dir),
 ) -> Response:
-    _channel_now_next_or_404(channel_id)
+    _require_channel_profile(channel_id)
     root = work_dir.expanduser().resolve()
     sidecar = active_caption_sidecar(root, channel_id).resolve()
     try:
@@ -92,8 +95,12 @@ def public_channel_captions_vtt(
     summary="Read public now/next state for a channel",
     responses={404: {"description": "Channel profile not found"}},
 )
-def public_channel_now_next(channel_id: str) -> ChannelNowNext:
-    return _channel_now_next_or_404(channel_id)
+def public_channel_now_next(
+    channel_id: str,
+    egress_store: EgressStore | None = Depends(get_egress_store),
+    schedule_store: Any = Depends(get_schedule_store),
+) -> ChannelNowNext:
+    return _channel_now_next_or_404(channel_id, egress_store, schedule_store)
 
 
 @staff_router.get(
@@ -113,8 +120,12 @@ def list_staff_channels() -> list[ChannelProfile]:
     responses={404: {"description": "Channel profile not found"}},
     dependencies=[Depends(require_any_role(*ALL_OPERATOR_ROLES))],
 )
-def staff_channel_now_next(channel_id: str) -> ChannelNowNext:
-    return _channel_now_next_or_404(channel_id)
+def staff_channel_now_next(
+    channel_id: str,
+    egress_store: EgressStore | None = Depends(get_egress_store),
+    schedule_store: Any = Depends(get_schedule_store),
+) -> ChannelNowNext:
+    return _channel_now_next_or_404(channel_id, egress_store, schedule_store)
 
 
 @staff_router.get(
@@ -124,11 +135,23 @@ def staff_channel_now_next(channel_id: str) -> ChannelNowNext:
     responses={404: {"description": "Channel profile not found"}},
     dependencies=[Depends(require_any_role(*ALL_OPERATOR_ROLES))],
 )
-def staff_channel_proof_log(channel_id: str) -> ChannelProofLog:
-    try:
-        return build_channel_proof_log(channel_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+def staff_channel_proof_log(
+    channel_id: str,
+    egress_store: EgressStore | None = Depends(get_egress_store),
+) -> ChannelProofLog:
+    """Proof log built only from persisted egress daemon proof events.
+
+    Without a durable egress store (or before the daemon has aired anything)
+    the log is empty; the console renders "No proof events yet". It never
+    falls back to sample-contract rows (beta.5 walkthrough F-27).
+    """
+    _require_channel_profile(channel_id)
+    proof_events = (
+        egress_store.recent_proof_events(channel_id, _PROOF_LOG_LIMIT)
+        if egress_store is not None
+        else None
+    )
+    return build_channel_proof_log(channel_id, proof_events=proof_events)
 
 
 @staff_router.get(
@@ -142,20 +165,48 @@ def staff_channel_playout_plan(
     channel_id: str,
     schedule_store: Any = Depends(get_schedule_store),
 ) -> ChannelPlayoutPlan:
-    try:
-        rows: list[ScheduleItemResponse] | None = None
-        if schedule_store is not None:
-            rows = cast(
-                list[ScheduleItemResponse],
-                schedule_store.list(channel_id=channel_id, states=(SCHEDULE_STATE_SCHEDULED,)),
-            )
-        return build_channel_playout_plan(channel_id, schedule_items=rows)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    _require_channel_profile(channel_id)
+    return build_channel_playout_plan(
+        channel_id, schedule_items=_scheduled_rows(schedule_store, channel_id)
+    )
 
 
-def _channel_now_next_or_404(channel_id: str) -> ChannelNowNext:
-    try:
-        return build_channel_now_next(channel_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+_PROOF_LOG_LIMIT = 200
+
+
+def _require_channel_profile(channel_id: str) -> ChannelProfile:
+    profile = get_channel_profile(channel_id)
+    if profile is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Unknown channel profile: {channel_id}",
+        )
+    return profile
+
+
+def _scheduled_rows(schedule_store: Any, channel_id: str) -> list[ScheduleItemResponse] | None:
+    if schedule_store is None:
+        return None
+    return cast(
+        list[ScheduleItemResponse],
+        schedule_store.list(channel_id=channel_id, states=(SCHEDULE_STATE_SCHEDULED,)),
+    )
+
+
+def _channel_now_next_or_404(
+    channel_id: str,
+    egress_store: EgressStore | None,
+    schedule_store: Any,
+) -> ChannelNowNext:
+    """Now/next from the daemon state row plus scheduled premieres.
+
+    No egress store or no state row means nothing is on air (``current`` is
+    ``None``); the console renders "No program on air" (F-27).
+    """
+    _require_channel_profile(channel_id)
+    egress_state = egress_store.read_state(channel_id) if egress_store is not None else None
+    return build_channel_now_next(
+        channel_id,
+        schedule_items=_scheduled_rows(schedule_store, channel_id),
+        egress_state=egress_state,
+    )

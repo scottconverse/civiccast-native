@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from civiccast.egress.models import EgressProofEvent, EgressStateRow
 from civiccast.schedule.models import ScheduleItemResponse
 
 ChannelKind = Literal["public", "education", "government", "community"]
@@ -80,7 +81,10 @@ class ChannelNowNext(BaseModel):
 
     generated_at: datetime
     channel: ChannelProfile
-    current: PlayoutBlock
+    # ``None`` when nothing is on air: the outgoing feed is stopped or has no
+    # daemon state row yet. The console renders "No program on air" for it
+    # rather than a fabricated block (beta.5 walkthrough F-27).
+    current: PlayoutBlock | None
     next: PlayoutBlock | None
     fallback_active: bool
     proof_boundary: str
@@ -94,14 +98,19 @@ class ChannelProofEvent(BaseModel):
     event_id: str = Field(min_length=1, max_length=120)
     observed_at: datetime
     channel_id: str = Field(min_length=1, max_length=80)
-    scheduled_block_id: str = Field(min_length=1, max_length=120)
+    # ``None`` when the daemon put something on air that no schedule block
+    # claimed (operator start, takeover, fallback slate).
+    scheduled_block_id: str | None = Field(default=None, min_length=1, max_length=120)
     actual_kind: PlayoutKind
     actual_status: PlayoutStatus
     title: str = Field(min_length=1, max_length=200)
     source_ref: str = Field(min_length=1, max_length=500)
     failover_from: str | None = Field(default=None, max_length=120)
     failover_reason: str | None = Field(default=None, max_length=500)
-    captions_attached: bool
+    # ``None`` means "not verified": the egress proof event does not carry a
+    # caption decode-back verdict, and the console must not print "Attached"
+    # for captions nobody proved (F-27).
+    captions_attached: bool | None
     machine_summary: str = Field(min_length=1)
 
 
@@ -125,6 +134,8 @@ class ChannelPlayoutPlan(BaseModel):
     generated_at: datetime
     channel: ChannelProfile
     source: Literal["schedule-store", "sample-contract"]
+    # Empty when nothing is scheduled. The operator plan never falls back to
+    # sample-contract blocks; that source is reserved for test fixtures.
     blocks: list[PlayoutBlock]
     gap_blocks: list[PlayoutBlock]
     export_formats: list[str]
@@ -221,26 +232,150 @@ def get_channel_profile(channel_id: str) -> ChannelProfile | None:
     return None
 
 
-def build_channel_now_next(channel_id: str, *, now: datetime | None = None) -> ChannelNowNext:
-    """Build deterministic now/next state for a channel profile."""
+_ON_AIR_EGRESS_STATES: frozenset[str] = frozenset(
+    {"ON_AIR", "TRANSITIONING", "FALLBACK_SLATE", "DRAINING"}
+)
+
+NOW_NEXT_PROOF_BOUNDARY = "egress-state-and-schedule-store"
+PLAYOUT_PLAN_PROOF_BOUNDARY = "software-schedule-to-playout-plan"
+SAMPLE_PROOF_BOUNDARY = "sample-contract"
+
+_PROOF_LOG_NOT_CLAIMED = [
+    "SDI or DeckLink output",
+    "Comcast/headend delivery proof",
+    "Roku Channel Store publication",
+]
+_PLAYOUT_PLAN_NOT_CLAIMED = [
+    "hardware playout device control",
+    "SDI or DeckLink output",
+    "Comcast/headend delivery proof",
+]
+
+
+def build_channel_now_next(
+    channel_id: str,
+    *,
+    now: datetime | None = None,
+    schedule_items: list[ScheduleItemResponse] | None = None,
+    egress_state: EgressStateRow | None = None,
+) -> ChannelNowNext:
+    """Build now/next from what the egress daemon and schedule store really report.
+
+    ``current`` is only populated while the daemon reports the feed on air
+    (``ON_AIR``/``TRANSITIONING``/``FALLBACK_SLATE``/``DRAINING``). A stopped
+    feed, a missing state row, or a channel with no daemon at all yields
+    ``current=None`` -- the console says "No program on air". ``next`` is the
+    first scheduled premiere that has not finished yet, or ``None``.
+    """
 
     profile = _require_profile(channel_id)
     current_time = (now or datetime.now(UTC)).astimezone(UTC)
-    blocks = _sample_playout_blocks(profile, current_time)
-    current = blocks[0]
-    next_block = blocks[1] if len(blocks) > 1 else None
+    scheduled = _blocks_from_schedule(profile, schedule_items or [])
+    upcoming = [
+        block
+        for block in scheduled
+        if block.starts_at + timedelta(seconds=block.duration_seconds) > current_time
+    ]
+    current: PlayoutBlock | None = None
+    if egress_state is not None and egress_state.state in _ON_AIR_EGRESS_STATES:
+        current = _block_from_egress_state(profile, egress_state, upcoming, current_time)
+    next_block: PlayoutBlock | None = None
+    for block in upcoming:
+        if current is not None and block.block_id == current.block_id:
+            continue
+        next_block = block
+        break
     return ChannelNowNext(
         generated_at=current_time,
         channel=profile,
         current=current,
         next=next_block,
-        fallback_active=current.status == "fallback",
-        proof_boundary="software-schedule-and-playout-contract",
+        fallback_active=egress_state is not None and egress_state.state == "FALLBACK_SLATE",
+        proof_boundary=NOW_NEXT_PROOF_BOUNDARY,
     )
 
 
-def build_channel_proof_log(channel_id: str, *, now: datetime | None = None) -> ChannelProofLog:
-    """Build an operator-readable proof log from the current software plan."""
+def build_channel_proof_log(
+    channel_id: str,
+    *,
+    now: datetime | None = None,
+    proof_events: list[EgressProofEvent] | None = None,
+) -> ChannelProofLog:
+    """Build the operator proof log from persisted egress daemon proof events.
+
+    No daemon events means an empty log -- the console says "No proof events
+    yet". Nothing here is synthesised from the plan.
+    """
+
+    profile = _require_profile(channel_id)
+    current_time = (now or datetime.now(UTC)).astimezone(UTC)
+    events = [
+        _proof_event_from_egress(profile, event)
+        for event in sorted(proof_events or [], key=lambda row: row.observed_at, reverse=True)
+        if event.channel_id == profile.channel_id
+    ]
+    return ChannelProofLog(
+        generated_at=current_time,
+        channel=profile,
+        events=events,
+        export_formats=["json", "csv-ready"],
+        not_claimed=_PROOF_LOG_NOT_CLAIMED,
+    )
+
+
+def build_channel_playout_plan(
+    channel_id: str,
+    *,
+    schedule_items: list[ScheduleItemResponse] | None = None,
+    now: datetime | None = None,
+) -> ChannelPlayoutPlan:
+    """Build a software playout plan from scheduled rows only.
+
+    An empty schedule yields an empty plan (``blocks == []``); the operator
+    view never receives sample-contract blocks.
+    """
+
+    profile = _require_profile(channel_id)
+    current_time = (now or datetime.now(UTC)).astimezone(UTC)
+    blocks = _blocks_from_schedule(profile, schedule_items or [])
+    return ChannelPlayoutPlan(
+        generated_at=current_time,
+        channel=profile,
+        source="schedule-store",
+        blocks=blocks,
+        gap_blocks=_gap_blocks(profile, blocks),
+        export_formats=["json", "csv-ready"],
+        proof_boundary=PLAYOUT_PLAN_PROOF_BOUNDARY,
+        not_claimed=_PLAYOUT_PLAN_NOT_CLAIMED,
+    )
+
+
+def build_sample_channel_now_next(
+    channel_id: str, *, now: datetime | None = None
+) -> ChannelNowNext:
+    """Deterministic sample now/next for fixtures and the seeded app-platform feed.
+
+    Never wire this into the operator console: it invents a playing block.
+    """
+
+    profile = _require_profile(channel_id)
+    current_time = (now or datetime.now(UTC)).astimezone(UTC)
+    blocks = _sample_playout_blocks(profile, current_time)
+    current = blocks[0]
+    return ChannelNowNext(
+        generated_at=current_time,
+        channel=profile,
+        current=current,
+        next=blocks[1] if len(blocks) > 1 else None,
+        fallback_active=current.status == "fallback",
+        proof_boundary=SAMPLE_PROOF_BOUNDARY,
+    )
+
+
+def build_sample_channel_proof_log(
+    channel_id: str, *, now: datetime | None = None
+) -> ChannelProofLog:
+    """Deterministic sample proof log for fixtures. Not for the operator console."""
 
     profile = _require_profile(channel_id)
     current_time = (now or datetime.now(UTC)).astimezone(UTC)
@@ -270,44 +405,88 @@ def build_channel_proof_log(channel_id: str, *, now: datetime | None = None) -> 
         channel=profile,
         events=events,
         export_formats=["json", "csv-ready"],
-        not_claimed=[
-            "SDI or DeckLink output",
-            "Comcast/headend delivery proof",
-            "Roku Channel Store publication",
-        ],
+        not_claimed=_PROOF_LOG_NOT_CLAIMED,
     )
 
 
-def build_channel_playout_plan(
-    channel_id: str,
-    *,
-    schedule_items: list[ScheduleItemResponse] | None = None,
-    now: datetime | None = None,
+def build_sample_channel_playout_plan(
+    channel_id: str, *, now: datetime | None = None
 ) -> ChannelPlayoutPlan:
-    """Build a software playout plan from scheduled rows or sample contract blocks."""
+    """Deterministic sample plan (``source="sample-contract"``) for fixtures only."""
 
     profile = _require_profile(channel_id)
     current_time = (now or datetime.now(UTC)).astimezone(UTC)
-    if schedule_items:
-        blocks = _blocks_from_schedule(profile, schedule_items)
-        source: Literal["schedule-store", "sample-contract"] = "schedule-store"
-    else:
-        blocks = _sample_playout_blocks(profile, current_time)
-        source = "sample-contract"
-    gap_blocks = _gap_blocks(profile, blocks)
+    blocks = _sample_playout_blocks(profile, current_time)
     return ChannelPlayoutPlan(
         generated_at=current_time,
         channel=profile,
-        source=source,
+        source="sample-contract",
         blocks=blocks,
-        gap_blocks=gap_blocks,
+        gap_blocks=_gap_blocks(profile, blocks),
         export_formats=["json", "csv-ready"],
-        proof_boundary="software-schedule-to-playout-plan",
-        not_claimed=[
-            "hardware playout device control",
-            "SDI or DeckLink output",
-            "Comcast/headend delivery proof",
-        ],
+        proof_boundary=SAMPLE_PROOF_BOUNDARY,
+        not_claimed=_PLAYOUT_PLAN_NOT_CLAIMED,
+    )
+
+
+def _block_from_egress_state(
+    profile: ChannelProfile,
+    state: EgressStateRow,
+    upcoming: list[PlayoutBlock],
+    now: datetime,
+) -> PlayoutBlock:
+    """Project the daemon's on-air state onto a playout block.
+
+    If a scheduled block covers ``now`` it is reported as the playing block
+    (its title and duration are real). Otherwise the block is built from the
+    daemon row alone: its title is the daemon's source label and its duration
+    is the time on air so far -- nothing is invented about what comes next.
+    """
+
+    fallback = state.state == "FALLBACK_SLATE"
+    for block in upcoming:
+        if block.starts_at <= now:
+            return block.model_copy(
+                update={
+                    "status": "fallback" if fallback else "playing",
+                    "kind": "fallback" if fallback else block.kind,
+                    "failover_from": block.source_ref if fallback else None,
+                    "failover_reason": state.last_error if fallback else None,
+                }
+            )
+    started = state.updated_at.astimezone(UTC)
+    elapsed = max(1, int((now - started).total_seconds()))
+    label = state.current_source_label or f"{profile.branding.short_name} outgoing feed"
+    return PlayoutBlock(
+        block_id=f"{profile.channel_id}-egress-{state.state.lower()}",
+        channel_id=profile.channel_id,
+        kind="fallback" if fallback else "live",
+        title=label,
+        starts_at=started,
+        duration_seconds=elapsed,
+        source_ref=state.current_source_label or f"egress-{profile.channel_id}",
+        status="fallback" if fallback else "playing",
+        failover_reason=state.last_error if fallback else None,
+    )
+
+
+def _proof_event_from_egress(profile: ChannelProfile, event: EgressProofEvent) -> ChannelProofEvent:
+    fallback = event.state == "FALLBACK_SLATE"
+    on_air = event.state in _ON_AIR_EGRESS_STATES
+    status: PlayoutStatus = "fallback" if fallback else ("playing" if on_air else "completed")
+    if event.state == "ERROR":
+        status = "failed"
+    return ChannelProofEvent(
+        event_id=event.event_id,
+        observed_at=event.observed_at,
+        channel_id=profile.channel_id,
+        scheduled_block_id=None,
+        actual_kind="fallback" if fallback else "live",
+        actual_status=status,
+        title=event.source_label,
+        source_ref=event.source_ref or event.source_label,
+        captions_attached=None,
+        machine_summary=event.machine_summary,
     )
 
 
@@ -465,21 +644,9 @@ def _blocks_from_schedule(
                 caption_refs=[f"{item.asset_id}.vtt"],
             )
         )
-    if blocks:
-        return blocks
-    now = datetime.now(UTC).replace(second=0, microsecond=0)
-    return [
-        PlayoutBlock(
-            block_id=f"{profile.channel_id}-empty-slate",
-            channel_id=profile.channel_id,
-            kind="slate",
-            title=f"{profile.branding.short_name} channel slate",
-            starts_at=now,
-            duration_seconds=1800,
-            source_ref=profile.default_slate_asset_id or f"slate-{profile.channel_id}",
-            status="scheduled",
-        )
-    ]
+    # An empty schedule is an empty plan. The old "channel slate" placeholder
+    # block made a bare channel look programmed (beta.5 walkthrough F-27).
+    return blocks
 
 
 def _gap_blocks(profile: ChannelProfile, blocks: list[PlayoutBlock]) -> list[PlayoutBlock]:

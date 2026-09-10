@@ -27,6 +27,11 @@ StationOperationMode = Literal["test", "on_air"]
 StationDashboardReadyState = Literal["ready", "not_ready"]
 SystemHealthCheckState = Literal["ready", "needs_attention", "needs_it_help", "not_set_up"]
 RehearsalStatus = Literal["ready", "needs_attention", "blocked"]
+# What the rehearsal run itself did, independent of the broadcast gate:
+# "passed" = a private session ran, passed preflight and finalized a recording;
+# "failed" = it started and stopped short; "not_run" = a precondition
+# (storage, sample media, durable services) kept it from starting.
+RehearsalResult = Literal["passed", "failed", "not_run"]
 ResidentPreviewStatus = Literal["available", "not_configured"]
 TesterReadinessState = Literal["ready", "needs_attention", "not_set_up", "needs_it_help"]
 ProviderReadinessStatus = Literal["ready", "not_set_up", "needs_live_proof", "needs_it_help"]
@@ -532,6 +537,34 @@ class SystemHealthReport(BaseModel):
     latest_resource_sample: SystemResourceSample | None = None
 
 
+class BroadcastGateItem(BaseModel):
+    """One required System Health check the broadcast gate is waiting on."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: Annotated[str, Field(min_length=1, max_length=80)]
+    label: Annotated[str, Field(min_length=1, max_length=120)]
+    color: SafeToBroadcastColor
+    next_step: Annotated[str, Field(min_length=1)]
+
+
+class BroadcastGate(BaseModel):
+    """The required-items gate, reported separately from the rehearsal run.
+
+    beta.5 walkthrough F-21: the headline used to say "rehearsal is blocked"
+    while the detail lines said the rehearsal ran and passed. The gate is a
+    property of the station's required checks, not of the run -- so it is its
+    own object, naming the items that block (red) or need attention (yellow).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    color: SafeToBroadcastColor
+    blocking: list[BroadcastGateItem] = Field(default_factory=list)
+    attention: list[BroadcastGateItem] = Field(default_factory=list)
+    summary: Annotated[str, Field(min_length=1)]
+
+
 class RehearsalReport(BaseModel):
     """Private first-broadcast rehearsal result."""
 
@@ -541,6 +574,8 @@ class RehearsalReport(BaseModel):
     started_at: datetime
     status: RehearsalStatus
     safe_to_broadcast: SafeToBroadcastColor
+    rehearsal_result: RehearsalResult
+    gate: BroadcastGate
     message: Annotated[str, Field(min_length=1)]
     resident_preview: ResidentPreview
     checks: list[SystemHealthCheck]
