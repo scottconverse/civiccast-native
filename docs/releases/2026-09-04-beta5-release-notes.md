@@ -39,8 +39,8 @@ complete before `v1.0.0-beta.5` is tagged.
 | 3 / 3b | post-#176 sandbox candidates | sandbox runs 11-13 crash-looped (items 78, 79, 82); reload-commit wedge (item 85) found in runs 12/14/15 | no |
 | `66e02c4` (post-#190) | built; Gate A `34069809445` cancelled without a verdict | no verdict either way | no |
 | `be1260b` / `9bf3883` (Codex 09-08) | signed builds `34231404699` / `34234158877` cancelled so the final candidate carries #193's settlement fix and the corrected handbook; the installed `be1260` kit reproduced the program-change deadlock on the tester and in the sandbox | no |
-| 09-09 candidate 1 | `39d852e5` (post-#199 `main`) | soak 1 FAIL: 2 unplanned relaunches on `government` + 1 aborted reload on `education`; soak 2 FAIL: 5 unplanned relaunches across all channels (captions ON); soak 3 (ASR/caption tap off): 0 stalls, 0 unplanned, FAIL only on `government`'s lost-horizon planned restart x2 -- which led to #203 (captions OFF by default) and #204 (stale-horizon race) | no (superseded) |
-| **09-09 candidate 2 (final)** | `148c8d21` (post-#205 `main`; the tagged commit may be this PR's docs-only merge on top of it) | see "Verification (tonight)" | pending |
+| 09-09 candidate 1 | `39d852e5` (post-#199 `main`) | soak 1 FAIL: 2 unplanned relaunches on `government` + 1 aborted reload on `education`; soak 2 FAIL: 5 unplanned relaunches across all channels (captions ON); soak 3 (ASR/caption tap off): 0 stalls, 0 unplanned, FAIL only on `government`'s lost-horizon planned restart x2 -- which led to #203 (captions OFF by default) and #204 (stale-horizon race). Evidence dirs: `soak-39d852e-20260909-180106Z`, `soak-39d852e-20260909-183511Z`, `soak-39d852e-20260909-191010Z` (under `cc-sbsoak-run\sandbox-lab\soak-output\`) | no (superseded) |
+| **09-09 candidate 2 (final)** | `148c8d21` (post-#205 `main`; build `34405681086`, Gate A `34423542177`; the tagged commit may be this PR's docs-only merge on top of it) | sandbox soak 1 FAIL (1 unplanned `government` relaunch, the known reload commit wedge, self-healed; 0 stalls); Gate A clean PASS, cross-version and download-only lanes in progress -- see "Verification (tonight)" | pending |
 
 ### What changed since `v1.0.0-beta.4` (every merged PR, `git log v1.0.0-beta.4..main`)
 
@@ -282,7 +282,8 @@ LPM is on `v1.0.0-beta.4`. The supported path is exactly the one Gate A's
 2. Verify before running -- both checks are required, in this order:
    - `Get-FileHash .\setup.exe -Algorithm SHA256` must equal the
      `setup.exe` line in `SHA256SUMS.txt` **and** the "Assets" table in
-     the GitHub Release body (`TBD-EVIDENCE-INSTALLER-SHA256` below).
+     the GitHub Release body (`775b9a3e63a94183f1c065bb4168d03c0aeb2d72d608c1dbed5c875a94e05842`, 289,302,104 bytes; see the
+     "Verification (tonight)" table below).
    - `Get-AuthenticodeSignature .\setup.exe` must report `Valid` with
      signer `Scott Converse`. A SmartScreen "Windows protected your PC"
      prompt on a fresh certificate is reputation, not a signature failure
@@ -371,7 +372,7 @@ Numbering follows the batch-fix item list used throughout `CHANGELOG.md`;
    the box driven to 100% CPU, **20 of 24** program-change runs committed
    cleanly on the #199 head, against **0 of 3** on the head before #199;
    the remaining 4 wedged and were terminated and relaunched by the
-   daemon (a blip, not a stuck channel). Evidence path: `TBD-EVIDENCE-ROUND2-LOAD-RUNS`.
+   daemon (a blip, not a stuck channel). Evidence: measured by the round-2 hostile review of PR #199 on 2026-09-09 (24 loaded runs, 4 failures, 100% CPU); raw logs were in a session scratchpad and were not retained; the tally is recorded in the PR #199 review thread and `CHANGELOG.md`.
    The follow-up is draft PR #202; it is not in beta.5.
 3. **The playout worker can crash at channel stop (`0xC0000005`).** Found
    by #202's builder while working the reload wedge: at stop, the
@@ -474,20 +475,44 @@ an evidence path. The publish command must not run while any token remains.
 | what | value | evidence |
 | --- | --- | --- |
 | Source SHA (candidate cut) | `148c8d21` (09-09 candidate 2; `git rev-parse` of the tagged commit if the tag lands on this PR's docs-only merge on top of it) | `git rev-parse` on the tagged commit |
-| Build run (`native-beta-candidate-artifacts`) | `TBD-EVIDENCE-BUILD-RUN-ID` | Actions run URL, conclusion `success` |
-| Kit SHA (kit-staging directory name = source SHA) and `station_index_sha256` | `TBD-EVIDENCE-KIT-SHA` / `TBD-EVIDENCE-STATION-INDEX-SHA256` | `C:\CivicCastTester\kit-staging\<sha>\` (copied to `kit-safe` before any build prunes it) |
-| `setup.exe` SHA-256 | `TBD-EVIDENCE-INSTALLER-SHA256` | `Get-FileHash` on the kit's `setup.exe`; must match `SHA256SUMS.txt` and the sidecar |
-| `setup.exe` Authenticode | `TBD-EVIDENCE-AUTHENTICODE-STATUS` (`Valid`, signer `Scott Converse`) | `Get-AuthenticodeSignature` |
-| Sandbox 15-min soak of candidate 2 (`148c8d21` kit), seamless ON, captions at the shipped default (OFF, #203), the 4 real LPM sample clips, normal logging -- run 1 | `TBD-EVIDENCE-SANDBOX-SOAK-1-VERDICT` (PASS/FAIL/HARNESS_ERROR; unplanned relaunches; reload arms/commits/aborts; TSDuck packets/invalid syncs/transport errors) | `sandbox-lab` evidence dir `TBD-EVIDENCE-SANDBOX-SOAK-1-DIR` |
-| Sandbox 15-min soak, same configuration -- run 2 | `TBD-EVIDENCE-SANDBOX-SOAK-2-VERDICT` | `TBD-EVIDENCE-SANDBOX-SOAK-2-DIR` |
-| Sandbox 15-min soak, same configuration -- run 3 | `TBD-EVIDENCE-SANDBOX-SOAK-3-VERDICT` | `TBD-EVIDENCE-SANDBOX-SOAK-3-DIR` |
-| Gate A run id | `TBD-EVIDENCE-GATE-A-RUN-ID` | Actions run URL |
-| Gate A `clean` lane | `TBD-EVIDENCE-GATE-A-CLEAN` (incl. `T4_RESULT`) | `gate-a-verdict-<build>\gate-a-verdict.json` |
+| Build run (`native-beta-candidate-artifacts`) | `34405681086` (self-hosted, 2026-09-09 21:13Z-21:52Z, conclusion `success`) | <https://github.com/scottconverse/civiccast-native/actions/runs/34405681086> |
+| Kit SHA (kit-staging directory name = source SHA) and `station_index_sha256` | kit `kit-safe\148c8d2172dd6b63cbbb856b429b68aa020dc421` (`SHA256SUMS.txt`, 19 files verified) / `044a9c8b5879644e526f58c4826fe1b21f59b8291a98794b6dd205c826e9d059` | `C:\CivicCastTester\kit-safe\148c8d2172dd6b63cbbb856b429b68aa020dc421\` (copied from `kit-staging` before the next build pruned it) |
+| `setup.exe` SHA-256 | `775b9a3e63a94183f1c065bb4168d03c0aeb2d72d608c1dbed5c875a94e05842` (`CivicCast (Native)_1.0.0-beta.5_x64-setup.exe`, 289,302,104 bytes) | `Get-FileHash` on the kit's `setup.exe`; matches `SHA256SUMS.txt` and the sidecar |
+| `setup.exe` Authenticode | `Valid`, signer `CN=Scott Converse, O=Scott Converse, L=Longmont, S=co, C=US` | `Get-AuthenticodeSignature`; also re-checked by the `publish_beta_candidate.py` dry run |
+| Sandbox 15-min soak of candidate 2 (`148c8d21` kit), seamless ON, captions at the shipped default (OFF, #203), the 4 real LPM sample clips, normal logging -- run 1 | **FAIL** -- 1 unplanned relaunch (`government`, 22:29:23Z, `reload-commit-timeout`: the known reload commit wedge, item 85; 20.4 s gap, self-healed). `education` and `public` 4/4 clean seamless rollovers, `government` 3/4; 0 stalls; 0 caption holds; the #204 horizon guard was seen working ("past due by 2s but the seamless reload is still settling; waiting") | `sandbox-lab` evidence dir `cc-sbsoak-run\sandbox-lab\soak-output\soak-148c8d2-20260909-215630Z` (`VERDICT.txt`, `cycles\`, `logs\`) |
+| Sandbox 15-min soak, same configuration -- run 2 | not run -- Gate A lane 1 soak stands in | none (not run) |
+| Sandbox 15-min soak, same configuration -- run 3 | not run -- Gate A lane 1 soak stands in | none (not run) |
+| Gate A run id | `34423542177` (attempt 3, dispatched 2026-09-10 00:58Z; see "Gate A attempts" below) | <https://github.com/scottconverse/civiccast-native/actions/runs/34423542177> |
+| Gate A `clean` lane | **PASS** (lane 1 "Windows Sandbox station-acceptance run + verdict" job `success`, about 2026-09-10 01:57Z) | `gate-a-verdict-<build>\gate-a-verdict.json` on run `34423542177` |
 | Gate A `dirty` (cross-version upgrade over the beta.4 baseline) lane | `TBD-EVIDENCE-GATE-A-XVER` | `gate-a-dirty-verdict-<build>\gate-a-verdict.json` |
 | Gate A `download-only` lane | `TBD-EVIDENCE-GATE-A-DLONLY` | `gate-a-download-only-verdict-<build>\gate-a-verdict.json` |
-| Tester 2-hour soak (`DESKTOP-VBMA6O5`, fresh run identity, counters reset) | `TBD-EVIDENCE-TESTER-SOAK-VERDICT` (clock, unplanned relaunches, caption overload events) | tester branch `tester/...` + local evidence copy |
+| Tester 2-hour soak (`DESKTOP-VBMA6O5`, fresh run identity, counters reset) | not run for beta.5 (owner decision 2026-09-09: sandbox + Gate A + the owner's own fresh-machine install stand in); 24-h soak follows publication | none for beta.5 |
 | Release | `TBD-EVIDENCE-RELEASE-URL` | `gh release view v1.0.0-beta.5 --json isDraft,assets,targetCommitish,tagName` |
 | Assets table (8 assets, sizes, SHA-256) | `TBD-EVIDENCE-ASSETS-TABLE` | `SHA256SUMS.txt` cross-checked by `scripts/download_windows_release_artifacts.ps1 -AssetSet NativeCandidate` |
+
+**Gate A attempts, honestly.** Run `34423542177` is the third dispatch of Gate A
+for this build. The first two, `34412708089` and `34419203610`, both failed at
+`d4-activate-station` after almost exactly 30 minutes (exit 67, the activation
+time budget) -- not because the station did anything wrong, but because the
+host was busy: during the first attempt a 12 MB/s USB copy of the kit was
+running on the same box, and during the second 27 hung `node --test`
+processes from another project were holding about 10 cores. With the host
+quiet, attempt 3 activated the station in about 12 minutes, the same as the
+2026-09-08 pass, and the `clean` lane passed. The cross-version and
+download-only lanes of run `34423542177` were still running when this record was
+written; their tokens above stay open until they finish.
+
+**Sandbox soaks of candidate 2.** Only one 15-minute soak of the `148c8d2`
+kit was run before the LPM install (time); it is the FAIL above, whose single
+relaunch is the known reload commit wedge (item 85), not a new defect. Runs 2
+and 3 were not run; the Gate A lane 1 station-acceptance soak stands in. This
+is short of the three-consecutive-PASS rule below, and the 24-hour
+post-publish soak is therefore the binding follow-up, as the rule already
+requires.
+
+**USB kit for the LPM install.** Drive `D:` labelled `CIVICCAST-BETA5`,
+folder `CivicCast-beta5-kit-148c8d21`, all 19 `SHA256SUMS.txt` manifest
+files verified after the copy, `README-START-HERE.txt` at the root.
 
 **Pass rule (unchanged from "How this release was proven" below):** three
 consecutive sandbox soaks PASS with the seamless flag ON, then Gate A PASS
@@ -547,9 +572,8 @@ owner's explicit requirement, seamless in-place rollover ON by default
 for the GStreamer engine in beta.5,
 `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` opts out) will cut **candidate
 3**. Candidate 3's identity is pending: source SHA
-`148c8d21`, build run `TBD-EVIDENCE-BUILD-RUN-ID`, Gate A run
-`TBD-EVIDENCE-GATE-A-RUN-ID`, hardware soak clock `TBD-EVIDENCE-TESTER-SOAK-START-UTC`, verdict
-`TBD-EVIDENCE-TESTER-SOAK-VERDICT`, relaunches `TBD-EVIDENCE-TESTER-SOAK-RELAUNCHES`.
+`148c8d21`, build run `34405681086`, Gate A run
+`34423542177`, hardware soak: not run for beta.5 (owner decision 2026-09-09: sandbox + Gate A + the owner's own fresh-machine install stand in); 24-h soak follows publication.
 
 **Update 2026-09-06 (process change): beta.5 now proves itself in a
 sandbox loop before it goes back to the tester.** After candidate 2's
@@ -691,12 +715,12 @@ command likewise never ran (its own hardware soak, soak #5, also failed):
 `--source-sha 609273da22b968b8ed9320dfc158d67b01eb30b3 --build-run-id
 33997406150 --gate-a-run-id 33998901590`. Candidate 3's command, once its
 own Gate A run and hardware soak pass, uses `148c8d21`,
-`TBD-EVIDENCE-BUILD-RUN-ID`, and `TBD-EVIDENCE-GATE-A-RUN-ID`. The publisher's
+`34405681086`, and `34423542177`. The publisher's
 fail-closed checks must all pass before any GitHub state is touched:
 version identity agreeing across `setup.exe` ProductVersion,
 `civiccast._native_version.__version__`, and the tag (already
 `1.0.0-beta.5` as of PR #164's version bump); Authenticode signature status
-`Valid`; Gate A run `TBD-EVIDENCE-GATE-A-RUN-ID` showing `PASS` on all three required
+`Valid`; Gate A run `34423542177` showing `PASS` on all three required
 lanes.
 
 ## Headline: the real cause of the playout-worker restarts, found on real station hardware (#172, merged)
@@ -1505,11 +1529,10 @@ hardware soak FAIL (item 60). Not publishable.**
   `scripts/download_windows_release_artifacts.ps1 -AssetSet NativeCandidate`,
   cross-verified against `SHA256SUMS.txt` and `Get-AuthenticodeSignature`.
 - **Source SHA:** `148c8d21`. **Build run:**
-  `TBD-EVIDENCE-BUILD-RUN-ID`.
-- **Gate A:** run `TBD-EVIDENCE-GATE-A-RUN-ID`. Lanes pending: clean, cross-version,
-  download-only.
-- **Clean-install hardware soak:** clock `TBD-EVIDENCE-TESTER-SOAK-START-UTC`, verdict
-  `TBD-EVIDENCE-TESTER-SOAK-VERDICT`, relaunches `TBD-EVIDENCE-TESTER-SOAK-RELAUNCHES`.
+  `34405681086`.
+- **Gate A:** run `34423542177`. Clean lane PASS; cross-version and
+  download-only lanes in progress (see "Verification (tonight)" at the top).
+- **Clean-install hardware soak:** not run for beta.5 (owner decision 2026-09-09: sandbox + Gate A + the owner's own fresh-machine install stand in); 24-h soak follows publication.
 - **Test suite:** `uv run pytest tests/docs tests/policy -q` re-run for this
   publish; see the commit history on this branch for the result.
 
