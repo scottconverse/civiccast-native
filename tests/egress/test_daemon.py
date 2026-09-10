@@ -6323,6 +6323,61 @@ def test_slate_eos_inside_the_restart_cooldown_defers_through_the_backoff_path(
 
 
 @pytest.mark.parametrize("action", ["stop", "drain"])
+def test_backoff_relaunch_with_a_queued_operator_stop_does_not_relaunch(
+    tmp_path: Path, action: str
+) -> None:
+    """#212 review MINOR-1. A stop/drain queued DURING the cooldown: the tick
+    that opens the latch runs ``_service_backoff_relaunch`` before it drains
+    commands, so the deferred relaunch must peek the queue and step aside
+    (no worker spawned) and the stop is honoured (STOPPED, no ``_start``)."""
+    program_plan: list[EgressSourcePlan | None] = [
+        _source_plan_with_label(tmp_path, "Council meeting")
+    ]
+    processes = [_FakeProcess(pid=pid) for pid in (111, 222, 333)]
+    started: list[_FakeProcess] = []
+    clock = [1000.0]
+    daemon = _slate_then_program_daemon(
+        tmp_path,
+        program_plan=program_plan,
+        processes=processes,
+        started=started,
+        clock=clock,
+        restart_cooldown_seconds=15.0,
+    )
+    store = daemon._store  # type: ignore[attr-defined]
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    daemon.process_once("gov")  # ON_AIR (111)
+    started[0].returncode = 1
+    daemon.process_once("gov")  # crash 1 -> immediate relaunch (222), latch armed 15s
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="FALLBACK_SLATE",
+            current_source_label="Fallback slate",
+            current_proof_event_id=None,
+            updated_at=datetime(2026, 6, 5, 12, 0, tzinfo=UTC),
+            pid=222,
+        )
+    )
+    started[1].returncode = 0  # slate EOS inside the cooldown -> deferred
+    clock[0] += 5.0
+    daemon.process_once("gov")
+    assert store.read_state("gov").state == "STARTING"
+    assert "gov" in daemon._backoff_relaunch  # type: ignore[attr-defined]
+
+    store.enqueue_command(_command(action))  # queued during the cooldown
+    clock[0] += 15.0  # the latch opens on this tick
+    daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state.state == "STOPPED"
+    assert [p.pid for p in started] == [111, 222]  # no worker the stop had to kill
+    assert "gov" not in daemon._backoff_relaunch  # type: ignore[attr-defined]
+    assert store.peek_pending_commands("gov") == []  # the command was drained
+
+
+@pytest.mark.parametrize("action", ["stop", "drain"])
 def test_slate_eos_with_a_queued_operator_stop_does_not_relaunch(
     tmp_path: Path, action: str
 ) -> None:

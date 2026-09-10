@@ -2241,6 +2241,25 @@ class EgressDaemon:
         pending = self._backoff_relaunch.get(channel_id)
         if pending is None:
             return
+        # #212 review MINOR-1: a queued operator stop/drain wins, same as the
+        # peek in _relaunch_slate_eos_onto_due_program. This runs BEFORE
+        # process_once drains commands, so without the peek the tick that
+        # opens the latch spawned a worker the Stop then had to kill. Leave
+        # the deferred entry alone: _process_command pops it for every action
+        # on this same tick.
+        queued = [
+            command.action
+            for command in self._store.peek_pending_commands(channel_id)
+            if command.action in {"stop", "drain"}
+        ]
+        if queued:
+            _LOG.info(
+                "channel %s: back-off relaunch due with an operator %s already queued; "
+                "not relaunching (the command drains this same tick).",
+                channel_id,
+                queued[0],
+            )
+            return
         if channel_id in self._processes:  # something already brought it back
             self._backoff_relaunch.pop(channel_id, None)
             return
