@@ -1,0 +1,1279 @@
+diff --git a/.claude/plans/2026-06-11-provider-credential-redaction-tests.md b/.claude/plans/2026-06-11-provider-credential-redaction-tests.md
+index 979552ad..fb7cef12 100644
+--- a/.claude/plans/2026-06-11-provider-credential-redaction-tests.md
++++ b/.claude/plans/2026-06-11-provider-credential-redaction-tests.md
+@@ -24,15 +24,19 @@ class TestCredentialRedaction:
+     """#122: no credential value may surface through reprs or error paths."""
+ 
+     def test_settings_reprs_never_contain_secret_values(self) -> None:
+-        ia = InternetArchiveSettings(access_key="ia-access-sentinel", secret_key="ia-secret-sentinel")
++        ia = InternetArchiveSettings(
++            access_key="ia-access-sentinel", secret_key="ia-secret-sentinel"
++        )
+         yt = YouTubeSettings(
+             client_id="yt-client-id",
+             client_secret="yt-secret-sentinel",
+             refresh_token="yt-refresh-sentinel",
+         )
+         smtp = SmtpSettings(
+-            host="relay.example", from_address="clerk@example.gov",
+-            username="mailer", password="smtp-secret-sentinel",
++            host="relay.example",
++            from_address="clerk@example.gov",
++            username="mailer",
++            password="smtp-secret-sentinel",
+         )
+         for rendered in (repr(ia), str(ia)):
+             assert "ia-access-sentinel" not in rendered
+@@ -45,7 +49,9 @@ class TestCredentialRedaction:
+ 
+     def test_internet_archive_error_path_never_echoes_keys(self) -> None:
+         client = InternetArchiveClient(
+-            InternetArchiveSettings(access_key="ia-access-sentinel", secret_key="ia-secret-sentinel"),
++            InternetArchiveSettings(
++                access_key="ia-access-sentinel", secret_key="ia-secret-sentinel"
++            ),
+             transport=httpx.MockTransport(lambda _: httpx.Response(403, text="denied")),
+         )
+         with pytest.raises(httpx.HTTPStatusError) as excinfo:
+@@ -72,24 +78,33 @@ class TestCredentialRedaction:
+     def test_smtp_login_error_path_never_echoes_password(self) -> None:
+         class _RefusingSmtp:
+             def __init__(self, *_args: object, **_kwargs: object) -> None: ...
+-            def __enter__(self) -> "_RefusingSmtp": return self
++            def __enter__(self) -> "_RefusingSmtp":
++                return self
++
+             def __exit__(self, *_exc: object) -> None: ...
+             def ehlo(self) -> None: ...
+             def starttls(self) -> None: ...
+             def login(self, username: str, password: str) -> None:
+-                raise smtplib.SMTPAuthenticationError(535, b"authentication failed for " + username.encode())
++                raise smtplib.SMTPAuthenticationError(
++                    535, b"authentication failed for " + username.encode()
++                )
++
+             def send_message(self, _message: object) -> None:
+                 raise AssertionError("send_message must not be reached after failed login")
+ 
+         mailbox = SmtpMailbox(
+             SmtpSettings(
+-                host="relay.example", from_address="clerk@example.gov",
+-                username="mailer", password="smtp-secret-sentinel",
++                host="relay.example",
++                from_address="clerk@example.gov",
++                username="mailer",
++                password="smtp-secret-sentinel",
+             ),
+             smtp_factory=lambda _host, _port: _RefusingSmtp(),  # type: ignore[arg-type,return-value]
+         )
+         with pytest.raises(smtplib.SMTPAuthenticationError) as excinfo:
+-            mailbox.send_confirmation(email="resident@example.gov", confirmation_url="https://x/c/1")
++            mailbox.send_confirmation(
++                email="resident@example.gov", confirmation_url="https://x/c/1"
++            )
+         rendered = f"{excinfo.value!s} {excinfo.value!r}"
+         assert "smtp-secret-sentinel" not in rendered
+ ```
+diff --git a/.claude/plans/2026-06-11-real-webhook-adapter.md b/.claude/plans/2026-06-11-real-webhook-adapter.md
+index 469c700a..7c8f4f18 100644
+--- a/.claude/plans/2026-06-11-real-webhook-adapter.md
++++ b/.claude/plans/2026-06-11-real-webhook-adapter.md
+@@ -35,6 +35,7 @@ LocalWebhookClient mock remains the default. Per-subscription secrets are
+ passed in by the caller (sealed at rest); nothing here reads credentials
+ from the environment, so there is nothing to fail fast about except config.
+ """
++
+ from __future__ import annotations
+ 
+ import json
+@@ -65,9 +66,7 @@ class WebhookSettings:
+                 f"CIVICCAST_WEBHOOK_TIMEOUT_SECONDS must be a number; got {raw!r}."
+             ) from exc
+         if timeout <= 0:
+-            raise ValueError(
+-                f"CIVICCAST_WEBHOOK_TIMEOUT_SECONDS must be positive; got {raw!r}."
+-            )
++            raise ValueError(f"CIVICCAST_WEBHOOK_TIMEOUT_SECONDS must be positive; got {raw!r}.")
+         return cls(timeout_seconds=timeout)
+ 
+ 
+diff --git a/.claude/plans/2026-06-11-recovery-kit-acknowledgement-gate.md b/.claude/plans/2026-06-11-recovery-kit-acknowledgement-gate.md
+index 54df6966..32963881 100644
+--- a/.claude/plans/2026-06-11-recovery-kit-acknowledgement-gate.md
++++ b/.claude/plans/2026-06-11-recovery-kit-acknowledgement-gate.md
+@@ -312,28 +312,32 @@ Expected: FAIL on `downloadable_pdf`.
+ Replace the destination field entry:
+ 
+ ```python
+-            FirstAdminRequiredField(
+-                id="recovery-kit-destination",
+-                label="Where will you keep the recovery kit?",
+-                help_text=(
+-                    "A note for the station record of where the kit will be kept. "
+-                    "CivicCast does not save the kit to that location; save or print "
+-                    "the kit from the setup screen."
+-                ),
+-            ),
++(
++    FirstAdminRequiredField(
++        id="recovery-kit-destination",
++        label="Where will you keep the recovery kit?",
++        help_text=(
++            "A note for the station record of where the kit will be kept. "
++            "CivicCast does not save the kit to that location; save or print "
++            "the kit from the setup screen."
++        ),
++    ),
++)
+ ```
+ 
+ Replace `media` and `contains` in `RecoveryKitContract`:
+ 
+ ```python
+-            media=["printable", "downloadable_text_file", "offline_copy"],
+-            contains=[
+-                "station identity",
+-                "admin account identifier",
+-                "one-time recovery codes",
+-                "recovery-code instructions",
+-                "credential-rotation instructions",
+-            ],
++media = (["printable", "downloadable_text_file", "offline_copy"],)
++contains = (
++    [
++        "station identity",
++        "admin account identifier",
++        "one-time recovery codes",
++        "recovery-code instructions",
++        "credential-rotation instructions",
++    ],
++)
+ ```
+ 
+ (Check `RecoveryKitContract` in models.py first — if `media`/`contains` are `Literal`-constrained, update the Literal values to match; if plain `list[str]`, no model change.)
+diff --git a/.claude/plans/stage-bd-fix-change-a-migration-repair.md b/.claude/plans/stage-bd-fix-change-a-migration-repair.md
+index 454e59bd..7a91b4ae 100644
+--- a/.claude/plans/stage-bd-fix-change-a-migration-repair.md
++++ b/.claude/plans/stage-bd-fix-change-a-migration-repair.md
+@@ -43,6 +43,7 @@ def test_alembic_graph_has_exactly_one_head() -> None:
+ def test_finalization_job_byte_columns_are_64_bit() -> None:
+     from sqlalchemy import BigInteger
+     from civiccast.live.models import LiveFinalizationJob
++
+     for col in ("recording_size_bytes", "last_observed_size_bytes"):
+         column_type = LiveFinalizationJob.__table__.c[col].type
+         assert isinstance(column_type, BigInteger), (
+diff --git a/.claude/plans/stage-bd-fix-change-b-wire-worker.md b/.claude/plans/stage-bd-fix-change-b-wire-worker.md
+index 8b8a4420..66fdb2a0 100644
+--- a/.claude/plans/stage-bd-fix-change-b-wire-worker.md
++++ b/.claude/plans/stage-bd-fix-change-b-wire-worker.md
+@@ -142,14 +142,17 @@ behavior otherwise unchanged.)
+ 
+ ```python
+ def _wire_finalization_worker(app, session_factory) -> None:
+-    settings = FinalizationWorkerSettings.from_env()   # raises on bad mode (fail fast)
+-    app.state.finalization_worker_supervisor = FinalizationWorkerSupervisor(session_factory, settings)
++    settings = FinalizationWorkerSettings.from_env()  # raises on bad mode (fail fast)
++    app.state.finalization_worker_supervisor = FinalizationWorkerSupervisor(
++        session_factory, settings
++    )
+     _maybe_start_finalization_worker(app)
+ 
++
+ def _maybe_start_finalization_worker(app) -> None:
+     sup = getattr(app.state, "finalization_worker_supervisor", None)
+     if sup is not None and getattr(app.state, "lifespan_started", False):
+-        sup.start()   # internally no-ops unless mode == inline
++        sup.start()  # internally no-ops unless mode == inline
+ ```
+ 
+ - Both `_resolve_live_finalization_worker` resolvers construct via
+diff --git a/civiccast/live/README.md b/civiccast/live/README.md
+index 8590555f..56b2b5ce 100644
+--- a/civiccast/live/README.md
++++ b/civiccast/live/README.md
+@@ -66,23 +66,31 @@ section highlights the main entry points rather than mirroring the full list
+ ```python
+ from civiccast.live import (
+     # Lifecycle + finalization state constants
+-    LIVE_SESSION_STATE_IDLE,        # ... PREFLIGHT / ON_AIR / ENDING / RECORDED
+-    FINALIZATION_STATE_PENDING,     # ... RUNNING / FAILED / COMPLETED
+-
++    LIVE_SESSION_STATE_IDLE,  # ... PREFLIGHT / ON_AIR / ENDING / RECORDED
++    FINALIZATION_STATE_PENDING,  # ... RUNNING / FAILED / COMPLETED
+     # SA mapped classes
+-    LiveSession, LiveSource, LiveSessionEvent, RecordingTarget,
+-    LiveRelayConfig, LiveFinalizationJob,
+-
++    LiveSession,
++    LiveSource,
++    LiveSessionEvent,
++    RecordingTarget,
++    LiveRelayConfig,
++    LiveFinalizationJob,
+     # Pydantic peers (create/response shapes, preflight, finalization status)
+-    LiveSessionCreate, LiveSessionResponse,
++    LiveSessionCreate,
++    LiveSessionResponse,
+     LiveFinalizationStatusResponse,
+-    RecordingTargetCreate, RecordingTargetResponse,
+-    LiveRelayConfigCreate, LiveRelayConfigResponse,
+-
++    RecordingTargetCreate,
++    RecordingTargetResponse,
++    LiveRelayConfigCreate,
++    LiveRelayConfigResponse,
+     # Stores, evaluator, finalizer, worker
+-    LiveSessionStore, LiveSourceStore, RecordingTargetStore,
+-    LiveRelayConfigStore, PreflightEvaluator,
+-    LiveRecordingFinalizer, LiveFinalizationWorker,
++    LiveSessionStore,
++    LiveSourceStore,
++    RecordingTargetStore,
++    LiveRelayConfigStore,
++    PreflightEvaluator,
++    LiveRecordingFinalizer,
++    LiveFinalizationWorker,
+ )
+ ```
+ 
+diff --git a/civiccast/schedule/README.md b/civiccast/schedule/README.md
+index af3f1a3e..efc6247b 100644
+--- a/civiccast/schedule/README.md
++++ b/civiccast/schedule/README.md
+@@ -17,19 +17,24 @@ the SA model level via `__table_args__ CheckConstraint` (SQLite test paths).
+ 
+ ```python
+ from civiccast.schedule.models import (
+-    Asset,                 # SQLAlchemy 2.0 mapped class
+-    AssetMetadata,         # Pydantic v2 peer of vod.models.AssetMetadata
+-    AssetMetadataUpdate,   # PATCH /api/staff/assets/{id} request body (with optimistic-concurrency expected_version)
+-    UploadedAssetResponse, # POST /api/staff/assets/upload response
+-    StaffAssetRow,         # GET /api/staff/assets row (operator library)
+-    ScheduleItem,          # SQLAlchemy 2.0 mapped class for schedule_items
+-    ScheduleItemCreate,    # Pydantic request body for POST /api/staff/schedule
++    Asset,  # SQLAlchemy 2.0 mapped class
++    AssetMetadata,  # Pydantic v2 peer of vod.models.AssetMetadata
++    AssetMetadataUpdate,  # PATCH /api/staff/assets/{id} request body (with optimistic-concurrency expected_version)
++    UploadedAssetResponse,  # POST /api/staff/assets/upload response
++    StaffAssetRow,  # GET /api/staff/assets row (operator library)
++    ScheduleItem,  # SQLAlchemy 2.0 mapped class for schedule_items
++    ScheduleItemCreate,  # Pydantic request body for POST /api/staff/schedule
+     ScheduleItemResponse,  # Pydantic row for GET /api/staff/schedule
+     ScheduleConflictDetail,
+-    ASSET_STATE_PENDING, ASSET_STATE_INGESTING,
+-    ASSET_STATE_VALIDATED, ASSET_STATE_REJECTED,
+-    SCHEDULE_MODE_PREMIERE, SCHEDULE_MODE_EMBARGO,
+-    SCHEDULE_STATE_SCHEDULED, SCHEDULE_STATE_CANCELLED, SCHEDULE_STATE_PUBLISHED,
++    ASSET_STATE_PENDING,
++    ASSET_STATE_INGESTING,
++    ASSET_STATE_VALIDATED,
++    ASSET_STATE_REJECTED,
++    SCHEDULE_MODE_PREMIERE,
++    SCHEDULE_MODE_EMBARGO,
++    SCHEDULE_STATE_SCHEDULED,
++    SCHEDULE_STATE_CANCELLED,
++    SCHEDULE_STATE_PUBLISHED,
+ )
+ from civiccast.schedule.store import (
+     PostgresAssetStore,
+@@ -39,12 +44,20 @@ from civiccast.schedule.store import (
+     ScheduleConflictError,
+ )
+ from civiccast.schedule.ingest import (
+-    run_ffprobe, validate_ingest, check_ffprobe,
+-    FfprobeResult, UnsupportedFormatError, FfprobeError, FfprobeNotFoundError,
++    run_ffprobe,
++    validate_ingest,
++    check_ffprobe,
++    FfprobeResult,
++    UnsupportedFormatError,
++    FfprobeError,
++    FfprobeNotFoundError,
+ )
+ from civiccast.schedule.router import (
+-    public_router, staff_router,
+-    get_asset_store, get_postgres_store, get_schedule_store,
++    public_router,
++    staff_router,
++    get_asset_store,
++    get_postgres_store,
++    get_schedule_store,
+ )
+ ```
+ 
+diff --git a/civiccast/stream/README.md b/civiccast/stream/README.md
+index 612181dc..08e3844f 100644
+--- a/civiccast/stream/README.md
++++ b/civiccast/stream/README.md
+@@ -63,7 +63,7 @@ from civiccast.stream.cdn.bunny import BunnyCDNAdapter
+ 
+ adapter = BunnyCDNAdapter(
+     storage_zone_name="myzone",
+-    access_key="...",          # from operator config
++    access_key="...",  # from operator config
+     cdn_hostname="myzone.b-cdn.net",
+ )
+ 
+diff --git a/docs/USER-MANUAL.md b/docs/USER-MANUAL.md
+index 86dda16f..a630c40f 100644
+--- a/docs/USER-MANUAL.md
++++ b/docs/USER-MANUAL.md
+@@ -878,9 +878,11 @@ which is the most thorough example.
+ class CapturePipelineProtocol(Protocol):
+     """Start, stop, and observe a capture pipeline for a scheduled recording."""
+ 
++
+ class AssetFinalizerProtocol(Protocol):
+     """Hand a finished capture to the publish pipeline as a registered Asset."""
+ 
++
+ class AlertSinkProtocol(Protocol):
+     """Receive scheduled-recording health / failure events as operator alerts."""
+ ```
+diff --git a/docs/adr/0010-live-session-state-machine.md b/docs/adr/0010-live-session-state-machine.md
+index 7708aef0..b2b671f2 100644
+--- a/docs/adr/0010-live-session-state-machine.md
++++ b/docs/adr/0010-live-session-state-machine.md
+@@ -54,9 +54,9 @@ The transition set lives in a module-private `_TRANSITIONS` dict at `civiccast/l
+ ```python
+ _TRANSITIONS: dict[str, tuple[str, str]] = {
+     "start_preflight": (LIVE_SESSION_STATE_IDLE, LIVE_SESSION_STATE_PREFLIGHT),
+-    "go_on_air":       (LIVE_SESSION_STATE_PREFLIGHT, LIVE_SESSION_STATE_ON_AIR),
+-    "end_broadcast":   (LIVE_SESSION_STATE_ON_AIR, LIVE_SESSION_STATE_ENDING),
+-    "mark_recorded":   (LIVE_SESSION_STATE_ENDING, LIVE_SESSION_STATE_RECORDED),
++    "go_on_air": (LIVE_SESSION_STATE_PREFLIGHT, LIVE_SESSION_STATE_ON_AIR),
++    "end_broadcast": (LIVE_SESSION_STATE_ON_AIR, LIVE_SESSION_STATE_ENDING),
++    "mark_recorded": (LIVE_SESSION_STATE_ENDING, LIVE_SESSION_STATE_RECORDED),
+ }
+ ```
+ 
+diff --git a/docs/spec/3.0/sections/S10-field-certification-and-proof-ladder.md b/docs/spec/3.0/sections/S10-field-certification-and-proof-ladder.md
+index 2af7a845..c7aaf52f 100644
+--- a/docs/spec/3.0/sections/S10-field-certification-and-proof-ladder.md
++++ b/docs/spec/3.0/sections/S10-field-certification-and-proof-ladder.md
+@@ -101,12 +101,12 @@ The gap we close: today the codebase has four overlapping proof vocabularies (`p
+ from typing import Literal
+ 
+ ProofRung = Literal[
+-    "contract",      # 0 — code + unit/API/UI tests; no live egress
+-    "lab",           # 1 — runtime proof against loopback/synthetic
+-    "machine",       # 2 — Windows clean install + 24/72h soak + reboot
+-    "sdi",           # 3 — physical SDI captured from real DeckLink card
+-    "headend",       # 4 — accepted by real cable headend + station
+-    "field",         # 5 — unattended in production for agreed duration
++    "contract",  # 0 — code + unit/API/UI tests; no live egress
++    "lab",  # 1 — runtime proof against loopback/synthetic
++    "machine",  # 2 — Windows clean install + 24/72h soak + reboot
++    "sdi",  # 3 — physical SDI captured from real DeckLink card
++    "headend",  # 4 — accepted by real cable headend + station
++    "field",  # 5 — unattended in production for agreed duration
+ ]
+ ```
+ 
+@@ -121,6 +121,7 @@ class ProofBoundary:
+     affects_claim: str
+     next_step: str | None
+ 
++
+ class CapabilityProof(BaseModel):
+     capability_id: str
+     label: str
+diff --git a/docs/spec/3.0/sections/S11-captions-loudness-eas-compliance.md b/docs/spec/3.0/sections/S11-captions-loudness-eas-compliance.md
+index 04367aa9..fb9af7f6 100644
+--- a/docs/spec/3.0/sections/S11-captions-loudness-eas-compliance.md
++++ b/docs/spec/3.0/sections/S11-captions-loudness-eas-compliance.md
+@@ -538,10 +538,10 @@ impaired) — an accessibility requirement that S20 (ADA) depends on.
+ class AudioProgramTrack(BaseModel):
+     track_id: Slug
+     scope: Literal["asset", "channel"]
+-    target_id: Slug                        # asset_id or channel_id
++    target_id: Slug  # asset_id or channel_id
+     kind: Literal["primary", "sap", "descriptive"]
+-    language: str                          # BCP-47 (e.g., "es", "en")
+-    source: str                            # input id / file / live source for this track
++    language: str  # BCP-47 (e.g., "es", "en")
++    source: str  # input id / file / live source for this track
+ ```
+ **Behavior:** (1) on the **cable** MPEG-TS path, the S15 engine muxes secondary audio as additional
+ **audio PIDs** (so a TV's SAP button / language selector works); (2) on **web/OTT** players, the
+diff --git a/docs/spec/3.0/sections/S12-ott-apps.md b/docs/spec/3.0/sections/S12-ott-apps.md
+index cd0ba0c5..00bf6921 100644
+--- a/docs/spec/3.0/sections/S12-ott-apps.md
++++ b/docs/spec/3.0/sections/S12-ott-apps.md
+@@ -93,6 +93,7 @@ build), not the workaround if we don't.
+ ```python
+ class AppBuildRecord(BaseModel):
+     """Immutable record of a platform-specific app build."""
++
+     record_id: Slug
+     station_id: Slug
+     app_target: AppTarget
+@@ -116,13 +117,16 @@ class AppBuildRecord(BaseModel):
+ ```python
+ class StoreSubmissionMetadata(BaseModel):
+     """External store submission metadata and status."""
++
+     app_target: AppTarget
+     store_account_email: str | None = None
+     package_id: str | None = None
+     version_code: int
+     version_name: str
+     submitted_at: datetime | None = None
+-    submission_status: Literal["draft", "pending_review", "approved", "rejected", "published", "withdrawn"] = "draft"
++    submission_status: Literal[
++        "draft", "pending_review", "approved", "rejected", "published", "withdrawn"
++    ] = "draft"
+     submission_notes: str | None = None
+     published_url: str | None = None
+     support_contact: str | None = None
+diff --git a/docs/spec/3.0/sections/S14-analytics-audience-measurement.md b/docs/spec/3.0/sections/S14-analytics-audience-measurement.md
+index 3a3034b7..8f0fc21b 100644
+--- a/docs/spec/3.0/sections/S14-analytics-audience-measurement.md
++++ b/docs/spec/3.0/sections/S14-analytics-audience-measurement.md
+@@ -136,58 +136,67 @@ the JSON store to a migrated Postgres-backed store** and adds rollup + report-sn
+ # Mirrors AnalyticsRetainedEvent (already the privacy-stripped shape) as a table.
+ class ViewershipEvent(Base):
+     __tablename__ = "viewership_events"
+-    event_id:     Mapped[str]            # PK; from AnalyticsEvent.event_id
+-    event_name:   Mapped[str]            # playback_start|playback_heartbeat|playback_complete|playback_error|schedule_browse|podcast_download
+-    occurred_at:  Mapped[datetime]       # tz-aware UTC; indexed
+-    app_target:   Mapped[str]            # web_pwa | roku | appletv | firetv | androidtv | ios | embedded
+-    stream_type:  Mapped[str]            # "vod" | "live"  (derived at ingest: content_id => vod, channel_id-only => live)
+-    channel_id:   Mapped[str | None]     # indexed; for live
+-    content_id:   Mapped[str | None]     # indexed; for vod
+-    view_seconds: Mapped[int]            # coarse watch-time contribution (heartbeat/complete)
++    event_id: Mapped[str]  # PK; from AnalyticsEvent.event_id
++    event_name: Mapped[
++        str
++    ]  # playback_start|playback_heartbeat|playback_complete|playback_error|schedule_browse|podcast_download
++    occurred_at: Mapped[datetime]  # tz-aware UTC; indexed
++    app_target: Mapped[str]  # web_pwa | roku | appletv | firetv | androidtv | ios | embedded
++    stream_type: Mapped[
++        str
++    ]  # "vod" | "live"  (derived at ingest: content_id => vod, channel_id-only => live)
++    channel_id: Mapped[str | None]  # indexed; for live
++    content_id: Mapped[str | None]  # indexed; for vod
++    view_seconds: Mapped[int]  # coarse watch-time contribution (heartbeat/complete)
+     concurrent_viewers: Mapped[int | None]  # coarse concurrency sample, live only
+-    geo_bucket:   Mapped[str | None]     # OPTIONAL coarse region (off by default; §8 privacy posture)
++    geo_bucket: Mapped[str | None]  # OPTIONAL coarse region (off by default; §8 privacy posture)
+     # NOTE: NO anonymous_session_id, NO hashed_viewer_id, NO ip — privacy boundary preserved.
+ 
++
+ # ViewershipRollup — pre-aggregated buckets (the dashboard reads these, not raw events).
+ class ViewershipRollup(Base):
+     __tablename__ = "viewership_rollups"
+-    rollup_id:      Mapped[str]          # PK
+-    stream_type:    Mapped[str]          # "vod" | "live"
+-    bucket_kind:    Mapped[str]          # "day" (VOD 24h) | "halfhour" (Live 30-min) | "hour" (Live single-day)
+-    bucket_start:   Mapped[datetime]     # UTC; UNIQUE(stream_type,bucket_kind,subject_id,bucket_start)
+-    subject_id:     Mapped[str]          # content_id (vod) or channel_id (live)
+-    viewer_count:   Mapped[int]          # incumbent PEG platform metric 1
+-    time_viewed_seconds: Mapped[int]     # incumbent PEG platform metric 2
++    rollup_id: Mapped[str]  # PK
++    stream_type: Mapped[str]  # "vod" | "live"
++    bucket_kind: Mapped[
++        str
++    ]  # "day" (VOD 24h) | "halfhour" (Live 30-min) | "hour" (Live single-day)
++    bucket_start: Mapped[datetime]  # UTC; UNIQUE(stream_type,bucket_kind,subject_id,bucket_start)
++    subject_id: Mapped[str]  # content_id (vod) or channel_id (live)
++    viewer_count: Mapped[int]  # incumbent PEG platform metric 1
++    time_viewed_seconds: Mapped[int]  # incumbent PEG platform metric 2
+     peak_concurrent: Mapped[int | None]  # live only — §8c differentiator
+-    avg_concurrent:  Mapped[float | None]
+-    samples:         Mapped[int]
++    avg_concurrent: Mapped[float | None]
++    samples: Mapped[int]
++
+ 
+ # AnalyticsReportSnapshot — a stored, dated report (drives YoY + PDF/CSV reproducibility).
+ class AnalyticsReportSnapshot(Base):
+     __tablename__ = "analytics_report_snapshots"
+-    snapshot_id:    Mapped[str]          # PK
+-    generated_at:   Mapped[datetime]
+-    range_start:    Mapped[datetime]
+-    range_end:      Mapped[datetime]
+-    report_json:    Mapped[str]          # serialized AnalyticsReport (+ YoY block)
+-    created_by:     Mapped[str]          # operator identity that ran it (audit)
++    snapshot_id: Mapped[str]  # PK
++    generated_at: Mapped[datetime]
++    range_start: Mapped[datetime]
++    range_end: Mapped[datetime]
++    report_json: Mapped[str]  # serialized AnalyticsReport (+ YoY block)
++    created_by: Mapped[str]  # operator identity that ran it (audit)
+ ```
+ 
+ The Pydantic `AnalyticsReport` (the API/PDF contract) is **extended** with a YoY block and the
+ coverage-named fields, without breaking the existing `/reports/overview` response:
+ 
+ ```python
+-class YearOverYearPoint(BaseModel):       # net-new
++class YearOverYearPoint(BaseModel):  # net-new
+     metric: Literal["viewer_count", "time_viewed_seconds", "peak_concurrent"]
+     current_period: int
+     prior_period: int
+-    delta_pct: float | None               # None when prior_period == 0 (no fabricated growth)
++    delta_pct: float | None  # None when prior_period == 0 (no fabricated growth)
++
+ 
+-class AnalyticsReport(BaseModel):         # EXTEND existing (analytics/models.py:72)
++class AnalyticsReport(BaseModel):  # EXTEND existing (analytics/models.py:72)
+     # ... all existing fields stay ...
+-    vod_rollups:  list[ViewershipRollupPoint] = []   # net-new (24h)
+-    live_rollups: list[ViewershipRollupPoint] = []   # net-new (30-min / hourly)
+-    year_over_year: list[YearOverYearPoint] = []      # net-new (§8b)
++    vod_rollups: list[ViewershipRollupPoint] = []  # net-new (24h)
++    live_rollups: list[ViewershipRollupPoint] = []  # net-new (30-min / hourly)
++    year_over_year: list[YearOverYearPoint] = []  # net-new (§8b)
+ ```
+ 
+ ### 3.2 Migration
+diff --git a/docs/spec/3.0/sections/S19-scheduling-automation.md b/docs/spec/3.0/sections/S19-scheduling-automation.md
+index b69cd931..07b9a12d 100644
+--- a/docs/spec/3.0/sections/S19-scheduling-automation.md
++++ b/docs/spec/3.0/sections/S19-scheduling-automation.md
+@@ -39,38 +39,43 @@ the incumbent PEG platform's Autoschedule lets a station bind a recurring timesl
+ ```python
+ class SavedSearch(BaseModel):
+     """A named, reusable query over asset metadata."""
++
+     saved_search_id: Slug
+     station_id: Slug
+     name: str
+     # Query is a structured, validated filter (NOT raw SQL) over Asset fields +
+     # custom fields (S22). Resolves to an ordered list of asset_ids at runtime.
+-    query: SavedSearchQuery            # {all_of:[...], any_of:[...], order_by, limit}
++    query: SavedSearchQuery  # {all_of:[...], any_of:[...], order_by, limit}
+     created_by: str
+     created_at: datetime
+ 
++
+ class AutoScheduleRule(BaseModel):
+     """Binds a SavedSearch to a recurring timeslot + pick strategy."""
++
+     rule_id: Slug
+     station_id: Slug
+     channel_id: Slug
+     saved_search_id: Slug
+-    recurrence: RecurrenceSpec         # reuse ProgramSlot recurrence (RRULE-like)
++    recurrence: RecurrenceSpec  # reuse ProgramSlot recurrence (RRULE-like)
+     pick: Literal["top", "random", "newest", "least_recently_aired"]
+-    rolling_window_days: int = 14      # 14..60 (PEG automation coverage)
+-    avoid_repeat_within_days: int | None = None   # don't re-air same asset within N days
++    rolling_window_days: int = 14  # 14..60 (PEG automation coverage)
++    avoid_repeat_within_days: int | None = None  # don't re-air same asset within N days
+     enabled: bool = True
+-    priority: int = 0                  # tie-break vs other rules on the same slot
++    priority: int = 0  # tie-break vs other rules on the same slot
++
+ 
+ class ScheduleBlock(BaseModel):
+     """A daypart/seasonal block constraining when rules + slots may place content."""
++
+     block_id: Slug
+     station_id: Slug
+     channel_id: Slug
+-    name: str                          # "Prime", "Overnight", "Election Season"
+-    daypart: DaypartSpec               # days-of-week + start/end time-of-day
+-    start_date: date | None = None     # seasonal window (None = always)
++    name: str  # "Prime", "Overnight", "Election Season"
++    daypart: DaypartSpec  # days-of-week + start/end time-of-day
++    start_date: date | None = None  # seasonal window (None = always)
+     end_date: date | None = None
+-    allow_rules: list[Slug] = []       # rule_ids permitted in this block (empty = all)
++    allow_rules: list[Slug] = []  # rule_ids permitted in this block (empty = all)
+ ```
+ 
+ Migration `0043_scheduling_automation` adds `saved_searches`, `auto_schedule_rules`, `schedule_blocks`. Single global chain, sequenced after `0042_takeover_audit_and_command_action` (on disk). No change to existing `schedule_items` schema (rules *produce* normal schedule_items, so downstream playout is unchanged).
+diff --git a/docs/spec/3.0/sections/S21-scheduled-recording.md b/docs/spec/3.0/sections/S21-scheduled-recording.md
+index 6b972f5e..7dadbfa1 100644
+--- a/docs/spec/3.0/sections/S21-scheduled-recording.md
++++ b/docs/spec/3.0/sections/S21-scheduled-recording.md
+@@ -33,22 +33,23 @@ class RecordingSchedule(BaseModel):
+     schedule_id: Slug
+     station_id: Slug
+     name: str
+-    source: RecordingSource            # kind = sdi|hdmi|ndi|rtsp|srt|hls|rtmp|mpegts ; uri/input id
++    source: RecordingSource  # kind = sdi|hdmi|ndi|rtsp|srt|hls|rtmp|mpegts ; uri/input id
+     recurrence: RecurrenceSpec | None  # None = one-shot; else RRULE-like (reuse S19/programlog)
+-    window: TimeWindow                 # start + (end | duration)
+-    encoder_profile: Slug              # references an S2/S7 encode profile (hw-encoder default)
+-    loudness_regime: str = "inherit"   # ingest loudness (S11)
++    window: TimeWindow  # start + (end | duration)
++    encoder_profile: Slug  # references an S2/S7 encode profile (hw-encoder default)
++    loudness_regime: str = "inherit"  # ingest loudness (S11)
+     target_series: Slug | None = None  # auto-file the resulting asset into a series/show
+-    custom_field_values: dict = {}     # S22 — stamp custom metadata on the recorded asset
++    custom_field_values: dict = {}  # S22 — stamp custom metadata on the recorded asset
+     enabled: bool = True
+ 
++
+ class RecordingJob(BaseModel):
+     job_id: Slug
+-    schedule_id: Slug | None           # None = ad-hoc manual record
+-    state: Literal["scheduled","arming","recording","finalizing","done","failed","skipped"]
++    schedule_id: Slug | None  # None = ad-hoc manual record
++    state: Literal["scheduled", "arming", "recording", "finalizing", "done", "failed", "skipped"]
+     started_at: datetime | None
+     ended_at: datetime | None
+-    asset_id: Slug | None              # the produced Asset (S7)
++    asset_id: Slug | None  # the produced Asset (S7)
+     bytes_written: int = 0
+     failure_reason: str | None = None
+     proof_boundary: str = "local-capture-asset-sha256"
+diff --git a/docs/spec/3.0/sections/S22-custom-metadata-fields.md b/docs/spec/3.0/sections/S22-custom-metadata-fields.md
+index c2cd19cc..d036cae5 100644
+--- a/docs/spec/3.0/sections/S22-custom-metadata-fields.md
++++ b/docs/spec/3.0/sections/S22-custom-metadata-fields.md
+@@ -26,26 +26,30 @@ incumbent PEG platform lets each station define its own metadata fields ("Meetin
+ ## 3. Entities & migration `0054_custom_metadata_fields`
+ 
+ ```python
+-CustomFieldType = Literal["text","longtext","list","date","number","boolean","asset_ref","producer_ref"]
++CustomFieldType = Literal[
++    "text", "longtext", "list", "date", "number", "boolean", "asset_ref", "producer_ref"
++]
++
+ 
+ class CustomFieldDef(BaseModel):
+     field_id: Slug
+     station_id: Slug
+-    key: str                       # stable machine key (immutable once created)
+-    label: str                     # operator-facing
++    key: str  # stable machine key (immutable once created)
++    label: str  # operator-facing
+     type: CustomFieldType
+-    options: list[str] = []        # for type=list
++    options: list[str] = []  # for type=list
+     required: bool = False
+-    searchable: bool = True        # exposed as a search facet + saved-search filter
++    searchable: bool = True  # exposed as a search facet + saved-search filter
+     api_exposed: bool = True
+     order: int = 0
+ 
++
+ class CustomFieldValue(BaseModel):
+     asset_id: Slug
+     field_id: Slug
+-    value: str                     # canonical string; typed-validated against the def
+-    value_num: float | None = None # denormalized for numeric range queries
+-    value_date: date | None = None # denormalized for date range queries
++    value: str  # canonical string; typed-validated against the def
++    value_num: float | None = None  # denormalized for numeric range queries
++    value_date: date | None = None  # denormalized for date range queries
+ ```
+ Migration `0054_custom_metadata_fields` adds `custom_field_defs` + `custom_field_values` (indexed on `(field_id, value)`, plus `value_num`/`value_date` for range search). Single global chain, after `0053`.
+ 
+diff --git a/docs/spec/3.0/sections/S23-asrun-epg-franchise-reporting.md b/docs/spec/3.0/sections/S23-asrun-epg-franchise-reporting.md
+index 355ebefe..69099e02 100644
+--- a/docs/spec/3.0/sections/S23-asrun-epg-franchise-reporting.md
++++ b/docs/spec/3.0/sections/S23-asrun-epg-franchise-reporting.md
+@@ -31,23 +31,26 @@ class AsRunLogEntry(BaseModel):
+     entry_id: Slug
+     station_id: Slug
+     channel_id: Slug
+-    schedule_item_id: Slug | None      # the planned slot, if any (None = live/manual/filler)
++    schedule_item_id: Slug | None  # the planned slot, if any (None = live/manual/filler)
+     asset_id: Slug | None
+     scheduled_start: datetime | None
+-    actual_start: datetime             # what the engine actually emitted (S15/automation)
++    actual_start: datetime  # what the engine actually emitted (S15/automation)
+     actual_end: datetime
+     duration_s: int
+-    source_kind: Literal["program","filler","live","slate","spot"]   # 'spot' links S24 underwriting
+-    verified: bool = True              # backed by engine proof-events (not just intent)
++    source_kind: Literal[
++        "program", "filler", "live", "slate", "spot"
++    ]  # 'spot' links S24 underwriting
++    verified: bool = True  # backed by engine proof-events (not just intent)
++
+ 
+ class EpgExportConfig(BaseModel):
+     config_id: Slug
+     station_id: Slug
+     channel_id: Slug
+-    format: Literal["xlist","xmltv","csv"]
++    format: Literal["xlist", "xmltv", "csv"]
+     horizon_days: int = 14
+-    endpoint: str | None = None        # push target (aggregator) or None = download-only
+-    field_map: dict = {}               # map CivicCast fields → aggregator columns
++    endpoint: str | None = None  # push target (aggregator) or None = download-only
++    field_map: dict = {}  # map CivicCast fields → aggregator columns
+ ```
+ Migration `0055_asrun_and_epg` adds `as_run_log` + `epg_export_configs` (sequences after `0054_custom_metadata_fields`; shipped 2026-06-18). As-run entries are written by the **playout engine/automation** at actual air time (not a separate process). Reports (Shows, hours-by-category) are **queries/views** over `as_run_log` + `schedule_items` + custom fields (S22, `0054` — shipped) — no extra tables.
+ 
+diff --git a/docs/spec/3.0/sections/S24-underwriting-spot-management.md b/docs/spec/3.0/sections/S24-underwriting-spot-management.md
+index 0588c326..31f5b27a 100644
+--- a/docs/spec/3.0/sections/S24-underwriting-spot-management.md
++++ b/docs/spec/3.0/sections/S24-underwriting-spot-management.md
+@@ -30,33 +30,38 @@ PEG/public-media is noncommercial but **runs paid underwriting spots from for-pr
+ class UnderwritingSpot(BaseModel):
+     spot_id: Slug
+     station_id: Slug
+-    underwriter: str                   # the sponsoring entity
+-    asset_id: Slug                     # the :15/:30 acknowledgment video (an Asset, S7)
+-    fcc_compliant_ack: bool = False    # operator attests sponsor-ID-only (no CTA/price/claims) — editorial gate
++    underwriter: str  # the sponsoring entity
++    asset_id: Slug  # the :15/:30 acknowledgment video (an Asset, S7)
++    fcc_compliant_ack: bool = (
++        False  # operator attests sponsor-ID-only (no CTA/price/claims) — editorial gate
++    )
+     review_notes: str | None = None
+ 
++
+ class SpotFlight(BaseModel):
+     flight_id: Slug
+     spot_id: Slug
+     start_date: date
+     end_date: date
+     frequency_cap_per_day: int | None = None
+-    daypart: DaypartSpec | None = None       # reuse S19 daypart; targeting
++    daypart: DaypartSpec | None = None  # reuse S19 daypart; targeting
+     channels: list[Slug]
+ 
+-class SpotPlacement(BaseModel):                # resolved insertion (what the compiler placed)
++
++class SpotPlacement(BaseModel):  # resolved insertion (what the compiler placed)
+     placement_id: Slug
+     flight_id: Slug
+     channel_id: Slug
+-    scheduled_at: datetime                     # break/interstitial slot in the program log
+-    schedule_item_id: Slug                     # the materialized program-log item
++    scheduled_at: datetime  # break/interstitial slot in the program log
++    schedule_item_id: Slug  # the materialized program-log item
++
+ 
+-class UnderwriterAffidavit(BaseModel):          # proof-of-airing for billing (view-backed by S23 as-run)
++class UnderwriterAffidavit(BaseModel):  # proof-of-airing for billing (view-backed by S23 as-run)
+     affidavit_id: Slug
+     underwriter: str
+     period_start: date
+     period_end: date
+-    aired: list[dict]                           # [{spot_id, channel, aired_at, duration_s}] from as_run (source_kind='spot')
++    aired: list[dict]  # [{spot_id, channel, aired_at, duration_s}] from as_run (source_kind='spot')
+     total_airings: int
+     total_seconds: int
+ ```
+diff --git a/docs/spec/3.0/sections/S25-meeting-agenda-integration.md b/docs/spec/3.0/sections/S25-meeting-agenda-integration.md
+index 57f29e5e..95fb78ff 100644
+--- a/docs/spec/3.0/sections/S25-meeting-agenda-integration.md
++++ b/docs/spec/3.0/sections/S25-meeting-agenda-integration.md
+@@ -30,18 +30,19 @@ A government-access viewer navigating a 4-hour council meeting needs to **jump t
+ class MeetingAgenda(BaseModel):
+     agenda_id: Slug
+     station_id: Slug
+-    meeting_asset_id: Slug             # the recorded meeting (Asset, S7)
++    meeting_asset_id: Slug  # the recorded meeting (Asset, S7)
+     source_doc_url: str | None = None  # optional uploaded agenda PDF (displayed beside player)
+-    status: Literal["draft","published"] = "draft"
++    status: Literal["draft", "published"] = "draft"
++
+ 
+ class AgendaItem(BaseModel):
+     item_id: Slug
+     agenda_id: Slug
+     order: int
+-    number: str | None = None          # "3.a", "VII"
++    number: str | None = None  # "3.a", "VII"
+     title: str
+-    video_timecode_s: int | None = None # offset into the meeting video (the jump point)
+-    doc_anchor: str | None = None       # optional anchor/page in the source PDF
++    video_timecode_s: int | None = None  # offset into the meeting video (the jump point)
++    doc_anchor: str | None = None  # optional anchor/page in the source PDF
+     notes: str | None = None
+ ```
+ Migration `0058_meeting_agenda` adds `meeting_agendas` + `agenda_items`. Sequences after `0057_underwriting_spots` (S24). Agenda items double as the meeting's **chapters** (one source of truth — chapters derive from agenda items when an agenda exists; implemented as the `agendaToChapters` projection helper, with the player chapter-strip wiring documented at the top of `MeetingAgendaSidebar.tsx` as the integration site — the sidebar is the user-visible chapter UI today).
+diff --git a/docs/spec/3.0/sections/S26-subscription-paywall.md b/docs/spec/3.0/sections/S26-subscription-paywall.md
+index c670eff0..3d2b9893 100644
+--- a/docs/spec/3.0/sections/S26-subscription-paywall.md
++++ b/docs/spec/3.0/sections/S26-subscription-paywall.md
+@@ -25,26 +25,28 @@ Some stations want to monetize premium content (e.g., exclusive HS sports) to of
+ class PaywallConfig(BaseModel):
+     config_id: Slug
+     station_id: Slug
+-    enabled: bool = False              # DEFAULT OFF
++    enabled: bool = False  # DEFAULT OFF
+     provider: Literal["stripe"] = "stripe"
+-    tiers: list[dict] = []             # {tier_id, name, price_id (Stripe), interval}
++    tiers: list[dict] = []  # {tier_id, name, price_id (Stripe), interval}
+     signing_secret: str | None = None  # per-station HMAC secret; signs magic-link tokens AND
+-                                       # verifies Stripe webhook signatures (separated in a future
+-                                       # slice if these concerns diverge — see Q-3 close-out in the
+-                                       # S26 gauntlet)
++    # verifies Stripe webhook signatures (separated in a future
++    # slice if these concerns diverge — see Q-3 close-out in the
++    # S26 gauntlet)
+ 
+-class AccessGrant(BaseModel):          # email magic-link → access
++
++class AccessGrant(BaseModel):  # email magic-link → access
+     grant_id: Slug
+     email: str
+-    scope: str                         # asset_id | series_id | "all"
+-    granted_via: Literal["subscription","comp","magic_link"]
++    scope: str  # asset_id | series_id | "all"
++    granted_via: Literal["subscription", "comp", "magic_link"]
+     expires_at: datetime | None
+ 
+-class Subscription(BaseModel):         # mirror of Stripe state (source of truth = Stripe)
+-    sub_id: str                        # Stripe subscription id
++
++class Subscription(BaseModel):  # mirror of Stripe state (source of truth = Stripe)
++    sub_id: str  # Stripe subscription id
+     email: str
+     tier_id: str
+-    status: Literal["active","past_due","canceled","incomplete"]
++    status: Literal["active", "past_due", "canceled", "incomplete"]
+     current_period_end: datetime
+ ```
+ Migration `0059_paywall_access` adds `paywall_configs` + `access_grants` + `paywall_subscriptions` (the subscriptions table is prefixed `paywall_` on disk to avoid collision with a future generic `subscriptions` table — the in-process pydantic model keeps the unprefixed `Subscription` class name). Sequences after `0058_meeting_agenda` (S25). Gated entirely behind `enabled=false` so a station that never turns it on carries empty tables + zero behavior change.
+diff --git a/docs/spec/3.0/sections/S27-agenda-import-bridge.md b/docs/spec/3.0/sections/S27-agenda-import-bridge.md
+index 7e3fb9fa..38319bf3 100644
+--- a/docs/spec/3.0/sections/S27-agenda-import-bridge.md
++++ b/docs/spec/3.0/sections/S27-agenda-import-bridge.md
+@@ -41,7 +41,9 @@ Every vendor implements one Protocol
+ 
+ ```python
+ class AgendaSource(Protocol):
+-    def fetch_meetings(self, client_code: str, *, since: date | None = None) -> list[ExternalMeetingSummary]: ...
++    def fetch_meetings(
++        self, client_code: str, *, since: date | None = None
++    ) -> list[ExternalMeetingSummary]: ...
+     def fetch_agenda(self, client_code: str, event_id: str) -> ExternalAgenda: ...
+ ```
+ 
+diff --git a/docs/spec/3.0/sections/S6-cg-bulletin-board-designer.md b/docs/spec/3.0/sections/S6-cg-bulletin-board-designer.md
+index a07e8980..c6b6a3b2 100644
+--- a/docs/spec/3.0/sections/S6-cg-bulletin-board-designer.md
++++ b/docs/spec/3.0/sections/S6-cg-bulletin-board-designer.md
+@@ -236,7 +236,8 @@ def fetch_feed_items(feed_source: CgFeedSource) -> list[CgFeedItem]:
+ ```python
+ now = datetime.now(UTC)
+ airable = [
+-    b for b in bulletins 
++    b
++    for b in bulletins
+     if b.state in ("accepted", "scheduled")
+     and (b.requested_start is None or b.requested_start <= now)
+     and (b.requested_end is None or now < b.requested_end)
+@@ -380,23 +381,29 @@ the S18 comparative appendix.
+ Extends the CG model (boards/zones/bulletins from `0040`) with the depth incumbent PEG graphics ships:
+ 
+ ```python
+-class BulletinMedia(BaseModel):            # richer bulletin content kinds
++class BulletinMedia(BaseModel):  # richer bulletin content kinds
+     media_id: Slug
+     bulletin_id: Slug
+     kind: Literal["uploaded_image", "fullscreen_slide", "live_video"]
+-    asset_ref: Slug | None = None          # uploaded image / slide asset
+-    live_source: str | None = None         # for kind=live_video: NDI/SDI/stream input id (composited via engine)
++    asset_ref: Slug | None = None  # uploaded image / slide asset
++    live_source: str | None = (
++        None  # for kind=live_video: NDI/SDI/stream input id (composited via engine)
++    )
++
+ 
+ class BulletinAudio(BaseModel):
+     audio_id: Slug
+     scope: Literal["bulletin", "channel"]  # per-bulletin narration OR per-channel background bed
+     target_id: Slug
+     asset_ref: Slug
+-    loudness_regime: str = "inherit"       # mixed under the S11 loudness path (never clips program)
++    loudness_regime: str = "inherit"  # mixed under the S11 loudness path (never clips program)
++
+ 
+-class ZoneTag(BaseModel):                  # tag/filter content into zones
++class ZoneTag(BaseModel):  # tag/filter content into zones
+     tag_id: Slug
+     label: str
++
++
+ # CgZoneConfig gains: allowed_tags: list[Slug]  (only tagged content fills the zone)
+ ```
+ **Behavior:** (1) **live-video bulletin** = a CG zone whose source is a live input, composited by the S15 `compositor` (an L-bar/PiP over a bulletin board); (2) **background audio** mixed beneath silent bulletin boards under the existing loudness normalization (S11) so it never overwhelms; (3) **zone tags** filter which feed/bulletin items may appear in a given zone; (4) **program-aware interstitials** = a CG feed-kind that reads the program log (S4) to render "Coming Up Next"/"You Were Just Watching." Migration `0053_cg_depth` adds `bulletin_media`/`bulletin_audio`/`zone_tags` (after `0052`).
+diff --git a/docs/spec/3.0/sections/S8-health-alerting-support-updates.md b/docs/spec/3.0/sections/S8-health-alerting-support-updates.md
+index 8c367612..107b95ac 100644
+--- a/docs/spec/3.0/sections/S8-health-alerting-support-updates.md
++++ b/docs/spec/3.0/sections/S8-health-alerting-support-updates.md
+@@ -78,16 +78,16 @@ AlertSeverity = Literal["critical", "warning", "info"]
+ # info      = an event worth a record (update applied, self-test passed).
+ 
+ AlertConditionKind = Literal[
+-    "off-air",                 # S8 (egress state) — a channel that should be ON_AIR is not
+-    "encoder-death",           # S8 (egress) — encoder process exited / ERROR with no clean stop
+-    "server-crash",            # S8 (self/boot) — app restarted without a clean shutdown marker
+-    "schema-drift",            # S9 — running code schema_version != persisted (S9 0043 field)
+-    "relay-blocked",           # S9 — SDI/NDI relay stuck in backoff (ENG-003 orphan card hold)
+-    "compliance-probe-fail",   # S2 — TSDuck TR 101 290 priority-1 drift on a cable sink
+-    "missing-media",           # S7 — a scheduled item's media is absent < 5 min before air
+-    "commit-failure",          # S4 — commit-to-air validation/dispatch failed
+-    "takeover-stuck-2h",       # S5 — a live takeover has held the channel > 2h without handback
+-    "ai-runtime-down",         # S13 — Ollama / model runtime unreachable for a needed feature
++    "off-air",  # S8 (egress state) — a channel that should be ON_AIR is not
++    "encoder-death",  # S8 (egress) — encoder process exited / ERROR with no clean stop
++    "server-crash",  # S8 (self/boot) — app restarted without a clean shutdown marker
++    "schema-drift",  # S9 — running code schema_version != persisted (S9 0043 field)
++    "relay-blocked",  # S9 — SDI/NDI relay stuck in backoff (ENG-003 orphan card hold)
++    "compliance-probe-fail",  # S2 — TSDuck TR 101 290 priority-1 drift on a cable sink
++    "missing-media",  # S7 — a scheduled item's media is absent < 5 min before air
++    "commit-failure",  # S4 — commit-to-air validation/dispatch failed
++    "takeover-stuck-2h",  # S5 — a live takeover has held the channel > 2h without handback
++    "ai-runtime-down",  # S13 — Ollama / model runtime unreachable for a needed feature
+ ]
+ 
+ AlertChannelKind = Literal["email", "sms", "webhook"]
+@@ -111,7 +111,7 @@ class AlertRule(BaseModel):
+     condition: AlertConditionKind
+     enabled: bool = True
+     severity: AlertSeverity
+-    channel_ids: Annotated[list[str], Field(min_length=0)]   # AlertChannel.channel_id refs
++    channel_ids: Annotated[list[str], Field(min_length=0)]  # AlertChannel.channel_id refs
+     # Dedupe / rate-limit: notify on FIRST failure, then suppress repeats for
+     # this resource until either it RESOLVES or re_alert_after elapses.
+     dedupe_window_seconds: Annotated[int, Field(ge=0, le=86_400)] = 900
+@@ -130,7 +130,9 @@ A push destination for the **operator**. Secret material (SMTP creds, SMS API ke
+ ```python
+ class AlertChannel(BaseModel):
+     model_config = ConfigDict(extra="forbid")
+-    channel_id: Annotated[str, Field(min_length=1, max_length=120)]   # NB: alert-channel id, NOT egress channel
++    channel_id: Annotated[
++        str, Field(min_length=1, max_length=120)
++    ]  # NB: alert-channel id, NOT egress channel
+     kind: AlertChannelKind
+     label: Annotated[str, Field(min_length=1, max_length=120)]
+     enabled: bool = True
+@@ -140,8 +142,12 @@ class AlertChannel(BaseModel):
+     target_redacted: Annotated[str, Field(min_length=1, max_length=200)]
+     credential_handle: Annotated[str | None, Field(default=None, max_length=200)] = None
+     # quiet hours: critical alerts ALWAYS send; warning/info hold until window closes (OD-2)
+-    quiet_hours_start_utc: Annotated[str | None, Field(default=None, max_length=5)] = None  # "22:00" UTC
+-    quiet_hours_end_utc: Annotated[str | None, Field(default=None, max_length=5)] = None    # "07:00" UTC
++    quiet_hours_start_utc: Annotated[str | None, Field(default=None, max_length=5)] = (
++        None  # "22:00" UTC
++    )
++    quiet_hours_end_utc: Annotated[str | None, Field(default=None, max_length=5)] = (
++        None  # "07:00" UTC
++    )
+     last_delivery_status: AlertDeliveryStatus | None = None
+     last_delivery_at: datetime | None = None
+     created_at: datetime
+@@ -158,16 +164,18 @@ class AlertEvent(BaseModel):
+     rule_id: Annotated[str, Field(min_length=1, max_length=120)]
+     condition: AlertConditionKind
+     severity: AlertSeverity
+-    state: AlertEventState                       # firing | resolved
++    state: AlertEventState  # firing | resolved
+     # dedupe_key = f"{condition}:{resource_ref}" — the unit of notify-on-first-failure
+-    resource_ref: Annotated[str, Field(min_length=1, max_length=200)]  # e.g. egress channel_id, sink label
++    resource_ref: Annotated[
++        str, Field(min_length=1, max_length=200)
++    ]  # e.g. egress channel_id, sink label
+     summary: Annotated[str, Field(min_length=1, max_length=300)]
+     detail: Annotated[str, Field(default="", max_length=2000)]
+     source_section: Annotated[str, Field(min_length=2, max_length=8)]  # "S2".."S13" or "S8"
+     first_observed_at: datetime
+     last_observed_at: datetime
+     resolved_at: datetime | None = None
+-    occurrence_count: Annotated[int, Field(ge=1)] = 1   # suppressed repeats counted here
++    occurrence_count: Annotated[int, Field(ge=1)] = 1  # suppressed repeats counted here
+     acknowledged_at: datetime | None = None
+     acknowledged_by: Annotated[str | None, Field(default=None, max_length=120)] = None
+ ```
+@@ -183,9 +191,9 @@ class AlertEventDelivery(BaseModel):
+     event_id: Annotated[str, Field(min_length=1, max_length=120)]
+     alert_channel_id: Annotated[str, Field(min_length=1, max_length=120)]
+     kind: AlertChannelKind
+-    status: AlertDeliveryStatus                  # sent | failed | suppressed | dead_letter
++    status: AlertDeliveryStatus  # sent | failed | suppressed | dead_letter
+     attempts: Annotated[int, Field(ge=0)] = 0
+-    next_attempt_at: datetime | None = None      # bounded exp backoff like WebhookRetryWorker
++    next_attempt_at: datetime | None = None  # bounded exp backoff like WebhookRetryWorker
+     last_error: Annotated[str, Field(default="", max_length=1000)] = ""
+     signature: Annotated[str | None, Field(default=None, max_length=200)] = None  # webhook HMAC
+     dispatched_at: datetime
+@@ -199,7 +207,7 @@ The install-time `SafeToBroadcastContract` answers "can I start a meeting?"; thi
+ class RuntimeSafeToAirStatus(BaseModel):
+     model_config = ConfigDict(extra="forbid")
+     generated_at: datetime
+-    color: SafeToAirColor                        # green=on-air & clean, yellow=degraded, red=off-air
++    color: SafeToAirColor  # green=on-air & clean, yellow=degraded, red=off-air
+     label: Annotated[str, Field(min_length=1, max_length=80)]
+     operator_message: Annotated[str, Field(min_length=1)]
+     channels: list[ChannelRuntimeStatus]
+@@ -215,10 +223,10 @@ class RuntimeSafeToAirStatus(BaseModel):
+ class ChannelRuntimeStatus(BaseModel):
+     model_config = ConfigDict(extra="forbid")
+     channel_id: Annotated[str, Field(min_length=1, max_length=80)]
+-    egress_state: EgressState                    # from EgressStateRow
+-    sink_health: dict[str, bool]                 # POST-QA-004 (state-aware, §6.1)
++    egress_state: EgressState  # from EgressStateRow
++    sink_health: dict[str, bool]  # POST-QA-004 (state-aware, §6.1)
+     on_air: bool
+-    on_healthy_slate: bool                       # idling on slate is healthy, not off-air
++    on_healthy_slate: bool  # idling on slate is healthy, not off-air
+     encoder_fps: float | None = None
+     encoder_bitrate_kbps: float | None = None
+     last_loudness_lufs: float | None = None
+@@ -245,7 +253,7 @@ class SystemResourceSample(BaseModel):
+     backup_volume_free_gb: Annotated[float | None, Field(default=None, ge=0)] = None
+     db_reachable: bool = True
+     backup_volume_writable: bool = True
+-    service_running: bool = True                 # the egress daemon / service unit is up
++    service_running: bool = True  # the egress daemon / service unit is up
+     clock_skew_seconds: Annotated[float | None, Field(default=None)] = None  # NTP/host drift
+ ```
+ 
+@@ -255,11 +263,11 @@ class SystemResourceSample(BaseModel):
+ class SystemSelfTest(BaseModel):
+     model_config = ConfigDict(extra="forbid")
+     self_test_id: Annotated[str, Field(min_length=1, max_length=120)]
+-    kind: SelfTestKind                           # daily | weekly
++    kind: SelfTestKind  # daily | weekly
+     started_at: datetime
+     finished_at: datetime | None = None
+-    status: SelfTestStatus                       # pass | warn | fail
+-    checks: dict[str, bool]                      # named subcheck → pass
++    status: SelfTestStatus  # pass | warn | fail
++    checks: dict[str, bool]  # named subcheck → pass
+     summary: Annotated[str, Field(min_length=1, max_length=600)]
+     evidence_path: Annotated[str | None, Field(default=None, max_length=500)] = None
+ ```
+@@ -315,8 +323,13 @@ S8 exposes a single **in-process** entry point other sections call (no HTTP —
+ 
+ ```python
+ def record_alert_condition(
+-    *, kind: AlertConditionKind, resource_ref: str, source_section: str,
+-    summary: str, detail: str = "", observed_at: datetime | None = None,
++    *,
++    kind: AlertConditionKind,
++    resource_ref: str,
++    source_section: str,
++    summary: str,
++    detail: str = "",
++    observed_at: datetime | None = None,
+     resolved: bool = False,
+ ) -> AlertEvent: ...
+ ```
+@@ -359,12 +372,13 @@ Every red/yellow item carries an **operator-actionable `next_step`** string (the
+ 
+ ```python
+ def build_default_sink_health(
+-    *, config: EgressConfig, metrics: EgressEncoderMetrics, state: EgressState,
++    *,
++    config: EgressConfig,
++    metrics: EgressEncoderMetrics,
++    state: EgressState,
+ ) -> dict[str, bool]:
+     require_progress = state == "ON_AIR"
+-    metrics_available = (
+-        metrics.encoder_fps is not None or metrics.encoder_bitrate_kbps is not None
+-    )
++    metrics_available = metrics.encoder_fps is not None or metrics.encoder_bitrate_kbps is not None
+     if require_progress:
+         # On air: a UDP sink is "connected" iff the encoder is actually moving media.
+         udp_ok = encoder_has_progress(metrics) if metrics_available else False
+@@ -375,9 +389,11 @@ def build_default_sink_health(
+     health: dict[str, bool] = {}
+     for sink in config.sinks:
+         if sink.kind == "file":
+-            health[sink.label] = True; continue
++            health[sink.label] = True
++            continue
+         if sink.kind == "local-ts" and urlsplit(sink.uri).scheme.lower() == "file":
+-            health[sink.label] = True; continue
++            health[sink.label] = True
++            continue
+         # srt/rtmp/sdi still require a provider ack ⇒ conservative False (unchanged).
+         health[sink.label] = False if sink.kind in {"srt", "rtmp", "sdi"} else udp_ok
+     return health
+diff --git a/docs/spec/3.0/sections/S9-reliability-and-process-identity.md b/docs/spec/3.0/sections/S9-reliability-and-process-identity.md
+index a1f4af71..1151213f 100644
+--- a/docs/spec/3.0/sections/S9-reliability-and-process-identity.md
++++ b/docs/spec/3.0/sections/S9-reliability-and-process-identity.md
+@@ -50,6 +50,7 @@ The state row already persists encoder pid. **Extend it to include optional-co-p
+ ```python
+ class EgressStateRow(BaseModel):
+     """Last-known daemon state for one channel."""
++
+     channel_id: str
+     state: EgressState
+     current_source_label: str | None = None
+@@ -57,11 +58,15 @@ class EgressStateRow(BaseModel):
+     updated_at: datetime
+     pid: int | None = None  # encoder pid (legacy ffmpeg-relay; unused under the GStreamer engine)
+     last_error: str | None = None
+-    
++
+     # NET-NEW (S9): durable identity of an optional device-holding co-process (S15 §5/§8)
+-    sdi_coproc_pid: int | None = None  # pid of the CasparCG/SDI co-process holding the DeckLink card (if running)
++    sdi_coproc_pid: int | None = (
++        None  # pid of the CasparCG/SDI co-process holding the DeckLink card (if running)
++    )
+     sdi_coproc_created_at: float | None = None  # process.create_time() at spawn
+-    ndi_coproc_pid: int | None = None  # pid of the NDI-runtime co-process holding the NDI name (if running)
++    ndi_coproc_pid: int | None = (
++        None  # pid of the NDI-runtime co-process holding the NDI name (if running)
++    )
+     ndi_coproc_created_at: float | None = None  # process.create_time() at spawn
+ ```
+ 
+@@ -74,6 +79,7 @@ Add schema-currency and proof-event rate visibility:
+ ```python
+ class EgressHealthSample(BaseModel):
+     """Periodic health sample for operator System Health and proof review."""
++
+     channel_id: str
+     sampled_at: datetime
+     state: EgressState
+@@ -84,7 +90,7 @@ class EgressHealthSample(BaseModel):
+     seconds_on_air: int = 0
+     last_loudness_lufs: float | None = None
+     caption_status: CaptionStatus = "not-verified"
+-    
++
+     # NET-NEW (S9): schema and proof churn visibility
+     schema_version: int  # Semver patch bumped on breaking entity changes
+     proof_events_appended_since_last_sample: int = 0  # count, for rate/churn detection
+@@ -99,14 +105,16 @@ Unify optional-co-process identity management (mirrors `OrphanInfo`). This appli
+ ```python
+ from dataclasses import dataclass
+ 
++
+ @dataclass(frozen=True)
+ class CoprocessIdentity:
+     """Identity of an optional co-process for TOCTOU-safe reaping.
+-    
++
+     Same pattern as daemon.OrphanInfo: created_at must re-verify at kill time
+     to guard against pid reuse. Used for co-processes that can hold a device
+     (CasparCG/SDI → DeckLink card; NDI runtime → NDI name).
+     """
++
+     pid: int
+     kind: Literal["sdi", "ndi", "obs", "vdoninja", "relay"]  # which co-process type
+     created_at: float  # process.create_time() from probe
+@@ -140,15 +148,17 @@ The persistent pipeline (S15 §3) is the primary thing to keep alive. The superv
+ 2. On boot, before starting fresh co-processes, iterate the reaped pids and **log** them with proof events (one event per reaped co-process):
+    ```python
+    for pid in reaped_coproc_pids:
+-       store.append_proof_event(EgressProofEvent(
+-           event_id=f"egress-coproc-reap-sdi-{pid}",  # or "ndi"
+-           channel_id=channel_id,
+-           state="STARTING",
+-           source_label="(co-process reap)",
+-           source_path=f"coproc-pid-{pid}",
+-           proof_boundary="civiccast-egress-coprocess-lifecycle",
+-           machine_summary=f"Reaped predecessor CasparCG/SDI co-process (pid {pid}) before startup; DeckLink card released."
+-       ))
++       store.append_proof_event(
++           EgressProofEvent(
++               event_id=f"egress-coproc-reap-sdi-{pid}",  # or "ndi"
++               channel_id=channel_id,
++               state="STARTING",
++               source_label="(co-process reap)",
++               source_path=f"coproc-pid-{pid}",
++               proof_boundary="civiccast-egress-coprocess-lifecycle",
++               machine_summary=f"Reaped predecessor CasparCG/SDI co-process (pid {pid}) before startup; DeckLink card released.",
++           )
++       )
+    ```
+ 
+ ### 4.2 Co-process pid durability (daemon / supervisor lifecycle)
+@@ -210,10 +220,12 @@ Same latch pattern already used for starts (automation.py:131) and reloads (auto
+ 1. Build a module `egress/schema_currency.py`:
+    ```python
+    EGRESS_SCHEMA_VERSION = 1  # Bumped on breaking entity changes
+-   
++
++
+    def current_schema_version() -> int:
+        return EGRESS_SCHEMA_VERSION
+-   
++
++
+    def is_schema_current(sample: EgressHealthSample) -> bool:
+        return sample.schema_version == current_schema_version()
+    ```
+@@ -297,17 +309,14 @@ Applies to the device-holding co-processes (CasparCG/SDI, NDI runtime) and any o
+ Extract `_verify_and_kill_process(pid, created_at, tolerance_seconds=1.0)` as a shared utility:
+ 
+ ```python
+-def _verify_and_kill_process(
+-    pid: int, 
+-    created_at: float, 
+-    tolerance_seconds: float = 1.0
+-) -> bool:
++def _verify_and_kill_process(pid: int, created_at: float, tolerance_seconds: float = 1.0) -> bool:
+     """Kill a process only if its create_time matches the recorded one.
+-    
++
+     Returns True if killed, False if not (pid missing, recycled, or access denied).
+     On access denied, logs a warning and returns False (best effort).
+     """
+     import psutil
++
+     try:
+         process = psutil.Process(pid)
+         if abs(process.create_time() - created_at) > tolerance_seconds:
+@@ -322,7 +331,9 @@ def _verify_and_kill_process(
+         process.kill()
+         return True
+     except psutil.AccessDenied:
+-        _LOG.warning(f"Access denied reaping pid {pid}; if it is the CasparCG/SDI co-process, the DeckLink card may remain locked.")
++        _LOG.warning(
++            f"Access denied reaping pid {pid}; if it is the CasparCG/SDI co-process, the DeckLink card may remain locked."
++        )
+         return False
+ ```
+ 
+@@ -335,14 +346,15 @@ Centralize in a helper class (egress/pacing.py):
+ ```python
+ class UniformPacingLatch:
+     """Cooldown latch for operations that must not churn.
+-    
++
+     Each operation (key) has a next-allowed time. Query returns whether
+     the operation should run now; if yes, updates the next-allowed time.
+     """
++
+     def __init__(self, default_cooldown_seconds: float = 30.0):
+         self._next_allowed: dict[str, float] = {}
+         self._default_cooldown = default_cooldown_seconds
+-    
++
+     def should_run_now(self, key: str, now: float | None = None) -> bool:
+         """Return True if the operation may run; also advances the latch."""
+         now = now or time.time()
+@@ -350,7 +362,7 @@ class UniformPacingLatch:
+             self._next_allowed[key] = now + self._default_cooldown
+             return True
+         return False
+-    
++
+     def force_reset(self, key: str) -> None:
+         """Clear the cooldown (used after success to allow immediate retry)."""
+         self._next_allowed.pop(key, None)
+@@ -371,18 +383,16 @@ In both `InMemoryEgressStore` and `PostgresEgressStore`:
+ MAX_PROOF_EVENTS_PER_CHANNEL = 10_000
+ TRIM_BATCH_SIZE = 1_000
+ 
++
+ def append_proof_event(self, event: EgressProofEvent) -> None:
+     # Append (duplicate check already exists).
+     # Then trim if needed.
+     self._do_append_proof_event_impl(event)
+-    
++
+     # Count per-channel; trim if over limit.
+     channel_count = self._count_proof_events_for_channel(event.channel_id)
+     if channel_count > MAX_PROOF_EVENTS_PER_CHANNEL:
+-        self._trim_oldest_proof_events_for_channel(
+-            event.channel_id, 
+-            delete_count=TRIM_BATCH_SIZE
+-        )
++        self._trim_oldest_proof_events_for_channel(event.channel_id, delete_count=TRIM_BATCH_SIZE)
+ ```
+ 
+ **Rationale:** Proof events are audit/debug logs, not operational data. A 10k limit per channel is ~10 hours of churn-loop activity at 900 events/hr, providing forensic window without unbounded growth.
