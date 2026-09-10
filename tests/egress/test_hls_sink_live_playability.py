@@ -154,10 +154,14 @@ def _read_segment_durations(manifest_text: str) -> list[float]:
     return durations
 
 
-def test_hls_sink_produces_rolling_playable_live_manifest(tmp_path: Path) -> None:
+def test_hls_sink_produces_rolling_playable_live_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The mission's core proof: real ffmpeg, real rolling HLS, real HTTP,
     real ffprobe, and the manifest actually updates over time."""
 
+    # The media router serves only folders inside CIVICCAST_LIVE_HLS_ROOT.
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(tmp_path))
     live_dir = tmp_path / "live-hls" / "gov-ch12"
     handle = _start_live_hls_encoder(live_dir)
     try:

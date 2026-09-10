@@ -4,8 +4,10 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
+from urllib.parse import quote
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,6 +31,12 @@ HLS_OUTPUT_ENABLED_NEXT_STEP = (
     "Serves the channel's hls egress sink while the channel is on air; the resident "
     "portal resolves this same URL from /api/public/live/current."
 )
+# Operator-set absolute media origin. Unset (the stock install) means the
+# local live manifest URL is site-relative -- the resident portal and the
+# media router share an origin, so a relative URL resolves to whatever host
+# the resident actually reached. Only a deployer whose media origin differs
+# from the portal's sets this. Read on every call so tests can monkeypatch it.
+LOCAL_MEDIA_BASE_URL_ENV = "CIVICCAST_LOCAL_MEDIA_BASE_URL"
 
 
 def public_live_manifest_path(channel_id: str) -> str:
@@ -43,8 +51,19 @@ def public_live_manifest_path(channel_id: str) -> str:
 
 
 def local_live_manifest_path(channel_id: str) -> str:
-    """Where ``civiccast.stream.media_router`` serves a channel's hls sink."""
-    return f"/media/live/{channel_id}/playlist.m3u8"
+    """Where ``civiccast.stream.media_router`` serves a channel's hls sink.
+
+    The ONE helper that spells this URL: the Channels screen, the CTV feed,
+    the ``live.m3u8`` redirect and ``/api/public/live/current`` all print it
+    (review round 2 delta, MINOR 2: two spellings had drifted -- one applied
+    ``CIVICCAST_LOCAL_MEDIA_BASE_URL`` and ``quote()``, one did neither).
+    Site-relative unless the operator set an absolute base.
+    """
+    path = f"/media/live/{quote(channel_id, safe='')}/playlist.m3u8"
+    base_url = os.environ.get(LOCAL_MEDIA_BASE_URL_ENV, "").strip()
+    if not base_url:
+        return path
+    return f"{base_url.rstrip('/')}{path}"
 
 
 class ChannelOutput(BaseModel):

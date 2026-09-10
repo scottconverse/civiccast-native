@@ -29548,7 +29548,7 @@
           "egress"
         ],
         "summary": "Apply a headend delivery profile to a channel's egress config",
-        "description": "Apply a headend preset to the channel's config and make it take effect.\n\nPersisting the config alone changes nothing on air: the daemon reads a\nchannel's sinks when it builds a pipeline. So when the channel is already\nrunning (``STARTING`` / ``ON_AIR`` / ``TRANSITIONING`` / ``FALLBACK_SLATE``)\na ``reload`` command is queued in the same request (review round 2,\nBLOCKER 2 -- before this, applying a preset did nothing until the service\nrestarted). A dark channel gets no command: its next ``start`` reads the\nnew config, and a ``reload`` on a dark channel would start it, which is an\noperator decision this route must not make.",
+        "description": "Apply a headend preset to the channel's config and say when it airs.\n\nPersisting the config alone changes nothing on air: the daemon reads a\nchannel's sinks, encode profile and loudness target only when it BUILDS a\npipeline. A ``reload`` does not rebuild them -- on the default GStreamer\nengine it re-applies only the program source and the graphics overlay\n(``gst/engine.py`` / ``gst/worker.py``), while ``daemon.py`` would still\nstart the HLS relay child for the new sink, leaving a relay fed nothing\nand a manifest URL that 404s (review round 2 delta, BLOCKER 1). So this\nroute never queues a ``reload``. What it does instead depends on the\nchannel's state and is reported back in ``on_air_effect``:\n``FALLBACK_SLATE`` gets a real restart (``stop`` + ``start``) because\nnothing but the slate is interrupted; a program on air is left alone and\nthe response says a restart is required; a dark channel just gets the\nconfig. See ``HeadendProfileApplyResponse``.",
         "operationId": "apply_headend_profile_to_channel_api_staff_egress_channels__channel_id__config_headend_profile_post",
         "parameters": [
           {
@@ -29577,7 +29577,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EgressConfig"
+                  "$ref": "#/components/schemas/HeadendProfileApplyResponse"
                 }
               }
             }
@@ -45198,6 +45198,36 @@
         ],
         "title": "HeadendProfileApplyRequest",
         "description": "Apply one named headend delivery profile to a channel (CA-6)."
+      },
+      "HeadendProfileApplyResponse": {
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/EgressConfig"
+          },
+          "on_air_effect": {
+            "type": "string",
+            "enum": [
+              "restart_queued",
+              "restart_required",
+              "next_start",
+              "unchanged"
+            ],
+            "title": "On Air Effect"
+          },
+          "on_air_detail": {
+            "type": "string",
+            "title": "On Air Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "config",
+          "on_air_effect",
+          "on_air_detail"
+        ],
+        "title": "HeadendProfileApplyResponse",
+        "description": "What a preset apply changed, and when it reaches the air.\n\n``on_air_effect`` is the honest answer to \"is this on air now?\":\n\n- ``restart_queued`` -- the channel was standing by on its fallback slate,\n  so a ``stop`` + ``start`` pair was queued; the daemon rebuilds the\n  pipeline with the new outputs within one poll cycle. Nothing a resident\n  was watching is lost (it was the slate).\n- ``restart_required`` -- the channel is airing a program. A running\n  pipeline never picks up an output change (the GStreamer engine's reload\n  re-applies only the program source and the graphics overlay -- see\n  ``civiccast/egress/gst/engine.py``), and cutting a program is the\n  operator's call, not this route's. The preset lands at the next\n  ``start``; the operator can Stop then Start now.\n- ``next_start`` -- the channel is not running; its next ``start`` reads\n  the new config.\n- ``unchanged`` -- the stored config already matched; nothing was queued.\n\n``on_air_detail`` says the same in one operator-readable sentence, and\nthe Channels screen shows it verbatim after the apply."
       },
       "HeadendReadinessResponse": {
         "properties": {

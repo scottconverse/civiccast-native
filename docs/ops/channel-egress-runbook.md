@@ -408,6 +408,25 @@ SPTS MPEG-TS over UDP unicast or multicast — plus named presets built from
 published vendor documentation. Apply one from **Channels → Cable headend
 delivery** (or `POST /api/staff/egress/channels/{id}/config/headend-profile`).
 
+When it reaches the air: the daemon reads a channel's outputs, encode profile
+and loudness target only when it **builds** a pipeline, and a content reload
+never rebuilds them. The apply response says what happened in
+`on_air_effect` / `on_air_detail`, and the card shows it:
+
+- `restart_queued` -- the channel was standing by on its fallback slate, so a
+  `stop` + `start` pair was queued and the pipeline comes back with the new
+  output within one daemon poll (nothing but the slate is interrupted).
+- `restart_required` -- a program is on air. The preset is saved and lands at
+  the channel's next start; to put it on air now, **Stop** then **Start** the
+  channel. The route never cuts a program on its own.
+- `next_start` -- the channel is not running; its next start reads the config.
+- `unchanged` -- the stored config already matched; nothing was queued.
+
+Until a pipeline built with the `hls` sink writes `playlist.m3u8`,
+`/api/public/live/current` reports `on_air_no_web_output` with
+`reason: "HLS output configured but not serving yet"` rather than a manifest
+URL that would 404.
+
 | Preset | Encode | Mux rate | Transport | Built from |
 | --- | --- | --- | --- | --- |
 | `generic-udp-spts` | H.264 720p30 5 Mbps, AC-3 192k | 8 Mbps default | UDP unicast | TelVue feed-setup KB; CableLabs encoding tech notes |
@@ -416,7 +435,7 @@ delivery** (or `POST /api/staff/egress/channels/{id}/config/headend-profile`).
 | `telvue-hypercaster-ip` | H.264 720p30 5 Mbps, AC-3 192k | 8 Mbps; match the feed's Max Bit Rate | UDP unicast or multicast, port 1024–65535 | TelVue KB (feed setup, content prep, ports) |
 | `harmonic-spectrum-ts` | H.264 1080p30 8 Mbps, AC-3 192k | 10 Mbps | UDP unicast | Harmonic Spectrum X/XE datasheets |
 | `leightronix-file-drop` | H.264 720p file handoff | n/a | Watched folder | Leightronix UltraNEXUS-HD docs |
-| `local-rehearsal-hls` | Adds an `hls` web-preview sink; leaves the channel's encode and loudness untouched | n/a | Local folder (blank = `<egress work dir>/live-hls/<channel>`; a typed folder must be an absolute path under the egress work dir or `CIVICCAST_LIVE_HLS_ROOT` -- UNC, relative and elsewhere paths are refused because the folder is served publicly), served at `/media/live/<channel>/playlist.m3u8` | Not a cable delivery: RFC 8216 + ffmpeg `hls` muxer. Lets the resident portal play the channel with no headend and no CDN |
+| `local-rehearsal-hls` | Adds an `hls` web-preview sink; leaves the channel's encode and loudness untouched | n/a | Local folder (blank = `<egress work dir>/live-hls/<channel>`, or `<root>/<channel>` with no `live-hls/` segment when `CIVICCAST_LIVE_HLS_ROOT` is set; a typed folder must be an absolute path under the egress work dir or `CIVICCAST_LIVE_HLS_ROOT` -- UNC, relative and elsewhere paths are refused because the folder is served publicly, and `/media/live` re-checks that containment on the resolved path at serve time), served at `/media/live/<channel>/playlist.m3u8` | Not a cable delivery: RFC 8216 + ffmpeg `hls` muxer. Lets the resident portal play the channel with no headend and no CDN |
 
 Mechanics worth knowing:
 

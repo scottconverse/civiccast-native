@@ -300,10 +300,11 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
       makes it absolute.
     - `POST /api/staff/egress/channels/{id}/config/headend-profile` only
       upserted the config row, so an applied preset did nothing until the
-      service restarted. It now queues a `reload` for a running channel
-      (`STARTING` / `ON_AIR` / `TRANSITIONING` / `FALLBACK_SLATE`) in the same
-      request; a dark channel gets no command (its next `start` reads the new
-      config, and a `reload` on a dark channel would start it).
+      service restarted. Round 2 queued a `reload`; the round-2 delta review
+      showed that does not work on the default GStreamer engine (see below),
+      and the route now restarts a channel standing by on its slate, reports
+      `restart_required` for a program on air, and `next_start` for a dark
+      channel -- see the delta-review entry for the full contract.
     - `FALLBACK_SLATE` projected as `on_air`, so a slate read "On air" to
       residents and hid the idle page. New fourth state `standing_by`
       (`reason: "fallback slate, no program on air"`, `manifest_url` still
@@ -320,6 +321,80 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
       an explicit `CIVICCAST_LIVE_HLS_ROOT`; UNC paths, relative paths,
       folders elsewhere, and `..` traversal out of the root are 422s naming
       the allowed root. The stored sink URI is the normalised absolute path.
+  - Round-2 delta review (two blockers, three majors, two minors -- all
+    fixed, each with a regression test proven red on `e071464e`):
+    - **A `reload` never put a preset on air, and made the web-preview case
+      worse.** On the default GStreamer engine a reload re-applies only the
+      program source and the graphics overlay (`gst/engine.py`,
+      `gst/worker.py`); the sink set, encode profile and loudness target are
+      read only when a pipeline is BUILT. Meanwhile `daemon.py` started the
+      HLS relay child for the new sink on that reload, so applying the
+      web-preview preset to a running channel left a relay fed nothing, a
+      config carrying an `hls` sink, and `/api/public/live/current` handing
+      residents a manifest URL that 404ed -- a broken player where they
+      previously had the idle panel. The route no longer queues a `reload`.
+      The response is now `HeadendProfileApplyResponse` (`config`,
+      `on_air_effect`, `on_air_detail`): a channel on its `FALLBACK_SLATE`
+      gets a real restart (`stop` + `start` queued in order; the daemon
+      rebuilds the pipeline with the new outputs and restarts the relay --
+      `restart_queued`); a program on air is left alone and told
+      `restart_required` ("Stop and then Start the channel"), because
+      cutting a program is the operator's call; a dark channel gets
+      `next_start`; an identical apply is `unchanged` and queues nothing.
+      The Channels screen shows the detail line after every apply.
+      Independently, `/api/public/live/current` now advertises the local
+      manifest only when the sink's folder is inside the served root AND
+      `playlist.m3u8` exists there; otherwise `on_air_no_web_output` with
+      the new `reason: "HLS output configured but not serving yet"`. The
+      running-states set is `civiccast.egress.dispatcher.RUNNING_STATES`,
+      not a copy. Tests drive a real `EgressDaemon` over the API's own store
+      and assert the pipeline it runs afterwards carries the `hls` sink
+      (`tests/egress/test_router.py::test_web_preview_preset_on_a_standing_by_channel_lands_on_air_via_restart`
+      and siblings; `tests/live/test_router.py` "not serving yet" cases).
+    - **The `hls`-sink containment guarded one of two doors.**
+      `PUT /api/staff/egress/channels/{id}/config` ran only the model's shape
+      check and accepted `C:\Windows`, `\\fileserver\share\hls`, `/etc`
+      and `file:///C:/Windows`, each then served by the public
+      unauthenticated `/media/live/{channel}/{path}` with no root check. The
+      PUT now runs every `hls` sink through `resolve_local_hls_directory`
+      (422 naming the allowed root), and `media_router._live_dir_for_channel`
+      re-checks containment on the RESOLVED path at serve time -- so a third
+      writer, a hand-edited row, or an NTFS junction swapped in after the
+      config was written (the TOCTOU case) all 404. Pinned by
+      `tests/stream/test_media_router_live.py::TestLiveDirectoryContainment`
+      (including a real `mklink /J` junction) and the PUT cases in
+      `tests/egress/test_router.py`.
+    - **`TRANSITIONING` read "Offline" to residents.** It is an emitting
+      state (the daemon writes it on the restart-reload path while the
+      outgoing worker is still on air, and never on the seamless path because
+      output stays up), yet it projected to `offline`, so a live meeting
+      flipped to "Offline" and the player vanished at every handoff.
+      `/api/public/live/current` now treats `TRANSITIONING` as a program on
+      air with the carried-over source label (`on_air`, or
+      `on_air_no_web_output` without a servable manifest), and a transitioning
+      program outranks a slate channel in the unfiltered pick.
+    - **The surge-switch soak harness broke on the site-relative manifest.**
+      `civiccast/load/live_soak.py` handed the `manifest_url` from `/current`
+      straight to `httpx`, which refuses a URL with no host. The viewer now
+      resolves a relative manifest against the soak origin
+      (`absolute_manifest_url`); absolute CDN/operator URLs pass through.
+    - **VOD `manifest_url` still defaulted to `http://127.0.0.1:8000`.**
+      `civiccast/live/finalization_worker.py` now writes the same
+      site-relative shape the staff package route stores
+      (`/media/vod/{asset}/playlist.m3u8`); `CIVICCAST_LOCAL_MEDIA_BASE_URL`
+      now means one thing for VOD and live alike (unset/blank = relative,
+      set = absolute).
+    - **The Channels screen and `/current` spelled the live URL differently.**
+      `civiccast.cable.channel.local_live_manifest_path` now applies
+      `CIVICCAST_LOCAL_MEDIA_BASE_URL` and percent-encodes the channel id,
+      and `/api/public/live/current` calls it -- one helper owns the URL.
+    - Resident Home no longer renders "Standing by" and "Nothing is posted
+      yet" together on a bare station; the `HomeScreen.standingBy` on-air
+      case now drives the slate-to-program handoff through the re-resolve
+      poll (player absent while standing by, present once on air) so it
+      fails with the fix reverted. The runbook's `local-rehearsal-hls` row
+      states the `CIVICCAST_LIVE_HLS_ROOT` default shape (`<root>/<channel>`,
+      no `live-hls/`) and the apply's on-air contract.
 
 - **Seamless rollover no longer runs to EOS when the outgoing leg overruns its
   projected end.** Sandbox soak 39d852e (2026-09-09) showed every government

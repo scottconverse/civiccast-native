@@ -343,9 +343,16 @@ export function HomeScreen() {
           ? 'Standing by'
           : 'Offline'
   const isPartial = state === 'ready' && errors.length > 0
+  // "Nothing is posted yet" is for a station with no live output, no
+  // schedule and no recordings. A channel that is on air (with or without a
+  // web preview) or standing by on its slate IS something -- the live card
+  // already says what (review round 2 delta, MINOR 6: standing by and
+  // "Nothing is posted yet" used to render together on a bare station).
+  const liveIsSomething =
+    Boolean(liveManifest) || liveNoWebOutput || liveStandingBy
   const isEmpty =
     state === 'ready' &&
-    !liveManifest &&
+    !liveIsSomething &&
     data.comingUp.length === 0 &&
     data.recordings.length === 0
   const recentRecordings = data.recordings.slice(0, HOME_RECORDING_COUNT)

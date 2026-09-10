@@ -3,9 +3,12 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -19,14 +22,21 @@ import civiccast.egress.models
 import civiccast.schedule.models  # noqa: F401
 from civiccast.app import create_app
 from civiccast.db import Base, bind_engine, reset_engine
+from civiccast.egress.daemon import EgressDaemon
+from civiccast.egress.encoder_strategy import EncoderStartRequest, EncoderStartResult
+from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.models import (
     EgressCaptionProofSample,
+    EgressCommand,
     EgressHealthSample,
     EgressProofEvent,
+    EgressSourcePlan,
+    EgressSourceSegment,
     EgressStateRow,
 )
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.store import PostgresEgressStore
+from civiccast.live.router import get_live_session_store
 
 
 @pytest.fixture
@@ -60,6 +70,11 @@ def store(engine: Engine) -> PostgresEgressStore:
 def client(store: PostgresEgressStore) -> Iterator[TestClient]:
     app = create_app()
     app.dependency_overrides[get_egress_store] = lambda: store
+    # No live SESSION is ever on air in these tests: /api/public/live/current
+    # then falls through to the egress state, which is what they assert.
+    app.dependency_overrides[get_live_session_store] = lambda: SimpleNamespace(
+        list_sessions=lambda **_kwargs: []
+    )
     with TestClient(app, headers={"Authorization": "Bearer operator-token-a"}) as c:
         yield c
 
@@ -90,14 +105,15 @@ def test_staff_egress_config_round_trip(client: TestClient) -> None:
     assert r.json()["channel_id"] == "gov"
 
 
-def test_staff_egress_config_accepts_hls_sink(client: TestClient) -> None:
+def test_staff_egress_config_accepts_hls_sink(client: TestClient, hls_root: Path) -> None:
     """DEFECT A: this exact repro (PUT an hls sink, 200 OK) used to crash the
     channel on the following ``start``. It still returns 200 — hls is now a
     genuinely supported sink kind for the default GStreamer engine — but see
     ``test_hls_relay.py``/``test_gst_bridge.py`` for proof it no longer
-    crashes the channel, not just that the API accepts it."""
+    crashes the channel, not just that the API accepts it. The folder must be
+    inside the served root (round-2 delta review, BLOCKER 2)."""
     payload = _config_payload() | {
-        "sinks": [{"kind": "hls", "label": "Web", "uri": "C:/CivicCast/live/gov"}]
+        "sinks": [{"kind": "hls", "label": "Web", "uri": str(hls_root / "gov")}]
     }
     r = client.put("/api/staff/egress/channels/gov/config", json=payload)
     assert r.status_code == 200, r.text
@@ -531,7 +547,8 @@ def test_apply_headend_profile_creates_a_fresh_config(client: TestClient) -> Non
     )
 
     assert r.status_code == 200, r.text
-    body = r.json()
+    body = r.json()["config"]
+    assert r.json()["on_air_effect"] == "next_start"
     assert body["canonical_profile"]["video_codec"] == "mpeg2video"
     sink = body["sinks"][0]
     assert sink["kind"] == "udp-ts"
@@ -559,7 +576,7 @@ def test_apply_headend_profile_keeps_existing_sinks_when_asked(client: TestClien
     )
 
     assert r.status_code == 200, r.text
-    body = r.json()
+    body = r.json()["config"]
     kinds = sorted(sink["kind"] for sink in body["sinks"])
     assert kinds == ["srt", "udp-ts"]
     headend = next(sink for sink in body["sinks"] if sink["kind"] == "udp-ts")
@@ -1018,7 +1035,8 @@ def test_apply_local_hls_profile_via_api_with_no_destination(client: TestClient)
     )
 
     assert r.status_code == 200, r.text
-    body = r.json()
+    body = r.json()["config"]
+    assert r.json()["on_air_effect"] == "next_start"
     assert body["enabled"] is True
     assert [sink["kind"] for sink in body["sinks"]] == ["hls"]
     assert body["sinks"][0]["label"] == "Web preview (HLS)"
@@ -1046,10 +1064,18 @@ def test_apply_cable_profile_via_api_still_requires_destination(client: TestClie
 
 
 # ---------------------------------------------------------------------------
-# Review round 2, BLOCKER 2: applying a headend preset only upserted the config
-# row. The daemon reads a channel's sinks when it builds a pipeline, so on a
-# running channel the preset did nothing until the service restarted. The
-# route now queues a ``reload`` for a running channel in the same request.
+# Review round 2, BLOCKER 2 + round-2 delta review, BLOCKER 1: applying a
+# headend preset only upserted the config row, and the daemon reads a
+# channel's sinks only when it BUILDS a pipeline. Round 2 queued a ``reload``
+# -- but on the default GStreamer engine a reload never rebuilds sinks
+# (``gst/engine.py`` applies only the program source and the graphics
+# overlay), while ``daemon.py`` still started the HLS relay for the new sink,
+# so residents got a player pointed at a manifest that never existed. The
+# route now restarts (``stop`` + ``start``) a channel standing by on its
+# slate, leaves a program on air alone and SAYS SO (``on_air_effect``), and
+# ``/api/public/live/current`` advertises a manifest only when the playlist
+# exists. These tests assert the OUTCOME through a real ``EgressDaemon``
+# draining the same store, not the presence of a queue row.
 # ---------------------------------------------------------------------------
 
 
@@ -1063,8 +1089,237 @@ def _write_egress_state(store: PostgresEgressStore, channel_id: str, state: str)
     )
 
 
-@pytest.mark.parametrize("state", ["ON_AIR", "FALLBACK_SLATE", "STARTING", "TRANSITIONING"])
-def test_apply_headend_profile_queues_a_reload_for_a_running_channel(
+class _RouterFakeProcess:
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+        self.returncode: int | None = None
+        self.terminated = False
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = 0
+
+
+class _SeamlessReloadStrategy:
+    """Stands in for ``GstPlayoutStrategy``: content-reload capable, and --
+    exactly like the real engine -- a reload re-applies the PROGRAM SOURCE
+    only. The sink set a pipeline carries is the one it was STARTED with, so
+    ``starts[-1].config.sinks`` is what is on air."""
+
+    name = "fake-gst-seamless"
+    supports_live_swap = True
+    supports_content_reload = True
+
+    def __init__(self) -> None:
+        self.starts: list[EncoderStartRequest] = []
+        self.processes: list[_RouterFakeProcess] = []
+        self.reloads: list[EncoderStartRequest] = []
+
+    def start(self, request: EncoderStartRequest) -> EncoderStartResult:
+        process = _RouterFakeProcess(pid=5000 + len(self.processes))
+        self.processes.append(process)
+        self.starts.append(request)
+        return EncoderStartResult(
+            process=process,
+            concat_plan_path=request.work_dir / "playout-graph.json",
+            stdout_path=request.work_dir / "out.log",
+            stderr_path=request.work_dir / "err.log",
+            args=("worker",),
+        )
+
+    def swap_role(self, channel_id: str, work_dir: Path, role: str) -> None:  # pragma: no cover
+        raise NotImplementedError
+
+    def reload_content(
+        self,
+        channel_id: str,
+        work_dir: Path,
+        request: EncoderStartRequest,
+        *,
+        command_id: str | None = None,
+    ) -> bool:
+        self.reloads.append(request)
+        channel_dir = work_dir / channel_id
+        channel_dir.mkdir(parents=True, exist_ok=True)
+        (channel_dir / "reload-status.json").write_text(
+            json.dumps({"id": command_id or "x", "result": "applied"}), encoding="utf-8"
+        )
+        return True
+
+
+def _slate_plan(tmp_path: Path) -> EgressSourcePlan:
+    source = tmp_path / "slate.ts"
+    source.write_text("slate", encoding="utf-8")
+    return EgressSourcePlan(
+        channel_id="gov",
+        segments=[
+            EgressSourceSegment(
+                label="Fallback slate",
+                path=str(source),
+                duration_seconds=1,
+                source_ref="civiccast-slate",
+            )
+        ],
+    )
+
+
+def _daemon_on_slate(
+    store: PostgresEgressStore, tmp_path: Path
+) -> tuple[EgressDaemon, _SeamlessReloadStrategy]:
+    """A daemon over the API's own store whose only program source is missing,
+    so every start lands on the fallback slate."""
+    strategy = _SeamlessReloadStrategy()
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path / "work",
+        source_plan_provider=lambda _channel_id: (_ for _ in ()).throw(
+            SourcePrepareError("Nothing scheduled.")
+        ),
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        encoder_strategy=strategy,
+    )
+    return daemon, strategy
+
+
+@pytest.fixture
+def hls_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    root = tmp_path / "hls-root"
+    root.mkdir()
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(root))
+    return root
+
+
+def test_web_preview_preset_on_a_standing_by_channel_lands_on_air_via_restart(
+    client: TestClient, store: PostgresEgressStore, tmp_path: Path, hls_root: Path
+) -> None:
+    # The beta.5 walkthrough: the channel idles on its slate on a UDP headend
+    # preset, the operator enables the web preview. Outcome asserted: the
+    # pipeline the daemon is running afterwards was BUILT with the hls sink.
+    assert (
+        client.put("/api/staff/egress/channels/gov/config", json=_config_payload()).status_code
+        == 200
+    )
+    daemon, strategy = _daemon_on_slate(store, tmp_path)
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="start",
+            issued_at=datetime.now(UTC),
+            issued_by="operator",
+            command_id="cmd-start",
+        )
+    )
+    assert daemon.process_once("gov") == 1
+    before = store.read_state("gov")
+    assert before is not None and before.state == "FALLBACK_SLATE"
+    assert [sink.kind for sink in strategy.starts[0].config.sinks] == ["srt"]
+
+    r = client.post(
+        "/api/staff/egress/channels/gov/config/headend-profile",
+        json={"profile_id": "local-rehearsal-hls", "keep_existing_sinks": True},
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["on_air_effect"] == "restart_queued"
+    assert "restarted" in body["on_air_detail"]
+    assert [sink["kind"] for sink in body["config"]["sinks"]] == ["srt", "hls"]
+
+    # The daemon drains what the route queued: the slate worker is gone and
+    # the replacement pipeline carries the new sink. No reload was involved.
+    assert daemon.process_once("gov") == 2
+    assert strategy.processes[0].terminated is True
+    assert len(strategy.starts) == 2
+    on_air_sinks = strategy.starts[1].config.sinks
+    assert [sink.kind for sink in on_air_sinks] == ["srt", "hls"]
+    assert Path(on_air_sinks[1].uri) == (hls_root / "gov").resolve()
+    assert strategy.reloads == []
+    after = store.read_state("gov")
+    assert after is not None
+    assert after.state == "FALLBACK_SLATE"
+    assert after.pid == strategy.processes[1].pid
+    assert store.pop_pending_commands("gov") == []
+
+    # Once that pipeline writes its manifest, residents get it -- and not before.
+    current = client.get("/api/public/live/current").json()
+    assert current["state"] == "standing_by"
+    assert current["manifest_url"] is None
+    (hls_root / "gov").mkdir(parents=True, exist_ok=True)
+    (hls_root / "gov" / "playlist.m3u8").write_text("#EXTM3U\n", encoding="utf-8")
+    current = client.get("/api/public/live/current").json()
+    assert current["manifest_url"] == "/media/live/gov/playlist.m3u8"
+
+
+def test_web_preview_preset_on_a_program_on_air_is_honest_and_never_lies_to_residents(
+    client: TestClient, store: PostgresEgressStore, tmp_path: Path, hls_root: Path
+) -> None:
+    assert (
+        client.put("/api/staff/egress/channels/gov/config", json=_config_payload()).status_code
+        == 200
+    )
+    daemon, strategy = _daemon_on_slate(store, tmp_path)
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="ON_AIR",
+            current_source_label="Council meeting",
+            updated_at=datetime.now(UTC),
+        )
+    )
+
+    r = client.post(
+        "/api/staff/egress/channels/gov/config/headend-profile",
+        json={"profile_id": "local-rehearsal-hls", "keep_existing_sinks": True},
+    )
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["on_air_effect"] == "restart_required"
+    assert "Stop and then Start" in body["on_air_detail"]
+    assert [sink["kind"] for sink in body["config"]["sinks"]] == ["srt", "hls"]
+    # The route did not decide to cut a program: nothing queued, nothing started.
+    assert daemon.process_once("gov") == 0
+    assert strategy.starts == [] and strategy.reloads == []
+    state = store.read_state("gov")
+    assert state is not None and state.state == "ON_AIR"
+
+    # Residents: on air, web preview configured but NOT serving -- never a
+    # manifest URL that 404s.
+    current = client.get("/api/public/live/current").json()
+    assert current["state"] == "on_air_no_web_output"
+    assert current["manifest_url"] is None
+    assert current["reason"] == "HLS output configured but not serving yet"
+    assert current["title"] == "Council meeting"
+
+
+@pytest.mark.parametrize("state", [None, "STOPPED", "STOPPING", "DRAINING", "ERROR"])
+def test_apply_headend_profile_on_a_dark_channel_reports_next_start_and_starts_nothing(
+    client: TestClient, store: PostgresEgressStore, tmp_path: Path, state: str | None
+) -> None:
+    # A start on a dark channel is an operator decision; the route only saves
+    # the config and says when it lands.
+    if state is not None:
+        _write_egress_state(store, "gov", state)
+    daemon, strategy = _daemon_on_slate(store, tmp_path)
+
+    r = client.post(
+        "/api/staff/egress/channels/gov/config/headend-profile",
+        json={"profile_id": "generic-udp-spts", "destination_uri": "udp://10.0.0.9:5000"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["on_air_effect"] == "next_start"
+    assert "next started" in r.json()["on_air_detail"]
+    assert daemon.process_once("gov") == 0
+    assert strategy.starts == []
+    assert store.read_state("gov") is None if state is None else True
+
+
+@pytest.mark.parametrize("state", ["STARTING", "TRANSITIONING"])
+def test_apply_headend_profile_while_starting_or_handing_off_requires_a_restart(
     client: TestClient, store: PostgresEgressStore, state: str
 ) -> None:
     assert (
@@ -1079,53 +1334,40 @@ def test_apply_headend_profile_queues_a_reload_for_a_running_channel(
     )
 
     assert r.status_code == 200, r.text
-    pending = store.pop_pending_commands("gov")
-    assert [cmd.action for cmd in pending] == ["reload"]
-    assert pending[0].channel_id == "gov"
-    assert pending[0].issued_by == "operator-token-a"
-    assert pending[0].command_id.startswith("headend-profile-reload-")
-    # Drained once: nothing left for the daemon's next cycle.
+    assert r.json()["on_air_effect"] == "restart_required"
     assert store.pop_pending_commands("gov") == []
 
 
-def test_apply_local_hls_profile_queues_a_reload_for_a_running_channel(
+def test_apply_headend_profile_twice_is_unchanged_and_queues_no_second_restart(
     client: TestClient, store: PostgresEgressStore
 ) -> None:
-    # The web-preview preset is the one the beta.5 walkthrough applies while
-    # the channel is already on its slate; it must land on air without a restart.
     _write_egress_state(store, "gov", "FALLBACK_SLATE")
+    payload = {"profile_id": "generic-udp-spts", "destination_uri": "udp://10.0.0.9:5000"}
+    first = client.post("/api/staff/egress/channels/gov/config/headend-profile", json=payload)
+    assert first.status_code == 200, first.text
+    assert first.json()["on_air_effect"] == "restart_queued"
+    assert [cmd.action for cmd in store.pop_pending_commands("gov")] == ["stop", "start"]
 
-    r = client.post(
-        "/api/staff/egress/channels/gov/config/headend-profile",
-        json={"profile_id": "local-rehearsal-hls"},
-    )
+    second = client.post("/api/staff/egress/channels/gov/config/headend-profile", json=payload)
 
-    assert r.status_code == 200, r.text
-    assert [cmd.action for cmd in store.pop_pending_commands("gov")] == ["reload"]
-
-
-@pytest.mark.parametrize("state", [None, "STOPPED", "STOPPING", "DRAINING", "ERROR"])
-def test_apply_headend_profile_queues_nothing_for_a_dark_channel(
-    client: TestClient, store: PostgresEgressStore, state: str | None
-) -> None:
-    # A reload on a dark channel would START it (the daemon falls through to
-    # _start when no worker is alive); starting is an operator decision.
-    if state is not None:
-        _write_egress_state(store, "gov", state)
-
-    r = client.post(
-        "/api/staff/egress/channels/gov/config/headend-profile",
-        json={"profile_id": "generic-udp-spts", "destination_uri": "udp://10.0.0.9:5000"},
-    )
-
-    assert r.status_code == 200, r.text
+    assert second.status_code == 200, second.text
+    assert second.json()["on_air_effect"] == "unchanged"
+    assert second.json()["config"] == first.json()["config"]
     assert store.pop_pending_commands("gov") == []
 
 
-def test_apply_headend_profile_rejected_destination_queues_nothing(
+def test_apply_headend_profile_rejected_destination_changes_nothing(
     client: TestClient, store: PostgresEgressStore
 ) -> None:
-    _write_egress_state(store, "gov", "ON_AIR")
+    # Validation runs BEFORE persistence and before any command: the stored
+    # config and the state row are byte-identical afterwards.
+    assert (
+        client.put("/api/staff/egress/channels/gov/config", json=_config_payload()).status_code
+        == 200
+    )
+    _write_egress_state(store, "gov", "FALLBACK_SLATE")
+    config_before = store.get_config("gov")
+    state_before = store.read_state("gov")
 
     r = client.post(
         "/api/staff/egress/channels/gov/config/headend-profile",
@@ -1133,4 +1375,56 @@ def test_apply_headend_profile_rejected_destination_queues_nothing(
     )
 
     assert r.status_code == 422
+    assert store.get_config("gov") == config_before
+    assert store.read_state("gov") == state_before
     assert store.pop_pending_commands("gov") == []
+
+
+# ---------------------------------------------------------------------------
+# Round-2 delta review, BLOCKER 2: the preset was one of TWO operator-input
+# write paths into the ``hls`` sink. ``PUT .../config`` ran only the model's
+# shape check and accepted ``C:\Windows``, a UNC share, ``/etc`` and
+# ``file:///C:/Windows`` -- each then served publicly by ``/media/live``.
+# ---------------------------------------------------------------------------
+
+
+def _hls_config_payload(uri: str) -> dict[str, object]:
+    return _config_payload() | {"sinks": [{"kind": "hls", "label": "Web", "uri": uri}]}
+
+
+def test_config_put_accepts_an_hls_sink_inside_the_root(client: TestClient, hls_root: Path) -> None:
+    r = client.put(
+        "/api/staff/egress/channels/gov/config", json=_hls_config_payload(str(hls_root / "gov"))
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["sinks"][0]["kind"] == "hls"
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "C:\\Windows",
+        "\\\\fileserver\\share\\hls",
+        "/etc",
+        "file:///C:/Windows",
+        "relative/folder",
+    ],
+)
+def test_config_put_refuses_an_hls_sink_the_media_router_would_not_serve(
+    client: TestClient, store: PostgresEgressStore, hls_root: Path, uri: str
+) -> None:
+    r = client.put("/api/staff/egress/channels/gov/config", json=_hls_config_payload(uri))
+
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"].startswith("hls sink 'Web': local HLS folder")
+    assert store.get_config("gov") is None
+
+
+def test_config_put_refuses_an_hls_sink_traversing_out_of_the_root(
+    client: TestClient, store: PostgresEgressStore, hls_root: Path
+) -> None:
+    outside = str(hls_root / ".." / "elsewhere")
+    r = client.put("/api/staff/egress/channels/gov/config", json=_hls_config_payload(outside))
+    assert r.status_code == 422, r.text
+    assert "outside the allowed root" in r.json()["detail"]
+    assert store.get_config("gov") is None

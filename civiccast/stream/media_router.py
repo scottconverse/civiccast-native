@@ -30,10 +30,10 @@ continuously-overwritten location per channel, not a write-once package).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
@@ -43,6 +43,7 @@ from sqlalchemy.orm import Session
 
 from civiccast.common.trusted_proxy import resolve_client_ip
 from civiccast.db import get_session
+from civiccast.egress.headend import resolve_local_hls_directory
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.store import EgressStore
 from civiccast.live.models import LiveFinalizationJob
@@ -51,6 +52,7 @@ from civiccast.schedule.models import Asset
 from civiccast.schedule.paths import resolve_upload_root, resolve_vod_package_root
 
 _DB_NOT_READY = "Durable storage is not ready yet."
+_LOG = logging.getLogger(__name__)
 
 
 def get_optional_session() -> Iterator[Session | None]:
@@ -250,6 +252,16 @@ def _live_dir_for_channel(channel_id: str, egress_store: EgressStore | None) -> 
     has never been wired for local live-HLS output simply has nothing under
     this router yet (the same "nothing configured -> 404" posture as
     ``_package_dir_for_asset`` for an unpackaged VOD asset).
+
+    Also 404s when the sink names a folder outside the root the station is
+    allowed to serve (``resolve_local_hls_directory``: the egress work dir or
+    ``CIVICCAST_LIVE_HLS_ROOT``; never UNC, never relative, never a path --
+    or a junction/symlink -- that resolves outside). This route is public and
+    unauthenticated, so the containment check lives HERE, at serve time, on
+    the resolved path (review round 2 delta, BLOCKER 2): the preset route
+    and the config PUT both refuse such a sink up front for a readable 422,
+    but a third writer -- or a junction swapped in after the config was
+    written -- must not be able to re-point this file server anywhere.
     """
     if egress_store is None:
         raise HTTPException(
@@ -268,11 +280,18 @@ def _live_dir_for_channel(channel_id: str, egress_store: EgressStore | None) -> 
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No live HLS output configured for channel: {channel_id}",
         )
-    parsed = urlsplit(hls_sink.uri)
-    raw = parsed.path if parsed.scheme == "file" else hls_sink.uri
-    if len(raw) >= 3 and raw[0] == "/" and raw[2] == ":":
-        raw = raw[1:]  # file:///C:/x -> "/C:/x"; strip the leading slash on Windows
-    return Path(raw).resolve()
+    try:
+        return resolve_local_hls_directory(hls_sink.uri)
+    except ValueError as exc:
+        _LOG.warning(
+            "refusing to serve /media/live/%s: the hls sink folder is not servable (%s)",
+            channel_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No live HLS output configured for channel: {channel_id}",
+        ) from exc
 
 
 @live_router.get("/{channel_id}/{file_path:path}")

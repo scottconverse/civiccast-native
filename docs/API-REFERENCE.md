@@ -2446,7 +2446,7 @@ Apply a headend delivery profile to a channel's egress config.
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: `channel_id` (path, required): `string`
 - Request body: `HeadendProfileApplyRequest`
-- Responses: 200 `EgressConfig`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Unknown headend profile; 422 Destination does not satisfy the profile's transport; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
+- Responses: 200 `HeadendProfileApplyResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Unknown headend profile; 422 Destination does not satisfy the profile's transport; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
 ### `GET /api/staff/egress/channels/{channel_id}/graphics-overlay`
 
@@ -6713,6 +6713,12 @@ rule (S13 §5.1).
 - `keep_existing_sinks` (optional): `boolean`
 - `muxrate_kbps` (optional): `number | null`
 - `profile_id` (required): `string`
+
+### `HeadendProfileApplyResponse`
+
+- `config` (required): `EgressConfig`
+- `on_air_detail` (required): `string`
+- `on_air_effect` (required): `'restart_queued' | 'restart_required' | 'next_start' | 'unchanged'`
 
 ### `HeadendReadinessResponse`
 

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) The CivicCast Authors
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { HomeScreen } from './HomeScreen'
+import { LIVE_POLL_SECONDS } from './homeLive'
 
 // Review round 2, MAJOR 3: a channel on its FALLBACK_SLATE used to arrive as
 // `on_air`, so Home said "On air" for a slate and never showed the idle page.
@@ -48,6 +49,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 const standingBy: LiveBody = {
@@ -74,6 +76,9 @@ describe('HomeScreen when the channel is standing by on its slate', () => {
     expect(screen.queryByText('Offline')).toBeNull()
     expect(screen.queryByText('Slate is on air.')).toBeNull()
     expect(screen.queryByTestId('player-src')).toBeNull()
+    // A station standing by is not an empty station (review round 2 delta,
+    // MINOR 6): the live card already says what is happening.
+    expect(screen.queryByText(/Nothing is posted yet/)).toBeNull()
   })
 
   it('keeps the between-streams idle page up while standing by', async () => {
@@ -93,19 +98,32 @@ describe('HomeScreen when the channel is standing by on its slate', () => {
     expect(screen.queryByTestId('player-src')).toBeNull()
   })
 
-  it('still plays and says On air for a real program', async () => {
+  it('starts the player only when the slate hands off to a real program', async () => {
+    // The beta.5 walkthrough as residents see it: the channel idles on its
+    // slate, then a program goes on air. The re-resolve poll flips the state
+    // and the player must appear at THAT moment -- and not before. Without
+    // the standing-by branch the first half fails: the slate autoplays.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    liveBody = standingBy
+    render(<HomeScreen />)
+    expect(await screen.findByText('Standing by')).toBeTruthy()
+    expect(screen.queryByTestId('player-src')).toBeNull()
+
     liveBody = {
       ...standingBy,
       state: 'on_air',
       title: 'Council meeting',
       reason: null,
     }
-    render(<HomeScreen />)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(LIVE_POLL_SECONDS * 1000 + 50)
+    })
 
     expect((await screen.findByTestId('player-src')).textContent).toBe(
       '/media/live/public/playlist.m3u8',
     )
     expect(screen.getByText('On air')).toBeTruthy()
+    expect(screen.getByText('Council meeting is on air.')).toBeTruthy()
     expect(screen.queryByText('Standing by')).toBeNull()
   })
 })

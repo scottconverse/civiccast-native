@@ -151,11 +151,11 @@ def test_worker_finalizes_settled_recording_and_packages_outside_installer_self_
     asset = _asset_rows(engine)[0]
     assert asset.source_live_session_id == "council-2026-06-09"
     # VOD local-serve (no CDN, no CIVICCAST_LIVE_MANIFEST_BASE_URL configured):
-    # manifest_url defaults to the app's own media_router URL rather than
-    # staying null, so the portal always has something playable.
-    assert asset.manifest_url == (
-        "http://127.0.0.1:8000/media/vod/council-2026-06-09/playlist.m3u8"
-    )
+    # manifest_url defaults to the app's own media_router path rather than
+    # staying null, so the portal always has something playable. Site-relative
+    # (round-2 delta review, MINOR 1): the old absolute http://127.0.0.1:8000
+    # sent a LAN resident clicking a recording to their own loopback.
+    assert asset.manifest_url == "/media/vod/council-2026-06-09/playlist.m3u8"
 
 
 def test_worker_does_not_finalize_unsettled_recording(
@@ -380,8 +380,34 @@ def test_local_package_sets_local_serve_manifest_url_without_a_cdn(
     worker.run_once(now=datetime(2026, 6, 9, 18, 1, tzinfo=UTC))
 
     asset = _asset_rows(engine)[0].to_staff_row()
-    assert asset.manifest_url == (
-        "http://127.0.0.1:8000/media/vod/council-2026-06-09/playlist.m3u8"
+    assert asset.manifest_url == "/media/vod/council-2026-06-09/playlist.m3u8"
+
+
+def test_worker_vod_manifest_is_absolute_only_with_an_operator_media_base(
+    engine: Engine, session_factory, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same CIVICCAST_LOCAL_MEDIA_BASE_URL contract as the live manifest
+    (``civiccast.cable.channel.local_live_manifest_path``): unset or blank
+    means site-relative, a configured base makes it absolute."""
+    from civiccast.live.finalization_worker import FinalizationWorkerSettings
+
+    _seed_ending_session(engine, tmp_path)
+    monkeypatch.delenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", raising=False)
+    settings = FinalizationWorkerSettings.from_env()
+    assert settings.local_media_base_url == ""
+    worker = LiveFinalizationWorker(
+        session_factory,
+        packager=_fake_packager([]),
+        probe=lambda _: _probe(),
+        settle_seconds=0,
+        local_media_base_url="https://media.town.example/",
+    )
+
+    worker.run_once(now=datetime(2026, 6, 9, 18, 1, tzinfo=UTC))
+
+    asset = _asset_rows(engine)[0].to_metadata()
+    assert str(asset.manifest_url) == (
+        "https://media.town.example/media/vod/council-2026-06-09/playlist.m3u8"
     )
 
 

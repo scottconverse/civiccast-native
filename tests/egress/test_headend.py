@@ -343,10 +343,14 @@ def test_blank_destination_lands_under_an_explicit_root(hls_root: Path) -> None:
 # ---------------------------------------------------------------------------
 # Review round 2, MAJOR 4: ``/media/live/{channel}/{file_path}`` is a PUBLIC,
 # unauthenticated file server for whatever directory the hls sink names. The
-# local-hls preset is the one write path into that sink that takes operator
-# input, so it must refuse anything outside the configured root: UNC paths,
-# relative paths, absolute paths elsewhere, and traversal out of the root.
-# Each case below failed open before ``resolve_local_hls_directory``.
+# local-hls preset is ONE of the operator-input write paths into that sink
+# (``PUT .../config`` is the other -- round-2 delta review, BLOCKER 2 -- and
+# ``media_router`` re-checks containment at serve time; see
+# ``tests/egress/test_router.py`` and ``tests/stream/test_media_router_live.py``).
+# This is the resolver's own contract: it must refuse anything outside the
+# configured root: UNC paths, relative paths, absolute paths elsewhere, and
+# traversal out of the root. Each case below failed open before
+# ``resolve_local_hls_directory``.
 # ---------------------------------------------------------------------------
 
 

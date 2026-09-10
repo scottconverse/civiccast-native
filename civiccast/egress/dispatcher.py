@@ -42,9 +42,12 @@ from civiccast.egress.store import EgressStore
 # process — a ``reload`` makes it re-resolve. Any other state (including no
 # state row at all) is treated as dark and gets a ``start``. Mirrors
 # channel_automation's "start dark channels, reload running ones" logic.
-_RUNNING_STATES: frozenset[str] = frozenset(
+# Public so ``civiccast.egress.router``'s headend-preset route reads the SAME
+# set (review round 2 delta, MINOR 3: it carried a by-hand copy).
+RUNNING_STATES: frozenset[str] = frozenset(
     {"STARTING", "ON_AIR", "TRANSITIONING", "FALLBACK_SLATE"}
 )
+_RUNNING_STATES = RUNNING_STATES
 
 _DEFAULT_ISSUED_BY = "commit-to-air"
 

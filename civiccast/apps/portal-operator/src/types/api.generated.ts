@@ -2236,6 +2236,12 @@ export interface HeadendProfileApplyRequest {
   keep_existing_sinks?: boolean
 }
 
+export interface HeadendProfileApplyResponse {
+  config: EgressConfig
+  on_air_effect: 'restart_queued' | 'restart_required' | 'next_start' | 'unchanged'
+  on_air_detail: string
+}
+
 export interface HeadendReadinessResponse {
   tsduck: TsduckStatus
   channels: Array<HeadendChannelReadiness>

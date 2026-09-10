@@ -52,6 +52,7 @@ import type {
   GraphicsOverlayStateResponse,
   GraphicsOverlayUpdateRequest,
   HeadendProfile,
+  HeadendProfileApplyResponse,
   PlayoutBlock,
   StationAppConfig,
   StationAppConfigUpdate,
@@ -1157,13 +1158,14 @@ export function GraphicsOverlayPanel({
   )
 }
 
-function HeadendDeliveryPanel({
+export function HeadendDeliveryPanel({
   channelId,
   profiles,
   config,
   applying,
   canEdit,
   applyError,
+  applyResult,
   onApply,
   verifying,
   verifyResult,
@@ -1176,6 +1178,10 @@ function HeadendDeliveryPanel({
   applying: boolean
   canEdit: boolean
   applyError: unknown
+  // The last successful apply, if any. Its `on_air_detail` is the operator's
+  // answer to "is this on air now?" -- a saved config alone says nothing about
+  // that, and a running pipeline does not pick up output changes.
+  applyResult: HeadendProfileApplyResponse | undefined
   onApply: (payload: {
     profile_id: string
     destination_uri: string
@@ -1357,6 +1363,31 @@ function HeadendDeliveryPanel({
         {webPreviewSink && (
           <div className="cc-mono text-[11px]" style={{ color: 'var(--cc-ink-2)' }}>
             Web preview (HLS) folder: {webPreviewSink.uri}
+          </div>
+        )}
+
+        {applyResult && (
+          <div
+            role="status"
+            className="rounded-md p-2 text-sm"
+            style={{
+              background:
+                applyResult.on_air_effect === 'restart_required'
+                  ? 'var(--cc-warn-soft)'
+                  : 'var(--cc-ok-soft)',
+              color: 'var(--cc-ink)',
+            }}
+          >
+            <div className="font-semibold">
+              {applyResult.on_air_effect === 'restart_queued'
+                ? 'Preset applied and going on air'
+                : applyResult.on_air_effect === 'restart_required'
+                  ? 'Preset saved. Restart the channel to put it on air'
+                  : applyResult.on_air_effect === 'unchanged'
+                    ? 'Nothing to change'
+                    : 'Preset saved for the next start'}
+            </div>
+            <div className="mt-1">{applyResult.on_air_detail}</div>
           </div>
         )}
 
@@ -1823,6 +1854,7 @@ export function ChannelOpsScreen() {
             applying={headendApplyMutation.isPending}
             canEdit={canEditEgressConfig}
             applyError={headendApplyMutation.error}
+            applyResult={headendApplyMutation.data}
             onApply={(payload) => {
               const channelName = selectedChannel?.branding.display_name ?? channelId ?? 'this channel'
               const isLocalHls = payload.profile_id === 'local-rehearsal-hls'

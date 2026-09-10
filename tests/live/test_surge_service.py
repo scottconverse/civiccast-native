@@ -23,6 +23,13 @@ class _Clock:
         return self.t
 
 
+@pytest.fixture(autouse=True)
+def _live_hls_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The service resolves the live dir through media_router's seam, which
+    # serves (and so publishes) only folders inside CIVICCAST_LIVE_HLS_ROOT.
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(tmp_path))
+
+
 class _StubEgressStore:
     """Resolves one channel to one live dir via an hls sink (file:// uri)."""
 

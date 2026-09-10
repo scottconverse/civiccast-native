@@ -71,6 +71,7 @@ import type {
   OfflineCaptionJobRecord,
   HeadendProfile,
   HeadendProfileApplyRequest,
+  HeadendProfileApplyResponse,
   MaterializeResult,
   ProgramSlot,
   ProgramSlotCreate,
@@ -2520,11 +2521,15 @@ export function listHeadendProfiles(): Promise<HeadendProfile[]> {
   return request<HeadendProfile[]>('/api/staff/egress/headend-profiles')
 }
 
+// The response carries the saved config AND `on_air_effect` /
+// `on_air_detail`: whether the preset is on air now (the channel was standing
+// by and was restarted), needs an operator restart (a program is on air), or
+// lands at the channel's next start. The Channels screen shows the detail.
 export function applyHeadendProfile(
   channelId: string,
   payload: HeadendProfileApplyRequest,
-): Promise<EgressConfig> {
-  return request<EgressConfig>(
+): Promise<HeadendProfileApplyResponse> {
+  return request<HeadendProfileApplyResponse>(
     `/api/staff/egress/channels/${encodeURIComponent(channelId)}/config/headend-profile`,
     { method: 'POST', body: payload },
   )

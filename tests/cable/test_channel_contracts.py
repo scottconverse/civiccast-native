@@ -290,3 +290,29 @@ def test_live_m3u8_404_without_any_egress_store(monkeypatch) -> None:
     r = client.get("/api/public/channels/public/live.m3u8", follow_redirects=False)
     assert r.status_code == 404
     assert "HLS web output is not enabled" in r.json()["detail"]
+
+
+# Round-2 delta review, MINOR 2: ``local_live_manifest_path`` ignored
+# ``CIVICCAST_LOCAL_MEDIA_BASE_URL`` and never quoted the channel id, so the
+# Channels screen and ``/api/public/live/current`` disagreed whenever an
+# operator base was configured. One helper owns the URL now.
+
+
+def test_local_live_manifest_path_is_site_relative_and_quoted_by_default(monkeypatch) -> None:
+    from civiccast.cable.channel import local_live_manifest_path
+
+    monkeypatch.delenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", raising=False)
+    assert local_live_manifest_path("public") == "/media/live/public/playlist.m3u8"
+    assert local_live_manifest_path("gov ch/12") == "/media/live/gov%20ch%2F12/playlist.m3u8"
+
+
+def test_local_live_manifest_path_honours_an_operator_base_like_the_live_api(monkeypatch) -> None:
+    from civiccast.cable.channel import local_live_manifest_path
+
+    for base in ("https://media.town.example", "https://media.town.example/"):
+        monkeypatch.setenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", base)
+        assert local_live_manifest_path("public") == (
+            "https://media.town.example/media/live/public/playlist.m3u8"
+        ), base
+    monkeypatch.setenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", "   ")
+    assert local_live_manifest_path("public") == "/media/live/public/playlist.m3u8"

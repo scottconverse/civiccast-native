@@ -8,9 +8,17 @@ import type {
   ChannelProfile,
   EgressStateRow,
   GraphicsOverlayStateResponse,
+  HeadendProfile,
+  HeadendProfileApplyResponse,
 } from '../types/api.generated'
 import type { EgressHealthSample } from '../api/client'
-import { EgressControlPanel, GraphicsOverlayPanel, OutputsPanel, PlayoutPlanPanel } from './ChannelOpsScreen'
+import {
+  EgressControlPanel,
+  GraphicsOverlayPanel,
+  HeadendDeliveryPanel,
+  OutputsPanel,
+  PlayoutPlanPanel,
+} from './ChannelOpsScreen'
 
 type ChannelOutput = NonNullable<ChannelProfile['outputs']>[number]
 
@@ -339,5 +347,81 @@ describe('OutputsPanel', () => {
     const { getByText, queryByText } = render(<OutputsPanel outputs={[legacy as ChannelOutput]} />)
     expect(getByText('/media/live/public/playlist.m3u8')).toBeTruthy()
     expect(queryByText('Not enabled')).toBeNull()
+  })
+})
+
+describe('HeadendDeliveryPanel', () => {
+  // Round-2 delta review, BLOCKER 1: a saved preset says nothing about the
+  // air. The apply response now carries `on_air_effect` + `on_air_detail`
+  // (restarted from the slate / restart required for a program on air / next
+  // start) and the card must show it, or the operator is left believing the
+  // web preview is live when the running pipeline never picked it up.
+  const localHls: HeadendProfile = {
+    profile_id: 'local-rehearsal-hls',
+    label: 'Local rehearsal (web preview, HLS)',
+    vendor: 'CivicCast',
+    source_urls: ['https://example.invalid/rfc8216'],
+    canonical_profile: {} as HeadendProfile['canonical_profile'],
+    muxrate_kbps: 0,
+    transport: 'local-hls',
+  }
+  const result = (
+    effect: HeadendProfileApplyResponse['on_air_effect'],
+    detail: string,
+  ): HeadendProfileApplyResponse => ({
+    config: {
+      channel_id: 'public',
+      enabled: true,
+      slate_message: 'x',
+      sinks: [{ kind: 'hls', label: 'Web preview (HLS)', uri: 'C:\\CivicCast\\egress\\live-hls\\public' }],
+    } as HeadendProfileApplyResponse['config'],
+    on_air_effect: effect,
+    on_air_detail: detail,
+  })
+  const renderPanel = (applyResult: HeadendProfileApplyResponse | undefined) =>
+    render(
+      <HeadendDeliveryPanel
+        channelId="public"
+        profiles={[localHls]}
+        config={applyResult?.config}
+        applying={false}
+        canEdit
+        applyError={null}
+        applyResult={applyResult}
+        onApply={() => {}}
+        verifying={false}
+        verifyResult={undefined}
+        verifyError={null}
+        onVerify={() => {}}
+      />,
+    )
+
+  it('shows nothing about the air before an apply', () => {
+    const { queryByRole } = renderPanel(undefined)
+    expect(queryByRole('status')).toBeNull()
+  })
+
+  it('tells the operator a program on air needs a restart, in the API\'s own words', () => {
+    const detail =
+      'The channel is on air. A running pipeline does not pick up output changes, so this preset takes effect when the channel is next started. To put it on air now, Stop and then Start the channel.'
+    const { getByRole, getByText } = renderPanel(result('restart_required', detail))
+    expect(getByRole('status').textContent).toContain('Restart the channel to put it on air')
+    expect(getByText(detail)).toBeTruthy()
+  })
+
+  it('says the slate channel was restarted and is going on air', () => {
+    const detail =
+      'The channel was standing by on its slate, so it is being restarted with the new output. It is back on air within a few seconds.'
+    const { getByRole, getByText } = renderPanel(result('restart_queued', detail))
+    expect(getByRole('status').textContent).toContain('going on air')
+    expect(getByText(detail)).toBeTruthy()
+  })
+
+  it('says a dark channel picks the preset up at its next start', () => {
+    const detail =
+      'The channel is not running. The preset takes effect when the channel is next started.'
+    const { getByRole } = renderPanel(result('next_start', detail))
+    expect(getByRole('status').textContent).toContain('next start')
+    expect(getByRole('status').textContent).toContain(detail)
   })
 })
