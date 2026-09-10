@@ -51,6 +51,32 @@ def _select_body_assets(artifacts: list[dict[str, Any]]) -> list[dict[str, Any]]
     return selected
 
 
+#: GitHub refuses a release body over 125,000 characters (HTTP 422 "body is
+#: too long", measured live on the v1.0.0-beta.5 publish 2026-09-10 when the
+#: [Unreleased] CHANGELOG section alone was ~130 KB). The "What changed"
+#: section is bounded to this many characters at a line boundary; the full
+#: text lives in CHANGELOG.md at the tagged commit and the body says so.
+CHANGELOG_BODY_MAX_CHARS = 90_000
+
+
+def bound_changelog_section(text: str, *, max_chars: int = CHANGELOG_BODY_MAX_CHARS) -> str:
+    """Return ``text`` unchanged if it fits, else the longest prefix that ends
+    at a line boundary within ``max_chars`` plus a pointer to the full text."""
+
+    stripped = text.strip()
+    if len(stripped) <= max_chars:
+        return stripped
+    cut = stripped.rfind("\n", 0, max_chars)
+    if cut <= 0:
+        cut = max_chars
+    head = stripped[:cut].rstrip()
+    return (
+        head + "\n\n_The CHANGELOG entry for this release is longer than a GitHub release "
+        "body allows; this is the first part. The complete entry is `CHANGELOG.md` "
+        "at the tagged commit._"
+    )
+
+
 def render_release_notes(manifest: dict[str, Any], tag: str) -> str:
     commit = manifest.get("source_state", {}).get("head", "")
     if not commit:
@@ -160,7 +186,7 @@ def render_native_beta_candidate_notes(
         "",
         "## What changed",
         "",
-        changelog_unreleased.strip() or "(no [Unreleased] CHANGELOG entry found)",
+        bound_changelog_section(changelog_unreleased) or "(no [Unreleased] CHANGELOG entry found)",
         "",
         "## Install / upgrade",
         "",
