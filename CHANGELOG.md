@@ -17,6 +17,69 @@ came across and what deliberately did not.
 candidate; it does not change the `v1.0.0-beta.4` install story documented
 below.
 
+**Known issue in beta.5 (fixed for beta.5.1 below).** Upgrading a station
+installed from the August 2026 beta.1/beta.2 kits halts provisioning with
+"the provisioning journal at C:\ProgramData\CivicCast\provision is
+corrupt/unparseable: ... Extra inputs are not permitted" (five
+`context.nats_*` validation errors). The journal is fine; the beta.5 model
+rejects the NATS fields the August installer wrote. Workaround: stop the
+`CivicCastSupervisor` service, rename
+`C:\ProgramData\CivicCast\provision\provision-journal.json` to
+`provision-journal.json.legacy`, and re-run `setup.exe`. Station data (the
+PostgreSQL data directory) is untouched by the halt and by the workaround.
+
+### Fixed
+
+- **beta.5.1: provisioning tolerates legacy journal fields (the August NATS
+  keys) instead of halting the upgrade.** Measured 2026-09-09 on an upgrade
+  over an August-15 beta.1-era station: the installer's provisioning step
+  halted at its very first read of
+  `C:\ProgramData\CivicCast\provision\provision-journal.json` with "5
+  validation errors for ProvisionJournal -- context.nats_config_path /
+  nats_host / nats_port / nats_store_dir / nats_tls: Extra inputs are not
+  permitted", wrote `PROVISION-RECOVERY.md`, and never looked at the
+  cluster. The journal was valid JSON, `schema_version: 1`,
+  `phase: complete`; the August installer wrote NATS fields into `context`
+  that `85ffe6c0` ("stop provisioning a NATS store or config") removed from
+  the model with no migration and no tolerance, and the persisted models
+  were `extra="forbid"`. `ProvisionJournal`, `ProvisionPlan` and
+  `ProvisionContext` (the three structures persisted across installer
+  versions) are now `extra="ignore"`. The provisioning CLI names every
+  dropped key once per run on stderr (`provision note: adopted provisioning
+  journal at ... carries 5 field(s) this version does not declare; ignored
+  (legacy or newer-installer keys, not corruption): context.nats_config_path,
+  ...`). That line goes to the provisioning CLI's own stderr; the
+  installer's Rust wrapper (`run_native_provision`) runs the CLI with
+  `Command::output()` and deliberately does not forward that stream, so the
+  note is not yet in `install-progress.log` -- forwarding it is a follow-up
+  tracked with the runtime-ownership diagnosability PR. `load_journal` also
+  logs the same at INFO on its module logger, which the CLI does not
+  configure. The legacy keys do not "migrate away": the adopt path clears
+  the journal outright and the reuse path leaves it as-is; either way no
+  legacy key can influence a later run (`write_journal` serialises only
+  declared fields, every load drops the undeclared ones). Still fail-loud:
+  invalid JSON, wrong types, missing required fields, an unknown `phase`
+  value. The in-process decision/outcome models
+  (`PostgresClusterDecision`, `DatabaseDecision`,
+  `ProvisionOutcome`, `ProvisionRecovery`) keep `extra="forbid"`; they are
+  never loaded from disk. With the journal readable, the upgrade takes the
+  ordinary paths it always had: registry `DatabaseUrl` present ->
+  `NOOP_REUSE_EXISTING` (schema migration only, journal untouched);
+  credential gone -> `ADOPT_EXISTING` (fresh credential on the surviving
+  cluster, no initdb, no drop); the engine's own rerun over a `COMPLETE`
+  journal short-circuits without calling a single seam. Fixture:
+  `tests/fixtures/provision/provision-journal-2026-08-15-beta1-nats.json`
+  (the August journal's on-disk shape, password already the product's
+  redaction marker). Covered by
+  `tests/native/test_provision_journal.py` (`..._tolerates_the_august_beta1_nats_context_fields`,
+  `..._tolerates_a_genuinely_unknown_future_field`,
+  `..._still_fails_loud_on_real_corruption`,
+  `test_write_journal_serialises_only_declared_fields_over_a_loaded_legacy_journal`),
+  `tests/native/test_provision_orchestrator.py::test_legacy_complete_journal_is_adopted_without_touching_the_cluster`,
+  and `tests/native/test_provision_cli.py`
+  (`test_main_adopts_a_station_with_a_legacy_august_journal_instead_of_halting`,
+  `test_main_reuses_registry_credential_with_a_legacy_august_journal_present`).
+
 ## [1.0.0-beta.5] - 2026-09-09
 
 **PUBLISHED.** `v1.0.0-beta.5` was published 2026-09-09 at 10:14 PM
