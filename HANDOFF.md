@@ -43,6 +43,7 @@ Not started (beta.6 or later): 106 startup page, 107 state authority, 109 sample
 - Open PRs: #165 notes, #202 draft, #206, #207, #208.
 
 ## Not done
+- MAIN IS RED (11:15 PM): `tests/policy/test_windows_release_downloader.py::test_windows_install_doc_matches_current_release_posture` and `tests/test_audit_protocol_docs.py::test_active_public_docs_link_validated_current_candidate` -- README.md / INSTALL-WINDOWS.md (and docs/index.html, docs/install-windows.html) still link v1.0.0-beta.4 as the current download while release-truth says beta.5. Flip those surfaces to v1.0.0-beta.5 in #165 (beta.6 stays the held candidate) before building the beta.6 kit.
 - #165 merge; #209 (round 3), #211, #212 (round 2), #213 (follow-ups), #214, setup-auth and honesty PRs; then the beta.6 kit pipeline (task 8); #202 soak; captions root cause (9).
 - Full fix list: C:\Users\scott\Desktop\floatsom\CIVICCAST-BATCH-FIX-LIST-2026-09-03.md (items 93-135); run log: CIVICCAST-RESUME-STATE.md.
 - Both tester machines started 8-hour soaks of beta.5 at 11:00 PM (docs/SOAK-PROMPT.md); reports due ~7 AM as Desktop\SOAK-<pc>-<date>.zip on each machine.
