@@ -161,6 +161,7 @@ function SurfaceRow({
   const canOverride = surface.required && surface.kind === 'archive' && canApprove
   return (
     <div
+      data-surface-id={surface.id}
       className="grid gap-3 rounded-md p-3 sm:grid-cols-[1fr_1.5fr]"
       style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}
     >
@@ -179,9 +180,12 @@ function SurfaceRow({
             ) : (
               <>
                 {surface.required && (
+                  // WCAG AA: --cc-err on --cc-err-soft measures 4.43:1 in the
+                  // dark theme (axe color-contrast, serious); --cc-ink on the
+                  // tint is the pattern ReadinessBadge already uses.
                   <span
                     className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase"
-                    style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}
+                    style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-ink)' }}
                   >
                     Required
                   </span>
@@ -452,8 +456,23 @@ function AssetPanel({
         .map((surface) => surface.id),
     [asset.surfaces],
   )
+  // beta.5 walkthrough F-23 (safety): the default selection used to be EVERY
+  // approvable surface, so one click on "Approve and Publish selected" read
+  // "7 selected surface(s) publish for real" -- Internet Archive, both NAS
+  // archives, YouTube Live/VOD and the cable package included. The default
+  // is now the canonical Portal surface only. Archive and reach surfaces are
+  // opt-in per approval: the operator ticks them deliberately, every time.
+  const defaultSelectedSurfaceIds = useMemo(
+    () =>
+      asset.surfaces
+        .filter(
+          (surface) => surface.kind === 'canonical' && approvableSurfaceIds.includes(surface.id),
+        )
+        .map((surface) => surface.id),
+    [asset.surfaces, approvableSurfaceIds],
+  )
   const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(approvableSurfaceIds),
+    () => new Set(defaultSelectedSurfaceIds),
   )
   const [overrideIds, setOverrideIds] = useState<Set<string>>(() => new Set())
   // Publishing is resident-facing and immediate — the button stages this
@@ -522,6 +541,27 @@ function AssetPanel({
     notReadySelectedSurfaces.length === 0
   const errorDetail =
     error instanceof ApiError && error.detail ? error.detail : error?.message
+  const surfaceLabelById = useMemo(
+    () => new Map(asset.surfaces.map((surface) => [surface.id, surface.label])),
+    [asset.surfaces],
+  )
+  // Everything the confirm dialog will really publish, by name, so the
+  // operator reads "Portal" -- not a bare count -- before the click (F-23).
+  const publishingSurfaceIds = [...approvedSurfaceIds, ...overrides.map((o) => o.surface_id)]
+  const publishingSurfaceLabels = publishingSurfaceIds.map(
+    (surfaceId) => surfaceLabelById.get(surfaceId) ?? surfaceId,
+  )
+  // Required archive surfaces (public-record assets) that this approval will
+  // NOT publish. They stay opt-in, but the operator must see that the asset
+  // remains archive-pending until they are approved.
+  const unselectedRequiredSurfaces = asset.surfaces.filter(
+    (surface) =>
+      surface.required &&
+      surface.kind !== 'canonical' &&
+      approvableSurfaceIds.includes(surface.id) &&
+      !activeSelected.has(surface.id) &&
+      !activeOverrideIds.has(surface.id),
+  )
 
   function setSurfaceChecked(surfaceId: string, checked: boolean) {
     setSelected((current) => {
@@ -633,6 +673,24 @@ function AssetPanel({
         </p>
       )}
       {approvableSurfaceIds.length > 0 && (
+        <p className="mt-3 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          Only the Portal surface is selected by default. Archive and reach surfaces (Internet
+          Archive, local NAS, YouTube, cable package) are opt-in: tick each one you mean to publish
+          this time.
+          {unselectedRequiredSurfaces.length > 0 && (
+            <>
+              {' '}
+              <span data-testid="required-surfaces-unselected" style={{ color: 'var(--cc-warn-text)' }}>
+                {unselectedRequiredSurfaces.length} required archive surface
+                {unselectedRequiredSurfaces.length === 1 ? '' : 's'} not selected (
+                {unselectedRequiredSurfaces.map((surface) => surface.label).join(', ')}); this
+                public-record asset stays archive-pending until they are approved.
+              </span>
+            </>
+          )}
+        </p>
+      )}
+      {approvableSurfaceIds.length > 0 && (
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <button
             type="button"
@@ -653,13 +711,13 @@ function AssetPanel({
             </span>
           )}
           {blockedSelectedSurface && (
-            <span className="text-xs" style={{ color: 'var(--cc-warn)' }}>
+            <span className="text-xs" style={{ color: 'var(--cc-warn-text)' }}>
               The selected surface is blocked. Complete its next step or uncheck it before
               publishing other ready surfaces.
             </span>
           )}
           {notReadySelectedSurfaces.length > 0 && (
-            <span className="text-xs" style={{ color: 'var(--cc-warn)' }}>
+            <span className="text-xs" style={{ color: 'var(--cc-warn-text)' }}>
               {notReadySelectedSurfaces.map((check) => check.label).join(', ')} failed its
               readiness check: {notReadySelectedSurfaces[0].message} Fix the listed
               configuration, rerun the readiness check, or uncheck it before publishing other
@@ -667,7 +725,7 @@ function AssetPanel({
             </span>
           )}
           {!canPublish && (
-            <span className="text-xs" style={{ color: 'var(--cc-warn)' }}>
+            <span className="text-xs" style={{ color: 'var(--cc-warn-text)' }}>
               Publish operator role required to approve or retry surfaces.
             </span>
           )}
@@ -683,7 +741,11 @@ function AssetPanel({
       {confirmingPublish && (
         <ConfirmDialog
           title={`Publish "${asset.title}" to residents?`}
-          body={`${approvedSurfaceIds.length + overrides.length} selected surface(s) publish for real. The portal surface becomes publicly visible to residents immediately and starts offline caption transcription.`}
+          body={`${publishingSurfaceIds.length} selected surface${publishingSurfaceIds.length === 1 ? '' : 's'} publish${publishingSurfaceIds.length === 1 ? 'es' : ''} for real: ${publishingSurfaceLabels.join(', ')}. ${
+            publishingSurfaceIds.includes('portal')
+              ? 'The portal surface becomes publicly visible to residents immediately and starts offline caption transcription.'
+              : 'The portal surface is not part of this approval.'
+          }`}
           confirmLabel="Approve and Publish"
           tone="brand"
           onConfirm={() => {

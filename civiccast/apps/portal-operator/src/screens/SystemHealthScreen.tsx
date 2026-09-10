@@ -37,6 +37,7 @@ import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { humanizeDuration } from '../format'
 import { feedCommandConfirmCopy } from './feed-command-confirm'
 import { captionsRowLabel, processLabel, readinessLabel, stateLabel, toneForEgressState, toneForReadiness } from './status-language'
+import { healthCheckAnchorId } from './health-check-anchor'
 import type {
   ChannelRuntimeStatus,
   DiagnosticBundleResponse,
@@ -92,6 +93,7 @@ function CheckRow({ check }: { check: SystemHealthCheck }) {
   const tone = COLOR_TONE[check.color]
   return (
     <article
+      id={healthCheckAnchorId(check.id)}
       className="grid gap-2 rounded-md p-3 md:grid-cols-[1fr_auto]"
       style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
     >
@@ -119,7 +121,38 @@ function CheckRow({ check }: { check: SystemHealthCheck }) {
   )
 }
 
-function RehearsalPanel({ report }: { report: RehearsalReport }) {
+const REHEARSAL_RESULT_COPY: Record<
+  RehearsalReport['rehearsal_result'],
+  { label: string; tone: 'ok' | 'warn' | 'err'; detail: string }
+> = {
+  passed: {
+    label: 'Passed',
+    tone: 'ok',
+    detail: 'A private session ran, passed preflight, and finalized a recording.',
+  },
+  failed: {
+    label: 'Failed',
+    tone: 'err',
+    detail: 'The private session started but stopped before a recording was finalized.',
+  },
+  not_run: {
+    label: 'Not run',
+    tone: 'warn',
+    detail: 'A precondition kept the private session from starting.',
+  },
+}
+
+// beta.5 walkthrough F-21: the headline used to say "rehearsal is blocked"
+// while the detail lines said the rehearsal ran and passed. The card now
+// reports the rehearsal result and the broadcast gate as two separate lines,
+// and the gate names each blocking item with a link to its control.
+export function RehearsalPanel({ report }: { report: RehearsalReport }) {
+  const result = REHEARSAL_RESULT_COPY[report.rehearsal_result]
+  const gateTone: 'ok' | 'warn' | 'err' =
+    report.gate.color === 'green' ? 'ok' : report.gate.color === 'yellow' ? 'warn' : 'err'
+  const blocking = report.gate.blocking ?? []
+  const attention = report.gate.attention ?? []
+  const gateItems = blocking.length > 0 ? blocking : attention
   return (
     <section
       className="grid gap-2 rounded-md p-4"
@@ -133,6 +166,50 @@ function RehearsalPanel({ report }: { report: RehearsalReport }) {
         This checks configuration, storage, and the bundled sample video -- it does not play
         video in this screen. Use Open resident preview to see what residents will see.
       </p>
+      <dl className="m-0 grid gap-2 text-sm" data-testid="rehearsal-result-and-gate">
+        <div className="flex flex-wrap items-center gap-2">
+          <dt className="font-semibold">Rehearsal result:</dt>
+          <dd className="m-0 flex flex-wrap items-center gap-2">
+            <StatusPill label={result.label} tone={result.tone} />
+            <span className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+              {result.detail}
+            </span>
+          </dd>
+        </div>
+        <div className="flex flex-wrap items-start gap-2">
+          <dt className="font-semibold">Broadcast gate:</dt>
+          <dd className="m-0 grid gap-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <StatusPill
+                label={
+                  blocking.length > 0
+                    ? `${blocking.length} required ${blocking.length === 1 ? 'item' : 'items'} not ready`
+                    : attention.length > 0
+                      ? `${attention.length} required ${attention.length === 1 ? 'item needs' : 'items need'} attention`
+                      : 'All required items ready'
+                }
+                tone={gateTone}
+              />
+            </div>
+            {gateItems.length > 0 && (
+              <ul className="m-0 grid gap-1 pl-4 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+                {gateItems.map((item) => (
+                  <li key={item.id}>
+                    <a
+                      href={`#${healthCheckAnchorId(item.id)}`}
+                      className="font-semibold underline"
+                      style={{ color: 'var(--cc-ink)' }}
+                    >
+                      {item.label}
+                    </a>
+                    {' '}&mdash; {item.next_step}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </dd>
+        </div>
+      </dl>
       <p className="m-0 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
         {report.message}
       </p>

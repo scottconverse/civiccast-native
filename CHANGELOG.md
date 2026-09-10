@@ -28,6 +28,39 @@ rejects the NATS fields the August installer wrote. Workaround: stop the
 `provision-journal.json.legacy`, and re-run `setup.exe`. Station data (the
 PostgreSQL data directory) is untouched by the halt and by the workaround.
 
+### Changed (breaking)
+
+- **Public `GET /api/public/channels/{id}/now-next`: `current` is now
+  nullable, its title is no longer the daemon's label, and `next` only lists
+  premieres that start after now.** `ChannelNowNext.current` went from
+  `PlayoutBlock` to `PlayoutBlock | null` (null while nothing is on air): a
+  signage page or CTV client written against beta.5 that reads
+  `current.title` without a null check will throw; read `fallback_active`
+  and null-check `current` first. When `current` is non-null its `title` is
+  the scheduled program's title when the daemon's own proof event says it is
+  airing that scheduled asset (the same string
+  `GET /api/public/schedule/coming-up` serves), the channel's display name
+  when the daemon airs something else or reports no label, or "Fallback
+  slate" -- never the daemon's free-text source label, and the block never
+  carries `failover_reason` or the daemon's `last_error`. A client that
+  rendered `current.title` as the program name will show the channel name
+  during a live takeover or an unlabelled start; read the display name as
+  "on air, program not named". `next` is the first premiere whose
+  `starts_at` is after `generated_at`; a premiere that already started but is
+  not what is airing is never re-advertised as Next (it is named in the
+  staff-only `schedule_note`). `ChannelNowNext` gains an optional
+  `schedule_note` (staff route only; always null on the public route).
+- **Staff `GET /api/staff/cable/channels/{id}/proof-log`:
+  `ChannelProofEvent.captions_attached` is now `boolean | null`** (null means
+  "not verified"). This is the operator proof log behind
+  `require_any_role(*ALL_OPERATOR_ROLES)`, not the public route.
+- **`POST /api/staff/publish/assets/{id}/approve` refuses
+  `approved_surface_ids: []` with no overrides (422).** Omitting the field
+  means the Portal surface only; an empty list used to mean "publish
+  nothing" and returned 200, so a JS client that dropped an `undefined`
+  selection and one that sent `[]` got the same status for opposite
+  outcomes. An empty list is still accepted alongside overrides.
+
 ### Fixed
 
 - **beta.5.1: provisioning tolerates legacy journal fields (the August NATS
@@ -487,6 +520,135 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   InstalledVersion not consulted, or cleared by the intervening native
   uninstall?) is not established; the routing is deliberately left as is in
   this change and needs its own investigation before beta.5.1.
+
+- **Publish dashboard defaults to the Portal surface only (beta.5 walkthrough
+  F-23, safety).** Every approvable surface used to be pre-checked, so a
+  one-click "Approve and Publish selected" read "7 selected surface(s) publish
+  for real" -- Internet Archive, both local NAS archives, YouTube Live/VOD and
+  the cable file package included. `PublishDashboardScreen` now pre-checks
+  only the canonical Portal surface; archive and reach surfaces are opt-in
+  per approval. The confirm dialog names the surfaces it will publish
+  ("1 selected surface publishes for real: Portal.") instead of a bare count,
+  and a public-record asset with required archive surfaces left unselected
+  says so ("3 required archive surfaces not selected (...); this public-record
+  asset stays archive-pending until they are approved."). Vitest pins the
+  default selection, the warning, and that the confirm-dialog count matches
+  the request the API receives. The server shares the default: `POST
+  /api/staff/publish/assets/{id}/approve` with `approved_surface_ids`
+  omitted (or null) now publishes the canonical Portal surface only -- it
+  used to mean every surface, so an API approval that named none put a
+  closed session on Internet Archive for good. Archive and reach surfaces
+  must be listed by id. Python tests pin that an omitted selection approves
+  no archive/reach surface and resolves no provider client.
+
+- **Channels shows real playout state, never sample-contract rows (F-27).**
+  `civiccast/cable/channel.py`'s `build_channel_now_next` /
+  `build_channel_proof_log` / `build_channel_playout_plan` served the
+  deterministic sample contract ("Public live programming -- Playing",
+  "Captions: Attached") to the operator console on a channel whose outgoing
+  feed was Stopped and captions Off. The operator builders now read the
+  egress daemon's state row and persisted proof events plus the schedule
+  store: `ChannelNowNext.current` is `null` unless the daemon reports the
+  feed on air, `next` is the first scheduled premiere that starts after now
+  or `null` (a slot that already started but is not airing is never
+  re-advertised as Next), and an empty schedule is an empty plan (no
+  synthetic "channel slate" block). The daemon is the authority on what is
+  on air: the Now slot's title is the daemon's `current_source_label`, and a
+  scheduled block covering the wall clock lends its block id, timing and
+  caption refs only when the daemon's own proof event for the handoff names
+  that block's asset (`EgressProofEvent.source_ref`, joined by the router on
+  the state row's `current_proof_event_id` or its label). With no proof
+  event, a label that equals the block's title whole lends the slot but
+  never the caption refs; identity is never inferred from a substring of the
+  label (asset id `live` does not own "Live takeover from Studio B"). When
+  they disagree (live takeover, manual start,
+  bulletin fill) the block is built from the daemon row and
+  `ChannelNowNext.schedule_note` names the disagreement ("Schedule lists
+  'Council Meeting' from 17:50 UTC, but the outgoing feed reports
+  'Emergency bulletin' on air."); the Channels screen shows it under
+  "Schedule differs from what is on air." The proof log is the daemon's
+  proof events (empty until the first start), and its captions column is
+  joined from the daemon's CEA-608/708 decode-back proof samples: the
+  nearest sample within 120s of the event decides `captions_attached`
+  (`true` on PASS, `false` on FAIL, `null` "Not verified" when no sample
+  covers it; the window is stated in `not_claimed`). The daemon's
+  `last_error` (up to 1000 characters of `str(exc)` / stderr) is cut to the
+  contract's 500-character `failover_reason` with an ellipsis at the
+  boundary -- it used to raise a pydantic ValidationError, a 500 on both
+  now/next routes, exactly during a fallback incident. The sample contract
+  survives only as `build_sample_channel_*` for fixtures and the seeded
+  app-platform feed, labelled `proof_boundary="sample-contract"`. The
+  Channels screen renders "No program on air", "Nothing scheduled" and "No
+  proof events yet" for those states. Python tests cover the builders, the
+  boundary truncation, the public redaction and the caption join through
+  the real routes with a populated state row; vitest covers the empty
+  states and the schedule note.
+
+- **Outgoing feed Start refuses without an egress configuration (F-29).**
+  `POST /api/staff/egress/channels/{id}/commands` accepted a `start` (202)
+  on a channel with no egress config; the daemon dropped it
+  (`ConfigInvalidError` into its own log) and the console stayed "Stopped"
+  with no reason. The router now answers 409 with the reason ("No
+  outgoing-feed configuration for {id}. Apply a headend preset or the local
+  rehearsal preset first."; disabled configs get their own 409: "Outgoing
+  feed for {id} is disabled in its egress configuration. Enable it in
+  Outgoing feed configuration, then start."). Stop/drain stay accepted. The
+  Channels screen disables Start with the identical inline reason for each
+  case -- a missing configuration and a disabled one (the screen used to
+  offer Start on a disabled configuration and get a surprise 409); a policy
+  test evaluates the screen's template against the router's function so the
+  two strings cannot drift. After an accepted Start the screen watches the
+  daemon state row for 20s and raises an alert ("Start was queued but the
+  feed did not start.") if nothing changes. The watch snapshots the row's
+  `state` and `updated_at` when the command is accepted and treats the
+  start as applied when the daemon reports a start-ish state or either
+  value changes; it never compares the station server's timestamp with the
+  browser clock, which false-alarmed on a station clock more than 60s
+  behind the workstation and on a Start pressed on an already-on-air
+  channel. Vitest drives `ChannelOpsScreen` itself with fake timers for the
+  skewed clock, the already-on-air no-op, and the genuine never-started
+  case.
+
+- **Broadcast readiness separates the rehearsal result from the gate (F-21).**
+  The readiness card's headline said "Private rehearsal is blocked because a
+  required broadcast item is not ready" while its detail lines said the
+  rehearsal ran, passed preflight, finalized a recording and loaded the
+  resident preview. `RehearsalReport` now carries `rehearsal_result`
+  (`passed` / `failed` / `not_run`) and a `gate` object listing the required
+  items that block (red) or need attention (yellow), each with its next
+  step. A passed run behind a red gate reads "Rehearsal passed, but the
+  broadcast gate has N required item(s) not ready: Backup destination." and
+  the next step names the item and its fix. System Health renders
+  "Rehearsal result" and "Broadcast gate" as separate lines, and each
+  blocking item links to its check row. Every colour branch states the
+  result it was given: a `not_run` result reads "Private rehearsal has not
+  been run; ..." and a `failed` one "Private rehearsal did not complete ..."
+  on green and yellow too, instead of "checks passed" / "ran, but" copy
+  that the red-branch fix had left in place.
+- **Channels: the Start watchdog no longer goes silent on a channel already
+  sitting in `ERROR` or parked on `FALLBACK_SLATE`.** After a Start was
+  accepted, a state row in `ERROR` or `FALLBACK_SLATE` counted as "the start
+  was applied" unconditionally, so a daemon that dropped the command on a
+  channel it had already failed (bad sink, missing encoder) never raised the
+  "Start was queued but the feed did not start" alert -- the exact silent
+  drop F-29 named. Only `STARTING`, `ON_AIR` and `TRANSITIONING` count as
+  applied on their own; any other state counts only when the row actually
+  changed from the snapshot taken when the Start was accepted.
+- **Channels: a failed outgoing-feed configuration check no longer reads as
+  "No outgoing-feed configuration".** When the configuration list itself
+  failed to load, Start was disabled with the missing-configuration reason
+  and its remedy (apply a preset), which is wrong when the configuration is
+  fine and the fetch was the problem. Start stays disabled with "Could not
+  check the outgoing-feed configuration" and a Retry check button.
+- **Operator console: warning copy on the publish dashboard now meets WCAG
+  AA contrast in the light theme.** The "N required archive surfaces not
+  selected" notice (and the three sibling warnings beside Approve and
+  Publish) were set in `--cc-warn`, a pill/border amber that measures
+  2.74:1 on the card surface; axe-core flagged it as a serious
+  `color-contrast` violation in `ci-a11y`. A new `--cc-warn-text` token
+  (5.60:1 on `--cc-surface`, 5.15:1 on `--cc-surface-2`, 5.37:1 on
+  `--cc-paper` in light; the existing 8.90:1 amber in dark) is used for
+  warning text, and the publish-dashboard axe scan now runs in both themes.
 
 - **Resident live state follows the egress pipeline; Channels shows the real
   HLS URL or says web output is off; a local-rehearsal HLS preset exists.**

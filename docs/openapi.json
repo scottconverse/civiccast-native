@@ -6158,6 +6158,7 @@
           "channels"
         ],
         "summary": "Read public now/next state for a channel",
+        "description": "Resident-safe now/next: no daemon ``last_error`` or free-text source label.\n\nThis route is unauthenticated. The daemon's ``last_error`` is raw\n``str(exc)`` / child stderr (file paths, NAS mounts, headend host:port)\nand ``current_source_label`` is operator free text; this route withholds\nboth and serves the scheduled program title (already public via the\nschedule routes) or the channel display name instead. The sibling\n``GET /api/public/egress/channels/{id}/now`` (``civiccast/egress/router.py``)\nstill serves ``current_source_label`` unauthenticated; that is outside this\nbuilder and tracked as a follow-up.",
         "operationId": "public_channel_now_next_api_public_channels__channel_id__now_next_get",
         "parameters": [
           {
@@ -6314,6 +6315,7 @@
           "cable"
         ],
         "summary": "Read channel playout proof log",
+        "description": "Proof log built only from persisted egress daemon proof events.\n\nWithout a durable egress store (or before the daemon has aired anything)\nthe log is empty; the console renders \"No proof events yet\". It never\nfalls back to sample-contract rows (beta.5 walkthrough F-27).",
         "operationId": "staff_channel_proof_log_api_staff_cable_channels__channel_id__proof_log_get",
         "parameters": [
           {
@@ -30006,6 +30008,9 @@
               }
             }
           },
+          "409": {
+            "description": "Start refused: the channel has no outgoing-feed configuration (or it is disabled)"
+          },
           "503": {
             "description": "Durable storage not ready -- run Setup storage or set DATABASE_URL"
           },
@@ -35164,6 +35169,86 @@
         ],
         "title": "Body_upload_contributor_media_api_public_contribute_uploads_post"
       },
+      "BroadcastGate": {
+        "properties": {
+          "color": {
+            "type": "string",
+            "enum": [
+              "green",
+              "yellow",
+              "red"
+            ],
+            "title": "Color"
+          },
+          "blocking": {
+            "items": {
+              "$ref": "#/components/schemas/BroadcastGateItem"
+            },
+            "type": "array",
+            "title": "Blocking"
+          },
+          "attention": {
+            "items": {
+              "$ref": "#/components/schemas/BroadcastGateItem"
+            },
+            "type": "array",
+            "title": "Attention"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Summary"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "color",
+          "summary"
+        ],
+        "title": "BroadcastGate",
+        "description": "The required-items gate, reported separately from the rehearsal run.\n\nbeta.5 walkthrough F-21: the headline used to say \"rehearsal is blocked\"\nwhile the detail lines said the rehearsal ran and passed. The gate is a\nproperty of the station's required checks, not of the run -- so it is its\nown object, naming the items that block (red) or need attention (yellow)."
+      },
+      "BroadcastGateItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Label"
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "green",
+              "yellow",
+              "red"
+            ],
+            "title": "Color"
+          },
+          "next_step": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Next Step"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "color",
+          "next_step"
+        ],
+        "title": "BroadcastGateItem",
+        "description": "One required System Health check the broadcast gate is waiting on."
+      },
       "BrokenMediaGateResult": {
         "properties": {
           "state": {
@@ -37480,7 +37565,14 @@
             "$ref": "#/components/schemas/ChannelProfile"
           },
           "current": {
-            "$ref": "#/components/schemas/PlayoutBlock"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlayoutBlock"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "next": {
             "anyOf": [
@@ -37499,6 +37591,18 @@
           "proof_boundary": {
             "type": "string",
             "title": "Proof Boundary"
+          },
+          "schedule_note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedule Note"
           }
         },
         "additionalProperties": false,
@@ -37671,9 +37775,16 @@
             "title": "Channel Id"
           },
           "scheduled_block_id": {
-            "type": "string",
-            "maxLength": 120,
-            "minLength": 1,
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Scheduled Block Id"
           },
           "actual_kind": {
@@ -37736,7 +37847,14 @@
             "title": "Failover Reason"
           },
           "captions_attached": {
-            "type": "boolean",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Captions Attached"
           },
           "machine_summary": {
@@ -37751,7 +37869,6 @@
           "event_id",
           "observed_at",
           "channel_id",
-          "scheduled_block_id",
           "actual_kind",
           "actual_status",
           "title",
@@ -52459,7 +52576,8 @@
                 "type": "null"
               }
             ],
-            "title": "Approved Surface Ids"
+            "title": "Approved Surface Ids",
+            "description": "Surface ids to publish. Omitted or null means the canonical Portal surface only; archive and reach surfaces must be listed explicitly. An empty list is accepted only together with overrides; on its own it is refused (422) because nothing would be published."
           },
           "overrides": {
             "items": {
@@ -54147,6 +54265,18 @@
             ],
             "title": "Safe To Broadcast"
           },
+          "rehearsal_result": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "not_run"
+            ],
+            "title": "Rehearsal Result"
+          },
+          "gate": {
+            "$ref": "#/components/schemas/BroadcastGate"
+          },
           "message": {
             "type": "string",
             "minLength": 1,
@@ -54233,6 +54363,8 @@
           "started_at",
           "status",
           "safe_to_broadcast",
+          "rehearsal_result",
+          "gate",
           "message",
           "resident_preview",
           "checks",

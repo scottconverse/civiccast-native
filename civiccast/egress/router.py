@@ -187,6 +187,34 @@ class StaffEgressChannelDetail(BaseModel):
     latest_health: EgressHealthSample | None = None
 
 
+START_WITHOUT_CONFIG_DESCRIPTION = (
+    "Start refused: the channel has no outgoing-feed configuration (or it is disabled)"
+)
+
+
+def start_without_config_reason(channel_id: str) -> str:
+    """Operator-facing reason for refusing ``start`` on an unconfigured channel.
+
+    Mirrors the inline reason the Channels screen shows under its disabled
+    Start button so the API and the console never disagree.
+    """
+    return (
+        f"No outgoing-feed configuration for {channel_id}. Apply a headend preset "
+        "or the local rehearsal preset first."
+    )
+
+
+def start_disabled_config_reason(channel_id: str) -> str:
+    """Operator-facing reason for refusing ``start`` on a disabled configuration.
+
+    Mirrored by ``startDisabledConfigReason`` in the Channels screen.
+    """
+    return (
+        f"Outgoing feed for {channel_id} is disabled in its egress configuration. "
+        "Enable it in Outgoing feed configuration, then start."
+    )
+
+
 def _reject_unsupported_sink_kinds(config: EgressConfig) -> None:
     """DEFECT B: refuse an unsupported sink kind AT CONFIG TIME, with a clear
     message naming the supported kinds -- instead of accepting it with 200 OK
@@ -1141,7 +1169,10 @@ def repair_gstreamer_runtime() -> GstreamerRepairResponse:
     status_code=status.HTTP_202_ACCEPTED,
     summary="Queue an egress daemon command",
     dependencies=[Depends(require_any_role("meeting_operator"))],
-    responses={503: {"description": _DB_NOT_READY_DESCRIPTION}},
+    responses={
+        409: {"description": START_WITHOUT_CONFIG_DESCRIPTION},
+        503: {"description": _DB_NOT_READY_DESCRIPTION},
+    },
 )
 def queue_command(
     channel_id: str,
@@ -1150,6 +1181,22 @@ def queue_command(
     egress_store: EgressStore | None = Depends(get_egress_store),
 ) -> EgressCommandResponse:
     store = _require_store(egress_store, surface="egress commands")
+    if payload.action == "start":
+        # beta.5 walkthrough F-29: a start on a channel with no egress config
+        # used to be accepted (202) and then dropped by the daemon, which
+        # only ever raised ConfigInvalidError into its own log -- the console
+        # showed "Stopped" with no reason. Refuse it here with the reason.
+        config = store.get_config(channel_id)
+        if config is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=start_without_config_reason(channel_id),
+            )
+        if not config.enabled:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=start_disabled_config_reason(channel_id),
+            )
     command = EgressCommand(
         channel_id=channel_id,
         action=payload.action,

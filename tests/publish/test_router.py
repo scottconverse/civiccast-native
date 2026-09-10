@@ -218,11 +218,25 @@ def test_preflight_blocks_unpackaged_public_record_with_actionable_next_step(
 
 
 def test_approve_and_publish_runs_all_mock_surfaces(client: TestClient) -> None:
+    # Every surface is named explicitly: an omitted selection now publishes
+    # the canonical Portal surface only (F-23 safety default, hostile review
+    # B3 of PR #216) -- see test_approve_with_surfaces_omitted_publishes_portal_only.
     response = client.post(
         "/api/staff/publish/assets/council-2026-05-08/approve",
         json={
             "operator_id": "staff-1",
             "operator_display_name": "Avery Operator",
+            "approved_surface_ids": [
+                "portal",
+                "internet-archive",
+                "local-nas-rsync",
+                "local-nas-zfs",
+                "youtube-live",
+                "youtube-vod",
+                "podcast",
+                "subscriber-notifications",
+                "cable-file-package",
+            ],
         },
     )
     assert response.status_code == 200
@@ -253,6 +267,27 @@ def test_approve_and_publish_runs_all_mock_surfaces(client: TestClient) -> None:
     assert surfaces["subscriber-notifications"]["health"] == "unknown"
     assert "coming in a future release" in surfaces["subscriber-notifications"]["message"].lower()
     assert surfaces["internet-archive"]["verification_hash"].startswith("sha256:")
+
+
+def test_approve_with_surfaces_omitted_publishes_portal_only(client: TestClient) -> None:
+    """Hostile review B3: the API default matches the screen -- Portal only."""
+    response = client.post(
+        "/api/staff/publish/assets/council-2026-05-08/approve",
+        json={
+            "operator_id": "staff-1",
+            "operator_display_name": "Avery Operator",
+        },
+    )
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["canonical_public"] is True
+    assert body["archive_verified"] is False
+    surfaces = {surface["id"]: surface for surface in body["surfaces"]}
+    assert surfaces["portal"]["state"] == "succeeded"
+    for surface_id in ("internet-archive", "local-nas-rsync", "local-nas-zfs", "youtube-vod"):
+        assert surfaces[surface_id]["approval"] == "pending", surface_id
+        assert surfaces[surface_id]["state"] == "pending", surface_id
 
 
 def test_portal_approval_marks_packaged_draft_as_published(
@@ -463,6 +498,27 @@ def test_explicit_empty_surface_selection_does_not_publish_every_surface(
     surfaces = {surface["id"]: surface for surface in response.json()["surfaces"]}
     assert surfaces["internet-archive"]["state"] == "overridden"
     assert surfaces["portal"]["state"] == "pending"
+    draft = store.get_staff_row("concert-archive")
+    assert draft is not None and draft.published_at is None
+
+
+def test_empty_surface_selection_without_overrides_is_refused_with_422(
+    client: TestClient, store: FakeAssetStore
+) -> None:
+    """Hostile review m8: ``[]`` with nothing else to do used to return 200 and
+    publish nothing, indistinguishable from an omitted field (Portal only)."""
+    response = client.post(
+        "/api/staff/publish/assets/concert-archive/approve",
+        json={
+            "operator_id": "staff-1",
+            "operator_display_name": "Avery Operator",
+            "approved_surface_ids": [],
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert "nothing would be published" in response.text
+    assert "Omit the field to publish the Portal surface only" in response.text
     draft = store.get_staff_row("concert-archive")
     assert draft is not None and draft.published_at is None
 

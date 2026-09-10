@@ -40,6 +40,7 @@
   --cc-warn: #aa7a05;
   --cc-warn-soft: #fff0c7;
   --cc-warn-ink: #1a1206;
+  --cc-warn-text: #8a6200;
   --cc-err: #bd1f31;
   --cc-err-soft: #fde6e8;
   --cc-err-ink: #ffffff;
@@ -76,6 +77,7 @@
   --cc-warn: #e6bd4d;
   --cc-warn-soft: #5c4720;
   --cc-warn-ink: #1a1206;
+  --cc-warn-text: #e6bd4d;
   --cc-err: #ff736f;
   --cc-err-soft: #5b272b;
   --cc-err-ink: #111827;

@@ -252,6 +252,26 @@ async function mockDashboard(page: import('@playwright/test').Page, status = 200
   })
 }
 
+const OPT_IN_SURFACE_IDS = [
+  'internet-archive',
+  'local-nas-rsync',
+  'local-nas-zfs',
+  'youtube-live',
+  'youtube-vod',
+] as const
+
+function councilCard(page: import('@playwright/test').Page) {
+  return page
+    .locator('article')
+    .filter({ has: page.getByRole('heading', { name: 'Council - May 8, 2026' }) })
+}
+
+function approveCheckbox(card: import('@playwright/test').Locator, surfaceId: string) {
+  return card
+    .locator(`[data-surface-id="${surfaceId}"]`)
+    .getByRole('checkbox', { name: 'Approve this surface' })
+}
+
 async function openPublish(page: import('@playwright/test').Page) {
   await page.goto('/')
   await page.getByRole('button', { name: 'Publish' }).click()
@@ -295,21 +315,74 @@ test.describe('publish dashboard', () => {
     })
     await openPublish(page)
 
-    await page.getByRole('button', { name: 'Approve and Publish selected' }).first().click()
-    await page.getByRole('alertdialog').getByRole('button', { name: 'Approve and Publish' }).click()
+    // B3: only the Portal surface is selected by default. Fanning out to the
+    // archive and reach surfaces is a deliberate act, so this test ticks each
+    // one explicitly and proves the POST carries exactly those six.
+    const card = councilCard(page)
+    await expect(approveCheckbox(card, 'portal')).toBeChecked()
+    for (const surfaceId of OPT_IN_SURFACE_IDS) {
+      await expect(approveCheckbox(card, surfaceId)).not.toBeChecked()
+    }
+    await expect(card.getByTestId('required-surfaces-unselected')).toHaveText(
+      /3 required archive surfaces not selected \(Internet Archive, Local NAS rsync, Local NAS ZFS\)/,
+    )
+    for (const surfaceId of OPT_IN_SURFACE_IDS) {
+      await approveCheckbox(card, surfaceId).check()
+    }
+    await expect(card.getByTestId('required-surfaces-unselected')).toHaveCount(0)
+
+    await card.getByRole('button', { name: 'Approve and Publish selected' }).click()
+    const dialog = page.getByRole('alertdialog')
+    for (const label of [
+      'Resident Portal',
+      'Internet Archive',
+      'Local NAS rsync',
+      'Local NAS ZFS',
+      'YouTube Live',
+      'YouTube VOD',
+    ]) {
+      await expect(dialog).toContainText(label)
+    }
+    await dialog.getByRole('button', { name: 'Approve and Publish' }).click()
     await expect.poll(() => postedBody).toBeTruthy()
     expect(postedBody).toMatchObject({
-      approved_surface_ids: [
-        'portal',
-        'internet-archive',
-        'local-nas-rsync',
-        'local-nas-zfs',
-        'youtube-live',
-        'youtube-vod',
-      ],
       operator_id: 'operator-dashboard',
       operator_display_name: 'Operator dashboard',
     })
+    expect((postedBody as { approved_surface_ids: string[] }).approved_surface_ids).toEqual([
+      'portal',
+      ...OPT_IN_SURFACE_IDS,
+    ])
+  })
+
+  test('approves Portal only when no archive or reach surface is ticked (B3 default)', async ({ page }) => {
+    let postedBody: unknown
+    await mockDashboard(page)
+    await page.route('**/api/staff/publish/assets/council-2026-05-08/approve', async (route) => {
+      postedBody = route.request().postDataJSON()
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ...MOCK_DASHBOARD.assets[0],
+          canonical_public: true,
+          surfaces: [APPROVED_SURFACES[0], ...PENDING_SURFACES.slice(1)],
+        }),
+      })
+    })
+    await openPublish(page)
+
+    const card = councilCard(page)
+    await card.getByRole('button', { name: 'Approve and Publish selected' }).click()
+    const dialog = page.getByRole('alertdialog')
+    await expect(dialog).toContainText('Resident Portal')
+    await expect(dialog).not.toContainText('Internet Archive')
+    await expect(dialog).not.toContainText('YouTube')
+    await dialog.getByRole('button', { name: 'Approve and Publish' }).click()
+    await expect.poll(() => postedBody).toBeTruthy()
+    expect((postedBody as { approved_surface_ids: string[] }).approved_surface_ids).toEqual([
+      'portal',
+    ])
   })
 
   test('requires a specific override justification before approving an archive override', async ({ page }) => {
@@ -459,25 +532,35 @@ test.describe('publish dashboard', () => {
     ).toBeDisabled()
   })
 
-  test('axe scan: publish dashboard has no serious/critical violations', async ({ page }) => {
-    await mockDashboard(page)
-    await openPublish(page)
-    const results = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze()
-    const blockers = results.violations.filter(
-      (v) => v.impact === 'serious' || v.impact === 'critical',
-    )
-    if (blockers.length > 0) {
-      const summary = blockers
-        .map(
-          (v) =>
-            `[${v.impact}] ${v.id}: ${v.help}\n    ${v.helpUrl}\n    nodes: ${v.nodes
-              .map((n) => n.target.join(' '))
-              .join('; ')}`,
-        )
-        .join('\n\n')
-      throw new Error(
-        `axe-core found ${blockers.length} serious/critical violation(s) on the publish dashboard:\n\n${summary}`,
+  // Both themes: the "required archive surfaces not selected" warning is
+  // small text on the card surface, and --cc-warn only clears 4.5:1 in the
+  // dark palette (measured 2.74:1 on white in light). Scan light and dark.
+  for (const theme of ['light', 'dark'] as const) {
+    test(`axe scan: publish dashboard has no serious/critical violations (${theme} theme)`, async ({
+      page,
+    }) => {
+      await mockDashboard(page)
+      await openPublish(page)
+      await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme)
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+      await expect(page.getByTestId('required-surfaces-unselected').first()).toBeVisible()
+      const results = await new AxeBuilder({ page }).withTags(WCAG_TAGS).analyze()
+      const blockers = results.violations.filter(
+        (v) => v.impact === 'serious' || v.impact === 'critical',
       )
-    }
-  })
+      if (blockers.length > 0) {
+        const summary = blockers
+          .map(
+            (v) =>
+              `[${v.impact}] ${v.id}: ${v.help}\n    ${v.helpUrl}\n    nodes: ${v.nodes
+                .map((n) => n.target.join(' '))
+                .join('; ')}`,
+          )
+          .join('\n\n')
+        throw new Error(
+          `axe-core found ${blockers.length} serious/critical violation(s) on the publish dashboard (${theme} theme):\n\n${summary}`,
+        )
+      }
+    })
+  }
 })

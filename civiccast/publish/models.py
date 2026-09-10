@@ -56,8 +56,39 @@ class PublishApprovalRequest(BaseModel):
 
     operator_id: Annotated[str, Field(min_length=1, max_length=160)]
     operator_display_name: Annotated[str, Field(min_length=1, max_length=200)]
-    approved_surface_ids: list[str] | None = None
+    # Omitted (``None``) means the canonical Portal surface only. It used to
+    # mean EVERY surface -- Internet Archive, both NAS archives, YouTube
+    # Live/VOD, cable package -- so an API approval with the field left out
+    # permanently published a closed session (beta.5 walkthrough F-23,
+    # safety). Archive and reach surfaces are opt-in by id.
+    approved_surface_ids: list[str] | None = Field(
+        default=None,
+        description=(
+            "Surface ids to publish. Omitted or null means the canonical Portal "
+            "surface only; archive and reach surfaces must be listed explicitly. "
+            "An empty list is accepted only together with overrides; on its own "
+            "it is refused (422) because nothing would be published."
+        ),
+    )
     overrides: list[PublishSurfaceOverride] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _empty_selection_needs_an_override(self) -> PublishApprovalRequest:
+        # Hostile review m8: ``null`` means Portal only and ``[]`` used to mean
+        # "publish nothing" -- both 200, indistinguishable to a JS client that
+        # drops an undefined field. An empty list with nothing else to do is
+        # refused so the caller learns which of the two it sent.
+        if (
+            self.approved_surface_ids is not None
+            and not self.approved_surface_ids
+            and not self.overrides
+        ):
+            raise ValueError(
+                "approved_surface_ids is an empty list and no overrides were given, "
+                "so nothing would be published. Omit the field to publish the Portal "
+                "surface only, or list the surface ids to publish."
+            )
+        return self
 
     @model_validator(mode="after")
     def _no_duplicate_overrides(self) -> PublishApprovalRequest:
