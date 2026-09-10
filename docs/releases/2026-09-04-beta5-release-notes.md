@@ -313,6 +313,9 @@ LPM is on `v1.0.0-beta.4`. The supported path is exactly the one Gate A's
 never had CivicCast needs the signed `station\` model bundle beside
 `setup.exe` (USB or LAN kit, verified against the kit's own manifest --
 see `INSTALL-WINDOWS.md`). A station already on beta.3 or beta.4 does not.
+`INSTALL-HELPER-PROMPT.md` at the kit root (and in PR #207) is the
+operator's AI-assisted install guide: paste it into an AI assistant and
+follow along.
 
 **If the upgraded station will not come up.** Stop; do not uninstall or
 wipe anything. Collect `%ProgramData%\CivicCast\logs\` and
@@ -466,11 +469,27 @@ Numbering follows the batch-fix item list used throughout `CHANGELOG.md`;
     the CI required checks on `main` are the gate. [source:
     `docs/releases/beta5-recovery-2026-09-08.md`, "Packaged
     publication-status correction".]
+16. **Item 99 -- upgrading a station that was first installed from the
+    August 2026 beta.1 kit halts provisioning** with "corrupt/unparseable
+    ... Extra inputs are not permitted ... nats_". Nothing is broken; the
+    old provision journal carries fields the new parser rejects.
+    Workaround: stop the `CivicCastSupervisor` service, rename
+    `C:\ProgramData\CivicCast\provision\provision-journal.json` to
+    `provision-journal.legacy.json`, and run setup again. Fix in PR #206
+    for beta.6. [source: the 2026-09-09 LPM install; PR #206.]
+17. **Item 100 -- on a machine where CivicCast was uninstalled before,
+    setup can stop after provisioning** with "could not determine which
+    CivicCast runtime owns this machine" (exit 85 / 127). Workaround, in
+    an admin PowerShell:
+    `New-ItemProperty -Path 'HKLM:\SOFTWARE\CivicCast' -Name 'ActiveRuntime' -PropertyType String -Value 'native' -Force`,
+    then run setup again. Fix in PR #209 for beta.6. [source: the
+    2026-09-09 LPM install; PR #209.]
 
-### Verification (tonight) -- the coordinator fills every `TBD-EVIDENCE` token
+### Verification (2026-09-09/10) -- the measured record
 
-Nothing below is done until its token is replaced with a measured value and
-an evidence path. The publish command must not run while any token remains.
+Every row below is a measured value with an evidence path; the table was
+filled as each measurement landed, and the last rows (the cross-version and
+download-only lanes, the release, the assets) were filled on 2026-09-10.
 
 | what | value | evidence |
 | --- | --- | --- |
@@ -484,11 +503,26 @@ an evidence path. The publish command must not run while any token remains.
 | Sandbox 15-min soak, same configuration -- run 3 | not run -- Gate A lane 1 soak stands in | none (not run) |
 | Gate A run id | `34423542177` (attempt 3, dispatched 2026-09-10 00:58Z; see "Gate A attempts" below) | <https://github.com/scottconverse/civiccast-native/actions/runs/34423542177> |
 | Gate A `clean` lane | **PASS** (lane 1 "Windows Sandbox station-acceptance run + verdict" job `success`, about 2026-09-10 01:57Z) | `gate-a-verdict-<build>\gate-a-verdict.json` on run `34423542177` |
-| Gate A `dirty` (cross-version upgrade over the beta.4 baseline) lane | `TBD-EVIDENCE-GATE-A-XVER` | `gate-a-dirty-verdict-<build>\gate-a-verdict.json` |
-| Gate A `download-only` lane | `TBD-EVIDENCE-GATE-A-DLONLY` | `gate-a-download-only-verdict-<build>\gate-a-verdict.json` |
+| Gate A `dirty` (cross-version upgrade over the beta.4 baseline) lane | **PASS** (lane "Cross-version install-over-existing lane + verdict" `success` on run `34423542177`, over the beta.4 baseline `c27c6e70`) | `gate-a-dirty-verdict-<build>\gate-a-verdict.json` on run `34423542177` |
+| Gate A `download-only` lane | **PASS** (lane "Download-only upgrade lane" `success` on run `34423542177`, completed 2026-09-10 04:04Z / 09-09 10:04 PM MT; whole run `success`, all three lanes) | `gate-a-download-only-verdict-<build>\gate-a-verdict.json` on run `34423542177` |
 | Tester 2-hour soak (`DESKTOP-VBMA6O5`, fresh run identity, counters reset) | not run for beta.5 (owner decision 2026-09-09: sandbox + Gate A + the owner's own fresh-machine install stand in); 24-h soak follows publication | none for beta.5 |
-| Release | `TBD-EVIDENCE-RELEASE-URL` | `gh release view v1.0.0-beta.5 --json isDraft,assets,targetCommitish,tagName` |
-| Assets table (8 assets, sizes, SHA-256) | `TBD-EVIDENCE-ASSETS-TABLE` | `SHA256SUMS.txt` cross-checked by `scripts/download_windows_release_artifacts.ps1 -AssetSet NativeCandidate` |
+| Release | <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5> -- published 2026-09-10 ~04:10Z (the publisher run was still uploading assets when this row was written) | `gh release view v1.0.0-beta.5 --json isDraft,assets,targetCommitish,tagName` |
+| Assets table (8 assets, sizes, SHA-256) | see "Release assets" below | `SHA256SUMS.txt` cross-checked by `scripts/download_windows_release_artifacts.ps1 -AssetSet NativeCandidate` |
+
+**Release assets (what the publisher uploads to the release above; sizes and
+SHA-256 from the kit at `C:\CivicCastTester\kit-safe\148c8d2172dd6b63cbbb856b429b68aa020dc421\`).**
+The 21 GB station model bundle is USB-only and is not on the release.
+
+| asset | bytes | SHA-256 |
+| --- | --- | --- |
+| `CivicCast (Native)_1.0.0-beta.5_x64-setup.exe` | 289,302,104 | `775b9a3e63a94183f1c065bb4168d03c0aeb2d72d608c1dbed5c875a94e05842` |
+| `CivicCast (Native)_1.0.0-beta.5_x64-setup.exe.sidecar.json` | (small; as uploaded) | listed in `SHA256SUMS.txt` |
+| `SHA256SUMS.txt` | (small; as uploaded) | manifest of the other assets |
+| `native-app-payload.ccpack` | 562,391,797 | `eb9bdfb46bbee166955736303e62495a71c85f5f72d96409df3f9e32ee296ec0` |
+| `native-cuda-runtime.ccpack` | 1,893,729,049 | `2ab2b2cc8acfc2b363ec3b8fff0af26c667a4808494943d8d9bd0c00ecf5580e` |
+| `native-ffmpeg-runtime.ccpack` | 144,129,579 | `2a26749b01d460ebd7aa2716c0714ea6d4ce9bc8d89ecdae56485b145eb91afb` |
+| `native-ollama-runtime.ccpack` | 1,941,233,056 | `192ad0d56abc649afda9a8f353c0454d52b0bcea4c143eb2899d538a2d341629` |
+| `native-server-binaries.ccpack` | 76,249,021 | `3ba90985bca7fb02646e85b00e005dbe65521723de7a420d6a3c64d502dd3620` |
 
 **Gate A attempts, honestly.** Run `34423542177` is the third dispatch of Gate A
 for this build. The first two, `34412708089` and `34419203610`, both failed at
@@ -498,9 +532,10 @@ host was busy: during the first attempt a 12 MB/s USB copy of the kit was
 running on the same box, and during the second 27 hung `node --test`
 processes from another project were holding about 10 cores. With the host
 quiet, attempt 3 activated the station in about 12 minutes, the same as the
-2026-09-08 pass, and the `clean` lane passed. The cross-version and
-download-only lanes of run `34423542177` were still running when this record was
-written; their tokens above stay open until they finish.
+2026-09-08 pass, and the `clean` lane passed. The cross-version lane (over
+the beta.4 baseline `c27c6e70`) and the download-only lane of run
+`34423542177` both passed afterwards, the download-only lane finishing at
+2026-09-10 04:04Z; the whole run concluded `success` on all three lanes.
 
 **Sandbox soaks of candidate 2.** Only one 15-minute soak of the `148c8d2`
 kit was run before the LPM install (time); it is the FAIL above, whose single
@@ -512,7 +547,11 @@ requires.
 
 **USB kit for the LPM install.** Drive `D:` labelled `CIVICCAST-BETA5`,
 folder `CivicCast-beta5-kit-148c8d21`, all 19 `SHA256SUMS.txt` manifest
-files verified after the copy, `README-START-HERE.txt` at the root.
+files verified after the copy, `README-START-HERE.txt` at the root, and
+`INSTALL-HELPER-PROMPT.md` beside it (also in PR #207): the operator's
+AI-assisted install guide -- paste it into an AI assistant and it walks the
+install, the checks, and the two workarounds in known issues 16 and 17
+below.
 
 **Pass rule (unchanged from "How this release was proven" below):** three
 consecutive sandbox soaks PASS with the seamless flag ON, then Gate A PASS
