@@ -7,8 +7,8 @@
 
 ## Current Release State
 
-`v1.0.0-beta.4` is the current release, a download-only upgrade for
-stations already on `v1.0.0-beta.3`: `setup.exe`, per-pack runtime
+`v1.0.0-beta.5` is the current release, a download-only upgrade for
+stations already on `v1.0.0-beta.4`: `setup.exe`, per-pack runtime
 `.ccpack` assets, and a `SHA256SUMS.txt` checksum file, published as a
 **prerelease** at
 <https://github.com/scottconverse/civiccast-native/releases> -- watch that
