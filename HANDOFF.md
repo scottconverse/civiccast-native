@@ -1,5 +1,13 @@
 # HANDOFF
 
+> **2026-09-10 11:10 AM — READ `PROJECT-STATUS.md` FIRST.** It is tracked in git (this file is
+> gitignored) and it is the full cold-start handoff: where the project is, both overnight soak
+> results with independent verification, the blocker that stops beta.6 shipping, every fix with its
+> definition of done, the test gates, and the location of every file on this machine and on GitHub.
+> **The built beta.6 kit must not be published** — the 2026-09-09 soaks found a blocker it does not
+> fix.
+
+
 Any session, on any plan or tool, continues from this file. Times below are Mountain (America/Denver).
 Rules in force: no new features; finish and test what exists; commit after each task; update this file after each task; stop at a clean state.
 
