@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 CURRENT_RELEASE_TAG = (
     "v"
@@ -15,6 +17,16 @@ CURRENT_RELEASE_TAG = (
         .split('"', 1)[0]
     )
 )
+# The downloadable GitHub Release tag the front doors must pin. Derived from
+# docs/releases/release-truth.yaml's authored `current` field -- the sole
+# authored source for release state -- because civiccast/_version.py moves to
+# the next owner-held candidate ahead of a publish while `current` stays on
+# the published tag (same distinction as check_v17_adoption_gate.py and
+# tests/policy/test_windows_release_downloader.py).
+PUBLISHED_RELEASE_TAG = yaml.safe_load(
+    (ROOT / "docs" / "releases" / "release-truth.yaml").read_text(encoding="utf-8")
+)["current"]
+PUBLISHED_RELEASE_LINK = f"releases/tag/{PUBLISHED_RELEASE_TAG}".lower()
 
 FRONT_DOORS = (
     "README.md",
@@ -31,14 +43,14 @@ def test_current_candidate_surfaces_match_the_release_posture() -> None:
         text = (ROOT / relative).read_text(encoding="utf-8")
         normalized = " ".join(text.lower().split())
         assert CURRENT_RELEASE_TAG in text, relative
-        assert "releases/tag/v1.0.0-beta.4" in normalized, relative
+        assert PUBLISHED_RELEASE_LINK in normalized, relative
 
 
 def test_front_doors_name_the_current_candidate_state() -> None:
     for relative in FRONT_DOORS:
         text = " ".join((ROOT / relative).read_text(encoding="utf-8").lower().split())
         assert CURRENT_RELEASE_TAG.lower() in text, relative
-        assert "releases/tag/v1.0.0-beta.4" in text, relative
+        assert PUBLISHED_RELEASE_LINK in text, relative
 
 
 def test_front_doors_do_not_offer_an_unproven_candidate_download() -> None:
@@ -49,8 +61,8 @@ def test_front_doors_do_not_offer_an_unproven_candidate_download() -> None:
     install_html = (ROOT / "docs/install-windows.html").read_text(encoding="utf-8")
     assert "releases/latest" not in readme
     assert "releases/latest" not in install_html
-    assert "releases/tag/v1.0.0-beta.4" in readme.lower()
-    assert "releases/tag/v1.0.0-beta.4" in install_html.lower()
+    assert PUBLISHED_RELEASE_LINK in readme.lower()
+    assert PUBLISHED_RELEASE_LINK in install_html.lower()
 
 
 def test_retired_tester_docs_do_not_masquerade_as_native_proof() -> None:

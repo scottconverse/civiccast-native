@@ -28,6 +28,397 @@ rejects the NATS fields the August installer wrote. Workaround: stop the
 `provision-journal.json.legacy`, and re-run `setup.exe`. Station data (the
 PostgreSQL data directory) is untouched by the halt and by the workaround.
 
+### Fixed
+
+- **beta.5.1: provisioning tolerates legacy journal fields (the August NATS
+  keys) instead of halting the upgrade.** Measured 2026-09-09 on an upgrade
+  over an August-15 beta.1-era station: the installer's provisioning step
+  halted at its very first read of
+  `C:\ProgramData\CivicCast\provision\provision-journal.json` with "5
+  validation errors for ProvisionJournal -- context.nats_config_path /
+  nats_host / nats_port / nats_store_dir / nats_tls: Extra inputs are not
+  permitted", wrote `PROVISION-RECOVERY.md`, and never looked at the
+  cluster. The journal was valid JSON, `schema_version: 1`,
+  `phase: complete`; the August installer wrote NATS fields into `context`
+  that `85ffe6c0` ("stop provisioning a NATS store or config") removed from
+  the model with no migration and no tolerance, and the persisted models
+  were `extra="forbid"`. `ProvisionJournal`, `ProvisionPlan` and
+  `ProvisionContext` (the three structures persisted across installer
+  versions) are now `extra="ignore"`. The provisioning CLI names every
+  dropped key once per run on stderr (`provision note: adopted provisioning
+  journal at ... carries 5 field(s) this version does not declare; ignored
+  (legacy or newer-installer keys, not corruption): context.nats_config_path,
+  ...`). That line goes to the provisioning CLI's own stderr; the
+  installer's Rust wrapper (`run_native_provision`) runs the CLI with
+  `Command::output()` and deliberately does not forward that stream, so the
+  note is not yet in `install-progress.log` -- forwarding it is a follow-up
+  tracked with the runtime-ownership diagnosability PR. `load_journal` also
+  logs the same at INFO on its module logger, which the CLI does not
+  configure. The legacy keys do not "migrate away": the adopt path clears
+  the journal outright and the reuse path leaves it as-is; either way no
+  legacy key can influence a later run (`write_journal` serialises only
+  declared fields, every load drops the undeclared ones). Still fail-loud:
+  invalid JSON, wrong types, missing required fields, an unknown `phase`
+  value. The in-process decision/outcome models
+  (`PostgresClusterDecision`, `DatabaseDecision`,
+  `ProvisionOutcome`, `ProvisionRecovery`) keep `extra="forbid"`; they are
+  never loaded from disk. With the journal readable, the upgrade takes the
+  ordinary paths it always had: registry `DatabaseUrl` present ->
+  `NOOP_REUSE_EXISTING` (schema migration only, journal untouched);
+  credential gone -> `ADOPT_EXISTING` (fresh credential on the surviving
+  cluster, no initdb, no drop); the engine's own rerun over a `COMPLETE`
+  journal short-circuits without calling a single seam. Fixture:
+  `tests/fixtures/provision/provision-journal-2026-08-15-beta1-nats.json`
+  (the August journal's on-disk shape, password already the product's
+  redaction marker). Covered by
+  `tests/native/test_provision_journal.py` (`..._tolerates_the_august_beta1_nats_context_fields`,
+  `..._tolerates_a_genuinely_unknown_future_field`,
+  `..._still_fails_loud_on_real_corruption`,
+  `test_write_journal_serialises_only_declared_fields_over_a_loaded_legacy_journal`),
+  `tests/native/test_provision_orchestrator.py::test_legacy_complete_journal_is_adopted_without_touching_the_cluster`,
+  and `tests/native/test_provision_cli.py`
+  (`test_main_adopts_a_station_with_a_legacy_august_journal_instead_of_halting`,
+  `test_main_reuses_registry_credential_with_a_legacy_august_journal_present`).
+
+- **Resident live state follows the egress pipeline; Channels shows the real
+  HLS URL or says web output is off; a local-rehearsal HLS preset exists.**
+  beta.5 clean-machine walkthrough: the channel was on air (slate, then a
+  scheduled asset) on a UDP headend preset while the resident portal Home
+  said "Offline" throughout, and the Channels screen advertised
+  `/api/public/channels/public/live.m3u8`, which answered 404. Three causes,
+  three fixes, no new screens:
+  - `GET /api/public/live/current` only ever consulted live SESSION rows
+    (`civiccast/live/router.py`). With no session on air it now falls through
+    to the channel's egress state: `ON_AIR` or `FALLBACK_SLATE` with an `hls`
+    sink reports `on_air` with the served `/media/live/{channel}/playlist.m3u8`
+    manifest and the daemon's current source label; on air WITHOUT an `hls`
+    sink reports the new `on_air_no_web_output` state with
+    `reason: "no HLS output configured"` (a valid `?manifest_url=` CDN
+    override still wins). A live session keeps precedence. Resident Home
+    renders that state as "On air, but web preview is not enabled for this
+    channel" instead of "Offline".
+  - `civiccast/cable/channel.py` built a static
+    `/api/public/channels/{id}/live.m3u8` output string with no route behind
+    it, and the Channels screen's Software outputs card printed it as a
+    working link. `ChannelOutput` now carries `enabled`; both channel-list
+    endpoints resolve the HLS output against the egress config (real
+    `/media/live/...` target when an `hls` sink exists, `enabled: false` plus
+    the fix otherwise) and the card says "HLS web output is not enabled for
+    this channel" in place of a dead URL. The advertised URL is now true:
+    `GET /api/public/channels/{id}/live.m3u8` redirects (307) to the media
+    router's manifest when an `hls` sink exists and answers 404 with a
+    `detail` naming the fix otherwise (the CTV feed and app-platform schedule
+    feed print the same URL).
+  - Every headend preset was UDP or file, so a first-time operator had no way
+    to make the resident portal play without a headend.
+    `civiccast/egress/headend.py` adds `local-rehearsal-hls` ("Local
+    rehearsal (web preview, HLS)"): it adds ONE `hls` sink (folder optional;
+    blank = `<egress work dir>/live-hls/<channel>`, the same directory
+    convention `hls_relay` / `HlsSink` write and `media_router` serves), never
+    rewrites the channel's canonical encode profile or loudness target, and
+    replaces a previous `hls` sink rather than stacking one. The apply
+    endpoint's `destination_uri` is optional for it (still required, and still
+    validated, for every cable transport); the Channels screen's Cable
+    headend delivery card labels the field "Output folder (optional)", hides
+    the mux-rate input, and confirms with "Enable web preview".
+  - Review round 2 on the above (four findings, all fixed, each with a
+    regression test proven red before the fix):
+    - The local manifest URL `/api/public/live/current` hands residents was
+      built on `CIVICCAST_LOCAL_MEDIA_BASE_URL`'s default
+      `http://127.0.0.1:8000`, so a resident on another LAN machine was sent
+      to their own loopback and playback died. It is now site-relative
+      (`/media/live/{channel}/playlist.m3u8`, the same target the Channels
+      screen prints); only an operator-set `CIVICCAST_LOCAL_MEDIA_BASE_URL`
+      makes it absolute.
+    - `POST /api/staff/egress/channels/{id}/config/headend-profile` only
+      upserted the config row, so an applied preset did nothing until the
+      service restarted. Round 2 queued a `reload`; the round-2 delta review
+      showed that does not work on the default GStreamer engine (see below),
+      and the route now restarts a channel standing by on its slate, reports
+      `restart_required` for a program on air, and `next_start` for a dark
+      channel -- see the delta-review entry for the full contract.
+    - `FALLBACK_SLATE` projected as `on_air`, so a slate read "On air" to
+      residents and hid the idle page. New fourth state `standing_by`
+      (`reason: "fallback slate, no program on air"`, `manifest_url` still
+      set when an `hls` sink exists). Resident Home renders it as "Standing
+      by" with "The station is standing by. No program is on air right now.",
+      keeps the idle page up, and does not autoplay the slate. A channel
+      airing a program now outranks one on its slate in the unfiltered pick.
+    - The `local-rehearsal-hls` preset accepted any absolute, UNC, or
+      relative folder, and `/media/live/{channel}/{path}` serves that folder
+      publicly with no authentication. `civiccast/egress/headend.py` now
+      resolves every local-HLS destination to an absolute path and refuses
+      it unless it is under the station's egress work dir
+      (`CIVICCAST_EGRESS_WORK_DIR`, else `%LOCALAPPDATA%\CivicCast\egress`) or
+      an explicit `CIVICCAST_LIVE_HLS_ROOT`; UNC paths, relative paths,
+      folders elsewhere, and `..` traversal out of the root are 422s naming
+      the allowed root. The stored sink URI is the normalised absolute path.
+  - Round-2 delta review (two blockers, three majors, two minors -- all
+    fixed, each with a regression test proven red on `e071464e`):
+    - **A `reload` never put a preset on air, and made the web-preview case
+      worse.** On the default GStreamer engine a reload re-applies only the
+      program source and the graphics overlay (`gst/engine.py`,
+      `gst/worker.py`); the sink set, encode profile and loudness target are
+      read only when a pipeline is BUILT. Meanwhile `daemon.py` started the
+      HLS relay child for the new sink on that reload, so applying the
+      web-preview preset to a running channel left a relay fed nothing, a
+      config carrying an `hls` sink, and `/api/public/live/current` handing
+      residents a manifest URL that 404ed -- a broken player where they
+      previously had the idle panel. The route no longer queues a `reload`.
+      The response is now `HeadendProfileApplyResponse` (`config`,
+      `on_air_effect`, `on_air_detail`): a channel on its `FALLBACK_SLATE`
+      gets a real restart (`stop` + `start` queued in order; the daemon
+      rebuilds the pipeline with the new outputs and restarts the relay --
+      `restart_queued`); a program on air is left alone and told
+      `restart_required` ("Stop and then Start the channel"), because
+      cutting a program is the operator's call; a dark channel gets
+      `next_start`; an identical apply is `unchanged` and queues nothing.
+      The Channels screen shows the detail line after every apply.
+      Independently, `/api/public/live/current` now advertises the local
+      manifest only when the sink's folder is inside the served root AND
+      `playlist.m3u8` exists there; otherwise `on_air_no_web_output` with
+      the new `reason: "HLS output configured but not serving yet"`. The
+      running-states set is `civiccast.egress.dispatcher.RUNNING_STATES`,
+      not a copy. Tests drive a real `EgressDaemon` over the API's own store
+      and assert the pipeline it runs afterwards carries the `hls` sink
+      (`tests/egress/test_router.py::test_web_preview_preset_on_a_standing_by_channel_lands_on_air_via_restart`
+      and siblings; `tests/live/test_router.py` "not serving yet" cases).
+    - **The `hls`-sink containment guarded one of two doors.**
+      `PUT /api/staff/egress/channels/{id}/config` ran only the model's shape
+      check and accepted `C:\Windows`, `\\fileserver\share\hls`, `/etc`
+      and `file:///C:/Windows`, each then served by the public
+      unauthenticated `/media/live/{channel}/{path}` with no root check. The
+      PUT now runs every `hls` sink through `resolve_local_hls_directory`
+      (422 naming the allowed root), and `media_router._live_dir_for_channel`
+      re-checks containment on the RESOLVED path at serve time -- so a third
+      writer, a hand-edited row, or an NTFS junction swapped in after the
+      config was written (the TOCTOU case) all 404. Pinned by
+      `tests/stream/test_media_router_live.py::TestLiveDirectoryContainment`
+      (including a real `mklink /J` junction) and the PUT cases in
+      `tests/egress/test_router.py`.
+    - **`TRANSITIONING` read "Offline" to residents.** It is an emitting
+      state (the daemon writes it on the restart-reload path while the
+      outgoing worker is still on air, and never on the seamless path because
+      output stays up), yet it projected to `offline`, so a live meeting
+      flipped to "Offline" and the player vanished at every handoff.
+      `/api/public/live/current` now treats `TRANSITIONING` as a program on
+      air with the carried-over source label (`on_air`, or
+      `on_air_no_web_output` without a servable manifest), and a transitioning
+      program outranks a slate channel in the unfiltered pick.
+    - **The surge-switch soak harness broke on the site-relative manifest.**
+      `civiccast/load/live_soak.py` handed the `manifest_url` from `/current`
+      straight to `httpx`, which refuses a URL with no host. The viewer now
+      resolves a relative manifest against the soak origin
+      (`absolute_manifest_url`); absolute CDN/operator URLs pass through.
+    - **VOD `manifest_url` still defaulted to `http://127.0.0.1:8000`.**
+      `civiccast/live/finalization_worker.py` now writes the same
+      site-relative shape the staff package route stores
+      (`/media/vod/{asset}/playlist.m3u8`); `CIVICCAST_LOCAL_MEDIA_BASE_URL`
+      now means one thing for VOD and live alike (unset/blank = relative,
+      set = absolute).
+    - **The Channels screen and `/current` spelled the live URL differently.**
+      `civiccast.cable.channel.local_live_manifest_path` now applies
+      `CIVICCAST_LOCAL_MEDIA_BASE_URL` and percent-encodes the channel id,
+      and `/api/public/live/current` calls it -- one helper owns the URL.
+    - Resident Home no longer renders "Standing by" and "Nothing is posted
+      yet" together on a bare station; the `HomeScreen.standingBy` on-air
+      case now drives the slate-to-program handoff through the re-resolve
+      poll (player absent while standing by, present once on air) so it
+      fails with the fix reverted. The runbook's `local-rehearsal-hls` row
+      states the `CIVICCAST_LIVE_HLS_ROOT` default shape (`<root>/<channel>`,
+      no `live-hls/`) and the apply's on-air contract.
+
+## [1.0.0-beta.5] - 2026-09-09
+
+**PUBLISHED.** `v1.0.0-beta.5` was published 2026-09-09 at 10:14 PM
+Mountain (2026-09-10 04:14Z) as a GitHub prerelease:
+https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5
+(source `148c8d2172dd6b63cbbb856b429b68aa020dc421`, build run
+`34405681086`, Gate A run `34423542177` -- clean, cross-version, and
+download-only lanes all PASS -- 8 assets). `docs/releases/release-truth.yaml`
+carries `v1.0.0-beta.5` as `current` and `v1.0.0-beta.4` as `superseded`.
+The dated "Update" paragraphs below are the honest history of the
+candidates that were cut, soaked, and rejected on the way here; where they
+say a fix is "pending" or "not yet merged", the 2026-09-09 section at the
+top of the release notes supersedes them. See
+[`docs/releases/2026-09-04-beta5-release-notes.md`](docs/releases/2026-09-04-beta5-release-notes.md)
+for the publish record and
+[`docs/releases/v1.0.0-beta.5-verification.md`](docs/releases/v1.0.0-beta.5-verification.md)
+for the verification record.
+
+**Update 2026-09-05: kit `91caebc` ("candidate 1") was NOT the beta.5
+release candidate.** Candidate 1's Gate A run passed all three lanes, but
+its clean-install hardware soak (soak #3) FAILED: every GStreamer playout
+worker exited with `CTRL stall: no output for 10s` and was relaunched --
+one per channel in the first 30 minutes, then roughly every 30 seconds
+(rule is zero). Root cause (item 51, below) was a regression introduced by
+#170, not present in beta.4: a widened plan window builds far more decoder
+chains than an 8-core CPU-only station can run at once. Hotfix
+`fix/plan-window-decoder-blowup` merged as #174, cutting **candidate 2**
+at source SHA `609273da22b968b8ed9320dfc158d67b01eb30b3` (`609273d`, build
+run `33997406150`). Candidate 1's facts below (SHA `91caebc`, build
+`33971258093`, Gate A `33972726431`) are preserved as history: **candidate
+1 -- Gate A PASS x3, hardware soak FAIL (item 51).**
+
+**Update 2026-09-06: candidate 2 (`609273d`) is also NOT the beta.5
+release candidate.** Gate A run `33998901590` (started
+2026-09-05T23:48Z): clean lane `PASS`; the cross-version lane FAILED at
+its own phase 1 -- the pinned `v1.0.0-beta.4` baseline installer crashed
+inside the sandbox before any upgrade step ran, even though the baseline
+`setup.exe`'s bytes were independently verified identical to the
+published `v1.0.0-beta.4` release asset (SHA-256 match) -- a
+harness/sandbox gap (item 58, below), not a product defect; download-only
+was not reached. A re-run, Gate A `34004354641`, is in progress. Candidate
+2's clean-install hardware soak (soak #5, clock `2026-09-06T02:26:16Z`)
+confirmed both the caption-tap fix (#172) and the plan-window fix (item
+51) hold on real hardware for the first 30 minutes -- control plane at
+roughly 20% CPU with the caption tap backed off, and workers at roughly
+550 MB RSS / 178 threads instead of the prior candidate's 3.5 GB / 1,238
+threads -- but from roughly 02:58Z every worker began relaunching about
+every 30 seconds again, and `government` tripped the 5-crash guard at
+03:01Z. **Verdict: FAIL** (relaunches: one per channel by 02:56Z, then
+about every 30 s). Root cause (item 60, below, tester-proven 2026-09-06,
+`tester-soak5-609273d-20260906`): when the planner extends a running
+plan, (a) the reload's prepare step writes the new plan's segment files
+onto the same paths the live worker is still playing
+(`<work>/<channel>/prepared/segment-NNNN.ts`, keyed by channel only,
+written in place, not atomically -- `civiccast/egress/preparer.py:342`/
+`378`, `:246-268`, `:465-476`), starving playback and tripping the same
+10-second stall watchdog, which relaunches the worker; and (b) the
+in-place reload command itself can fail to reach the worker at all, and
+the daemon returns without logging that failure
+(`civiccast/egress/daemon.py:1617-1618`), falling into the drain path
+(`TRANSITIONING`) with the worker's own logs showing no reload ever
+arrived. The `vconcat_program`/`aconcat_program` element-name collision
+is a real defect in the same code path but was not the trigger measured
+on hardware. Present in beta.4 as well; it simply fired far less often
+there. Fix `fix/gst-reload-concat-collision` (per-plan prepared
+directories with atomic writes and cleanup, a logged failure, unique
+element names, an honest reload acknowledgement, and, per the owner's
+explicit requirement, seamless in-place rollover ON by default for the
+GStreamer engine in beta.5 (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` opts
+out) will cut **candidate 3**.
+Candidate 2's facts below (SHA `609273d`, build `33997406150`, Gate A
+`33998901590`) are preserved as history: **candidate 2 -- Gate A clean
+PASS / cross-version invalidated by harness gap (item 58) / download-only
+not reached, hardware soak FAIL (item 60).** `v1.0.0-beta.5` will be cut
+from `main` as **candidate 3** once `fix/gst-reload-concat-collision`
+merges, then re-run through a fresh Gate A and a fresh clean-install
+hardware soak. (Resolved at publish: the released candidate is source SHA
+`148c8d21`, build run `34405681086`, Gate A run `34423542177`; a further
+tester hardware soak was not run for beta.5 -- owner decision 2026-09-09:
+sandbox soaks + Gate A + the owner's own fresh-machine install stand in;
+the 24-hour soak follows publication.)
+
+**Update 2026-09-06 (process change): beta.5 now proves itself in a sandbox
+loop before it ever goes back to the tester.** After candidate 2's hardware
+soak failed on item 60, the owner set a new standing process (recorded
+below in "How this release was proven") so the next real-hardware soak
+only runs once a candidate has already passed a fast, repeatable sandbox
+soak every time. `fix/gst-reload-concat-collision` (item 60's fix) is
+being finished under that process now, alongside a companion change the
+owner made a beta.5 requirement: seamless plan rollover ships **on** by
+default rather than off (see "Seamless plan rollover ON by default" below).
+Candidate 3 and candidate 4's build/Gate A/soak identities were
+placeholders here until that chain completed; the published identity is
+recorded in the paragraph at the top of this entry.
+
+### How this release was proven
+
+Every prior beta shipped after a build passed Gate A and then one
+real-hardware soak on the tester. Candidate 2's hardware soak (soak #5)
+failed on a bug (item 60) that a Gate A run cannot see and that took 2.5
+hours to surface on the tester -- too slow and too far downstream to
+iterate against. Beta.5 adds a step in front of the tester: a fast,
+disposable Windows Sandbox soak that can reproduce the same class of bug
+in minutes instead of hours, run over and over on HALO until a candidate
+passes every time, before the tester's time is spent on it at all.
+
+1. **Sandbox soak, repeated until green.** `sandbox-lab/Run-SandboxSoak.ps1`
+   (new, PR #177) installs a candidate kit into a disposable Windows
+   Sandbox VM, brings up three channels on the GStreamer engine with the
+   project's own real sample clips, and runs a short soak (15 minutes) --
+   short enough to run many times in one session, long enough to cross at
+   least one plan-rollover boundary. Only a candidate that passes this soak
+   every time it's run moves on.
+2. **Tester soak (2 hours), on a sandbox-proven candidate only.** The
+   real-hardware soak on the tester (`DESKTOP-VBMA6O5`) now only runs once
+   the sandbox lane is green.
+3. **Publish**, once the tester soak passes.
+4. **A further 24-hour soak** follows publish, as an additional real-world
+   confirmation on top of the 2-hour tester soak.
+
+**What the sandbox lane measures, each cycle of the soak:** whether each of
+the three channels is `ON_AIR` on the GStreamer engine; a TSDuck (`tsp`)
+packet-level proof of the egress stream; each worker restart, classified
+**planned** or **unplanned** by reading the daemon's own state-log lines
+(not by guessing from a pid change, which candidate 2's own hardware soak
+showed is unreliable); and any seamless-reload abort (a rollover the
+engine attempted and gave up on rather than completed). **Verdict
+contract:** every run resolves to exactly one of `PASS`, `FAIL`, or
+`HARNESS_ERROR` -- the last one reserved for a failure in the lane itself
+(a stale share, a busy sandbox, a harness bug) rather than a real product
+finding, so a harness problem is never counted against the product and a
+real product problem can never hide behind "harness error" either.
+
+**Measured facts from the lane's own runs (kit `609273d`, candidate 2, used
+to prove the lane itself works before being asked to judge a fix):**
+install completes in roughly 11-13.5 minutes inside the sandbox VM; the
+station reports healthy within about 1 second of that; the first channel
+reaches `ON_AIR` roughly 490-530 seconds after the start command is issued
+(the delay is item 66, below -- a cold full-asset conform running on the
+single automation thread). Once channels are on air, kit `609273d`
+reproduces item 60 in about 4 minutes (versus 2.5 hours to see the same
+failure on the tester), with 20-35 restart events counted across a single
+15-minute run.
+
+**Candidate 3b, measured 2026-09-06: the crash loop is not the seamless
+rollover path.** Across runs 11-13 on candidate 3b, the seamless rollover
+mechanism itself armed 31 times and never once committed -- every arm was
+pre-empted by a worker crash-relaunch before it could complete, driven by
+two separate problems: CPU starvation from the live caption tap (item 79,
+below) and a rollover horizon that goes stale the moment a channel's slow
+start already leaves its plan in the past (item 78, below). Run 12
+(seamless flag ON) crash-looped roughly every 65 seconds on all three
+channels; run 13, the same candidate with the flag switched OFF,
+crash-looped too -- proof that turning the seamless path off does not, by
+itself, stop the crash, because the underlying CPU-starvation and
+stale-horizon defects fire either way. Every restart counted in these runs
+is attributed from the daemon's own state-log lines (never from a worker
+pid change, which candidate 2's own hardware soak already showed is
+unreliable), so a crash-relaunch and a genuine planned restart are never
+confused with each other in these numbers. **The beta.5 gate, unchanged by
+this finding:** a candidate must pass the 15-minute sandbox soak, with the
+seamless flag ON, every time it is run, before it goes back to the tester
+for its own real-hardware soak.
+
+### Seamless plan rollover ON by default (owner requirement)
+
+**Seamless plan rollover ships ON by default in beta.5, at the owner's
+explicit requirement.** With it on, a channel that reaches the end of its
+currently-airing plan and has more schedule ahead of it extends onto the
+next plan in place -- no worker restart, no gap. The env var
+`CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` opts out.
+
+**With the flag off, every plan end becomes a planned worker restart.**
+The gap the operator sees at that restart depends on whether the next
+clip is already warm in the segment cache: a few seconds if it is, or
+multiple minutes the first time a given clip airs and has to be conformed
+from scratch (see item 66, below, measured at roughly 490-530 seconds).
+Seamless rollover is what removes that restart-and-gap entirely for a
+channel with continuous scheduled content.
+
+Two changes land this: `fix/gst-reload-concat-collision` (PR #176) fixes
+the mechanism itself -- each rollover now prepares its segments into its
+own directory instead of overwriting the ones the live worker is still
+reading, writes them atomically, fails loudly instead of silently when
+GStreamer refuses a duplicately-named element, and gives the worker's
+reload acknowledgement an honest success/failure signal instead of always
+reporting success. PR #178 is the one that flips the default itself, from
+off (candidate 2's stopgap, while the mechanism above was still being
+proven) to on, once the sandbox lane showed the fixed mechanism holding
+across repeated runs.
+
 ### External field documentation
 
 - **Publisher-generated SmartScreen guidance now states the verification order.**
@@ -198,203 +589,6 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   corrected.
 
 ### Fixed
-
-- **beta.5.1: provisioning tolerates legacy journal fields (the August NATS
-  keys) instead of halting the upgrade.** Measured 2026-09-09 on an upgrade
-  over an August-15 beta.1-era station: the installer's provisioning step
-  halted at its very first read of
-  `C:\ProgramData\CivicCast\provision\provision-journal.json` with "5
-  validation errors for ProvisionJournal -- context.nats_config_path /
-  nats_host / nats_port / nats_store_dir / nats_tls: Extra inputs are not
-  permitted", wrote `PROVISION-RECOVERY.md`, and never looked at the
-  cluster. The journal was valid JSON, `schema_version: 1`,
-  `phase: complete`; the August installer wrote NATS fields into `context`
-  that `85ffe6c0` ("stop provisioning a NATS store or config") removed from
-  the model with no migration and no tolerance, and the persisted models
-  were `extra="forbid"`. `ProvisionJournal`, `ProvisionPlan` and
-  `ProvisionContext` (the three structures persisted across installer
-  versions) are now `extra="ignore"`. The provisioning CLI names every
-  dropped key once per run on stderr (`provision note: adopted provisioning
-  journal at ... carries 5 field(s) this version does not declare; ignored
-  (legacy or newer-installer keys, not corruption): context.nats_config_path,
-  ...`). That line goes to the provisioning CLI's own stderr; the
-  installer's Rust wrapper (`run_native_provision`) runs the CLI with
-  `Command::output()` and deliberately does not forward that stream, so the
-  note is not yet in `install-progress.log` -- forwarding it is a follow-up
-  tracked with the runtime-ownership diagnosability PR. `load_journal` also
-  logs the same at INFO on its module logger, which the CLI does not
-  configure. The legacy keys do not "migrate away": the adopt path clears
-  the journal outright and the reuse path leaves it as-is; either way no
-  legacy key can influence a later run (`write_journal` serialises only
-  declared fields, every load drops the undeclared ones). Still fail-loud:
-  invalid JSON, wrong types, missing required fields, an unknown `phase`
-  value. The in-process decision/outcome models
-  (`PostgresClusterDecision`, `DatabaseDecision`,
-  `ProvisionOutcome`, `ProvisionRecovery`) keep `extra="forbid"`; they are
-  never loaded from disk. With the journal readable, the upgrade takes the
-  ordinary paths it always had: registry `DatabaseUrl` present ->
-  `NOOP_REUSE_EXISTING` (schema migration only, journal untouched);
-  credential gone -> `ADOPT_EXISTING` (fresh credential on the surviving
-  cluster, no initdb, no drop); the engine's own rerun over a `COMPLETE`
-  journal short-circuits without calling a single seam. Fixture:
-  `tests/fixtures/provision/provision-journal-2026-08-15-beta1-nats.json`
-  (the August journal's on-disk shape, password already the product's
-  redaction marker). Covered by
-  `tests/native/test_provision_journal.py` (`..._tolerates_the_august_beta1_nats_context_fields`,
-  `..._tolerates_a_genuinely_unknown_future_field`,
-  `..._still_fails_loud_on_real_corruption`,
-  `test_write_journal_serialises_only_declared_fields_over_a_loaded_legacy_journal`),
-  `tests/native/test_provision_orchestrator.py::test_legacy_complete_journal_is_adopted_without_touching_the_cluster`,
-  and `tests/native/test_provision_cli.py`
-  (`test_main_adopts_a_station_with_a_legacy_august_journal_instead_of_halting`,
-  `test_main_reuses_registry_credential_with_a_legacy_august_journal_present`).
-- **Resident live state follows the egress pipeline; Channels shows the real
-  HLS URL or says web output is off; a local-rehearsal HLS preset exists.**
-  beta.5 clean-machine walkthrough: the channel was on air (slate, then a
-  scheduled asset) on a UDP headend preset while the resident portal Home
-  said "Offline" throughout, and the Channels screen advertised
-  `/api/public/channels/public/live.m3u8`, which answered 404. Three causes,
-  three fixes, no new screens:
-  - `GET /api/public/live/current` only ever consulted live SESSION rows
-    (`civiccast/live/router.py`). With no session on air it now falls through
-    to the channel's egress state: `ON_AIR` or `FALLBACK_SLATE` with an `hls`
-    sink reports `on_air` with the served `/media/live/{channel}/playlist.m3u8`
-    manifest and the daemon's current source label; on air WITHOUT an `hls`
-    sink reports the new `on_air_no_web_output` state with
-    `reason: "no HLS output configured"` (a valid `?manifest_url=` CDN
-    override still wins). A live session keeps precedence. Resident Home
-    renders that state as "On air, but web preview is not enabled for this
-    channel" instead of "Offline".
-  - `civiccast/cable/channel.py` built a static
-    `/api/public/channels/{id}/live.m3u8` output string with no route behind
-    it, and the Channels screen's Software outputs card printed it as a
-    working link. `ChannelOutput` now carries `enabled`; both channel-list
-    endpoints resolve the HLS output against the egress config (real
-    `/media/live/...` target when an `hls` sink exists, `enabled: false` plus
-    the fix otherwise) and the card says "HLS web output is not enabled for
-    this channel" in place of a dead URL. The advertised URL is now true:
-    `GET /api/public/channels/{id}/live.m3u8` redirects (307) to the media
-    router's manifest when an `hls` sink exists and answers 404 with a
-    `detail` naming the fix otherwise (the CTV feed and app-platform schedule
-    feed print the same URL).
-  - Every headend preset was UDP or file, so a first-time operator had no way
-    to make the resident portal play without a headend.
-    `civiccast/egress/headend.py` adds `local-rehearsal-hls` ("Local
-    rehearsal (web preview, HLS)"): it adds ONE `hls` sink (folder optional;
-    blank = `<egress work dir>/live-hls/<channel>`, the same directory
-    convention `hls_relay` / `HlsSink` write and `media_router` serves), never
-    rewrites the channel's canonical encode profile or loudness target, and
-    replaces a previous `hls` sink rather than stacking one. The apply
-    endpoint's `destination_uri` is optional for it (still required, and still
-    validated, for every cable transport); the Channels screen's Cable
-    headend delivery card labels the field "Output folder (optional)", hides
-    the mux-rate input, and confirms with "Enable web preview".
-  - Review round 2 on the above (four findings, all fixed, each with a
-    regression test proven red before the fix):
-    - The local manifest URL `/api/public/live/current` hands residents was
-      built on `CIVICCAST_LOCAL_MEDIA_BASE_URL`'s default
-      `http://127.0.0.1:8000`, so a resident on another LAN machine was sent
-      to their own loopback and playback died. It is now site-relative
-      (`/media/live/{channel}/playlist.m3u8`, the same target the Channels
-      screen prints); only an operator-set `CIVICCAST_LOCAL_MEDIA_BASE_URL`
-      makes it absolute.
-    - `POST /api/staff/egress/channels/{id}/config/headend-profile` only
-      upserted the config row, so an applied preset did nothing until the
-      service restarted. Round 2 queued a `reload`; the round-2 delta review
-      showed that does not work on the default GStreamer engine (see below),
-      and the route now restarts a channel standing by on its slate, reports
-      `restart_required` for a program on air, and `next_start` for a dark
-      channel -- see the delta-review entry for the full contract.
-    - `FALLBACK_SLATE` projected as `on_air`, so a slate read "On air" to
-      residents and hid the idle page. New fourth state `standing_by`
-      (`reason: "fallback slate, no program on air"`, `manifest_url` still
-      set when an `hls` sink exists). Resident Home renders it as "Standing
-      by" with "The station is standing by. No program is on air right now.",
-      keeps the idle page up, and does not autoplay the slate. A channel
-      airing a program now outranks one on its slate in the unfiltered pick.
-    - The `local-rehearsal-hls` preset accepted any absolute, UNC, or
-      relative folder, and `/media/live/{channel}/{path}` serves that folder
-      publicly with no authentication. `civiccast/egress/headend.py` now
-      resolves every local-HLS destination to an absolute path and refuses
-      it unless it is under the station's egress work dir
-      (`CIVICCAST_EGRESS_WORK_DIR`, else `%LOCALAPPDATA%\CivicCast\egress`) or
-      an explicit `CIVICCAST_LIVE_HLS_ROOT`; UNC paths, relative paths,
-      folders elsewhere, and `..` traversal out of the root are 422s naming
-      the allowed root. The stored sink URI is the normalised absolute path.
-  - Round-2 delta review (two blockers, three majors, two minors -- all
-    fixed, each with a regression test proven red on `e071464e`):
-    - **A `reload` never put a preset on air, and made the web-preview case
-      worse.** On the default GStreamer engine a reload re-applies only the
-      program source and the graphics overlay (`gst/engine.py`,
-      `gst/worker.py`); the sink set, encode profile and loudness target are
-      read only when a pipeline is BUILT. Meanwhile `daemon.py` started the
-      HLS relay child for the new sink on that reload, so applying the
-      web-preview preset to a running channel left a relay fed nothing, a
-      config carrying an `hls` sink, and `/api/public/live/current` handing
-      residents a manifest URL that 404ed -- a broken player where they
-      previously had the idle panel. The route no longer queues a `reload`.
-      The response is now `HeadendProfileApplyResponse` (`config`,
-      `on_air_effect`, `on_air_detail`): a channel on its `FALLBACK_SLATE`
-      gets a real restart (`stop` + `start` queued in order; the daemon
-      rebuilds the pipeline with the new outputs and restarts the relay --
-      `restart_queued`); a program on air is left alone and told
-      `restart_required` ("Stop and then Start the channel"), because
-      cutting a program is the operator's call; a dark channel gets
-      `next_start`; an identical apply is `unchanged` and queues nothing.
-      The Channels screen shows the detail line after every apply.
-      Independently, `/api/public/live/current` now advertises the local
-      manifest only when the sink's folder is inside the served root AND
-      `playlist.m3u8` exists there; otherwise `on_air_no_web_output` with
-      the new `reason: "HLS output configured but not serving yet"`. The
-      running-states set is `civiccast.egress.dispatcher.RUNNING_STATES`,
-      not a copy. Tests drive a real `EgressDaemon` over the API's own store
-      and assert the pipeline it runs afterwards carries the `hls` sink
-      (`tests/egress/test_router.py::test_web_preview_preset_on_a_standing_by_channel_lands_on_air_via_restart`
-      and siblings; `tests/live/test_router.py` "not serving yet" cases).
-    - **The `hls`-sink containment guarded one of two doors.**
-      `PUT /api/staff/egress/channels/{id}/config` ran only the model's shape
-      check and accepted `C:\Windows`, `\\fileserver\share\hls`, `/etc`
-      and `file:///C:/Windows`, each then served by the public
-      unauthenticated `/media/live/{channel}/{path}` with no root check. The
-      PUT now runs every `hls` sink through `resolve_local_hls_directory`
-      (422 naming the allowed root), and `media_router._live_dir_for_channel`
-      re-checks containment on the RESOLVED path at serve time -- so a third
-      writer, a hand-edited row, or an NTFS junction swapped in after the
-      config was written (the TOCTOU case) all 404. Pinned by
-      `tests/stream/test_media_router_live.py::TestLiveDirectoryContainment`
-      (including a real `mklink /J` junction) and the PUT cases in
-      `tests/egress/test_router.py`.
-    - **`TRANSITIONING` read "Offline" to residents.** It is an emitting
-      state (the daemon writes it on the restart-reload path while the
-      outgoing worker is still on air, and never on the seamless path because
-      output stays up), yet it projected to `offline`, so a live meeting
-      flipped to "Offline" and the player vanished at every handoff.
-      `/api/public/live/current` now treats `TRANSITIONING` as a program on
-      air with the carried-over source label (`on_air`, or
-      `on_air_no_web_output` without a servable manifest), and a transitioning
-      program outranks a slate channel in the unfiltered pick.
-    - **The surge-switch soak harness broke on the site-relative manifest.**
-      `civiccast/load/live_soak.py` handed the `manifest_url` from `/current`
-      straight to `httpx`, which refuses a URL with no host. The viewer now
-      resolves a relative manifest against the soak origin
-      (`absolute_manifest_url`); absolute CDN/operator URLs pass through.
-    - **VOD `manifest_url` still defaulted to `http://127.0.0.1:8000`.**
-      `civiccast/live/finalization_worker.py` now writes the same
-      site-relative shape the staff package route stores
-      (`/media/vod/{asset}/playlist.m3u8`); `CIVICCAST_LOCAL_MEDIA_BASE_URL`
-      now means one thing for VOD and live alike (unset/blank = relative,
-      set = absolute).
-    - **The Channels screen and `/current` spelled the live URL differently.**
-      `civiccast.cable.channel.local_live_manifest_path` now applies
-      `CIVICCAST_LOCAL_MEDIA_BASE_URL` and percent-encodes the channel id,
-      and `/api/public/live/current` calls it -- one helper owns the URL.
-    - Resident Home no longer renders "Standing by" and "Nothing is posted
-      yet" together on a bare station; the `HomeScreen.standingBy` on-air
-      case now drives the slate-to-program handoff through the re-resolve
-      poll (player absent while standing by, present once on air) so it
-      fails with the fix reverted. The runbook's `local-rehearsal-hls` row
-      states the `CIVICCAST_LIVE_HLS_ROOT` default shape (`<root>/<channel>`,
-      no `live-hls/`) and the apply's on-air contract.
 
 - **Seamless rollover no longer runs to EOS when the outgoing leg overruns its
   projected end.** Sandbox soak 39d852e (2026-09-09) showed every government
@@ -1698,6 +1892,212 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   still satisfied. It now accepts either refusal state, and the test consumes
   the REAL producer's output instead of a hand-typed report dict, which is why
   nothing caught the mismatch.
+- **Headline: the real cause of the playout-worker restarts, found on real
+  station hardware (#172, merged).** Two earlier rounds of this entry
+  attributed the beta.4 soak's relaunch-count `FAIL` first to plan-boundary
+  worker exits (retracted, corrected 2026-09-05 in
+  `docs/releases/v1.0.0-beta.4-verification.md` and the beta.4 release
+  notes; that explanation was inferred from worker pid changes, never from
+  the worker's own logs), then to a mix of a sandbox-only output stall and
+  a `UnicodeEncodeError` in the automation pass. **That second explanation
+  was also incomplete.** A soak on the tester's own real hardware
+  (`DESKTOP-VBMA6O5`, 2026-09-05) reproduced the same restarts with no
+  sandbox involved, ruling out "sandbox-specific stall" as the driver and
+  pointing at the one thing common to every environment: the live caption
+  tap.
+
+  **Root cause: the caption tap transcribes every `ON_AIR` channel's audio
+  in-process on CPU, and with three channels running it overloads.**
+  `civiccast/captions/tap_worker.py` runs speech-to-text for every on-air
+  channel in the same process, on the CPU, with no backoff. The tester's
+  three-channel real-hardware soak (`DESKTOP-VBMA6O5`, kit `e502074`,
+  mission `soak8-e1acfe6`, planned 2 hours, actually run 2.5 hours,
+  2026-09-05T09:06:14Z -- 11:36:14Z) recorded `CRITICAL
+  civiccast.captions.tap_worker: Caption tap overload for channel <id>: N
+  settled segments exceeds the maximum 2; active captions were cleared and
+  stale audio was moved to overload evidence` roughly every 30 seconds, on
+  all three channels, throughout the run. It never backs off, drives the
+  control-plane process to roughly 2.8 CPU cores (1.4-1.9 GB resident)
+  throughout, and starves the GStreamer playout workers of CPU time; each
+  starved worker trips its own stall watchdog (`CTRL stall: no output for
+  10s`) and exits, and the daemon relaunches it -- on the tester, public
+  relaunched twice, education once, government three times (6 total); at
+  the final probe public and government were in `FALLBACK_SLATE` after a
+  relaunch and education was still `ON_AIR`; the sandbox soaks saw 5-10
+  relaunches per channel in 2 hours. TSDuck (`tsp`) packet-level checks
+  passed on every 30-minute probe cycle from 09:36Z onward -- the two
+  earlier probe failures, at 08:28Z and 09:06Z, predate `ON_AIR` (the
+  channels had not yet been created) and are excluded -- and the upgrade
+  path passes independently on real hardware: the restarts are a
+  CPU-contention symptom of the caption tap, not an engine or upgrade
+  defect. **Fixed here by #172 (merged)**: overload
+  backoff/pause in the caption tap, a bounded ASR workload, and higher
+  process priority for the playout workers. **Known limit, carried
+  forward:** captions are best-effort -- a three-channel, CPU-only station
+  will pause captions under sustained load; playout always wins.
+
+  **Contributing, also fixed: a state-write crash on non-cp1252 characters
+  (#169, merged).** Every restart's channel-automation pass on the earlier
+  soaks also raised `UnicodeEncodeError: 'charmap' codec can't encode
+  character '\ufffd' in position 118` (the worker's stall message folds a
+  `\ufffd` replacement character into `last_error`, and writing it out
+  under the process's `cp1252` client encoding failed), aborting that
+  channel's automation pass until the next tick. Seen on the tester and on
+  both sandbox soaks. #169 folds all persisted free text for non-cp1252
+  clusters and creates new clusters as UTF-8.
+
+  **Planner defects found on the way (#170, open, not part of this
+  release):** schedule slot duration was ignored (a 30-second slot of long
+  media could air for hours), plans were sized by item count rather than
+  duration so a run of short items produced 4-minute plans, and the health
+  poll re-read a worker's entire growing stderr log every 2 seconds instead
+  of tailing it. None of these were the restart's root cause.
+
+  **#162, below, is a real improvement for genuine plan-boundary
+  transitions, but it did not fire in any soak and did not cause, and does
+  not fix, the restarts.** Evidence:
+  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-4b30c99-20260904`
+  (beta.4 sandbox),
+  `C:\Users\scott\Desktop\CIVICCAST-EVIDENCE\soak-120-e502074-20260905`
+  (beta.5 sandbox retest), and the tester's real-hardware soak on
+  `DESKTOP-VBMA6O5` (2026-09-05).
+- **Also in this candidate: seamless source-plan rollover for genuine
+  plan-boundary transitions (#162).** Independent of the diagnosis above,
+  the playout worker genuinely does exit cleanly at the end of every
+  source plan (`civiccast/egress/source_plan.py`'s `max_segments=8`), which
+  can happen under continuous back-to-back premieres, and each
+  exit-and-restart is a short on-air blip. New
+  `ChannelAutomationService._check_plan_rollover`
+  (`civiccast/egress/automation.py`) runs every automation tick, tracks the
+  projected wall-clock end of the plan a channel is actively airing, and
+  within 30 seconds of that end re-fetches the schedule through the same
+  `source_plan_provider` already in use -- because
+  `build_source_plan_from_schedule` always resumes the currently-airing item
+  and windows forward from "now," a later fetch naturally reaches further
+  once more content has been published, and that recompute *is* the
+  rollover. If the fresh plan extends further, the channel enqueues the
+  same `"reload"` command the existing slate-to-program transition already
+  uses: the engine switches both video and audio to the new leg at the
+  outgoing clip's end, EOS is dropped on the outgoing selector pads,
+  running-time is rebased, and the new leg is held prerolled so there is
+  nothing left to wait on at the switch point. The channel's `state` stays
+  `ON_AIR` throughout; only a `TRANSITIONING` proof event is recorded. If
+  nothing further is published yet, this is a deliberate no-op and the plan
+  is left to reach its natural end -- closing that smaller residual gap is
+  a separate follow-on. The FFmpeg-concat engine
+  (`supports_content_reload = False`) still benefits: the same `"reload"`
+  command now defers to the existing graceful pending-reload handoff
+  instead of a force-kill. Proven on HALO with the bundled GStreamer: the
+  rollover engine test suite passed 5/5, TSDuck measured 0 discontinuities
+  and 0 PCR/PTS leaps across the monitored rollovers. New
+  `tests/egress/test_automation.py::TestPlanRollover` (6 cases) pins the
+  no-rollover-while-runway-remains case, the single-dispatch-once-inside-
+  lookahead case, no-double-dispatch before the daemon applies a reload, no
+  reload when nothing is published beyond what's airing, horizon
+  re-establishment after a reload lands, and that the rollover check never
+  fires while `FALLBACK_SLATE` is active. **Known residual, carried forward
+  as a known issue:** if the next leg is not ready before the outgoing clip
+  ends, the output freezes until it is ready or the existing 10-second
+  stall watchdog restarts the channel; the immediate-switch path is
+  unchanged. **What only the sandbox soak can confirm:** this is proven at
+  the automation-decision level (unit tests against a fake daemon/store)
+  and via the already-proven seamless-reload path it reuses -- it does not
+  itself replay the 120-minute soak; see the T6 rollover retest in
+  `docs/releases/v1.0.0-beta.5-verification.md` for that.
+- **Gate A: the independent post-upgrade schema proof now actually
+  executes (#158, #160, #161, #163).** Four sequential harness-only bugs on
+  the cross-version-upgrade lane's `psql` schema proof, each exposed only
+  after the one before it was fixed:
+  - **#158** -- `tsp.exe`'s exit code came back `null` on Windows
+    PowerShell 5.1 (`Start-Process -PassThru` + `Wait-Process -Id` needs
+    the process handle cached first), which judged a fail-exit- against an
+    otherwise fully healthy TSDuck capture (Gate A run `33826665417`, kit
+    `4b30c99`: 1229 packets, 0 invalid syncs, 0 transport errors). Fixed by
+    caching `$proc.Handle` and waiting on the object; contract test added.
+  - **#160** -- the proof read the installer's `DatabaseUrl` from
+    `HKLM\SOFTWARE\CivicCast` instead of its real location,
+    `HKLM\Software\CivicCast\Native`, judging every reaching upgrade run
+    `<no-database-url>` (first: Gate A run `33857982657`, kit `c27c6e7`,
+    install/activation/health all independently passing). Fixed; contract
+    test pins the key against the NSIS source.
+  - **#161** -- the proof's SQL argument to `psql` was not quoted
+    (`Start-Process -ArgumentList` does not quote its elements), so `psql`
+    warned about an ignored extra argument, ran a bare `SELECT`, and
+    exited 0 with no rows -- judged `<no-alembic-version-row>` (Gate A run
+    `33870994702`, kit `c27c6e7`). Fixed by quoting the SQL and treating an
+    exit-0-with-warnings result as a failed proof, not a pass; contract
+    test added.
+  - **#163** -- the proof's single `UNION ALL` statement over
+    `civiccast.alembic_version` and `public.alembic_version` failed as a
+    whole when `public.alembic_version` does not exist at all (the product
+    keeps its version table in the `civiccast` schema only) -- Gate A run
+    `33885550628` (kit `c27c6e7`) recorded `<psql-failed>` with `relation
+    "public.alembic_version" does not exist` while
+    install/activation/health/DB-at-head all independently passed. Fixed
+    by running one statement per namespace and falling through cleanly on
+    "does not exist"; contract test added.
+
+  Tonight's Gate A run is the first whose cross-version-upgrade lane can
+  reach a real, independent `psql`-read verdict on the post-upgrade schema
+  instead of failing inside the harness itself before producing one. This
+  is a harness-only class of fix -- it does not touch the product's own
+  upgrade/migration code path, only the independent proof that checks it
+  from the outside. **Gate A harness self-test lane still to add** (batch
+  27): a self-test lane for the harness's own proof logic, so a fifth
+  latent bug in the same path is caught before a live run rather than
+  after -- queued, not part of this candidate.
+- **Root cause of soak #3 (item 51): a #170 regression drives a decoder
+  pileup, not present in beta.4.** Clean-install hardware soak #3 (kit
+  `91caebc`, tester `DESKTOP-VBMA6O5`, clock started
+  `2026-09-05T20:16:29Z`, 272 thirty-second schedule items per channel
+  across three channels) proved the caption-tap fix (#172) works: control
+  plane at roughly 30% CPU, caption tap in state `paused` with backoff,
+  zero `CRITICAL` overload lines. **But every GStreamer playout worker
+  exited with `CTRL stall: no output for 10s` and was relaunched -- one
+  per channel in the first 30 minutes, then roughly every 30 seconds (rule
+  is zero) -- FAIL.** One worker reached 3.5 GB RSS and 1,238 threads.
+  Root cause: #170 widened the playout plan window to hold 30 minutes of
+  schedule (`PLAN_MIN_SECONDS=1800`, `PLAN_MAX_SEGMENTS=120` in
+  `civiccast/egress/source_plan.py`; before #170 a plan held at most 8
+  segments). With 30-second schedule items, a 30-minute plan now holds 60
+  segments; `civiccast/egress/gst/bridge.py` builds one H.264 decoder
+  chain per segment and starts them all in a single pipeline (`engine.py`'s
+  `_build_playlist`), so three channels x 60 decoders means 180
+  concurrently-running decoder chains on an 8-core, CPU-only, GPU-less
+  station -- more than it can produce output from inside the existing
+  10-second stall watchdog. **This is why kit `91caebc` is not the beta.5
+  release candidate.** Hotfix `fix/plan-window-decoder-blowup` (open, not
+  yet merged) caps plans at 8 segments regardless of duration, ties the
+  replan-trigger floor to the plan's actual segment count, and hard-caps
+  decoder chains in the engine. `v1.0.0-beta.5` will be cut from `main` at
+  the new head once this merges, then re-run through a fresh Gate A and a
+  fresh clean-install hardware soak as candidate 2.
+- **Soak #4: real clip durations, item-boundary diagnostic.** Same build
+  `91caebc` (pre-hotfix), same tester. Purpose: determine whether the
+  soak #3 stall is driven by item (schedule-segment) boundaries
+  specifically, or purely by decoder count regardless of segment shape.
+  The four approved LPM clips were rescheduled with their real durations
+  -- 67s, 67s, 667s, and 2365s -- instead of soak #3's 30-second default,
+  sharply cutting the number of schedule items (and decoder chains) a
+  30-minute plan window holds, without touching #170's plan-window code.
+  Soak clock started `2026-09-05T21:08:51Z` on kit `91caebc`. **Result:
+  FAIL (relaunches).** The rescheduled long items collided (HTTP 409)
+  with the 30-second items still queued, which stayed in the plan until
+  roughly `22:20Z` -- so the first ~70 minutes of the run stayed on the
+  30-second items and kept relaunching. Once the plan window actually
+  held the long clips, each worker's RSS fell from roughly 3.5 GB to
+  roughly 0.35 GB -- the item-51 decoder-pileup mechanism seen live,
+  confirming rather than disproving the root cause. The long-item phase
+  then hit a schedule gap (`No valid source plan is available`, falling
+  back to slate); one channel tripped the 5-crash guard; the planner then
+  issued a rollover for a plan it believed had ended 1,208 seconds
+  earlier; and all three channels sat in `TRANSITIONING` from `22:55Z`
+  onward. The streams themselves stayed clean throughout (TSDuck probes
+  kept passing; no channel went off air) -- this is the product's
+  designed graceful drain, not a hang: when a live content reload cannot
+  be applied seamlessly, the running program is allowed to play to its
+  natural end before the new plan starts. The defects are operator- and
+  automation-facing, not streaming ones (items 54/55, below).
 - **`civiccast/egress/gst/graph.py`'s `source_leg_is_clock_timed` docstring
   claimed the fail-safe answer for an unknown source factory is `True`; the
   code has always returned `False`** (`_chain_is_clock_timed` only matches a
@@ -2127,6 +2527,78 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
     `[10, 120]`) were removed rather than converted, since a passing test
     against a state the product can never reach is misleading, not
     coverage.
+- **Soak #5: clean-install retest of candidate 2 (`609273d`), confirms the
+  decoder-pileup fix above and surfaces a different, deeper defect (item
+  60).** Tester `DESKTOP-VBMA6O5`, fresh `/S` install, soak clock started
+  `2026-09-06T02:26:16Z`. **First 30 minutes: both carried-forward fixes
+  held on real hardware** -- control plane at roughly 20% CPU with the
+  caption tap backed off (#172), and workers at roughly 550 MB RSS / 178
+  threads instead of the prior candidate's 3.5 GB / 1,238 threads (the
+  decoder-pileup fix immediately above). **From roughly 02:58Z every
+  worker began relaunching about every 30 seconds again**, and
+  `government` tripped the 5-crash guard at 03:01Z. **Verdict: FAIL**
+  (one relaunch per channel by 02:56Z, then about every 30 seconds).
+  **Root cause (item 60), tester-proven 2026-09-06
+  (`tester-soak5-609273d-20260906`):** when the planner extends a running
+  plan with a new plan, two defects fire in the same reload path. **(a)**
+  the reload's prepare step (`SourcePreparer.prepare`) derives its output
+  directory from the channel id alone
+  (`civiccast/egress/preparer.py:342`) and writes each new plan's
+  segments onto the same `segment-NNNN.ts` paths
+  (`civiccast/egress/preparer.py:378`) that the *currently airing* plan's
+  GStreamer pipeline still has open for read, keyed by channel rather
+  than by plan and written straight to the final path with no
+  temp-file-plus-rename step in either the cache-hit
+  (`civiccast/egress/preparer.py:246-268`) or cache-miss
+  (`civiccast/egress/preparer.py:465-476`) write path (contrast
+  `_conform_full_asset_into_cache`, which *does* write to a `.tmp` file
+  and `Path.replace()` it into place). The live worker reads a
+  half-overwritten or truncated file mid-playback, playback starves, and
+  the existing 10-second stall watchdog fires and relaunches the worker
+  -- the same `CTRL stall: no output for 10s` signature as the
+  decoder-pileup fix above, from a different mechanism. **(b)** the
+  in-place reload command itself can fail to reach the worker at all,
+  and `EgressDaemon`'s reload path returns without logging it
+  (`civiccast/egress/daemon.py:1617-1618` is `if not applied: return
+  False` -- no log line, no proof event), so the caller falls through
+  into the ordinary drain path and the channel sits in `TRANSITIONING`
+  believing a graceful hand-off is in progress while the worker's own
+  logs show no reload ever arrived. **The `vconcat_program`/
+  `aconcat_program` element-name collision
+  (`civiccast/egress/gst/engine.py:361-363`,
+  `civiccast/egress/gst/bridge.py:639`) is a real defect in this same
+  reload path -- GStreamer does refuse to add a second element under a
+  name already present in the pipeline -- but tester evidence shows it
+  was not the trigger on hardware:** (a) and (b) above are what soak #5
+  actually measured. **No in-place rollover has ever committed on real
+  hardware.** Present in beta.4 as well -- none of this is new code in
+  this candidate, but beta.4 fired the in-place rollover path far less
+  often because #162 (the feature that attempts an in-place rollover at
+  all) postdates beta.4. **This is why `609273d` is not the beta.5
+  release candidate.** Fix pending: `fix/gst-reload-concat-collision`
+  (open, not yet merged) -- gives each plan its own prepared directory
+  (not just each channel) with atomic writes and cleanup of superseded
+  plans' directories, logs and records a failed reload instead of
+  silently falling through to drain, fails loud when GStreamer refuses
+  to add a duplicately-named element instead of silently timing out,
+  gives each rollover's new concat elements unique names, makes the
+  worker's reload acknowledgement honest, and, per the owner's explicit
+  requirement, ships seamless in-place rollover ON by default for the
+  GStreamer engine in beta.5 (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` opts
+  out, falling back to one ordinary encoder restart at every plan's
+  natural end instead of an attempted in-place splice -- rare with real
+  10-40 minute schedule items, but roughly every 4 minutes with
+  30-second items). See "Seamless plan rollover ON by default" above.
+  Not part of candidate 2; will be part of candidate 3.
+- **Gate A `33998901590`'s cross-version-upgrade lane failed at its own
+  phase 1 on a harness/sandbox gap, not a product defect (item 58).** The
+  pinned `v1.0.0-beta.4` baseline installer crashed inside the sandbox
+  before any upgrade step ran. The baseline `setup.exe`'s bytes were
+  independently verified identical to the published `v1.0.0-beta.4`
+  release asset (SHA-256 match), ruling out a corrupted or wrong baseline
+  artifact. The lane never reached candidate 2's own upgrade or
+  post-upgrade schema proof, so this run says nothing either way about
+  candidate 2's upgrade path. Re-run in progress as Gate A `34004354641`.
 
 ### Changed
 
@@ -2161,6 +2633,346 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   `v1.0.0-beta.4`'s own entry is untouched and stays `status: current`
   (flipped by PR #157); this bump only stages the next candidate behind
   it.
+
+### Known issues in beta.5
+
+**Status reconciliation, 2026-09-09.** The numbered list below is kept as
+written when each item was found; items 6 (48), 11 (60), 12 (61), 16 (78),
+17 (79), 18 (80), and 19 (82) now carry a `FIXED on main` marker naming the
+PR that closed them (#173, #176, #181, #182/#190, #184-#189, #183). What is
+actually carried into the beta.5 candidate (`main` at `148c8d21`) -- live
+captions OFF by default (#203; with them ON, a 25-30 s video hold and
+catch-up burst every 1-2 min, the occasional 10 s stall-watchdog channel
+restart, and a red *On air right now* after turning them on until each
+channel restarts, #205; root cause under investigation in the live-caption
+path, fix planned for beta.5.1); the reload commit that can still wedge
+under extreme CPU load and is bounded by the #188/#199 watchdogs and daemon
+self-heal rather than proven gone (20 of 24 clean at 100% CPU on the #199
+head vs 0 of 3 before it; follow-up draft PR #202); the playout worker
+crash at channel stop found by #202's builder (`0xC0000005`, the `GstBin`
+cascade re-`PLAY`s NULLed old-leg elements; fix in #202, not in beta.5);
+item 89; the open no-reload caption stress case in the 09-08 diagnostic
+record; and the operator-facing items 47, 54/55/57, 56, 62, 81 -- is listed
+with sources in `docs/releases/2026-09-04-beta5-release-notes.md`, "Known
+issues carried forward into beta.5". The "initial-playlist bug" from
+Codex's 09-08 chronology was never located in this repository and is not
+carried.
+
+1. **Seamless rollover has a residual freeze case (#162).** If the next leg
+   is not ready before the outgoing clip ends, the output freezes until it
+   becomes ready or the existing 10-second stall watchdog restarts the
+   channel. The immediate-switch (non-rollover) path is unchanged. Not yet
+   scheduled; tracked as a follow-on to #162.
+2. **Gate A harness self-test lane still to add (batch 27).** The four
+   independent-proof bugs fixed above (#158, #160, #161, #163) were each
+   found by a real Gate A run failing in a new way, one at a time, rather
+   than by a test exercising the harness's own proof logic in isolation. A
+   self-test lane for the harness is queued as batch 27 and is not part of
+   this candidate.
+3. **Captions are best-effort and pause under load (#172, merged).**
+   The caption tap's overload backoff means a box that cannot keep up
+   pauses captions rather than risk playout -- a three-channel, CPU-only
+   station will see captions pause under sustained load. Playout always
+   wins over captioning.
+4. **Planner defects tracked separately (#170, open).** Found while
+   diagnosing the restarts above: schedule slot duration was ignored (a
+   30-second slot of long media could air for hours), plans were sized by
+   item count rather than duration, and the health poll re-read a worker's
+   entire growing stderr log every 2 seconds. Not part of this candidate.
+5. **A channel an operator started by hand does not come back on its own
+   after an upgrade install or any service restart -- only a channel with
+   "Start automatically" turned on does (beta.4 and beta.5).** On every
+   restart, channel automation re-starts a dark channel only when its
+   config has `auto_start=true`; a channel the operator switched on by
+   hand without that setting stays off the air until the operator opens it
+   and presses Start again (`civiccast/egress/automation.py:478-493`). A
+   channel's on-air/off-air choice and its `auto_start` setting are both
+   ordinary config/state rows (`egress_configs`, `egress_states`) and
+   survive an upgrade install untouched -- nothing is lost, the automation
+   loop simply does not act on a channel that was never marked to
+   auto-start. Operator action: after any upgrade or restart, check each
+   channel you run by hand and press Start if it is not already on air, or
+   turn on "Start automatically" for it. Gate A's cross-version-upgrade
+   lane does not assert on-air state after install-over, so this gap is
+   not caught by that lane.
+6. **(item 48, FIXED on `main` by #173, 2026-09-05 -- history below) Installing a kit over a station that already reports the same version
+   string does not replace the app -- it silently does nothing.** The
+   installer's pack staging
+   (`civiccast/apps/installer/src-tauri/src/native_pack_staging.rs`,
+   `classify_dest_pack_state` -> `AlreadySatisfied`, and
+   `ensure_pack_extracted`'s matching early return) compares the
+   already-installed pack's declared `product_version` string to the
+   kit's, never the pack's actual content, so a kit rebuilt without a
+   version bump is treated as already installed: installer exit `0`,
+   `/health` OK, old code keeps running. MEASURED on the tester: kit
+   `91caebc` installed over a station on an earlier `1.0.0-beta.5`
+   candidate left the pre-#172 caption tap running, proven by file
+   hashes. Does not affect the customer upgrade path (beta.4 -> beta.5
+   carries two different version strings and does replace the payload);
+   affects only re-installing the same declared version to pick up a
+   rebuilt kit. Workaround: uninstall, then install fresh. Fix pending:
+   `fix/pack-staging-identity-not-version-string`, not part of this
+   candidate.
+7. **(item 51, RESOLVED -- confirmed fixed on hardware by soak #5) Every
+   GStreamer playout worker relaunched under a real schedule -- a
+   regression from #170, not present in beta.4.** #170's 30-minute plan
+   window (`PLAN_MIN_SECONDS=1800`, `PLAN_MAX_SEGMENTS=120` in
+   `civiccast/egress/source_plan.py`) built far more decoder chains than
+   an 8-core CPU-only station can run at once when schedule items are
+   short. MEASURED broken: soak #3, clean install of kit `91caebc`,
+   30-second schedule items, `FAIL` -- one relaunch per channel in the
+   first 30 minutes, then roughly every 30 seconds (rule is zero). Fixed
+   by `fix/plan-window-decoder-blowup` (merged as #174, part of candidate
+   2) -- caps plans at 8 segments, ties the replan floor to the plan
+   length, and hard-caps decoder chains in the engine. **MEASURED fixed:**
+   soak #5 (candidate 2, `609273d`), first 30 minutes -- workers at
+   roughly 550 MB RSS / 178 threads, against the prior 3.5 GB / 1,238
+   threads. Candidate 2's hardware soak still FAILED overall, but on a
+   different, later-firing defect -- item 60, below.
+8. **(item 54) A long `TRANSITIONING` state is the product's designed
+   graceful drain, but the operator cannot tell it from a hang.** When a
+   live content reload cannot be applied seamlessly, the running program
+   is deliberately allowed to play to its natural end before the new plan
+   starts -- this is expected behavior, not a fault, and the streams
+   themselves stayed clean throughout (TSDuck probes kept passing; no
+   channel went off air). MEASURED: soak #4, kit `91caebc`, once the plan
+   window held the rescheduled long clips -- a schedule gap fell back to
+   slate, one channel tripped the 5-crash guard, and the planner then
+   issued a rollover for a plan it believed had ended 1,208 seconds
+   earlier; all three channels sat in `TRANSITIONING` from `22:55Z`
+   onward. The defect is that the operator has no way to distinguish this
+   drain from a stall: there is no label for it, no time-in-state shown,
+   and the health view resets its clock on every write, so a drain in
+   progress looks identical to a fresh healthy poll. **Operator action:**
+   none needed for an ordinary drain; if a channel stays in
+   `TRANSITIONING` past the end of its current program, Stop then Start
+   it. **Fix pending:** PR #175, targeted for beta.6.
+9. **(item 55) During a graceful drain, automation bookkeeping and a lost
+   control-pipe acknowledgement both go unsurfaced.** Two related gaps
+   surfaced by the same soak #4 drain: channel automation stops updating
+   its own rollover bookkeeping while a channel is draining, so its
+   internal state can drift from what is actually airing; and a lost
+   control-pipe acknowledgement (the worker's ack of the reload command)
+   is never surfaced anywhere, so there is no signal when the drain's own
+   command handshake fails silently. Neither is addressed by hotfix #174.
+   **Fix pending:** PR #175, targeted for beta.6.
+10. **(item 58) Gate A's cross-version-upgrade lane failed at its own phase
+    1 on a harness/sandbox gap, not a product defect.** Gate A run
+    `33998901590` (candidate 2, `609273d`): the pinned `v1.0.0-beta.4`
+    baseline installer crashed inside the sandbox before any upgrade step
+    ran. The baseline `setup.exe`'s bytes were independently verified
+    identical to the published `v1.0.0-beta.4` release asset, ruling out a
+    corrupted or wrong baseline artifact. Because the lane never reached
+    the candidate's own upgrade or post-upgrade schema proof, this run
+    says nothing either way about candidate 2's upgrade path. **Fix
+    pending:** the sandbox/harness gap that let the baseline install
+    itself crash before phase 1 started; re-run in progress as Gate A
+    `34004354641`.
+11. **(item 60, FIXED on `main` by #176, 2026-09-06; reload path further repaired by #188/#199 -- history below) When the planner extends a running plan, the in-place
+    reload starves live playback and can fail silently -- present since
+    #162, previously masked by item 51.** Tester-proven 2026-09-06
+    (`tester-soak5-609273d-20260906`): (a) the reload's prepare step
+    writes the new plan's segment files onto the same paths the live
+    worker is still playing -- `<work>/<channel>/prepared/segment-
+    NNNN.ts`, keyed by channel only and written in place, not atomically
+    (`civiccast/egress/preparer.py:342`/`378`, `:246-268`, `:465-476`) --
+    so playback starves and the existing 10-second stall watchdog
+    relaunches the worker; and (b) the in-place reload command itself can
+    fail to reach the worker at all, and the daemon returns without
+    logging it (`civiccast/egress/daemon.py:1617-1618`), falling into the
+    drain path (`TRANSITIONING`) with the worker's own logs showing no
+    reload ever arrived. The `vconcat_program`/`aconcat_program` element
+    name collision (`civiccast/egress/gst/engine.py:361-363`,
+    `civiccast/egress/gst/bridge.py:639`) is a real defect in the same
+    reload path but was not the trigger measured on hardware. No
+    in-place rollover has ever committed on real hardware. Present in
+    beta.4 as well -- beta.4 simply never exercised the code path, since
+    #162 postdates beta.4. **MEASURED:** soak #5 (candidate 2, `609273d`),
+    clean install, FAIL from roughly 02:58Z. **This is why `609273d` is
+    not the beta.5 release candidate.** Fix: `fix/gst-reload-concat-
+    collision` (open, not yet merged) -- gives each plan its own prepared
+    directory with atomic writes and cleanup, logs a failed reload
+    instead of silently falling through to drain, fails loud on a
+    refused element add, gives each rollover's concat elements unique
+    names, makes the reload acknowledgement honest, and, per the owner's
+    explicit requirement, ships seamless in-place rollover ON by default
+    for the GStreamer engine in beta.5
+    (`CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` opts out). Not part of
+    candidate 2; will be part of candidate 3.
+12. **(item 61, the concat-collision ack made honest by #176; the general ack-after-commit guarantee is what #199's applied-receipt settlement now provides -- targeted for beta.6 only if a soak shows otherwise) A worker's reload acknowledgement
+    reports success before the reload actually commits.** The same defect
+    underlying item 60's masking: the control-pipe reload ack is sent once
+    a reload is attempted, not once GStreamer confirms the new elements
+    are actually in the pipeline. Item 60's fix makes this specific ack
+    honest for the concat-collision case; a general, structural
+    ack-after-commit guarantee is tracked separately for beta.6.
+13. **(item 62, targeted for beta.6) The decoder-chain cap is enforced per
+    plan, not per pipeline.** `MAX_PLAYLIST_SUBCHAINS` bounds how many
+    decoder chains a single plan can build, but a pipeline can briefly
+    carry more than one plan's worth of chains during a rollover attempt
+    (the outgoing plan's chains plus the incoming plan's chains
+    coexisting) -- the cap does not account for that overlap. Tracked for
+    beta.6.
+14. **(item 64, part of item 60) The prepare step for a rollover clobbers
+    the live worker's own segment files.** `SourcePreparer.prepare` keys
+    its output directory by channel id only
+    (`civiccast/egress/preparer.py:342`) and writes each new plan's
+    segments over the same `segment-NNNN.ts` paths
+    (`civiccast/egress/preparer.py:378`) the currently-airing plan is
+    still reading, with no per-plan directory and no atomic write. Fix:
+    `fix/gst-reload-concat-collision` (per-plan prepared directories,
+    atomic writes, cleanup).
+15. **(item 65, part of item 60) A failed in-place reload is never
+    logged.** `EgressDaemon`'s reload path returns `False` with no log
+    line or proof event when `reload_content` fails
+    (`civiccast/egress/daemon.py:1617-1618`), so a reload that never
+    reached the worker is indistinguishable, from the logs, from one
+    that was never attempted. Fix: `fix/gst-reload-concat-collision`
+    (logged, honest reload failure).
+16. **(item 78, FIXED on `main` by #181, 2026-09-06 -- history below; was: BETA.5 BLOCKER on candidate 3b, fix in review) A stale
+    rollover horizon crash-loops every channel once a slow start already
+    leaves the plan in the past.** Sandbox soak run 12 (candidate 3b,
+    seamless rollover ON) measured a first-`ON_AIR` of 915-930 seconds
+    (item 66's synchronous-conform delay, worse on 3b than the 527 seconds
+    measured on `609273d`) -- by the time each channel came up, its plan
+    had already ended roughly 11 minutes earlier. `ChannelAutomationService
+    .run_once` captures "now" once per pass, and that pass blocked for the
+    full 915 seconds inside `_start`, so the computed `plan_end_at` was
+    already stale (automation logged "the live plan ends in -698s") the
+    moment the channel went on air. Automation immediately armed a seamless
+    rollover onto that already-passed boundary; the worker hit `CTRL stall:
+    no output for 10s` and exited; the daemon relaunched it; automation
+    re-armed 1 second later, bypassing its own retry-cadence floor
+    entirely -- a crash loop roughly every 65 seconds on all three
+    channels (26 unplanned relaunches in 15 minutes). Diagnosis (Opus,
+    2026-09-06) found three compounding defects: (a) the rollover horizon
+    is captured once per automation pass and never refreshed against a
+    slow-starting channel's real clock; (b) a 45-second retry path
+    bypasses the cadence floor entirely; (c) `should_defer_switch` can
+    defer a switch onto a boundary that has already passed instead of
+    cutting immediately. **Fix in review:** `fix/rollover-horizon-item78`
+    (PR #181) -- a per-channel clock instead of one shared "now",
+    discard-and-re-establish on a stale horizon, a real retry floor plus a
+    worker-age guard, and an immediate cut when `plan_end_at <= now`. Not
+    yet merged: round 2 of review (2026-09-06) found the clock still has
+    to be read after, not before, the blocking `process_once` call, or a
+    slow-starting channel is measured stale regardless.
+17. **(item 79, FIXED on `main` by #182 (caps) and #190 (tap can never block air), 2026-09-06 -- history below; was: BETA.5 BLOCKER on candidate 3b, fix in review, isolation
+    runs pending) The live caption tap still starves playout inside the
+    sandbox VM even with #172's backoff.** Run 12 (candidate 3b) logged 10
+    "Caption tap overload" events, and worker stalls clustered inside those
+    overload windows; the tap's own self-pause escalation
+    (60/120/240/480 seconds) engaged but too late to prevent the first
+    several stalls -- the same root cause the tester measured on beta.4
+    (2026-09-05), reproduced inside a more resource-constrained VM. **Fix
+    in review:** `fix/caption-tap-caps-item79` (PR #182) -- one caption
+    channel transcribing at a time station-wide, the live tap's
+    `cpu_threads` capped to `cpu//8` (max 2), and a shorter first pause
+    (120 seconds). Not conclusively the whole story: run 13 (candidate 3b,
+    seamless flag OFF) crash-looped too with 12 caption-overload events,
+    ruling out the seamless path as the driver but not settling whether
+    captions are the sole cause -- 14 of 30 relaunches in run 12 happened
+    while the ASR tap was idle inside its own backoff window, pointing at
+    a second contributor (most likely item 78's re-arm storm building a
+    second full decoder leg on every relaunch, or VM/disk contention).
+    **Isolation runs pending:** a captions-ON vs captions-OFF run on the
+    same candidate, decisive for whether captions are necessary or merely
+    contributing, is queued behind item 78's fix landing.
+18. **(item 80, harness, FIXED on `main` by the sandbox-lab follow-ups #184-#186/#189 -- history below; was: fix in progress) The sandbox lane's restart
+    classifier ignored the playout worker's own stdout, undercounting
+    aborted reloads.** The worker's `CTRL reload aborted`/`CTRL reload
+    committed` progress lines are written to stdout only; the classifier
+    read stderr and the daemon's state-log lines, so a run where the
+    worker itself logged an aborted reload still reported
+    `reload_aborted_count=0`. **Fix:** in the sandbox lane's follow-up
+    branch (after PR #177) -- not yet merged as of this writing; the same
+    follow-up also carries worker-stdout capture into evidence bundles and
+    a captions-off isolation switch for item 79's isolation runs.
+19. **(item 82, FIXED on `main` by #183, 2026-09-06 -- history below; was: PR pending) A 5-second preroll timeout
+    guarantees a relaunch storm on a CPU-starved box.** `engine.py`'s
+    `_await_playing` gives a worker 5 seconds to reach GStreamer's
+    `PLAYING` state; run 13's (candidate 3b, seamless OFF) first crash was
+    `government` failing exactly this bound (`pipeline did not reach
+    PLAYING within 5.0s (get_state=async)`) under load. On a box already
+    starved by items 78/79, 5 seconds is not enough for a cold pipeline to
+    preroll, and the daemon treats the timeout as an ordinary
+    crash-relaunch rather than a retry-with-backoff. Same family of
+    CPU-pressure symptom as items 79/81, a distinct code path. **Fix
+    pending:** raise the bound to roughly 30 seconds (or until the stall
+    watchdog would fire), log state-change progress while waiting, and
+    treat a preroll timeout as retry-with-backoff instead of
+    crash-relaunch; PR requested 2026-09-06, not yet opened as of this
+    writing.
+
+### Known issues carried to beta.6
+
+Found by the sandbox-lab soak lane while proving candidate 2 and while
+proving the item-60 fix itself. One line each; items the batch-fix list
+already records as fixed/merged (items 48 and 51, and item 60's own
+sub-items 61/64/65 -- fixed by `fix/gst-reload-concat-collision` in this
+release) are not repeated here.
+
+- **(item 66, CRITICAL)** A cold full-asset conform runs synchronously on
+  the single automation thread and blocks every channel's start -- the
+  measured 490-530 second delay to first `ON_AIR` above.
+- **(item 67)** A channel reports a bare `null` state for minutes after
+  start, before the first prepare step writes any row at all.
+- **(item 68)** `ON_AIR` is persisted before the playout worker process
+  actually exists.
+- **(item 69)** Starting a channel can write dozens of redundant state
+  rows in a couple of seconds, and one of those write paths nulls out the
+  channel's current proof-event id.
+- **(item 71)** Under `gst-python`, a failed pad link raises instead of
+  returning a boolean, so eight `!= OK` error-handling branches across the
+  engine never run, which can leak a request pad on a failed reload.
+- **(item 72)** The Gate A harness scripts crash under plain Windows
+  PowerShell 5.1 (only `pwsh` is exercised in CI) because of an empty
+  default `$PSScriptRoot` parameter.
+- **(item 46)** The (non-required, "always informational") mutation-report
+  CI lane fails its own baseline on every code PR.
+- **(item 47)** A channel an operator started by hand, without "Start
+  automatically," stays dark after an upgrade install or service restart
+  until the operator presses Start again.
+- **(item 49)** Gate A has no lane that would catch a same-version,
+  different-content install-over regression like item 48's (fixed here) --
+  only a Rust-level unit/e2e test covers that case today.
+- **(item 50)** One claims-evidence test writes the operator's real
+  `installer-state.json` instead of a temp path, tripping the hermetic
+  test-isolation guard.
+- **(item 52)** The harness could not find `ffprobe` on the tester, so
+  every schedule item defaulted to a 30-second duration instead of the
+  asset's real length.
+- **(item 53)** `avdec_h264` decoder threads are not bounded per
+  sub-chain, so a plan with several segments still costs more CPU than it
+  should even under the 8-segment cap.
+- **(items 54/57)** After a channel falls back to slate, rollover
+  accounting can compute a negative plan-end and dispatch a zero-advance
+  rollover, leaving the channel stuck in `TRANSITIONING`; a rework (PR
+  #175) is in progress for beta.6.
+- **(item 55)** A content reload that never gets acknowledged has no
+  timeout, no watchdog, and no operator-visible recovery path -- the
+  channel just sits in `TRANSITIONING`.
+- **(item 56)** Slate/fill plans are truncated to 12 sub-chains, so a
+  station sitting on slate restarts its slate encoder roughly every 6
+  minutes.
+- **(item 58)** Gate A's cross-version lane collects no forensics and does
+  not retry when the baseline install itself crashes in phase 1, before
+  any upgrade step runs.
+- **(item 62)** The decoder-chain cap is enforced per plan, not per
+  pipeline, so a rollover can briefly run more decoder chains than the cap
+  intends.
+- **(item 63)** Evidence bundles don't reliably capture the playout
+  worker's stdout log, where reload-progress lines are written.
+- **(item 81)** The offline caption job worker transcribes
+  uploaded/published assets in-process with `cpu_threads=0` (all cores)
+  and `beam_size=5` while channels are on air; on a real station, a
+  publish that lands during heavy schedule activity could compete with
+  playout for CPU the same way the live caption tap does. Confirmed NOT a
+  factor in the sandbox soak lane -- the lane never calls
+  approve/publish, so this worker sits idle throughout every run measured
+  here (item 79's overload events are the live caption tap only). Fix
+  (throttle/pause offline captions while any channel is on air, or move
+  the job to a separate low-priority process) is targeted for beta.6.
 
 ## [1.0.0-beta.4] - 2026-09-04
 

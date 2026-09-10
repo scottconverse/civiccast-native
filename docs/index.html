@@ -1159,7 +1159,7 @@
         outline-offset: 4px;
       }
     </style>
-    <!-- The WSL/mainline version identity is fully retired. v1.0.0-beta.4 is the current published release, a download-only upgrade for stations already on v1.0.0-beta.3. Its GitHub Release carries setup.exe and runtime packs, SHA256SUMS.txt and installer sidecar metadata. The installer is Authenticode-signed; the JSON sidecar is not a separately signed attestation. v1.0.0-beta.3 (the first downloadable release) and v1.0.0-beta.1 (USB-delivered, no downloadable assets) are superseded. v1.0.0-beta.2 was never published and remains only an internal Gate A upgrade-baseline kit. The product source and unpublished candidate are v1.0.0-beta.5; that does not change the beta.4 install target. -->
+    <!-- The WSL/mainline version identity is fully retired. v1.0.0-beta.5 is the current published release (2026-09-09), a download-only upgrade for stations already on v1.0.0-beta.4. Its GitHub Release carries setup.exe and runtime packs, SHA256SUMS.txt and installer sidecar metadata. The installer is Authenticode-signed; the JSON sidecar is not a separately signed attestation. v1.0.0-beta.4, v1.0.0-beta.3 (the first downloadable release) and v1.0.0-beta.1 (USB-delivered, no downloadable assets) are superseded. v1.0.0-beta.2 was never published and remains only an internal Gate A upgrade-baseline kit. The product source and unpublished candidate are v1.0.0-beta.6; that does not change the beta.5 install target. -->
   </head>
   <body>
     <a class="skip-link" href="#top">Skip to content</a>
@@ -2152,31 +2152,33 @@
           <details>
             <summary>Can we download a Windows beta installer today?</summary>
             <p>
-              Yes. <code>v1.0.0-beta.4</code> is the current release, a
-              download-only upgrade for stations already on
-              <code>v1.0.0-beta.3</code>: <code>setup.exe</code> and the
-              runtime packs are attached to the
-              <a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.4">v1.0.0-beta.4 GitHub Release</a>,
+              Yes. <code>v1.0.0-beta.5</code> is the current release
+              (published 2026-09-09), a download-only upgrade for stations
+              already on <code>v1.0.0-beta.4</code>: <code>setup.exe</code>
+              and the runtime packs are attached to the
+              <a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5">v1.0.0-beta.5 GitHub Release</a>,
               with <code>SHA256SUMS.txt</code> and installer sidecar metadata.
               Verify the installer's Authenticode signature separately --
               see the
-              <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.4-verification.md">release verification record</a>
-              for the Gate A run and the asset/hash/signature checks.
+              <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.5-verification.md">release verification record</a>
+              for the Gate A run, the asset/hash/signature checks, and the
+              known issues it ships with.
               It is still a beta, not a finished production release --
               read "What's proven in this candidate" in the README before
               relying on it. (<code>v1.0.0-beta.2</code> was never
               published -- it exists only as an internal Gate A
-              upgrade-baseline kit.) <code>v1.0.0-beta.3</code>, the first
-              downloadable release, is now superseded. The release before
-              that, <code>v1.0.0-beta.1</code>, was delivered by USB rather
+              upgrade-baseline kit.) <code>v1.0.0-beta.4</code> and
+              <code>v1.0.0-beta.3</code>, the first downloadable release,
+              are now superseded. The release before that,
+              <code>v1.0.0-beta.1</code>, was delivered by USB rather
               than a GitHub download and is also superseded.
               <code>v1.0.0-beta.6</code> is the next candidate and the
               current owner-held unpublished candidate (unpublished; no
               installer asset) -- it does not change the install story
-              above, which still targets <code>v1.0.0-beta.4</code>.
+              above, which still targets <code>v1.0.0-beta.5</code>.
             </p>
             <p>
-              Beta.5 development enables in-place schedule rollover by default,
+              <code>v1.0.0-beta.5</code> enables in-place schedule rollover by default,
               allowing the next plan and between-program filler to load without
               a planned encoder restart. Large bulletin rotations retain every
               approved, currently airable slide.
@@ -2193,8 +2195,11 @@
               Live-caption timing is also isolated: at most one no-text timing
               signal can wait behind the signal currently being processed.
               Actual caption cues keep their existing path.
-              Installed-candidate soak verification is still pending. See the
-              <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/beta5-recovery-2026-09-08.md">recovery record</a>.
+              Live captions are off by default in beta.5; the release notes
+              explain how to turn them on. The soak history behind the
+              published candidate is in the
+              <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/beta5-recovery-2026-09-08.md">recovery record</a>
+              and the release verification record linked above.
               The bundled manual describes beta.5 operation; this page and the
               exact GitHub Release provide current download and verification status.
             </p>
