@@ -9,6 +9,7 @@ encoding profiles) — never tailored to any one station.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 
@@ -459,16 +460,78 @@ def test_resolve_local_hls_directory_memoises_a_successful_resolution(
 def test_resolve_local_hls_directory_cache_is_keyed_by_the_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Review round 4 delta, MINOR 3: this used to pass with the memo removed
+    # (an uncached resolver also answers per root). It now proves BOTH halves:
+    # the same destination under the same root is served from memory, and a
+    # root change is a cache miss -- a key without the root env would hand
+    # back the root_a resolution under root_b instead of raising.
     clear_local_hls_resolution_cache()
+    resolves: list[str] = []
+    real_resolve = Path.resolve
+
+    def counting_resolve(self: Path, strict: bool = False) -> Path:
+        resolves.append(str(self))
+        return real_resolve(self, strict=strict)
+
     root_a = tmp_path / "a"
     root_b = tmp_path / "b"
     root_a.mkdir()
     root_b.mkdir()
+    expected = (root_a / "gov").resolve()
+    monkeypatch.setattr(Path, "resolve", counting_resolve)
     monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(root_a))
-    assert resolve_local_hls_directory(str(root_a / "gov")) == (root_a / "gov").resolve()
+    assert resolve_local_hls_directory(str(root_a / "gov")) == expected
+    after_first = len(resolves)
+    assert after_first >= 1
+    assert resolve_local_hls_directory(str(root_a / "gov")) == expected
+    assert len(resolves) == after_first, "same destination, same root: served from memory"
     monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(root_b))
     with pytest.raises(ValueError, match="outside the allowed root"):
         resolve_local_hls_directory(str(root_a / "gov"))
+    assert len(resolves) > after_first, "a root change must be a cache miss"
+
+
+def test_resolve_local_hls_directory_cache_key_is_the_destination_and_both_roots(
+    hls_root: Path,
+) -> None:
+    # Review round 4 delta, CI note: CI's ``mypy civiccast`` went red because
+    # the key was built by star-unpacking a generator over ``_ROOT_ENV_NAMES``,
+    # which infers ``tuple[str, ...]`` and loses the arity the memo dict is
+    # annotated with. The build is spelled out now; this pins the shape at
+    # runtime so a future refactor back to an unpack fails here as well as
+    # under mypy.
+    from civiccast.egress import headend
+
+    clear_local_hls_resolution_cache()
+    resolve_local_hls_directory(str(hls_root / "gov"))
+
+    key = next(iter(headend._resolve_cache))
+    assert len(key) == 1 + len(headend._ROOT_ENV_NAMES) == 3, key
+    assert all(isinstance(part, str) for part in key), key
+    assert key[0] == str(hls_root / "gov")
+    assert key[1] == os.environ.get(headend._ROOT_ENV_NAMES[0], "")
+    assert key[2] == os.environ.get(headend._ROOT_ENV_NAMES[1], "")
+
+
+def test_resolve_local_hls_directory_can_bypass_the_cache(
+    hls_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Review round 4 delta, MINOR 5: the one memo consumer that WRITES (the
+    # daemon's stale-playlist removal) must not act on a resolution cached
+    # before a junction swap. ``use_cache=False`` re-resolves every call and
+    # refreshes the memo for the hot-path readers.
+    from civiccast.egress import headend
+
+    clear_local_hls_resolution_cache()
+    destination = str(hls_root / "gov")
+    resolved = resolve_local_hls_directory(destination)
+    key = next(iter(headend._resolve_cache))
+    stale = hls_root.parent / "elsewhere"
+    headend._resolve_cache[key] = (headend._resolve_cache[key][0], stale)
+
+    assert resolve_local_hls_directory(destination) == stale, "the test's stale seed"
+    assert resolve_local_hls_directory(destination, use_cache=False) == resolved
+    assert resolve_local_hls_directory(destination) == resolved, "the fresh result refreshes"
 
 
 @pytest.mark.parametrize("destination", ["udp://239.0.0.1:5000", "srt://host:9000", "https://cdn"])

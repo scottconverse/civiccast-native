@@ -615,6 +615,46 @@ def test_start_with_no_live_relay_removes_a_stale_hls_playlist_first(
     assert state is not None and state.state == "ON_AIR"
 
 
+def test_stale_playlist_removal_never_acts_on_a_cached_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Review round 4 delta, MINOR 5: the resolver memo is fine for the public
+    # READ paths (the media router re-checks every file it serves), but the
+    # daemon's playlist removal WRITES. A resolution cached before the sink
+    # folder was swapped for a junction pointing outside the root must not
+    # steer an unlink() outside the root. The cache is seeded with exactly
+    # that stale state; the removal must re-resolve and touch only the real
+    # in-root folder.
+    from civiccast.egress import headend
+
+    root = tmp_path / "hls-root"
+    folder = root / "gov"
+    folder.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(root))
+    (folder / "playlist.m3u8").write_text("#EXTM3U\n#stale\n", encoding="utf-8")
+    (outside / "playlist.m3u8").write_text("#EXTM3U\n#not yours\n", encoding="utf-8")
+    headend.clear_local_hls_resolution_cache()
+    headend.resolve_local_hls_directory(str(folder))
+    key = next(iter(headend._resolve_cache))
+    headend._resolve_cache[key] = (headend._resolve_cache[key][0], outside.resolve())
+    store = InMemoryEgressStore()
+    store.upsert_config(_hls_config(folder))
+    store.enqueue_command(_command())
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path / "work",
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _FakeProcess(),
+    )
+
+    assert daemon.process_once("gov") == 1
+
+    assert (outside / "playlist.m3u8").is_file(), "unlinked through a stale cached resolution"
+    assert not (folder / "playlist.m3u8").exists()
+
+
 def test_start_leaves_the_playlist_alone_while_the_hls_relay_is_still_alive(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

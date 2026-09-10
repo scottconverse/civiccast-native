@@ -683,6 +683,10 @@ class EgressDaemon:
         # "working-but-invisible" lie. The headend-preset route reads the
         # latest sample's labels to decide whether an identical re-apply is
         # truly ``unchanged`` on air (``router._running_pipeline_delivers``).
+        # The keying happens inside ``_sink_connected`` so that EVERY health
+        # appender -- including a content reload's settlement, which carries
+        # the config row it read when it armed -- reports the built set
+        # (review round 4 delta, MAJOR 1).
         self._built_configs: dict[str, EgressConfig] = {}
         self._last_loudness_lufs: dict[str, float] = {}
         self._active_cg_overlay_ids: dict[str, str] = {}
@@ -971,7 +975,11 @@ class EgressDaemon:
         writer is gone with the channel) and on a start that finds no live
         relay. Segments are left for the next writer's own rolling window.
         Folders that fail containment are skipped: the API never advertises
-        those anyway.
+        those anyway. This is the one consumer of the resolver that WRITES,
+        so it bypasses the resolver's memo: a folder swapped for a junction
+        inside the TTL is refused here as it would be uncached, never
+        followed to an ``unlink`` outside the root (review round 4 delta,
+        MINOR 5). It runs on a stop or a start, never on a hot path.
         """
         from civiccast.egress.headend import resolve_local_hls_directory
 
@@ -983,7 +991,7 @@ class EgressDaemon:
             if sink.kind != "hls":
                 continue
             try:
-                playlist = resolve_local_hls_directory(sink.uri) / "playlist.m3u8"
+                playlist = resolve_local_hls_directory(sink.uri, use_cache=False) / "playlist.m3u8"
             except ValueError:
                 continue
             try:
@@ -1901,9 +1909,9 @@ class EgressDaemon:
         returncode = _process_poll(process)
         if returncode is None:
             state = self._store.read_state(channel_id)
-            # Health is keyed by the sinks the RUNNING pipeline was built with
-            # (see _built_configs); the config row is only a fallback for a
-            # process adopted without a recorded build.
+            # _sink_connected keys health by the sinks the RUNNING pipeline was
+            # built with (see _built_configs) for every appender; the config
+            # row is only its fallback for a process without a recorded build.
             config = self._built_configs.get(channel_id) or self._store.get_config(channel_id)
             if channel_id in self._draining_channels:
                 current_state: EgressState = "DRAINING"
@@ -3656,6 +3664,15 @@ class EgressDaemon:
         *,
         state: EgressState,
     ) -> dict[str, bool]:
+        # Health is keyed by the sinks the RUNNING pipeline was built with,
+        # decided HERE so every appender gets it -- the start, the poll tick,
+        # the fallback-slate transition and the content-reload settlement
+        # (review round 4 delta, MAJOR 1: the settlement passed the config
+        # row as it stood NOW, so a program-boundary reload made a sink saved
+        # after the build read as "delivering" for one automation tick). The
+        # caller's config is only the fallback for a process this daemon has
+        # no recorded build for.
+        config = self._built_configs.get(channel_id) or config
         metrics = self._health_metrics(channel_id, state=state)
         if self._sink_health_provider is not None:
             health = self._sink_health_provider(channel_id, config, metrics)

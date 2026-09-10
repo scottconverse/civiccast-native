@@ -517,9 +517,28 @@ def _local_path_from_uri(value: str) -> str:
 # under a cached folder inside the TTL is still caught, because the media
 # router re-resolves each FILE against the cached directory and 404s anything
 # that leaves it (review round 3 delta, MINOR 6).
+#
+# Two residuals of that stale window are accepted rather than fixed (review
+# round 4 delta, MINOR 5). Both are bounded by the TTL above:
+#   - ``live/router.py`` can advertise a ``manifest_url`` for a playlist that
+#     exists behind a repointed junction, and the media router then 404s it.
+#     That is an INCONSISTENCY, not a disclosure -- no byte outside the root
+#     is ever served -- and it self-corrects on the resident's next 4 s poll.
+#   - the one memo consumer that WRITES, ``daemon._discard_stale_hls_
+#     playlists``, is not allowed to tolerate it and passes ``use_cache=
+#     False``: a write followed through a stale resolution would ``unlink``
+#     outside the root, which no re-check downstream would catch.
 _RESOLVE_CACHE_TTL_SECONDS = 5.0
-_ROOT_ENV_NAMES = (LOCAL_HLS_ROOT_ENV, "CIVICCAST_EGRESS_WORK_DIR")
-_resolve_cache: dict[tuple[str, str, str], tuple[float, Path]] = {}
+# The memo key: the destination, then the two root environment variables in
+# the order of ``_ROOT_ENV_NAMES``. Both the alias and the spelled-out build
+# below are load-bearing for CI's ``mypy civiccast`` (review round 4 delta,
+# CI note): a star-unpacked generator -- ``(destination_uri, *(os.environ...
+# for name in _ROOT_ENV_NAMES))`` -- infers ``tuple[str, ...]``, which does
+# not type-check against a fixed-width key, because the unpack throws the
+# LENGTH away. Naming the two variables keeps the arity in the type.
+_ResolveCacheKey = tuple[str, str, str]
+_ROOT_ENV_NAMES: tuple[str, str] = (LOCAL_HLS_ROOT_ENV, "CIVICCAST_EGRESS_WORK_DIR")
+_resolve_cache: dict[_ResolveCacheKey, tuple[float, Path]] = {}
 _resolve_cache_lock = threading.Lock()
 
 
@@ -529,7 +548,7 @@ def clear_local_hls_resolution_cache() -> None:
         _resolve_cache.clear()
 
 
-def resolve_local_hls_directory(destination_uri: str) -> Path:
+def resolve_local_hls_directory(destination_uri: str, *, use_cache: bool = True) -> Path:
     """Resolve a ``local-hls`` destination to an absolute path under the root.
 
     Raises ``ValueError`` (the apply endpoint maps it to 422) for a UNC path, a
@@ -539,13 +558,26 @@ def resolve_local_hls_directory(destination_uri: str) -> Path:
     ``/media/live/{channel}/...`` serves this folder to the public with no
     authentication, so this is the containment boundary for that file server.
     A successful resolution is memoised for ``_RESOLVE_CACHE_TTL_SECONDS``.
+
+    ``use_cache=False`` re-resolves regardless of the memo (and refreshes it).
+    The readers on the hot paths tolerate a stale memo because every file they
+    serve is re-checked against the cached folder; a caller that WRITES on the
+    strength of the resolution (``daemon._discard_stale_hls_playlists``) must
+    not, because a folder swapped for a junction inside the TTL would steer
+    the write outside the root (review round 4 delta, MINOR 5).
     """
-    key = (destination_uri, *(os.environ.get(name, "") for name in _ROOT_ENV_NAMES))
+    hls_root_env, work_dir_env = _ROOT_ENV_NAMES
+    key: _ResolveCacheKey = (
+        destination_uri,
+        os.environ.get(hls_root_env, ""),
+        os.environ.get(work_dir_env, ""),
+    )
     now = time.monotonic()
-    with _resolve_cache_lock:
-        cached = _resolve_cache.get(key)
-        if cached is not None and cached[0] > now:
-            return cached[1]
+    if use_cache:
+        with _resolve_cache_lock:
+            cached = _resolve_cache.get(key)
+            if cached is not None and cached[0] > now:
+                return cached[1]
     resolved = _resolve_local_hls_directory_uncached(destination_uri)
     with _resolve_cache_lock:
         _resolve_cache[key] = (now + _RESOLVE_CACHE_TTL_SECONDS, resolved)

@@ -421,7 +421,14 @@ never rebuilds them. The apply response says what happened in
   subscribers watching the slate see that. The Channels screen says so before
   the operator confirms. The daemon runs the `stop` only while the channel is
   still on its slate and the `start` only after that `stop` ran, so a program
-  that commits to air in between is never cut.
+  that commits to air in between is never cut. **Residual:** the pair is
+  drained in one pass, so if the daemon dies *between* the two halves the
+  channel is left `STOPPED` with the `start` already marked consumed, and
+  nothing retries it -- the one durable write moved this failure from the API
+  process to the daemon process, it did not eliminate it. The window is a
+  single in-process loop iteration, but if a slate-only channel is found
+  `STOPPED` after a daemon crash, **Start** it from the Channels screen; no
+  reconciler will.
 - `restart_required` -- a program is on air (or the channel is starting up /
   handing off). The preset is saved and lands at the channel's next start; to
   put it on air now, **Stop** then **Start** the channel. The route never cuts
@@ -431,7 +438,10 @@ never rebuilds them. The apply response says what happened in
 - `unchanged` -- the stored config already matched AND the channel is either
   not running or measured to be delivering those outputs already (the
   daemon's latest health sample is keyed by the sinks the running pipeline
-  was built with). Re-applying a preset after `restart_required`, once the
+  was built with -- in **every** appender that writes a sample, the start,
+  the poll tick, the fallback-slate transition and a content reload's
+  settlement alike, because the keying is applied inside `_sink_connected`
+  rather than at each call site). Re-applying a preset after `restart_required`, once the
   program has ended and the channel is back on its slate, is therefore NOT
   `unchanged` -- it restarts the channel and puts the output on air.
 

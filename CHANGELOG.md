@@ -441,6 +441,9 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
       config row as it stands now -- so a sink saved after the build is no
       longer reported as connected either. The reviewer's exact sequence is
       `test_reapplying_the_preset_after_the_program_ends_puts_the_preview_on_air`.
+      (Round 3 keyed only the poll tick, which left the claim false on the
+      content-reload path; the round-4 delta entry below completes it across
+      every appender.)
     - **Residents were told "web preview is not enabled" while it was.**
       `on_air_no_web_output` carries two `reason`s and Home read neither.
       Resident Home now renders `HLS output configured but not serving yet`
@@ -493,6 +496,66 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
       by `Base.metadata.create_all` with no migration path for installed
       stations, and is out of scope for a beta.6 fix PR. Single-operator
       station; the config screen shows the current config before any Start.
+  - Round-4 delta review (one major, three minors, plus the CI blocker round
+    4's gate list omitted -- each fixed with a regression test proven red
+    against the source at `953371ce`):
+    - **CI `Lint and type check` was red on mypy, not ruff.** The round-3
+      resolver memo built its cache key by star-unpacking a generator over
+      `_ROOT_ENV_NAMES`, which infers `tuple[str, ...]` and does not
+      type-check against the memo's `tuple[str, str, str]` key -- the unpack
+      throws the arity away. The key is spelled out from two named variables
+      behind a `_ResolveCacheKey` alias. `mypy civiccast` is now a listed
+      gate for this branch
+      (`tests/egress/test_headend.py::test_resolve_local_hls_directory_cache_key_is_the_destination_and_both_roots`
+      pins the shape at runtime too).
+    - **`unchanged` still lied for one poll tick, at every program
+      boundary.** Round 3 keyed `sink_connected` by `_built_configs` at only
+      one of the four appenders; `_commit_reload_settlement` still computed
+      it from the config row it had read when the reload armed. A content
+      reload is what the dispatcher issues at every program boundary and it
+      never rebuilds sinks, so a preset applied during a program read back as
+      `unchanged` / "the running channel is already delivering them" -- with
+      nothing queued and the Stop/Start instruction withheld -- until the
+      next ~2 s poll tick corrected it. The keying now happens inside
+      `_sink_connected` itself, so all four appenders get it
+      (`tests/egress/test_router.py::test_a_program_boundary_reload_does_not_make_an_unbuilt_sink_read_as_delivering`,
+      which reloads before re-applying; the pre-existing slate-path test
+      passed for the wrong reason and pinned nothing).
+    - **The confirm dialog contradicted itself on one of its four
+      variants.** "Web preview + replace other outputs" deletes the SRT
+      headend sink outright (`keep_existing_sinks: false` leaves only
+      `hls`), but it carried the sentence shared with the other three: that
+      the cable feed "drops for a few seconds while the pipeline rebuilds".
+      That variant now says the cable feed and every other output are
+      removed and do not come back. `headendConfirm.test.ts` pinned the
+      shared sentence into all four variants -- locking the wrong copy in --
+      and now pins the copy per variant. All four also state the third
+      channel state, a stopped channel, which the shared sentence omitted.
+    - Two claims that passed with their fix reverted are now load-bearing:
+      `test_resolve_local_hls_directory_cache_is_keyed_by_the_root` counts
+      resolutions, so it proves the memo hits on a repeat and misses on a
+      root change (an uncached resolver also answers per root, so it used to
+      prove neither); and the "one list swap in memory" half of the durable
+      restart write is pinned by a reader that peeks between the batch's two
+      items and must see none of it
+      (`test_in_memory_egress_store_enqueue_commands_is_one_list_swap`).
+    - The one memo consumer that WRITES, `_discard_stale_hls_playlists`,
+      no longer reads through the memo (`resolve_local_hls_directory(...,
+      use_cache=False)`): within the 5 s TTL a folder swapped for a junction
+      pointing outside the root would have steered an `unlink` out of the
+      root, where the uncached resolver raises and the loop skips. It runs
+      only on a stop or a start, never on a hot path. The read-side residual
+      of the same window -- a `manifest_url` advertised for a playlist the
+      media router then 404s -- is an inconsistency rather than a
+      disclosure, self-corrects on the next 4 s resident poll, and is stated
+      in the resolver's comment rather than fixed
+      (`test_stale_playlist_removal_never_acts_on_a_cached_resolution`,
+      `test_resolve_local_hls_directory_can_bypass_the_cache`).
+    - The runbook now states the slate-restart guard's residual: both halves
+      are popped in one pass, so a daemon death *between* them leaves the
+      channel `STOPPED` with the `start` already consumed and nothing
+      retrying it. The one durable write moved that failure from the API
+      process to the daemon process; it did not eliminate it.
 
 ## [1.0.0-beta.5] - 2026-09-09
 

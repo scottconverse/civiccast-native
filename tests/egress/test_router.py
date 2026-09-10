@@ -1467,6 +1467,103 @@ def test_reapplying_the_preset_after_the_program_ends_puts_the_preview_on_air(
     assert store.pop_pending_commands("gov") == []
 
 
+def _program_plan(tmp_path: Path) -> EgressSourcePlan:
+    source = tmp_path / "council.ts"
+    source.write_text("council", encoding="utf-8")
+    return EgressSourcePlan(
+        channel_id="gov",
+        segments=[
+            EgressSourceSegment(
+                label="Council meeting",
+                path=str(source),
+                duration_seconds=3600,
+                source_ref="asset-council",
+            )
+        ],
+    )
+
+
+def test_a_program_boundary_reload_does_not_make_an_unbuilt_sink_read_as_delivering(
+    client: TestClient, store: PostgresEgressStore, tmp_path: Path, hls_root: Path
+) -> None:
+    """Review round 4 delta, MAJOR 1 -- the reviewer's executed sequence.
+
+    1. A program is on air; the operator enables the web preview ->
+       ``restart_required``, nothing queued.
+    2. The dispatcher issues an ordinary content reload (every program
+       boundary does). A reload re-applies the program source only; the
+       pipeline keeps the sinks it was BUILT with. Its settlement appends a
+       health sample.
+    3. The operator re-applies the same preset before the next poll tick.
+
+    Before the fix, ``_commit_reload_settlement`` keyed that sample by the
+    config row as it stood NOW (``pending.config``), so step 3 read "the
+    running channel is already delivering them" / ``unchanged`` while the
+    web preview had never been built -- for one automation tick, at every
+    program boundary. Health must be keyed by ``_built_configs`` in EVERY
+    appender, which is why the keying now lives in ``_sink_connected``.
+    """
+    assert (
+        client.put("/api/staff/egress/channels/gov/config", json=_config_payload()).status_code
+        == 200
+    )
+    strategy = _SeamlessReloadStrategy()
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path / "work",
+        source_plan_provider=lambda _channel_id: _program_plan(tmp_path),
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        encoder_strategy=strategy,
+    )
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="start",
+            issued_at=datetime.now(UTC),
+            issued_by="operator",
+            command_id="cmd-start",
+        )
+    )
+    assert daemon.process_once("gov") == 1
+    state = store.read_state("gov")
+    assert state is not None and state.state == "ON_AIR"
+    assert [sink.kind for sink in strategy.starts[-1].config.sinks] == ["srt"]
+
+    # Step 1: the operator enables the web preview while the program airs.
+    payload = {"profile_id": "local-rehearsal-hls", "keep_existing_sinks": True}
+    first = client.post("/api/staff/egress/channels/gov/config/headend-profile", json=payload)
+    assert first.status_code == 200, first.text
+    assert first.json()["on_air_effect"] == "restart_required"
+    assert store.pop_pending_commands("gov") == []
+
+    # Step 2: a program-boundary content reload, armed on one tick and
+    # settled on the next. The running pipeline still carries only ``srt``.
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="reload",
+            issued_at=datetime.now(UTC),
+            issued_by="automation",
+            command_id="cmd-reload",
+        )
+    )
+    assert daemon.process_once("gov") == 1
+    assert len(strategy.reloads) == 1
+    assert daemon.process_once("gov") == 0  # settlement commits; its health sample is newest
+    assert len(strategy.starts) == 1, "a content reload never rebuilds the pipeline"
+
+    # Step 3: re-apply inside the same tick -- the preview is NOT on air.
+    second = client.post("/api/staff/egress/channels/gov/config/headend-profile", json=payload)
+
+    assert second.status_code == 200, second.text
+    assert second.json()["on_air_effect"] == "restart_required", second.json()
+    assert "Stop and then Start" in second.json()["on_air_detail"]
+    assert store.pop_pending_commands("gov") == []
+    # And the settlement's own sample names only the sinks that were built.
+    latest = store.recent_health("gov", 1)[0]
+    assert set(latest.sink_connected) == {"Headend"}, latest.sink_connected
+
+
 def test_restart_queued_tells_the_operator_every_output_drops_including_cable(
     client: TestClient, store: PostgresEgressStore, tmp_path: Path, hls_root: Path
 ) -> None:

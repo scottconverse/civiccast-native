@@ -636,7 +636,13 @@ class HeadendProfileApplyResponse(BaseModel):
       reach the air: the channel is not running, or its running pipeline was
       built with every output this preset asks for (measured from the
       daemon's latest health sample, which is keyed by the sink labels of the
-      config the pipeline was BUILT with). A config that matches on disk but
+      config the pipeline was BUILT with -- in every appender that writes a
+      sample, a content reload's settlement included, because the keying is
+      applied inside ``_sink_connected`` and not at each call site). A
+      content reload is issued at every program boundary and does not
+      rebuild sinks, so an appender keyed off the config row as it stands
+      now would report a sink saved after the build as connected for one
+      ~2 s poll tick (review round 4 delta, MAJOR 1). A config that matches on disk but
       not on air -- the sequence ``restart_required`` -> program ends ->
       re-apply -- is NOT ``unchanged``; it takes the normal path above
       (review round 3 delta, MAJOR 2).
@@ -833,8 +839,12 @@ def _running_pipeline_delivers(store: EgressStore, config: EgressConfig) -> bool
     keyed by the sink LABELS of the config the pipeline was built with
     (``EgressDaemon._built_configs`` -> ``_sink_connected`` /
     ``health.build_default_sink_health``; the config row as it stands NOW is
-    only the fallback for a process adopted without a recorded build), and a
-    sample is appended at start and on every poll tick. So "the latest sample
+    only the fallback for a process adopted without a recorded build). That
+    keying lives inside ``_sink_connected``, so it holds for EVERY appender
+    -- the start, the poll tick, the fallback-slate transition and a content
+    reload's settlement, which carries the config row it read when it armed
+    (review round 4 delta, MAJOR 1). A sample is appended at start and on
+    every poll tick. So "the latest sample
     knows every label this preset asks for" is a measurement of what is on
     air, not a guess from the config row. No sample at all (a state row
     written by something other than a daemon) reads as "not delivering", so
