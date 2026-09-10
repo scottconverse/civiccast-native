@@ -9,13 +9,20 @@ Rules in force: no new features; finish and test what exists; commit after each 
    `python scripts/release/publish_beta_candidate.py --kit-dir C:\CivicCastTester\kit-mirror\148c8d2172dd6b63cbbb856b429b68aa020dc421 --source-sha 148c8d2172dd6b63cbbb856b429b68aa020dc421 --build-run-id 34405681086 --gate-a-run-id 34423542177 --tag v1.0.0-beta.5 --truth-status current`
    The dry run already passed layout, version and Authenticode. The publisher updates docs/releases/release-truth.yaml; commit that.
 2. **Finish release notes PR #165** (branch docs/release-beta5, worktree C:\Users\scott\Desktop\Code\cc-docs165, head 834d68f5): fill the last tokens (GATE-A-XVER = PASS, GATE-A-DLONLY, RELEASE-URL, ASSETS-TABLE; release-notes.md ~487-491, verification.md ~80-88, 112), add known issues 99 (legacy NATS journal halts August-install upgrades) and 100 (ownership check exit 85/127 on boxes with uninstall history) with the workarounds in docs/INSTALL-HELPER-PROMPT.md, then merge.
-3. **Merge PR #206** (journal tolerant of legacy NATS keys) on green CI at cdb98387. Reviewed twice; round-3 delta accepted.
+3. **Merge PR #206** (journal tolerant of legacy NATS keys) on green CI at e2537f13 (adds the +13 native test-count pin). Reviewed twice; round-3 delta accepted.
 4. DONE 10:14 PM: PR #207 (docs/INSTALL-HELPER-PROMPT.md) merged.
 5. **Ownership-check fix = PR #209** (branch fix/runtime-ownership-claim-diagnosable, worktree cc-ownership-claim, head d6d5ea2f): hostile review said MERGE with follow-ups; round 2 in progress (5 s bound on `sc query`, dialog wording on upgrades, const assert, skip-predicate pin). Merge on green after round 2. Item 101 (forward the provisioning CLI's stderr into install-progress.log) is NOT in this PR: it needs a file handoff like ownership-observation.txt plus a policy test that no stderr line can carry the database URL; do it as its own PR later.
 6. DONE 10:20 PM: PR #208 merged (main a2ccfc98): product version is now 1.0.0-beta.6; Gate A baseline repinned to the beta.5 kit.
 7. **PR #202** (reload wedge off-air retirement, crash at stop; head 399c4618, draft, rebased on 148c8d21): needs a sandbox soak proving on every rollover that `stage=holds-released` precedes `stage=old-leg-disposed`, zero `reload-commit-timeout`, then 20+ loaded runs at 100% CPU (only when the box is otherwise idle), then a delta review, then merge.
 8. **beta.6 kit**: after 3-7, build with `scratchpad\build-chain.sh <main sha>`, cancel the auto Gate A, kill the orphan sandbox VM via the elevated helper, soak 15 min (captions OFF default, seamless ON), dispatch Gate A full, publish `--tag v1.0.0-beta.6`. Never run anything I/O or CPU heavy during Gate A (two attempts failed tonight from host load).
 9. **Captions root cause** (item 96): with live captions ON, video holds 25-30 s then bursts, every 1-2 min. Needs a `GST_DEBUG=cccombiner:6,aggregator:5` discriminator soak. Not before 1-8.
+
+## Added 10:35 PM from the clean-machine walkthrough (tester report, beta.5)
+Three fix PRs are being built in parallel; each gets a hostile review, then merges on green, then joins the beta.6 kit:
+- cc-boundary-stop / fix/slate-boundary-relaunch-not-stopped: a finite slate plan reaching EOS relaunches onto the due program instead of STOPPED; STARTING written before prepare; Channels elapsed-time polling. (items 105, 110)
+- cc-portal-live / fix/portal-live-follows-egress-and-hls-truth: resident /api/public/live/current follows egress when an hls sink exists; Channels shows the real HLS URL or says web output is off; local rehearsal HLS preset. (item 104)
+- cc-setup-session / fix/first-setup-recovery-kit-signout-autofill: recovery kit survives navigation until confirmed; Sign out control + route; no browser autofill on first setup. (items 102, 103, 97)
+Not started (beta.6 or later): 106 startup page, 107 state authority, 108 start-without-egress error, 109 sample live source, 111 resident schedule, 112-115 copy/mobile/docs. Full list: Desktop\floatsom\CIVICCAST-BATCH-FIX-LIST-2026-09-03.md items 102-115.
 
 ## Done tonight (2026-09-09 to 09-10)
 - Merged: #199 reload/caption-flow (39d852e5), #178 seamless default proof (8920a6c7), #203 live captions OFF by default (508e637a), #204 rollover horizon race (7891109b), #205 manual note + tolerant resolver (148c8d21).
