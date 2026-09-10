@@ -204,18 +204,52 @@ def test_provision_plan_rejects_unsafe_database_username() -> None:
         _plan(database_username='civiccast_svc"; DROP DATABASE civiccast; --')
 
 
-def test_provision_context_extra_field_is_rejected(tmp_path) -> None:
-    with pytest.raises(ValidationError):
-        ProvisionContext(
-            postgres_data_dir=str(tmp_path / "pgdata"),
-            postgres_config_path=str(tmp_path / "pgdata" / "postgresql.conf"),
-            postgres_hba_path=str(tmp_path / "pgdata" / "pg_hba.conf"),
-            database_password="hunter2",
-            server_pack_path=str(tmp_path / "server-binaries.ccpack"),
-            state_root=str(tmp_path / "state"),
-            owner_run_id="run-1",
-            unexpected_field="boom",
-        )
+def test_provision_context_extra_field_is_ignored_not_rejected(tmp_path) -> None:
+    """beta.5.1 (2026-09-09): the persisted models tolerate unknown keys.
+    Until this fix the context was extra="forbid", and the five
+    context.nats_* keys an August beta.1/beta.2 installer wrote made a valid
+    COMPLETE journal unparseable, halting every upgrade over such a station.
+    The unknown key is dropped, never exposed as an attribute."""
+
+    context = ProvisionContext(
+        postgres_data_dir=str(tmp_path / "pgdata"),
+        postgres_config_path=str(tmp_path / "pgdata" / "postgresql.conf"),
+        postgres_hba_path=str(tmp_path / "pgdata" / "pg_hba.conf"),
+        database_password="hunter2",
+        server_pack_path=str(tmp_path / "server-binaries.ccpack"),
+        state_root=str(tmp_path / "state"),
+        owner_run_id="run-1",
+        unexpected_field="boom",
+        nats_store_dir=str(tmp_path / "nats-store"),
+    )
+    assert not hasattr(context, "unexpected_field")
+    assert not hasattr(context, "nats_store_dir")
+    assert "unexpected_field" not in context.model_dump()
+
+
+def test_persisted_models_ignore_unknown_keys_and_in_process_models_forbid_them() -> None:
+    """Pin the split: everything re-loaded from disk across installer
+    versions is extra="ignore"; every in-process decision/outcome shape stays
+    extra="forbid" (never loaded from disk, so a stray field there is a
+    programming error, not legacy data)."""
+
+    from civiccast.native.provision.models import (
+        DatabaseDecision,
+        PostgresClusterDecision,
+        ProvisionJournal,
+        ProvisionOutcome,
+        ProvisionRecovery,
+    )
+
+    for persisted in (ProvisionPlan, ProvisionContext, ProvisionJournal):
+        assert persisted.model_config["extra"] == "ignore", persisted.__name__
+    for in_process in (
+        PostgresClusterDecision,
+        DatabaseDecision,
+        ProvisionOutcome,
+        ProvisionRecovery,
+    ):
+        assert in_process.model_config["extra"] == "forbid", in_process.__name__
 
 
 # --- evaluate_postgres_cluster ----------------------------------------------

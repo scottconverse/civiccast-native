@@ -9,10 +9,17 @@ NATS JetStream was removed from the product entirely (owner decision
 ADR 0001); this module no longer provisions a NATS store directory or config
 file.
 
-Every persisted structure is a pydantic model with ``extra="forbid"`` (house
-pattern -- see :mod:`civiccast.native.upgrade.models`), so a schema-drifted or
-truncated journal fails LOUDLY at parse time rather than resuming from a value
-we cannot trust.
+Every in-process decision/outcome structure is a pydantic model with
+``extra="forbid"`` (house pattern -- see :mod:`civiccast.native.upgrade.models`).
+The three structures that are PERSISTED and re-loaded across product
+versions (:class:`ProvisionPlan`, :class:`ProvisionContext`,
+:class:`ProvisionJournal`) are ``extra="ignore"`` instead, since beta.5
+(2026-09-09): a journal written by an OLDER installer may carry fields a newer
+model no longer declares, and rejecting those halted a real upgrade -- see
+:class:`ProvisionJournal`'s docstring for the measured incident. Type errors,
+missing required fields, and unknown ``phase`` values are still fail-loud; only
+*unknown key names* are tolerated (and logged by
+:func:`civiccast.native.provision.journal.load_journal`).
 
 Two things live here that are deliberately kept OUT of the journaled
 orchestrator so they stay unit-testable without any Windows/Postgres
@@ -234,9 +241,14 @@ class ProvisionPlan(BaseModel):
     Recorded verbatim into the journal at phase-0 so a resuming process
     reconstructs the exact same intent (same pattern as
     :class:`civiccast.native.upgrade.models.UpgradePlan`).
+
+    ``extra="ignore"`` (not ``forbid``): this is persisted and re-read across
+    installer versions; every decision reads a NAMED field, so an unknown key
+    left behind by an older or newer installer cannot change behaviour and
+    must not halt an upgrade (see :class:`ProvisionJournal`).
     """
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="ignore", frozen=True)
 
     postgres_major_version: str = Field(min_length=1)
     database_name: str = Field(min_length=1)
@@ -297,9 +309,28 @@ class ProvisionContext(BaseModel):
        called on every journal write -- so even the (already non-secret)
        plan/context/history this journal still carries is not
        world-readable either.
+
+    LEGACY FIELDS (beta.5.1 fix, 2026-09-09): journals written by the August
+    2026 beta.1/beta.2 installers carried ``nats_host`` / ``nats_port`` /
+    ``nats_store_dir`` / ``nats_config_path`` / ``nats_tls`` here (removed by
+    85ffe6c0 "stop provisioning a NATS store or config" with no migration).
+    With ``extra="forbid"`` those five keys made a valid, ``phase: complete``
+    journal unparseable and halted every upgrade over such a station. The
+    context is now ``extra="ignore"``: unknown keys are dropped at load and
+    named once per run on the provisioning CLI's own stderr (``main()`` in
+    :mod:`civiccast.native.provision.__main__`, from the list
+    :func:`civiccast.native.provision.journal.load_journal_with_ignored_keys`
+    returns; the INFO line
+    :func:`~civiccast.native.provision.journal.load_journal` also emits
+    reaches nothing in production because the CLI configures no logging).
+    The installer's Rust wrapper currently captures and does not forward
+    that stderr, so the note is not yet in ``install-progress.log``;
+    forwarding it is a follow-up tracked with the runtime-ownership
+    diagnosability PR. Nothing here ever reads a field by anything but its
+    declared name, so a stray key has no path to influence provisioning.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     postgres_host: str = "127.0.0.1"
     postgres_port: int = Field(default=5432, gt=0, le=65535)
@@ -338,12 +369,34 @@ def resolve_database_url(*, plan: ProvisionPlan, context: ProvisionContext) -> s
 class ProvisionJournal(BaseModel):
     """The durable, power-loss-resilient record of an in-flight provisioning
     run. Same shape/persistence contract as
-    :class:`civiccast.native.upgrade.models.UpgradeJournal`: ``extra="forbid"``,
-    an append-only ``history`` log, and a ``recovery_document_path`` populated
-    only on the ``FAILED`` terminal state.
+    :class:`civiccast.native.upgrade.models.UpgradeJournal` -- an append-only
+    ``history`` log and a ``recovery_document_path`` populated only on the
+    ``FAILED`` terminal state -- EXCEPT for unknown keys.
+
+    ``extra="ignore"`` (was ``forbid`` until beta.5.1, 2026-09-09). Measured
+    on an upgrade over an August-15 beta.1-era station: the installer halted
+    with *"the provisioning journal at C:\\ProgramData\\CivicCast\\provision is
+    corrupt/unparseable: 5 validation errors for ProvisionJournal --
+    context.nats_config_path / nats_host / nats_port / nats_store_dir /
+    nats_tls: Extra inputs are not permitted"* over a journal that was valid
+    JSON, ``schema_version: 1``, ``phase: complete``. The journal is an
+    upgrade-surviving file (ProgramData) read by every later installer, so a
+    field the model stops declaring must be tolerated, not treated as
+    corruption. What stays fail-loud: truncated/invalid JSON, wrong types,
+    missing required fields, and an unknown ``phase`` -- the cases where the
+    value genuinely cannot be trusted. ``history`` entries are plain string
+    triples, so legacy phase names recorded there (``nats_store_ready``,
+    ``nats_config_written``) load unchanged. What becomes of the legacy keys
+    on disk depends on the path the CLI takes over such a station: the
+    ADOPT_EXISTING path clears the journal outright (pre-existing
+    behaviour; the engine then writes a fresh one, history discarded) and
+    the NOOP_REUSE_EXISTING path never writes it, so the file is left
+    exactly as-is, legacy keys included. Either way no legacy key can
+    influence a later run: any ``write_journal`` serialises only declared
+    fields, and any load drops the undeclared ones again.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     schema_version: int = 1
     plan: ProvisionPlan
