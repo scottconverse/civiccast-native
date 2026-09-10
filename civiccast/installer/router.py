@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -1322,6 +1323,33 @@ async def _require_setup_access(request: Request) -> None:
     )
 
 
+def _require_setup_role(*roles: str) -> Callable[[Request], Awaitable[None]]:
+    """Post-setup, demand the same product role the ``/api/staff/`` sibling demands.
+
+    MAJOR-2 (hostile review of PR #215): ``_require_setup_access`` proves a
+    staff token exists, not what it may do. ``POST /api/staff/installer/storage``
+    requires ``setup_admin``, but ``POST /api/setup/storage`` -- the same
+    ``_activate_storage`` mutation behind a different path -- accepted any
+    valid token, so a records-clerk token could rebind the engine and rewrite
+    ``DATABASE_URL`` through the weaker door. Before ``setup_complete`` there
+    is no token and no identity, so nothing to check; after it, the identity
+    ``_verify_setup_caller`` attached is checked exactly like
+    :func:`civiccast.auth.roles.require_any_role` does for staff routes
+    (401 without an identity, 403 for the wrong role). Order matters: list
+    this AFTER ``_require_setup_access`` in ``dependencies`` so the identity
+    is attached first.
+    """
+
+    role_dependency = require_any_role(*roles)
+
+    async def dependency(request: Request) -> None:
+        if not read_station_setup().setup_complete:
+            return
+        role_dependency(request)
+
+    return dependency
+
+
 @public_router.get(
     "/station-state",
     response_model=StationSetupState,
@@ -1352,7 +1380,10 @@ def public_storage_state() -> ManagedStorageStatusReport:
     response_model=ManagedStorageStatusReport,
     summary="Prepare installer-managed durable storage before staff auth exists",
     responses=_SETUP_AFTER_COMPLETE_RESPONSES,
-    dependencies=[Depends(_require_setup_access)],
+    dependencies=[
+        Depends(_require_setup_access),
+        Depends(_require_setup_role("setup_admin")),
+    ],
 )
 def public_storage_setup(
     _payload: PublicStorageSetupRequest,
@@ -1376,7 +1407,10 @@ def public_storage_setup(
     response_model=FirstAdminSetupResponse,
     summary="Complete local first-admin setup before staff auth exists",
     responses=_SETUP_AFTER_COMPLETE_RESPONSES,
-    dependencies=[Depends(_require_setup_access)],
+    dependencies=[
+        Depends(_require_setup_access),
+        Depends(_require_setup_role("setup_admin")),
+    ],
 )
 def public_first_admin_setup(
     payload: FirstAdminSetupRequest,
@@ -1405,7 +1439,10 @@ def public_first_admin_setup(
     response_model=StationSetupState,
     summary="Record that the operator saved or printed the one-time recovery kit",
     responses=_SETUP_AFTER_COMPLETE_RESPONSES,
-    dependencies=[Depends(_require_setup_access)],
+    dependencies=[
+        Depends(_require_setup_access),
+        Depends(_require_setup_role("setup_admin")),
+    ],
 )
 def public_recovery_kit_acknowledge(
     payload: RecoveryKitAcknowledgeRequest,

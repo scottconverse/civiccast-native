@@ -490,3 +490,85 @@ def test_storage_report_never_carries_the_database_url(
     broken = durable_storage_status(tmp_path).report()
     assert broken.database_kind == "unknown"
     assert "this is not a database address" not in broken.model_dump_json()
+
+
+@pytest.mark.parametrize(
+    ("database_url", "secret_fragments", "expected_kind"),
+    [
+        pytest.param(
+            "postgresql://civiccast_svc:p@ssw0rd@127.0.0.1:5432/civiccast",
+            ("p@ssw0rd", "ssw0rd", "civiccast_svc"),
+            "postgresql",
+            id="unescaped-at-in-password-plain-scheme",
+        ),
+        pytest.param(
+            "postgresql+psycopg://u:P@ssw0rd@h:5432/d",
+            ("P@ssw0rd", "ssw0rd"),
+            "postgresql",
+            id="unescaped-at-in-password-normalized-scheme",
+        ),
+        pytest.param(
+            "postgresql://u:p@ss/w0rd@h:5432/d",
+            ("p@ss", "w0rd"),
+            "postgresql",
+            id="unescaped-at-then-slash-in-password",
+        ),
+        pytest.param(
+            "SecretPw@127.0.0.1:5432/civiccast",
+            ("SecretPw", "secretpw"),
+            "unknown",
+            id="scheme-less-value-starting-with-the-password",
+        ),
+        pytest.param(
+            "civiccast_svc:SecretPw@127.0.0.1:5432/civiccast",
+            ("civiccast_svc", "SecretPw"),
+            "unknown",
+            id="scheme-less-value-starting-with-the-user-name",
+        ),
+    ],
+)
+def test_describe_database_url_never_echoes_a_credential_fragment(
+    database_url: str,
+    secret_fragments: tuple[str, ...],
+    expected_kind: str,
+) -> None:
+    """MAJOR-1 (hostile review of PR #215, round 2): an unescaped ``@`` in an
+    operator-set password made SQLAlchemy split at the wrong ``@`` and hand the
+    password tail back as ``database_host``, and the exception path returned a
+    verbatim prefix of whatever could not be parsed -- the user name or the
+    password itself when the value had no scheme. Neither may reach the report:
+    the kind comes from a whitelist, and a URL whose authority carries more than
+    one ``@`` describes nothing but its kind."""
+
+    described = storage._describe_database_url(database_url)
+
+    assert described[0] == expected_kind
+    for fragment in secret_fragments:
+        for field in described:
+            assert fragment.lower() not in str(field).lower(), (database_url, described)
+
+
+def test_describe_database_url_still_describes_a_clean_network_url() -> None:
+    """The fail-closed cases above must not cost the ordinary report anything."""
+
+    assert storage._describe_database_url(
+        "postgresql://civiccast_svc:p%40ss@127.0.0.1:5432/civiccast"
+    ) == ("postgresql", "127.0.0.1", 5432, "civiccast")
+    assert storage._describe_database_url("postgresql://u:p@[::1]:5432/d") == (
+        "postgresql",
+        "::1",
+        5432,
+        "d",
+    )
+    assert storage._describe_database_url("sqlite:////tmp/x.sqlite3") == (
+        "sqlite",
+        None,
+        None,
+        None,
+    )
+    assert storage._describe_database_url("postgresql://") == (
+        "postgresql",
+        None,
+        None,
+        None,
+    )

@@ -178,15 +178,39 @@ class ManagedStorageStatusReport(BaseModel):
     next_step: str = Field(min_length=1)
 
 
+_DESCRIBABLE_DATABASE_KINDS = frozenset(
+    {"postgresql", "postgres", "sqlite", "mysql", "mariadb", "mssql", "oracle"}
+)
+
+
 def _describe_database_url(database_url: str) -> tuple[str, str | None, int | None, str | None]:
     """Return ``(kind, host, port, database_name)`` for a URL, never its credential.
 
-    A URL that SQLAlchemy cannot parse still gets a kind derived from its
-    scheme prefix, so a misconfigured station reports ``misconfigured`` with
-    a describable backend instead of raising -- and still never echoes the
-    string it could not parse.
+    Two fail-closed rules keep an operator-set ``DATABASE_URL`` from leaking
+    through the descriptive fields (MAJOR-1, hostile review of PR #215):
+
+    * The kind is only ever a whitelisted backend name or ``"unknown"`` --
+      never a slice of the input. The old exception path returned the text
+      before the first ``:`` verbatim, which for a value pasted without its
+      scheme is the user name or the password.
+    * A URL whose part after ``://`` carries more than one ``@`` describes
+      nothing but its kind. SQLAlchemy's URL grammar captures the password
+      as ``[^@]*``, so an unescaped ``@`` inside the password splits at the
+      wrong ``@`` and the password tail lands in ``host`` (or ``database``).
+      An escaped ``%40`` password has exactly one ``@`` and is described
+      normally. A ``?password=a@b`` query is the one clean shape this also
+      withholds -- deliberately: withholding a host is cheap, echoing a
+      credential is not.
     """
 
+    scheme, separator, remainder = database_url.partition("://")
+    kind = scheme.split("+", 1)[0].lower() if separator else ""
+    if kind not in _DESCRIBABLE_DATABASE_KINDS:
+        kind = "unknown"
+    if kind == "sqlite" or kind == "unknown":
+        return kind, None, None, None
+    if remainder.count("@") > 1:
+        return kind, None, None, None
     try:
         from sqlalchemy.engine import make_url
 
@@ -198,13 +222,11 @@ def _describe_database_url(database_url: str) -> tuple[str, str | None, int | No
         # design, so the class of bug that rolled back R7 cannot creep back.
         parsed = make_url(normalize_database_url(database_url))
     except Exception:
-        scheme = database_url.split(":", 1)[0].lower() if ":" in database_url else ""
-        kind = scheme.split("+", 1)[0] or "unknown"
         return kind, None, None, None
-    kind = parsed.get_backend_name() or "unknown"
-    if kind == "sqlite":
+    host = parsed.host
+    if host is not None and "@" in host:
         return kind, None, None, None
-    return kind, parsed.host, parsed.port, parsed.database
+    return kind, host, parsed.port, parsed.database
 
 
 def default_storage_dir() -> Path:

@@ -167,6 +167,47 @@ def test_f06_the_token_gate_survives_the_packaged_portal_mount_at_root(
     assert "/api/staff/installer/storage" in held.json()["paths"]
 
 
+def test_f06_the_gated_schema_route_spends_the_same_failure_budget_as_the_staff_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MINOR-3 (hostile review of PR #215): the gate verified the bearer itself
+    and never touched ``AuthRateLimiter``, so ``/openapi.json`` was an
+    unthrottled token oracle on the one surface where every other
+    token-checking route spends the ``staff-auth-fail:<ip>`` budget (audit
+    item #27). A wrong token on the schema route now costs exactly what a wrong
+    token on ``/api/staff/*`` costs, the budgets are one and the same, the
+    saturated route answers 429 with ``Retry-After``, and -- like the staff
+    middleware -- a missing header is a plain budget-free 401 and the correct
+    token still gets through a saturated budget."""
+
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT", "2")
+    monkeypatch.setenv("CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS", "60")
+    for name, value in station_runtime.lan_only_station_environment().items():
+        monkeypatch.setenv(name, value)
+    client = TestClient(create_app())
+    wrong = {"Authorization": "Bearer ccst_not-the-token"}
+
+    # Two wrong guesses on the schema route, then the third is refused --
+    # the same accounting the staff middleware applies.
+    assert client.get("/openapi.json", headers=wrong).status_code == 401
+    assert client.get("/openapi.json", headers=wrong).status_code == 401
+    limited = client.get("/openapi.json", headers=wrong)
+    assert limited.status_code == 429, (
+        "the token-gated /openapi.json answered a third wrong bearer with "
+        f"{limited.status_code}: it is not spending the staff-auth failure budget"
+    )
+    assert "Retry-After" in limited.headers
+
+    # One shared budget: the schema route's failures saturated the staff routes too.
+    assert client.get("/api/staff/auth/me", headers=wrong).status_code == 429
+    # A missing header never touches the budget, and the correct token still
+    # passes a saturated one.
+    assert client.get("/openapi.json").status_code == 401
+    held = client.get("/openapi.json", headers={"Authorization": "Bearer operator-token-a"})
+    assert held.status_code == 200
+    assert "/api/staff/installer/storage" in held.json()["paths"]
+
+
 def test_f06_the_contract_stays_unauthenticated_where_the_station_is_not_lan_only() -> None:
     """Deliberately NARROW, like the doc UIs: a deployment without the flag
     keeps FastAPI's default unauthenticated schema route, and the docs

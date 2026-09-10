@@ -1076,6 +1076,67 @@ def test_setup_endpoints_require_the_staff_token_once_setup_is_complete(
     assert "Sign in" not in wrong_recovery.json()["detail"]
 
 
+def test_mutating_setup_routes_require_setup_admin_once_setup_is_complete(
+    monkeypatch, tmp_path
+) -> None:
+    """MAJOR-2 (hostile review of PR #215, rounds 1 and 2): after
+    ``setup_complete`` the mutating ``/api/setup/*`` routes accepted ANY valid
+    staff token, while their ``/api/staff/`` siblings require ``setup_admin``.
+    A records-clerk token could rebind the database engine through the weaker
+    door. Now the setup path demands the same role the staff sibling does:
+    a wrong-role token gets 403, a ``setup_admin`` token succeeds, and the
+    read-only ``GET /api/setup/storage`` stays open to any staff token exactly
+    like ``GET /api/staff/installer/storage``."""
+
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    monkeypatch.setenv("CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB", "1")
+    monkeypatch.setenv(
+        "CIVICCAST_STAFF_TOKENS", "records-token:records-1:Records Clerk:records_clerk"
+    )
+    client = TestClient(create_app())
+    admin = {"Authorization": f"Bearer {_complete_setup(client)}"}
+    clerk = {"Authorization": "Bearer records-token"}
+    monkeypatch.setenv("DATABASE_URL", _EXTERNAL_PG_URL)
+    monkeypatch.setattr(
+        storage_module,
+        "_cached_probe_external_database",
+        lambda url: storage_module.ExternalDatabaseProbe(
+            status="ready",
+            migrations_applied=True,
+            operator_message="Database ready.",
+            next_step="Nothing to do.",
+        ),
+    )
+
+    # The clerk token is genuinely authenticated: the read route admits it.
+    assert client.get("/api/setup/storage", headers=clerk).status_code == 200
+
+    forbidden_storage = client.post("/api/setup/storage", json={}, headers=clerk)
+    assert forbidden_storage.status_code == 403
+    assert "setup_admin" in forbidden_storage.json()["detail"]
+    forbidden_ack = client.post(
+        "/api/setup/recovery-kit/acknowledge", json={"confirmed": True}, headers=clerk
+    )
+    assert forbidden_ack.status_code == 403
+    assert "setup_admin" in forbidden_ack.json()["detail"]
+    forbidden_admin = client.post("/api/setup/first-admin", json=_SETUP_PAYLOAD, headers=clerk)
+    assert forbidden_admin.status_code == 403
+
+    assert client.post("/api/setup/storage", json={}, headers=admin).status_code == 200
+    assert (
+        client.post(
+            "/api/setup/recovery-kit/acknowledge", json={"confirmed": True}, headers=admin
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post("/api/setup/first-admin", json=_SETUP_PAYLOAD, headers=admin).status_code == 409
+    )
+    # The role gate is a post-setup rule only: the signed-out 401 still wins
+    # for a caller with no token at all.
+    assert client.post("/api/setup/storage", json={}).status_code == 401
+
+
 def test_signed_out_station_state_after_setup_discloses_only_public_fields(
     monkeypatch, tmp_path
 ) -> None:

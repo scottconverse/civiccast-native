@@ -95,7 +95,35 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
     drops the rejected token, re-reads the state without it (the signed-out
     view), shows the "You were signed out" notice above the sign-in card, and
     keeps an explicit "Sign in again" button on the 401 card for a token it
-    cannot discard; covered by the two `SetupScreen stale staff token` vitests.
+    could not discard automatically -- that button now stops sending the
+    rejected token too, so it lands on the sign-in form even while the
+    station keeps rejecting it; covered by the `SetupScreen stale staff
+    token` vitests, one of which keeps the station rejecting throughout.
+  - Round-3 corrections from the same review, all with regression tests
+    proven failing first: (1) `_describe_database_url` could still echo an
+    operator-set credential -- an unescaped `@` in the password put the
+    password tail in `database_host`, and an unparseable value was echoed as
+    `database_kind` (the user name or the password when pasted without a
+    scheme); the kind is now a whitelisted backend name or `unknown` and a
+    URL whose authority carries more than one `@` describes only its kind
+    (`test_describe_database_url_never_echoes_a_credential_fragment`, five
+    cases). (2) `POST /api/setup/storage`, `POST /api/setup/first-admin` and
+    `POST /api/setup/recovery-kit/acknowledge` now require the `setup_admin`
+    role after setup, the same role their `/api/staff/` siblings require --
+    any valid staff token used to pass, so a records-clerk token could rebind
+    the database engine through the setup path
+    (`test_mutating_setup_routes_require_setup_admin_once_setup_is_complete`:
+    403 for the clerk, 200/409 for the admin). (3) The token-gated
+    `/openapi.json` now runs the same verify-and-throttle routine as the
+    staff middleware (`civiccast.auth.middleware.authenticate_staff_request`),
+    so a wrong bearer there spends the `staff-auth-fail:<ip>` budget instead
+    of being an unthrottled token oracle
+    (`test_f06_the_gated_schema_route_spends_the_same_failure_budget_as_the_staff_routes`).
+    (4) A 429 from `/api/setup/station-state` renders a cooldown card that
+    still carries the admin sign-in form (`/api/setup/login` is budgeted
+    separately, per IP and path), instead of a dead-end error card. (5)
+    `docs/ops/staff-route-protection.md` no longer lists `/docs` and
+    `/openapi.json` as unauthenticated on a station.
   - Gate fallout from the same fix, corrected before merge: the descriptive
     `make_url` in `civiccast/installer/storage.py`'s new
     `_describe_database_url` now goes through `normalize_database_url`

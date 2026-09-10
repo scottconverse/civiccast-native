@@ -856,18 +856,21 @@ describe('SetupScreen stale staff token (HIGH 2, hostile review of PR #215)', ()
     expect(requestedUrls).toContain('/api/setup/station-state (no token)')
   })
 
-  it('offers an explicit "Sign in again" action on the 401 card when automatic recovery cannot clear the token', async () => {
-    // A token the console cannot discard: the test-only injected one. The
-    // automatic path has nothing to clear, so the operator must still be
-    // handed a button that gets them to the sign-in card.
+  it('"Sign in again" on the 401 card recovers while the station KEEPS rejecting the token it could not clear automatically', async () => {
+    // MINOR-1 (hostile review of PR #215, round 2): a token the automatic
+    // path cannot discard -- the test-only injected one -- was re-sent by
+    // the button, so the same 401 card came straight back. The station never
+    // starts accepting the token in this test; the button must stop sending
+    // it and land on the sign-in form from the signed-out view.
     window.__CIVICCAST_STAFF_TOKEN__ = 'ccst_injected_stale'
     try {
-      let rejectWithToken = true
+      const requestedUrls: string[] = []
       const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input)
         const authorization = authorizationOf(init)
+        requestedUrls.push(`${url} ${authorization ?? '(no token)'}`)
         if (url === '/api/setup/station-state') {
-          if (authorization && rejectWithToken) {
+          if (authorization) {
             return jsonResponse({ detail: 'Invalid staff bearer token.' }, 401)
           }
           return jsonResponse(signedOutBody)
@@ -883,15 +886,67 @@ describe('SetupScreen stale staff token (HIGH 2, hostile review of PR #215)', ()
 
       const again = await screen.findByRole('button', { name: 'Sign in again' })
       expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull()
-      // Simulate the station accepting the next read (e.g. the operator
-      // fixed the injected token) and prove the button re-reads state.
-      rejectWithToken = false
       fireEvent.click(again)
       expect(await screen.findByRole('button', { name: 'Sign in' })).toBeTruthy()
       expect(inputById('login-admin-username')).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'Sign in again' })).toBeNull()
+      // The recovery read went out WITHOUT the rejected token.
+      expect(requestedUrls).toContain('/api/setup/station-state (no token)')
+      expect(screen.getByText('You were signed out')).toBeTruthy()
     } finally {
       delete window.__CIVICCAST_STAFF_TOKEN__
     }
+  })
+
+  it('still offers the admin sign-in form when station-state is rate-limited (429)', async () => {
+    // MINOR-4 (hostile review of PR #215, round 2): /api/setup/station-state
+    // spends a per-request budget, and the stale-token recovery costs two
+    // reads, so a 429 there is likelier -- and it rendered the generic
+    // "Could not read setup state" card with no way to sign in. /api/setup/
+    // login is budgeted separately (per IP AND path), so the operator can
+    // still sign in from a station-state 429 if the form is on the card.
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url === '/api/setup/station-state') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              detail:
+                'Too many sign-in attempts from this station. Wait 42 seconds, then try again with the correct password, or use a printed recovery code.',
+            }),
+            {
+              status: 429,
+              headers: { 'Content-Type': 'application/json', 'Retry-After': '42' },
+            },
+          ),
+        )
+      }
+      if (url === '/api/setup/login' && init?.method === 'POST') {
+        return jsonResponse({
+          status: 'authenticated',
+          profile,
+          operator_console_token: 'ccst_fresh_token',
+          operator_console_url: 'http://127.0.0.1:8000/operator/',
+          next_step: 'Open the operator console.',
+        })
+      }
+      return jsonResponse({ detail: `Unhandled ${init?.method ?? 'GET'} ${url}` }, 404)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderSetupScreen()
+
+    expect(await screen.findByText(/Wait 42 seconds/)).toBeTruthy()
+    const signIn = await screen.findByRole('button', { name: 'Sign in' })
+    fireEvent.change(inputById('login-admin-username'), { target: { value: 'avery' } })
+    fireEvent.change(inputById('login-admin-password'), {
+      target: { value: 'correct horse battery staple' },
+    })
+    fireEvent.click(signIn)
+    await waitFor(() =>
+      expect(window.localStorage.getItem('civiccast.staffToken')).toBe('ccst_fresh_token'),
+    )
+    expect(fetchMock.mock.calls.some(([input]) => String(input) === '/api/setup/login')).toBe(true)
   })
 })
 

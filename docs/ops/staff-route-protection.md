@@ -44,10 +44,19 @@ These routes now require a staff bearer token at the application layer. Deployme
 
 ### Deliberately unauthenticated routes
 
-`/health`, `/api/version`, `/api/hardware`, `/api/public/*`, `/docs` and
-`/openapi.json` answer without a token. That is a design choice, not an
-oversight: the installer sizes a deployment and confirms the service is running
-before a station or any staff token exists.
+`/health`, `/api/version`, `/api/hardware` and `/api/public/*` answer without
+a token. That is a design choice, not an oversight: the installer sizes a
+deployment and confirms the service is running before a station or any staff
+token exists.
+
+`/docs`, `/redoc` and `/openapi.json` are **not** on that list on a station.
+Every installed station runs with `CIVICCAST_LAN_ONLY_STATION=1` (set by
+`civiccast.native.station_runtime` on both the activated and the
+pre-activation path): there `/docs` and `/redoc` are not served at all, and
+`/openapi.json` requires the staff bearer token, with a wrong token spending
+the same per-IP failure budget as a wrong token on `/api/staff/*`. Only a
+deployment without that flag (a container or a developer checkout) keeps
+FastAPI's default unauthenticated schema and doc pages.
 
 Because they are public, what they disclose is a deliberate contract:
 
@@ -236,7 +245,7 @@ server {
     listen 443 ssl http2;
     server_name civiccast.example.org;
 
-    location ~ ^/(api/public|api/version|api/hardware|health|docs|openapi.json) {
+    location ~ ^/(api/public|api/version|api/hardware|health) {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

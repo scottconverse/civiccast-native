@@ -3460,25 +3460,15 @@ def _install_lan_only_openapi_route(app: FastAPI) -> None:
     untouched, so the docs generator keeps working from the app object.
     """
 
-    from civiccast.auth.tokens import StaffAuthError, verify_bearer_token
+    from civiccast.auth.middleware import authenticate_staff_request
 
     async def lan_only_openapi(request: Request) -> JSONResponse:
-        authorization = request.headers.get("Authorization")
-        if not authorization:
-            return JSONResponse(
-                status_code=http_status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "Missing Authorization header. Use Bearer <staff-token>."},
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        token_store = getattr(app.state, "staff_token_store", None)
-        try:
-            verify_bearer_token(authorization, token_store=token_store)
-        except StaffAuthError as exc:
-            return JSONResponse(
-                status_code=http_status.HTTP_401_UNAUTHORIZED,
-                content={"detail": str(exc)},
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+        # MINOR-3 (hostile review of PR #215): the same verify-and-throttle
+        # routine the staff middleware runs, so a wrong bearer here spends the
+        # ``staff-auth-fail:<ip>`` budget exactly like one on /api/staff/*.
+        rejected = authenticate_staff_request(request)
+        if rejected is not None:
+            return rejected
         return JSONResponse(app.openapi())
 
     app.add_api_route(
