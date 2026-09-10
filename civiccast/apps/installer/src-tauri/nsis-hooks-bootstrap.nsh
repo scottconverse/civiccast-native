@@ -1343,11 +1343,13 @@ Var CIVICCAST_POSTCLEAR_ARMED
     ; ...; InstallLocation ...; UninstallString ...)". The remedy is that
     ; product, not the registry value, so this text carries NO
     ; ActiveRuntime instruction. Same string budget as the 85 arm below
-    ; (563 static + 420 observation cap + 29 log prefix = 1012 < 1023,
-    ; pinned by test_the_exit_85_and_87_dialogs_fit_the_nsis_string_budget_
-    ; with_the_observation).
+    ; (542 static at runtime, 558 counted as source literal, + 420
+    ; observation cap + 29 log prefix = 1007 worst case < 1023; the test
+    ; test_the_exit_85_and_87_dialogs_fit_the_nsis_string_budget_with_the_
+    ; observation MEASURES both strings under both counts on every run --
+    ; round 4 shortened this text after the review found no slack).
     DetailPrint "CivicCast (Native): D4 found another CivicCast product installed on this machine (exit 87) — see the installer log above and $COMMONPROGRAMDATA\CivicCast\provision\OWNERSHIP-RECOVERY.md."
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_OTHER_PRODUCT} "CivicCast (Native) setup found another CivicCast product installed on this machine, so it cannot claim the runtime for the native product. Setup stopped before provisioning: postgresql.conf, pg_hba.conf and your database credential were not touched.$\r$\n$\r$\nWhat setup observed: $R6$\r$\n$\r$\nUninstall that product from Settings > Apps (or run its UninstallString above), or run civiccast-runtime cutover-to-native from it, then run setup again. Every read: $COMMONPROGRAMDATA\CivicCast\provision\OWNERSHIP-RECOVERY.md; also logged in $COMMONPROGRAMDATA\CivicCast\install-progress.log."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_OTHER_PRODUCT} "CivicCast (Native) setup found another CivicCast product installed on this machine, so it will not claim the runtime. Setup stopped before provisioning: postgresql.conf, pg_hba.conf and your database credential were not touched.$\r$\n$\r$\nWhat setup observed: $R6$\r$\n$\r$\nUninstall that product from Settings > Apps (or run its UninstallString above), or run civiccast-runtime cutover-to-native from it, then run setup again. Every read: $COMMONPROGRAMDATA\CivicCast\provision\OWNERSHIP-RECOVERY.md; also logged in $COMMONPROGRAMDATA\CivicCast\install-progress.log."
   ${ElseIf} $0 == 85
     ; Installer-path audit BL-13: the ActiveRuntime selector could not be
     ; established. This used to be a printed sentence and an exit 0, after
@@ -1368,13 +1370,17 @@ Var CIVICCAST_POSTCLEAR_ARMED
     ; String budget: NSIS_MAX_STRLEN is 1024 (Tauri's NSIS 3.11, measured
     ; with makensis -HDRINFO) and CIVICCAST_ALERT prefixes this text with a
     ; ~29-char timestamp before writing it to install-progress.log, so the
-    ; static text here (564 chars) plus the observation line (capped at
+    ; static text here (520 chars at runtime, 540 counted as a source
+    ; literal) plus the observation line (capped at
     ; OWNERSHIP_OBSERVATION_LINE_MAX_CHARS = 420 by the Rust writer, raised
     ; from 360 in round 3 so the exit-87 lead fits) must stay under 1023:
-    ; 564 + 420 + 29 = 1013 (pinned by test_the_exit_85_and_87_dialogs_fit_
-    ; the_nsis_string_budget_with_the_observation). Do not lengthen either
-    ; without re-measuring.
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP} "CivicCast (Native) setup could not establish which CivicCast runtime owns this machine. Setup stopped before provisioning: postgresql.conf, pg_hba.conf and your database credential were not touched.$\r$\n$\r$\nWhat setup observed: $R6$\r$\n$\r$\nIf this machine has no CivicCast WSL product, an administrator sets HKLM\SOFTWARE\CivicCast\ActiveRuntime to $\"native$\" and runs setup again. The exact command and every individual read are in $COMMONPROGRAMDATA\CivicCast\provision\OWNERSHIP-RECOVERY.md; the observation above is also recorded in $COMMONPROGRAMDATA\CivicCast\install-progress.log."
+    ; 540 + 420 + 29 = 989 worst case. Round 4 shortened both arms after
+    ; the review measured the previous text at 580 (source count) and found
+    ; 1029; test_the_exit_85_and_87_dialogs_fit_the_nsis_string_budget_with_
+    ; the_observation now measures the real strings under both counts and
+    ; names the maximum safe cap when it fails. Do not lengthen either
+    ; without running it.
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP} "CivicCast (Native) setup could not establish which CivicCast runtime owns this machine. Setup stopped before provisioning: postgresql.conf, pg_hba.conf and your database credential were not touched.$\r$\n$\r$\nWhat setup observed: $R6$\r$\n$\r$\nIf this machine has no CivicCast WSL product, an administrator sets HKLM\SOFTWARE\CivicCast\ActiveRuntime to $\"native$\" and runs setup again. The exact command and every read: $COMMONPROGRAMDATA\CivicCast\provision\OWNERSHIP-RECOVERY.md; also logged in $COMMONPROGRAMDATA\CivicCast\install-progress.log."
   ${Else}
     DetailPrint "CivicCast (Native): D4 database/messaging provisioning reported an unexpected fault (exit $0) — see the installer log above."
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_PROVISION_FAULT} "CivicCast (Native) setup hit an unexpected fault while provisioning the PostgreSQL server (exit code $0). See the installer log."

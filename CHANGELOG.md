@@ -335,7 +335,18 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
        than not-found) and Unreadable-selector cases, each with its own
        text; the registry remedy stays there and the "permissions" guess is
        gone. `OWNERSHIP_OBSERVATION_LINE_MAX_CHARS` 360 -> 420 so the exit-87
-       lead fits (564 + 420 + 29 = 1013 < 1023, pinned by test).
+       lead fits.
+     - Round 4 (hostile review): the round-3 dialog text had no slack under
+       the NSIS 1024 string limit (580 + 420 + 29 = 1029 counted as source),
+       so both dialogs were shortened (85: 540 + 420 + 29 = 989; 87:
+       558 + 420 + 29 = 1007) and the budget test now measures the real
+       strings under both the runtime and the source count instead of
+       trusting a number. `OWNERSHIP-RECOVERY.md` said "installer exit 127"
+       for the exit-87 refusal too; it now names 135, from constants a
+       policy test pins to the NSIS defines. The inert-leftover rule needs
+       the entry to have been found in a LOADED user hive: a per-machine ARP
+       entry whose owner is logged out cannot be proven inert (the distro
+       and autostart scans never saw that hive) and stays exit 87.
 
   Follow-up, not in this change: a setup wizard page asking the operator to
   confirm native ownership when the evidence is merely inconclusive, instead

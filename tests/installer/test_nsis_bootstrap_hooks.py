@@ -1235,18 +1235,44 @@ def test_the_exit_85_and_87_dialogs_fit_the_nsis_string_budget_with_the_observat
             "CIVICCAST_EXIT_D4_OTHER_PRODUCT",
         ),
     }
+    # Round 4 (hostile review of round 3): the budget is MEASURED from the
+    # real static strings on every run, under BOTH ways of counting them --
+    # the runtime expansion (`$\r$\n` -> CRLF, `$\"` -> `"`,
+    # `$COMMONPROGRAMDATA` -> C:\ProgramData, `$R6` -> the observation) and
+    # the pessimistic source-literal count (every `$\r$\n` at its six
+    # source characters, `$\"` at three), which is what a reviewer counting
+    # the .nsh by hand gets. The cap must fit under the LARGER of the two,
+    # so no hardcoded "564" can drift again. Whoever lengthens either dialog
+    # gets the exact numbers in the failure message.
+    static_lengths: dict[str, tuple[int, int]] = {}
     for code, (arm, define) in arms.items():
         text = re.search(rf'CIVICCAST_FAIL \$\{{{define}\}} "(.*)"', arm)
         assert text is not None, code
-        expanded = (
-            text.group(1)
-            .replace("$\\r$\\n", "\r\n")
+        literal = text.group(1)
+        runtime = (
+            literal.replace("$\\r$\\n", "\r\n")
             .replace('$\\"', '"')
             .replace("$COMMONPROGRAMDATA", "C:\\ProgramData")
             .replace("$R6", "")
         )
-        total = len(expanded) + int(cap.group(1)) + timestamp_prefix
-        assert total < 1023, f"exit-{code} dialog + observation + log prefix = {total} chars"
+        pessimistic = literal.replace("$COMMONPROGRAMDATA", "C:\\ProgramData").replace("$R6", "")
+        static_lengths[code] = (len(runtime), len(pessimistic))
+    line_cap = int(cap.group(1))
+    max_static = max(max(pair) for pair in static_lengths.values())
+    max_safe_cap = 1022 - timestamp_prefix - max_static
+    for code, (runtime_len, pessimistic_len) in static_lengths.items():
+        for label, static in (("runtime", runtime_len), ("pessimistic", pessimistic_len)):
+            total = static + line_cap + timestamp_prefix
+            assert total < 1023, (
+                f"exit-{code} dialog ({label} count {static}) + observation cap {line_cap} "
+                f"+ log prefix {timestamp_prefix} = {total} chars >= 1023; the maximum safe "
+                f"OWNERSHIP_OBSERVATION_LINE_MAX_CHARS for the current text is {max_safe_cap}"
+            )
+    assert line_cap <= max_safe_cap, (line_cap, max_safe_cap, static_lengths)
+    # The exit-87 lead (user, product, version, an HKU\<SID> key,
+    # InstallLocation, UninstallString) needs the round-3 cap; a shrunken
+    # cap would silently cut it.
+    assert line_cap >= 420, (line_cap, static_lengths)
 
 
 def test_ownership_claim_runs_before_the_provisioning_engine_mutates_state() -> None:

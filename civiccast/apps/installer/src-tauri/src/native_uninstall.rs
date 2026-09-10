@@ -940,12 +940,21 @@ impl WslProductVerdict {
 /// consumes: [`corroborate_wsl_product_state`] first, then the
 /// **inert-leftover rule** on its `Present`:
 ///
-/// | corroborated | distro-scan | autostart | transfer-marker | verdict        |
-/// |--------------|-------------|-----------|-----------------|----------------|
-/// | Absent       | any         | any       | any             | Absent         |
-/// | Unknown      | any         | any       | any             | Unknown        |
-/// | Present      | Absent      | Absent    | Present         | PresentInert   |
-/// | Present      | otherwise                                 | Present        |
+/// | corroborated | user-ARP | distro-scan | autostart | transfer-marker | verdict      |
+/// |--------------|----------|-------------|-----------|-----------------|--------------|
+/// | Absent       | any      | any         | any       | any             | Absent       |
+/// | Unknown      | any      | any         | any       | any             | Unknown      |
+/// | Present      | Present  | Absent      | Absent    | Present         | PresentInert |
+/// | Present      | otherwise                                            | Present      |
+///
+/// The `user-ARP = Present` column (round 4, hostile review of round 3):
+/// the distro scan and the autostart read only see hives Windows has
+/// LOADED. A per-user ARP entry that read `Present` was found in a loaded
+/// hive, so an `Absent` distro/autostart covers the hive that owns the
+/// leftover. A MACHINE-scope entry (HKLM) names no hive: its owner may be
+/// logged out, in which case the two per-user absences are reads of hives
+/// that are not the owner's and prove nothing about inertness. That case is
+/// "inertness unknown", which is `Present` (exit 87) -- never `PresentInert`.
 ///
 /// Field report (2026-09-09, corrected): the refused box had the old WSL-era
 /// "CivicCast Installer" 3.0.0-beta1 ARP entry under HKCU (-> `Present`),
@@ -962,7 +971,12 @@ pub fn classify_wsl_product_for_claim(evidence: &WslPresenceEvidence) -> WslProd
         OtherProductState::Absent => WslProductVerdict::Absent,
         OtherProductState::Unknown => WslProductVerdict::Unknown,
         OtherProductState::Present => {
-            if evidence.distro_registration == OtherProductState::Absent
+            // The owner hive is known to be loaded only when the per-user
+            // probe itself found the entry there; a machine-scope-only
+            // Present leaves the per-user absences uncorroborated.
+            let owner_hive_loaded = evidence.user_arp == OtherProductState::Present;
+            if owner_hive_loaded
+                && evidence.distro_registration == OtherProductState::Absent
                 && evidence.autostart == OtherProductState::Absent
                 && evidence.native_transfer_marker == OtherProductState::Present
             {
@@ -3730,6 +3744,78 @@ mod runtime_ownership_evidence_tests {
     /// A Present observation carries the ARP record in its Display, so the
     /// observation line and the recovery document name the product, its
     /// version, publisher, InstallLocation and UninstallString.
+    /// Round 4 (hostile review of round 3): a MACHINE-scope ARP entry whose
+    /// owner hive is not loaded. `distro_registration` and `autostart` are
+    /// scans over LOADED user hives only, so with the HKLM entry's owner
+    /// logged out both read `Absent` for a hive they never looked at. That
+    /// absence proves nothing about the leftover's inertness: the verdict
+    /// must be `Present` (exit 87, zero writes), never `PresentInert`.
+    #[test]
+    fn a_machine_arp_entry_with_no_loaded_owner_hive_is_never_inert() {
+        let mut hklm = ProbeObservation::settled(
+            "machine-ARP",
+            "HKLM".to_string(),
+            "64-bit",
+            OtherProductState::Present,
+        );
+        hklm.product = Some(ArpProductRecord {
+            user: "(per-machine)".to_string(),
+            display_name: Some("CivicCast Installer".to_string()),
+            display_version: Some("3.0.0-beta1".to_string()),
+            ..ArpProductRecord::default()
+        });
+        // Exactly the field report's inert shape (no distro in any loaded
+        // hive, no autostart in any loaded hive, hand-off marker set) --
+        // except the entry is per-machine and no loaded user hive carries it.
+        let e = WslPresenceEvidence {
+            user_arp: OtherProductState::Absent,
+            machine_arp: OtherProductState::Present,
+            distro_registration: OtherProductState::Absent,
+            wsl_service: OtherProductState::Present,
+            autostart: OtherProductState::Absent,
+            native_transfer_marker: OtherProductState::Present,
+            observations: vec![hklm],
+        };
+        assert_eq!(corroborate_wsl_product_state(&e), OtherProductState::Present);
+        assert_eq!(
+            classify_wsl_product_for_claim(&e),
+            WslProductVerdict::Present,
+            "an ARP entry whose owner hive is not loaded cannot be proven inert"
+        );
+        let writes = RefCell::new(0usize);
+        let outcome = claim_install_selector_with(
+            || SelectorState::Absent,
+            || e.clone(),
+            || {
+                *writes.borrow_mut() += 1;
+                Ok(())
+            },
+        );
+        assert_eq!(outcome.action, SelectorClaimAction::LeaveOtherProductPresent);
+        assert_eq!(outcome.verdict, Some(WslProductVerdict::Present));
+        assert_eq!(*writes.borrow(), 0);
+        assert!(!outcome.detail.starts_with("WARNING"), "{}", outcome.detail);
+
+        // The same evidence with the user-ARP probe also Unknown (a hive it
+        // could not read) is no more inert than Absent.
+        let mut unknown_user = e.clone();
+        unknown_user.user_arp = OtherProductState::Unknown;
+        assert_eq!(
+            classify_wsl_product_for_claim(&unknown_user),
+            WslProductVerdict::Present
+        );
+
+        // Control: the owner hive IS loaded (the per-user entry was found in
+        // it), so the per-user absences are real reads -> inert, as round 3.
+        let mut loaded_owner = e.clone();
+        loaded_owner.user_arp = OtherProductState::Present;
+        loaded_owner.observations.push(field_report_present_observation());
+        assert_eq!(
+            classify_wsl_product_for_claim(&loaded_owner),
+            WslProductVerdict::PresentInert
+        );
+    }
+
     #[test]
     fn a_present_observation_displays_the_arp_record() {
         assert_eq!(

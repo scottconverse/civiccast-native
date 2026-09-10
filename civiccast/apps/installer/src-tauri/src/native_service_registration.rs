@@ -1949,6 +1949,30 @@ pub const SELECTOR_UNPROVABLE_EXIT_CODE: i32 = 85;
 /// (`UNKNOWN_CIVICCAST_FLAG_EXIT_CODE`).
 pub const OTHER_PRODUCT_PRESENT_EXIT_CODE: i32 = 87;
 
+/// The INSTALLER process exit code the NSIS d4 step maps CLI exit 85 to:
+/// `CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP` in `nsis-hooks-bootstrap.nsh`.
+/// `OWNERSHIP-RECOVERY.md` names it beside the CLI code, so it is a
+/// constant pinned to the NSIS define by
+/// `test_ownership_recovery_document_installer_exit_codes_are_pinned_to_the_nsis_defines`.
+pub const SELECTOR_UNPROVABLE_INSTALLER_EXIT_CODE: i32 = 127;
+
+/// The INSTALLER process exit code the NSIS d4 step maps CLI exit 87 to:
+/// `CIVICCAST_EXIT_D4_OTHER_PRODUCT`. Round 4 (hostile review of round 3):
+/// the recovery document used to say "installer exit 127" for BOTH
+/// refusals, which was wrong for this one from the day 135 was defined.
+pub const OTHER_PRODUCT_PRESENT_INSTALLER_EXIT_CODE: i32 = 135;
+
+/// The installer exit code that goes with a refusal's CLI exit code (the
+/// d4 step's `$0 == 87` / `$0 == 85` arms). Anything else is not a refusal
+/// and never reaches the document.
+pub fn installer_exit_code_for(cli_exit_code: i32) -> i32 {
+    if cli_exit_code == OTHER_PRODUCT_PRESENT_EXIT_CODE {
+        OTHER_PRODUCT_PRESENT_INSTALLER_EXIT_CODE
+    } else {
+        SELECTOR_UNPROVABLE_INSTALLER_EXIT_CODE
+    }
+}
+
 /// The exit code the binary reports for a `--civiccast-*` flag it does not
 /// implement.
 ///
@@ -2005,10 +2029,14 @@ pub const OWNERSHIP_RECOVERY_DOCUMENT_FILE_NAME: &str = "OWNERSHIP-RECOVERY.md";
 /// Upper bound on the one-line observation. `NSIS_MAX_STRLEN` is 1024 in
 /// Tauri's NSIS 3.11 (measured with `makensis -HDRINFO`); the exit-85 and
 /// exit-87 dialogs in `nsis-hooks-bootstrap.nsh` embed this line inside
-/// ~564 chars of their own text and `CIVICCAST_ALERT` prefixes that with a
-/// ~29-char timestamp before writing it to `install-progress.log`, so 420
-/// keeps the whole string under 1023 (564 + 420 + 29 = 1013; pinned by
-/// `test_the_exit_85_and_87_dialogs_fit_the_nsis_string_budget_with_the_observation`).
+/// their own static text (520/542 chars at runtime; 540/558 counted as the
+/// source literal) and `CIVICCAST_ALERT` prefixes that with a ~29-char
+/// timestamp before writing it to `install-progress.log`, so 420 keeps the
+/// whole string under 1023 (558 + 420 + 29 = 1007 worst case). Round 4:
+/// `test_the_exit_85_and_87_dialogs_fit_the_nsis_string_budget_with_the_observation`
+/// MEASURES both static strings under both counts on every run and names
+/// the maximum safe value of this constant when it fails -- the round-3
+/// text had been 564/580 and the 420 cap overflowed by six.
 /// Raised from 360 in round 3 so the exit-87 lead -- user, product,
 /// version, an `HKU\<SID>` key, InstallLocation AND UninstallString (~350
 /// chars with a real SID and real paths) -- survives the truncation marker.
@@ -2181,6 +2209,7 @@ pub fn ownership_recovery_document(
     use crate::native_uninstall::SelectorClaimAction;
     let present = outcome.action == SelectorClaimAction::LeaveOtherProductPresent;
     let exit_code = refusal_exit_code(outcome.action).unwrap_or(SELECTOR_UNPROVABLE_EXIT_CODE);
+    let installer_exit_code = installer_exit_code_for(exit_code);
     let mut doc = String::new();
     if present {
         doc.push_str("# CivicCast (Native) setup: another CivicCast product is installed\n\n");
@@ -2190,7 +2219,7 @@ pub fn ownership_recovery_document(
         );
     }
     doc.push_str(&format!(
-        "Setup {version} stopped (exit {exit_code} / installer exit 127) BEFORE provisioning the \
+        "Setup {version} stopped (exit {exit_code} / installer exit {installer_exit_code}) BEFORE provisioning the \
          PostgreSQL server: postgresql.conf, pg_hba.conf and your database credential were \
          not touched by this run. (On an upgrade, the program files under the install \
          directory had already been replaced before this check ran.)\n\n"
@@ -2254,9 +2283,11 @@ pub fn ownership_recovery_document(
              dual-runtime guard starts the control plane on -- names no owner. Setup never \
              takes a machine away from a CivicCast product that was there first, so it \
              stopped rather than finish an install whose station could never serve. (If that \
-             entry were only an inert leftover -- no CivicCast distro, no autostart entry, \
-             and a previous native install's hand-off marker set -- setup would have claimed \
-             native with a warning instead; one of those three conditions did not hold, see \
+             entry were only an inert leftover -- registered in a loaded user hive, with no \
+             CivicCast distro, no autostart entry, and a previous native install's hand-off \
+             marker set -- setup would have claimed native with a warning instead; one of \
+             those conditions did not hold (a per-machine entry whose owner is not logged in \
+             cannot be proven inert), see \
              the evidence line.)\n\n",
         );
     } else {
@@ -3170,6 +3201,24 @@ mod control_plane_readiness_tests {
                 assert_ne!(code, other, "two service failures share exit code {code}");
             }
         }
+    }
+
+    /// Round 4: the two refusals map to two DIFFERENT installer exit codes
+    /// (the NSIS defines the d4 arms abort with), and the recovery document
+    /// names the right one for each. The Python policy test pins these
+    /// constants to the .nsh defines themselves.
+    #[test]
+    fn each_refusal_maps_to_its_own_installer_exit_code() {
+        assert_eq!(installer_exit_code_for(SELECTOR_UNPROVABLE_EXIT_CODE), 127);
+        assert_eq!(installer_exit_code_for(OTHER_PRODUCT_PRESENT_EXIT_CODE), 135);
+        assert_ne!(
+            SELECTOR_UNPROVABLE_INSTALLER_EXIT_CODE,
+            OTHER_PRODUCT_PRESENT_INSTALLER_EXIT_CODE
+        );
+        assert!(
+            !(83..=87).contains(&OTHER_PRODUCT_PRESENT_INSTALLER_EXIT_CODE),
+            "an installer code must stay out of the CLI band"
+        );
     }
 
     #[test]
@@ -4935,7 +4984,7 @@ mod runtime_ownership_report_tests {
 
         let doc = ownership_recovery_document(&outcome, "1.0.0-beta.5.1");
         assert!(doc.starts_with("# CivicCast (Native) setup: another CivicCast product is installed"));
-        assert!(doc.contains("stopped (exit 87 / installer exit 127)"));
+        assert!(doc.contains("stopped (exit 87 / installer exit 135)"), "{doc}");
         for expected in [
             "  - DisplayName: CivicCast Installer\n",
             "  - DisplayVersion: 3.0.0-beta1\n",
