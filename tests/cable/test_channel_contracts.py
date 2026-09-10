@@ -462,7 +462,7 @@ class _ScheduleStoreStub:
 
 def _client_with_egress_store(
     monkeypatch,
-    store: InMemoryEgressStore,
+    store: InMemoryEgressStore | None,
     schedule_items: list[ScheduleItemResponse] | None = None,
 ) -> TestClient:
     monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
@@ -927,16 +927,6 @@ def test_static_profile_hls_output_is_marked_not_enabled() -> None:
     assert hls.target == "/api/public/channels/public/live.m3u8"
     assert hls.next_step.startswith("HLS web output is not enabled for this channel.")
     assert "Local rehearsal (web preview, HLS)" in hls.next_step
-
-
-def _client_with_egress_store(monkeypatch, egress_store):  # type: ignore[no-untyped-def]
-    from civiccast.egress.router import get_egress_store
-
-    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
-    monkeypatch.setenv("CIVICCAST_STAFF_TOKENS", "operator-token-a:operator-a:Operator A:operator")
-    app = create_app()
-    app.dependency_overrides[get_egress_store] = lambda: egress_store
-    return TestClient(app, headers={"Authorization": "Bearer operator-token-a"})
 
 
 def test_live_m3u8_redirects_to_media_router_when_hls_sink_configured(monkeypatch) -> None:
