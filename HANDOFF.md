@@ -8,7 +8,7 @@ Rules in force: no new features; finish and test what exists; commit after each 
 1. DONE 10:14 PM: **v1.0.0-beta.5 PUBLISHED** https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5 (8 assets, prerelease, target 148c8d21; Gate A 34423542177 all three lanes PASS). First attempt was refused (body > 125,000 chars, HTTP 422); the renderer fix is PR #210. release-truth.yaml flipped by the publisher and committed. Command used:
    `python scripts/release/publish_beta_candidate.py --kit-dir C:\CivicCastTester\kit-mirror\148c8d2172dd6b63cbbb856b429b68aa020dc421 --source-sha 148c8d2172dd6b63cbbb856b429b68aa020dc421 --build-run-id 34405681086 --gate-a-run-id 34423542177 --tag v1.0.0-beta.5 --truth-status current`
    The dry run already passed layout, version and Authenticode. The publisher updates docs/releases/release-truth.yaml; commit that.
-2. **Finish release notes PR #165** (branch docs/release-beta5, worktree C:\Users\scott\Desktop\Code\cc-docs165, head 834d68f5): fill the last tokens (GATE-A-XVER = PASS, GATE-A-DLONLY, RELEASE-URL, ASSETS-TABLE; release-notes.md ~487-491, verification.md ~80-88, 112), add known issues 99 (legacy NATS journal halts August-install upgrades) and 100 (ownership check exit 85/127 on boxes with uninstall history) with the workarounds in docs/INSTALL-HELPER-PROMPT.md, then merge.
+2. **Merge release notes PR #165** (branch docs/release-beta5, worktree cc-docs165): all tokens filled, headers PUBLISHED, known issues 99/100 added, duplicate release-truth entry fixed. Being rebased onto main after #206/#210; merge on green.
 3. DONE 11:06 PM: PR #206 merged (journal tolerant of legacy NATS keys; item 99).
 4. DONE 10:14 PM: PR #207 (docs/INSTALL-HELPER-PROMPT.md) merged.
 5. **Ownership-check fix = PR #209** (branch fix/runtime-ownership-claim-diagnosable, worktree cc-ownership-claim, head d6d5ea2f): hostile review said MERGE with follow-ups; round 2 in progress (5 s bound on `sc query`, dialog wording on upgrades, const assert, skip-predicate pin). Merge on green after round 2. Item 101 (forward the provisioning CLI's stderr into install-progress.log) is NOT in this PR: it needs a file handoff like ownership-observation.txt plus a policy test that no stderr line can carry the database URL; do it as its own PR later.
@@ -23,6 +23,8 @@ Three fix PRs are being built in parallel; each gets a hostile review, then merg
 - cc-portal-live / fix/portal-live-follows-egress-and-hls-truth: resident /api/public/live/current follows egress when an hls sink exists; Channels shows the real HLS URL or says web output is off; local rehearsal HLS preset. (item 104)
 - cc-setup-session / fix/first-setup-recovery-kit-signout-autofill: recovery kit survives navigation until confirmed; Sign out control + route; no browser autofill on first setup. (items 102, 103, 97)
 Not started (beta.6 or later): 106 startup page, 107 state authority, 109 sample live source, 112-115 copy/mobile/docs. Full list: Desktop\floatsom\CIVICCAST-BATCH-FIX-LIST-2026-09-03.md items 102-135.
+
+- DONE 11:08 PM: PR #210 merged (release-body bound under GitHub's 125k limit).
 
 ## Added 10:55 PM from the upgrade-machine walkthrough (Blackwell, 5070 Ti; items 120-135)
 - PR #212 (slate boundary relaunch): review CHANGES (relaunch bypasses the crash-escalation latch; the 30 s cap can never fire because the slate plan is 120 s; STOP race; stale stamp). Round 2 in progress in cc-boundary-stop.
@@ -41,8 +43,10 @@ Not started (beta.6 or later): 106 startup page, 107 state authority, 109 sample
 - Open PRs: #165 notes, #202 draft, #206, #207, #208.
 
 ## Not done
-- beta.5 publish (waiting on lane 3), #165 merge, beta.6 pipeline (tasks 3-8), captions root cause (9).
-- Beta.6 hygiene list lives in C:\Users\scott\Desktop\floatsom\CIVICCAST-BATCH-FIX-LIST-2026-09-03.md (items 93-101) and the run log in CIVICCAST-RESUME-STATE.md.
+- MAIN IS RED (11:15 PM): `tests/policy/test_windows_release_downloader.py::test_windows_install_doc_matches_current_release_posture` and `tests/test_audit_protocol_docs.py::test_active_public_docs_link_validated_current_candidate` -- README.md / INSTALL-WINDOWS.md (and docs/index.html, docs/install-windows.html) still link v1.0.0-beta.4 as the current download while release-truth says beta.5. Flip those surfaces to v1.0.0-beta.5 in #165 (beta.6 stays the held candidate) before building the beta.6 kit.
+- #165 merge; #209 (round 3), #211, #212 (round 2), #213 (follow-ups), #214, setup-auth and honesty PRs; then the beta.6 kit pipeline (task 8); #202 soak; captions root cause (9).
+- Full fix list: C:\Users\scott\Desktop\floatsom\CIVICCAST-BATCH-FIX-LIST-2026-09-03.md (items 93-135); run log: CIVICCAST-RESUME-STATE.md.
+- Both tester machines started 8-hour soaks of beta.5 at 11:00 PM (docs/SOAK-PROMPT.md); reports due ~7 AM as Desktop\SOAK-<pc>-<date>.zip on each machine.
 
 ## Where things are
 - Main checkout: C:\Users\scott\Desktop\Code\civiccast-native. Worktrees: cc-docs165 (#165), cc-journal-tolerant (#206), cc-install-helper (#207), cc-ownership-claim (ownership fix), cc-beta6-bump (#208), cc-item66 (#202), cc-sbsoak-run (sandbox lane, detached at origin/main).
