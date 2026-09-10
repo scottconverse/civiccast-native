@@ -592,8 +592,20 @@ def headend_profiles() -> list[HeadendProfile]:
 def apply_headend_profile_to_channel(
     channel_id: str,
     payload: HeadendProfileApplyRequest,
+    request: Request,
     egress_store: EgressStore | None = Depends(get_egress_store),
 ) -> EgressConfig:
+    """Apply a headend preset to the channel's config and make it take effect.
+
+    Persisting the config alone changes nothing on air: the daemon reads a
+    channel's sinks when it builds a pipeline. So when the channel is already
+    running (``STARTING`` / ``ON_AIR`` / ``TRANSITIONING`` / ``FALLBACK_SLATE``)
+    a ``reload`` command is queued in the same request (review round 2,
+    BLOCKER 2 -- before this, applying a preset did nothing until the service
+    restarted). A dark channel gets no command: its next ``start`` reads the
+    new config, and a ``reload`` on a dark channel would start it, which is an
+    operator decision this route must not make.
+    """
     store = _require_store(egress_store, surface="headend profile")
     profile = get_headend_profile(payload.profile_id)
     if profile is None:
@@ -639,7 +651,34 @@ def apply_headend_profile_to_channel(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Egress config was not readable after save.",
         )
+    _enqueue_reload_if_running(store, channel_id, issued_by=_staff_operator_id(request))
     return result
+
+
+# Channel states in which the daemon has (or is bringing up) a live pipeline,
+# so a ``reload`` makes it rebuild with the new sinks. Mirrors
+# ``civiccast.egress.dispatcher._RUNNING_STATES`` (the commit-to-air nudge);
+# any other state, or no state row, is dark and gets no command.
+_HEADEND_RELOAD_STATES: frozenset[str] = frozenset(
+    {"STARTING", "ON_AIR", "TRANSITIONING", "FALLBACK_SLATE"}
+)
+
+
+def _enqueue_reload_if_running(store: EgressStore, channel_id: str, *, issued_by: str) -> None:
+    """Queue a ``reload`` for ``channel_id`` when its pipeline is running."""
+
+    state = store.read_state(channel_id)
+    if state is None or state.state not in _HEADEND_RELOAD_STATES:
+        return
+    store.enqueue_command(
+        EgressCommand(
+            channel_id=channel_id,
+            action="reload",
+            issued_at=datetime.now(UTC),
+            issued_by=issued_by,
+            command_id=f"headend-profile-reload-{uuid.uuid4()}",
+        )
+    )
 
 
 class ComplianceProbeRequest(BaseModel):

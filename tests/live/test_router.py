@@ -405,7 +405,47 @@ class TestPublicCurrentLive:
         assert r.status_code == 200
         body = r.json()
         assert body["state"] == "on_air"
-        assert body["manifest_url"] == "http://127.0.0.1:8000/media/live/gov-ch12/playlist.m3u8"
+        # Site-relative (review round 2, BLOCKER 1): the old absolute
+        # http://127.0.0.1:8000 default sent every LAN resident to their own
+        # loopback. The portal and the media router share an origin.
+        assert body["manifest_url"] == "/media/live/gov-ch12/playlist.m3u8"
+
+    def test_local_live_url_is_absolute_only_with_an_explicit_operator_base(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        egress_store = InMemoryEgressStore()
+        egress_store.upsert_config(
+            EgressConfig(
+                channel_id="gov-ch12",
+                enabled=True,
+                slate_message="Off air",
+                sinks=[EgressSinkSpec(kind="hls", label="Web", uri="/var/civiccast/live/gov-ch12")],
+            )
+        )
+        client.app.dependency_overrides[get_egress_store] = lambda: egress_store  # type: ignore[attr-defined]
+        egress_store.write_state(
+            EgressStateRow(
+                channel_id="gov-ch12", state="ON_AIR", updated_at=datetime(2026, 5, 15, tzinfo=UTC)
+            )
+        )
+
+        # Unset (the stock install) and blank both mean site-relative.
+        for value in (None, "", "   "):
+            if value is None:
+                monkeypatch.delenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", raising=False)
+            else:
+                monkeypatch.setenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", value)
+            body = client.get("/api/public/live/current").json()
+            assert body["manifest_url"] == "/media/live/gov-ch12/playlist.m3u8", value
+
+        # An operator-configured absolute base wins, trailing slash or not.
+        for base in ("https://media.town.example", "https://media.town.example/"):
+            monkeypatch.setenv("CIVICCAST_LOCAL_MEDIA_BASE_URL", base)
+            body = client.get("/api/public/live/current").json()
+            assert (
+                body["manifest_url"]
+                == "https://media.town.example/media/live/gov-ch12/playlist.m3u8"
+            ), base
 
     def test_explicit_manifest_url_param_still_wins_over_local_default(
         self, client: TestClient
@@ -564,15 +604,67 @@ class TestPublicCurrentLive:
         assert body["manifest_url"].endswith("/media/live/gov-ch12/playlist.m3u8")
         assert body["reason"] is None
 
-    def test_egress_fallback_slate_counts_as_on_air(self, client: TestClient) -> None:
-        # Residents see the slate; that is on air, not offline.
+    # Review round 2, MAJOR 3: a FALLBACK_SLATE pipeline used to project as
+    # ``on_air``, so a slate read "On air" to residents and hid the idle page.
+    # It is its own honest state now.
+
+    def test_egress_fallback_slate_is_standing_by_not_on_air(self, client: TestClient) -> None:
         store = self._egress_store(state="FALLBACK_SLATE", source_label="Slate")
         client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
 
         body = client.get("/api/public/live/current").json()
 
-        assert body["state"] == "on_air"
+        assert body["state"] == "standing_by"
+        assert body["state"] != "on_air"
+        assert body["channel_id"] == "gov-ch12"
         assert body["title"] == "Slate"
+        assert body["started_at"] == "2026-05-15T18:00:00+00:00"
+        assert body["reason"] == "fallback slate, no program on air"
+        # The slate IS being served, so the manifest is still reported.
+        assert body["manifest_url"] == "/media/live/gov-ch12/playlist.m3u8"
+
+    def test_egress_fallback_slate_without_hls_is_still_standing_by(
+        self, client: TestClient
+    ) -> None:
+        store = self._egress_store(state="FALLBACK_SLATE", hls=False, source_label="Slate")
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "standing_by"
+        assert body["manifest_url"] is None
+        assert body["reason"] == "fallback slate, no program on air"
+
+    def test_egress_program_channel_outranks_a_slate_channel(self, client: TestClient) -> None:
+        # Two channels: the id-first one is on its slate WITH web output, the
+        # other airs a program WITHOUT. The program wins the unfiltered pick.
+        store = InMemoryEgressStore()
+        for channel_id, state, hls in (
+            ("aaa-slate", "FALLBACK_SLATE", True),
+            ("zzz-program", "ON_AIR", False),
+        ):
+            sinks = [
+                EgressSinkSpec(kind="udp-ts", label="Cable headend", uri="udp://10.0.0.9:5000")
+            ]
+            if hls:
+                sinks.append(EgressSinkSpec(kind="hls", label="Web", uri=f"/var/live/{channel_id}"))
+            store.upsert_config(
+                EgressConfig(channel_id=channel_id, enabled=True, slate_message="x", sinks=sinks)
+            )
+            store.write_state(
+                EgressStateRow(
+                    channel_id=channel_id,
+                    state=state,  # type: ignore[arg-type]
+                    updated_at=datetime.now(tz=UTC),
+                )
+            )
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        body = client.get("/api/public/live/current").json()
+        assert (body["state"], body["channel_id"]) == ("on_air_no_web_output", "zzz-program")
+
+        body = client.get("/api/public/live/current", params={"channel_id": "aaa-slate"}).json()
+        assert (body["state"], body["channel_id"]) == ("standing_by", "aaa-slate")
 
     def test_egress_on_air_without_hls_sink_is_on_air_no_web_output(
         self, client: TestClient

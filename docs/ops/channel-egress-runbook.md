@@ -416,7 +416,7 @@ delivery** (or `POST /api/staff/egress/channels/{id}/config/headend-profile`).
 | `telvue-hypercaster-ip` | H.264 720p30 5 Mbps, AC-3 192k | 8 Mbps; match the feed's Max Bit Rate | UDP unicast or multicast, port 1024–65535 | TelVue KB (feed setup, content prep, ports) |
 | `harmonic-spectrum-ts` | H.264 1080p30 8 Mbps, AC-3 192k | 10 Mbps | UDP unicast | Harmonic Spectrum X/XE datasheets |
 | `leightronix-file-drop` | H.264 720p file handoff | n/a | Watched folder | Leightronix UltraNEXUS-HD docs |
-| `local-rehearsal-hls` | Adds an `hls` web-preview sink; leaves the channel's encode and loudness untouched | n/a | Local folder (blank = `<egress work dir>/live-hls/<channel>`), served at `/media/live/<channel>/playlist.m3u8` | Not a cable delivery: RFC 8216 + ffmpeg `hls` muxer. Lets the resident portal play the channel with no headend and no CDN |
+| `local-rehearsal-hls` | Adds an `hls` web-preview sink; leaves the channel's encode and loudness untouched | n/a | Local folder (blank = `<egress work dir>/live-hls/<channel>`; a typed folder must be an absolute path under the egress work dir or `CIVICCAST_LIVE_HLS_ROOT` -- UNC, relative and elsewhere paths are refused because the folder is served publicly), served at `/media/live/<channel>/playlist.m3u8` | Not a cable delivery: RFC 8216 + ffmpeg `hls` muxer. Lets the resident portal play the channel with no headend and no CDN |
 
 Mechanics worth knowing:
 

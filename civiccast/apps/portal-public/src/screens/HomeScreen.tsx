@@ -326,7 +326,10 @@ export function HomeScreen() {
     }
   }
 
-  const liveManifest = data.live?.manifest_url
+  // The pipeline is up on its fallback slate, not a program. That is not
+  // "On air": the idle page stays up and the slate manifest is not autoplayed.
+  const liveStandingBy = data.live?.state === 'standing_by'
+  const liveManifest = liveStandingBy ? null : data.live?.manifest_url
   // On air on the headend, but the station has not enabled an HLS web output
   // for this channel. Say exactly that rather than "Offline" (beta.5
   // walkthrough: the channel was visibly on air while Home said Offline).
@@ -336,7 +339,9 @@ export function HomeScreen() {
       ? 'On air'
       : liveNoWebOutput
         ? 'On air (no web preview)'
-        : 'Offline'
+        : liveStandingBy
+          ? 'Standing by'
+          : 'Offline'
   const isPartial = state === 'ready' && errors.length > 0
   const isEmpty =
     state === 'ready' &&
@@ -387,7 +392,9 @@ export function HomeScreen() {
                 ? `${data.live.title ?? 'Broadcast'} is on air.`
                 : liveNoWebOutput
                   ? `${data.live?.title ?? 'The station'} is on air, but web preview is not enabled for this channel.`
-                  : 'No live broadcast is on air.'}
+                  : liveStandingBy
+                    ? 'The station is standing by. No program is on air right now.'
+                    : 'No live broadcast is on air.'}
             </p>
           </div>
           {liveManifest ? (

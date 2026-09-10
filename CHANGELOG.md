@@ -289,6 +289,37 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
     validated, for every cable transport); the Channels screen's Cable
     headend delivery card labels the field "Output folder (optional)", hides
     the mux-rate input, and confirms with "Enable web preview".
+  - Review round 2 on the above (four findings, all fixed, each with a
+    regression test proven red before the fix):
+    - The local manifest URL `/api/public/live/current` hands residents was
+      built on `CIVICCAST_LOCAL_MEDIA_BASE_URL`'s default
+      `http://127.0.0.1:8000`, so a resident on another LAN machine was sent
+      to their own loopback and playback died. It is now site-relative
+      (`/media/live/{channel}/playlist.m3u8`, the same target the Channels
+      screen prints); only an operator-set `CIVICCAST_LOCAL_MEDIA_BASE_URL`
+      makes it absolute.
+    - `POST /api/staff/egress/channels/{id}/config/headend-profile` only
+      upserted the config row, so an applied preset did nothing until the
+      service restarted. It now queues a `reload` for a running channel
+      (`STARTING` / `ON_AIR` / `TRANSITIONING` / `FALLBACK_SLATE`) in the same
+      request; a dark channel gets no command (its next `start` reads the new
+      config, and a `reload` on a dark channel would start it).
+    - `FALLBACK_SLATE` projected as `on_air`, so a slate read "On air" to
+      residents and hid the idle page. New fourth state `standing_by`
+      (`reason: "fallback slate, no program on air"`, `manifest_url` still
+      set when an `hls` sink exists). Resident Home renders it as "Standing
+      by" with "The station is standing by. No program is on air right now.",
+      keeps the idle page up, and does not autoplay the slate. A channel
+      airing a program now outranks one on its slate in the unfiltered pick.
+    - The `local-rehearsal-hls` preset accepted any absolute, UNC, or
+      relative folder, and `/media/live/{channel}/{path}` serves that folder
+      publicly with no authentication. `civiccast/egress/headend.py` now
+      resolves every local-HLS destination to an absolute path and refuses
+      it unless it is under the station's egress work dir
+      (`CIVICCAST_EGRESS_WORK_DIR`, else `%LOCALAPPDATA%\CivicCast\egress`) or
+      an explicit `CIVICCAST_LIVE_HLS_ROOT`; UNC paths, relative paths,
+      folders elsewhere, and `..` traversal out of the root are 422s naming
+      the allowed root. The stored sink URI is the normalised absolute path.
 
 - **Seamless rollover no longer runs to EOS when the outgoing leg overruns its
   projected end.** Sandbox soak 39d852e (2026-09-09) showed every government

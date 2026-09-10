@@ -9,16 +9,21 @@ encoding profiles) — never tailored to any one station.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
+
 import pytest
 
 from civiccast.egress.headend import (
     HEADEND_PROFILES,
     LOCAL_HLS_PROFILE_ID,
+    LOCAL_HLS_ROOT_ENV,
     LOCAL_HLS_SINK_LABEL,
     apply_headend_profile,
     default_local_hls_directory,
     get_headend_profile,
     list_headend_profiles,
+    resolve_local_hls_directory,
 )
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
 
@@ -230,9 +235,11 @@ def test_local_hls_profile_is_registered_and_honest() -> None:
 
 
 def test_apply_local_hls_profile_with_blank_destination_uses_station_work_dir(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("CIVICCAST_EGRESS_WORK_DIR", "/srv/civiccast/egress")
+    work_dir = tmp_path / "egress"
+    monkeypatch.setenv("CIVICCAST_EGRESS_WORK_DIR", str(work_dir))
+    monkeypatch.delenv(LOCAL_HLS_ROOT_ENV, raising=False)
     profile = get_headend_profile(LOCAL_HLS_PROFILE_ID)
     assert profile is not None
     base = _base_config(channel_id="government")
@@ -243,8 +250,8 @@ def test_apply_local_hls_profile_with_blank_destination_uses_station_work_dir(
     sink = config.sinks[0]
     assert sink.kind == "hls"
     assert sink.label == LOCAL_HLS_SINK_LABEL
-    assert sink.uri == default_local_hls_directory("government")
-    assert sink.uri.replace("\\", "/").endswith("/srv/civiccast/egress/live-hls/government")
+    assert Path(sink.uri) == Path(default_local_hls_directory("government")).resolve()
+    assert Path(sink.uri) == (work_dir / "live-hls" / "government").resolve()
     assert sink.loudness_regime == "streaming"
     assert "-muxrate" not in sink.extra_output_args
 
@@ -267,7 +274,9 @@ def test_apply_local_hls_profile_never_rewrites_encode_or_loudness() -> None:
     assert kinds == ["hls", "udp-ts"]
 
 
-def test_apply_local_hls_profile_replaces_a_previous_hls_sink_but_keeps_others() -> None:
+def test_apply_local_hls_profile_replaces_a_previous_hls_sink_but_keeps_others(
+    hls_root: Path,
+) -> None:
     # media_router serves ONE hls sink per channel, so re-applying with a new
     # folder swaps the old hls sink instead of stacking a second one.
     local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
@@ -276,35 +285,132 @@ def test_apply_local_hls_profile_replaces_a_previous_hls_sink_but_keeps_others()
         update={
             "sinks": [
                 EgressSinkSpec(kind="file", label="Proof", uri="build/proof.ts"),
-                EgressSinkSpec(kind="hls", label="Old web", uri="/tmp/old-hls"),
+                EgressSinkSpec(kind="hls", label="Old web", uri=str(hls_root / "old-hls")),
             ]
         }
     )
 
     config = apply_headend_profile(
-        base, local, destination_uri="/srv/new-hls", keep_existing_sinks=True
+        base, local, destination_uri=str(hls_root / "new-hls"), keep_existing_sinks=True
     )
 
     labels = sorted(sink.label for sink in config.sinks)
     assert labels == sorted(["Proof", LOCAL_HLS_SINK_LABEL])
     hls = next(sink for sink in config.sinks if sink.kind == "hls")
-    assert hls.uri == "/srv/new-hls"
+    assert Path(hls.uri) == (hls_root / "new-hls").resolve()
+
+
+@pytest.fixture
+def hls_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """An explicit ``CIVICCAST_LIVE_HLS_ROOT`` the tests may write under."""
+    root = tmp_path / "hls-root"
+    root.mkdir()
+    monkeypatch.setenv(LOCAL_HLS_ROOT_ENV, str(root))
+    return root
+
+
+@pytest.mark.parametrize(
+    "spell",
+    [
+        lambda root: str(root / "public"),  # plain absolute path
+        lambda root: (root / "public").as_uri(),  # file:///... uri
+        lambda root: str(root),  # the root itself
+        lambda root: str(root / "a" / ".." / "public"),  # traversal that stays inside
+    ],
+)
+def test_apply_local_hls_profile_accepts_folders_under_the_root(
+    hls_root: Path, spell: Callable[[Path], str]
+) -> None:
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    destination = spell(hls_root)
+    config = apply_headend_profile(_base_config(), local, destination_uri=destination)
+    assert config.sinks[-1].kind == "hls"
+    # Persisted as the normalised absolute path, never the raw spelling.
+    stored = Path(config.sinks[-1].uri)
+    assert stored.is_absolute()
+    assert stored == stored.resolve()
+    assert stored == hls_root.resolve() or stored.is_relative_to(hls_root.resolve())
+
+
+def test_blank_destination_lands_under_an_explicit_root(hls_root: Path) -> None:
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    config = apply_headend_profile(_base_config(channel_id="gov"), local, destination_uri="")
+    assert Path(config.sinks[-1].uri) == (hls_root / "gov").resolve()
+
+
+# ---------------------------------------------------------------------------
+# Review round 2, MAJOR 4: ``/media/live/{channel}/{file_path}`` is a PUBLIC,
+# unauthenticated file server for whatever directory the hls sink names. The
+# local-hls preset is the one write path into that sink that takes operator
+# input, so it must refuse anything outside the configured root: UNC paths,
+# relative paths, absolute paths elsewhere, and traversal out of the root.
+# Each case below failed open before ``resolve_local_hls_directory``.
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
     "destination",
     [
-        "/srv/civiccast/live/public",
-        "file:///srv/civiccast/live/public",
-        r"D:\civiccast\live\public",
+        r"\\fileserver\share\hls",
+        "//fileserver/share/hls",
+        "file://fileserver/share/hls",
     ],
 )
-def test_apply_local_hls_profile_accepts_local_folders(destination: str) -> None:
+def test_local_hls_rejects_unc_destinations(hls_root: Path, destination: str) -> None:
     local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
     assert local is not None
-    config = apply_headend_profile(_base_config(), local, destination_uri=destination)
-    assert config.sinks[-1].kind == "hls"
-    assert config.sinks[-1].uri == destination
+    with pytest.raises(ValueError, match="UNC/network path is not allowed"):
+        apply_headend_profile(_base_config(), local, destination_uri=destination)
+
+
+@pytest.mark.parametrize("destination", ["relative/hls", "./hls", "hls"])
+def test_local_hls_rejects_relative_destinations(hls_root: Path, destination: str) -> None:
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    with pytest.raises(ValueError, match="is a relative path"):
+        apply_headend_profile(_base_config(), local, destination_uri=destination)
+
+
+def test_local_hls_rejects_absolute_destination_outside_the_root(
+    hls_root: Path, tmp_path: Path
+) -> None:
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    elsewhere = tmp_path / "elsewhere"  # a sibling of the root, not under it
+    with pytest.raises(ValueError, match="outside the allowed root"):
+        apply_headend_profile(_base_config(), local, destination_uri=str(elsewhere))
+    # A drive/filesystem root is the worst case: it would serve the whole disk.
+    with pytest.raises(ValueError, match="outside the allowed root"):
+        apply_headend_profile(_base_config(), local, destination_uri=str(hls_root.anchor))
+
+
+@pytest.mark.parametrize(
+    "spell",
+    [
+        lambda root: str(root / ".." / "escape"),
+        lambda root: str(root / "inner" / ".." / ".." / "escape"),
+        lambda root: (root / ".." / "escape").as_uri(),
+    ],
+)
+def test_local_hls_rejects_traversal_out_of_the_root(
+    hls_root: Path, spell: Callable[[Path], str]
+) -> None:
+    local = get_headend_profile(LOCAL_HLS_PROFILE_ID)
+    assert local is not None
+    with pytest.raises(ValueError, match="outside the allowed root"):
+        apply_headend_profile(_base_config(), local, destination_uri=spell(hls_root))
+
+
+def test_resolve_local_hls_directory_is_the_containment_boundary(hls_root: Path) -> None:
+    # Direct unit check on the resolver the preset and the apply endpoint share.
+    inside = resolve_local_hls_directory(str(hls_root / "x" / ".." / "y"))
+    assert inside == (hls_root / "y").resolve()
+    with pytest.raises(ValueError, match="outside the allowed root"):
+        resolve_local_hls_directory(str(hls_root.parent))
+    with pytest.raises(ValueError, match="blank"):
+        resolve_local_hls_directory("   ")
 
 
 @pytest.mark.parametrize("destination", ["udp://239.0.0.1:5000", "srt://host:9000", "https://cdn"])

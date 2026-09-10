@@ -30,9 +30,10 @@ target, so applying it after a cable preset leaves the cable feed untouched.
 
 from __future__ import annotations
 
-from pathlib import PureWindowsPath
+import os
+from pathlib import Path, PureWindowsPath
 from typing import Annotated, Literal
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -57,22 +58,50 @@ LOCAL_HLS_SINK_LABEL = "Web preview (HLS)"
 # Directory name under the egress work dir that holds each channel's rolling
 # live-HLS window when the operator leaves the preset's folder blank.
 LOCAL_HLS_WORK_SUBDIR = "live-hls"
+# Optional explicit root for local-HLS output folders. When set, every
+# ``local-rehearsal-hls`` destination must live under it (and the blank-
+# destination default becomes ``<root>/<channel>``); when unset the station's
+# egress work dir is the root. See ``local_hls_root``.
+LOCAL_HLS_ROOT_ENV = "CIVICCAST_LIVE_HLS_ROOT"
+
+
+def local_hls_root() -> Path:
+    """The one directory a local-HLS preview folder is allowed to live under.
+
+    ``/media/live/{channel}/...`` is a public, unauthenticated file server
+    that serves whatever directory the channel's ``hls`` sink names, so the
+    preset that writes that sink must not accept an arbitrary path (review
+    round 2, MAJOR 4: a ``C:\\`` or UNC destination would have exposed that
+    tree to every resident). ``CIVICCAST_LIVE_HLS_ROOT`` names an explicit
+    root when a deployer wants the preview somewhere else; otherwise the root
+    is the station's egress work dir (``CIVICCAST_EGRESS_WORK_DIR``, else
+    ``%LOCALAPPDATA%\\CivicCast\\egress``) -- the folder the daemon already
+    owns. Imported lazily: ``egress.automation`` pulls the whole daemon in,
+    which this registry module must not do at import time.
+    """
+    configured = os.environ.get(LOCAL_HLS_ROOT_ENV, "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    from civiccast.egress.automation import default_egress_work_dir
+
+    return default_egress_work_dir().expanduser()
 
 
 def default_local_hls_directory(channel_id: str) -> str:
     """Default manifest + segment folder for a channel's local HLS preview.
 
-    Lives under the same egress work dir the daemon already resolves for its
-    plans, prepared segments and slates (``CIVICCAST_EGRESS_WORK_DIR``, else
-    ``%LOCALAPPDATA%\\CivicCast\\egress``), so the daemon (which writes it via
-    ``egress.hls_relay`` / ``egress.sinks.HlsSink``) and the API process (which
-    serves it via ``stream.media_router``) agree on one absolute path without
-    the operator typing one. Imported lazily: ``egress.automation`` pulls the
-    whole daemon in, which this registry module must not do at import time.
+    ``<egress work dir>/live-hls/<channel>`` -- the same egress work dir the
+    daemon already resolves for its plans, prepared segments and slates, so the
+    daemon (which writes it via ``egress.hls_relay`` / ``egress.sinks.HlsSink``)
+    and the API process (which serves it via ``stream.media_router``) agree on
+    one absolute path without the operator typing one. With an explicit
+    ``CIVICCAST_LIVE_HLS_ROOT`` the default is ``<root>/<channel>`` instead, so
+    the blank-destination path always satisfies :func:`local_hls_root`'s
+    containment rule.
     """
-    from civiccast.egress.automation import default_egress_work_dir
-
-    return str(default_egress_work_dir() / LOCAL_HLS_WORK_SUBDIR / channel_id)
+    if os.environ.get(LOCAL_HLS_ROOT_ENV, "").strip():
+        return str(local_hls_root() / channel_id)
+    return str(local_hls_root() / LOCAL_HLS_WORK_SUBDIR / channel_id)
 
 
 class HeadendProfile(BaseModel):
@@ -295,7 +324,10 @@ def _profiles() -> dict[str, HeadendProfile]:
                 recommended_loudness_regime="streaming",
                 operator_must_supply=[
                     "Nothing. Optionally a local folder for the manifest and segments; "
-                    "blank uses the station's egress work folder (live-hls/<channel>).",
+                    "blank uses the station's egress work folder (live-hls/<channel>). "
+                    "A typed folder must be an absolute path under that work folder "
+                    "(or under CIVICCAST_LIVE_HLS_ROOT): the resident portal serves it "
+                    "publicly, so network (UNC), relative and elsewhere paths are refused.",
                 ],
                 not_claimed=[
                     "Web preview only: nothing here reaches a cable headend, and it is "
@@ -406,6 +438,9 @@ def _apply_local_hls_profile(
 
     directory = destination_uri.strip() or default_local_hls_directory(config.channel_id)
     _validate_destination(profile, directory)
+    # Persist the contained, normalised absolute path (not the operator's raw
+    # spelling): the daemon writes and the media router serves exactly this.
+    directory = str(resolve_local_hls_directory(directory))
     sink = EgressSinkSpec(
         kind="hls",
         label=label,
@@ -425,6 +460,17 @@ def _apply_local_hls_profile(
 
 
 def _is_local_directory_uri(value: str) -> bool:
+    """Shape check only: a directory path or ``file://`` uri, not a network address.
+
+    Deliberately narrow. It answers "is this spelled like a local folder"; it
+    does NOT decide whether the folder may be served. UNC spellings fail here
+    too, but the containment decision (inside :func:`local_hls_root`, not
+    relative, not traversing out) is :func:`resolve_local_hls_directory`, which
+    ``_validate_destination`` runs right after this for every ``local-hls``
+    destination.
+    """
+    if _is_unc(value):
+        return False
     scheme = urlsplit(value).scheme.lower()
     if scheme in {"", "file"}:
         return True
@@ -432,15 +478,84 @@ def _is_local_directory_uri(value: str) -> bool:
     return bool(path.drive and path.root)  # ``C:\...`` parses as scheme "c"
 
 
+def _is_unc(value: str) -> bool:
+    """True for ``\\\\server\\share``, ``//server/share`` and ``file://server/...``."""
+
+    stripped = value.strip()
+    if stripped.startswith(("\\\\", "//")):
+        return True
+    parsed = urlsplit(stripped)
+    if parsed.scheme.lower() == "file" and parsed.netloc not in ("", "localhost"):
+        return True
+    # ``PureWindowsPath`` parses a UNC drive as ``\\\\server\\share``.
+    return PureWindowsPath(stripped).drive.startswith("\\\\")
+
+
+def _local_path_from_uri(value: str) -> str:
+    """``file:///C:/x`` -> ``C:/x``; ``file:///srv/x`` -> ``/srv/x``; plain paths pass."""
+
+    parsed = urlsplit(value.strip())
+    if parsed.scheme.lower() != "file":
+        return value.strip()
+    raw = unquote(parsed.path)
+    if len(raw) >= 3 and raw[0] == "/" and raw[2] == ":":
+        raw = raw[1:]  # strip the leading slash off a Windows drive path
+    return raw
+
+
+def resolve_local_hls_directory(destination_uri: str) -> Path:
+    """Resolve a ``local-hls`` destination to an absolute path under the root.
+
+    Raises ``ValueError`` (the apply endpoint maps it to 422) for a UNC path, a
+    relative path, or an absolute path outside :func:`local_hls_root`. Every
+    message starts with "local HLS folder" and says what is wrong, so the
+    Channels screen's error line reads as an instruction, not a stack trace.
+    ``/media/live/{channel}/...`` serves this folder to the public with no
+    authentication, so this is the containment boundary for that file server.
+    """
+    raw = destination_uri.strip()
+    if not raw:
+        raise ValueError("local HLS folder: the destination is blank")
+    if _is_unc(raw):
+        raise ValueError(
+            "local HLS folder: a UNC/network path is not allowed; use a folder on "
+            f"this station under {local_hls_root()}"
+        )
+    if not _is_local_directory_uri(raw):
+        raise ValueError(
+            "local HLS folder: the destination must be a directory path or file:// uri, "
+            "not a network address"
+        )
+    candidate = Path(_local_path_from_uri(raw)).expanduser()
+    if not candidate.is_absolute():
+        raise ValueError(
+            f"local HLS folder: {raw!r} is a relative path; use an absolute folder "
+            f"under {local_hls_root()}"
+        )
+    root = local_hls_root().resolve()
+    resolved = candidate.resolve()
+    if resolved != root and not resolved.is_relative_to(root):
+        raise ValueError(
+            f"local HLS folder: {raw!r} is outside the allowed root {root}; the resident "
+            "portal serves this folder publicly, so it must stay under the station's "
+            f"egress work dir (or the {LOCAL_HLS_ROOT_ENV} root)"
+        )
+    return resolved
+
+
 def _validate_destination(profile: HeadendProfile, destination_uri: str) -> None:
     parsed = urlsplit(destination_uri)
     scheme = parsed.scheme.lower()
     if profile.transport == "local-hls":
-        if not _is_local_directory_uri(destination_uri):
+        # A UNC spelling is let through to resolve_local_hls_directory so the
+        # operator reads the specific "UNC/network path is not allowed" line
+        # rather than the generic shape complaint.
+        if not _is_unc(destination_uri) and not _is_local_directory_uri(destination_uri):
             raise ValueError(
                 f"profile {profile.profile_id} writes HLS to a local folder; "
                 "the destination must be a directory path or file:// uri, not a network address"
             )
+        resolve_local_hls_directory(destination_uri)
         return
     if profile.transport == "file-drop":
         if scheme not in {"", "file"}:

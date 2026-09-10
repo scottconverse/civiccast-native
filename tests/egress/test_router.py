@@ -1043,3 +1043,94 @@ def test_apply_cable_profile_via_api_still_requires_destination(client: TestClie
     )
     assert r.status_code == 422
     assert "udp" in r.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Review round 2, BLOCKER 2: applying a headend preset only upserted the config
+# row. The daemon reads a channel's sinks when it builds a pipeline, so on a
+# running channel the preset did nothing until the service restarted. The
+# route now queues a ``reload`` for a running channel in the same request.
+# ---------------------------------------------------------------------------
+
+
+def _write_egress_state(store: PostgresEgressStore, channel_id: str, state: str) -> None:
+    store.write_state(
+        EgressStateRow(
+            channel_id=channel_id,
+            state=state,  # type: ignore[arg-type]
+            updated_at=datetime.now(UTC),
+        )
+    )
+
+
+@pytest.mark.parametrize("state", ["ON_AIR", "FALLBACK_SLATE", "STARTING", "TRANSITIONING"])
+def test_apply_headend_profile_queues_a_reload_for_a_running_channel(
+    client: TestClient, store: PostgresEgressStore, state: str
+) -> None:
+    assert (
+        client.put("/api/staff/egress/channels/gov/config", json=_config_payload()).status_code
+        == 200
+    )
+    _write_egress_state(store, "gov", state)
+
+    r = client.post(
+        "/api/staff/egress/channels/gov/config/headend-profile",
+        json={"profile_id": "generic-udp-spts", "destination_uri": "udp://10.0.0.9:5000"},
+    )
+
+    assert r.status_code == 200, r.text
+    pending = store.pop_pending_commands("gov")
+    assert [cmd.action for cmd in pending] == ["reload"]
+    assert pending[0].channel_id == "gov"
+    assert pending[0].issued_by == "operator-token-a"
+    assert pending[0].command_id.startswith("headend-profile-reload-")
+    # Drained once: nothing left for the daemon's next cycle.
+    assert store.pop_pending_commands("gov") == []
+
+
+def test_apply_local_hls_profile_queues_a_reload_for_a_running_channel(
+    client: TestClient, store: PostgresEgressStore
+) -> None:
+    # The web-preview preset is the one the beta.5 walkthrough applies while
+    # the channel is already on its slate; it must land on air without a restart.
+    _write_egress_state(store, "gov", "FALLBACK_SLATE")
+
+    r = client.post(
+        "/api/staff/egress/channels/gov/config/headend-profile",
+        json={"profile_id": "local-rehearsal-hls"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert [cmd.action for cmd in store.pop_pending_commands("gov")] == ["reload"]
+
+
+@pytest.mark.parametrize("state", [None, "STOPPED", "STOPPING", "DRAINING", "ERROR"])
+def test_apply_headend_profile_queues_nothing_for_a_dark_channel(
+    client: TestClient, store: PostgresEgressStore, state: str | None
+) -> None:
+    # A reload on a dark channel would START it (the daemon falls through to
+    # _start when no worker is alive); starting is an operator decision.
+    if state is not None:
+        _write_egress_state(store, "gov", state)
+
+    r = client.post(
+        "/api/staff/egress/channels/gov/config/headend-profile",
+        json={"profile_id": "generic-udp-spts", "destination_uri": "udp://10.0.0.9:5000"},
+    )
+
+    assert r.status_code == 200, r.text
+    assert store.pop_pending_commands("gov") == []
+
+
+def test_apply_headend_profile_rejected_destination_queues_nothing(
+    client: TestClient, store: PostgresEgressStore
+) -> None:
+    _write_egress_state(store, "gov", "ON_AIR")
+
+    r = client.post(
+        "/api/staff/egress/channels/gov/config/headend-profile",
+        json={"profile_id": "comcast-mtd-sd", "destination_uri": "udp://10.0.0.5:5000"},
+    )
+
+    assert r.status_code == 422
+    assert store.pop_pending_commands("gov") == []

@@ -1284,7 +1284,7 @@ function HeadendDeliveryPanel({
             onChange={(e) => setDestination(e.target.value)}
             placeholder={
               isLocalHls
-                ? "Leave blank to use the station's egress work folder"
+                ? "Leave blank to use the station's egress work folder (a typed folder must be under it)"
                 : isFileDrop
                   ? 'file:///D:/headend-drop/channel.ts'
                   : 'udp://239.255.0.1:5000'
