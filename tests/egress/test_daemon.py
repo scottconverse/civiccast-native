@@ -4888,10 +4888,14 @@ def test_start_tracks_not_releases_the_prepared_plan_for_a_force_fallback_slate(
     assert active_dir not in released
     assert daemon.live_prepared_plan_dirs("gov") == frozenset({active_dir})
 
-    # Once THAT worker exits (a clean exit here, e.g. an operator stop), the
+    # Once THAT worker exits (an operator stop here -- a bare clean exit of a
+    # FALLBACK_SLATE worker now relaunches onto the still-resolvable live
+    # source instead of going dark, see
+    # test_slate_eos_with_a_due_program_relaunches_instead_of_stopping), the
     # slate's own directory is released like any other active plan.
-    started[-1].returncode = 0
+    store.enqueue_command(_command("stop"))
     daemon.process_once("gov")
+    assert store.read_state("gov").state == "STOPPED"
     assert active_dir in released
     assert daemon.live_prepared_plan_dirs("gov") == frozenset()
 
@@ -4933,8 +4937,12 @@ def test_start_tracks_not_releases_the_prepared_plan_for_a_caption_readiness_ref
     assert released == []  # the slate's own directory (plan-1) is airing, not released
     assert daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-1"})
 
-    started[0].returncode = 0  # the slate worker exits cleanly
+    # An operator stop (a bare clean exit of a FALLBACK_SLATE worker whose
+    # program plan still resolves now relaunches instead of going dark --
+    # see the force_fallback_slate test above).
+    store.enqueue_command(_command("stop"))
     daemon.process_once("gov")
+    assert store.read_state("gov").state == "STOPPED"
     assert released == [tmp_path / "plan-1"]
     assert daemon.live_prepared_plan_dirs("gov") == frozenset()
 
@@ -5692,3 +5700,270 @@ def test_process_once_isolates_a_poll_failure_from_the_rest_of_the_pass(
     state = store.read_state("gov")
     assert state is not None
     assert state.state == "ON_AIR"
+
+
+# ---------------------------------------------------------------------------
+# Clean-machine walkthrough of beta.5 (2026-09-09 MDT): a finite fallback
+# slate reaching EOS at a program boundary went STOPPED instead of airing the
+# due program, and a manual Start read Stopped until the prepare finished.
+# ---------------------------------------------------------------------------
+
+
+def _slate_then_program_daemon(
+    tmp_path: Path,
+    *,
+    program_plan: list[EgressSourcePlan | None],
+    processes: list[_FakeProcess],
+    started: list[_FakeProcess],
+    clock: list[float],
+    source_preparer: Callable[[EgressSourcePlan, EgressConfig], SourcePreparationReport]
+    | None = None,
+) -> EgressDaemon:
+    """A daemon whose program provider hands out ``program_plan[0]`` (mutable
+    by the test) and whose fallback provider always yields the slate plan."""
+
+    return EgressDaemon(
+        InMemoryEgressStore(),
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: program_plan[0],
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+        source_preparer=source_preparer,
+        monotonic=lambda: clock[0],
+        restart_cooldown_seconds=0.0,
+    )
+
+
+def test_slate_eos_with_a_due_program_relaunches_instead_of_stopping(tmp_path: Path) -> None:
+    """Walkthrough 22:00:23: slate worker exits 0 at the boundary (its plan is
+    finite to the next due item), no reload is pending (the automation's
+    reload prepare was still running), and the program provider now yields
+    the due program -- the channel must go ON_AIR on that program, not
+    STOPPED, with the slate->program transition recorded."""
+    program_plan: list[EgressSourcePlan | None] = [None]
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    clock = [1000.0]
+    daemon = _slate_then_program_daemon(
+        tmp_path, program_plan=program_plan, processes=processes, started=started, clock=clock
+    )
+    store = daemon._store  # type: ignore[attr-defined]
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    daemon.process_once("gov")  # nothing due -> FALLBACK_SLATE (process 111)
+    assert store.read_state("gov").state == "FALLBACK_SLATE"
+
+    program_plan[0] = _source_plan_with_label(tmp_path, "Council meeting")  # now due
+    started[0].returncode = 0  # the finite slate plan reached EOS
+    daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Council meeting"
+    assert state.pid == 222
+    assert [p.pid for p in started] == [111, 222]
+    transition = store.recent_proof_events("gov", 1)[0]
+    assert "exited fallback slate" in transition.machine_summary
+    assert store.recent_health("gov", 1)[0].state == "ON_AIR"
+
+
+def test_slate_eos_with_nothing_due_still_stops(tmp_path: Path) -> None:
+    """Belt only: with no program to relaunch onto the clean-exit branch
+    behaves exactly as before (STOPPED, no last_error, no second worker)."""
+    program_plan: list[EgressSourcePlan | None] = [None]
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    clock = [1000.0]
+    daemon = _slate_then_program_daemon(
+        tmp_path, program_plan=program_plan, processes=processes, started=started, clock=clock
+    )
+    store = daemon._store  # type: ignore[attr-defined]
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    daemon.process_once("gov")
+    assert store.read_state("gov").state == "FALLBACK_SLATE"
+
+    started[0].returncode = 0
+    daemon.process_once("gov")
+
+    state = store.read_state("gov")
+    assert state.state == "STOPPED"
+    assert state.last_error is None
+    assert [p.pid for p in started] == [111]
+
+
+def test_slate_eos_relaunch_is_capped_to_one_per_boundary(tmp_path: Path) -> None:
+    """The program plan resolves but its prepare keeps failing, so ``_start``
+    falls straight back to a (finite) slate that ends at once. The first slate
+    EOS relaunches; the second inside the 30s window must NOT relaunch again
+    -- STOPPED with a last_error saying why -- and once the window has
+    passed a fresh boundary gets its one relaunch again."""
+    program_plan: list[EgressSourcePlan | None] = [None]
+    processes = [_FakeProcess(pid=pid) for pid in (111, 222, 333)]
+    started: list[_FakeProcess] = []
+    clock = [1000.0]
+
+    def prepare(source_plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
+        if source_plan.segments[0].label != "Fallback slate":
+            raise SourcePrepareError("conform failed: unsupported codec")
+        return SourcePreparationReport(source_plan=source_plan, records=())
+
+    daemon = _slate_then_program_daemon(
+        tmp_path,
+        program_plan=program_plan,
+        processes=processes,
+        started=started,
+        clock=clock,
+        source_preparer=prepare,
+    )
+    store = daemon._store  # type: ignore[attr-defined]
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    daemon.process_once("gov")  # FALLBACK_SLATE (111)
+    program_plan[0] = _source_plan_with_label(tmp_path, "Council meeting")
+
+    started[0].returncode = 0  # boundary: slate EOS #1 -> one automatic relaunch
+    clock[0] += 5.0
+    daemon.process_once("gov")
+    state = store.read_state("gov")
+    assert state.state == "FALLBACK_SLATE"  # the program's prepare failed -> slate again
+    assert state.pid == 222
+    assert "conform failed" in (state.last_error or "")
+
+    started[1].returncode = 0  # slate EOS #2, 10s later: the cap refuses a loop
+    clock[0] += 10.0
+    daemon.process_once("gov")
+    state = store.read_state("gov")
+    assert state.state == "STOPPED"
+    assert "stopped instead of looping" in (state.last_error or "")
+    assert [p.pid for p in started] == [111, 222]
+    assert store.recent_health("gov", 1)[0].state == "STOPPED"
+
+    # A later boundary (past the window) gets its own single relaunch.
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="start",
+            issued_at=datetime(2026, 6, 5, 13, 0, tzinfo=UTC),
+            issued_by="operator",
+            command_id="cmd-restart",
+        )
+    )
+    program_plan[0] = None
+    daemon.process_once("gov")  # FALLBACK_SLATE again (333) via the operator start
+    assert store.read_state("gov").state == "FALLBACK_SLATE"
+    program_plan[0] = _source_plan_with_label(tmp_path, "Council meeting")
+    processes.append(_FakeProcess(pid=444))
+    started[2].returncode = 0
+    clock[0] += 60.0
+    daemon.process_once("gov")
+    assert store.read_state("gov").pid == 444  # relaunched once more
+
+
+def test_slate_eos_after_an_operator_drain_does_not_relaunch(tmp_path: Path) -> None:
+    """A drain is the operator taking the channel off air on purpose; the
+    slate ending under a drain must still land STOPPED even when a program
+    is due."""
+    program_plan: list[EgressSourcePlan | None] = [None]
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    clock = [1000.0]
+    daemon = _slate_then_program_daemon(
+        tmp_path, program_plan=program_plan, processes=processes, started=started, clock=clock
+    )
+    store = daemon._store  # type: ignore[attr-defined]
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    daemon.process_once("gov")
+    assert store.read_state("gov").state == "FALLBACK_SLATE"
+
+    program_plan[0] = _source_plan_with_label(tmp_path, "Council meeting")
+    store.enqueue_command(_command("drain"))
+    daemon.process_once("gov")  # DRAINING; the fake process keeps running
+    assert store.read_state("gov").state == "DRAINING"
+    started[0].returncode = 0
+    daemon.process_once("gov")
+
+    assert store.read_state("gov").state == "STOPPED"
+    assert [p.pid for p in started] == [111]
+
+
+def test_start_writes_starting_with_the_target_label_before_source_preparation(
+    tmp_path: Path,
+) -> None:
+    """Walkthrough 22:00:39-22:01:03: a manual Start read Stopped for ~20s
+    because ``_start`` wrote nothing until the preparer returned. The row
+    must already say STARTING (with the program's label, no pid) at the
+    moment the preparer is called."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="STOPPED",
+            current_source_label=None,
+            current_proof_event_id=None,
+            updated_at=datetime(2026, 6, 5, 11, 0, tzinfo=UTC),
+            pid=None,
+        )
+    )
+    store.enqueue_command(_command())
+    seen_at_prepare: list[EgressStateRow | None] = []
+
+    def prepare(source_plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
+        seen_at_prepare.append(store.read_state("gov"))
+        return SourcePreparationReport(source_plan=source_plan, records=())
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan_with_label(
+            tmp_path, "Council meeting"
+        ),
+        source_preparer=prepare,
+        ffmpeg_starter=lambda _args: _FakeProcess(pid=111),
+    )
+    daemon.process_once("gov")
+
+    assert len(seen_at_prepare) == 1
+    row = seen_at_prepare[0]
+    assert row is not None
+    assert row.state == "STARTING"
+    assert row.current_source_label == "Council meeting"
+    assert row.pid is None
+    final = store.read_state("gov")
+    assert final.state == "ON_AIR"
+    assert final.pid == 111
+
+
+def test_start_leaves_the_early_slate_flip_state_in_place_during_preparation(
+    tmp_path: Path,
+) -> None:
+    """The early flips to FALLBACK_SLATE (no program plan here) already carry
+    a last_error explaining the slate; the new STARTING write must not
+    overwrite that while the slate itself is prepared."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    seen_at_prepare: list[EgressStateRow | None] = []
+
+    def prepare(source_plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
+        seen_at_prepare.append(store.read_state("gov"))
+        return SourcePreparationReport(source_plan=source_plan, records=())
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        source_preparer=prepare,
+        ffmpeg_starter=lambda _args: _FakeProcess(pid=111),
+    )
+    daemon.process_once("gov")
+
+    assert len(seen_at_prepare) == 1
+    row = seen_at_prepare[0]
+    assert row is not None
+    assert row.state == "FALLBACK_SLATE"
+    assert "No valid source plan" in (row.last_error or "")
+    assert store.read_state("gov").state == "FALLBACK_SLATE"

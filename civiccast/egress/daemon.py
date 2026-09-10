@@ -150,6 +150,23 @@ def _default_independent_slate_strategy() -> EncoderStrategy | None:
 # intended anti-churn behavior (a persistently-dead source must not hot-loop).
 _RESTART_COOLDOWN_SECONDS = 15.0
 _RESTART_STREAK_RESET_UPTIME_S = 60.0
+# Clean-machine walkthrough of beta.5 (2026-09-09 MDT): a channel airing the
+# FALLBACK SLATE for a program committed at 22:00 showed STOPPED at 22:00:23
+# and stayed dark until an operator pressed Start. The slate plan is finite to
+# the next due item (source_plan.py); ChannelAutomationService's slate replan
+# enqueued the reload at the boundary, but the reload's prepare (the first-ever
+# conform of the clip) ran synchronously on the automation thread, the slate
+# worker reached EOS meanwhile and exited 0, and _poll_process's clean-exit
+# branch -- which had no pending reload to bind to -- wrote STOPPED. Automation
+# bails on STOPPED and only auto_start (UI default off) restarts a dark
+# channel. That branch now relaunches onto the due program itself (see
+# _poll_process) -- at most ONCE per boundary: a second clean slate exit inside
+# this window means the program plan itself is not holding air (its own
+# prepare keeps falling back to a finite slate that ends at once), and the
+# channel goes STOPPED with a last_error saying so rather than looping. Sized
+# to match ChannelAutomationService._RELOAD_RETRY_COOLDOWN_SECONDS (30s), the
+# pacing the slate replan itself already honours.
+_SLATE_EOS_RELAUNCH_COOLDOWN_SECONDS = 30.0
 # Emit an escalation proof event at this restart streak and every multiple after
 # (the S8 alerting hook — the actual alert dispatch is wired when S8 lands, build
 # step 4; until then the escalation is durably recorded as a proof event).
@@ -602,6 +619,11 @@ class EgressDaemon:
             default_cooldown_seconds=restart_cooldown_seconds, clock=self._monotonic
         )
         self._restart_streak: dict[str, int] = {}
+        # Last _monotonic() a finite fallback-slate plan reaching EOS was
+        # automatically relaunched onto the due program by _poll_process's
+        # clean-exit branch -- the one-relaunch-per-boundary cap (see
+        # _SLATE_EOS_RELAUNCH_COOLDOWN_SECONDS).
+        self._slate_eos_relaunch_at: dict[str, float] = {}
         # Item 82 (extended by item 84): last _monotonic() the crash-loop
         # streak was actually incremented for a "slow start" exit --
         # GST_PREROLL_TIMEOUT_EXIT_CODE or GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE
@@ -1018,6 +1040,23 @@ class EgressDaemon:
                 raise ConfigInvalidError(
                     f"Source plan channel {source_plan.channel_id!r} does not match "
                     f"requested channel {channel_id!r}."
+                )
+            if not using_fallback_slate:
+                # Clean-machine walkthrough of beta.5 (2026-09-09 MDT): an
+                # operator Start at 22:00:39 still read Stopped at 22:00:41
+                # and 22:00:47 and only flipped to ON AIR at 22:01:03 -- the
+                # preparer below (a first-ever conform of the clip) ran for
+                # ~20s with NO state written yet, so the row kept whatever it
+                # said before (STOPPED). Publish STARTING with the target
+                # source label BEFORE preparation so the screen never says
+                # Stopped during a start. The early slate flips above already
+                # wrote FALLBACK_SLATE with their own last_error -- leave those
+                # in place (the slate's prepare is a cache hit anyway).
+                self._write_state(
+                    channel_id,
+                    "STARTING",
+                    current_source_label=source_plan.segments[0].label,
+                    pid=None,
                 )
             # Hostile-review follow-up, item 4: None unless the preparer
             # actually reports a discrete per-plan directory for the plan
@@ -1832,6 +1871,11 @@ class EgressDaemon:
             )
             return
         if returncode == 0:
+            stop_error: str | None = None
+            if not was_draining:
+                relaunched, stop_error = self._relaunch_slate_eos_onto_due_program(channel_id)
+                if relaunched:
+                    return
             self._reset_restart_tracking(channel_id)  # clean exit — fresh slate
             self._clear_cg_overlay_proof(channel_id, "STOPPED")
             self._close_as_run(channel_id)  # the channel left air — close the open row
@@ -1842,7 +1886,7 @@ class EgressDaemon:
                 self._ts_relay.stop_channel(channel_id)
             if was_draining and self._hls_relay is not None:
                 self._hls_relay.stop_channel(channel_id)
-            self._write_state(channel_id, "STOPPED")
+            self._write_state(channel_id, "STOPPED", last_error=stop_error)
             self._append_health(channel_id, "STOPPED", sink_connected={})
             # Round 5 (coordinator review): a clean exit with no pending
             # reload is genuinely off-air -- unlike the pending_reload
@@ -1883,6 +1927,75 @@ class EgressDaemon:
         # branch above -- a terminal ERROR is off-air and bypasses _stop,
         # so this route must clear the entry itself.
         self._rollover_plan_end_at.pop(channel_id, None)
+
+    def _relaunch_slate_eos_onto_due_program(self, channel_id: str) -> tuple[bool, str | None]:
+        """A finite FALLBACK_SLATE plan reached EOS (clean exit, no pending
+        reload): relaunch onto the program that is now due instead of going
+        dark. Returns ``(relaunched, stop_error)``: ``(True, None)`` when
+        ``_start`` was invoked (the caller returns; ``_start`` owns every
+        state write from here), otherwise ``(False, reason)`` where ``reason``
+        is ``None`` for the ordinary STOPPED outcome (the channel was not on
+        slate, or no program is due) and a human-readable ``last_error`` when
+        the one-relaunch-per-boundary cap refused a second relaunch.
+
+        See ``_SLATE_EOS_RELAUNCH_COOLDOWN_SECONDS`` for the walkthrough that
+        found this. The automation's slate replan normally reloads BEFORE the
+        slate ends; this is the belt for the case where that reload's own
+        synchronous prepare (a cold conform) outlasts the slate's horizon and
+        the worker exits underneath it.
+        """
+        state = self._store.read_state(channel_id)
+        if state is None or state.state != "FALLBACK_SLATE":
+            return False, None
+        now = self._monotonic()
+        last_relaunch_at = self._slate_eos_relaunch_at.get(channel_id)
+        if (
+            last_relaunch_at is not None
+            and now - last_relaunch_at < _SLATE_EOS_RELAUNCH_COOLDOWN_SECONDS
+        ):
+            self._slate_eos_relaunch_at.pop(channel_id, None)
+            reason = (
+                "Fallback slate reached its end again within "
+                f"{_SLATE_EOS_RELAUNCH_COOLDOWN_SECONDS:.0f}s of an automatic relaunch onto "
+                "the due program; the program's own start keeps falling back to slate, so "
+                "the channel was stopped instead of looping. Check the program's media, "
+                "then start the channel."
+            )
+            _LOG.warning("channel %s: %s", channel_id, reason)
+            return False, reason
+        try:
+            source_plan = self._source_plan_provider(channel_id)
+        except SourcePrepareError as exc:
+            _LOG.info(
+                "channel %s: fallback slate ended but the due program is not playable yet "
+                "(%s); leaving the channel stopped.",
+                channel_id,
+                exc,
+            )
+            return False, None
+        if source_plan is None or source_plan.channel_id != channel_id:
+            return False, None
+        self._slate_eos_relaunch_at[channel_id] = now
+        _LOG.info(
+            "channel %s: fallback slate reached its end with a scheduled program due; "
+            "relaunching onto %r instead of stopping.",
+            channel_id,
+            source_plan.segments[0].label if source_plan.segments else "-",
+        )
+        # Mirror the pending-reload restart above: the row still carries the
+        # exited slate worker's pid -- clear it before the fresh start.
+        self._write_state(
+            channel_id,
+            "STARTING",
+            current_source_label=state.current_source_label,
+            pid=None,
+        )
+        self._start(
+            channel_id,
+            previous_state=state.state,
+            previous_source_label=state.current_source_label,
+        )
+        return True, None
 
     def _relaunch_after_crash(
         self,

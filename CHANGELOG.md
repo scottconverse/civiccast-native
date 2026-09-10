@@ -248,6 +248,46 @@ PostgreSQL data directory) is untouched by the halt and by the workaround.
   and `tests/native/test_provision_cli.py`
   (`test_main_adopts_a_station_with_a_legacy_august_journal_instead_of_halting`,
   `test_main_reuses_registry_credential_with_a_legacy_august_journal_present`).
+- **A finite fallback-slate plan reaching its end relaunches onto the due
+  program instead of stopping the channel, and a start says STARTING before
+  it prepares.** Clean-machine walkthrough of beta.5 (2026-09-09 MDT): the
+  Public Channel was on air on the fallback slate from 21:52 (UDP egress)
+  with an asset committed for a 22:00 five-minute slot. At 22:00:23 the
+  Channels screen showed STOPPED (not TRANSITIONING/STARTING) with the item
+  still Committed/Queued; a manual Start at 22:00:39 still read Stopped at
+  22:00:41 and 22:00:47 and only went ON AIR with the asset at 22:01:03. The
+  slate plan is finite to the next due item (`source_plan.py`), the
+  automation's slate replan enqueued the reload at the boundary, but the
+  reload's source preparation (the first-ever conform of the clip to the
+  720p profile) runs synchronously on the automation thread; the slate
+  worker reached EOS underneath it and exited 0, and `EgressDaemon.
+  _poll_process`'s clean-exit branch -- with no pending reload to bind to --
+  wrote STOPPED, which the automation then treats as "off air on purpose"
+  (only `auto_start`, off by default in the UI, restarts a dark channel).
+  Two changes in `civiccast/egress/daemon.py`: (1) the clean-exit branch now
+  asks the source-plan provider first when the exited worker was airing
+  FALLBACK_SLATE and, if a program plan resolves, relaunches onto it through
+  `_start` (recording the slate-to-program transition) -- at most once per
+  boundary: a second clean slate exit inside 30s (the same pacing as the
+  automation's slate-replan cooldown) means the program's own start keeps
+  falling back to a slate that ends at once, so the channel goes STOPPED
+  with a `last_error` saying so rather than looping; a drain still stops.
+  (2) `_start` writes STARTING with the target source label before source
+  preparation, so a start never reads Stopped while a cold conform runs
+  (the early fallback-slate flips keep their own FALLBACK_SLATE row and
+  `last_error`). Warming the conform cache at Schedule commit was NOT done:
+  `SourcePreparer` exposes only `prepare`/`release`, lives in the egress
+  control-plane process, and nothing in the commit path (`civiccast/
+  schedule/commit_service.py`) can reach it without new plumbing. The
+  Channels screen's `egress-health` query already polls on `POLL_MS`;
+  nothing changed there. Covered by
+  `tests/egress/test_daemon.py::test_slate_eos_with_a_due_program_relaunches_instead_of_stopping`,
+  `::test_slate_eos_relaunch_is_capped_to_one_per_boundary`,
+  `::test_slate_eos_with_nothing_due_still_stops`,
+  `::test_slate_eos_after_an_operator_drain_does_not_relaunch`,
+  `::test_start_writes_starting_with_the_target_label_before_source_preparation`
+  and `::test_start_leaves_the_early_slate_flip_state_in_place_during_preparation`.
+
 - **Seamless rollover no longer runs to EOS when the outgoing leg overruns its
   projected end.** Sandbox soak 39d852e (2026-09-09) showed every government
   channel rollover taking the 20s planned restart: with a boundary-aligned
