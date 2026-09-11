@@ -1,5 +1,15 @@
 # CivicCast Native — full project status and cold-start handoff
 
+> **2026-09-10 latest: third CI cycle complete at 8653b56f.** Exact count repair
+> passed local policy, Linux unit/randomized and Windows tests; claims PASS.
+> Final checks: 20 success, 3 skipped, 1 cancelled. Mutation hit its two-hour
+> limit after clean-test/forced-fail phases completed and mutation execution
+> reached a partial 8932/9795 counter. No complete mutation result set or score.
+> See `docs/evidence/f1-ci-repair-2026-09-10/CI-THIRD-RESULT.md`.
+> No CI remains in flight. The authorized cycle is complete; no extra push/rerun.
+> Main, F-2 and release restrictions are unchanged. The old kit remains blocked.
+> All older status/action paragraphs below are historical checkpoints.
+
 > **2026-09-10 latest: approved native count correction applied and locally verified.**
 > Proof/source anchor: `104e722f9e15d19828736a10090e8b508778faef`. Full policy:
 > 1935 passed, 5 skipped. Fresh collections: 1823 pure / 2024 total / 2021 Windows

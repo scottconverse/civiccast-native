@@ -1,5 +1,58 @@
 # HANDOFF
 
+## 2026-09-10 third CI cycle finished: count fix passes, mutation timed out
+
+Current remote PR / CI HEAD: `8653b56f8623cb5fa8e3855f26b64296e814526f`.
+Branch: `fix/f1-reload-readiness-20260910`. PR #219 is OPEN.
+This local documentation checkpoint follows the pushed SHA; use
+`git rev-parse HEAD` for its own checkout HEAD. Last published version is beta.5.
+Main remains `d77b634e3685de8fb077956b8099fc92c3927243`.
+
+All 12 workflows finished: 11 success, 1 cancelled. PR checks: 20 success,
+3 skipped, 1 cancelled (mutation appears as fail in the check UI).
+ci-test 34558549832 and Windows reproducibility 34558549734 PASS.
+deterministic-detectors 34558549841: randomized PASS; mutation job exceeded
+GitHub's two-hour limit at 2026-09-11T05:28:31Z (11:28 PM Mountain September 10).
+Its clean-test and forced-fail phases completed and mutation execution began;
+last partial status counter was 8932/9795. No complete result set or score.
+
+Unit: 10145 passed / 68 skipped / 5 deselected, coverage 80.15%; native pure:
+1823 passed / 201 deselected. Windows: 2021 passed / zero skipped / 3 deselected.
+Claims verifier PASS; all 125 claims-policy and 7 state-guard cases passed.
+Randomized: 10149 passed / 69 skipped, then native pure 1823 passed /
+201 deselected; seed 2673792843. Reproducibility: 9633 matching files /
+482655736 bytes, clean pushed source. These are CI checks, not kit acceptance.
+
+Full evidence and limitations: `docs/evidence/f1-ci-repair-2026-09-10/CI-THIRD-RESULT.md`.
+Local exact-count proof anchor: `104e722f9e15d19828736a10090e8b508778faef`.
+Local full policy: 1935 passed, 5 skipped; counts 1823 / 2024 / 2021.
+The authorized single push/cycle is complete. No further push or rerun is
+authorized. The monitor finished; no CI, tests or agent work remains in flight.
+Next proposed local ticket is the existing F-2 three-channel blocked-prepare
+regression, subject to the owner's next per-action authorization. F-2 is unstarted.
+No merge, candidate, Gate A, soak, service restart, tag or publication occurred.
+The old 795cdab5 beta.6 kit is blocked. Older checkpoints below are historical.
+
+## 2026-09-10 third push: CI in progress
+
+Current HEAD / remote PR / CI SHA: `8653b56f8623cb5fa8e3855f26b64296e814526f`.
+Branch: `fix/f1-reload-readiness-20260910`. PR #219 remains OPEN.
+Scott's authorized single third push succeeded. New runs started at
+2026-09-11T03:28:10Z (2026-09-10 Mountain): ci-test 34558549832,
+deterministic-detectors 34558549841, Windows reproducibility 34558549734.
+ci-test and Windows reproducibility PASS. Randomized suite PASS. Only mutation-report
+remains pending. Unit 10145 passed / 68 skipped / 5 deselected (coverage 80.15%);
+native pure1823 passed / 201 deselected; Windows2021 passed / 3 deselected, zero
+skips. Claims verifier PASS. Randomized10149 passed / 69 skipped plus native
+pure1823 passed / 201 deselected, seed2673792843. Reproducibility matches9633
+files /482655736 bytes. All receipts identify pushed SHA8653b56f. No mutation
+score or final verdict is claimed. Local proof anchor is104e722f; details in
+`docs/evidence/f1-ci-repair-2026-09-10/COUNT-LOCAL-VERIFICATION.md`.
+The task monitor is read-only and will capture the complete cycle. No further
+push/rerun is authorized. F-2, candidate, Gate A, soak and release gates remain
+open; no merge, services, tag or publication. The 795cdab5 kit remains blocked.
+This local post-push status update is not pushed. Earlier entries are historical.
+
 ## 2026-09-10 authorized exact-count repair: local checks passed
 
 Current source/proof HEAD: `104e722f9e15d19828736a10090e8b508778faef`.

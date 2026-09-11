@@ -18,7 +18,9 @@ came across and what deliberately did not.
 - Updated the exact native collection assertion for four new launcher regression
   cases: 1823 pure and 2024 total. Workflow minimums are unchanged. Fresh local
   collection and the full policy suite passed (1935 passed, 5 skipped); the
-  authorized next CI cycle remains pending at this checkpoint.
+  third CI cycle passed unit, claims, randomized and Windows checks at 8653b56f.
+  Mutation exceeded its two-hour limit after clean-test completion; no complete
+  mutation result set or score is available. Release validation remains open.
 
 - Reload readiness belongs to its original transaction; stale callbacks and timers
   cannot ready, commit, or abort a replacement. Every replacement A/V stream must

@@ -1,5 +1,11 @@
 # F-1 PR #219: local CI corrections
 
+Current CI result: the third cycle finished at 8653b56f with 20 successful,
+3 skipped and 1 cancelled check. Unit, claims, randomized, Windows runtime and
+reproducibility passed. Mutation exceeded its two-hour job limit after baseline
+and forced-fail completion, with a partial 8932/9795 counter; no complete score.
+See `CI-THIRD-RESULT.md`. The remaining text is historical local/pre-push proof.
+
 Latest local checkpoint: the owner approved and the lead applied the exact
 native count correction. Full policy: 1935 passed, 5 skipped; fresh collections
 1823 / 2024 / 2021. See `COUNT-LOCAL-VERIFICATION.md` for the current proof anchor,

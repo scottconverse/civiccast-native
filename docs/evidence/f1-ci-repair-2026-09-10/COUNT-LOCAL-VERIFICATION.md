@@ -1,5 +1,11 @@
 # Exact native inventory correction: local verification
 
+Current CI result: the third cycle finished at 8653b56f with 20 successful,
+3 skipped and 1 cancelled check. Unit, claims, randomized, Windows runtime and
+reproducibility passed. Mutation exceeded its two-hour job limit after baseline
+and forced-fail completion, with a partial 8932/9795 counter; no complete score.
+See `CI-THIRD-RESULT.md`. The remaining text is historical local/pre-push proof.
+
 Recorded 2026-09-10 Mountain. Scott authorized the reviewed one-file repair,
 fresh native collections, full policy verification and, conditional on passing,
 one push to PR #219 for one new CI cycle. No merge or release action is authorized.
