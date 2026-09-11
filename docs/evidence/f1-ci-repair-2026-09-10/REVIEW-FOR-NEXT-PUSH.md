@@ -1,5 +1,10 @@
 # Review prepared for the next owner-authorized push
 
+Latest local checkpoint: the owner approved and the lead applied the exact
+native count correction. Full policy: 1935 passed, 5 skipped; fresh collections
+1823 / 2024 / 2021. See `COUNT-LOCAL-VERIFICATION.md` for the current proof anchor,
+five-lens audit and authorized one-push boundary. Text below is historical.
+
 Post-push correction: the second cycle at `2dd9287c` exposed a missed exact
 native collection-count assertion. The Engineering/Tests/QA pass conclusions
 below are superseded by that finding. See `CI-SECOND-RESULT.md` for the actual

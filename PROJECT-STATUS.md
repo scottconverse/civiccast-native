@@ -1,5 +1,14 @@
 # CivicCast Native — full project status and cold-start handoff
 
+> **2026-09-10 latest: approved native count correction applied and locally verified.**
+> Proof/source anchor: `104e722f9e15d19828736a10090e8b508778faef`. Full policy:
+> 1935 passed, 5 skipped. Fresh collections: 1823 pure / 2024 total / 2021 Windows
+> filtered. Workflow floors are unchanged. Independent Sol review accepted.
+> See `docs/evidence/f1-ci-repair-2026-09-10/COUNT-LOCAL-VERIFICATION.md`.
+> Scott authorized one push/new CI cycle after these passes. It has not yet
+> occurred at this checkpoint; the second cycle below is historical remote state.
+> F-2 and release gates remain open. Main and the blocked old kit are unchanged.
+
 > **2026-09-10 latest: PR #219's authorized second CI cycle is complete and red.**
 > Pushed source: `2dd9287c8426f21a0464f6d13fb5d5e76cb724fb`. Final checks:
 > 17 passed, 4 failed, 3 skipped. Unit, randomized and mutation-baseline failures

@@ -15,6 +15,11 @@ came across and what deliberately did not.
 
 ### F-1 local correction (release validation outstanding)
 
+- Updated the exact native collection assertion for four new launcher regression
+  cases: 1823 pure and 2024 total. Workflow minimums are unchanged. Fresh local
+  collection and the full policy suite passed (1935 passed, 5 skipped); the
+  authorized next CI cycle remains pending at this checkpoint.
+
 - Reload readiness belongs to its original transaction; stale callbacks and timers
   cannot ready, commit, or abort a replacement. Every replacement A/V stream must
   produce a first buffer before the old leg can be retired. Live streams remain
@@ -32,7 +37,8 @@ came across and what deliberately did not.
   that can override the replacement script with uv 0.12.13. The regression
   executes the relocated launcher and repeats normalization with bytecode
   disabled. Local evidence is in `docs/evidence/f1-ci-repair-2026-09-10/`;
-  the changed builder still requires new CI and candidate verification.
+  second-cycle Windows tests and payload reproducibility passed at 2dd9287c;
+  candidate verification remains outstanding.
 
 `v1.0.0-beta.6` is the next candidate and the current owner-held unpublished
 candidate; it does not change the `v1.0.0-beta.4` install story documented

@@ -1,5 +1,31 @@
 # HANDOFF
 
+## 2026-09-10 authorized exact-count repair: local checks passed
+
+Current source/proof HEAD: `104e722f9e15d19828736a10090e8b508778faef`.
+Current branch: `fix/f1-reload-readiness-20260910`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/219 (OPEN).
+This following documentation checkpoint changes no tested source; its own HEAD
+is available with `git rev-parse HEAD`. Last published version remains beta.5.
+Main remains `d77b634e3685de8fb077956b8099fc92c3927243`.
+
+Scott approved the previously proposed one-file collection-count correction,
+fresh collections/full policy verification and one conditional push/CI cycle.
+The patch is now applied: exact counts (1823, 2024). Full policy suite:
+1935 passed, 5 skipped. Separate actual collections: pure 1823, unfiltered 2024,
+Windows not-integration 2021. Ruff and mypy passed; Sol independently accepted
+the source diff. See `docs/evidence/f1-ci-repair-2026-09-10/COUNT-LOCAL-VERIFICATION.md`
+for raw evidence, skip reasons, proof anchor and five-lens review.
+
+The approved next push will start the third cycle. Until then, remote HEAD is
+2dd9287c with the second cycle's 17 passed, 4 failed and 3 skipped checks.
+No further permission is needed for that one conditional push. Follow the cycle
+to completion and update exact pushed SHA/run IDs; no extra push or rerun is
+authorized. F-2 remains unimplemented. No merge, candidate, Gate A, soak, service
+restart, tag or publication is authorized. The old 795cdab5 beta.6 kit is blocked.
+All older checkpoints below are historical and their next-action requests are
+superseded by this explicit authorization.
+
 ## 2026-09-10 second push / completed CI checkpoint
 
 Current remote PR / CI HEAD: `2dd9287c8426f21a0464f6d13fb5d5e76cb724fb`.

@@ -1,5 +1,10 @@
 # F-1 PR #219: local CI corrections
 
+Latest local checkpoint: the owner approved and the lead applied the exact
+native count correction. Full policy: 1935 passed, 5 skipped; fresh collections
+1823 / 2024 / 2021. See `COUNT-LOCAL-VERIFICATION.md` for the current proof anchor,
+five-lens audit and authorized one-push boundary. Text below is historical.
+
 Post-push update: Scott authorized pushing `2dd9287c`; its second CI cycle
 finished with 17 passing, 4 failing and 3 skipped checks. The launcher and
 reproducibility checks passed, but a missed exact test-count assertion keeps
