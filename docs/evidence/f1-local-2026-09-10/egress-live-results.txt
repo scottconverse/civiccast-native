@@ -1,0 +1,104 @@
+........................................................................ [  3%]
+........................................................................ [  6%]
+........................................................................ [  9%]
+.................s...................................................... [ 13%]
+........................................................................ [ 16%]
+........................................................................ [ 19%]
+........................................................................ [ 23%]
+........................................................................ [ 26%]
+..............................................ss........................ [ 29%]
+........................................................................ [ 33%]
+............ssssssssssssssssssssssssss.................................. [ 36%]
+..................................................s.........s.s......... [ 39%]
+.....s.................ss............................................... [ 42%]
+........................................................................ [ 46%]
+........................................ss.............................. [ 49%]
+........................................................................ [ 52%]
+........................................................................ [ 56%]
+........................................................................ [ 59%]
+........................................................................ [ 62%]
+........................................s............................... [ 66%]
+...............................................................s........ [ 69%]
+........................................................................ [ 72%]
+........................................................................ [ 76%]
+........................................................................ [ 79%]
+........................................................................ [ 82%]
+.................................................sssssssssssssssssssssss [ 85%]
+ssssssssss.............................................................. [ 89%]
+........................................................................ [ 92%]
+........................................................................ [ 95%]
+........................................................................ [ 99%]
+..................                                                       [100%]
+=========================== short test summary info ===========================
+SKIPPED [1] tests\egress\test_compliance.py:245: XDG branch is non-Windows only; monkeypatching os.name='posix' breaks pathlib on Windows
+SKIPPED [1] tests\egress\test_gst_engine_caption_flow_native.py:24: caption flow proof requires the real bundled GStreamer caption runtime
+SKIPPED [1] tests\egress\test_gst_engine_caption_flow_native.py:60: caption flow proof requires the real bundled GStreamer caption runtime
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:772: CC embed elements (tttocea608/ccconverter/cccombiner/h264ccinserter) not installed
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:819: CC embed elements (tttocea608/ccconverter/cccombiner/h264ccinserter) not installed
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:913: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1016: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1053: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1145: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1168: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1181: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1197: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1217: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1241: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [2] tests\egress\test_gst_engine_wsl.py:1267: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1310: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1324: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1344: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1379: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1395: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1481: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1605: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1727: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1846: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2031: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2319: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2393: production-pressure rollover needs the shipped caption embed elements
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2519: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_strategy.py:177: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_gst_strategy.py:336: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_gst_strategy.py:353: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_gst_strategy.py:455: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_gst_strategy.py:919: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_gst_strategy.py:935: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_hls_relay_live_playability.py:204: Live-HLS-over-HTTP composition proof (a real GStreamer pipeline -> HlsRelaySupervisor's real ffmpeg relay -> civiccast.stream.media_router -> ffprobe over a real socket, with observed rotation) requires gi + the installed GStreamer runtime + ffmpeg/ffprobe on PATH. NOT covered by this skip: this is the ONLY test that proves a GStreamer-fed directory serves a genuinely advancing manifest over live HTTP -- test_hls_sink_live_playability.py separately proves the ffmpeg-lavfi-fed case, and test_media_router_live.py separately proves the router serves a static fixture; neither substitutes for this. Run with CIVICCAST_GSTREAMER_RUNTIME_ROOT set and `uv run --python 3.12 pytest tests/egress/test_hls_relay_live_playability.py` (the bundled _gi extension is CPython-3.12-specific).
+SKIPPED [1] tests\egress\test_hls_relay_live_playability.py:362: Live-HLS-over-HTTP composition proof (a real GStreamer pipeline -> HlsRelaySupervisor's real ffmpeg relay -> civiccast.stream.media_router -> ffprobe over a real socket, with observed rotation) requires gi + the installed GStreamer runtime + ffmpeg/ffprobe on PATH. NOT covered by this skip: this is the ONLY test that proves a GStreamer-fed directory serves a genuinely advancing manifest over live HTTP -- test_hls_sink_live_playability.py separately proves the ffmpeg-lavfi-fed case, and test_media_router_live.py separately proves the router serves a static fixture; neither substitutes for this. Run with CIVICCAST_GSTREAMER_RUNTIME_ROOT set and `uv run --python 3.12 pytest tests/egress/test_hls_relay_live_playability.py` (the bundled _gi extension is CPython-3.12-specific).
+SKIPPED [1] tests\egress\test_ts_relay.py:204: TSDuck tsp not installed
+SKIPPED [1] tests\egress\test_worker_pipe_seam.py:389: could not import 'gi': No module named 'gi'
+SKIPPED [1] tests\live\test_real_postgres.py:98: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:122: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:142: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:162: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:192: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:264: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:434: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:451: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:478: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:502: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:558: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:634: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:684: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:750: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:864: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1025: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1139: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1184: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1202: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1222: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1257: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1276: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1317: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1395: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1448: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1506: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1566: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1612: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1682: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1700: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1721: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1768: Docker unavailable; live-spine real-Postgres test cannot run
+SKIPPED [1] tests\live\test_real_postgres.py:1790: Docker unavailable; live-spine real-Postgres test cannot run
+2106 passed, 72 skipped in 263.70s (0:04:23)

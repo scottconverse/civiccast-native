@@ -1,0 +1,16 @@
+F1 claims local correction receipt
+Worktree: C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\ci-claims
+Branch: fix/f1-ci-claims-local-20260910
+Base: 5bc57d7e (owner supplied)
+
+Import receipt: claims-imports-baseline.txt
+Baseline: claims-baseline.txt; 18 failed, 107 passed in 100.73s (0:01:40)
+Green: claims-green.txt; 125 passed in 89.80s (0:01:29)
+Command: uv run --frozen python -m pytest tests/policy/test_claims_evidence.py -q -p no:cacheprovider
+Interpreter: uv CPython 3.12.10, worktree .venv; PYTHONPATH set to this worktree.
+
+Changed file: docs/claims/claims.yaml only. Current git blob: d3910b09db5b772fa43b1db4815121928212d752
+Diff stat:  docs/claims/claims.yaml | 18 ++++++++++++++----  1 file changed, 14 insertions(+), 4 deletions(-)
+Status:
+ M docs/claims/claims.yaml
+No commit, push, PR, merge, service or publication performed.

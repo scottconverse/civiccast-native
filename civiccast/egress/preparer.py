@@ -40,6 +40,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.models import (
@@ -49,7 +50,12 @@ from civiccast.egress.models import (
     EgressSourceSegment,
 )
 from civiccast.egress.runtime import FfmpegRunner
-from civiccast.stream._ffmpeg import probe_media_duration_seconds, run_ffmpeg
+from civiccast.stream._ffmpeg import (
+    FfmpegCancelledError,
+    FfmpegResult,
+    probe_media_duration_seconds,
+    run_ffmpeg,
+)
 from civiccast.stream.loudness import (
     DEFAULT_LOUDNESS_STANDARD,
     LoudnessGateResult,
@@ -263,6 +269,10 @@ class SourcePreparationReport:
     plan_dir: Path | None = None
 
 
+class SourcePreparationCancelledError(SourcePrepareError):
+    """The owner cancelled preparation before it could be put on air."""
+
+
 class SourcePreparer:
     """Conform one source plan to the channel's canonical egress profile."""
 
@@ -440,6 +450,7 @@ class SourcePreparer:
         *,
         threads: int = 1,
         media_duration_seconds: float | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> Path | None:
         """Conform the WHOLE asset (no trim) into the cache, atomically.
 
@@ -494,7 +505,11 @@ class SourcePreparer:
                 loudness_target_lufs=config.loudness_target_lufs if normalized else None,
                 threads=threads,
             )
-            result = self._ffmpeg_runner(args)
+            try:
+                result = self._run_ffmpeg(args, cancel_event)
+            except SourcePreparationCancelledError:
+                tmp.unlink(missing_ok=True)
+                raise
             if result.returncode != 0:
                 tmp.unlink(missing_ok=True)
                 raise SourcePrepareError(
@@ -835,6 +850,7 @@ class SourcePreparer:
         loudness_status: str,
         measured_lufs: float | None,
         normalized: bool,
+        cancel_event: threading.Event | None = None,
     ) -> tuple[EgressSourceSegment, PreparedSegmentRecord]:
         """Emit a prepared segment backed by the cached full-asset conform.
 
@@ -883,7 +899,11 @@ class SourcePreparer:
                     str(tmp_output_path),
                 ]
             )
-            result = self._ffmpeg_runner(args)
+            try:
+                result = self._run_ffmpeg(args, cancel_event)
+            except SourcePreparationCancelledError:
+                tmp_output_path.unlink(missing_ok=True)
+                raise
             if result.returncode != 0:
                 tmp_output_path.unlink(missing_ok=True)
                 raise SourcePrepareError(
@@ -1163,7 +1183,12 @@ class SourcePreparer:
                 continue
 
     def prepare(
-        self, source_plan: EgressSourcePlan, config: EgressConfig
+        self,
+        source_plan: EgressSourcePlan,
+        config: EgressConfig,
+        *,
+        cancel_event: threading.Event | None = None,
+        protected_plan_dirs: frozenset[Path] | None = None,
     ) -> SourcePreparationReport:
         """Return a canonical, trim-free source plan ready for the persistent encoder.
 
@@ -1203,11 +1228,14 @@ class SourcePreparer:
         # channel's directories are LIVE right now, so GC can never evict one
         # regardless of age, size, or keep-N recency -- not just the
         # keep-N-most-recent heuristic on its own.
-        protected = (
-            self._protected_plan_dirs_provider(config.channel_id)
-            if self._protected_plan_dirs_provider is not None
-            else frozenset()
-        )
+        self._raise_if_cancelled(cancel_event)
+        protected = protected_plan_dirs
+        if protected is None:
+            protected = (
+                self._protected_plan_dirs_provider(config.channel_id)
+                if self._protected_plan_dirs_provider is not None
+                else frozenset()
+            )
         self._gc_prepared_plan_dirs(channel_prepared_root, keep=protected)
         prepared_dir = channel_prepared_root / uuid.uuid4().hex[:12]
         prepared_segments: list[EgressSourceSegment] = []
@@ -1225,6 +1253,11 @@ class SourcePreparer:
             tuple[EgressSourceSegment, PreparedSegmentRecord],
         ] = {}
         for index, segment in enumerate(source_plan.segments, start=1):
+            try:
+                self._raise_if_cancelled(cancel_event)
+            except SourcePreparationCancelledError:
+                shutil.rmtree(prepared_dir, ignore_errors=True)
+                raise
             if segment.kind == "live":
                 prepared_segments.append(segment)
                 records.append(
@@ -1245,11 +1278,16 @@ class SourcePreparer:
                 records.append(cached[1])
                 continue
             prepared_path = prepared_dir / f"segment-{index:04d}.ts"
-            prepared_segment, record = self._prepare_segment(
-                segment,
-                config=config,
-                output_path=prepared_path,
-            )
+            try:
+                prepared_segment, record = self._prepare_segment(
+                    segment,
+                    config=config,
+                    output_path=prepared_path,
+                    cancel_event=cancel_event,
+                )
+            except SourcePreparationCancelledError:
+                shutil.rmtree(prepared_dir, ignore_errors=True)
+                raise
             seen[key] = (prepared_segment, record)
             prepared_segments.append(prepared_segment)
             records.append(record)
@@ -1274,13 +1312,46 @@ class SourcePreparer:
             plan_dir=reported_plan_dir,
         )
 
+    @staticmethod
+    def _raise_if_cancelled(cancel_event: threading.Event | None) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise SourcePreparationCancelledError("Source preparation was cancelled.")
+
+    def _run_ffmpeg(self, args: list[str], cancel_event: threading.Event | None) -> FfmpegResult:
+        self._raise_if_cancelled(cancel_event)
+        try:
+            if self._ffmpeg_runner is run_ffmpeg:
+                result = self._ffmpeg_runner(args, cancel_event=cancel_event)
+            else:
+                result = self._ffmpeg_runner(args)
+        except FfmpegCancelledError as exc:
+            raise SourcePreparationCancelledError("Source preparation was cancelled.") from exc
+        self._raise_if_cancelled(cancel_event)
+        return result
+
+    def _check_loudness(
+        self, *, cancel_event: threading.Event | None, **kwargs: Any
+    ) -> LoudnessGateResult:
+        self._raise_if_cancelled(cancel_event)
+        try:
+            if self._loudness_checker is check_streaming_loudness:
+                result = self._loudness_checker(**kwargs, cancel_event=cancel_event)
+            else:
+                result = self._loudness_checker(**kwargs)
+        except FfmpegCancelledError as exc:
+            raise SourcePreparationCancelledError("Source preparation was cancelled.") from exc
+        self._raise_if_cancelled(cancel_event)
+        return result
+
     def _prepare_segment(
         self,
         segment: EgressSourceSegment,
         *,
         config: EgressConfig,
         output_path: Path,
+        cancel_event: threading.Event | None = None,
     ) -> tuple[EgressSourceSegment, PreparedSegmentRecord]:
+        self._raise_if_cancelled(cancel_event)
         source_path = Path(segment.path).expanduser()
         if not source_path.exists() or not source_path.is_file():
             raise SourcePrepareError(
@@ -1343,6 +1414,7 @@ class SourcePreparer:
                             else None
                         ),
                         normalized=bool(meta.get("normalized", False)),
+                        cancel_event=cancel_event,
                     )
 
         # Item 66 round-6 (point 3): declared here, before the reuse/probe
@@ -1511,7 +1583,8 @@ class SourcePreparer:
                     # it against when the asset's true length isn't known.
                     probe_start_seconds = 0.0
                     probe_duration_seconds = _UNTRIMMED_LOUDNESS_PROBE_CAP_S
-            loudness = self._loudness_checker(
+            loudness = self._check_loudness(
+                cancel_event=cancel_event,
                 media_path=source_path,
                 target_lufs=config.loudness_target_lufs,
                 tolerance_lufs=config.loudness_tolerance_lufs,
@@ -1594,7 +1667,8 @@ class SourcePreparer:
                         probe_start_seconds,
                         second_probe_start,
                     )
-                    second_loudness = self._loudness_checker(
+                    second_loudness = self._check_loudness(
+                        cancel_event=cancel_event,
                         media_path=source_path,
                         target_lufs=config.loudness_target_lufs,
                         tolerance_lufs=config.loudness_tolerance_lufs,
@@ -1655,6 +1729,7 @@ class SourcePreparer:
                 normalized,
                 threads=_foreground_thread_cap(),
                 media_duration_seconds=media_duration,
+                cancel_event=cancel_event,
             )
             if full_asset_cached_ts is not None:
                 return self._emit_prepared_from_cache(
@@ -1665,6 +1740,7 @@ class SourcePreparer:
                     loudness_status=loudness.status,
                     measured_lufs=loudness.measured_lufs,
                     normalized=normalized,
+                    cancel_event=cancel_event,
                 )
             # Item 66 round-4 BLOCKER fix (Opus review, point 1): ``None``
             # means a background warm already holds this exact asset's
@@ -1703,7 +1779,11 @@ class SourcePreparer:
             loudness_target_lufs=config.loudness_target_lufs if normalized else None,
             threads=_foreground_thread_cap(),
         )
-        result = self._ffmpeg_runner(args)
+        try:
+            result = self._run_ffmpeg(args, cancel_event)
+        except SourcePreparationCancelledError:
+            tmp_output_path.unlink(missing_ok=True)
+            raise
         if result.returncode != 0:
             tmp_output_path.unlink(missing_ok=True)
             raise SourcePrepareError(

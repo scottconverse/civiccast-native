@@ -173,11 +173,21 @@ class ScheduleSourcePlanProvider:
         self._gap_tolerance = timedelta(seconds=gap_tolerance_seconds)
 
     def __call__(self, channel_id: str) -> EgressSourcePlan | None:
+        return self.plan_at(channel_id, self._now_provider())
+
+    def plan_at(self, channel_id: str, boundary_at: datetime) -> EgressSourcePlan | None:
+        """Build the plan active at an explicit scheduled boundary.
+
+        Automation uses this separate entry point to prepare the item due at a
+        future rollover boundary. Ordinary starts continue through ``__call__``
+        and therefore retain wall-clock join-in-progress behavior.
+        """
+
         return build_source_plan_from_schedule(
             channel_id=channel_id,
             schedule_items=self._schedule_items_provider(channel_id),
             asset_resolver=self._asset_resolver,
-            now=self._now_provider(),
+            now=boundary_at,
             max_segments=self._max_segments,
             min_plan_seconds=self._min_plan_seconds,
             segment_cap=self._segment_cap,

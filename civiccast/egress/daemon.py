@@ -10,9 +10,13 @@ import logging
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from pathlib import Path
+from threading import Event, Lock, RLock
 from typing import Any, NamedTuple, Protocol, cast
 
 from civiccast.captions.tap import build_audio_tap_plan
@@ -82,6 +86,7 @@ from civiccast.egress.store import EgressStore
 from civiccast.stream._ffmpeg import FfmpegNotFoundError
 
 SourcePlanProvider = Callable[[str], EgressSourcePlan | None]
+BoundarySourcePlanProvider = Callable[[str, datetime], EgressSourcePlan | None]
 FallbackSourceProvider = Callable[[EgressConfig], EgressSourcePlan]
 SourcePreparerFunc = Callable[[EgressSourcePlan, EgressConfig], SourcePreparationReport]
 BrandingPlanProvider = Callable[[str], EgressBrandingPlan | None]
@@ -337,6 +342,31 @@ class OrphanInfo(NamedTuple):
     created_at: float
 
 
+class _PreparationState(Enum):
+    PENDING = "preparing"
+
+
+class _PreparationRequest(NamedTuple):
+    plan: EgressSourcePlan
+    config: EgressConfig
+
+
+_PreparationSteps = Generator[_PreparationRequest, SourcePreparationReport, bool | None]
+AsyncSourcePreparerFunc = Callable[
+    [EgressSourcePlan, EgressConfig, Event, frozenset[Path]], SourcePreparationReport
+]
+
+
+@dataclass
+class _PendingPreparation:
+    steps: _PreparationSteps
+    future: Future[SourcePreparationReport]
+    cancel: Event
+    kind: str
+    process: object | None
+    config: EgressConfig | None
+
+
 class EgressDaemon:
     """Consume egress commands and run the configured output encoder."""
 
@@ -346,8 +376,10 @@ class EgressDaemon:
         *,
         work_dir: Path,
         source_plan_provider: SourcePlanProvider,
+        boundary_source_plan_provider: BoundarySourcePlanProvider | None = None,
         fallback_source_provider: FallbackSourceProvider | None = None,
         source_preparer: SourcePreparerFunc | None = None,
+        async_source_preparer: AsyncSourcePreparerFunc | None = None,
         branding_plan_provider: BrandingPlanProvider | None = None,
         cg_overlay_provider: BoardOverlayProvider | None = None,
         caption_plan_provider: CaptionPlanProvider | None = None,
@@ -402,8 +434,15 @@ class EgressDaemon:
         self._command_failure_hook = command_failure_hook
         self._work_dir = work_dir
         self._source_plan_provider = source_plan_provider
+        self._boundary_source_plan_provider = boundary_source_plan_provider
         self._fallback_source_provider = fallback_source_provider
         self._source_preparer = source_preparer
+        self._async_source_preparer = async_source_preparer
+        self._preparation_executor: ThreadPoolExecutor | None = None
+        self._preparations: dict[str, _PendingPreparation] = {}
+        self._preparation_guard = RLock()
+        self._preparation_channel_locks: dict[str, Lock] = {}
+        self._preparation_closed = False
         self._branding_plan_provider = branding_plan_provider
         # S15 §5 CG-lite: per-channel board raster for the engine overlay leg.
         self._cg_overlay_provider = cg_overlay_provider
@@ -723,6 +762,120 @@ class EgressDaemon:
         # written for. Reverted to a plain reload_id with no expiry.)
         self._discarded_reload_ids: dict[str, str] = {}
 
+    def enable_async_preparation(self) -> None:
+        """Keep media conformance off the shared automation thread."""
+        with self._preparation_guard:
+            if self._preparation_executor is None:
+                self._preparation_closed = False
+                self._preparation_executor = ThreadPoolExecutor(
+                    max_workers=8, thread_name_prefix="egress-prepare"
+                )
+
+    def shutdown_preparation(self) -> None:
+        with self._preparation_guard:
+            self._preparation_closed = True
+            for channel_id in tuple(self._preparations):
+                self._cancel_preparation(channel_id)
+            executor = self._preparation_executor
+            self._preparation_executor = None
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
+
+    def _cancel_preparation(self, channel_id: str) -> None:
+        with self._preparation_guard:
+            pending = self._preparations.pop(channel_id, None)
+            if pending is None:
+                return
+            pending.cancel.set()
+            pending.steps.close()
+            pending.future.cancel()
+
+            # A late result may own files, but may never launch an encoder or
+            # write channel state. The callback only releases that unused plan.
+            def release_unused(future: Future[SourcePreparationReport]) -> None:
+                if not future.cancelled() and future.exception() is None:
+                    self._release_prepared_plan_dir(future.result().plan_dir)
+
+            pending.future.add_done_callback(release_unused)
+
+    def _drive_preparation(
+        self, channel_id: str, steps: _PreparationSteps, *, kind: str
+    ) -> bool | _PreparationState | None:
+        with self._preparation_guard:
+            if self._preparation_closed:
+                steps.close()
+                return None
+            try:
+                request = next(steps)
+            except StopIteration as done:
+                return cast(bool | None, done.value)
+            preparer = self._source_preparer
+            assert preparer is not None
+            executor = self._preparation_executor
+            if executor is None:
+                try:
+                    try:
+                        report = preparer(request.plan, request.config)
+                    except Exception as exc:
+                        steps.throw(exc)
+                    else:
+                        steps.send(report)
+                except StopIteration as done:
+                    return cast(bool | None, done.value)
+                raise RuntimeError("Unexpected second media preparation in one operation")
+
+            cancel = Event()
+            protected = self.live_prepared_plan_dirs(channel_id)
+            channel_lock = self._preparation_channel_locks.setdefault(channel_id, Lock())
+            async_preparer = self._async_source_preparer
+
+            def prepare() -> SourcePreparationReport:
+                # Superseded preparations for one channel must not race its GC.
+                with channel_lock:
+                    if cancel.is_set():
+                        raise SourcePrepareError("Preparation cancelled")
+                    if async_preparer is not None:
+                        return async_preparer(request.plan, request.config, cancel, protected)
+                    return preparer(request.plan, request.config)
+
+            self._preparations[channel_id] = _PendingPreparation(
+                steps=steps,
+                future=executor.submit(prepare),
+                cancel=cancel,
+                kind=kind,
+                process=self._processes.get(channel_id),
+                config=self._store.get_config(channel_id),
+            )
+            _LOG.info("channel %s: %s source preparation queued", channel_id, kind)
+            return _PreparationState.PENDING
+
+    def _poll_preparation(self, channel_id: str) -> None:
+        with self._preparation_guard:
+            pending = self._preparations.get(channel_id)
+            if pending is None or not pending.future.done():
+                return
+            if pending.process is not self._processes.get(
+                channel_id
+            ) or pending.config != self._store.get_config(channel_id):
+                self._cancel_preparation(channel_id)
+                self._request_reload(channel_id)
+                return
+            self._preparations.pop(channel_id)
+            try:
+                try:
+                    report = pending.future.result()
+                except Exception as exc:
+                    pending.steps.throw(exc)
+                else:
+                    pending.steps.send(report)
+            except StopIteration as done:
+                if pending.kind == "reload" and done.value is False:
+                    self._fall_back_to_restart_reload(channel_id)
+                return
+            finally:
+                pending.steps.close()
+            raise RuntimeError("Unexpected second media preparation in one operation")
+
     def process_once(self, channel_id: str) -> int:
         """Process all currently queued commands for one channel.
 
@@ -806,6 +959,11 @@ class EgressDaemon:
                             "command_failure_hook itself raised for channel %s; continuing.",
                             channel_id,
                         )
+        # Consume Stop/new intent before committing any completed preparation.
+        try:
+            self._poll_preparation(channel_id)
+        except Exception:
+            _LOG.exception("channel %s: prepared operation failed", channel_id)
         return len(commands)
 
     def has_live_process(self, channel_id: str) -> bool:
@@ -1024,6 +1182,32 @@ class EgressDaemon:
         force_fallback_reason: str | None = None,
         resolved_plan: EgressSourcePlan | None = None,
     ) -> None:
+        with self._preparation_guard:
+            if channel_id in self._preparations:
+                return
+            self._drive_preparation(
+                channel_id,
+                self._start_steps(
+                    channel_id,
+                    previous_state=previous_state,
+                    previous_source_label=previous_source_label,
+                    force_fallback_slate=force_fallback_slate,
+                    force_fallback_reason=force_fallback_reason,
+                    resolved_plan=resolved_plan,
+                ),
+                kind="start",
+            )
+
+    def _start_steps(
+        self,
+        channel_id: str,
+        *,
+        previous_state: str | None = None,
+        previous_source_label: str | None = None,
+        force_fallback_slate: bool = False,
+        force_fallback_reason: str | None = None,
+        resolved_plan: EgressSourcePlan | None = None,
+    ) -> _PreparationSteps:
         # ``resolved_plan``: a program plan the caller ALREADY resolved from
         # ``source_plan_provider`` this same tick (the slate-EOS relaunch
         # probes for a due program before deciding to relaunch). Threaded in
@@ -1074,7 +1258,7 @@ class EgressDaemon:
                     ),
                     seconds_on_air=self._seconds_on_air(channel_id),
                 )
-                return
+                return None
             # Hostile-review follow-up, items 1 & 4: reaching here means either
             # no process was tracked at all, or the tracked one has ALREADY
             # exited (the guard above only returns early while it is still
@@ -1134,7 +1318,7 @@ class EgressDaemon:
                 if self._fallback_source_provider is None:
                     self._write_state(channel_id, "FALLBACK_SLATE", last_error=fallback_reason)
                     self._append_health(channel_id, "FALLBACK_SLATE", sink_connected={})
-                    return
+                    return None
                 self._write_state(channel_id, "FALLBACK_SLATE", last_error=fallback_reason)
                 source_plan = self._fallback_source_provider(config)
                 using_fallback_slate = True
@@ -1161,7 +1345,7 @@ class EgressDaemon:
                         ),
                     )
                     self._append_health(channel_id, "FALLBACK_SLATE", sink_connected={})
-                    return
+                    return None
                 fallback_reason = "No valid source plan is available; generated fallback slate."
                 self._write_state(channel_id, "FALLBACK_SLATE", last_error=fallback_reason)
                 source_plan = self._fallback_source_provider(config)
@@ -1199,7 +1383,7 @@ class EgressDaemon:
             prepared_plan_dir: Path | None = None
             if self._source_preparer is not None:
                 try:
-                    preparation_report = self._source_preparer(source_plan, config)
+                    preparation_report = yield _PreparationRequest(source_plan, config)
                     source_plan = preparation_report.source_plan
                     prepared_plan_dir = preparation_report.plan_dir
                     self._record_prepared_loudness(channel_id, preparation_report)
@@ -1494,6 +1678,7 @@ class EgressDaemon:
             self._write_state(channel_id, "ERROR", last_error=str(exc))
             self._append_health(channel_id, "ERROR", sink_connected={})
             self._rollover_plan_end_at.pop(channel_id, None)
+        return None
 
     def _write_state(
         self,
@@ -1992,11 +2177,22 @@ class EgressDaemon:
         # ffmpeg; it still flows into the pending reload, not crash relaunch.
         deliberate_kill = channel_id in self._reload_kills
         self._reload_kills.discard(channel_id)
-        pending_reload = (
-            self._pending_reloads.pop(channel_id, None)
-            if returncode == 0 or deliberate_kill
-            else None
+        queued_terminal_command = any(
+            command.action in {"stop", "drain"}
+            for command in self._store.peek_pending_commands(channel_id)
         )
+        exited_state = self._store.read_state(channel_id)
+        _LOG.info(
+            "channel %s: worker exited (exit_code=%s, state=%s, desired=%s, pending_reload=%s)",
+            channel_id,
+            returncode,
+            exited_state.state if exited_state is not None else "UNKNOWN",
+            "STOPPED" if was_draining or queued_terminal_command else "ACTIVE",
+            channel_id in self._pending_reloads,
+        )
+        pending_reload = self._pending_reloads.pop(channel_id, None)
+        if (returncode != 0 and not deliberate_kill) or was_draining or queued_terminal_command:
+            pending_reload = None
         _process_close(process)
         # Hostile-review follow-up, items 1 & 4: the worker that would have
         # settled any armed reload (and that was reading the currently-active
@@ -2024,7 +2220,22 @@ class EgressDaemon:
                 previous_source_label=previous_source_label,
             )
             return
-        if returncode == 0:
+        # A queued operator stop/drain is an explicit intent to leave air and
+        # must win over recovery, even when the worker exits between command
+        # enqueue and this poll.  The command is drained below against the
+        # already-gone worker and records STOPPED.
+        state = self._store.read_state(channel_id)
+        active_intent = state is not None and state.state in {"ON_AIR", "TRANSITIONING"}
+        if (
+            returncode == 0
+            and state is not None
+            and active_intent
+            and not was_draining
+            and not queued_terminal_command
+        ):
+            self._relaunch_after_crash(channel_id, state, uptime, returncode)
+            return
+        if returncode == 0 or was_draining or queued_terminal_command:
             stop_error: str | None = None
             if not was_draining:
                 relaunched, stop_error = self._relaunch_slate_eos_onto_due_program(channel_id)
@@ -2302,7 +2513,19 @@ class EgressDaemon:
         else:
             streak += 1
             self._restart_streak[channel_id] = streak
-        failure_event = self._append_encoder_child_failure_event(channel_id, state)
+        # F-7: recovery can replace the live state with STARTING/ON_AIR in
+        # this same tick. Notify the existing evaluator of the actual off-air
+        # fault before that recovery so the channel-named alert is not skipped.
+        if self._alert_evaluator_hook is not None:
+            try:
+                self._alert_evaluator_hook(channel_id, "ERROR", None, None)
+            except Exception:
+                _LOG.exception(
+                    "Off-air alert evaluation failed for %s; continuing recovery", channel_id
+                )
+        failure_event = self._append_encoder_child_failure_event(
+            channel_id, state, clean_exit=(returncode == 0)
+        )
         proof_event_id = failure_event.event_id
         if streak >= _RESTART_ESCALATION_STREAK and streak % _RESTART_ESCALATION_STREAK == 0:
             # S8 hook: durably record the escalation now; alert dispatch lands in S8.
@@ -2325,7 +2548,8 @@ class EgressDaemon:
                 current_source_label=state.current_source_label,
                 current_proof_event_id=proof_event_id,
                 last_error=(
-                    f"Encoder exited non-zero repeatedly (restart #{streak}); backing off "
+                    f"Encoder exited {'cleanly' if returncode == 0 else 'non-zero'} repeatedly "
+                    f"(restart #{streak}); backing off "
                     "before relaunch to avoid a crash loop."
                 ),
             )
@@ -2443,7 +2667,13 @@ class EgressDaemon:
             current_source_label=previous_source_label,
             current_proof_event_id=proof_event_id,
             last_error=(
-                force_fallback_reason or self._child_exit_error(channel_id, suffix=relaunch_suffix)
+                force_fallback_reason
+                or (
+                    "Worker exited cleanly while the channel was expected to stay on air; "
+                    "relaunching encoder."
+                    if returncode == 0
+                    else self._child_exit_error(channel_id, suffix=relaunch_suffix)
+                )
             ),
         )
         self._append_health(channel_id, "STARTING", sink_connected={}, dropped_frames=0)
@@ -2498,18 +2728,24 @@ class EgressDaemon:
         self,
         channel_id: str,
         state: EgressStateRow,
+        *,
+        clean_exit: bool = False,
     ) -> EgressProofEvent:
+        exit_source = "ffmpeg-child:clean-exit" if clean_exit else "ffmpeg-child:nonzero-exit"
         event = EgressProofEvent(
             event_id=f"egress-encoder-child-relaunch-{uuid.uuid4()}",
             observed_at=datetime.now(UTC),
             channel_id=channel_id,
             state="STARTING",
             source_label=state.current_source_label or "Unknown egress source",
-            source_path="ffmpeg-child:nonzero-exit",
+            source_path=exit_source,
             source_ref=state.current_proof_event_id,
             proof_boundary="civiccast-egress-handoff-boundary",
             machine_summary=(
-                "CivicCast detected a non-zero FFmpeg child exit while the channel was "
+                "CivicCast detected a worker that exited cleanly while the channel was "
+                "expected to stay on air; the daemon kept running and started encoder relaunch."
+                if clean_exit
+                else "CivicCast detected a non-zero FFmpeg child exit while the channel was "
                 "expected to stay on air; the daemon kept running and started encoder relaunch."
             ),
         )
@@ -2728,7 +2964,7 @@ class EgressDaemon:
         so its rollover cadence latch can tell "armed, still settling" (never
         retry -- wait for this daemon's own deadline) apart from "genuinely
         dropped" (retry after ``_ROLLOVER_ISSUED_TIMEOUT_SECONDS``)."""
-        return channel_id in self._pending_reload_settle
+        return channel_id in self._pending_reload_settle or channel_id in self._preparations
 
     def _try_content_reload(
         self,
@@ -2738,7 +2974,30 @@ class EgressDaemon:
         *,
         rollover_plan_end_at: datetime | None,
         force_fallback: bool = False,
-    ) -> bool:
+    ) -> bool | _PreparationState:
+        self._cancel_preparation(channel_id)
+        result = self._drive_preparation(
+            channel_id,
+            self._reload_steps(
+                channel_id,
+                state,
+                process,
+                rollover_plan_end_at=rollover_plan_end_at,
+                force_fallback=force_fallback,
+            ),
+            kind="reload",
+        )
+        return result if result is not None else False
+
+    def _reload_steps(
+        self,
+        channel_id: str,
+        state: EgressStateRow,
+        process: object,
+        *,
+        rollover_plan_end_at: datetime | None,
+        force_fallback: bool = False,
+    ) -> _PreparationSteps:
         """Seamless program content-reload for a content-reload-capable strategy.
 
         Resolves the newly-due plan (same provider → preparer chain as ``_start``) and
@@ -2748,8 +3007,8 @@ class EgressDaemon:
         strategy error, or a worker control channel that isn't ready yet.
 
         F1 redesign (coordinator hostile review, 2026-09-06): ``reload_content``
-        returning True now means the reload was ARMED (accepted; the worker's new
-        leg is building/prerolling), NOT that it has committed -- committing (or
+        returning True means the worker ACCEPTED the request for arm/preroll,
+        NOT that it has committed -- committing (or
         aborting) can take up to the worker's own ``defer_switch_timeout_s`` (900s
         default) for a deferred/boundary-aligned switch (the automation-driven
         ON_AIR-extension case this method exists for -- see
@@ -2793,9 +3052,24 @@ class EgressDaemon:
             config = self._hls_relay.apply(config)
         source_plan = None
         target_state: EgressState = "ON_AIR"
+        # Scheduled rollover prepares the item due at the outgoing boundary.
+        # Start/recovery and operator overrides continue to resolve wall-clock now.
+        boundary_provider = self._boundary_source_plan_provider
+        boundary_at = (
+            max(rollover_plan_end_at, datetime.now(UTC))
+            if rollover_plan_end_at is not None
+            else None
+        )
         if not force_fallback:
             try:
-                source_plan = self._source_plan_provider(channel_id)
+                if (
+                    boundary_provider is not None
+                    and boundary_at is not None
+                    and not self.has_manual_override(channel_id)
+                ):
+                    source_plan = boundary_provider(channel_id, boundary_at)
+                else:
+                    source_plan = self._source_plan_provider(channel_id)
             except SourcePrepareError:
                 return False  # let terminate+restart resolve the slate fallback
         else:
@@ -2805,7 +3079,11 @@ class EgressDaemon:
             # now reaches beyond the boundary this rollover protects.
             provider_sampled_at = datetime.now(UTC)
             try:
-                late_plan = self._source_plan_provider(channel_id)
+                if boundary_provider is not None and boundary_at is not None:
+                    provider_sampled_at = boundary_at
+                    late_plan = boundary_provider(channel_id, boundary_at)
+                else:
+                    late_plan = self._source_plan_provider(channel_id)
             except SourcePrepareError:
                 late_plan = None
             late_plan_seconds = (
@@ -2841,22 +3119,11 @@ class EgressDaemon:
         # PREVIOUS plan once this one lands.
         prepared_plan_dir: Path | None = None
         if self._source_preparer is not None:
-            # D43 instrumentation (2026-09-05): this call is SYNCHRONOUS on the
-            # automation thread -- ChannelAutomationService's poll loop
-            # dispatches the reload that lands here, so every second spent
-            # conforming is a second the whole automation pass is blocked. The
-            # tester soak could measure the symptom (control plane at ~240% of
-            # a core, worker restarts from the 10s CTRL stall watchdog) but not
-            # this number, and the log recorded 5 reloads over 2 hours with no
-            # timing on any of them. Log it per reload, at INFO with the
-            # segment count, so the NEXT soak can read the actual prepare cost
-            # straight out of the control-plane log instead of inferring it.
-            # (Cache-warm prepares are already cheap: SourcePreparer._prepare_segment
-            # short-circuits a conform-cache HIT to a stream copy or a
-            # zero-ffmpeg trim -- see preparer.py. This measures what is left.)
+            # Retain per-channel elapsed preparation evidence while the
+            # production automation loop runs this work in the background.
             prepare_started = time.monotonic()
             try:
-                preparation_report = self._source_preparer(source_plan, config)
+                preparation_report = yield _PreparationRequest(source_plan, config)
                 source_plan = preparation_report.source_plan
                 prepared_plan_dir = preparation_report.plan_dir
                 self._record_prepared_loudness(channel_id, preparation_report)
@@ -2870,7 +3137,7 @@ class EgressDaemon:
                 return False
             _LOG.info(
                 "Content-reload source preparation for %s took %.1fs for %d segment(s) "
-                "(synchronous on the automation thread).",
+                "(media preparation completed).",
                 channel_id,
                 time.monotonic() - prepare_started,
                 len(source_plan.segments),
@@ -2940,9 +3207,9 @@ class EgressDaemon:
         reload_id = str(uuid.uuid4())
         # F5 note (coordinator hostile review; NOT fixed here, deliberately):
         # this call still runs synchronously on the automation thread, same as
-        # every call already made from here (source_plan_provider, the
-        # preparer, the strategy dispatch below). With the F1 redesign the
-        # worker's ack is "armed" -- fast, bounded by _reload_ack_timeout_s()
+        # the source-plan lookup and strategy dispatch below. Media preparation
+        # has already completed off-thread. With the F2 change the
+        # worker's ack is "accepted" -- fast, bounded by _reload_ack_timeout_s()
         # (the plain 5s default) -- so the WORST case this blocks the
         # automation thread for is that ~5s pipe round trip, not the up-to-
         # 900s settlement wait the pre-redesign code risked. That is still a
@@ -3048,7 +3315,7 @@ class EgressDaemon:
             plan_dir=prepared_plan_dir,
         )
         _LOG.info(
-            "Seamless content-reload armed for %s (reload_id=%s, switch_at_end_of_current=%s); "
+            "Seamless content-reload accepted for %s (reload_id=%s, switch_at_end_of_current=%s); "
             "awaiting settlement.",
             channel_id,
             reload_id,
@@ -3213,7 +3480,10 @@ class EgressDaemon:
                 self._discard_pending_reload_settlement(
                     channel_id, reason=f"worker reported {result}"
                 )
-                self._fall_back_to_restart_reload(channel_id)
+                self._fall_back_to_restart_reload(
+                    channel_id,
+                    failure_reason=f"Seamless content reload failed: {result}",
+                )
                 return
             # Unrecognized result value -- see the docstring note above.
             _LOG.warning(
@@ -3254,7 +3524,9 @@ class EgressDaemon:
             return None
         return data if isinstance(data, dict) else None
 
-    def _fall_back_to_restart_reload(self, channel_id: str) -> None:
+    def _fall_back_to_restart_reload(
+        self, channel_id: str, *, failure_reason: str | None = None
+    ) -> None:
         """The terminate+restart reload path a declined/aborted/lost content-
         reload always falls through to -- factored out of ``_request_reload``
         so ``_poll_reload_settlement`` can take the exact same path for a
@@ -3272,11 +3544,32 @@ class EgressDaemon:
             state.state if state else None,
             state.current_source_label if state else None,
         )
+        proof_event_id = state.current_proof_event_id if state else None
+        if failure_reason is not None:
+            source_label = (
+                state.current_source_label
+                if state and state.current_source_label
+                else "Unknown egress source"
+            )
+            event = EgressProofEvent(
+                event_id=f"egress-content-reload-failure-{uuid.uuid4()}",
+                observed_at=datetime.now(UTC),
+                channel_id=channel_id,
+                state="TRANSITIONING",
+                source_label=source_label,
+                source_path="content-reload:settlement-aborted",
+                source_ref=proof_event_id,
+                proof_boundary="civiccast-egress-handoff-boundary",
+                machine_summary=f"{failure_reason}; restart requested.",
+            )
+            self._store.append_proof_event(event)
+            proof_event_id = event.event_id
         self._write_state(
             channel_id,
             "TRANSITIONING",
             current_source_label=state.current_source_label if state else None,
-            current_proof_event_id=state.current_proof_event_id if state else None,
+            current_proof_event_id=proof_event_id,
+            last_error=failure_reason,
             pid=_process_pid(process),
         )
         if state is not None and state.state == "FALLBACK_SLATE" and process is not None:
@@ -3288,6 +3581,7 @@ class EgressDaemon:
             _process_terminate(process)
 
     def _request_reload(self, channel_id: str, *, command_id: str | None = None) -> None:
+        self._cancel_preparation(channel_id)
         # Item 78 fix 3 (coordinator review, round 3): pop the automation-
         # recorded rollover plan_end_at HERE, at the very top of the ONE
         # method every "reload" command reaches, before any of this
@@ -3373,7 +3667,7 @@ class EgressDaemon:
                 force_fallback=force_fallback,
             )
         ):
-            # F1 redesign: True means ARMED, not settled -- _poll_reload_
+            # Preparing/accepted work is pending; it is not on-air proof. _poll_reload_
             # settlement (in process_once's poll tuple) finishes the job (or
             # falls back to restart via _fall_back_to_restart_reload below)
             # once reload-status.json actually reports an outcome.
@@ -3381,6 +3675,7 @@ class EgressDaemon:
         self._fall_back_to_restart_reload(channel_id)
 
     def _drain(self, channel_id: str) -> None:
+        self._cancel_preparation(channel_id)
         process = self._processes.get(channel_id)
         if process is None:
             self._close_as_run(channel_id)  # nothing on air to drain — close any open row
@@ -3414,6 +3709,7 @@ class EgressDaemon:
         )
 
     def _stop(self, channel_id: str, *, draining: bool) -> None:
+        self._cancel_preparation(channel_id)
         # Item 78 fix 3 (coordinator review, round 3): the channel is coming
         # off air (or draining toward it) -- any rollover plan_end automation
         # recorded for an in-flight content-reload attempt is moot now (there
@@ -3516,7 +3812,14 @@ class EgressDaemon:
         exit is actually confirmed.
         """
 
-        snapshot = list(self._processes.items())
+        # App shutdown drains before stopping the automation loop. Close new
+        # preparation admission first, so a completed conform cannot launch a
+        # fresh worker while this snapshot is being drained.
+        with self._preparation_guard:
+            self._preparation_closed = True
+            for channel_id in tuple(self._preparations):
+                self._cancel_preparation(channel_id)
+            snapshot = list(self._processes.items())
         if not snapshot:
             return DrainResult(outcomes=())
 

@@ -1,4 +1,63 @@
+> 2026-09-11 owner authorization: Scott authorizes everything needed to finish the beta release, without asking again. This supersedes section 10's older per-action rule for this release. Proceed through PR, required CI, fresh build, Sandbox/Gate A, tester soak and publication on passing evidence. The old 795cdab5 kit is still blocked.
+
+> 2026-09-11 operator-fault delta: F7/F8/F10 source corrections preserve aborted
+> reload errors, notify the existing alert evaluator before worker recovery, and
+> verify operator-visible PIDs. Root's affected Python run passed299 tests.
+> F9 UDP labels distinguish local sending from receiver verification. See
+> docs/evidence/f2-local-2026-09-11/OPERATOR-FAULTS.md. Candidate gates remain open.
+
+> 2026-09-11 active local beta repair: F2 isolation/boundary fixes, native retirement repair and caption FAIL visibility pass local checks (7 native, 2265 affected Python, 1035 operator UI, 61 public UI, 18 accessibility/contrast). Source anchor c4d70243. See docs/evidence/f2-local-2026-09-11/VERIFICATION.md. Candidate CI/build/Sandbox/Gate A/hardware soak remain open. No new release or candidate acceptance. Prior status entries are historical.
+
 # CivicCast Native — full project status and cold-start handoff
+
+> **2026-09-10 latest: third CI cycle complete at 8653b56f.** Exact count repair
+> passed local policy, Linux unit/randomized and Windows tests; claims PASS.
+> Final checks: 20 success, 3 skipped, 1 cancelled. Mutation hit its two-hour
+> limit after clean-test/forced-fail phases completed and mutation execution
+> reached a partial 8932/9795 counter. No complete mutation result set or score.
+> See `docs/evidence/f1-ci-repair-2026-09-10/CI-THIRD-RESULT.md`.
+> No CI remains in flight. The authorized cycle is complete; no extra push/rerun.
+> Main, F-2 and release restrictions are unchanged. The old kit remains blocked.
+> All older status/action paragraphs below are historical checkpoints.
+
+> **2026-09-10 latest: approved native count correction applied and locally verified.**
+> Proof/source anchor: `104e722f9e15d19828736a10090e8b508778faef`. Full policy:
+> 1935 passed, 5 skipped. Fresh collections: 1823 pure / 2024 total / 2021 Windows
+> filtered. Workflow floors are unchanged. Independent Sol review accepted.
+> See `docs/evidence/f1-ci-repair-2026-09-10/COUNT-LOCAL-VERIFICATION.md`.
+> Scott authorized one push/new CI cycle after these passes. It has not yet
+> occurred at this checkpoint; the second cycle below is historical remote state.
+> F-2 and release gates remain open. Main and the blocked old kit are unchanged.
+
+> **2026-09-10 latest: PR #219's authorized second CI cycle is complete and red.**
+> Pushed source: `2dd9287c8426f21a0464f6d13fb5d5e76cb724fb`. Final checks:
+> 17 passed, 4 failed, 3 skipped. Unit, randomized and mutation-baseline failures
+> all identify one missed exact native collection-count assertion: actual
+> (1823, 2024), expected (1819, 2020). The dependent claims verifier also failed.
+> Windows launcher tests and changed-builder reproducibility passed on this SHA.
+> See `docs/evidence/f1-ci-repair-2026-09-10/CI-SECOND-RESULT.md`. An independently
+> reviewed one-file correction is proposed but unapplied; no third push or rerun.
+> Main remains `d77b634e`. F-2 and release gates remain open; the old kit is blocked.
+
+> **Historical pre-second-push checkpoint: local CI corrections passed.**
+> Scott authorized the three local repairs. Their source/proof anchor is
+> `59ef1be6498e5a4eced081d7c412df1176fefdb0`: 213 integrated tests passed,
+> an independent reviewer passed 88 tests, and the uv 0.12.12/0.12.13 execution
+> matrix reproduced the old failure and verified the correction. Read
+> `docs/evidence/f1-ci-repair-2026-09-10/VERIFICATION.md` for exact evidence and limits.
+> No second push occurred. Remote PR HEAD remains
+> `f9b5e1aa71e8860e8fff41c1cb572b80bbbc8e2b`, with 16 passed, 5 failed and 3 skipped
+> checks. Main remains `d77b634e3685de8fb077956b8099fc92c3927243`. The old kit is unchanged.
+> The next-action boundary in this historical paragraph was superseded by the
+> authorized second push and completed results above.
+
+> **2026-09-10 update: F-1 local implementation passed local verification.** Scott
+> authorized GO after the cold takeover. Work is isolated on
+> `fix/f1-reload-readiness-20260910`, based on `d77b634e3685de8fb077956b8099fc92c3927243`.
+> See `docs/evidence/f1-local-2026-09-10/VERIFICATION.md` for source, tests and gaps.
+> This is not a merged or release-accepted fix. F-2 remains unstarted. The built
+> kit at `795cdab5` is unchanged and must not be published. Older progress notes
+> below describe the pre-takeover snapshot unless explicitly updated.
 
 **Written 2026-09-10, ~11:10 AM Mountain.** Times in this document are Mountain (America/Denver),
 12-hour where they are user-facing.
@@ -46,8 +105,9 @@ So: **beta.6 must not be published as-is.** See §5.
 
 ### What is NOT done — the whole list, in one place
 
-- **F-1 and F-2 are unstarted.** The silent-death bug and the missed schedule boundaries. **Those
-  two are the release.** Every fix in §5 is unstarted; nothing below §5's heading has been begun.
+- **F-1 passed local verification; F-2 is unstarted.** The silent-death bug and the missed
+  schedule boundaries remain release blockers. F-1 includes related F-4 exit/fire logging;
+  the remaining section 5 work is unstarted. No new candidate has passed release gates.
 - **The beta.6 kit is built and byte-verified but unsoaked, ungated and unpublished.** It sits at
   `C:\CivicCastTester\kit-safe\795cdab5065e3b1b1d9df69c6fc06658f481c8d4\`. Leave it there.
 - **No soak has been run against beta.6 at all.** The two failed soaks were of **beta.5**.
@@ -172,7 +232,8 @@ states. It also showed **15 × "reload superseding a still-settling reload"**, w
 
 ## 5. What has to be fixed, and what "done" means
 
-Ordered by importance. Nothing below is started.
+Ordered by importance. F-1 and its related F-4 logging passed local verification;
+no finding below has met its full release acceptance criteria.
 
 ### F-1 — BLOCKER: seamless reload can commit a half-built pipeline
 
@@ -188,12 +249,14 @@ Ordered by importance. Nothing below is started.
   disposed and the commit does **not** happen — proven failing before the fix.
 - A test asserts a worker exiting `error: None` while the desired state is on-air **is relaunched**
   — proven failing before the fix.
-- A grep-style assertion (policy test) that no commit path can emit `committed (elements=N)` without
-  a preceding preroll-hold line, so this cannot regress silently.
+- A grep-style assertion (policy test) that no commit path can emit `committed (elements=N)`
+  without transaction-specific proof that every replacement stream produced its first buffer.
+  Held file legs additionally require their completed preroll-hold line. Immediate and
+  clock-timed legs stay unheld and use the all-stream `preroll verified` proof instead.
 - `python -m pytest tests/egress tests/live -p no:randomly -q` green.
 - **A ≥2-hour sandbox soak with zero `error: None` worker exits and zero undersized commits.**
   Grade from `gst-worker.stdout.log`: every `committed (elements=…)` must be the healthy count for
-  that machine and must be preceded by preroll-hold lines.
+  that machine and topology and must have the matching preroll proof above.
 
 ### F-2 — BLOCKER: scheduled programme changes do not happen
 

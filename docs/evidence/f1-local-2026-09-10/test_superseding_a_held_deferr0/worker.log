@@ -1,0 +1,22 @@
+CTRL preroll: reached PLAYING after 0.0s pid=15332
+CTRL first-output: first buffer after 1.4s pid=15332
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=1)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=1)
+CTRL reload: new leg preroll verified (reload_id=1) held_streams=2
+CTRL reload superseding a still-settling reload
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=2)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=2)
+CTRL reload: new leg preroll verified (reload_id=2) held_streams=2
+CTRL output: 452 buffers (+451) since PLAYING
+CTRL reload: outgoing EOS observed stream=audio (1/2 stream(s))
+CTRL reload: firing (reload_id=2)
+CTRL reload: boundary switch rebased to running time 10.155s
+CTRL reload: switching selector
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload: old leg disposed
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload: holds released
+CTRL reload diagnostic: stage=holds-released
+CTRL reload committed (elements=77)
+CTRL reload diagnostic: stage=committed elements=77
+WORKER_RESULT {'error': None, 'teardown_clean': True}

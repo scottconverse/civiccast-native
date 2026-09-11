@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -1087,11 +1089,135 @@ def test_console_launcher_normalization_is_relative_and_non_mutating(
 
     normalized = launcher.read_bytes()
     assert b"..\\..\\..\\python.exe" in normalized
-    assert str(Path(sys.executable)).encode() not in normalized
+    # Resource lookup is authoritative for the interpreter. A stale raw path
+    # may remain in a PE section after UpdateResourceW, so execute below too.
+    assert builder._pe_rcdata(launcher, "UV_PYTHON_PATH") == b"..\\..\\..\\python.exe"
+    assert str(Path(sys.executable)).encode() not in builder._pe_rcdata(launcher, "UV_SCRIPT_DATA")
     assert b"sys.dont_write_bytecode = True" in normalized
     assert normalized.index(b"sys.dont_write_bytecode = True") < normalized.index(
         b"from civiccast.native.runtime_cli import main_entrypoint"
     )
+
+    # uv 0.12.13 leaves a stale ZIP payload in the PE after UpdateResourceW.
+    # The trampoline loads its script through zipimport from the complete EXE,
+    # so prove the normalized executable runs the replacement script through
+    # the relative payload interpreter, rather than merely inspecting bytes.
+    runtime = tmp_path / "runtime"
+    bin_dir = runtime / "Lib" / "site-packages" / "bin"
+    bin_dir.mkdir(parents=True)
+    fixture_launcher = bin_dir / "fixture.exe"
+    fixture_launcher.write_bytes(source.read_bytes())
+    builder.normalize_console_launcher(fixture_launcher, "fixture_entry:main")
+
+    base_python = Path(sys._base_executable)
+    shutil.copy2(base_python, runtime / "python.exe")
+    python_dll = f"python{sys.version_info.major}{sys.version_info.minor}.dll"
+    shutil.copy2(base_python.with_name(python_dll), runtime / python_dll)
+    (runtime / f"python{sys.version_info.major}{sys.version_info.minor}._pth").write_text(
+        "\n".join(
+            (
+                str(
+                    Path(sys.base_prefix)
+                    / f"python{sys.version_info.major}{sys.version_info.minor}.zip"
+                ),
+                str(Path(sys.base_prefix) / "DLLs"),
+                str(Path(sys.base_prefix) / "Lib"),
+                ".",
+                "Lib\\site-packages",
+                "import site",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    receipt = tmp_path / "fixture-receipt.txt"
+    (runtime / "Lib" / "site-packages" / "fixture_entry.py").write_text(
+        "import os\nimport sys\nfrom pathlib import Path\n"
+        "def main():\n"
+        "    Path(os.environ['CIVICCAST_FIXTURE_RECEIPT']).write_text(\n"
+        "        f'{sys.executable}\\n{sys.dont_write_bytecode}\\n', encoding='utf-8'\n"
+        "    )\n"
+        "    return 0\n",
+        encoding="utf-8",
+    )
+    environment = dict(os.environ)
+    environment.pop("PYTHONDONTWRITEBYTECODE", None)
+    environment["CIVICCAST_FIXTURE_RECEIPT"] = str(receipt)
+    result = subprocess.run(
+        [str(fixture_launcher)],
+        capture_output=True,
+        text=True,
+        env=environment,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    assert receipt.read_text(encoding="utf-8") == f"{runtime / 'python.exe'}\nTrue\n"
+    assert not list(runtime.rglob("fixture_entry*.pyc"))
+
+    # The same launcher is normalized twice by some rebuild workflows.
+    builder.normalize_console_launcher(fixture_launcher, "fixture_entry:main")
+    receipt.unlink()
+    second = subprocess.run(
+        [str(fixture_launcher)], capture_output=True, text=True, env=environment, timeout=20
+    )
+    assert second.returncode == 0, second.stderr
+    assert receipt.read_text(encoding="utf-8") == f"{runtime / 'python.exe'}\nTrue\n"
+    assert not list(runtime.rglob("fixture_entry*.pyc"))
+
+
+def test_retained_launcher_script_rejects_empty_or_malformed_data(tmp_path: Path) -> None:
+    launcher = tmp_path / "fixture.exe"
+    launcher.write_bytes(b"fixture")
+
+    with pytest.raises(SystemExit, match="script resource is empty"):
+        builder._discard_retained_pe_resource_data(launcher, b"", b"not-empty")
+    with pytest.raises(SystemExit, match="script resource is malformed"):
+        builder._discard_retained_pe_resource_data(launcher, b"not-a-zip", b"also-not-a-zip")
+    with pytest.raises(SystemExit, match="script resource is malformed"):
+        builder._discard_retained_pe_resource_data(launcher, b"not-a-zip", b"not-a-zip")
+
+    old = builder._launcher_script_zip("print('old')\n")
+    active = builder._launcher_script_zip("print('active')\n")
+    launcher.write_bytes(b"fixture" + active)
+    builder._discard_retained_pe_resource_data(launcher, old, active)
+    assert launcher.read_bytes() == b"fixture" + active  # No retained payload on uv 0.12.12.
+
+    overlapping = io.BytesIO()
+    with zipfile.ZipFile(overlapping, "w") as archive:
+        archive.writestr("__main__.py", b"print('active')\n")
+        archive.writestr("retained-old.bin", old)
+    with pytest.raises(SystemExit, match="overlaps the active resource"):
+        builder._discard_retained_pe_resource_data(launcher, old, overlapping.getvalue())
+
+
+def test_retained_launcher_script_preserves_active_payload_and_file_size(tmp_path: Path) -> None:
+    old = builder._launcher_script_zip("print('old')\n")
+    active = builder._launcher_script_zip("print('a longer replacement script')\n")
+    launcher = tmp_path / "fixture.exe"
+    original = b"prefix" + old + b"middle" + active + b"suffix" + old
+    launcher.write_bytes(original)
+    builder._discard_retained_pe_resource_data(launcher, old, active)
+    assert launcher.read_bytes() == (
+        b"prefix" + bytes(len(old)) + b"middle" + active + b"suffix" + bytes(len(old))
+    )
+    assert launcher.stat().st_size == len(original)
+    builder._discard_retained_pe_resource_data(launcher, active, active)
+    with zipfile.ZipFile(launcher) as archive:
+        assert archive.read("__main__.py") == b"print('a longer replacement script')\n"
+
+
+@pytest.mark.parametrize("active_copies", [0, 2])
+def test_retained_launcher_script_rejects_ambiguous_active_payload(
+    tmp_path: Path, active_copies: int
+) -> None:
+    old = builder._launcher_script_zip("print('old')\n")
+    active = builder._launcher_script_zip("print('active')\n")
+    launcher = tmp_path / "fixture.exe"
+    original = old + active * active_copies
+    launcher.write_bytes(original)
+    with pytest.raises(SystemExit, match="active script payload is missing or ambiguous"):
+        builder._discard_retained_pe_resource_data(launcher, old, active)
+    assert launcher.read_bytes() == original
 
 
 # ---------------------------------------------------------------------------

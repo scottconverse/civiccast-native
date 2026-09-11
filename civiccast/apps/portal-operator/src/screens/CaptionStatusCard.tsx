@@ -13,6 +13,11 @@ function fmtTime(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString()
 }
 
+function isStale(iso: string): boolean {
+  const sampled = new Date(iso).getTime()
+  return Number.isFinite(sampled) && Date.now() - sampled > 120_000
+}
+
 // Presentational only (no data fetching) so it unit-tests without a network.
 export function CaptionStatusView({
   status,
@@ -31,6 +36,9 @@ export function CaptionStatusView({
   liveCaptionsEnabled?: boolean
 }) {
   const on = status?.caption_status === 'on'
+  const latest = status?.latest ?? proofs?.[0]
+  const failed = latest?.status === 'FAIL'
+  const stale = latest ? isStale(latest.sampled_at) : false
   const switchedOff = !on && liveCaptionsEnabled === false
   return (
     <section
@@ -42,11 +50,42 @@ export function CaptionStatusView({
         <h2 className="m-0 text-base font-semibold">Captions</h2>
         <span
           className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase"
-          style={{ background: on ? 'var(--cc-ok-soft)' : 'var(--cc-surface-3)', color: 'var(--cc-ink)' }}
+          style={{
+            background: failed
+              ? 'var(--cc-err-soft)'
+              : on
+                ? 'var(--cc-ok-soft)'
+                : 'var(--cc-surface-3)',
+            color: failed ? 'var(--cc-err)' : 'var(--cc-ink)',
+          }}
         >
-          {loading ? 'Checking…' : on ? 'Captions on' : switchedOff ? 'Captions off' : 'Not verified'}
+          {loading
+            ? 'Checking…'
+            : failed
+              ? 'Caption proof failed'
+              : on
+                ? 'Captions on'
+                : switchedOff
+                  ? 'Captions off'
+                  : 'Not verified'}
         </span>
       </div>
+      {latest && (
+        <div
+          className="grid gap-1 rounded-md p-2 text-xs"
+          style={{ background: failed ? 'var(--cc-err-soft)' : 'var(--cc-surface-3)' }}
+        >
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <strong>{failed ? 'Caption proof failed' : `Latest proof: ${latest.status}`}</strong>
+            <span>{latest.matched_cue_count}/{latest.expected_cue_count} cues matched</span>
+            <span>Sampled {fmtTime(latest.sampled_at)}</span>
+            {stale && <span className="font-semibold">Stale (older than 120 seconds)</span>}
+          </div>
+          {latest.blocker && <div>Blocker: {latest.blocker}</div>}
+          {failed && <div>Check the caption source and the decode-back proof details below.</div>}
+          <div>Checks refresh every 30 seconds; readings older than 2 minutes are stale.</div>
+        </div>
+      )}
       {switchedOff && (
         <p className="m-0 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
           Live captions are switched off in the station profile (Setup &rarr; Station Profile), so
@@ -143,11 +182,13 @@ export function CaptionStatusCard({
     queryKey: ['caption-status', channelId],
     queryFn: () => getCaptionStatus(channelId),
     retry: false,
+    refetchInterval: 30_000,
   })
   const proofsQuery = useQuery({
     queryKey: ['caption-proofs', channelId],
     queryFn: () => getCaptionProofs(channelId, 10),
     retry: false,
+    refetchInterval: 30_000,
   })
   return (
     <CaptionStatusView

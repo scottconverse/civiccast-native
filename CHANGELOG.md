@@ -13,6 +13,55 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+### Local beta reliability repair (candidate gates outstanding)
+
+- Preserve aborted-reload reasons in current state and durable proof history.
+  Evaluate worker-fault alerts before recovery can replace the fault state.
+- Hide worker PIDs that cannot be verified in operator API responses. Qualify
+  UDP health as local sending, with receiver reception still unverified.
+- Prepare scheduled media without blocking other channels. Stop cancels pending
+  preparation and prevents a late worker launch.
+- Acknowledge reload admission before slow GStreamer arm work. Commit remains a
+  separate result; a slow arm no longer consumes the pipe receipt deadline.
+- Prepare one scheduled programme at a time with boundary-aware lookahead, so
+  the current programme label changes with its committed switch.
+- Show a failed caption proof as a failure, with its blocker and sample time;
+  refresh caption checks every 30 seconds and identify stale readings.
+- Release retired streaming tasks before NULL teardown to prevent a native
+  programme switch from hanging with the new programme's buffers held.
+- Local verification, including the reproduced retirement failure and seven
+  passing native checks after its repair, is recorded in
+  `docs/evidence/f2-local-2026-09-11/VERIFICATION.md`. No new beta is published.
+
+### F-1 local correction (release validation outstanding)
+
+- Updated the exact native collection assertion for four new launcher regression
+  cases: 1823 pure and 2024 total. Workflow minimums are unchanged. Fresh local
+  collection and the full policy suite passed (1935 passed, 5 skipped); the
+  third CI cycle passed unit, claims, randomized and Windows checks at 8653b56f.
+  Mutation exceeded its two-hour limit after clean-test completion; no complete
+  mutation result set or score is available. Release validation remains open.
+
+- Reload readiness belongs to its original transaction; stale callbacks and timers
+  cannot ready, commit, or abort a replacement. Every replacement A/V stream must
+  produce a first buffer before the old leg can be retired. Live streams remain
+  unheld and keep their running-time base.
+- Unexpected clean worker exits while ON_AIR or TRANSITIONING now enter bounded
+  fault recovery. Queued Stop/Drain wins for any exit code, including a pending
+  restart. Exit logs name the channel and state; clean-exit recovery records an
+  explicit fault. Reload logs identify preroll and the actual commit attempt.
+- Added local regression and native-worker evidence plus a per-transaction log
+  grader. These changes do not validate the existing beta.6 kit or resolve F-2.
+- Corrected the four current-source claims bindings and isolated the state-guard
+  child regression from unrelated application fixtures after PR #219's first
+  CI failure. Local checks do not provide a new mutation or CI verdict.
+- Windows console-launcher normalization now removes retained old script ZIPs
+  that can override the replacement script with uv 0.12.13. The regression
+  executes the relocated launcher and repeats normalization with bytecode
+  disabled. Local evidence is in `docs/evidence/f1-ci-repair-2026-09-10/`;
+  second-cycle Windows tests and payload reproducibility passed at 2dd9287c;
+  candidate verification remains outstanding.
+
 `v1.0.0-beta.6` is the next candidate and the current owner-held unpublished
 candidate; it does not change the `v1.0.0-beta.4` install story documented
 below.

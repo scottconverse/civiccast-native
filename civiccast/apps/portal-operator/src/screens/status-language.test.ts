@@ -20,6 +20,7 @@ import {
   toneForDeliveryStatus,
   toneForEgressState,
   toneForReadiness,
+  captionsRowLabel,
 } from './status-language'
 
 describe('readinessLabel', () => {
@@ -109,6 +110,14 @@ describe('readinessLabel', () => {
     ]
     const unmapped = contractStatuses.filter((status) => !isKnownReadinessStatus(status))
     expect(unmapped).toEqual([])
+  })
+})
+
+describe('captionsRowLabel', () => {
+  it('directs an unverified operator to the channel caption proof', () => {
+    expect(captionsRowLabel('not-verified', undefined)).toBe(
+      'Not verified; open channel caption proof',
+    )
   })
 })
 

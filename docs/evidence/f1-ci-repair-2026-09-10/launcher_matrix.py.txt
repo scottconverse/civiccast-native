@@ -1,0 +1,112 @@
+"""Execute old and corrected normalization against isolated official uv launchers."""
+
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timezone
+import zipfile
+
+
+repo = Path(sys.argv[1]).resolve()
+scratch = Path(__file__).resolve().parent
+run = scratch / ("matrix-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+run.mkdir()
+baseline_sha = "f9b5e1aa71e8860e8fff41c1cb572b80bbbc8e2b"
+baseline = run / "baseline_builder.py"
+baseline.write_bytes(subprocess.check_output([
+    "git", "-c", f"safe.directory={repo.as_posix()}", "-C", str(repo),
+    "show", f"{baseline_sha}:scripts/build_native_app_payload.py",
+]))
+sys.path.insert(0, str(repo))
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+old_builder = load("matrix_baseline", baseline)
+current_path = repo / "scripts" / "build_native_app_payload.py"
+new_builder = load("matrix_current", current_path)
+print(json.dumps({
+    "baseline_source": baseline_sha,
+    "current_builder_sha256": hashlib.sha256(current_path.read_bytes()).hexdigest(),
+    "python": sys.version,
+    "executable": sys.executable,
+    "run_directory": str(run),
+}), flush=True)
+
+for version in ("0.12.12", "0.12.13"):
+    source = scratch / f"venv-{version}" / "Scripts" / "civiccast-runtime.exe"
+    original = source.read_bytes()
+    print(json.dumps({
+        "uv_version": version,
+        "uv_archive_sha256": hashlib.sha256((scratch / f"uv-{version}.zip").read_bytes()).hexdigest(),
+        "source_launcher": str(source),
+        "source_launcher_sha256": hashlib.sha256(original).hexdigest(),
+    }), flush=True)
+    for stage, builder in (("baseline", old_builder), ("fixed", new_builder)):
+        runtime = run / f"{stage}-{version}"
+        bin_dir = runtime / "Lib" / "site-packages" / "bin"
+        bin_dir.mkdir(parents=True)
+        launcher = bin_dir / "fixture.exe"
+        launcher.write_bytes(original)
+        base = Path(sys._base_executable)
+        dll_stem = f"python{sys.version_info.major}{sys.version_info.minor}"
+        shutil.copy2(base, runtime / "python.exe")
+        shutil.copy2(base.with_name(dll_stem + ".dll"), runtime / (dll_stem + ".dll"))
+        (runtime / (dll_stem + "._pth")).write_text("\n".join([
+            str(Path(sys.base_prefix) / (dll_stem + ".zip")),
+            str(Path(sys.base_prefix) / "DLLs"), str(Path(sys.base_prefix) / "Lib"),
+            ".", "Lib\\site-packages", "import site", "",
+        ]), encoding="utf-8")
+        (runtime / "Lib" / "site-packages" / "fixture_entry.py").write_text(
+            "import os, sys\nfrom pathlib import Path\n"
+            "def main():\n"
+            "    Path(os.environ['CIVICCAST_FIXTURE_RECEIPT']).write_text(\n"
+            "        f'{sys.executable}\\n{sys.dont_write_bytecode}\\n', encoding='utf-8')\n"
+            "    return 0\n", encoding="utf-8")
+        receipt = runtime / "receipt.txt"
+        env = dict(os.environ)
+        env.pop("PYTHONDONTWRITEBYTECODE", None)
+        env.pop("PYTHONPATH", None)
+        env["CIVICCAST_FIXTURE_RECEIPT"] = str(receipt)
+        expected_script = builder.render_console_launcher_script("fixture_entry:main").encode()
+        for iteration in range(1, 3 if stage == "fixed" else 2):
+            receipt.unlink(missing_ok=True)
+            builder.normalize_console_launcher(launcher, "fixture_entry:main")
+            with zipfile.ZipFile(launcher) as archive:
+                selected_script = archive.read("__main__.py")
+            result = subprocess.run([str(launcher)], cwd=runtime, env=env,
+                                    capture_output=True, text=True, timeout=20)
+            record = {
+                "uv_version": version, "stage": stage, "iteration": iteration,
+                "active_interpreter": new_builder._pe_rcdata(launcher, "UV_PYTHON_PATH").decode(),
+                "active_script_matches": new_builder._pe_rcdata(launcher, "UV_SCRIPT_DATA") == builder._launcher_script_zip(expected_script.decode()),
+                "whole_file_zip_matches": selected_script == expected_script,
+                "exit_code": result.returncode,
+                "receipt": receipt.read_text() if receipt.exists() else None,
+                "stderr": result.stderr,
+                "fixture_pyc": [str(p) for p in runtime.rglob("fixture_entry*.pyc")],
+            }
+            print(json.dumps(record), flush=True)
+            assert record["active_script_matches"]
+            assert record["active_interpreter"] == "..\\..\\..\\python.exe"
+            if stage == "baseline" and version == "0.12.13":
+                assert result.returncode != 0 and "civiccast" in result.stderr
+                assert not record["whole_file_zip_matches"] and record["receipt"] is None
+            else:
+                assert result.returncode == 0, result.stderr
+                assert record["whole_file_zip_matches"]
+                assert record["receipt"] == f"{runtime / 'python.exe'}\nTrue\n"
+                assert not record["fixture_pyc"]
+        assert source.read_bytes() == original
+print("PASS: baseline uv13 defect reproduced; both fixed versions execute twice correctly.", flush=True)

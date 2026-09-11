@@ -2339,6 +2339,8 @@ class GstPlayoutEngine:
             "old_elements": old_elements,
             "new_elements": new_elements,
             "probe_id": None,
+            "readiness_probes": [],
+            "ready_pads": set(),
             "timeout_id": None,
             # Item 4 (honest ack): the caller's completion callback, if any --
             # invoked exactly once by ``_commit_reload`` or ``_abort_pending_reload``.
@@ -2347,11 +2349,8 @@ class GstPlayoutEngine:
             "commit_watchdog": None,
             "commit_completed": None,
             "retirement_result": None,
-            # B3 fix: deferred-switch bookkeeping. "ready"/"eos" both default to
-            # True for an immediate switch (switch_at_end_of_current=False), so
-            # the `ready and eos` gate reduces to "ready" alone -- committing the
-            # instant the new leg's first buffer lands, exactly the pre-existing
-            # behavior.
+            # Every switch waits for this transaction's first buffer. Only the
+            # outgoing-EOS condition starts satisfied for an immediate switch.
             "switch_at_end_of_current": switch_at_end_of_current,
             "new_leg_ready": False,
             "old_leg_eos": not switch_at_end_of_current,
@@ -2373,6 +2372,7 @@ class GstPlayoutEngine:
             "new_src_pads": [pad for pad in (out_pad, audio_out_pad) if pad is not None],
             "hold_probes": [],
             "holds_awaited": 0,
+            "held_pads": set(),
             "boundary_probes": [],
             "outgoing_end": {},
             "outgoing_eos_pads": set(),
@@ -2412,17 +2412,20 @@ class GstPlayoutEngine:
                     probe_id = pad.add_probe(
                         Gst.PadProbeType.BLOCK | Gst.PadProbeType.BUFFER,
                         self._on_new_leg_hold,
+                        pending["txn_id"],
                     )
                     pending["hold_probes"].append((pad, probe_id))
                     pending["holds_awaited"] += 1
             else:
-                # No hold: readiness is the new leg's first buffer AT the selector,
-                # exactly as the immediate path (and as every reload did before the
-                # boundary-aligned switch existed). For a deferred switch this only
-                # marks the leg ready -- the commit still waits for the boundary.
-                pending["probe_id"] = new_video_pad.add_probe(
-                    Gst.PadProbeType.BUFFER, self._on_reload_first_buffer
-                )
+                # Live/clock-timed streams must keep flowing, but video alone is
+                # not proof that the replacement audio decoded. Observe each
+                # stream without blocking or rebasing it, including immediate
+                # reloads. For deferred switches, readiness still waits for EOS.
+                for pad in pending["new_src_pads"]:
+                    probe_id = pad.add_probe(
+                        Gst.PadProbeType.BUFFER, self._on_reload_first_buffer, pending["txn_id"]
+                    )
+                    pending["readiness_probes"].append((pad, probe_id))
             for element in new_elements:
                 element.sync_state_with_parent()  # preroll the new leg
         except Exception:  # ENG-008: a preroll/arm failure must not wedge
@@ -2431,37 +2434,64 @@ class GstPlayoutEngine:
         # ENG-001: bound the wait for the new leg's first buffer. If it never arrives,
         # abort rather than pin _pending_reload forever (the old program keeps playing).
         pending["timeout_id"] = GLib.timeout_add_seconds(
-            max(1, int(self.reload_timeout_s)), self._on_reload_timeout
+            max(1, int(self.reload_timeout_s)), self._on_reload_timeout, pending["txn_id"]
         )
 
-    def _on_reload_first_buffer(self, _pad: Gst.Pad, _info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+    def _on_reload_first_buffer(
+        self, pad: Gst.Pad, _info: Gst.PadProbeInfo, txn_id: int
+    ) -> Gst.PadProbeReturn:
         # Streaming thread: hand the readiness update to the main loop (no state
         # changes here).
-        GLib.idle_add(self._on_new_leg_ready)
+        GLib.idle_add(self._on_unheld_probe_engaged, pad, txn_id)
         return Gst.PadProbeReturn.REMOVE
 
-    def _on_new_leg_ready(self) -> bool:
+    def _on_unheld_probe_engaged(self, pad: Gst.Pad, txn_id: int) -> bool:
+        """Main-loop: require a first buffer from every unheld replacement stream."""
+        pending = self._pending_reload
+        if pending is None or pending["txn_id"] != txn_id:
+            return False
+        expected = {source_pad for source_pad, _probe_id in pending["readiness_probes"]}
+        if pad not in expected or pad in pending["ready_pads"]:
+            return False
+        pending["ready_pads"].add(pad)
+        if expected <= pending["ready_pads"]:
+            self._on_new_leg_ready(txn_id)
+        return False
+
+    def _on_new_leg_ready(self, txn_id: int) -> bool:
         """Main-loop: the new leg's first buffer landed. Cancels the
         new-leg-readiness watchdog (it has done its job); for a deferred switch,
         arms the longer ``defer_switch_timeout_s`` safety watchdog instead of
         committing immediately, and waits for the outgoing leg's EOS."""
         pending = self._pending_reload
-        if pending is None:
+        if (
+            pending is None
+            or pending["txn_id"] != txn_id
+            or pending["new_leg_ready"]
+            or pending["holds_awaited"] != 0
+        ):
             return False  # aborted or superseded before the first buffer landed
         if pending["timeout_id"] is not None:
             with contextlib.suppress(Exception):
                 GLib.source_remove(pending["timeout_id"])
             pending["timeout_id"] = None
         pending["new_leg_ready"] = True
+        print(
+            f"CTRL reload: new leg preroll verified (reload_id={txn_id}) "
+            f"held_streams={len(pending['hold_probes'])}",
+            flush=True,
+        )
         if pending["switch_at_end_of_current"] and not pending["old_leg_eos"]:
             pending["defer_timeout_id"] = GLib.timeout_add_seconds(
-                max(1, int(self.defer_switch_timeout_s)), self._on_defer_switch_timeout
+                max(1, int(self.defer_switch_timeout_s)), self._on_defer_switch_timeout, txn_id
             )
             return False
         self._commit_reload()
         return False
 
-    def _on_new_leg_hold(self, pad: Gst.Pad, _info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+    def _on_new_leg_hold(
+        self, pad: Gst.Pad, _info: Gst.PadProbeInfo, txn_id: int
+    ) -> Gst.PadProbeReturn:
         """Streaming thread, deferred switch: the new leg produced its first buffer
         on ``pad``. Returning from a BLOCK probe leaves the pad BLOCKED (and the
         callback is not re-entered until the probe is removed), which is exactly
@@ -2469,30 +2499,31 @@ class GstPlayoutEngine:
         stops it decoding any further until ``_commit_reload`` releases it. The
         readiness bookkeeping is handed to the main loop -- this thread is now
         parked inside GStreamer and must touch no engine state."""
-        pending = self._pending_reload
-        if pending is not None:
-            for held_pad, _probe_id in pending["hold_probes"]:
-                if held_pad is pad:
-                    GLib.idle_add(self._on_hold_probe_engaged)
-                    break
+        # Capture identity when the probe is installed, not when its delayed
+        # callback runs. Superseding a reload must invalidate all its callbacks.
+        GLib.idle_add(self._on_hold_probe_engaged, pad, txn_id)
         return Gst.PadProbeReturn.OK
 
-    def _on_hold_probe_engaged(self) -> bool:
+    def _on_hold_probe_engaged(self, pad: Gst.Pad, txn_id: int) -> bool:
         """Main-loop: one of the deferred reload's streams reached (and is now
         holding at) its first buffer. The leg counts as ready only once EVERY
         stream has -- a video-only readiness signal would let the commit fire
         while the audio leg has not decoded a single frame."""
         pending = self._pending_reload
-        if pending is None:
+        if pending is None or pending["txn_id"] != txn_id:
             return False
-        pending["holds_awaited"] = max(0, pending["holds_awaited"] - 1)
+        expected = {held_pad for held_pad, _probe_id in pending["hold_probes"]}
+        if pad not in expected or pad in pending["held_pads"]:
+            return False
+        pending["held_pads"].add(pad)
+        pending["holds_awaited"] = len(expected - pending["held_pads"])
         print(
             "CTRL reload: new leg stream held at its first buffer "
-            f"({pending['holds_awaited']} stream(s) still to preroll)",
+            f"({pending['holds_awaited']} stream(s) still to preroll) (reload_id={txn_id})",
             flush=True,
         )
         if pending["holds_awaited"] == 0 and not pending["new_leg_ready"]:
-            self._on_new_leg_ready()
+            self._on_new_leg_ready(txn_id)
         return False
 
     @staticmethod
@@ -2628,7 +2659,7 @@ class GstPlayoutEngine:
             self._commit_reload()
         return False
 
-    def _on_defer_switch_timeout(self) -> bool:
+    def _on_defer_switch_timeout(self, txn_id: int) -> bool:
         """Safety watchdog (B3 fix): the outgoing leg's EOS never arrived within
         ``defer_switch_timeout_s`` of the new leg becoming ready. Force the switch
         rather than hold two legs open indefinitely -- the reload always eventually
@@ -2636,8 +2667,10 @@ class GstPlayoutEngine:
         pending = self._pending_reload
         if (
             pending is None
+            or pending["txn_id"] != txn_id
             or pending.get("commit_in_progress", False)
             or not pending["switch_at_end_of_current"]
+            or not pending["new_leg_ready"]
         ):
             return False  # already committed/aborted, or not a deferred reload
         pending["defer_timeout_id"] = None
@@ -2772,6 +2805,13 @@ class GstPlayoutEngine:
         pending = self._pending_reload
         if pending is None or pending.get("commit_in_progress", False):
             return False  # aborted or superseded before the first buffer landed
+        # F-1: no caller (including an expired timer) may retire the old leg
+        # without readiness for every required stream of THIS transaction.
+        if not pending["new_leg_ready"] or pending["holds_awaited"] != 0:
+            return False
+        if pending["switch_at_end_of_current"] and not pending["old_leg_eos"]:
+            return False
+        print(f"CTRL reload: firing (reload_id={pending['txn_id']})", flush=True)
         pending["commit_in_progress"] = True
         start_retirement = threading.Event()
         pending["retirement_cancelled"] = False
@@ -2966,11 +3006,16 @@ class GstPlayoutEngine:
         self._reset_stall_reference()
         return False
 
-    def _on_reload_timeout(self) -> bool:
+    def _on_reload_timeout(self, txn_id: int) -> bool:
         """Watchdog: the new reload leg never produced a first buffer in time. Abort so
         the channel isn't wedged on a never-committing reload; the old program keeps
         playing and the next due program can retry."""
-        if self._pending_reload is None or self._pending_reload.get("commit_in_progress", False):
+        if (
+            self._pending_reload is None
+            or self._pending_reload["txn_id"] != txn_id
+            or self._pending_reload.get("commit_in_progress", False)
+            or self._pending_reload["new_leg_ready"]
+        ):
             return False  # already committed/aborted
         print(
             f"CTRL reload aborted: new program produced no buffer within {max(1, int(self.reload_timeout_s))}s; "
@@ -2995,6 +3040,9 @@ class GstPlayoutEngine:
         if pending["probe_id"] is not None:
             with contextlib.suppress(Exception):  # probe may already have auto-removed
                 pending["new_video_pad"].remove_probe(pending["probe_id"])
+        for pad, probe_id in pending.get("readiness_probes", ()):
+            with contextlib.suppress(Exception):  # first-buffer probes remove themselves
+                pad.remove_probe(probe_id)
         for pad, probe_id in pending["boundary_probes"]:
             with contextlib.suppress(Exception):
                 pad.remove_probe(probe_id)
@@ -3171,24 +3219,26 @@ class GstPlayoutEngine:
           watchdog already owns that escalation with far better evidence than a
           disposal return code can carry.
 
-        Item 85 history: a round-1 hypothesis reordered this
-        to unlink/release BEFORE ``set_state(Gst.State.NULL)``, with FLUSH_START/
-        FLUSH_STOP bracketing the unlink, on the theory that a streaming thread
-        parked inside input-selector's own wait needed waking before its element
-        could be safely NULLed. REVERTED after review: releasing/unlinking the
-        selector's request pad before the retiring leg's OWN elements reach NULL
-        races that leg's still-live streaming thread into pushing into a pad that
-        no longer has a peer -- ``GST_FLOW_NOT_LINKED``, a FATAL flow error on this
-        leg's own source pad, not a benign no-op. And ``FLUSH_START`` sent directly
-        to the selector's sink pad does not reach (and cannot unblock) a thread
-        blocked further upstream in this leg's OWN elements; ``flush_stop(True)``
-        immediately after re-opens the exact race window it was meant to close.
-        The ordering below is therefore unchanged from main. Element and selector-
-        The four transaction-stage markers plus the stack-dumping watchdog
-        distinguish the retirement phase without high-volume per-element logging
-        that can perturb a scheduling-sensitive media race."""
+        The old native failure stopped inside set_state(NULL) while a retired
+        concat task still held its streaming lock. Flush that inactive leg from
+        its tail source pads before NULL. Do not unlink a still-running source
+        and do not send FLUSH_STOP: either would reopen a producer race. The
+        commit-stage markers and watchdog retain failure evidence if teardown
+        still cannot complete.
+        """
         failures: list[str] = []
-        warnings: list[str] = []
+        # A second deferred rollover in the native AV playlist shape wedged in
+        # ``element.set_state(NULL)``: the retiring concat's streaming task was
+        # still blocked at the selector even though that selector pad had become
+        # inactive.  FLUSH_START is deliberately sent from the retiring leg's OWN
+        # tail src pad, through its peer, before taking the leg down. GStreamer
+        # makes that out-of-band event turn blocked pushes into GST_FLOW_FLUSHING,
+        # so the retiring task releases its STREAM_LOCK before the downward state
+        # transition waits for it. Do NOT send FLUSH_STOP: this leg is being
+        # removed, and reopening it would restore the exact producer race this
+        # flush closes. Do NOT send on the selector request pad itself: that does
+        # not reach the retired leg's upstream task.
+        warnings = self._flush_retiring_leg_source_pads(video_pad, audio_pad)
         for index, element in enumerate(elements):
             self._null_retiring_element(element, index + 1, failures)
         for stream, selector, pad in (
@@ -3221,6 +3271,31 @@ class GstPlayoutEngine:
             print(f"WARN: leg disposal did not reach NULL: {reason}", flush=True)
             return False, reason
         return True, None
+
+    @staticmethod
+    def _flush_retiring_leg_source_pads(video_pad: Gst.Pad, audio_pad: Gst.Pad | None) -> list[str]:
+        """Flush only the retiring leg downstream, without reopening it.
+
+        ``video_pad`` / ``audio_pad`` are input-selector request pads. Their peers
+        are the retiring leg's tail *src* pads; ``push_event(FLUSH_START)`` there
+        travels from that one leg into its now-inactive selector input and unblocks
+        the leg's task. It is intentionally not a pipeline-wide flush and there is
+        no matching FLUSH_STOP because the leg is immediately driven to NULL.
+        """
+        warnings: list[str] = []
+        for stream, selector_pad in (("video", video_pad), ("audio", audio_pad)):
+            if selector_pad is None:
+                continue
+            try:
+                peer = selector_pad.get_peer()
+                if peer is None:
+                    warnings.append(f"retiring-flush-peer-missing:{stream}")
+                    continue
+                if peer.push_event(Gst.Event.new_flush_start()) is False:
+                    warnings.append(f"retiring-flush-failed:{stream}")
+            except Exception as exc:
+                warnings.append(f"retiring-flush-error:{stream}:{exc!r}")
+        return warnings
 
     def _null_retiring_element(self, element: Gst.Element, index: int, failures: list[str]) -> bool:
         """Bring ONE element of a retiring leg to NULL under the finding-3 policy.
@@ -3577,6 +3652,9 @@ class GstPlayoutEngine:
             if pending["probe_id"] is not None:
                 with contextlib.suppress(Exception):
                     pending["new_video_pad"].remove_probe(pending["probe_id"])
+            for pad, probe_id in pending.get("readiness_probes", ()):
+                with contextlib.suppress(Exception):
+                    pad.remove_probe(probe_id)
             for pad, probe_id in pending["boundary_probes"]:
                 with contextlib.suppress(Exception):
                     pad.remove_probe(probe_id)

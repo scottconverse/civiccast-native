@@ -1,0 +1,4 @@
+C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\ci-claims\.venv\Scripts\python.exe
+C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\ci-claims
+C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\ci-claims\scripts\policy\check_claims_evidence.py
+C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\ci-claims\tests\policy\test_claims_evidence.py

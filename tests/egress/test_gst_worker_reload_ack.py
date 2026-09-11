@@ -2,9 +2,8 @@
 # Copyright (c) The CivicCast Authors
 """F1 redesign (coordinator hostile-review follow-up, 2026-09-06, superseding
 item 4's original "deferred ack" design): a ``reload`` command's pipe ack means
-only "armed" now (the worker accepted the command and the new leg is building/
-prerolling, or the build failed synchronously) -- written SYNCHRONOUSLY, same
-as every other verb. Item 4's fix made the ack wait for the reload to fully
+only "accepted" now (the worker reader admitted the command for later GLib-loop
+application) -- written before source-leg construction. Item 4's fix made the ack wait for the reload to fully
 COMMIT or ABORT, which for a deferred/boundary-aligned switch (an
 automation-driven ON_AIR extension) can take up to ``defer_switch_timeout_s``
 (900s default) -- far longer than any pipe round-trip ack should ever block
@@ -29,6 +28,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+import threading
 import types
 from collections.abc import Iterator
 from pathlib import Path
@@ -126,7 +126,7 @@ def _write_graph(tmp_path: Path) -> Path:
     return path
 
 
-# --- F1: the reload verb acks "armed" synchronously; settle is out-of-band --------
+# --- F2: accepted pipe admission; arm/settle are later main-loop work ----------------
 
 
 def _read_status(graph_path: Path) -> dict[str, Any]:
@@ -134,16 +134,17 @@ def _read_status(graph_path: Path) -> dict[str, Any]:
     return json.loads(status_path.read_text(encoding="utf-8"))
 
 
-def test_reload_acks_armed_synchronously(worker_module, tmp_path: Path) -> None:
+def test_accepted_reload_applies_later_and_settles_out_of_band(
+    worker_module, tmp_path: Path
+) -> None:
     graph_path = _write_graph(tmp_path)
     engine = _FakeEngine()
 
-    result, detail = worker_module._dispatch_control_with_ack(
-        engine, f"reload {graph_path}", command_id="cmd-1"
+    result = worker_module._apply_accepted_reload(
+        engine, f"reload {graph_path}", command_id="cmd-1", stop_requested=threading.Event()
     )
 
-    assert result == "armed"
-    assert detail is None
+    assert result is False  # one-shot GLib callback
     assert len(engine.reload_calls) == 1
     assert not graph_path.exists()  # one-shot graph file consumed after read
     # Not settled yet -- no status file until on_settled fires.
@@ -154,7 +155,9 @@ def test_reload_settle_applied_is_written_out_of_band(worker_module, tmp_path: P
     graph_path = _write_graph(tmp_path)
     engine = _FakeEngine()
 
-    worker_module._dispatch_control_with_ack(engine, f"reload {graph_path}", command_id="cmd-2")
+    worker_module._apply_accepted_reload(
+        engine, f"reload {graph_path}", command_id="cmd-2", stop_requested=threading.Event()
+    )
     # Simulate the engine's own later main-loop commit (``_commit_reload``'s
     # ``on_settled(True, None)`` call) -- this does NOT touch the pipe ack at
     # all; it writes the status file instead.
@@ -169,7 +172,9 @@ def test_reload_settle_aborted_carries_the_reason(worker_module, tmp_path: Path)
     graph_path = _write_graph(tmp_path)
     engine = _FakeEngine()
 
-    worker_module._dispatch_control_with_ack(engine, f"reload {graph_path}", command_id="cmd-3")
+    worker_module._apply_accepted_reload(
+        engine, f"reload {graph_path}", command_id="cmd-3", stop_requested=threading.Event()
+    )
     # Simulate the engine's own later main-loop abort (e.g. the H1 fix's
     # ``_make``-raises-on-refused-add path, or the reload_timeout_s watchdog) --
     # arriving long after any pipe ack bound would have expired is exactly the
@@ -181,45 +186,40 @@ def test_reload_settle_aborted_carries_the_reason(worker_module, tmp_path: Path)
     assert status["result"] == "aborted:timeout"
 
 
-def test_reload_settle_without_a_command_id_falls_back_to_a_generated_one(
-    worker_module, tmp_path: Path
-) -> None:
-    """A caller that doesn't supply ``command_id`` (the default) still gets a
-    real, generated reload id in the status file -- never a crash, never a
-    silently-dropped settlement."""
-    graph_path = _write_graph(tmp_path)
-    engine = _FakeEngine()
-
-    worker_module._dispatch_control_with_ack(engine, f"reload {graph_path}")
-    engine.reload_calls[0]["on_settled"](True, None)
-
-    status = _read_status(graph_path)
-    assert status["id"]  # some non-empty generated id
-    assert status["result"] == "applied"
-
-
-def test_a_synchronous_build_failure_acks_error_and_settles_nothing(
-    worker_module, tmp_path: Path
-) -> None:
-    """F2: if ``reload_program`` itself raises (nothing was armed), the ack is
-    "error" immediately -- there is no pending settlement to report later, so
-    no status file is written at all."""
+def test_accepted_build_failure_writes_terminal_abort(worker_module, tmp_path: Path) -> None:
+    """The admission receipt has already returned before a main-loop build fails,
+    so this failure must reach daemon settlement through the original id."""
     graph_path = _write_graph(tmp_path)
     engine = _FakeEngine()
     engine.reload_program_should_raise = RuntimeError("simulated fail-loud pipeline.add refusal")
 
-    result, detail = worker_module._dispatch_control_with_ack(
-        engine, f"reload {graph_path}", command_id="cmd-4"
+    worker_module._apply_accepted_reload(
+        engine, f"reload {graph_path}", command_id="cmd-4", stop_requested=threading.Event()
     )
 
-    assert result == "error"
-    assert "simulated fail-loud pipeline.add refusal" in (detail or "")
-    assert not (graph_path.parent / "reload-status.json").exists()
+    status = _read_status(graph_path)
+    assert status["id"] == "cmd-4"
+    assert status["result"] == "aborted:build-error"
 
 
-def test_reload_commit_busy_error_does_not_apply_the_graphs_overlay(
-    worker_module, tmp_path: Path
-) -> None:
+def test_accepted_reload_stopped_before_apply_never_arms(worker_module, tmp_path: Path) -> None:
+    graph_path = _write_graph(tmp_path)
+    engine = _FakeEngine()
+    stop_requested = threading.Event()
+    stop_requested.set()
+
+    worker_module._apply_accepted_reload(
+        engine, f"reload {graph_path}", command_id="cmd-stop", stop_requested=stop_requested
+    )
+
+    assert engine.reload_calls == []
+    assert not graph_path.exists()
+    status = _read_status(graph_path)
+    assert status["id"] == "cmd-stop"
+    assert status["result"] == "aborted:stopped"
+
+
+def test_reload_commit_busy_error_writes_terminal_abort(worker_module, tmp_path: Path) -> None:
     """An overlap rejected by the engine fails the whole worker graph dispatch.
 
     In particular the worker must not continue to the graph's overlay call or
@@ -231,15 +231,16 @@ def test_reload_commit_busy_error_does_not_apply_the_graphs_overlay(
     engine = _FakeEngine()
     engine.reload_program_should_raise = RuntimeError("reload commit already in progress")
 
-    result, detail = worker_module._dispatch_control_with_ack(
-        engine, f"reload {graph_path}", command_id="cmd-overlap"
+    worker_module._apply_accepted_reload(
+        engine,
+        f"reload {graph_path}",
+        command_id="cmd-overlap",
+        stop_requested=threading.Event(),
     )
 
-    assert result == "error"
-    assert "reload commit already in progress" in (detail or "")
     assert engine.reload_calls == []
     assert engine.graphics_overlay_calls == []
-    assert not (graph_path.parent / "reload-status.json").exists()
+    assert _read_status(graph_path)["result"] == "aborted:build-error"
 
 
 def test_a_graphics_overlay_reapply_failure_does_not_affect_the_program_reload_ack(
@@ -253,17 +254,89 @@ def test_a_graphics_overlay_reapply_failure_does_not_affect_the_program_reload_a
     engine = _FakeEngine()
     engine.graphics_overlay_should_raise = True
 
-    result, _detail = worker_module._dispatch_control_with_ack(
-        engine, f"reload {graph_path}", command_id="cmd-5"
+    worker_module._apply_accepted_reload(
+        engine, f"reload {graph_path}", command_id="cmd-5", stop_requested=threading.Event()
     )
 
-    assert result == "armed"  # program reload still armed fine
     assert len(engine.reload_calls) == 1
     assert "graphics-overlay re-apply failed" in capsys.readouterr().out
 
     engine.reload_calls[0]["on_settled"](True, None)
     status = _read_status(graph_path)
     assert status["result"] == "applied"  # program reload's own outcome, unaffected
+
+
+def test_pipe_accepts_reload_before_a_slow_main_loop_arm(
+    worker_module, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The five-second pipe receipt is emitted before a deliberately blocked
+    ``reload_program`` call begins; draining the queued GLib callback later does
+    not revise that receipt into an ``armed`` or terminal claim."""
+    graph_path = _write_graph(tmp_path)
+    arm_started = threading.Event()
+    release_arm = threading.Event()
+
+    class _SlowEngine(_FakeEngine):
+        def reload_program(
+            self, new_leg: Any, *, switch_at_end_of_current: bool, on_settled: Any
+        ) -> None:
+            arm_started.set()
+            assert release_arm.wait(1.0)
+            super().reload_program(
+                new_leg, switch_at_end_of_current=switch_at_end_of_current, on_settled=on_settled
+            )
+
+    engine = _SlowEngine()
+    queued: list[Any] = []
+    writes: list[dict[str, Any]] = []
+    stop_event = threading.Event()
+    envelope = json.dumps({"id": "cmd-slow", "cmd": f"reload {graph_path}"})
+    lines = [envelope, envelope]  # lost first receipt: replay before slow arm runs
+
+    class _FakeGLib:
+        @staticmethod
+        def idle_add(callback: Any) -> int:
+            queued.append(callback)
+            return 1
+
+    gi = types.ModuleType("gi")
+    repository = types.ModuleType("gi.repository")
+    repository.GLib = _FakeGLib  # type: ignore[attr-defined]
+    gi.repository = repository  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "gi", gi)
+    monkeypatch.setitem(sys.modules, "gi.repository", repository)
+    monkeypatch.setattr(worker_module, "_windows_pipe_connect", lambda _name: object())
+
+    def read_line(_handle: object) -> str | None:
+        if lines:
+            return lines.pop(0)
+        stop_event.set()
+        return None
+
+    monkeypatch.setattr(worker_module, "_windows_pipe_read_line", read_line)
+    monkeypatch.setattr(
+        worker_module,
+        "_windows_pipe_write_line",
+        lambda _handle, _lock, text: writes.append(json.loads(text)),
+    )
+
+    worker_module._windows_pipe_reader_loop("fake", engine, stop_event)
+
+    assert writes == [
+        {"v": 1, "id": "cmd-slow", "result": "accepted", "detail": None},
+        {"v": 1, "id": "cmd-slow", "result": "accepted", "detail": None},
+    ]
+    assert engine.reload_calls == []
+    assert len(queued) == 1
+
+    arm_thread = threading.Thread(target=queued.pop())
+    arm_thread.start()
+    assert arm_started.wait(1.0)
+    assert writes[0]["result"] == "accepted"
+    release_arm.set()
+    arm_thread.join(timeout=1.0)
+    assert not arm_thread.is_alive()
+    assert len(engine.reload_calls) == 1
 
 
 # --- every other verb is unchanged: synchronous dispatch + immediate ack ----------

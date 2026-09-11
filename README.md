@@ -40,6 +40,16 @@ for the publish record and the upgrade steps.
 (unpublished; no installer asset) -- it does not change the install story
 above, which still targets `v1.0.0-beta.5`.
 
+The active local reliability repair addresses preparation blocking, reload
+acknowledgements, scheduled programme labels and caption-failure visibility.
+It also preserves reload-abort evidence, alerts on worker faults before recovery,
+and hides unverified worker PIDs in operator responses. UDP status distinguishes
+local sending from receiver verification.
+The observed old-leg retirement hang is repaired; all seven affected native
+checks pass. Current results and remaining candidate gates are recorded in
+[the local verification note](docs/evidence/f2-local-2026-09-11/VERIFICATION.md).
+This work has not passed the installer, gate or sustained-soak release criteria.
+
 `v1.0.0-beta.5` enables in-place schedule rollover by default.
 This lets the playout worker load the next plan without a planned encoder
 restart, including refreshing filler between programs. Bulletin rotations

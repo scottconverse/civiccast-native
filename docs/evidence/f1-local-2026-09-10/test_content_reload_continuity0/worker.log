@@ -1,0 +1,12 @@
+CTRL preroll: reached PLAYING after 0.0s pid=41460
+CTRL reload: new leg preroll verified (reload_id=1) held_streams=0
+CTRL reload: firing (reload_id=1)
+CTRL reload: switching selector
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload: old leg disposed
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload: holds released
+CTRL reload diagnostic: stage=holds-released
+CTRL reload committed (elements=30)
+CTRL reload diagnostic: stage=committed elements=30
+WORKER_RESULT {'error': None, 'teardown_clean': True}

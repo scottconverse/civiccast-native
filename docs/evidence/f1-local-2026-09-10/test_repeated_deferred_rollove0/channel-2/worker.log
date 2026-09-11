@@ -1,0 +1,98 @@
+CTRL preroll: reached PLAYING after 0.1s pid=11068
+CTRL first-output: first buffer after 1.7s pid=11068
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=1)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=1)
+CTRL reload: new leg preroll verified (reload_id=1) held_streams=2
+CTRL output: 468 buffers (+467) since PLAYING
+CTRL reload: outgoing EOS observed stream=audio (1/2 stream(s))
+CTRL reload: firing (reload_id=1)
+CTRL reload: boundary switch rebased to running time 10.155s
+CTRL reload: switching selector
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload: old leg disposed
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload: holds released
+CTRL reload diagnostic: stage=holds-released
+CTRL reload committed (elements=77)
+CTRL reload diagnostic: stage=committed elements=77
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=2)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=2)
+CTRL reload: new leg preroll verified (reload_id=2) held_streams=2
+CTRL output: 804 buffers (+803) since PLAYING
+CTRL output: 1267 buffers (+1266) since PLAYING
+CTRL reload: outgoing EOS observed stream=audio (1/2 stream(s))
+CTRL reload: firing (reload_id=2)
+CTRL reload: boundary switch rebased to running time 20.309s
+CTRL reload: switching selector
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload: old leg disposed
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload: holds released
+CTRL reload diagnostic: stage=holds-released
+CTRL reload committed (elements=77)
+CTRL reload diagnostic: stage=committed elements=77
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=3)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=3)
+CTRL reload: new leg preroll verified (reload_id=3) held_streams=2
+CTRL output: 1635 buffers (+1634) since PLAYING
+CTRL output: 2028 buffers (+2027) since PLAYING
+CTRL reload: outgoing EOS observed stream=audio (1/2 stream(s))
+CTRL reload: firing (reload_id=3)
+CTRL reload: boundary switch rebased to running time 30.464s
+CTRL reload: switching selector
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload: old leg disposed
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload: holds released
+CTRL reload diagnostic: stage=holds-released
+CTRL reload committed (elements=77)
+CTRL reload diagnostic: stage=committed elements=77
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=4)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=4)
+CTRL reload: new leg preroll verified (reload_id=4) held_streams=2
+CTRL output: 2463 buffers (+2462) since PLAYING
+CTRL output: 2850 buffers (+2849) since PLAYING
+CTRL reload: outgoing EOS observed stream=audio (1/2 stream(s))
+CTRL reload: firing (reload_id=4)
+CTRL reload: boundary switch rebased to running time 40.618s
+CTRL reload: switching selector
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload: old leg disposed
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload: holds released
+CTRL reload diagnostic: stage=holds-released
+CTRL reload committed (elements=77)
+CTRL reload diagnostic: stage=committed elements=77
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=5)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=5)
+CTRL reload: new leg preroll verified (reload_id=5) held_streams=2
+CTRL output: 3185 buffers (+3184) since PLAYING
+CTRL output: 3572 buffers (+3571) since PLAYING
+CTRL reload: outgoing EOS observed stream=audio (1/2 stream(s))
+CTRL reload: firing (reload_id=5)
+CTRL reload: boundary switch rebased to running time 50.773s
+CTRL reload: switching selector
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload: old leg disposed
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload: holds released
+CTRL reload diagnostic: stage=holds-released
+CTRL reload committed (elements=77)
+CTRL reload diagnostic: stage=committed elements=77
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=6)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=6)
+CTRL reload: new leg preroll verified (reload_id=6) held_streams=2
+CTRL output: 4016 buffers (+4015) since PLAYING
+CTRL output: 4402 buffers (+4401) since PLAYING
+CTRL reload: outgoing EOS observed stream=audio (1/2 stream(s))
+CTRL reload: firing (reload_id=6)
+CTRL reload: boundary switch rebased to running time 60.928s
+CTRL reload: switching selector
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload: old leg disposed
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload: holds released
+CTRL reload diagnostic: stage=holds-released
+CTRL reload committed (elements=77)
+CTRL reload diagnostic: stage=committed elements=77
+WORKER_RESULT {'error': None, 'teardown_clean': True}

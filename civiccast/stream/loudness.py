@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,6 +51,7 @@ def check_loudness(
     probe_start_seconds: float | None = None,
     probe_duration_seconds: float | None = None,
     threads: int | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> LoudnessGateResult:
     """Measure a media asset's integrated loudness and gate it against a target.
 
@@ -129,7 +131,10 @@ def check_loudness(
     if probe_duration_seconds is not None:
         args.extend(["-t", f"{probe_duration_seconds:g}"])
     args.extend(["-filter_complex", "ebur128=peak=true", "-f", "null", "-"])
-    result = run_ffmpeg(args)
+    if cancel_event is None:
+        result = run_ffmpeg(args)
+    else:
+        result = run_ffmpeg(args, cancel_event=cancel_event)
     if result.returncode != 0:
         return _loudness_failure(
             standard=standard_label,
@@ -164,6 +169,7 @@ def check_streaming_loudness(
     probe_start_seconds: float | None = None,
     probe_duration_seconds: float | None = None,
     threads: int | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> LoudnessGateResult:
     """Back-compat wrapper: gate streaming audio against its -16 LUFS target.
 
@@ -185,6 +191,7 @@ def check_streaming_loudness(
         probe_start_seconds=probe_start_seconds,
         probe_duration_seconds=probe_duration_seconds,
         threads=threads,
+        cancel_event=cancel_event,
     )
 
 

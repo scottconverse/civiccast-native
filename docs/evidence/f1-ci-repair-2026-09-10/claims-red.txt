@@ -1,0 +1,827 @@
+..........................................F........................F.... [ 57%]
+.FF...FFFFFFFFFFFFFF.................................                    [100%]
+================================== FAILURES ===================================
+____________ test_ac1_verifier_green_on_registered_claims_at_head _____________
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ac1_verifier_green_on_reg0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001E380737830>
+
+    def test_ac1_verifier_green_on_registered_claims_at_head(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AC1: exercised against the REAL committed registry/workflow-contract/
+        trust-root/ci-test.yml in this worktree (real blobs must match � this is
+        the load-bearing proof that docs/claims/claims.yaml is not aspirational),
+        with synthetic-but-otherwise-real-shaped CI artifacts standing in for a
+        real GitHub Actions run (no Docker/GitHub available locally).
+
+        Hermetic against the job's OWN run_attempt: `--run-attempt` is never
+        passed on the CLI below, so the verifier falls back to its own process's
+        `GITHUB_RUN_ATTEMPT` env var (`main`'s `if args.run_attempt is None:
+        args.run_attempt = os.environ.get("GITHUB_RUN_ATTEMPT")`), and `_run_cli`
+        passes this test's own inherited `os.environ` through to the subprocess.
+        Left ambient, a CI re-run attempt (GitHub Actions sets a real
+        `GITHUB_RUN_ATTEMPT=2` on attempt 2) would mismatch the "1" hardcoded
+        into the synthetic meta below and fail CC-WS3-004 for a reason that has
+        nothing to do with what this test actually proves � seen on
+        randomized-suite job 100290734871, run 33641309663 attempt 2 (seed
+        1070036697). `monkeypatch.setenv` pins `GITHUB_RUN_ATTEMPT` to match the
+        meta so the outcome never depends on the job's real attempt number.
+        `GITHUB_RUN_ID` is pinned too for the same reason, belt-and-suspenders �
+        `--run-id 999` is already passed explicitly below, so `args.run_id` is
+        never `None` and the env fallback is never actually consulted, but a
+        future edit that drops `--run-id` should not silently regain this
+        dependency."""
+        artifacts, real_repo_head = _prepare_ac1_synthetic_artifacts(tmp_path, meta_run_attempt="1")
+        monkeypatch.setenv("GITHUB_RUN_ATTEMPT", "1")
+        monkeypatch.setenv("GITHUB_RUN_ID", "999")
+
+        result = _run_ac1_cli(artifacts, real_repo_head, tmp_path)
+>       assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+E       AssertionError: stdout:
+E         VIOLATION: native-decision-gate: input role code[1] (civiccast/egress/gst/engine.py) blob drift \ufffd recorded 472f6ec66b28d2d22d91ac25aad8e9c76c3bdd6f, current e6868282a4645d3a95c618c1e8ef8cc556436444 (re-prove or re-bind)
+E         VIOLATION: native-decision-gate: input role test (tests/egress/test_gst_engine_wsl.py) blob drift \ufffd recorded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)
+E         VIOLATION: session0-service-broadcast: input role code[1] (civiccast/egress/gst/engine.py) blob drift \ufffd recorded 472f6ec66b28d2d22d91ac25aad8e9c76c3bdd6f, current e6868282a4645d3a95c618c1e8ef8cc556436444 (re-prove or re-bind)
+E         VIOLATION: session0-service-broadcast: input role test (tests/egress/test_gst_engine_wsl.py) blob drift \ufffd recorded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)
+E         claims-evidence: FAIL (4 violation(s))
+E
+E         stderr:
+E
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['C:\\Users\\scott\\Documents\\Codex\\2026-09-10\\openai-multi-agent-c-users-scott\\work\\ci-cla...t f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)\nclaims-evidence: FAIL (4 violation(s))\n', stderr='').returncode
+
+artifacts  = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ac1_verifier_green_on_reg0/artifacts')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001E380737830>
+real_repo_head = '5bc57d7e5500e10465c413632c2ece3cce32bfec'
+result     = CompletedProcess(args=['C:\\Users\\scott\\Documents\\Codex\\2026-09-10\\openai-multi-agent-c-users-scott\\work\\ci-cla...t f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)\nclaims-evidence: FAIL (4 violation(s))\n', stderr='')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ac1_verifier_green_on_reg0')
+
+tests\policy\test_claims_evidence.py:830: AssertionError
+_________ test_ws3r2_005_three_new_registry_entries_present_and_clean _________
+
+    def test_ws3r2_005_three_new_registry_entries_present_and_clean() -> None:
+        registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        ids = {entry.id for entry in registry.entries}
+        assert {
+            "ws1-release-truth-checker",
+            "native-decision-gate",
+            "session0-service-broadcast",
+        } <= ids
+        by_id = {entry.id: entry for entry in registry.entries}
+        assert by_id["ws1-release-truth-checker"].resolution == "same_run"
+        assert by_id["native-decision-gate"].resolution == "external_evidence"
+        assert by_id["session0-service-broadcast"].resolution == "external_evidence"
+        for claim_id in ("native-decision-gate", "session0-service-broadcast"):
+            non_ci_safe = [c for c in by_id[claim_id].controls if not c.ci_safe]
+            assert non_ci_safe, f"{claim_id} must carry >=1 ci_safe:false control"
+        assert cce.scan_marker_violations(REPO_ROOT, registry) == []
+>       assert cce.blob_drift_violations(REPO_ROOT, registry) == []
+E       AssertionError: assert ['native-deci... or re-bind)'] == []
+E
+E         Left contains 4 more items, first extra item: 'native-decision-gate: input role code[1] (civiccast/egress/gst/engine.py) blob drift � recorded 472f6ec66b28d2d22d91ac25aad8e9c76c3bdd6f, current e6868282a4645d3a95c618c1e8ef8cc556436444 (re-prove or re-bind)'
+E         Use -v to get more diff
+
+by_id      = {'native-decision-gate': ClaimEntry(id='native-decision-gate', claim='A decision-gate spike on real Windows hardware e.... Re-asserted same-run: this control's node must show PASSED (not skipped) in this run's junit.", ci_safe=True)]), ...}
+claim_id   = 'session0-service-broadcast'
+ids        = {'native-decision-gate', 'session0-service-broadcast', 'ws1-release-truth-checker', 'ws2-postgres-backup-capture', 'ws2-postgres-restore-drill', 'ws2-sqlite-restore-falsification'}
+non_ci_safe = [Control(id='session0-service-broadcast-authority-record', command='NO AUTOMATED RESOLUTION MECHANISM EXISTS for this ...ution � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)]
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+
+tests\policy\test_claims_evidence.py:1230: AssertionError
+____ test_ws3r3_005_native_decision_gate_binds_current_engine_dependencies ____
+
+    def test_ws3r3_005_native_decision_gate_binds_current_engine_dependencies() -> None:
+        registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        entry = next(e for e in registry.entries if e.id == "native-decision-gate")
+        code_role = entry.inputs["code"]
+        assert isinstance(code_role, list)
+        paths = {rf.path for rf in code_role}
+        assert paths == _CURRENT_ENGINE_DEPENDENCY_MODULES
+        for rf in code_role:
+>           assert cce.git_hash_object(REPO_ROOT, rf.path) == rf.blob
+E           AssertionError: assert 'e6868282a464...f8cc556436444' == '472f6ec66b28...8e9c76c3bdd6f'
+E
+E             - 472f6ec66b28d2d22d91ac25aad8e9c76c3bdd6f
+E             + e6868282a4645d3a95c618c1e8ef8cc556436444
+
+code_role  = [RoleFile(path='civiccast/egress/gst/worker.py', blob='e5baeb27dd7c053233407286085e2b0f594d4b64', node_id=None), RoleF..., RoleFile(path='civiccast/egress/gst/control.py', blob='fd181d64f643414ba4bb4ca2ce3717fa3e6c076f', node_id=None), ...]
+entry      = ClaimEntry(id='native-decision-gate', claim='A decision-gate spike on real Windows hardware exercised the then-unmodif...tion � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])
+paths      = {'civiccast/egress/gst/audio_tap.py', 'civiccast/egress/gst/caption_flow.py', 'civiccast/egress/gst/control.py', 'civiccast/egress/gst/decode_policy.py', 'civiccast/egress/gst/engine.py', 'civiccast/egress/gst/graph.py', ...}
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+rf         = RoleFile(path='civiccast/egress/gst/engine.py', blob='472f6ec66b28d2d22d91ac25aad8e9c76c3bdd6f', node_id=None)
+
+tests\policy\test_claims_evidence.py:1330: AssertionError
+__________ test_ws3r3_005_session0_binds_current_engine_dependencies __________
+
+    def test_ws3r3_005_session0_binds_current_engine_dependencies() -> None:
+        registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        entry = next(e for e in registry.entries if e.id == "session0-service-broadcast")
+        code_role = entry.inputs["code"]
+        assert isinstance(code_role, list)
+        paths = {rf.path for rf in code_role}
+        assert paths == _CURRENT_ENGINE_DEPENDENCY_MODULES
+        for rf in code_role:
+>           assert cce.git_hash_object(REPO_ROOT, rf.path) == rf.blob
+E           AssertionError: assert 'e6868282a464...f8cc556436444' == '472f6ec66b28...8e9c76c3bdd6f'
+E
+E             - 472f6ec66b28d2d22d91ac25aad8e9c76c3bdd6f
+E             + e6868282a4645d3a95c618c1e8ef8cc556436444
+
+code_role  = [RoleFile(path='civiccast/egress/gst/worker.py', blob='e5baeb27dd7c053233407286085e2b0f594d4b64', node_id=None), RoleF..., RoleFile(path='civiccast/egress/gst/control.py', blob='fd181d64f643414ba4bb4ca2ce3717fa3e6c076f', node_id=None), ...]
+entry      = ClaimEntry(id='session0-service-broadcast', claim='A temporary LocalSystem Windows service running the then-unmodified...tion � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])
+paths      = {'civiccast/egress/gst/audio_tap.py', 'civiccast/egress/gst/caption_flow.py', 'civiccast/egress/gst/control.py', 'civiccast/egress/gst/decode_policy.py', 'civiccast/egress/gst/engine.py', 'civiccast/egress/gst/graph.py', ...}
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+rf         = RoleFile(path='civiccast/egress/gst/engine.py', blob='472f6ec66b28d2d22d91ac25aad8e9c76c3bdd6f', node_id=None)
+
+tests\policy\test_claims_evidence.py:1341: AssertionError
+_ test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[native-decision-gate-civiccast/egress/gst/audio_tap.py] _
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo0')
+claim_id = 'native-decision-gate'
+module_path = 'civiccast/egress/gst/audio_tap.py'
+
+    @pytest.mark.parametrize(
+        "claim_id, module_path",
+        [
+            (claim_id, module_path)
+            for claim_id in ("native-decision-gate", "session0-service-broadcast")
+            for module_path in sorted(_CURRENT_ENGINE_DEPENDENCY_MODULES)
+        ],
+    )
+    def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim(
+        tmp_path: Path, claim_id: str, module_path: str
+    ) -> None:
+        """CC-WS3-005's own acceptance criterion: each additionally-bound code
+        module, drifted alone, independently invalidates its claim (a real
+        registry entry, not a synthetic fixture) � proving the round-3 binding
+        is load-bearing, not decorative."""
+        real_registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        work = tmp_path / "work"
+        _copy_registry_referenced_files(work, real_registry)
+        target = work / module_path
+        target.write_text(target.read_text(encoding="utf-8") + "\n# UNBOUND EDIT.\n", encoding="utf-8")
+
+        registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
+        violations = cce.blob_drift_violations(work, registry)
+        assert violations, f"expected a blob-drift violation after mutating {module_path}"
+>       assert all(module_path in v for v in violations), (
+            "mutating exactly one file must not implicate any other input path",
+            violations,
+        )
+E       AssertionError: ('mutating exactly one file must not implicate any other input path', ['native-decision-gate: input role code[1] (civi...ded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)'])
+E       assert False
+E        +  where False = all(<generator object test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim.<locals>.<genexpr> at 0x000001E3809A98A0>)
+
+claim_id   = 'native-decision-gate'
+module_path = 'civiccast/egress/gst/audio_tap.py'
+real_registry = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+target     = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo0/work/civiccast/egress/gst/audio_tap.py')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo0')
+violations = ['native-decision-gate: input role code[1] (civiccast/egress/gst/engine.py) blob drift � recorded 472f6ec66b28d2d22d91...rded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)']
+work       = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo0/work')
+
+tests\policy\test_claims_evidence.py:1415: AssertionError
+_ test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[native-decision-gate-civiccast/egress/gst/caption_flow.py] _
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo1')
+claim_id = 'native-decision-gate'
+module_path = 'civiccast/egress/gst/caption_flow.py'
+
+    @pytest.mark.parametrize(
+        "claim_id, module_path",
+        [
+            (claim_id, module_path)
+            for claim_id in ("native-decision-gate", "session0-service-broadcast")
+            for module_path in sorted(_CURRENT_ENGINE_DEPENDENCY_MODULES)
+        ],
+    )
+    def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim(
+        tmp_path: Path, claim_id: str, module_path: str
+    ) -> None:
+        """CC-WS3-005's own acceptance criterion: each additionally-bound code
+        module, drifted alone, independently invalidates its claim (a real
+        registry entry, not a synthetic fixture) � proving the round-3 binding
+        is load-bearing, not decorative."""
+        real_registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        work = tmp_path / "work"
+        _copy_registry_referenced_files(work, real_registry)
+        target = work / module_path
+        target.write_text(target.read_text(encoding="utf-8") + "\n# UNBOUND EDIT.\n", encoding="utf-8")
+
+        registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
+        violations = cce.blob_drift_violations(work, registry)
+        assert violations, f"expected a blob-drift violation after mutating {module_path}"
+>       assert all(module_path in v for v in violations), (
+            "mutating exactly one file must not implicate any other input path",
+            violations,
+        )
+E       AssertionError: ('mutating exactly one file must not implicate any other input path', ['native-decision-gate: input role code[1] (civi...ded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)'])
+E       assert False
+E        +  where False = all(<generator object test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim.<locals>.<genexpr> at 0x000001E380876330>)
+
+claim_id   = 'native-decision-gate'
+module_path = 'civiccast/egress/gst/caption_flow.py'
+real_registry = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+target     = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo1/work/civiccast/egress/gst/caption_flow.py')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo1')
+violations = ['native-decision-gate: input role code[1] (civiccast/egress/gst/engine.py) blob drift � recorded 472f6ec66b28d2d22d91...rded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)']
+work       = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo1/work')
+
+tests\policy\test_claims_evidence.py:1415: AssertionError
+_ test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[native-decision-gate-civiccast/egress/gst/control.py] _
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo2')
+claim_id = 'native-decision-gate'
+module_path = 'civiccast/egress/gst/control.py'
+
+    @pytest.mark.parametrize(
+        "claim_id, module_path",
+        [
+            (claim_id, module_path)
+            for claim_id in ("native-decision-gate", "session0-service-broadcast")
+            for module_path in sorted(_CURRENT_ENGINE_DEPENDENCY_MODULES)
+        ],
+    )
+    def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim(
+        tmp_path: Path, claim_id: str, module_path: str
+    ) -> None:
+        """CC-WS3-005's own acceptance criterion: each additionally-bound code
+        module, drifted alone, independently invalidates its claim (a real
+        registry entry, not a synthetic fixture) � proving the round-3 binding
+        is load-bearing, not decorative."""
+        real_registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        work = tmp_path / "work"
+        _copy_registry_referenced_files(work, real_registry)
+        target = work / module_path
+        target.write_text(target.read_text(encoding="utf-8") + "\n# UNBOUND EDIT.\n", encoding="utf-8")
+
+        registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
+        violations = cce.blob_drift_violations(work, registry)
+        assert violations, f"expected a blob-drift violation after mutating {module_path}"
+>       assert all(module_path in v for v in violations), (
+            "mutating exactly one file must not implicate any other input path",
+            violations,
+        )
+E       AssertionError: ('mutating exactly one file must not implicate any other input path', ['native-decision-gate: input role code[1] (civi...ded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)'])
+E       assert False
+E        +  where False = all(<generator object test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim.<locals>.<genexpr> at 0x000001E3809AB920>)
+
+claim_id   = 'native-decision-gate'
+module_path = 'civiccast/egress/gst/control.py'
+real_registry = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+target     = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo2/work/civiccast/egress/gst/control.py')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo2')
+violations = ['native-decision-gate: input role code[1] (civiccast/egress/gst/engine.py) blob drift � recorded 472f6ec66b28d2d22d91...rded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)']
+work       = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo2/work')
+
+tests\policy\test_claims_evidence.py:1415: AssertionError
+_ test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[native-decision-gate-civiccast/egress/gst/decode_policy.py] _
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo3')
+claim_id = 'native-decision-gate'
+module_path = 'civiccast/egress/gst/decode_policy.py'
+
+    @pytest.mark.parametrize(
+        "claim_id, module_path",
+        [
+            (claim_id, module_path)
+            for claim_id in ("native-decision-gate", "session0-service-broadcast")
+            for module_path in sorted(_CURRENT_ENGINE_DEPENDENCY_MODULES)
+        ],
+    )
+    def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim(
+        tmp_path: Path, claim_id: str, module_path: str
+    ) -> None:
+        """CC-WS3-005's own acceptance criterion: each additionally-bound code
+        module, drifted alone, independently invalidates its claim (a real
+        registry entry, not a synthetic fixture) � proving the round-3 binding
+        is load-bearing, not decorative."""
+        real_registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        work = tmp_path / "work"
+        _copy_registry_referenced_files(work, real_registry)
+        target = work / module_path
+        target.write_text(target.read_text(encoding="utf-8") + "\n# UNBOUND EDIT.\n", encoding="utf-8")
+
+        registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
+        violations = cce.blob_drift_violations(work, registry)
+        assert violations, f"expected a blob-drift violation after mutating {module_path}"
+>       assert all(module_path in v for v in violations), (
+            "mutating exactly one file must not implicate any other input path",
+            violations,
+        )
+E       AssertionError: ('mutating exactly one file must not implicate any other input path', ['native-decision-gate: input role code[1] (civi...ded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)'])
+E       assert False
+E        +  where False = all(<generator object test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim.<locals>.<genexpr> at 0x000001E380877850>)
+
+claim_id   = 'native-decision-gate'
+module_path = 'civiccast/egress/gst/decode_policy.py'
+real_registry = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+target     = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo3/work/civiccast/egress/gst/decode_policy.py')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo3')
+violations = ['native-decision-gate: input role code[1] (civiccast/egress/gst/engine.py) blob drift � recorded 472f6ec66b28d2d22d91...rded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)']
+work       = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo3/work')
+
+tests\policy\test_claims_evidence.py:1415: AssertionError
+_ test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[native-decision-gate-civiccast/egress/gst/engine.py] _
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo4')
+claim_id = 'native-decision-gate'
+module_path = 'civiccast/egress/gst/engine.py'
+
+    @pytest.mark.parametrize(
+        "claim_id, module_path",
+        [
+            (claim_id, module_path)
+            for claim_id in ("native-decision-gate", "session0-service-broadcast")
+            for module_path in sorted(_CURRENT_ENGINE_DEPENDENCY_MODULES)
+        ],
+    )
+    def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim(
+        tmp_path: Path, claim_id: str, module_path: str
+    ) -> None:
+        """CC-WS3-005's own acceptance criterion: each additionally-bound code
+        module, drifted alone, independently invalidates its claim (a real
+        registry entry, not a synthetic fixture) � proving the round-3 binding
+        is load-bearing, not decorative."""
+        real_registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        work = tmp_path / "work"
+        _copy_registry_referenced_files(work, real_registry)
+        target = work / module_path
+        target.write_text(target.read_text(encoding="utf-8") + "\n# UNBOUND EDIT.\n", encoding="utf-8")
+
+        registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
+        violations = cce.blob_drift_violations(work, registry)
+        assert violations, f"expected a blob-drift violation after mutating {module_path}"
+>       assert all(module_path in v for v in violations), (
+            "mutating exactly one file must not implicate any other input path",
+            violations,
+        )
+E       AssertionError: ('mutating exactly one file must not implicate any other input path', ['native-decision-gate: input role code[1] (civi...ded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)'])
+E       assert False
+E        +  where False = all(<generator object test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim.<locals>.<genexpr> at 0x000001E380CC0EE0>)
+
+claim_id   = 'native-decision-gate'
+module_path = 'civiccast/egress/gst/engine.py'
+real_registry = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+target     = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo4/work/civiccast/egress/gst/engine.py')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo4')
+violations = ['native-decision-gate: input role code[1] (civiccast/egress/gst/engine.py) blob drift � recorded 472f6ec66b28d2d22d91...rded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)']
+work       = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo4/work')
+
+tests\policy\test_claims_evidence.py:1415: AssertionError
+_ test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[native-decision-gate-civiccast/egress/gst/graph.py] _
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo5')
+claim_id = 'native-decision-gate', module_path = 'civiccast/egress/gst/graph.py'
+
+    @pytest.mark.parametrize(
+        "claim_id, module_path",
+        [
+            (claim_id, module_path)
+            for claim_id in ("native-decision-gate", "session0-service-broadcast")
+            for module_path in sorted(_CURRENT_ENGINE_DEPENDENCY_MODULES)
+        ],
+    )
+    def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim(
+        tmp_path: Path, claim_id: str, module_path: str
+    ) -> None:
+        """CC-WS3-005's own acceptance criterion: each additionally-bound code
+        module, drifted alone, independently invalidates its claim (a real
+        registry entry, not a synthetic fixture) � proving the round-3 binding
+        is load-bearing, not decorative."""
+        real_registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        work = tmp_path / "work"
+        _copy_registry_referenced_files(work, real_registry)
+        target = work / module_path
+        target.write_text(target.read_text(encoding="utf-8") + "\n# UNBOUND EDIT.\n", encoding="utf-8")
+
+        registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
+        violations = cce.blob_drift_violations(work, registry)
+        assert violations, f"expected a blob-drift violation after mutating {module_path}"
+>       assert all(module_path in v for v in violations), (
+            "mutating exactly one file must not implicate any other input path",
+            violations,
+        )
+E       AssertionError: ('mutating exactly one file must not implicate any other input path', ['native-decision-gate: input role code[1] (civi...2dad4550596e96cd5fcd57986604b47d8380bbc, current ef0e72a87257e8cb3d46bcc1cf7757df9c102c11 (re-prove or re-bind)', ...])
+E       assert False
+E        +  where False = all(<generator object test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim.<locals>.<genexpr> at 0x000001E380874FB0>)
+
+claim_id   = 'native-decision-gate'
+module_path = 'civiccast/egress/gst/graph.py'
+real_registry = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+target     = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo5/work/civiccast/egress/gst/graph.py')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo5')
+violations = ['native-decision-gate: input role code[1] (civiccast/egress/gst/engine.py) blob drift � recorded 472f6ec66b28d2d22d91...02dad4550596e96cd5fcd57986604b47d8380bbc, current ef0e72a87257e8cb3d46bcc1cf7757df9c102c11 (re-prove or re-bind)', ...]
+work       = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo5/work')
+
+tests\policy\test_claims_evidence.py:1415: AssertionError
+_ test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[native-decision-gate-civiccast/egress/gst/worker.py] _
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo6')
+claim_id = 'native-decision-gate'
+module_path = 'civiccast/egress/gst/worker.py'
+
+    @pytest.mark.parametrize(
+        "claim_id, module_path",
+        [
+            (claim_id, module_path)
+            for claim_id in ("native-decision-gate", "session0-service-broadcast")
+            for module_path in sorted(_CURRENT_ENGINE_DEPENDENCY_MODULES)
+        ],
+    )
+    def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim(
+        tmp_path: Path, claim_id: str, module_path: str
+    ) -> None:
+        """CC-WS3-005's own acceptance criterion: each additionally-bound code
+        module, drifted alone, independently invalidates its claim (a real
+        registry entry, not a synthetic fixture) � proving the round-3 binding
+        is load-bearing, not decorative."""
+        real_registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        work = tmp_path / "work"
+        _copy_registry_referenced_files(work, real_registry)
+        target = work / module_path
+        target.write_text(target.read_text(encoding="utf-8") + "\n# UNBOUND EDIT.\n", encoding="utf-8")
+
+        registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
+        violations = cce.blob_drift_violations(work, registry)
+        assert violations, f"expected a blob-drift violation after mutating {module_path}"
+>       assert all(module_path in v for v in violations), (
+            "mutating exactly one file must not implicate any other input path",
+            violations,
+        )
+E       AssertionError: ('mutating exactly one file must not implicate any other input path', ['native-decision-gate: input role code[0] (civi...ded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)'])
+E       assert False
+E        +  where False = all(<generator object test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim.<locals>.<genexpr> at 0x000001E3809AA9B0>)
+
+claim_id   = 'native-decision-gate'
+module_path = 'civiccast/egress/gst/worker.py'
+real_registry = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+target     = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo6/work/civiccast/egress/gst/worker.py')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo6')
+violations = ['native-decision-gate: input role code[0] (civiccast/egress/gst/worker.py) blob drift � recorded e5baeb27dd7c05323340...rded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)']
+work       = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo6/work')
+
+tests\policy\test_claims_evidence.py:1415: AssertionError
+_ test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[session0-service-broadcast-civiccast/egress/gst/audio_tap.py] _
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo7')
+claim_id = 'session0-service-broadcast'
+module_path = 'civiccast/egress/gst/audio_tap.py'
+
+    @pytest.mark.parametrize(
+        "claim_id, module_path",
+        [
+            (claim_id, module_path)
+            for claim_id in ("native-decision-gate", "session0-service-broadcast")
+            for module_path in sorted(_CURRENT_ENGINE_DEPENDENCY_MODULES)
+        ],
+    )
+    def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim(
+        tmp_path: Path, claim_id: str, module_path: str
+    ) -> None:
+        """CC-WS3-005's own acceptance criterion: each additionally-bound code
+        module, drifted alone, independently invalidates its claim (a real
+        registry entry, not a synthetic fixture) � proving the round-3 binding
+        is load-bearing, not decorative."""
+        real_registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        work = tmp_path / "work"
+        _copy_registry_referenced_files(work, real_registry)
+        target = work / module_path
+        target.write_text(target.read_text(encoding="utf-8") + "\n# UNBOUND EDIT.\n", encoding="utf-8")
+
+        registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
+        violations = cce.blob_drift_violations(work, registry)
+        assert violations, f"expected a blob-drift violation after mutating {module_path}"
+>       assert all(module_path in v for v in violations), (
+            "mutating exactly one file must not implicate any other input path",
+            violations,
+        )
+E       AssertionError: ('mutating exactly one file must not implicate any other input path', ['native-decision-gate: input role code[1] (civi...ded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)'])
+E       assert False
+E        +  where False = all(<generator object test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim.<locals>.<genexpr> at 0x000001E380C05F20>)
+
+claim_id   = 'session0-service-broadcast'
+module_path = 'civiccast/egress/gst/audio_tap.py'
+real_registry = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+target     = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo7/work/civiccast/egress/gst/audio_tap.py')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo7')
+violations = ['native-decision-gate: input role code[1] (civiccast/egress/gst/engine.py) blob drift � recorded 472f6ec66b28d2d22d91...rded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)']
+work       = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo7/work')
+
+tests\policy\test_claims_evidence.py:1415: AssertionError
+_ test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[session0-service-broadcast-civiccast/egress/gst/caption_flow.py] _
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo8')
+claim_id = 'session0-service-broadcast'
+module_path = 'civiccast/egress/gst/caption_flow.py'
+
+    @pytest.mark.parametrize(
+        "claim_id, module_path",
+        [
+            (claim_id, module_path)
+            for claim_id in ("native-decision-gate", "session0-service-broadcast")
+            for module_path in sorted(_CURRENT_ENGINE_DEPENDENCY_MODULES)
+        ],
+    )
+    def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim(
+        tmp_path: Path, claim_id: str, module_path: str
+    ) -> None:
+        """CC-WS3-005's own acceptance criterion: each additionally-bound code
+        module, drifted alone, independently invalidates its claim (a real
+        registry entry, not a synthetic fixture) � proving the round-3 binding
+        is load-bearing, not decorative."""
+        real_registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        work = tmp_path / "work"
+        _copy_registry_referenced_files(work, real_registry)
+        target = work / module_path
+        target.write_text(target.read_text(encoding="utf-8") + "\n# UNBOUND EDIT.\n", encoding="utf-8")
+
+        registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
+        violations = cce.blob_drift_violations(work, registry)
+        assert violations, f"expected a blob-drift violation after mutating {module_path}"
+>       assert all(module_path in v for v in violations), (
+            "mutating exactly one file must not implicate any other input path",
+            violations,
+        )
+E       AssertionError: ('mutating exactly one file must not implicate any other input path', ['native-decision-gate: input role code[1] (civi...ded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)'])
+E       assert False
+E        +  where False = all(<generator object test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim.<locals>.<genexpr> at 0x000001E380AD4860>)
+
+claim_id   = 'session0-service-broadcast'
+module_path = 'civiccast/egress/gst/caption_flow.py'
+real_registry = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+target     = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo8/work/civiccast/egress/gst/caption_flow.py')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo8')
+violations = ['native-decision-gate: input role code[1] (civiccast/egress/gst/engine.py) blob drift � recorded 472f6ec66b28d2d22d91...rded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)']
+work       = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo8/work')
+
+tests\policy\test_claims_evidence.py:1415: AssertionError
+_ test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[session0-service-broadcast-civiccast/egress/gst/control.py] _
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo9')
+claim_id = 'session0-service-broadcast'
+module_path = 'civiccast/egress/gst/control.py'
+
+    @pytest.mark.parametrize(
+        "claim_id, module_path",
+        [
+            (claim_id, module_path)
+            for claim_id in ("native-decision-gate", "session0-service-broadcast")
+            for module_path in sorted(_CURRENT_ENGINE_DEPENDENCY_MODULES)
+        ],
+    )
+    def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim(
+        tmp_path: Path, claim_id: str, module_path: str
+    ) -> None:
+        """CC-WS3-005's own acceptance criterion: each additionally-bound code
+        module, drifted alone, independently invalidates its claim (a real
+        registry entry, not a synthetic fixture) � proving the round-3 binding
+        is load-bearing, not decorative."""
+        real_registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        work = tmp_path / "work"
+        _copy_registry_referenced_files(work, real_registry)
+        target = work / module_path
+        target.write_text(target.read_text(encoding="utf-8") + "\n# UNBOUND EDIT.\n", encoding="utf-8")
+
+        registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
+        violations = cce.blob_drift_violations(work, registry)
+        assert violations, f"expected a blob-drift violation after mutating {module_path}"
+>       assert all(module_path in v for v in violations), (
+            "mutating exactly one file must not implicate any other input path",
+            violations,
+        )
+E       AssertionError: ('mutating exactly one file must not implicate any other input path', ['native-decision-gate: input role code[1] (civi...ded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)'])
+E       assert False
+E        +  where False = all(<generator object test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim.<locals>.<genexpr> at 0x000001E380A417D0>)
+
+claim_id   = 'session0-service-broadcast'
+module_path = 'civiccast/egress/gst/control.py'
+real_registry = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+target     = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo9/work/civiccast/egress/gst/control.py')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo9')
+violations = ['native-decision-gate: input role code[1] (civiccast/egress/gst/engine.py) blob drift � recorded 472f6ec66b28d2d22d91...rded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)']
+work       = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo9/work')
+
+tests\policy\test_claims_evidence.py:1415: AssertionError
+_ test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[session0-service-broadcast-civiccast/egress/gst/decode_policy.py] _
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo10')
+claim_id = 'session0-service-broadcast'
+module_path = 'civiccast/egress/gst/decode_policy.py'
+
+    @pytest.mark.parametrize(
+        "claim_id, module_path",
+        [
+            (claim_id, module_path)
+            for claim_id in ("native-decision-gate", "session0-service-broadcast")
+            for module_path in sorted(_CURRENT_ENGINE_DEPENDENCY_MODULES)
+        ],
+    )
+    def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim(
+        tmp_path: Path, claim_id: str, module_path: str
+    ) -> None:
+        """CC-WS3-005's own acceptance criterion: each additionally-bound code
+        module, drifted alone, independently invalidates its claim (a real
+        registry entry, not a synthetic fixture) � proving the round-3 binding
+        is load-bearing, not decorative."""
+        real_registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        work = tmp_path / "work"
+        _copy_registry_referenced_files(work, real_registry)
+        target = work / module_path
+        target.write_text(target.read_text(encoding="utf-8") + "\n# UNBOUND EDIT.\n", encoding="utf-8")
+
+        registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
+        violations = cce.blob_drift_violations(work, registry)
+        assert violations, f"expected a blob-drift violation after mutating {module_path}"
+>       assert all(module_path in v for v in violations), (
+            "mutating exactly one file must not implicate any other input path",
+            violations,
+        )
+E       AssertionError: ('mutating exactly one file must not implicate any other input path', ['native-decision-gate: input role code[1] (civi...ded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)'])
+E       assert False
+E        +  where False = all(<generator object test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim.<locals>.<genexpr> at 0x000001E380856400>)
+
+claim_id   = 'session0-service-broadcast'
+module_path = 'civiccast/egress/gst/decode_policy.py'
+real_registry = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+target     = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo10/work/civiccast/egress/gst/decode_policy.py')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo10')
+violations = ['native-decision-gate: input role code[1] (civiccast/egress/gst/engine.py) blob drift � recorded 472f6ec66b28d2d22d91...rded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)']
+work       = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo10/work')
+
+tests\policy\test_claims_evidence.py:1415: AssertionError
+_ test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[session0-service-broadcast-civiccast/egress/gst/engine.py] _
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo11')
+claim_id = 'session0-service-broadcast'
+module_path = 'civiccast/egress/gst/engine.py'
+
+    @pytest.mark.parametrize(
+        "claim_id, module_path",
+        [
+            (claim_id, module_path)
+            for claim_id in ("native-decision-gate", "session0-service-broadcast")
+            for module_path in sorted(_CURRENT_ENGINE_DEPENDENCY_MODULES)
+        ],
+    )
+    def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim(
+        tmp_path: Path, claim_id: str, module_path: str
+    ) -> None:
+        """CC-WS3-005's own acceptance criterion: each additionally-bound code
+        module, drifted alone, independently invalidates its claim (a real
+        registry entry, not a synthetic fixture) � proving the round-3 binding
+        is load-bearing, not decorative."""
+        real_registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        work = tmp_path / "work"
+        _copy_registry_referenced_files(work, real_registry)
+        target = work / module_path
+        target.write_text(target.read_text(encoding="utf-8") + "\n# UNBOUND EDIT.\n", encoding="utf-8")
+
+        registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
+        violations = cce.blob_drift_violations(work, registry)
+        assert violations, f"expected a blob-drift violation after mutating {module_path}"
+>       assert all(module_path in v for v in violations), (
+            "mutating exactly one file must not implicate any other input path",
+            violations,
+        )
+E       AssertionError: ('mutating exactly one file must not implicate any other input path', ['native-decision-gate: input role code[1] (civi...ded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)'])
+E       assert False
+E        +  where False = all(<generator object test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim.<locals>.<genexpr> at 0x000001E380BB0A00>)
+
+claim_id   = 'session0-service-broadcast'
+module_path = 'civiccast/egress/gst/engine.py'
+real_registry = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+target     = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo11/work/civiccast/egress/gst/engine.py')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo11')
+violations = ['native-decision-gate: input role code[1] (civiccast/egress/gst/engine.py) blob drift � recorded 472f6ec66b28d2d22d91...rded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)']
+work       = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo11/work')
+
+tests\policy\test_claims_evidence.py:1415: AssertionError
+_ test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[session0-service-broadcast-civiccast/egress/gst/graph.py] _
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo12')
+claim_id = 'session0-service-broadcast'
+module_path = 'civiccast/egress/gst/graph.py'
+
+    @pytest.mark.parametrize(
+        "claim_id, module_path",
+        [
+            (claim_id, module_path)
+            for claim_id in ("native-decision-gate", "session0-service-broadcast")
+            for module_path in sorted(_CURRENT_ENGINE_DEPENDENCY_MODULES)
+        ],
+    )
+    def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim(
+        tmp_path: Path, claim_id: str, module_path: str
+    ) -> None:
+        """CC-WS3-005's own acceptance criterion: each additionally-bound code
+        module, drifted alone, independently invalidates its claim (a real
+        registry entry, not a synthetic fixture) � proving the round-3 binding
+        is load-bearing, not decorative."""
+        real_registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        work = tmp_path / "work"
+        _copy_registry_referenced_files(work, real_registry)
+        target = work / module_path
+        target.write_text(target.read_text(encoding="utf-8") + "\n# UNBOUND EDIT.\n", encoding="utf-8")
+
+        registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
+        violations = cce.blob_drift_violations(work, registry)
+        assert violations, f"expected a blob-drift violation after mutating {module_path}"
+>       assert all(module_path in v for v in violations), (
+            "mutating exactly one file must not implicate any other input path",
+            violations,
+        )
+E       AssertionError: ('mutating exactly one file must not implicate any other input path', ['native-decision-gate: input role code[1] (civi...2dad4550596e96cd5fcd57986604b47d8380bbc, current ef0e72a87257e8cb3d46bcc1cf7757df9c102c11 (re-prove or re-bind)', ...])
+E       assert False
+E        +  where False = all(<generator object test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim.<locals>.<genexpr> at 0x000001E38051DA40>)
+
+claim_id   = 'session0-service-broadcast'
+module_path = 'civiccast/egress/gst/graph.py'
+real_registry = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+target     = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo12/work/civiccast/egress/gst/graph.py')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo12')
+violations = ['native-decision-gate: input role code[1] (civiccast/egress/gst/engine.py) blob drift � recorded 472f6ec66b28d2d22d91...02dad4550596e96cd5fcd57986604b47d8380bbc, current ef0e72a87257e8cb3d46bcc1cf7757df9c102c11 (re-prove or re-bind)', ...]
+work       = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo12/work')
+
+tests\policy\test_claims_evidence.py:1415: AssertionError
+_ test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[session0-service-broadcast-civiccast/egress/gst/worker.py] _
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo13')
+claim_id = 'session0-service-broadcast'
+module_path = 'civiccast/egress/gst/worker.py'
+
+    @pytest.mark.parametrize(
+        "claim_id, module_path",
+        [
+            (claim_id, module_path)
+            for claim_id in ("native-decision-gate", "session0-service-broadcast")
+            for module_path in sorted(_CURRENT_ENGINE_DEPENDENCY_MODULES)
+        ],
+    )
+    def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim(
+        tmp_path: Path, claim_id: str, module_path: str
+    ) -> None:
+        """CC-WS3-005's own acceptance criterion: each additionally-bound code
+        module, drifted alone, independently invalidates its claim (a real
+        registry entry, not a synthetic fixture) � proving the round-3 binding
+        is load-bearing, not decorative."""
+        real_registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
+        work = tmp_path / "work"
+        _copy_registry_referenced_files(work, real_registry)
+        target = work / module_path
+        target.write_text(target.read_text(encoding="utf-8") + "\n# UNBOUND EDIT.\n", encoding="utf-8")
+
+        registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
+        violations = cce.blob_drift_violations(work, registry)
+        assert violations, f"expected a blob-drift violation after mutating {module_path}"
+>       assert all(module_path in v for v in violations), (
+            "mutating exactly one file must not implicate any other input path",
+            violations,
+        )
+E       AssertionError: ('mutating exactly one file must not implicate any other input path', ['native-decision-gate: input role code[0] (civi...ded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)'])
+E       assert False
+E        +  where False = all(<generator object test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim.<locals>.<genexpr> at 0x000001E3FE7841E0>)
+
+claim_id   = 'session0-service-broadcast'
+module_path = 'civiccast/egress/gst/worker.py'
+real_registry = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+registry   = Registry(schema_version=1, governed_doc_set=[GovernedDoc(path='civiccast/dr/__init__.py', doc_format='python', enforce...on � see that check's own violation for the actual fail-closed guarantee this entry carries today.", ci_safe=False)])])
+target     = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo13/work/civiccast/egress/gst/worker.py')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo13')
+violations = ['native-decision-gate: input role code[0] (civiccast/egress/gst/worker.py) blob drift � recorded e5baeb27dd7c05323340...rded e285ee64790f3d8152c0a679285a5451b9bd8ed0, current f9191cd11d871ba97bd284ea057c516c68e544a4 (re-prove or re-bind)']
+work       = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-3638/test_ws3r3_005_drifting_one_bo13/work')
+
+tests\policy\test_claims_evidence.py:1415: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/policy/test_claims_evidence.py::test_ac1_verifier_green_on_registered_claims_at_head
+FAILED tests/policy/test_claims_evidence.py::test_ws3r2_005_three_new_registry_entries_present_and_clean
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_native_decision_gate_binds_current_engine_dependencies
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_session0_binds_current_engine_dependencies
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[native-decision-gate-civiccast/egress/gst/audio_tap.py]
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[native-decision-gate-civiccast/egress/gst/caption_flow.py]
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[native-decision-gate-civiccast/egress/gst/control.py]
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[native-decision-gate-civiccast/egress/gst/decode_policy.py]
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[native-decision-gate-civiccast/egress/gst/engine.py]
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[native-decision-gate-civiccast/egress/gst/graph.py]
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[native-decision-gate-civiccast/egress/gst/worker.py]
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[session0-service-broadcast-civiccast/egress/gst/audio_tap.py]
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[session0-service-broadcast-civiccast/egress/gst/caption_flow.py]
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[session0-service-broadcast-civiccast/egress/gst/control.py]
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[session0-service-broadcast-civiccast/egress/gst/decode_policy.py]
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[session0-service-broadcast-civiccast/egress/gst/engine.py]
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[session0-service-broadcast-civiccast/egress/gst/graph.py]
+FAILED tests/policy/test_claims_evidence.py::test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_claim[session0-service-broadcast-civiccast/egress/gst/worker.py]
+18 failed, 107 passed in 100.73s (0:01:40)

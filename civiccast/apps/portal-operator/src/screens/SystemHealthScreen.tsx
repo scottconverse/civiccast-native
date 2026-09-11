@@ -275,6 +275,26 @@ function runtimeChannelLabel(channel: ChannelRuntimeStatus): string {
   return channel.on_air ? 'On air' : 'Ready'
 }
 
+function udpSinkLabel(
+  channel: ChannelProfile,
+  sink: string,
+  connected: boolean,
+  state: EgressStateRow | null | undefined,
+  health: EgressHealthSample | undefined,
+): { label: string; tone: 'ok' | 'warn' | 'err' } {
+  const output = channel.outputs?.find((candidate) => candidate.label === sink)
+  const isUdp = output?.target.toLowerCase().startsWith('udp://')
+  // Egress-only UDP sinks need not appear in the channel's portal outputs.
+  // Without a known connection transport, report only local progress.
+  if (output && !isUdp) return { label: connected ? 'connected' : 'not connected', tone: connected ? 'ok' : 'err' }
+  const liveProgress = state?.state === 'ON_AIR' && health?.state === 'ON_AIR' &&
+    state.pid != null &&
+    ((health.encoder_fps ?? 0) > 0 || (health.encoder_bitrate_kbps ?? 0) > 0) &&
+    Date.now() - new Date(health.sampled_at).getTime() <= 120_000
+  if (connected && liveProgress) return { label: 'local send: active (receiver not verified)', tone: 'ok' }
+  return { label: 'local send: not verified (receiver not verified)', tone: 'warn' }
+}
+
 // The headline live signal: is each channel that should be running actually on
 // air and healthy *right now*? This is distinct from the install-time
 // "safe to broadcast" readiness below — it reflects the running egress workers.
@@ -718,9 +738,12 @@ export function EgressReadinessPanel({
               </dl>
               {sinkEntries.length > 0 && (
                 <div className="flex flex-wrap gap-2">
-                  {sinkEntries.map(([sink, connected]) => (
-                    <StatusPill key={sink} label={`${sink}: ${connected ? 'connected' : 'not connected'}`} tone={connected ? 'ok' : 'err'} />
-                  ))}
+                  {sinkEntries.map(([sink, connected]) => {
+                      const status = udpSinkLabel(channel, sink, connected, state, latestHealth)
+                      return (
+                    <StatusPill key={sink} label={`${sink}: ${status.label}`} tone={status.tone} />
+                      )
+                  })}
                 </div>
               )}
               <SchemaBadge schema={schema} />

@@ -1,0 +1,22 @@
+[
+  {
+    "path": "docs/claims/claims.yaml",
+    "git_blob": "d3910b09db5b772fa43b1db4815121928212d752",
+    "local_sha256": "571a8ca8f11e964ba6a290c55f559c830df59aeb0800421e571cdbf4fd1b8cb5"
+  },
+  {
+    "path": "tests/test_hermetic_state_guard.py",
+    "git_blob": "8f66c3714db29ff22f9242af366fbf72accabcb7",
+    "local_sha256": "b2c32529840e77b388310bd369cadcbe56a004857b88e86f1a5b2a9ec430a041"
+  },
+  {
+    "path": "scripts/build_native_app_payload.py",
+    "git_blob": "b164216bff0f1c8f09c0b59532d67ab344d4a4cc",
+    "local_sha256": "dcdd23c1fbc6dd806dbf6cd487abe67bab9fa138e8ccf34d561ab6e01a1673c7"
+  },
+  {
+    "path": "tests/native/test_app_payload_builder.py",
+    "git_blob": "91d78b3fb56569660ec59ad830ae9b0b62273b71",
+    "local_sha256": "8698af96278749d599bbe3997217c220e70ab56d692b32f67a90dacf058411d0"
+  }
+]

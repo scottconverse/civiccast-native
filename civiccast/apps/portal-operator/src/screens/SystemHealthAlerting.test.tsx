@@ -227,6 +227,34 @@ describe('ResourceSnapshotPanel', () => {
   })
 })
 
+describe('outgoing feed transport evidence', () => {
+  it.each([
+    ['ON_AIR', 0, false, 'local send: active (receiver not verified)'],
+    ['STOPPED', 0, false, 'local send: not verified (receiver not verified)'],
+    ['ON_AIR', 180_000, false, 'local send: not verified (receiver not verified)'],
+    ['ON_AIR', 0, true, 'connected'],
+  ] as const)('qualifies %s transport evidence aged %i ms (SRT=%s)', (state, age, srt, expected) => {
+    const now = new Date().toISOString()
+    const channel = {
+      channel_id: 'public', slug: 'public', kind: 'public',
+      branding: { display_name: 'Public Channel' }, fallback_behavior: 'slate',
+      outputs: srt ? [{ kind: 'srt', label: 'head', target: 'srt://example:9000', proof_boundary: 'receiver', next_step: 'Check receiver' }] : [],
+    } as ChannelProfile
+    const sample: EgressHealthSample = {
+      channel_id: 'public', state: 'ON_AIR', sampled_at: new Date(Date.now() - age).toISOString(),
+      sink_connected: { head: true }, encoder_fps: 30, encoder_bitrate_kbps: 2000,
+      dropped_frames: 0, seconds_on_air: 300,
+    }
+    const { container } = render(<EgressReadinessPanel
+      channels={[channel]}
+      states={new Map([['public', { channel_id: 'public', state, updated_at: now, pid: state === 'ON_AIR' ? 4321 : null }]])}
+      health={new Map([['public', [sample]]])} currency={new Map()} loading={false}
+      error={null} pendingCommand={null} canControl={false} onCommand={vi.fn()}
+    />)
+    expect(container.textContent).toContain(`head: ${expected}`)
+  })
+})
+
 describe('live captions switched off (round-2 review BLOCKER 1)', () => {
   const CHANNEL = {
     channel_id: 'public',
@@ -310,7 +338,7 @@ describe('live captions switched off (round-2 review BLOCKER 1)', () => {
         liveCaptionsEnabled
       />,
     )
-    expect(on.container.textContent).toContain('Not yet confirmed (waiting for the on-air check)')
+    expect(on.container.textContent).toContain('Not verified; open channel caption proof')
   })
 })
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
 
 import type { CaptionStatusResponse, EgressCaptionProofSample } from '../types/api.generated'
@@ -57,6 +57,20 @@ describe('CaptionStatusView', () => {
     expect(container.textContent).toContain('FAIL')
     expect(container.textContent).toContain('EGRESS_CAPTION_DECODE_BACK_MISMATCH')
     expect(container.textContent).toContain('0/2')
+    expect(container.textContent).toContain('Caption proof failed')
+    expect(container.textContent).not.toMatch(/Not verified/)
+  })
+
+  it('marks a latest proof older than 120 seconds as stale', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T12:05:00Z'))
+    try {
+      const { container } = render(<CaptionStatusView status={ON} proofs={[proof()]} />)
+      expect(container.textContent).toContain('Stale (older than 120 seconds)')
+      expect(container.textContent).toContain('Sampled')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('surfaces a load error', () => {

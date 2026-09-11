@@ -1,0 +1,168 @@
+FFFF                                                                     [100%]
+================================== FAILURES ===================================
+___________ test_f1_never_prerolled_reload_cannot_dispose_or_commit ___________
+
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\Documents\\Codex\\2026-09-10\\openai-multi-agent-c-users-scott\\work\\f1-integration\\civiccast\\egress\\gst\\engine.py'>
+capsys = <_pytest.capture.CaptureFixture object at 0x00000254F9CC5D30>
+
+    def test_f1_never_prerolled_reload_cannot_dispose_or_commit(engine_module, capsys) -> None:
+        recorder = _Recorder()
+        engine = _bare_engine_for_commit(engine_module, recorder)
+        engine.commit_timeout_s = 5.0
+        pending = _unready_reload(recorder)
+        engine._pending_reload = pending
+        assert engine._commit_reload() is False
+        thread = engine._reload_commit_thread
+        if thread is not None:
+            thread.join(timeout=1.0)
+>       assert recorder.calls == [], "an unready replacement must not switch or retire the old leg"
+E       AssertionError: an unready replacement must not switch or retire the old leg
+E       assert ['video_sel.s...video:1', ...] == []
+E
+E         Left contains 7 more items, first extra item: 'video_sel.set_property:active-pad=new-video'
+E         Use -v to get more diff
+
+capsys     = <_pytest.capture.CaptureFixture object at 0x00000254F9CC5D30>
+engine     = <civiccast.egress.gst.engine.GstPlayoutEngine object at 0x00000254F9CC6120>
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\Documents\\Codex\\2026-09-10\\openai-multi-agent-c-users-scott\\work\\f1-integration\\civiccast\\egress\\gst\\engine.py'>
+pending    = {'boundary_probes': [], 'commit_completed': <threading.Event at 0x254f513e190: set>, 'commit_in_progress': True, 'commit_watchdog': <Timer(Thread-1, stopped daemon 40940)>, ...}
+recorder   = <tests.egress.test_gst_engine_reload_commit_ordering._Recorder object at 0x00000254F9CC5E80>
+thread     = <Thread(civiccast-reload-retirement, stopped daemon 41536)>
+
+tests\egress\test_gst_engine_reload_commit_ordering.py:307: AssertionError
+---------------------------- Captured stdout call -----------------------------
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=0)
+---------------------------- Captured stderr call -----------------------------
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload diagnostic: stage=holds-released
+CTRL reload diagnostic: stage=committed elements=0
+______ test_f1_queued_readiness_cannot_ready_a_superseding_reload[False] ______
+
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\Documents\\Codex\\2026-09-10\\openai-multi-agent-c-users-scott\\work\\f1-integration\\civiccast\\egress\\gst\\engine.py'>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000254F519A8D0>
+held = False
+
+    @pytest.mark.parametrize("held", [False, True])
+    def test_f1_queued_readiness_cannot_ready_a_superseding_reload(
+        engine_module, monkeypatch, held
+    ) -> None:
+        recorder = _Recorder()
+        engine = _bare_engine_for_commit(engine_module, recorder)
+        old = _unready_reload(recorder)
+        current = _unready_reload(recorder, txn_id=2)
+        engine._pending_reload = old
+        queued: list[tuple[Any, tuple[Any, ...]]] = []
+        monkeypatch.setattr(engine_module.GLib, "idle_add", lambda fn, *args: queued.append((fn, args)))
+        commits: list[str] = []
+        engine._commit_reload = lambda: commits.append("commit")
+        if held:
+            engine._on_new_leg_hold(old["new_src_pads"][0], None)
+        else:
+            # The non-held path also queues a callback from a streaming thread.
+            engine_module.Gst.PadProbeReturn.REMOVE = "REMOVE"
+            engine._on_reload_first_buffer(old["new_video_pad"], None)
+        engine._pending_reload = current
+        for callback, args in queued:
+            callback(*args)
+>       assert current["new_leg_ready"] is False
+E       assert True is False
+
+args       = ()
+callback   = <bound method GstPlayoutEngine._on_new_leg_ready of <civiccast.egress.gst.engine.GstPlayoutEngine object at 0x00000254F9CC6CF0>>
+commits    = ['commit']
+current    = {'boundary_probes': [], 'defer_timeout_id': None, 'held_pads': set(), 'hold_probes': [(<tests.egress.test_gst_engine_r...D35C0>, 1), (<tests.egress.test_gst_engine_reload_commit_ordering._FakeHoldPad object at 0x00000254F9D9C830>, 2)], ...}
+engine     = <civiccast.egress.gst.engine.GstPlayoutEngine object at 0x00000254F9CC6CF0>
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\Documents\\Codex\\2026-09-10\\openai-multi-agent-c-users-scott\\work\\f1-integration\\civiccast\\egress\\gst\\engine.py'>
+held       = False
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000254F519A8D0>
+old        = {'boundary_probes': [], 'defer_timeout_id': None, 'held_pads': set(), 'hold_probes': [(<tests.egress.test_gst_engine_r...A1450>, 1), (<tests.egress.test_gst_engine_reload_commit_ordering._FakeHoldPad object at 0x00000254F9DD3490>, 2)], ...}
+queued     = [(<bound method GstPlayoutEngine._on_new_leg_ready of <civiccast.egress.gst.engine.GstPlayoutEngine object at 0x00000254F9CC6CF0>>, ())]
+recorder   = <tests.egress.test_gst_engine_reload_commit_ordering._Recorder object at 0x00000254F9DA0CD0>
+
+tests\egress\test_gst_engine_reload_commit_ordering.py:334: AssertionError
+______ test_f1_queued_readiness_cannot_ready_a_superseding_reload[True] _______
+
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\Documents\\Codex\\2026-09-10\\openai-multi-agent-c-users-scott\\work\\f1-integration\\civiccast\\egress\\gst\\engine.py'>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000254F9D47F00>
+held = True
+
+    @pytest.mark.parametrize("held", [False, True])
+    def test_f1_queued_readiness_cannot_ready_a_superseding_reload(
+        engine_module, monkeypatch, held
+    ) -> None:
+        recorder = _Recorder()
+        engine = _bare_engine_for_commit(engine_module, recorder)
+        old = _unready_reload(recorder)
+        current = _unready_reload(recorder, txn_id=2)
+        engine._pending_reload = old
+        queued: list[tuple[Any, tuple[Any, ...]]] = []
+        monkeypatch.setattr(engine_module.GLib, "idle_add", lambda fn, *args: queued.append((fn, args)))
+        commits: list[str] = []
+        engine._commit_reload = lambda: commits.append("commit")
+        if held:
+            engine._on_new_leg_hold(old["new_src_pads"][0], None)
+        else:
+            # The non-held path also queues a callback from a streaming thread.
+            engine_module.Gst.PadProbeReturn.REMOVE = "REMOVE"
+            engine._on_reload_first_buffer(old["new_video_pad"], None)
+        engine._pending_reload = current
+        for callback, args in queued:
+            callback(*args)
+        assert current["new_leg_ready"] is False
+>       assert current["holds_awaited"] == 2
+E       assert 1 == 2
+
+args       = ()
+callback   = <bound method GstPlayoutEngine._on_hold_probe_engaged of <civiccast.egress.gst.engine.GstPlayoutEngine object at 0x00000254F9CC6E40>>
+commits    = []
+current    = {'boundary_probes': [], 'defer_timeout_id': None, 'held_pads': set(), 'hold_probes': [(<tests.egress.test_gst_engine_r...99A50>, 1), (<tests.egress.test_gst_engine_reload_commit_ordering._FakeHoldPad object at 0x00000254F9D99D50>, 2)], ...}
+engine     = <civiccast.egress.gst.engine.GstPlayoutEngine object at 0x00000254F9CC6E40>
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\Documents\\Codex\\2026-09-10\\openai-multi-agent-c-users-scott\\work\\f1-integration\\civiccast\\egress\\gst\\engine.py'>
+held       = True
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000254F9D47F00>
+old        = {'boundary_probes': [], 'defer_timeout_id': None, 'held_pads': set(), 'hold_probes': [(<tests.egress.test_gst_engine_r...14AF0>, 1), (<tests.egress.test_gst_engine_reload_commit_ordering._FakeHoldPad object at 0x00000254F9E14C00>, 2)], ...}
+queued     = [(<bound method GstPlayoutEngine._on_hold_probe_engaged of <civiccast.egress.gst.engine.GstPlayoutEngine object at 0x00000254F9CC6E40>>, ())]
+recorder   = <tests.egress.test_gst_engine_reload_commit_ordering._Recorder object at 0x00000254F9DA2990>
+
+tests\egress\test_gst_engine_reload_commit_ordering.py:335: AssertionError
+---------------------------- Captured stdout call -----------------------------
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+_______ test_f1_duplicate_hold_cannot_substitute_for_unprerolled_audio ________
+
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\Documents\\Codex\\2026-09-10\\openai-multi-agent-c-users-scott\\work\\f1-integration\\civiccast\\egress\\gst\\engine.py'>
+
+    def test_f1_duplicate_hold_cannot_substitute_for_unprerolled_audio(engine_module) -> None:
+        recorder = _Recorder()
+        engine = _bare_engine_for_commit(engine_module, recorder)
+        pending = _unready_reload(recorder)
+        engine._pending_reload = pending
+        commits: list[str] = []
+        engine._commit_reload = lambda: commits.append("commit")
+        video, audio = pending["new_src_pads"]
+        engine._on_new_leg_hold(video, None)
+        engine._on_new_leg_hold(video, None)
+>       assert pending["new_leg_ready"] is False
+E       assert True is False
+
+audio      = <tests.egress.test_gst_engine_reload_commit_ordering._FakeHoldPad object at 0x00000254F9ECC8C0>
+commits    = ['commit']
+engine     = <civiccast.egress.gst.engine.GstPlayoutEngine object at 0x00000254F9EE0440>
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\Documents\\Codex\\2026-09-10\\openai-multi-agent-c-users-scott\\work\\f1-integration\\civiccast\\egress\\gst\\engine.py'>
+pending    = {'boundary_probes': [], 'defer_timeout_id': None, 'held_pads': set(), 'hold_probes': [(<tests.egress.test_gst_engine_r...CC320>, 1), (<tests.egress.test_gst_engine_reload_commit_ordering._FakeHoldPad object at 0x00000254F9ECC8C0>, 2)], ...}
+recorder   = <tests.egress.test_gst_engine_reload_commit_ordering._Recorder object at 0x00000254F9E19810>
+video      = <tests.egress.test_gst_engine_reload_commit_ordering._FakeHoldPad object at 0x00000254F9ECC320>
+
+tests\egress\test_gst_engine_reload_commit_ordering.py:349: AssertionError
+---------------------------- Captured stdout call -----------------------------
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+=========================== short test summary info ===========================
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_f1_never_prerolled_reload_cannot_dispose_or_commit
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_f1_queued_readiness_cannot_ready_a_superseding_reload[False]
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_f1_queued_readiness_cannot_ready_a_superseding_reload[True]
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_f1_duplicate_hold_cannot_substitute_for_unprerolled_audio
+4 failed, 33 deselected in 4.18s

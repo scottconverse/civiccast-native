@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 import subprocess
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import civiccast.stream._ffmpeg as ffmpeg_module
 from civiccast.stream._ffmpeg import (
+    FfmpegCancelledError,
     FfmpegNotFoundError,
     FfmpegResult,
     _parse_ffmpeg_version,
@@ -20,6 +22,42 @@ from civiccast.stream._ffmpeg import (
     run_ffmpeg,
     start_ffmpeg,
 )
+
+
+def test_run_ffmpeg_cancel_event_terminates_owned_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    cancel_event = threading.Event()
+    process = MagicMock()
+    process.returncode = -15
+
+    def communicate(*, timeout: float | None = None):  # type: ignore[no-untyped-def]
+        if not cancel_event.is_set():
+            cancel_event.set()
+            raise subprocess.TimeoutExpired(["ffmpeg"], timeout)
+        return ("", "")
+
+    process.communicate.side_effect = communicate
+    monkeypatch.setattr(ffmpeg_module, "_ffmpeg_path", lambda: "ffmpeg")
+    monkeypatch.setattr(ffmpeg_module, "_resolve_video_encoder_args", lambda args, _path: args)
+    popen = MagicMock(return_value=process)
+    monkeypatch.setattr(subprocess, "Popen", popen)
+
+    with pytest.raises(FfmpegCancelledError, match="cancelled"):
+        run_ffmpeg(["-version"], cancel_event=cancel_event)
+
+    process.terminate.assert_called_once_with()
+    process.kill.assert_not_called()
+
+
+def test_run_ffmpeg_pre_cancel_does_not_launch(monkeypatch: pytest.MonkeyPatch) -> None:
+    cancel_event = threading.Event()
+    cancel_event.set()
+    popen = MagicMock()
+    monkeypatch.setattr(subprocess, "Popen", popen)
+
+    with pytest.raises(FfmpegCancelledError, match="before launch"):
+        run_ffmpeg(["-version"], cancel_event=cancel_event)
+
+    popen.assert_not_called()
 
 
 def _all_usable(_path: str, _encoder: str) -> bool:

@@ -1,0 +1,9 @@
+Independent focused pytest receipt
+Date: 2026-09-10
+Worktree: work/f1-integration
+Base HEAD: 5bc57d7e5500e10465c413632c2ece3cce32bfec
+Executor: /root/ci_review
+Command: .venv312\Scripts\python.exe -m pytest tests\test_hermetic_state_guard.py tests\native\test_app_payload_builder.py -q -p no:cacheprovider -p no:randomly
+Exit: 0
+Result: 88 passed in 9.94s
+Scope: local focused tests only; no mutation score or PR-CI/release acceptance inferred.

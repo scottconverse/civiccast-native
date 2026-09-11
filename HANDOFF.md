@@ -1,5 +1,295 @@
 # HANDOFF
 
+## 2026-09-11 operator fault visibility delta
+
+After source head fe9ed3c5, root confirmed remaining original soak-report
+defects: an aborted reload's error was log-only, and operator APIs could show
+a dead persisted PID. The integrated correction records aborted-reload errors
+in live state and durable proof history, invokes fault alerts before recovery
+changes state, and verifies PIDs at the API boundary. UDP send-health labels
+now distinguish local sending from receiver verification. Source regressions
+and limits are in docs/evidence/f2-local-2026-09-11/OPERATOR-FAULTS.md.
+Root's affected Python 3.12 run passed299 tests. Required CI must pass on the
+new combined head before candidate build. Main remains d77b634e and the old
+795cdab5 kit remains blocked. Full delivery authorization remains in force.
+
+## 2026-09-11 full delivery authorization and source checkpoint
+
+CI on51ab78cd found one stale end-to-end caption-label assertion in the broader
+operator Playwright gate (34621933713:253 passed,1 failed). The assertion now
+matches the F5 production label. No product code changed in this correction.
+Root then ran the full existing operator browser gate:254 passed in1.0minute.
+
+Candidate preflight also corrected the beta.5 Gate A baseline index pin: 48608252
+is the retained148c8d21 build index; the previous044a9c8b belongs to earlier39d852e5.
+No retained bytes were regenerated or re-signed. Provenance is recorded in
+docs/evidence/f2-local-2026-09-11/BASELINE-IDENTITY.md. This removes a concrete
+dirty/download-only gate mismatch; it does not claim a new Gate A pass.
+
+PR219 advanced to 88935dccb9ece46d3b7e8b7e210fb128257382d3. Its first headend
+gate (34621294908) found Ruff RUF036: place None last in a type union. This
+annotation-only correction follows that push; runtime logic and native proof
+are unchanged. Required CI on the next pushed HEAD remains pending.
+
+Scott explicitly authorized everything needed to finish the beta release, with
+no further permission stops. This supersedes older per-action restrictions for
+this release. Advance PR219, merge on required CI, build a fresh candidate,
+complete Sandbox/Gate A and the tester soak, then publish after passing results.
+The old 795cdab5 kit remains blocked. No speculative hardening or extra test
+campaign is authorized by this scope; fix actual release failures and continue.
+
+Source proof anchor: c4d70243546be321a1eef71e4c34c77ec4a36029.
+Current branch: fix/f2-release-readiness-20260911. Existing PR: #219.
+This documentation commit follows that source anchor; the exact pushed HEAD
+and CI run IDs are recorded in the PR and external release checkpoint.
+Local public portal lint/build and all 61 tests also pass. Local frontend
+runtime was Node 25.9.0; CI/candidate must use pinned Node 24.15.0.
+Earlier authorization and progress entries below are historical checkpoints.
+
+## 2026-09-11 active beta repair
+
+Scott directed beta delivery and rejected speculative hardening/testing polish.
+Current local branch: fix/f2-release-readiness-20260911, base b2593a50.
+F2 preparation isolation, early pipe acceptance and boundary-aware one-programme
+plans are implemented locally. The observed old-leg retirement hang is fixed
+and all 7 affected native checks pass, including three workers / 18 rollovers.
+Caption FAIL visibility is fixed. Final affected Python: 2265 passed, 72 skips;
+operator UI: 1035 passed; accessibility/contrast: 18 passed. Static checks and
+OpenAPI check pass. Candidate CI/build/Sandbox/Gate A/hardware soak remain open.
+Nothing has been published,
+no new build/gate/service has started, and the old beta.6 kit remains blocked.
+See docs/evidence/f2-local-2026-09-11/VERIFICATION.md. Earlier entries below
+are historical. Current remote PR219 remains8653b56f; main remainsd77b634e.
+
+## 2026-09-10 third CI cycle finished: count fix passes, mutation timed out
+
+Current remote PR / CI HEAD: `8653b56f8623cb5fa8e3855f26b64296e814526f`.
+Branch: `fix/f1-reload-readiness-20260910`. PR #219 is OPEN.
+This local documentation checkpoint follows the pushed SHA; use
+`git rev-parse HEAD` for its own checkout HEAD. Last published version is beta.5.
+Main remains `d77b634e3685de8fb077956b8099fc92c3927243`.
+
+All 12 workflows finished: 11 success, 1 cancelled. PR checks: 20 success,
+3 skipped, 1 cancelled (mutation appears as fail in the check UI).
+ci-test 34558549832 and Windows reproducibility 34558549734 PASS.
+deterministic-detectors 34558549841: randomized PASS; mutation job exceeded
+GitHub's two-hour limit at 2026-09-11T05:28:31Z (11:28 PM Mountain September 10).
+Its clean-test and forced-fail phases completed and mutation execution began;
+last partial status counter was 8932/9795. No complete result set or score.
+
+Unit: 10145 passed / 68 skipped / 5 deselected, coverage 80.15%; native pure:
+1823 passed / 201 deselected. Windows: 2021 passed / zero skipped / 3 deselected.
+Claims verifier PASS; all 125 claims-policy and 7 state-guard cases passed.
+Randomized: 10149 passed / 69 skipped, then native pure 1823 passed /
+201 deselected; seed 2673792843. Reproducibility: 9633 matching files /
+482655736 bytes, clean pushed source. These are CI checks, not kit acceptance.
+
+Full evidence and limitations: `docs/evidence/f1-ci-repair-2026-09-10/CI-THIRD-RESULT.md`.
+Local exact-count proof anchor: `104e722f9e15d19828736a10090e8b508778faef`.
+Local full policy: 1935 passed, 5 skipped; counts 1823 / 2024 / 2021.
+The authorized single push/cycle is complete. No further push or rerun is
+authorized. The monitor finished; no CI, tests or agent work remains in flight.
+Next proposed local ticket is the existing F-2 three-channel blocked-prepare
+regression, subject to the owner's next per-action authorization. F-2 is unstarted.
+No merge, candidate, Gate A, soak, service restart, tag or publication occurred.
+The old 795cdab5 beta.6 kit is blocked. Older checkpoints below are historical.
+
+## 2026-09-10 third push: CI in progress
+
+Current HEAD / remote PR / CI SHA: `8653b56f8623cb5fa8e3855f26b64296e814526f`.
+Branch: `fix/f1-reload-readiness-20260910`. PR #219 remains OPEN.
+Scott's authorized single third push succeeded. New runs started at
+2026-09-11T03:28:10Z (2026-09-10 Mountain): ci-test 34558549832,
+deterministic-detectors 34558549841, Windows reproducibility 34558549734.
+ci-test and Windows reproducibility PASS. Randomized suite PASS. Only mutation-report
+remains pending. Unit 10145 passed / 68 skipped / 5 deselected (coverage 80.15%);
+native pure1823 passed / 201 deselected; Windows2021 passed / 3 deselected, zero
+skips. Claims verifier PASS. Randomized10149 passed / 69 skipped plus native
+pure1823 passed / 201 deselected, seed2673792843. Reproducibility matches9633
+files /482655736 bytes. All receipts identify pushed SHA8653b56f. No mutation
+score or final verdict is claimed. Local proof anchor is104e722f; details in
+`docs/evidence/f1-ci-repair-2026-09-10/COUNT-LOCAL-VERIFICATION.md`.
+The task monitor is read-only and will capture the complete cycle. No further
+push/rerun is authorized. F-2, candidate, Gate A, soak and release gates remain
+open; no merge, services, tag or publication. The 795cdab5 kit remains blocked.
+This local post-push status update is not pushed. Earlier entries are historical.
+
+## 2026-09-10 authorized exact-count repair: local checks passed
+
+Current source/proof HEAD: `104e722f9e15d19828736a10090e8b508778faef`.
+Current branch: `fix/f1-reload-readiness-20260910`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/219 (OPEN).
+This following documentation checkpoint changes no tested source; its own HEAD
+is available with `git rev-parse HEAD`. Last published version remains beta.5.
+Main remains `d77b634e3685de8fb077956b8099fc92c3927243`.
+
+Scott approved the previously proposed one-file collection-count correction,
+fresh collections/full policy verification and one conditional push/CI cycle.
+The patch is now applied: exact counts (1823, 2024). Full policy suite:
+1935 passed, 5 skipped. Separate actual collections: pure 1823, unfiltered 2024,
+Windows not-integration 2021. Ruff and mypy passed; Sol independently accepted
+the source diff. See `docs/evidence/f1-ci-repair-2026-09-10/COUNT-LOCAL-VERIFICATION.md`
+for raw evidence, skip reasons, proof anchor and five-lens review.
+
+The approved next push will start the third cycle. Until then, remote HEAD is
+2dd9287c with the second cycle's 17 passed, 4 failed and 3 skipped checks.
+No further permission is needed for that one conditional push. Follow the cycle
+to completion and update exact pushed SHA/run IDs; no extra push or rerun is
+authorized. F-2 remains unimplemented. No merge, candidate, Gate A, soak, service
+restart, tag or publication is authorized. The old 795cdab5 beta.6 kit is blocked.
+All older checkpoints below are historical and their next-action requests are
+superseded by this explicit authorization.
+
+## 2026-09-10 second push / completed CI checkpoint
+
+Current remote PR / CI HEAD: `2dd9287c8426f21a0464f6d13fb5d5e76cb724fb`.
+Current branch: `fix/f1-reload-readiness-20260910`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/219 (OPEN).
+Main remains clean and unchanged at `d77b634e3685de8fb077956b8099fc92c3927243`.
+This local documentation checkpoint follows the pushed SHA; use
+`git rev-parse HEAD` in `work/f1-integration` for its own checkout HEAD.
+The local correction proof anchor remains `59ef1be6498e5a4eced081d7c412df1176fefdb0`.
+
+Scott authorized one second push and CI cycle. All 12 workflows completed:
+17 checks passed, 4 failed, 3 skipped. Runs 34547036834 (ci-test) and
+34547036853 (deterministic-detectors) failed. Windows reproducibility run
+34547036679 passed for this exact SHA. The remote PR body now records these
+actual results. Full evidence: `docs/evidence/f1-ci-repair-2026-09-10/CI-SECOND-RESULT.md`.
+
+All observed test failures have one cause: the four new native launcher tests
+changed exact collection counts to (1823, 2024), but
+`tests/policy/test_native_caption_workflow_policy.py:1179` still expects
+(1819, 2020). The lead missed that dependency in the pre-push review. The
+workflow minimum floors remain valid; no workflow change is proposed.
+
+Unit: 1 failed / 10144 passed / 68 skipped / 5 deselected, coverage 80.12%.
+Randomized: 1 failed / 10148 passed / 69 skipped, seed 2179285722.
+Mutation baseline: 1 failed / 7790 passed / 289 skipped / 8 deselected; no score.
+The claims verifier failed closed with 9 violations from the failed producer
+and missing accepted observations, with no stale-source blob violations.
+
+All 125 claims-policy and all 7 state-guard tests passed in the ordinary Linux
+unit run. Windows: 2021 passed / 3 deselected on uv 0.12.13; the actual launcher
+test and all four new cleanup cases executed and passed. Two Windows payload
+builds matched 9633 files. Neither result proves an installed kit or a soak.
+The corrected guard in the instrumented mutation run remains unverified because
+the baseline stopped earlier on the inventory assertion.
+
+An independently reviewed, unapplied one-file correction is in task outputs:
+`F1-CI-floor-correction-PROPOSED.patch`. A copy is committed as evidence, not
+applied source: `docs/evidence/f1-ci-repair-2026-09-10/count-correction-PROPOSED.patch.txt`.
+`git apply --check` passed. **Next owner action: authorize applying this exact
+count correction, fresh native collection and full policy verification, then
+one further push/CI cycle.** No code repair or new local tests were performed
+after the second push; no third push or rerun occurred.
+
+The monitor finished; no CI or test process remains in flight. No merge,
+release kit, Gate A, soak, service restart, tag or publication occurred. F-2
+remains unimplemented. The 795cdab5 beta.6 kit is unchanged and blocked.
+Older checkpoints below are historical snapshots, not current action authority.
+
+## 2026-09-10 local CI repairs checkpoint (historical pre-second-push snapshot)
+
+Current branch: `fix/f1-reload-readiness-20260910`.
+Local correction source/proof HEAD: `59ef1be6498e5a4eced081d7c412df1176fefdb0`.
+This following documentation checkpoint changes no tested source; obtain the
+current checkout HEAD with `git rev-parse HEAD` in the integration worktree.
+Remote PR / CI HEAD: `f9b5e1aa71e8860e8fff41c1cb572b80bbbc8e2b`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/219 (OPEN).
+Main: `d77b634e3685de8fb077956b8099fc92c3927243`, unchanged.
+Current public tag remains `v1.0.0-beta.5`. No new tag or release was created.
+
+Integration worktree:
+`C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f1-integration`.
+Scott approved local correction and testing of the three first-cycle CI issues.
+The four current-source claims bindings are corrected; the state-guard child
+imports its actual fixture without unrelated application fixtures; the builder
+now clears retained old script ZIPs that could still execute with uv 0.12.13.
+The repair verifies both PE resources and whole-file ZIP script selection.
+
+Local verification: 213 passed across all three affected test files; Ruff check
+and format passed (1541 files), mypy passed (675 source files). The lead's actual
+uv 0.12.12/0.12.13 executable matrix reproduces the old uv 0.12.13 failure and
+passes each corrected launcher twice with a relative interpreter and no fixture
+bytecode. Sol independently reviewed the integrated changes and ran 88 passing
+guard/native-builder tests. Luna completed the claims slice; Terra supplied
+launcher diagnosis and drafts; the lead finished the reviewed corrections.
+
+Evidence: `docs/evidence/f1-ci-repair-2026-09-10/VERIFICATION.md`, source hashes,
+red/green receipts, matrix script/output and independent review. Earlier F-1
+proof at `7a468cd2` is historical source/runtime evidence, not candidate acceptance.
+First PR CI remains red: 16 passed, 5 failed, 3 skipped. No actual Linux mutation
+score or fresh successful CI producer/verifier evidence exists yet.
+
+**Next owner action: approve a second push to the existing PR and one new CI
+cycle.** No second push or rerun, merge, candidate build, Gate A, soak, service
+restart or publication has occurred. F-2 is unimplemented. The beta.6 kit at
+`795cdab5065e3b1b1d9df69c6fc06658f481c8d4` is unchanged, unsoaked, ungated and must
+not be published. The LAN server and Gate A runner were not restarted.
+
+Agent worktrees `work/ci-claims` and `work/ci-launcher` retain their task-owned
+uncommitted submissions as review history; they are not the integration source.
+The launcher submission is also preserved as
+`work/ci-repair-notes/launcher/terra-submitted.patch`. No test process remains
+running. No main checkout changes were made.
+
+## 2026-09-10 post-push / CI checkpoint (historical first-cycle snapshot)
+
+Current HEAD (remote PR / CI): `f9b5e1aa71e8860e8fff41c1cb572b80bbbc8e2b`.
+Current branch: `fix/f1-reload-readiness-20260910`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/219 (OPEN).
+Current public tag remains `v1.0.0-beta.5`; no new tag or release was created.
+Main remains `d77b634e3685de8fb077956b8099fc92c3927243`.
+
+Scott approved the branch push and one PR. The first CI cycle completed with
+16 passing, 5 failing and 3 skipped checks. Runs 34530877832 (ci-test) and
+34530877848 (deterministic-detectors) failed. Windows app reproducibility run
+34530877710 passed. Full results: `docs/evidence/f1-local-2026-09-10/CI-RESULT.md`.
+
+The F-1 change omitted four claims-registry blob updates. Both ordinary and
+randomized suites failed 18 policy tests on those bindings; the dependent
+claims verifier also failed. The pre-push all-pass audit missed this and is
+superseded by the finding. A separate Windows launcher-normalization test
+failed after CI's uv selector advanced from 0.12.12 to 0.12.13. The mutation
+baseline failed in a nested process importing instrumented code without its
+configuration; no mutation score was produced.
+
+An independently reviewed, unapplied claims correction is in the task outputs.
+Further local correction/reproduction and any second push await the owner's
+next action. No merge, candidate build, Gate A, soak, service restart or
+publication has occurred. F-2 remains unimplemented; the old beta.6 kit is blocked.
+
+This local documentation checkpoint follows the pushed source; obtain its own
+local SHA with `git rev-parse HEAD`. The remote PR/CI SHA above remains the source
+identity for this cycle. Prior proof anchors remain historical, not new acceptance.
+
+## 2026-09-10 local F-1 implementation update (pre-push snapshot)
+
+Scott authorized GO following the cold takeover. Active branch:
+`fix/f1-reload-readiness-20260910`, base `d77b634e3685de8fb077956b8099fc92c3927243`.
+Local worktree:
+`C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f1-integration`.
+Implementation/proof anchor: `7a468cd2e9018775926d384ac1b25ebe07ebd18d`.
+The following documentation checkpoint cites that anchor; it changes no code.
+Read `git rev-parse HEAD` in this worktree for the current documentation HEAD.
+Scott subsequently authorized pushing this branch and opening one F-1 PR. The
+pre-push audit clarified that the existing deferred-boundary watchdog can force
+a switch only after current all-stream preroll. Code and checked hashes are unchanged.
+Local checks: 2106 passed / 72 skipped (egress/live/policy); seven targeted native
+tests passed, 24 commits graded; mypy 675 files, Ruff lint/format, and independent
+Terra review accepted. F-1 release acceptance remains open.
+No PR, push, merge, tag, publication, station service start, Gate A, or sandbox soak
+has been performed for this work. See `docs/evidence/f1-local-2026-09-10/VERIFICATION.md`
+for the current implementation/review evidence and remaining release gates.
+
+F-1 changes bind preroll callbacks to their reload, require every replacement
+stream before retirement, and recover unexpected clean worker exits while honoring
+Stop/Drain. F-4 exit and fire logging is included. F-2 remains unstarted. The
+existing `795cdab5` beta.6 kit is unchanged and still must not be published.
+
+Older task lists below are historical; they do not authorize starting old work
+or publishing the existing kit. The current owner per-action authority governs.
+
 > **2026-09-10 11:10 AM — READ `PROJECT-STATUS.md` FIRST.** It is tracked in git (this file is
 > gitignored) and it is the full cold-start handoff: where the project is, both overnight soak
 > results with independent verification, the blocker that stops beta.6 shipping, every fix with its

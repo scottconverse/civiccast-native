@@ -91,12 +91,15 @@ def test_snapshot_diff_reports_create_modify_and_delete(tmp_path: Path) -> None:
     assert changed_entries(before, after) == sorted([str(root / "new.db"), str(doomed), str(keep)])
 
 
-def test_guard_fails_a_test_that_writes_real_state(request: pytest.FixtureRequest) -> None:
+@pytest.mark.parametrize("reject_application_imports", [False, True])
+def test_guard_fails_a_test_that_writes_real_state(
+    request: pytest.FixtureRequest, reject_application_imports: bool
+) -> None:
     """End-to-end: an unmarked test writing under the real root fails at teardown.
 
     Runs a throwaway pytest session in a subprocess whose "real" profile is a
-    directory under this test's tmp_path, using a verbatim copy of the root
-    conftest, so the guard is exercised exactly as the suite installs it.
+    directory under this test's tmp_path. Import the suite's actual guard
+    fixture alone so unrelated application fixtures cannot fail child setup.
     """
 
     request.config.pluginmanager.import_plugin("pytester")
@@ -104,7 +107,21 @@ def test_guard_fails_a_test_that_writes_real_state(request: pytest.FixtureReques
     fake_profile = pytester.mkdir("fake-profile")
     fake_local = fake_profile / "AppData" / "Local"
     fake_local.mkdir(parents=True)
-    pytester.makeconftest((Path(__file__).parent / "conftest.py").read_text(encoding="utf-8"))
+    pytester.makeconftest("from tests.conftest import _hermetic_civiccast_state")
+    if reject_application_imports:
+        # The nested guard proof needs no application imports. In mutation CI,
+        # importing instrumented application code from this temporary cwd can
+        # initialize mutmut without its configuration and fail during setup.
+        # Reject that dependency directly without emulating a mutation score.
+        with (pytester.path / "conftest.py").open("a", encoding="utf-8") as conftest:
+            conftest.write(
+                "\nimport sys\n"
+                "class RejectApplicationImports:\n"
+                "    def find_spec(self, fullname, path=None, target=None):\n"
+                "        if fullname == 'civiccast' or fullname.startswith('civiccast.'):\n"
+                "            raise AssertionError('guard proof imported application: ' + fullname)\n"
+                "sys.meta_path.insert(0, RejectApplicationImports())\n"
+            )
     pytester.makepyfile(
         test_offender=f"""
         import os

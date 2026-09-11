@@ -1264,7 +1264,8 @@ def test_repeated_reloads_no_leak(tmp_path: Path) -> None:
     assert len(set(counts)) == 1, f"element count not flat across reloads: {counts} (leak)"
 
 
-def test_reload_never_buffers_recovers(tmp_path: Path) -> None:
+@pytest.mark.parametrize("deferred", [False, True])
+def test_reload_never_buffers_recovers(tmp_path: Path, deferred: bool) -> None:
     """ENG-001 + TEST-003: a reload whose new leg never delivers a first buffer (a
     udpsrc on a dead port) must NOT wedge the channel. Also exercises supersede: a
     second dead reload arriving while the first is still settling replaces it; then the
@@ -1272,9 +1273,10 @@ def test_reload_never_buffers_recovers(tmp_path: Path) -> None:
     dead_a, dead_b = _free_udp_port(), _free_udp_port()  # nothing is sending to either
     good = tmp_path / "good.json"
     good.write_text(graphmod.graph_to_json(_reload_graph(2)), encoding="utf-8")
-    bad_a = tmp_path / "bad_a.json"
+    suffix = reloadpolicy.DEFERRED_SWITCH_SUFFIX if deferred else ".json"
+    bad_a = tmp_path / f"bad_a{suffix}"
     bad_a.write_text(graphmod.graph_to_json(_udpsrc_program_graph(dead_a)), encoding="utf-8")
-    bad_b = tmp_path / "bad_b.json"
+    bad_b = tmp_path / f"bad_b{suffix}"
     bad_b.write_text(graphmod.graph_to_json(_udpsrc_program_graph(dead_b)), encoding="utf-8")
 
     out_ts = tmp_path / "out.ts"
@@ -1288,6 +1290,10 @@ def test_reload_never_buffers_recovers(tmp_path: Path) -> None:
         time.sleep(0.2)
         _send(control, f"reload {bad_b}")  # supersedes bad_a while it's still settling
         _wait_for_log(log, "CTRL reload aborted", timeout=12.0)  # watchdog fired on bad_b
+        before_good = log.read_text(encoding="utf-8", errors="replace")
+        assert proc.poll() is None, before_good
+        assert "CTRL reload committed" not in before_good, before_good
+        assert "CTRL reload: old leg disposed" not in before_good, before_good
         _send(control, f"reload {good}")  # channel must NOT be wedged
         _wait_for_log(log, "CTRL reload committed", timeout=12.0)
         _send(control, "stop")

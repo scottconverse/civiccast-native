@@ -150,6 +150,45 @@ def _plan_with_segments(
     )
 
 
+@pytest.mark.parametrize("duration", [300.0, 3600.0])
+def test_single_item_rollover_prepares_next_boundary_with_bounded_lead(duration: float) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config("public"))
+    store.write_state(
+        EgressStateRow(
+            channel_id="public",
+            state="ON_AIR",
+            current_source_label="Current programme",
+            current_proof_event_id="ev-1",
+            updated_at=_NOW,
+            pid=123,
+        )
+    )
+    daemon = _HorizonAwareDaemon(live_channels={"public"})
+    daemon.dispatched["public"] = ("ev-1", (duration,), False)
+    sampled: list[datetime] = []
+
+    def next_plan(channel_id: str, boundary: datetime) -> EgressSourcePlan:
+        sampled.append(boundary)
+        return _plan_with_duration(channel_id, 300, source_ref="next-programme")
+
+    service = ChannelAutomationService(
+        store,
+        daemon,
+        lambda channel: _plan_with_duration(channel, duration),
+        settings=ChannelAutomationSettings(),
+        boundary_source_plan_provider=next_plan,
+    )
+    end = _NOW + timedelta(seconds=duration)
+    service.run_once(now=_NOW)
+    service.run_once(now=end - timedelta(seconds=121))
+    assert _pending_actions(store, "public") == []
+    assert sampled == []
+    service.run_once(now=end - timedelta(seconds=120))
+    assert sampled == [end]
+    assert _pending_actions(store, "public") == ["reload"]
+
+
 class TestRelayIdentifierValidation:
     """Audit Critical (TEST-001/QA-001): the API layer must reject relay
     identifiers the relay runtime categorically rejects - otherwise a saved

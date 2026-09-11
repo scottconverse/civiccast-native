@@ -273,7 +273,7 @@ export function captionsRowLabel(
 ): string {
   if (captionStatus === 'on') return 'On'
   if (liveCaptionsEnabled === false) return 'Off (switched off in the station profile)'
-  return 'Not yet confirmed (waiting for the on-air check)'
+  return 'Not verified; open channel caption proof'
 }
 
 // The "Process" row of a channel card. PR #212 round 2: the daemon now writes

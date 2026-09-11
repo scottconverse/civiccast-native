@@ -43,7 +43,6 @@ import os
 import sys
 import threading
 import time
-import uuid
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -157,8 +156,8 @@ def _write_reload_status(channel_dir: Path, *, reload_id: str, result: str) -> N
     """F1 redesign (coordinator hostile review, 2026-09-06): the OUT-OF-BAND
     settle outcome for a reload.
 
-    The pipe ack for a ``reload`` command now means only "armed" (see
-    ``_dispatch_control_with_ack``'s docstring) -- the actual commit or abort
+    The pipe ack for a ``reload`` command now means only "accepted" -- the
+    actual arm, commit, or abort
     can take up to the engine's own ``reload_timeout_s`` (an immediate switch)
     or ``defer_switch_timeout_s`` (900s default, a deferred/boundary-aligned
     switch -- exactly the case an automation-driven ON_AIR extension uses, per
@@ -186,6 +185,66 @@ def _write_reload_status(channel_dir: Path, *, reload_id: str, result: str) -> N
         print(f"WARN: failed to write reload-status.json: {exc!r}", flush=True)
 
 
+def _apply_accepted_reload(
+    engine_instance: Any,
+    line: str,
+    *,
+    command_id: str,
+    stop_requested: threading.Event,
+) -> bool:
+    """Main-loop half of an already-accepted Windows pipe reload.
+
+    The reader thread writes the short ``accepted`` receipt before scheduling this
+    callback, so a healthy source-leg build cannot be mistaken for a lost pipe
+    acknowledgement.  This callback owns every terminal outcome after admission:
+    the engine's ``on_settled`` callback writes commit/async-abort status, while a
+    synchronous parse/build failure writes ``aborted:build-error`` itself.
+    """
+    command = controlmod.parse_control_line(line)
+    if command is None or command[0] != "reload":
+        return False
+    reload_path = Path(command[1])
+    channel_dir = reload_path.parent
+    if stop_requested.is_set() or getattr(engine_instance, "_stopping", False):
+        with contextlib.suppress(OSError):
+            reload_path.unlink()
+        _write_reload_status(channel_dir, reload_id=command_id, result="aborted:stopped")
+        return False
+    try:
+        with reload_path.open(encoding="utf-8") as handle:
+            new_graph = graphmod.graph_from_json(handle.read())
+        switch_at_end_of_current = reload_policy_mod.reload_switch_is_deferred(command[1])
+        with contextlib.suppress(OSError):
+            # One-shot graph file: a failed admission is terminal and the daemon
+            # will prepare a new plan rather than retry this payload.
+            reload_path.unlink()
+
+        def _on_settled(committed: bool, reason: str | None) -> None:
+            result = "applied" if committed else f"aborted:{reason or 'unknown'}"
+            _write_reload_status(channel_dir, reload_id=command_id, result=result)
+
+        engine_instance.reload_program(
+            new_graph.sources[0],
+            switch_at_end_of_current=switch_at_end_of_current,
+            on_settled=_on_settled,
+        )
+    except Exception as exc:
+        print(f"CTRL reload: accepted arm failed: {exc!r}", flush=True)
+        _write_reload_status(channel_dir, reload_id=command_id, result="aborted:build-error")
+        return False
+    try:
+        # Preserve the FIFO path's overlay behavior. Its failure does not alter
+        # the accepted program transaction or its terminal receipt.
+        engine_instance.reload_graphics_overlay(new_graph.graphics_overlay)
+    except Exception as exc:
+        print(
+            f"CTRL reload: graphics-overlay re-apply failed "
+            f"(program reload still in flight): {exc!r}",
+            flush=True,
+        )
+    return False
+
+
 def _dispatch_control_with_ack(
     engine_instance: Any,
     line: str,
@@ -193,7 +252,7 @@ def _dispatch_control_with_ack(
     command_id: str | None = None,
 ) -> tuple[str, str | None]:
     """The D2 pipe-seam dispatch: applies ``line`` and returns an ack result
-    (``"applied"``|``"armed"``|``"error"``, detail) instead of only printing, so
+    (``"applied"``|``"error"``, detail) instead of only printing, so
     the pipe seam can write back ``{"result": ...}`` (design.md sec4's 'ack-point
     reading'). Calls the SAME public engine effects ``engine._dispatch_control`` uses
     (``swap.swap_to``, ``reload_program``, ``push_caption_cue``, ``_loop.quit()``)
@@ -201,32 +260,10 @@ def _dispatch_control_with_ack(
     since ``_dispatch_control`` itself is fire-and-forget (engine.py, out of this
     unit's file ownership) and has no return value to relay.
 
-    F1 redesign (coordinator hostile review, 2026-09-06, superseding item 4's
-    original "deferred ack" design): ``reload_program`` only ARMS a reload -- it
-    builds and prerolls the new leg and returns immediately; the actual commit
-    (first buffer / boundary reached) or abort (build error, async bus error,
-    timeout, supersession) happens LATER, on the main loop, and for a DEFERRED
-    switch (an automation-driven ON_AIR extension) that can take up to
-    ``defer_switch_timeout_s`` (900s default) -- far longer than any pipe
-    round-trip ack should ever block for. Item 4's fix made the ack wait for
-    that full settlement, which just moved the dishonesty (and, worse,
-    introduced a NEW failure: the strategy's bounded ack wait would time out
-    on a correctly-armed long-lead deferred reload and the daemon would
-    terminate a healthy worker). This redesign instead:
-
-    * acks ``"armed"`` the instant ``reload_program`` returns without raising
-      (the command was accepted; the new leg is now building/prerolling) --
-      keeps the ack fast and bounded, like every other verb;
-    * acks ``"error:<repr>"`` immediately if ``reload_program`` (or reading/
-      parsing the graph file) raises synchronously -- nothing was armed, so
-      there is nothing to settle later;
-    * reports the EVENTUAL settle outcome out-of-band via
-      ``_write_reload_status`` (``reload_id`` is the D2 envelope's own
-      command id, so the daemon can correlate a specific armed attempt to its
-      settlement even across a supersede).
-
-    Every other verb (swap/caption/stop) is unchanged: dispatch and ack are
-    still the same synchronous step they always were."""
+    Reload is deliberately rejected here: the named-pipe reader admits it and
+    writes ``accepted`` before scheduling :func:`_apply_accepted_reload`. That
+    separate path prevents slow source-leg construction from consuming the pipe
+    acknowledgement budget. Every other verb remains synchronous here."""
     command = controlmod.parse_control_line(line)
     if command is None:
         return "error", f"unparseable control line: {line!r}"
@@ -236,51 +273,7 @@ def _dispatch_control_with_ack(
             engine_instance.swap.swap_to(command[1])
             return "applied", None
         if verb == "reload":
-            reload_path = Path(command[1])
-            channel_dir = reload_path.parent
-            with reload_path.open(encoding="utf-8") as handle:
-                new_graph = graphmod.graph_from_json(handle.read())
-            switch_at_end_of_current = reload_policy_mod.reload_switch_is_deferred(command[1])
-            with contextlib.suppress(OSError):
-                # One-shot graph file: consumed after read, and deliberately
-                # unlinked BEFORE ``reload_program`` below decides anything. A
-                # rejected payload is therefore destroyed rather than left on
-                # disk, so recovery is always "the daemon re-prepares the plan
-                # and dispatches a fresh file", never "retry this file". Keep
-                # that ordering: leaving the file behind on rejection would
-                # invite a retry loop over a payload the engine already refused.
-                reload_path.unlink()
-
-            reload_id = command_id or uuid.uuid4().hex
-
-            def _on_settled(committed: bool, reason: str | None) -> None:
-                result = "applied" if committed else f"aborted:{reason or 'unknown'}"
-                _write_reload_status(channel_dir, reload_id=reload_id, result=result)
-
-            engine_instance.reload_program(
-                new_graph.sources[0],
-                switch_at_end_of_current=switch_at_end_of_current,
-                on_settled=_on_settled,
-            )
-            # BLOCKER fix: re-apply the graphics-overlay leg too (mirrors the FIFO
-            # dispatch path, engine._dispatch_control) -- otherwise a content-reload
-            # delivered over the D2 Windows pipe seam would silently drop a lower-third
-            # text update just like the FIFO path used to. Its own failure must NOT
-            # affect the program reload's ack above (that reload already armed
-            # successfully and will settle on its own via ``_on_settled``) -- an
-            # overlay re-apply failure never disturbs the already-on-air overlay
-            # (see ``reload_graphics_overlay``'s own docstring) and must not be
-            # conflated with the program reload's outcome.
-            try:
-                engine_instance.reload_graphics_overlay(new_graph.graphics_overlay)
-            except Exception as exc:
-                print(
-                    f"CTRL reload: graphics-overlay re-apply failed "
-                    f"(program reload still in flight): {exc!r}",
-                    flush=True,
-                )
-            # F1: ack "armed" NOW -- do not wait for _on_settled.
-            return "armed", None
+            return "error", "reload must be admitted by the pipe reader"
         if verb == "caption":
             text = base64.b64decode(command[3]).decode("utf-8", "replace")
             pushed = engine_instance.push_caption_cue(
@@ -372,6 +365,7 @@ def _windows_pipe_reader_loop(
 
     applied = _AppliedIdCache()
     write_lock = threading.Lock()
+    stop_requested = threading.Event()
     handle: Any = None
     backoff = 0.5
     while not stop_event.is_set():
@@ -395,17 +389,32 @@ def _windows_pipe_reader_loop(
             continue  # malformed frame: drop silently, never crash the worker
 
         current_handle = handle
+        parsed = controlmod.parse_control_line(command_line)
+        if parsed is not None and parsed[0] == "stop":
+            # A Stop received after a reload admission must suppress a queued
+            # (not yet main-loop-applied) reload.  The apply callback writes its
+            # own terminal ``aborted:stopped`` receipt.
+            stop_requested.set()
         if not applied.should_apply(command_id):
             # Redelivered id: the ack was lost, not the application -- ack again
             # without re-enacting (D2 idempotent-redelivery contract). F1
             # redesign: "applied" is only ever cached for swap/caption/stop
             # now (a "reload" that ACTUALLY committed writes reload-status.json,
             # not the applied-id cache -- see _dispatch_and_ack); a cached
-            # "reload" id was marked applied at ARM time, so redelivering it
-            # re-acks "armed" (matching what the original ack said), never
+            # "reload" id was marked applied at ACCEPT time, so redelivering it
+            # re-acks "accepted" (matching the original receipt), never
             # "applied".
-            parsed = controlmod.parse_control_line(command_line)
-            reack_result = "armed" if parsed is not None and parsed[0] == "reload" else "applied"
+            reack_result = "accepted" if parsed is not None and parsed[0] == "reload" else "applied"
+            if reack_result == "accepted":
+                # The first accepted reload may now be doing a slow main-loop
+                # arm. A lost acknowledgement replay must not wait behind that
+                # same arm merely to repeat a cached, effect-free receipt.
+                _windows_pipe_write_line(
+                    current_handle,
+                    write_lock,
+                    json.dumps({"v": 1, "id": command_id, "result": "accepted", "detail": None}),
+                )
+                continue
             ack_written = threading.Event()
 
             def _reack(
@@ -429,6 +438,23 @@ def _windows_pipe_reader_loop(
                 pass
             continue
 
+        if parsed is not None and parsed[0] == "reload":
+            # The acknowledgement is a PIPE-ADMISSION receipt, not a claim that
+            # GStreamer has already built the replacement leg.  It must leave
+            # this reader thread before any slow main-loop arm work begins.
+            applied.mark_applied(command_id)
+            _windows_pipe_write_line(
+                current_handle,
+                write_lock,
+                json.dumps({"v": 1, "id": command_id, "result": "accepted", "detail": None}),
+            )
+            GLib.idle_add(
+                lambda e=engine_instance, text=command_line, cid=command_id: _apply_accepted_reload(
+                    e, text, command_id=cid, stop_requested=stop_requested
+                )
+            )
+            continue
+
         ack_written = threading.Event()
 
         def _dispatch_and_ack(
@@ -440,10 +466,9 @@ def _windows_pipe_reader_loop(
             # F1 redesign: the ack is ALWAYS written synchronously now (a
             # "reload"'s eventual settle outcome goes out-of-band via
             # reload-status.json instead -- see _dispatch_control_with_ack's
-            # docstring). "armed" counts as accepted for the dedup cache, same
-            # as "applied": a redelivery of an already-armed reload id must
-            # re-ack, not re-enact (re-arming would supersede the FIRST
-            # attempt's own still-settling reload for no reason).
+            # docstring). A non-reload result of "applied" is cached here;
+            # reloads were already cached at pipe admission and never reach this
+            # callback.
             try:
                 try:
                     result, detail = _dispatch_control_with_ack(
@@ -461,7 +486,7 @@ def _windows_pipe_reader_loop(
                     # bug in dispatch itself is still an honest, fast "error"
                     # ack rather than a silent hang.
                     result, detail = "error", repr(exc)
-                if result in ("applied", "armed"):
+                if result == "applied":
                     applied.mark_applied(cid)
                 _windows_pipe_write_line(
                     h,

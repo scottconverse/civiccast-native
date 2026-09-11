@@ -71,6 +71,25 @@ import { captionsRowLabel, stateLabel, toneForEgressState } from './status-langu
 
 const POLL_MS = 30_000
 
+function udpLocalSendStatus(
+  sink: EgressConfig['sinks'][number],
+  connected: boolean,
+  state: EgressStateRow | null | undefined,
+  health: EgressHealthSample | undefined,
+): { label: string; tone: 'ok' | 'warn' | 'err' } {
+  const liveProgress = state?.state === 'ON_AIR' && health?.state === 'ON_AIR' &&
+    state.pid != null &&
+    ((health.encoder_fps ?? 0) > 0 || (health.encoder_bitrate_kbps ?? 0) > 0) &&
+    Date.now() - new Date(health.sampled_at).getTime() <= 120_000
+  if (sink.kind !== 'udp-ts') {
+    return { label: connected ? 'connected' : 'not connected', tone: connected ? 'ok' : 'err' }
+  }
+  if (connected && liveProgress) {
+    return { label: 'local send: active (receiver not verified)', tone: 'ok' }
+  }
+  return { label: 'local send: not verified (receiver not verified)', tone: 'warn' }
+}
+
 function apiMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.detail ?? fallback
   if (error instanceof Error) return error.message
@@ -613,6 +632,7 @@ export function EgressControlPanel({
   channelId,
   state,
   health,
+  config,
   pendingCommand,
   canControl,
   error,
@@ -625,6 +645,7 @@ export function EgressControlPanel({
   channelId: string | undefined
   state: EgressStateRow | null | undefined
   health: EgressHealthSample[]
+  config?: EgressConfig
   pendingCommand: { channelId: string; action: EgressCommandAction } | null
   canControl: boolean
   error: unknown
@@ -721,18 +742,24 @@ export function EgressControlPanel({
         )}
         {latestHealth && Object.keys(latestHealth.sink_connected).length > 0 && (
           <div className="flex flex-wrap gap-2">
-            {Object.entries(latestHealth.sink_connected).map(([sink, connected]) => (
+            {Object.entries(latestHealth.sink_connected).map(([sink, connected]) => {
+                const configuredSink = config?.sinks.find((candidate) => candidate.label === sink)
+                const status = configuredSink
+                  ? udpLocalSendStatus(configuredSink, connected, state, latestHealth)
+                  : { label: 'local send: not verified (receiver not verified)', tone: 'warn' as const }
+                return (
               <span
                 key={sink}
                 className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase"
                 style={{
-                  background: connected ? 'var(--cc-ok-soft)' : 'var(--cc-err-soft)',
-                  color: connected ? 'var(--cc-ok)' : 'var(--cc-err)',
+                  background: status.tone === 'ok' ? 'var(--cc-ok-soft)' : status.tone === 'err' ? 'var(--cc-err-soft)' : 'var(--cc-warn-soft)',
+                  color: status.tone === 'ok' ? 'var(--cc-ok)' : status.tone === 'err' ? 'var(--cc-err)' : 'var(--cc-ink)',
                 }}
               >
-                {sink}: {connected ? 'connected' : 'not connected'}
+                {sink}: {status.label}
               </span>
-            ))}
+                )
+            })}
           </div>
         )}
       </div>
@@ -1993,6 +2020,7 @@ export function ChannelOpsScreen() {
             channelId={channelId}
             state={egressStateQuery.data}
             health={egressHealthQuery.data ?? []}
+            config={egressConfigQuery.data}
             pendingCommand={egressCommandMutation.isPending ? (egressCommandMutation.variables ?? null) : null}
             canControl={canControlEgress}
             error={egressCommandMutation.error}
