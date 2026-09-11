@@ -1,5 +1,11 @@
 > 2026-09-11 owner authorization: Scott authorizes everything needed to finish the beta release, without asking again. This supersedes section 10's older per-action rule for this release. Proceed through PR, required CI, fresh build, Sandbox/Gate A, tester soak and publication on passing evidence. The old 795cdab5 kit is still blocked.
 
+> 2026-09-11 operator-fault delta: F7/F8/F10 source corrections preserve aborted
+> reload errors, notify the existing alert evaluator before worker recovery, and
+> verify operator-visible PIDs. Root's affected Python run passed299 tests.
+> F9 UDP labels distinguish local sending from receiver verification. See
+> docs/evidence/f2-local-2026-09-11/OPERATOR-FAULTS.md. Candidate gates remain open.
+
 > 2026-09-11 active local beta repair: F2 isolation/boundary fixes, native retirement repair and caption FAIL visibility pass local checks (7 native, 2265 affected Python, 1035 operator UI, 61 public UI, 18 accessibility/contrast). Source anchor c4d70243. See docs/evidence/f2-local-2026-09-11/VERIFICATION.md. Candidate CI/build/Sandbox/Gate A/hardware soak remain open. No new release or candidate acceptance. Prior status entries are historical.
 
 # CivicCast Native — full project status and cold-start handoff

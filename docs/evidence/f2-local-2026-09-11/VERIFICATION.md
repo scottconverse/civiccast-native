@@ -1,8 +1,10 @@
 # F2 local release repair - 2026-09-11
 
-Working branch: `fix/f2-release-readiness-20260911`, based on
-`b2593a50b96c1696496461e2382ec6c396c9e940`. Local changes are not pushed.
-Main remains d77b634e; PR219 remote source is 8653b56f. No new kit is accepted.
+Working branch: `fix/f2-release-readiness-20260911`. The original local evidence
+below is anchored at c4d70243, following base b2593a50. It has since been pushed
+to PR219 with the baseline-pin and browser-assertion corrections. The latest
+operator fault-visibility delta is described in OPERATOR-FAULTS.md. Read the PR
+for its current exact head and CI results. No new kit is accepted.
 
 ## Implemented locally
 
@@ -75,8 +77,9 @@ No informational mutation wait is on this release critical path. The old
 Known candidate checks: publish the complete intended schedule horizon before
 soak; verify actual programme/label transitions and Stop; run captions ON/OFF.
 The underlying zero-expected-caption-cue symptom is not claimed fixed by the
-display change. Nonfatal reload-abort UI visibility, memory growth and dropped
-frame metrics remain bounded observations for the soak, not new workstreams.
+display change. Reload-abort visibility now has the additional source regression
+described in OPERATOR-FAULTS.md. Memory growth and dropped-frame metrics remain
+bounded observations for the soak, not new workstreams.
 Owner for these release observations: CivicCast release coordinator, 2026-09-11.
 
 OpenAI-only roles: root owns integration; Luna supplied channel-isolation and

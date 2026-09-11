@@ -3152,6 +3152,62 @@ def test_unrecognized_settlement_result_is_treated_as_aborted_immediately(
     assert state.current_source_label == "Mayor interview"
 
 
+def test_aborted_reload_settlement_is_operator_visible_and_durable(tmp_path: Path) -> None:
+    """F-8: a worker-side media/build abort must survive the restart transition.
+
+    The state row gives the operator the immediate reason, while the proof event
+    remains available after a rapid successful restart replaces that live row.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    current_label = "Council meeting"
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        return _source_plan_with_label(tmp_path, current_label)
+
+    strategy = _FakeContentReloadStrategy(processes, started, auto_settle=False)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")
+    current_label = "Mayor interview"
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+    _write_fake_reload_status(
+        tmp_path,
+        "gov",
+        strategy.reload_ids[-1],
+        "aborted:new program errored before commit",
+    )
+
+    daemon.process_once("gov")
+
+    transitioning = store.read_state("gov")
+    assert transitioning is not None
+    assert transitioning.state == "TRANSITIONING"
+    assert transitioning.last_error == (
+        "Seamless content reload failed: aborted:new program errored before commit"
+    )
+    failure_event = store.recent_proof_events("gov", 1)[0]
+    assert failure_event.event_id == transitioning.current_proof_event_id
+    assert failure_event.source_path == "content-reload:settlement-aborted"
+    assert "new program errored before commit" in failure_event.machine_summary
+
+    started[0].returncode = 0
+    daemon.process_once("gov")
+
+    assert store.read_state("gov").state == "ON_AIR"  # type: ignore[union-attr]
+    durable_events = store.recent_proof_events("gov", 20)
+    assert any(event.event_id == failure_event.event_id for event in durable_events)
+
+
 def test_worker_crash_during_the_armed_window_discards_pending_settlement(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -4184,11 +4240,15 @@ def test_daemon_relaunches_running_encoder_when_child_exits_nonzero(tmp_path: Pa
     store.enqueue_command(_command())
     processes = [_FakeProcess(pid=111, returncode=None), _FakeProcess(pid=222, returncode=None)]
     started: list[_FakeProcess] = []
+    alert_calls: list[tuple[str, str, float | None, float | None]] = []
     daemon = EgressDaemon(
         store,
         work_dir=tmp_path,
         source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
         ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+        alert_evaluator_hook=lambda channel, state, fps, bitrate: alert_calls.append(
+            (channel, state, fps, bitrate)
+        ),
     )
 
     daemon.process_once("gov")
@@ -4202,6 +4262,8 @@ def test_daemon_relaunches_running_encoder_when_child_exits_nonzero(tmp_path: Pa
     assert len(started) == 2
     assert processes == []
     assert store.recent_health("gov", 2)[1].state == "STARTING"
+    error_calls = [call for call in alert_calls if call[1] == "ERROR"]
+    assert error_calls == [("gov", "ERROR", None, None)]
     proof_events = store.recent_proof_events("gov", 4)
     assert [event.state for event in proof_events] == [
         "ON_AIR",
@@ -4213,9 +4275,11 @@ def test_daemon_relaunches_running_encoder_when_child_exits_nonzero(tmp_path: Pa
     assert "started encoder relaunch" in proof_events[2].machine_summary
 
 
+@pytest.mark.parametrize("alert_fails", [False, True])
 def test_daemon_relaunches_running_encoder_when_child_exits_cleanly_on_air(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
+    alert_fails: bool,
 ) -> None:
     """A worker's rc=0 is still a fault while the channel is supposed to air.
 
@@ -4227,11 +4291,20 @@ def test_daemon_relaunches_running_encoder_when_child_exits_cleanly_on_air(
     store.enqueue_command(_command())
     processes = [_FakeProcess(pid=111, returncode=None), _FakeProcess(pid=222, returncode=None)]
     started: list[_FakeProcess] = []
+    fault_alerts: list[str] = []
+
+    def alert_hook(channel: str, state: str, fps: float | None, bitrate: float | None) -> None:
+        if state == "ERROR":
+            fault_alerts.append(channel)
+            if alert_fails:
+                raise RuntimeError("alert delivery unavailable")
+
     daemon = EgressDaemon(
         store,
         work_dir=tmp_path,
         source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
         ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+        alert_evaluator_hook=alert_hook,
     )
 
     daemon.process_once("gov")
@@ -4244,6 +4317,7 @@ def test_daemon_relaunches_running_encoder_when_child_exits_cleanly_on_air(
     assert state.state == "ON_AIR"
     assert state.pid == 222
     assert len(started) == 2
+    assert fault_alerts == ["gov"]
     assert store.recent_health("gov", 2)[1].state == "STARTING"
     failure = store.recent_proof_events("gov", 4)[2]
     assert failure.state == "STARTING"

@@ -42,6 +42,9 @@ above, which still targets `v1.0.0-beta.5`.
 
 The active local reliability repair addresses preparation blocking, reload
 acknowledgements, scheduled programme labels and caption-failure visibility.
+It also preserves reload-abort evidence, alerts on worker faults before recovery,
+and hides unverified worker PIDs in operator responses. UDP status distinguishes
+local sending from receiver verification.
 The observed old-leg retirement hang is repaired; all seven affected native
 checks pass. Current results and remaining candidate gates are recorded in
 [the local verification note](docs/evidence/f2-local-2026-09-11/VERIFICATION.md).

@@ -22,6 +22,7 @@ import civiccast.egress.models
 import civiccast.schedule.models  # noqa: F401
 from civiccast.app import create_app
 from civiccast.db import Base, bind_engine, reset_engine
+from civiccast.egress import router as egress_router
 from civiccast.egress.daemon import EgressDaemon
 from civiccast.egress.encoder_strategy import EncoderStartRequest, EncoderStartResult
 from civiccast.egress.errors import SourcePrepareError
@@ -34,6 +35,7 @@ from civiccast.egress.models import (
     EgressSourceSegment,
     EgressStateRow,
 )
+from civiccast.egress.operator_state import operator_state_projection
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.store import PostgresEgressStore
 from civiccast.live.router import get_live_session_store
@@ -264,7 +266,9 @@ def test_staff_egress_config_rtmp_allowed_on_ffmpeg_concat_engine(
 def test_staff_egress_channel_list_and_detail(
     client: TestClient,
     store: PostgresEgressStore,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr("psutil.pid_exists", lambda pid: True)
     now = datetime(2026, 6, 5, 12, 0, tzinfo=UTC)
     assert (
         client.put("/api/staff/egress/channels/gov/config", json=_config_payload()).status_code
@@ -306,6 +310,39 @@ def test_staff_egress_channel_list_and_detail(
     assert r.json()["config"]["channel_id"] == "gov"
     assert r.json()["state"]["current_source_label"] == "Council meeting"
     assert r.json()["latest_health"]["caption_status"] == "not-verified"
+
+
+@pytest.mark.parametrize(("alive", "expected_pid"), [(False, None), (True, 4321), (None, None)])
+def test_staff_state_projects_dead_worker_pid(
+    client: TestClient,
+    store: PostgresEgressStore,
+    monkeypatch: pytest.MonkeyPatch,
+    alive: bool | None,
+    expected_pid: int | None,
+) -> None:
+    store.write_state(
+        EgressStateRow(channel_id="gov", state="ON_AIR", updated_at=datetime.now(UTC), pid=4321)
+    )
+    monkeypatch.setattr(
+        egress_router,
+        "operator_state_projection",
+        lambda state: operator_state_projection(state, pid_is_alive=lambda _pid: alive),
+    )
+    response = client.get("/api/staff/egress/channels/gov/state")
+    assert response.status_code == 200
+    assert response.json()["pid"] == expected_pid
+
+
+def test_staff_state_keeps_normal_stopped_row(
+    client: TestClient, store: PostgresEgressStore
+) -> None:
+    store.write_state(
+        EgressStateRow(channel_id="gov", state="STOPPED", updated_at=datetime.now(UTC), pid=None)
+    )
+    response = client.get("/api/staff/egress/channels/gov/state")
+    assert response.status_code == 200
+    assert response.json()["state"] == "STOPPED"
+    assert response.json()["pid"] is None
 
 
 def test_public_egress_now_is_viewer_safe(

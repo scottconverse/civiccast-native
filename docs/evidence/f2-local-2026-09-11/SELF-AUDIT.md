@@ -1,5 +1,28 @@
 # Consolidated beta repair self-audit - 2026-09-11
 
+Operator-fault delta after fe9ed3c5:
+
+- Engineering: PASS. Aborted settlements persist their reason in state and the
+  existing proof store. Fault alerts run before recovery and cannot prevent it.
+  PID validation is an operator projection; internal process ownership is unchanged.
+  UDP badges claim local sending only, qualified by PID, progress and sample age.
+- UX: PASS. The two outgoing-feed surfaces distinguish receiver verification
+  from sending. Unknown/stopped/stale UDP evidence does not show Connected.
+  Errors remain accessible in proof history after fast recovery.
+- Tests: PASS for the local source delta. Root ran299 affected Python cases,
+ 70 affected operator cases, Ruff/mypy/OpenAPI and operator lint/build. The full
+  browser gate initially exposed a stale uri fixture; it now uses API field target.
+  The corrected full browser gate passed254 cases in31.4 seconds.
+- Docs: PASS. README, CHANGELOG, HANDOFF, PROJECT-STATUS and verification records
+  cover the delta and retain the candidate-gate boundary. PR text is updated with
+  the actual pushed head by the coordinator.
+- QA: PASS for source integration. The whole PR contains the intended reliability
+  fixes, regressions, existing CI repairs and evidence. No new migration, ledger
+  closure, kit acceptance or release claim is introduced.
+
+Artifact-state: local delta reviewed. New-head CI and post-push propagation must
+finish before merge. The old795cdab5 candidate remains blocked.
+
 Operator e2e delta: run34621933713 on51ab78cd passed253 cases but failed one
 assertion still naming the old caption label. Engineering/UX/tests/docs/QA
 PASS for updating that expectation to the existing F5 production string.

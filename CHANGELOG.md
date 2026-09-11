@@ -15,6 +15,10 @@ came across and what deliberately did not.
 
 ### Local beta reliability repair (candidate gates outstanding)
 
+- Preserve aborted-reload reasons in current state and durable proof history.
+  Evaluate worker-fault alerts before recovery can replace the fault state.
+- Hide worker PIDs that cannot be verified in operator API responses. Qualify
+  UDP health as local sending, with receiver reception still unverified.
 - Prepare scheduled media without blocking other channels. Stop cancels pending
   preparation and prevents a late worker launch.
 - Acknowledge reload admission before slow GStreamer arm work. Commit remains a

@@ -2513,6 +2513,16 @@ class EgressDaemon:
         else:
             streak += 1
             self._restart_streak[channel_id] = streak
+        # F-7: recovery can replace the live state with STARTING/ON_AIR in
+        # this same tick. Notify the existing evaluator of the actual off-air
+        # fault before that recovery so the channel-named alert is not skipped.
+        if self._alert_evaluator_hook is not None:
+            try:
+                self._alert_evaluator_hook(channel_id, "ERROR", None, None)
+            except Exception:
+                _LOG.exception(
+                    "Off-air alert evaluation failed for %s; continuing recovery", channel_id
+                )
         failure_event = self._append_encoder_child_failure_event(
             channel_id, state, clean_exit=(returncode == 0)
         )
@@ -3470,7 +3480,10 @@ class EgressDaemon:
                 self._discard_pending_reload_settlement(
                     channel_id, reason=f"worker reported {result}"
                 )
-                self._fall_back_to_restart_reload(channel_id)
+                self._fall_back_to_restart_reload(
+                    channel_id,
+                    failure_reason=f"Seamless content reload failed: {result}",
+                )
                 return
             # Unrecognized result value -- see the docstring note above.
             _LOG.warning(
@@ -3511,7 +3524,9 @@ class EgressDaemon:
             return None
         return data if isinstance(data, dict) else None
 
-    def _fall_back_to_restart_reload(self, channel_id: str) -> None:
+    def _fall_back_to_restart_reload(
+        self, channel_id: str, *, failure_reason: str | None = None
+    ) -> None:
         """The terminate+restart reload path a declined/aborted/lost content-
         reload always falls through to -- factored out of ``_request_reload``
         so ``_poll_reload_settlement`` can take the exact same path for a
@@ -3529,11 +3544,32 @@ class EgressDaemon:
             state.state if state else None,
             state.current_source_label if state else None,
         )
+        proof_event_id = state.current_proof_event_id if state else None
+        if failure_reason is not None:
+            source_label = (
+                state.current_source_label
+                if state and state.current_source_label
+                else "Unknown egress source"
+            )
+            event = EgressProofEvent(
+                event_id=f"egress-content-reload-failure-{uuid.uuid4()}",
+                observed_at=datetime.now(UTC),
+                channel_id=channel_id,
+                state="TRANSITIONING",
+                source_label=source_label,
+                source_path="content-reload:settlement-aborted",
+                source_ref=proof_event_id,
+                proof_boundary="civiccast-egress-handoff-boundary",
+                machine_summary=f"{failure_reason}; restart requested.",
+            )
+            self._store.append_proof_event(event)
+            proof_event_id = event.event_id
         self._write_state(
             channel_id,
             "TRANSITIONING",
             current_source_label=state.current_source_label if state else None,
-            current_proof_event_id=state.current_proof_event_id if state else None,
+            current_proof_event_id=proof_event_id,
+            last_error=failure_reason,
             pid=_process_pid(process),
         )
         if state is not None and state.state == "FALLBACK_SLATE" and process is not None:

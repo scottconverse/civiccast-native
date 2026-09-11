@@ -52,6 +52,7 @@ import type {
   ChannelPlayoutPlan,
   ChannelProfile,
   ChannelProofLog,
+  EgressConfig,
   EgressStateRow,
   GraphicsOverlayStateResponse,
   HeadendProfile,
@@ -180,6 +181,57 @@ describe('EgressControlPanel egress-state pill tone', () => {
     expect(renderEgressPill('ON_AIR').getByText('On air').style.background).toBe('var(--cc-ok-soft)')
     cleanup()
     expect(renderEgressPill('ERROR').getByText('Needs attention').style.background).toBe('var(--cc-err-soft)')
+  })
+})
+
+describe('EgressControlPanel sink health wording', () => {
+  const config = (kind: 'udp-ts' | 'srt'): EgressConfig => ({
+    channel_id: 'public',
+    enabled: true,
+    slate_message: 'Stand by.',
+    sinks: [{ kind, label: 'Cable headend', uri: kind === 'udp-ts' ? 'udp://239.0.0.1:5000' : 'srt://example' }],
+  })
+
+  const health = (state: EgressHealthSample['state'], connected: boolean): EgressHealthSample => ({
+    channel_id: 'public',
+    sampled_at: new Date().toISOString(),
+    state,
+    sink_connected: { 'Cable headend': connected },
+    encoder_fps: 30,
+    encoder_bitrate_kbps: 2000,
+    dropped_frames: 0,
+    seconds_on_air: 30,
+  })
+
+  function renderSink(kind: 'udp-ts' | 'srt', state: EgressStateRow['state'], connected = true) {
+    return render(
+      <EgressControlPanel
+        channelId="public"
+        state={{ ...egressState(state), pid: state === 'ON_AIR' ? 4321 : null }}
+        health={[health(state, connected)]}
+        config={config(kind)}
+        pendingCommand={null}
+        canControl={false}
+        error={null}
+        onCommand={() => {}}
+      />,
+    )
+  }
+
+  it('qualifies an active UDP sink as local send with receiver not verified', () => {
+    expect(renderSink('udp-ts', 'ON_AIR').container.textContent).toContain(
+      'Cable headend: local send: active (receiver not verified)',
+    )
+  })
+
+  it('does not treat an old true UDP sample as connected after the channel stops', () => {
+    expect(renderSink('udp-ts', 'STOPPED').container.textContent).toContain(
+      'Cable headend: local send: not verified (receiver not verified)',
+    )
+  })
+
+  it('preserves connected wording for transports with connection semantics', () => {
+    expect(renderSink('srt', 'ON_AIR').container.textContent).toContain('Cable headend: connected')
   })
 })
 
@@ -341,7 +393,7 @@ describe('GraphicsOverlayPanel', () => {
 describe('EgressControlPanel captions row', () => {
   const sample: EgressHealthSample = {
     channel_id: 'public',
-    sampled_at: '2026-06-15T12:00:00Z',
+    sampled_at: new Date().toISOString(),
     state: 'ON_AIR',
     sink_connected: { head: true },
             dropped_frames: 0,

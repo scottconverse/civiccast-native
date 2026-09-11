@@ -52,6 +52,7 @@ from civiccast.egress.models import (
     TakeoverSession,
     reject_control_chars,
 )
+from civiccast.egress.operator_state import operator_state_projection
 from civiccast.egress.store import EgressStore
 from civiccast.egress.takeover_service import (
     AlreadyLiveError,
@@ -305,7 +306,7 @@ def list_channels(
                 channel_id=config.channel_id,
                 enabled=config.enabled,
                 sink_count=len(config.sinks),
-                state=store.read_state(config.channel_id),
+                state=operator_state_projection(store.read_state(config.channel_id)),
                 latest_health=_latest_health(store, config.channel_id),
             )
         )
@@ -334,7 +335,7 @@ def get_channel_detail(
         )
     return StaffEgressChannelDetail(
         config=config,
-        state=store.read_state(channel_id),
+        state=operator_state_projection(store.read_state(channel_id)),
         latest_health=_latest_health(store, channel_id),
     )
 
@@ -1316,7 +1317,7 @@ def get_state(
     egress_store: EgressStore | None = Depends(get_egress_store),
 ) -> EgressStateRow | None:
     store = _require_store(egress_store, surface="egress state")
-    return store.read_state(channel_id)
+    return operator_state_projection(store.read_state(channel_id))
 
 
 @staff_router.get(

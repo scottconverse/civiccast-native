@@ -229,7 +229,7 @@ const CABLE_CHANNELS = [
         id: 'headend',
         label: 'Headend',
         kind: 'srt',
-        uri: 'srt://127.0.0.1:17001',
+        target: 'srt://127.0.0.1:17001',
         enabled: true,
       },
     ],

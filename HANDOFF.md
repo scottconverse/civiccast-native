@@ -1,5 +1,18 @@
 # HANDOFF
 
+## 2026-09-11 operator fault visibility delta
+
+After source head fe9ed3c5, root confirmed remaining original soak-report
+defects: an aborted reload's error was log-only, and operator APIs could show
+a dead persisted PID. The integrated correction records aborted-reload errors
+in live state and durable proof history, invokes fault alerts before recovery
+changes state, and verifies PIDs at the API boundary. UDP send-health labels
+now distinguish local sending from receiver verification. Source regressions
+and limits are in docs/evidence/f2-local-2026-09-11/OPERATOR-FAULTS.md.
+Root's affected Python 3.12 run passed299 tests. Required CI must pass on the
+new combined head before candidate build. Main remains d77b634e and the old
+795cdab5 kit remains blocked. Full delivery authorization remains in force.
+
 ## 2026-09-11 full delivery authorization and source checkpoint
 
 CI on51ab78cd found one stale end-to-end caption-label assertion in the broader
