@@ -1,5 +1,12 @@
 # Consolidated beta repair self-audit - 2026-09-11
 
+Post-push delta audit: headend run34621294908 on88935dccb9ece46d3b7e8b7e210fb128257382d3
+reported RUF036. The correction only moves None last in one type union.
+Engineering/UX/tests/docs/QA PASS for this annotation-only delta; no executable
+logic or user copy changes. Local lint/format/type gates validate syntax/types;
+prior native behavioral evidence remains applicable. Required new-head CI is
+still needed. The initial audit below is retained as its historical checkpoint.
+
 Scope: actual local diff from b2593a50, plus whole branch against main d77b634e.
 This records source acceptance for the next PR update. It is not release,
 installer or sustained-soak acceptance. No new push has occurred.

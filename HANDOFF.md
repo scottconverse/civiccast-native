@@ -2,6 +2,11 @@
 
 ## 2026-09-11 full delivery authorization and source checkpoint
 
+PR219 advanced to 88935dccb9ece46d3b7e8b7e210fb128257382d3. Its first headend
+gate (34621294908) found Ruff RUF036: place None last in a type union. This
+annotation-only correction follows that push; runtime logic and native proof
+are unchanged. Required CI on the next pushed HEAD remains pending.
+
 Scott explicitly authorized everything needed to finish the beta release, with
 no further permission stops. This supersedes older per-action restrictions for
 this release. Advance PR219, merge on required CI, build a fresh candidate,

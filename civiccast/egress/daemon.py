@@ -800,7 +800,7 @@ class EgressDaemon:
 
     def _drive_preparation(
         self, channel_id: str, steps: _PreparationSteps, *, kind: str
-    ) -> bool | None | _PreparationState:
+    ) -> bool | _PreparationState | None:
         with self._preparation_guard:
             if self._preparation_closed:
                 steps.close()
