@@ -1,5 +1,13 @@
 # Consolidated beta repair self-audit - 2026-09-11
 
+Operator e2e delta: run34621933713 on51ab78cd passed253 cases but failed one
+assertion still naming the old caption label. Engineering/UX/tests/docs/QA
+PASS for updating that expectation to the existing F5 production string.
+Repository search found no other old-string expectation in operator source or
+tests. No product code or native behavior changed; validate the actual browser
+flow and full operator Playwright gate before the next push. Root execution
+after correction: all254 existing browser checks passed in1.0minute.
+
 Baseline delta audit: engineering PASS after independent root hashes of original
 build mirror, staging and safe copies (48608252), and earlier candidate (044a9c8b).
 Only the stale baseline index pin and matching historical documentary values

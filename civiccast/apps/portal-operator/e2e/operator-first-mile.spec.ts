@@ -730,7 +730,7 @@ test.describe('operator first mile', () => {
     await expect(page.getByRole('heading', { name: 'Outgoing channel feed' })).toBeVisible()
     await expect(page.getByText('Public meeting live')).toBeVisible()
     await expect(page.getByText('Headend: connected')).toBeVisible()
-    await expect(page.getByText('Not yet confirmed (waiting for the on-air check)')).toBeVisible()
+    await expect(page.getByText('Not verified; open channel caption proof')).toBeVisible()
     await page.getByRole('button', { name: 'Restart feed' }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Restart feed' }).click()
     await expect.poll(() => requests.egressCommands).toEqual(['reload'])

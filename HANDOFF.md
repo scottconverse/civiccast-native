@@ -2,6 +2,11 @@
 
 ## 2026-09-11 full delivery authorization and source checkpoint
 
+CI on51ab78cd found one stale end-to-end caption-label assertion in the broader
+operator Playwright gate (34621933713:253 passed,1 failed). The assertion now
+matches the F5 production label. No product code changed in this correction.
+Root then ran the full existing operator browser gate:254 passed in1.0minute.
+
 Candidate preflight also corrected the beta.5 Gate A baseline index pin: 48608252
 is the retained148c8d21 build index; the previous044a9c8b belongs to earlier39d852e5.
 No retained bytes were regenerated or re-signed. Provenance is recorded in
