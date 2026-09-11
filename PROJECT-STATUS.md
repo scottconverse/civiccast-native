@@ -1,3 +1,9 @@
+> Latest September 11: candidate39e7ec3c build34633364038 passed. Two-hour Sandbox
+> evidence is accepted after independently reproducing and correcting an empty-array
+> grading defect;723 raw commits,zero exits/timeouts. Gate A34651334966 failed T4
+> because harness schema discovery omitted staff auth. The harness correction is
+> on fix/beta-harness-auth-20260911; a full Gate A rerun and hardware soak remain.
+> See docs/evidence/beta-harness-2026-09-11.md. Older progress below is historical.
 > 2026-09-11 owner authorization: Scott authorizes everything needed to finish the beta release, without asking again. This supersedes section 10's older per-action rule for this release. Proceed through PR, required CI, fresh build, Sandbox/Gate A, tester soak and publication on passing evidence. The old 795cdab5 kit is still blocked.
 
 > 2026-09-11 operator-fault delta: F7/F8/F10 source corrections preserve aborted

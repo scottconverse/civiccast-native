@@ -1,5 +1,20 @@
 # HANDOFF
 
+## 2026-09-11 candidate built; harness corrections for Gate A
+
+Branch: fix/beta-harness-auth-20260911, based on merged main39e7ec3c.
+Candidate build34633364038 passed; its exact source remains
+39e7ec3cbb4ccbeb3009ff3257dfc314010151f3. The two-hour Sandbox run is accepted
+after a reproduced, independently reviewed empty-array grading correction:
+723 raw commits have matching preroll and zero worker exits/timeouts.
+Original FAIL evidence is preserved. Gate A34651334966 failed only T4 because
+schema discovery omitted the staff token and used the rejected FFmpeg fallback.
+This harness-only branch corrects both schema calls and the soak array capture.
+Rerun full Gate A against original build34633364038 with this harness revision;
+do not rebuild unchanged installer bytes. Physical-host ON/OFF soak and release
+remain pending. Full owner authorization persists. Details and checks are in
+docs/evidence/beta-harness-2026-09-11.md. Older entries below are historical.
+
 ## 2026-09-11 operator fault visibility delta
 
 After source head fe9ed3c5, root confirmed remaining original soak-report
