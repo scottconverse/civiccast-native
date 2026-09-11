@@ -310,7 +310,7 @@ describe('live captions switched off (round-2 review BLOCKER 1)', () => {
         liveCaptionsEnabled
       />,
     )
-    expect(on.container.textContent).toContain('Not yet confirmed (waiting for the on-air check)')
+    expect(on.container.textContent).toContain('Not verified; open channel caption proof')
   })
 })
 

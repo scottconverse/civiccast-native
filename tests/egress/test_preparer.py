@@ -23,7 +23,11 @@ from civiccast.egress.models import (
     EgressSourcePlan,
     EgressSourceSegment,
 )
-from civiccast.egress.preparer import SourcePreparer, build_conform_source_args
+from civiccast.egress.preparer import (
+    SourcePreparationCancelledError,
+    SourcePreparer,
+    build_conform_source_args,
+)
 from civiccast.stream._ffmpeg import FfmpegResult
 from civiccast.stream.loudness import LoudnessGateResult
 
@@ -100,6 +104,54 @@ def _write_fake_output(args: list[str]) -> None:
     ``.tmp`` sibling of the final prepared path) for the rename to succeed --
     mirrors what a real ffmpeg process does."""
     Path(args[-1]).write_text("prepared", encoding="utf-8")
+
+
+def test_prepare_uses_explicit_protected_plan_snapshot(tmp_path: Path) -> None:
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    preparer.set_protected_plan_dirs_provider(
+        lambda _channel_id: (_ for _ in ()).throw(AssertionError("provider must not run"))
+    )
+    live_plan = EgressSourcePlan(
+        channel_id="gov",
+        segments=[
+            EgressSourceSegment(
+                label="Live",
+                path="srt://127.0.0.1:19002",
+                duration_seconds=60,
+                kind="live",
+            )
+        ],
+    )
+
+    report = preparer.prepare(live_plan, _config(), protected_plan_dirs=frozenset())
+
+    assert report.source_plan == live_plan
+
+
+def test_prepare_cancellation_after_legacy_fake_runner_cleans_plan_dir(tmp_path: Path) -> None:
+    cancel_event = threading.Event()
+
+    def runner(args: list[str]) -> FfmpegResult:
+        _write_fake_output(args)
+        cancel_event.set()
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=runner,
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda _job: None,
+    )
+
+    with pytest.raises(SourcePreparationCancelledError):
+        preparer.prepare(
+            _source_plan(tmp_path),
+            _config(),
+            cancel_event=cancel_event,
+            protected_plan_dirs=frozenset(),
+        )
+
+    assert not list((tmp_path / "work" / "gov" / "prepared").iterdir())
 
 
 def test_source_preparer_conforms_inside_loudness_tolerance(tmp_path: Path) -> None:

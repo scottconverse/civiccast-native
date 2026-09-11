@@ -371,9 +371,9 @@ describe('EgressControlPanel captions row', () => {
   })
 
   it('keeps the fail-closed wording while the switch is on or unknown', () => {
-    expect(renderCaptions(true).container.textContent).toContain('Not yet confirmed (waiting for the on-air check)')
+    expect(renderCaptions(true).container.textContent).toContain('Not verified; open channel caption proof')
     cleanup()
-    expect(renderCaptions(undefined).container.textContent).toContain('Not yet confirmed (waiting for the on-air check)')
+    expect(renderCaptions(undefined).container.textContent).toContain('Not verified; open channel caption proof')
   })
 })
 

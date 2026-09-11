@@ -386,6 +386,10 @@ entries:
   # is D2 blob-drift binding on the code files below (worker.py, engine.py,
   # graph.py, control.py, audio_tap.py) — any further change to those files
   # still fails closed, same as every other entry in this registry.
+  # F2 current-source review: 2026-09-11 background preparation and early pipe
+  # acceptance; native retirement unblocks inactive legs before NULL. Current
+  # local evidence: docs/evidence/f2-local-2026-09-11/VERIFICATION.md.
+  # Historical external installer/spike evidence is not promoted by this rebind.
   - id: native-decision-gate
     claim: >-
       A decision-gate spike on real Windows hardware exercised the
@@ -1043,9 +1047,9 @@ entries:
       # acceptance. Rebinding restores D2 change detection only.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: e5baeb27dd7c053233407286085e2b0f594d4b64
+          blob: 3e435a2ff0ff4e947ce37e109edd41ecdfaf2633
         - path: civiccast/egress/gst/engine.py
-          blob: e6868282a4645d3a95c618c1e8ef8cc556436444
+          blob: 8f5483d3871d72e96dcba10d055069fc1a13ee46
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -1935,9 +1939,9 @@ entries:
       # acceptance. Rebinding restores D2 change detection only.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: e5baeb27dd7c053233407286085e2b0f594d4b64
+          blob: 3e435a2ff0ff4e947ce37e109edd41ecdfaf2633
         - path: civiccast/egress/gst/engine.py
-          blob: e6868282a4645d3a95c618c1e8ef8cc556436444
+          blob: 8f5483d3871d72e96dcba10d055069fc1a13ee46
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py

@@ -1,3 +1,5 @@
+> 2026-09-11 active local beta repair: F2 isolation/boundary fixes, native retirement repair and caption FAIL visibility pass local checks (7 native, 2265 affected Python, 1035 operator UI, 18 accessibility/contrast). See docs/evidence/f2-local-2026-09-11/VERIFICATION.md. Candidate CI/build/Sandbox/Gate A/hardware soak remain open. No new release or candidate acceptance. Prior status entries are historical.
+
 # CivicCast Native — full project status and cold-start handoff
 
 > **2026-09-10 latest: third CI cycle complete at 8653b56f.** Exact count repair

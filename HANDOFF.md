@@ -1,5 +1,20 @@
 # HANDOFF
 
+## 2026-09-11 active beta repair
+
+Scott directed beta delivery and rejected speculative hardening/testing polish.
+Current local branch: fix/f2-release-readiness-20260911, base b2593a50.
+F2 preparation isolation, early pipe acceptance and boundary-aware one-programme
+plans are implemented locally. The observed old-leg retirement hang is fixed
+and all 7 affected native checks pass, including three workers / 18 rollovers.
+Caption FAIL visibility is fixed. Final affected Python: 2265 passed, 72 skips;
+operator UI: 1035 passed; accessibility/contrast: 18 passed. Static checks and
+OpenAPI check pass. Candidate CI/build/Sandbox/Gate A/hardware soak remain open.
+Nothing has been published,
+no new build/gate/service has started, and the old beta.6 kit remains blocked.
+See docs/evidence/f2-local-2026-09-11/VERIFICATION.md. Earlier entries below
+are historical. Current remote PR219 remains8653b56f; main remainsd77b634e.
+
 ## 2026-09-10 third CI cycle finished: count fix passes, mutation timed out
 
 Current remote PR / CI HEAD: `8653b56f8623cb5fa8e3855f26b64296e814526f`.

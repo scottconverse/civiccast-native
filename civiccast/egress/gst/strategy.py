@@ -78,8 +78,10 @@ _TRUTHY = {"1", "true", "yes", "on"}
 #   strategy -> worker  {"v":1,"id":"<uuid>","cmd":"<existing control line>"}
 #   worker -> strategy  {"v":1,"id":"<same>","result":"applied"|"error","detail":...}
 #
-# F1 redesign (2026-09-06): for the "reload" verb specifically, "applied" above
-# is really "armed" (accepted; the new leg is building/prerolling) -- the
+# F2 acknowledgement fix: for the "reload" verb specifically, "accepted" means
+# the worker pipe reader admitted the request for later main-loop application.
+# "armed" remains the later engine lifecycle state, after the F1 transaction has
+# actually been created -- the
 # eventual commit/abort is reported out-of-band via reload-status.json
 # (worker.py's _write_reload_status / daemon._poll_reload_settlement), never
 # by blocking this ack. See _reload_ack_timeout_s's docstring for why.
@@ -112,10 +114,9 @@ def _reload_ack_timeout_s() -> float:
     the strategy would report a lost ack, and the daemon would terminate a
     perfectly healthy worker.
 
-    The ack now means only "armed" (``worker.py``'s ``_dispatch_control_with_ack``
-    docstring) -- the worker accepted the command and the new leg is building/
-    prerolling, or the build failed synchronously -- which is fast, like every
-    other verb's ack. The eventual settle outcome is reported out-of-band
+    The ack now means only "accepted" -- the worker pipe reader admitted the
+    command for later main-loop application, before source-leg construction can
+    consume the pipe budget. The eventual settle outcome is reported out-of-band
     (``reload-status.json``, polled by ``EgressDaemon._poll_reload_settlement``)
     instead of riding this ack at all. This function is therefore back to the
     SAME small default every other verb uses -- kept as its own named function
@@ -498,12 +499,13 @@ class _WindowsPipeChannel:
         matching the existing FIFO-path contract where a dropped command is
         reported as ``False``, never an exception.
 
-        F1 redesign: a ``reload`` command's ack means "armed" (accepted, the new
-        leg is building/prerolling), written by the worker synchronously -- same
+        F2 acknowledgement fix: a ``reload`` command's ack means "accepted"
+        (the pipe reader admitted it for main-loop application), written before
+        potentially slow GStreamer arm work -- same
         bound as every other verb (``_reload_ack_timeout_s()`` intentionally
         equals the default now; see its own docstring for why item 4's original
         widened bound was itself a bug). ``True`` for ``reload`` on either
-        ``"armed"`` or ``"applied"`` (a redelivered id re-acks whatever the
+        ``"accepted"`` or ``"applied"`` (a redelivered id re-acks whatever the
         original ack said -- see ``worker.py``'s ``_windows_pipe_reader_loop``)."""
         ack_timeout_s = _reload_ack_timeout_s() if verb == "reload" else self._ack_timeout_s
         # A synchronous Win32 pipe handle serializes ReadFile and WriteFile calls
@@ -547,7 +549,9 @@ class _WindowsPipeChannel:
                 resolved.result = result
                 resolved.detail = detail
                 if command_id == command.id:
-                    succeeded = result == "applied" or (verb == "reload" and result == "armed")
+                    succeeded = result == "applied" or (
+                        verb == "reload" and result in ("accepted", "armed")
+                    )
                     if not succeeded:
                         # e.g. a reload's synchronous "error:<repr>" ack (the
                         # build failed before anything was armed -- F1 redesign)
@@ -996,8 +1000,8 @@ class GstPlayoutStrategy:
         On native Windows this routes through the D2 named-pipe seam (design.md
         sec4): the versioned envelope + a BOUNDED wait for the worker's ack
         (``_WindowsPipeChannel.send_and_wait``) -- returns ``True`` only when the
-        worker acked ``"applied"`` (or, for ``reload``, ``"armed"`` -- F1
-        redesign, see ``_reload_ack_timeout_s``'s docstring), ``False`` on a
+        worker acked ``"applied"`` (or, for ``reload``, ``"accepted"`` -- F2
+        acknowledgement fix), ``False`` on a
         lost/timed-out/errored ack (never raises), matching the POSIX contract's
         shape below exactly. On
         WSL/Linux this is the ORIGINAL POSIX FIFO write, UNCHANGED: non-blocking,
@@ -1122,7 +1126,8 @@ class GstPlayoutStrategy:
         first buffer, or defers the switch to the outgoing leg's own EOS when
         ``request.switch_at_end_of_current`` is set — B3 fix, seamless either way,
         no encoder restart). Returns True once the worker has ACKED the command
-        as armed (F1 redesign) -- not once the reload has actually committed; the
+        as accepted (F2 acknowledgement fix) -- not once the engine has armed or
+        the reload has actually committed; the
         caller (``daemon._try_content_reload``) tracks settlement separately via
         ``reload-status.json``. Returns False when the worker control channel is
         not ready or the build failed synchronously, so the daemon can fall back

@@ -14,9 +14,12 @@ when the operator UI needs live progress. The signature is forward-compatible.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import shutil
 import subprocess
+import threading
+import time
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from functools import cache
@@ -431,6 +434,12 @@ def _resolve_video_encoder_args(args: list[str], ffmpeg_path: str) -> list[str]:
 
 
 _DEFAULT_TIMEOUT_SECONDS = 6 * 3600  # generous: won't kill a legitimate large concat/transcode.
+_CANCEL_POLL_SECONDS = 0.1
+_CANCEL_TERMINATE_SECONDS = 2.0
+
+
+class FfmpegCancelledError(RuntimeError):
+    """Raised when an owned ffmpeg process is stopped by its caller."""
 
 
 def run_ffmpeg(
@@ -439,6 +448,7 @@ def run_ffmpeg(
     progress_callback: Callable[[str], None] | None = None,
     timeout: float | None = _DEFAULT_TIMEOUT_SECONDS,
     lower_priority: bool = False,
+    cancel_event: threading.Event | None = None,
 ) -> FfmpegResult:
     """Run ffmpeg with the given argument list.
 
@@ -477,15 +487,56 @@ def run_ffmpeg(
 
     creationflags = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0) if lower_priority else 0
 
-    completed = subprocess.run(  # noqa: S603
-        cmd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-        creationflags=creationflags,
-    )
+    if cancel_event is None:
+        completed = subprocess.run(  # noqa: S603
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            creationflags=creationflags,
+        )
+    else:
+        if cancel_event.is_set():
+            raise FfmpegCancelledError("ffmpeg cancelled before launch")
+        process = subprocess.Popen(  # noqa: S603
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            creationflags=creationflags,
+        )
+        started = time.monotonic()
+        while True:
+            if cancel_event.is_set():
+                with contextlib.suppress(ProcessLookupError):
+                    process.terminate()
+                try:
+                    process.communicate(timeout=_CANCEL_TERMINATE_SECONDS)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.communicate()
+                raise FfmpegCancelledError("ffmpeg cancelled")
+            remaining = None if timeout is None else timeout - (time.monotonic() - started)
+            if remaining is not None and remaining <= 0:
+                process.kill()
+                stdout, stderr = process.communicate()
+                assert timeout is not None
+                raise subprocess.TimeoutExpired(cmd, timeout, output=stdout, stderr=stderr)
+            poll_timeout = (
+                _CANCEL_POLL_SECONDS
+                if remaining is None
+                else min(_CANCEL_POLL_SECONDS, max(remaining, 0.001))
+            )
+            try:
+                stdout, stderr = process.communicate(timeout=poll_timeout)
+            except subprocess.TimeoutExpired:
+                continue
+            completed = subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
+            break
 
     if progress_callback is not None:
         for line in completed.stderr.splitlines():

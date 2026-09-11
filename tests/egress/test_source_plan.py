@@ -439,6 +439,82 @@ def test_schedule_source_plan_provider_calls_schedule_and_asset_resolvers(
     assert seen == {"channel_id": "gov", "asset_id": "council-meeting"}
 
 
+def test_one_item_provider_resolves_each_future_boundary(tmp_path: Path) -> None:
+    media = tmp_path / "program.ts"
+    media.write_text("fake", encoding="utf-8")
+    start = datetime(2026, 6, 5, 23, 20, tzinfo=UTC)
+    boundaries = (5, 30, 35)
+    items = [
+        _schedule_item(
+            asset_id=f"program-{minute}",
+            scheduled_at=start + timedelta(minutes=minute),
+            duration_seconds=300,
+        ).model_copy(update={"asset_title": f"Program :{20 + minute:02d}"})
+        for minute in (0, *boundaries)
+    ]
+    assets = {
+        item.asset_id: _asset(media, asset_id=item.asset_id).model_copy(
+            update={
+                "title": item.asset_title,
+                "duration_seconds": 300,
+                "trim_in_seconds": 0,
+                "trim_out_seconds": 300,
+            }
+        )
+        for item in items
+    }
+    provider = ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _channel_id: items,
+        asset_resolver=assets.get,
+        now_provider=lambda: start,
+        max_segments=1,
+    )
+
+    assert provider("gov").segments[0].label == "Program :20"  # type: ignore[union-attr]
+    assert [
+        provider.plan_at("gov", start + timedelta(minutes=minute)).segments[0].label  # type: ignore[union-attr]
+        for minute in boundaries
+    ] == ["Program :25", "Program :50", "Program :55"]
+
+
+def test_one_item_provider_restart_now_keeps_join_in_progress_trim(tmp_path: Path) -> None:
+    media = tmp_path / "program.ts"
+    media.write_text("fake", encoding="utf-8")
+    start = datetime(2026, 6, 5, 23, 20, tzinfo=UTC)
+    item = _schedule_item(scheduled_at=start, duration_seconds=300)
+    asset = _asset(media).model_copy(
+        update={"duration_seconds": 300, "trim_in_seconds": 0, "trim_out_seconds": 300}
+    )
+    provider = ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _channel_id: [item],
+        asset_resolver=lambda _asset_id: asset,
+        now_provider=lambda: start + timedelta(seconds=75),
+        max_segments=1,
+    )
+
+    plan = provider("gov")
+
+    assert plan is not None
+    assert len(plan.segments) == 1
+    assert plan.segments[0].inpoint_seconds == 75
+    assert plan.segments[0].duration_seconds == 225
+
+
+def test_one_item_provider_future_gap_returns_none(tmp_path: Path) -> None:
+    media = tmp_path / "program.ts"
+    media.write_text("fake", encoding="utf-8")
+    start = datetime(2026, 6, 5, 23, 20, tzinfo=UTC)
+    item = _schedule_item(scheduled_at=start, duration_seconds=300)
+    provider = ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _channel_id: [item],
+        asset_resolver=lambda _asset_id: _asset(media),
+        now_provider=lambda: start,
+        max_segments=1,
+    )
+
+    assert provider.plan_at("gov", start + timedelta(minutes=5, seconds=1)) is None
+
+
 def test_resolver_module_exports_source_plan_contracts() -> None:
     assert resolver.ScheduleSourcePlanProvider is ScheduleSourcePlanProvider
     assert resolver.SlateSourceGenerator is SlateSourceGenerator

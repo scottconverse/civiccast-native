@@ -138,6 +138,10 @@ class _FakePeer:
     def unlink(self, pad: _FakeOldPad) -> None:
         self.recorder.calls.append(f"peer.unlink:{self.name}->{pad.name}")
 
+    def push_event(self, event: Any) -> bool:
+        self.recorder.calls.append(f"peer.push_event:{self.name}:{event}")
+        return True
+
 
 class _FakeOldPad:
     """The RETIRING leg's own selector-side request pad -- what
@@ -181,6 +185,12 @@ class _FakeOldElement:
         return (_FakeStateChangeReturn.SUCCESS, _FakeState.NULL, _FakeState.NULL)
 
 
+class _FakeEvent:
+    @staticmethod
+    def new_flush_start() -> str:
+        return "FLUSH_START"
+
+
 def _install_fake_gst() -> types.ModuleType:
     fake_gst = types.ModuleType("gi.repository.Gst")
     fake_gst.State = _FakeState  # type: ignore[attr-defined]
@@ -190,6 +200,7 @@ def _install_fake_gst() -> types.ModuleType:
     fake_gst.SECOND = 1  # type: ignore[attr-defined]
     fake_gst.PadProbeType = _FakePadProbeType  # type: ignore[attr-defined]
     fake_gst.PadProbeReturn = _FakePadProbeReturn  # type: ignore[attr-defined]
+    fake_gst.Event = _FakeEvent  # type: ignore[attr-defined]
     return fake_gst
 
 
@@ -687,16 +698,14 @@ def test_commit_disposes_old_leg_by_nulling_before_unlinking(engine_module) -> N
     assert null_2 >= 0  # both elements were NULLed; their relative order is not asserted
 
 
-def test_dispose_source_leg_never_sends_flush_events(engine_module) -> None:
-    """Round 1 also added ``FLUSH_START``/``FLUSH_STOP`` events on the
-    retiring leg's selector pad, bracketing the unlink. REVERTED along with
-    the reorder: ``FLUSH_START`` sent directly to the selector's OWN sink pad
-    does not reach (and cannot unblock) a thread blocked further upstream in
-    the leg's own elements, and ``flush_stop(True)`` immediately after
-    re-opens the exact race window the flush was meant to close. This test
-    proves ``_FakeOldPad.send_event`` -- which would fail loudly via its own
-    ``pragma: no cover`` marker if ever actually invoked as part of the normal
-    call recording -- is never called at all during a normal dispose."""
+def test_dispose_flushes_the_retiring_leg_peer_before_null_without_reopening_it(
+    engine_module,
+) -> None:
+    """The flush starts at each retiring leg tail, never at a selector request pad.
+
+    It must precede ``set_state(NULL)`` so blocked concat tasks can return
+    FLUSHING before teardown waits for their STREAM_LOCK. There is deliberately no
+    matching FLUSH_STOP: the leg is about to be removed and must never resume."""
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)
 
@@ -705,9 +714,13 @@ def test_dispose_source_leg_never_sends_flush_events(engine_module) -> None:
 
     engine._dispose_source_leg(old_video_pad, old_audio_pad, [_FakeOldElement("elem", recorder)])
 
-    assert not any(call.startswith("send_event:") for call in recorder.calls), (
-        f"a FLUSH event was sent; calls={recorder.calls}"
-    )
+    video_flush = _index_of(recorder.calls, "peer.push_event:old-video-peer:FLUSH_START")
+    audio_flush = _index_of(recorder.calls, "peer.push_event:old-audio-peer:FLUSH_START")
+    null = _index_of(recorder.calls, "set_state:elem:NULL")
+    assert video_flush < null
+    assert audio_flush < null
+    assert not any(call.startswith("send_event:") for call in recorder.calls), recorder.calls
+    assert not any("FLUSH_STOP" in call for call in recorder.calls), recorder.calls
 
 
 def test_dispose_source_leg_is_best_effort_on_a_disposal_hiccup(engine_module) -> None:

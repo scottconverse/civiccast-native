@@ -1,0 +1,66 @@
+CTRL preroll: reached PLAYING after 0.1s pid=13828
+CTRL first-output: first buffer after 1.5s pid=13828
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=1)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=1)
+CTRL reload: new leg preroll verified (reload_id=1) held_streams=2
+CTRL output: 427 buffers (+426) since PLAYING
+CTRL reload: outgoing EOS observed stream=audio (1/2 stream(s))
+CTRL reload: firing (reload_id=1)
+CTRL reload: boundary switch rebased to running time 10.155s
+CTRL reload: switching selector
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload: old leg disposed
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload: holds released
+CTRL reload diagnostic: stage=holds-released
+CTRL reload committed (elements=77)
+CTRL reload diagnostic: stage=committed elements=77
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=2)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=2)
+CTRL reload: new leg preroll verified (reload_id=2) held_streams=2
+CTRL output: 870 buffers (+869) since PLAYING
+CTRL output: 1264 buffers (+1263) since PLAYING
+CTRL reload: outgoing EOS observed stream=audio (1/2 stream(s))
+CTRL reload: firing (reload_id=2)
+CTRL reload: boundary switch rebased to running time 20.309s
+CTRL reload: switching selector
+CTRL reload diagnostic: stage=switching-selector
+CTRL output: 1529 buffers (+1528) since PLAYING
+CTRL output: 1529 buffers (+1528) since PLAYING
+CTRL stall: suspended while a reload commit is in progress; the 15s commit watchdog owns this window
+CTRL output: 1529 buffers (+1528) since PLAYING
+Current thread 0x0000b698 (most recent call first):
+  File "C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f2-integration\civiccast\egress\gst\engine.py", line 2753 in _on_commit_wedged
+  File "C:\Users\scott\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1433 in run
+  File "C:\Users\scott\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Users\scott\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00005a58 (most recent call first):
+  File "C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f2-integration\civiccast\egress\gst\engine.py", line 3289 in _null_retiring_element
+  File "C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f2-integration\civiccast\egress\gst\engine.py", line 3241 in _dispose_source_leg
+  File "C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f2-integration\civiccast\egress\gst\engine.py", line 2923 in _retire_reload_old_leg
+  File "C:\Users\scott\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Users\scott\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Users\scott\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00007958 (most recent call first):
+  File "C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f2-integration\civiccast\egress\gst\worker.py", line 329 in _windows_pipe_read_line
+  File "C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f2-integration\civiccast\egress\gst\worker.py", line 380 in _windows_pipe_reader_loop
+  File "C:\Users\scott\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1012 in run
+  File "C:\Users\scott\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Users\scott\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x0000bda4 (most recent call first):
+  File "C:\Users\scott\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 359 in wait
+  File "C:\Users\scott\AppData\Local\Programs\Python\Python312\Lib\queue.py", line 180 in get
+  File "C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f2-integration\civiccast\egress\gst\audio_tap.py", line 228 in run
+  File "C:\Users\scott\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1075 in _bootstrap_inner
+  File "C:\Users\scott\AppData\Local\Programs\Python\Python312\Lib\threading.py", line 1032 in _bootstrap
+
+Thread 0x00007b84 (most recent call first):
+  File "C:\CivicCastTester\candidates\795cdab5065e3b1b1d9df69c6fc06658f481c8d4\candidate\trust-bridge-install\runtime\dependencies\gstreamer\python\gi\overrides\GLib.py", line 497 in run
+  File "C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f2-integration\civiccast\egress\gst\engine.py", line 2029 in run_forever
+  File "C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f2-integration\civiccast\egress\gst\worker.py", line 520 in _run_forever_windows_pipe
+  File "C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f2-integration\civiccast\egress\gst\worker.py", line 564 in main
+  File "C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f2-integration\civiccast\egress\gst\worker.py", line 636 in <module>
+CTRL reload: commit did not finish within 15s - quitting for daemon restart

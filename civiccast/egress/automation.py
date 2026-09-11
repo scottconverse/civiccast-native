@@ -280,6 +280,7 @@ class ChannelAutomationService:
         source_plan_provider: Any,
         *,
         settings: ChannelAutomationSettings,
+        boundary_source_plan_provider: Any = None,
         ndi_supervisor_factory: Any = None,
         sdi_supervisor_factory: Any = None,
         monotonic: Any = None,
@@ -289,6 +290,7 @@ class ChannelAutomationService:
         self._store = store
         self._daemon = daemon
         self._source_plan_provider = source_plan_provider
+        self._boundary_source_plan_provider = boundary_source_plan_provider
         self._settings = settings
         self._monotonic = monotonic or time.monotonic
         # DEFECT C: shared with the daemon's command_failure_hook (see
@@ -527,17 +529,25 @@ class ChannelAutomationService:
     ) -> None:
         """Run the automation loop until stopped; survive scan errors."""
 
-        while stop_event is None or not stop_event.is_set():
-            try:
-                self.run_once()
-            except Exception:
-                _LOG.exception(
-                    "Channel automation scan failed; retrying on the next poll interval."
-                )
-            if stop_event is not None:
-                stop_event.wait(poll_seconds)
-            else:
-                time.sleep(poll_seconds)
+        enable = getattr(self._daemon, "enable_async_preparation", None)
+        shutdown = getattr(self._daemon, "shutdown_preparation", None)
+        if enable is not None:
+            enable()
+        try:
+            while stop_event is None or not stop_event.is_set():
+                try:
+                    self.run_once()
+                except Exception:
+                    _LOG.exception(
+                        "Channel automation scan failed; retrying on the next poll interval."
+                    )
+                if stop_event is not None:
+                    stop_event.wait(poll_seconds)
+                else:
+                    time.sleep(poll_seconds)
+        finally:
+            if shutdown is not None:
+                shutdown()
 
     def run_once(self, *, now: datetime | None = None) -> list[str]:
         """One pass over every enabled channel; returns the channel ids seen."""
@@ -1170,6 +1180,12 @@ class ChannelAutomationService:
             last_segment_start_at=last_segment_start_at,
             min_lead_seconds=self._rollover_min_lead_seconds(planned_seconds),
         )
+        if self._boundary_source_plan_provider is not None:
+            # One scheduled item per plan: preload near its END, not at the
+            # start of a potentially hour-long item (the defer limit is 900s).
+            trigger_at = plan_end_at - timedelta(
+                seconds=self._rollover_min_lead_seconds(planned_seconds)
+            )
         if now < trigger_at:
             return  # not yet at the boundary-aligned trigger point
 
@@ -1249,7 +1265,10 @@ class ChannelAutomationService:
         if retry_at is not None and self._monotonic() < retry_at:
             return
         try:
-            fresh_plan = self._source_plan_provider(channel_id)
+            if self._boundary_source_plan_provider is not None:
+                fresh_plan = self._boundary_source_plan_provider(channel_id, max(now, plan_end_at))
+            else:
+                fresh_plan = self._source_plan_provider(channel_id)
         except SourcePrepareError:
             # Try again next poll (after the cooldown) -- the current plan
             # still plays out fine meanwhile.
@@ -1261,7 +1280,10 @@ class ChannelAutomationService:
         fresh_end = plan_end_at
         if not force_fallback:
             fresh_seconds = sum(segment.duration_seconds for segment in fresh_plan.segments)
-            fresh_end = now + timedelta(seconds=fresh_seconds)
+            fresh_start = (
+                max(now, plan_end_at) if self._boundary_source_plan_provider is not None else now
+            )
+            fresh_end = fresh_start + timedelta(seconds=fresh_seconds)
             # A final schedule window commonly resolves to the same item with
             # less time remaining. It cannot extend the live horizon, so roll
             # seamlessly onto filler instead of allowing EOS.
@@ -1788,6 +1810,7 @@ def build_channel_automation(
             states=(SCHEDULE_STATE_PUBLISHED,),
         ),
         asset_resolver=asset_store.get_staff_row,
+        max_segments=1 if gstreamer_engine_selected() else 8,
     )
     # #156: the persistent conform cache emits playout-time trims when the
     # engine honors them — the legacy ffmpeg-concat engine does (ffconcat
@@ -1812,6 +1835,9 @@ def build_channel_automation(
         store,
         work_dir=resolved_work_dir,
         source_plan_provider=source_plan_provider,
+        boundary_source_plan_provider=(
+            source_plan_provider.plan_at if gstreamer_engine_selected() else None
+        ),
         lookahead_source_plan_provider=None,
         takeover_audit_store=PostgresTakeoverAuditStore(session_factory),
         # CA-3: gaps fill per the channel's fill_policy — rotating approved
@@ -1820,6 +1846,11 @@ def build_channel_automation(
             session_factory, work_dir=resolved_work_dir
         ),
         source_preparer=source_preparer_instance.prepare,
+        async_source_preparer=lambda plan, config, cancel, protected: (
+            source_preparer_instance.prepare(
+                plan, config, cancel_event=cancel, protected_plan_dirs=protected
+            )
+        ),
         prepared_plan_release=source_preparer_instance.release,
         resolve_secret=lambda ref: os.environ.get(ref),
         # S15: the GStreamer engine (default) or ffmpeg-concat (legacy), per
@@ -1884,6 +1915,9 @@ def build_channel_automation(
         daemon,
         source_plan_provider,
         settings=ChannelAutomationSettings.from_env(),
+        boundary_source_plan_provider=(
+            source_plan_provider.plan_at if gstreamer_engine_selected() else None
+        ),
         # BUG C2 fix: the periodic poll retries any as-run drain backlog
         # left by a DB outage once the DB comes back (see run_once's
         # _drain_as_run_outbox).

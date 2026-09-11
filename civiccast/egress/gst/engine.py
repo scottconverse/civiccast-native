@@ -3219,24 +3219,26 @@ class GstPlayoutEngine:
           watchdog already owns that escalation with far better evidence than a
           disposal return code can carry.
 
-        Item 85 history: a round-1 hypothesis reordered this
-        to unlink/release BEFORE ``set_state(Gst.State.NULL)``, with FLUSH_START/
-        FLUSH_STOP bracketing the unlink, on the theory that a streaming thread
-        parked inside input-selector's own wait needed waking before its element
-        could be safely NULLed. REVERTED after review: releasing/unlinking the
-        selector's request pad before the retiring leg's OWN elements reach NULL
-        races that leg's still-live streaming thread into pushing into a pad that
-        no longer has a peer -- ``GST_FLOW_NOT_LINKED``, a FATAL flow error on this
-        leg's own source pad, not a benign no-op. And ``FLUSH_START`` sent directly
-        to the selector's sink pad does not reach (and cannot unblock) a thread
-        blocked further upstream in this leg's OWN elements; ``flush_stop(True)``
-        immediately after re-opens the exact race window it was meant to close.
-        The ordering below is therefore unchanged from main. Element and selector-
-        The four transaction-stage markers plus the stack-dumping watchdog
-        distinguish the retirement phase without high-volume per-element logging
-        that can perturb a scheduling-sensitive media race."""
+        The old native failure stopped inside set_state(NULL) while a retired
+        concat task still held its streaming lock. Flush that inactive leg from
+        its tail source pads before NULL. Do not unlink a still-running source
+        and do not send FLUSH_STOP: either would reopen a producer race. The
+        commit-stage markers and watchdog retain failure evidence if teardown
+        still cannot complete.
+        """
         failures: list[str] = []
-        warnings: list[str] = []
+        # A second deferred rollover in the native AV playlist shape wedged in
+        # ``element.set_state(NULL)``: the retiring concat's streaming task was
+        # still blocked at the selector even though that selector pad had become
+        # inactive.  FLUSH_START is deliberately sent from the retiring leg's OWN
+        # tail src pad, through its peer, before taking the leg down. GStreamer
+        # makes that out-of-band event turn blocked pushes into GST_FLOW_FLUSHING,
+        # so the retiring task releases its STREAM_LOCK before the downward state
+        # transition waits for it. Do NOT send FLUSH_STOP: this leg is being
+        # removed, and reopening it would restore the exact producer race this
+        # flush closes. Do NOT send on the selector request pad itself: that does
+        # not reach the retired leg's upstream task.
+        warnings = self._flush_retiring_leg_source_pads(video_pad, audio_pad)
         for index, element in enumerate(elements):
             self._null_retiring_element(element, index + 1, failures)
         for stream, selector, pad in (
@@ -3269,6 +3271,31 @@ class GstPlayoutEngine:
             print(f"WARN: leg disposal did not reach NULL: {reason}", flush=True)
             return False, reason
         return True, None
+
+    @staticmethod
+    def _flush_retiring_leg_source_pads(video_pad: Gst.Pad, audio_pad: Gst.Pad | None) -> list[str]:
+        """Flush only the retiring leg downstream, without reopening it.
+
+        ``video_pad`` / ``audio_pad`` are input-selector request pads. Their peers
+        are the retiring leg's tail *src* pads; ``push_event(FLUSH_START)`` there
+        travels from that one leg into its now-inactive selector input and unblocks
+        the leg's task. It is intentionally not a pipeline-wide flush and there is
+        no matching FLUSH_STOP because the leg is immediately driven to NULL.
+        """
+        warnings: list[str] = []
+        for stream, selector_pad in (("video", video_pad), ("audio", audio_pad)):
+            if selector_pad is None:
+                continue
+            try:
+                peer = selector_pad.get_peer()
+                if peer is None:
+                    warnings.append(f"retiring-flush-peer-missing:{stream}")
+                    continue
+                if peer.push_event(Gst.Event.new_flush_start()) is False:
+                    warnings.append(f"retiring-flush-failed:{stream}")
+            except Exception as exc:
+                warnings.append(f"retiring-flush-error:{stream}:{exc!r}")
+        return warnings
 
     def _null_retiring_element(self, element: Gst.Element, index: int, failures: list[str]) -> bool:
         """Bring ONE element of a retiring leg to NULL under the finding-3 policy.

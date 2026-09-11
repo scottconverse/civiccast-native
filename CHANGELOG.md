@@ -13,6 +13,22 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+### Local beta reliability repair (candidate gates outstanding)
+
+- Prepare scheduled media without blocking other channels. Stop cancels pending
+  preparation and prevents a late worker launch.
+- Acknowledge reload admission before slow GStreamer arm work. Commit remains a
+  separate result; a slow arm no longer consumes the pipe receipt deadline.
+- Prepare one scheduled programme at a time with boundary-aware lookahead, so
+  the current programme label changes with its committed switch.
+- Show a failed caption proof as a failure, with its blocker and sample time;
+  refresh caption checks every 30 seconds and identify stale readings.
+- Release retired streaming tasks before NULL teardown to prevent a native
+  programme switch from hanging with the new programme's buffers held.
+- Local verification, including the reproduced retirement failure and seven
+  passing native checks after its repair, is recorded in
+  `docs/evidence/f2-local-2026-09-11/VERIFICATION.md`. No new beta is published.
+
 ### F-1 local correction (release validation outstanding)
 
 - Updated the exact native collection assertion for four new launcher regression
