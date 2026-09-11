@@ -1,5 +1,22 @@
 # HANDOFF
 
+## 2026-09-11 full delivery authorization and source checkpoint
+
+Scott explicitly authorized everything needed to finish the beta release, with
+no further permission stops. This supersedes older per-action restrictions for
+this release. Advance PR219, merge on required CI, build a fresh candidate,
+complete Sandbox/Gate A and the tester soak, then publish after passing results.
+The old 795cdab5 kit remains blocked. No speculative hardening or extra test
+campaign is authorized by this scope; fix actual release failures and continue.
+
+Source proof anchor: c4d70243546be321a1eef71e4c34c77ec4a36029.
+Current branch: fix/f2-release-readiness-20260911. Existing PR: #219.
+This documentation commit follows that source anchor; the exact pushed HEAD
+and CI run IDs are recorded in the PR and external release checkpoint.
+Local public portal lint/build and all 61 tests also pass. Local frontend
+runtime was Node 25.9.0; CI/candidate must use pinned Node 24.15.0.
+Earlier authorization and progress entries below are historical checkpoints.
+
 ## 2026-09-11 active beta repair
 
 Scott directed beta delivery and rejected speculative hardening/testing polish.
