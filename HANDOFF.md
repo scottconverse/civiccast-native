@@ -1,6 +1,54 @@
 # HANDOFF
 
-## 2026-09-10 local CI repairs checkpoint
+## 2026-09-10 second push / completed CI checkpoint
+
+Current remote PR / CI HEAD: `2dd9287c8426f21a0464f6d13fb5d5e76cb724fb`.
+Current branch: `fix/f1-reload-readiness-20260910`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/219 (OPEN).
+Main remains clean and unchanged at `d77b634e3685de8fb077956b8099fc92c3927243`.
+This local documentation checkpoint follows the pushed SHA; use
+`git rev-parse HEAD` in `work/f1-integration` for its own checkout HEAD.
+The local correction proof anchor remains `59ef1be6498e5a4eced081d7c412df1176fefdb0`.
+
+Scott authorized one second push and CI cycle. All 12 workflows completed:
+17 checks passed, 4 failed, 3 skipped. Runs 34547036834 (ci-test) and
+34547036853 (deterministic-detectors) failed. Windows reproducibility run
+34547036679 passed for this exact SHA. The remote PR body now records these
+actual results. Full evidence: `docs/evidence/f1-ci-repair-2026-09-10/CI-SECOND-RESULT.md`.
+
+All observed test failures have one cause: the four new native launcher tests
+changed exact collection counts to (1823, 2024), but
+`tests/policy/test_native_caption_workflow_policy.py:1179` still expects
+(1819, 2020). The lead missed that dependency in the pre-push review. The
+workflow minimum floors remain valid; no workflow change is proposed.
+
+Unit: 1 failed / 10144 passed / 68 skipped / 5 deselected, coverage 80.12%.
+Randomized: 1 failed / 10148 passed / 69 skipped, seed 2179285722.
+Mutation baseline: 1 failed / 7790 passed / 289 skipped / 8 deselected; no score.
+The claims verifier failed closed with 9 violations from the failed producer
+and missing accepted observations, with no stale-source blob violations.
+
+All 125 claims-policy and all 7 state-guard tests passed in the ordinary Linux
+unit run. Windows: 2021 passed / 3 deselected on uv 0.12.13; the actual launcher
+test and all four new cleanup cases executed and passed. Two Windows payload
+builds matched 9633 files. Neither result proves an installed kit or a soak.
+The corrected guard in the instrumented mutation run remains unverified because
+the baseline stopped earlier on the inventory assertion.
+
+An independently reviewed, unapplied one-file correction is in task outputs:
+`F1-CI-floor-correction-PROPOSED.patch`. A copy is committed as evidence, not
+applied source: `docs/evidence/f1-ci-repair-2026-09-10/count-correction-PROPOSED.patch.txt`.
+`git apply --check` passed. **Next owner action: authorize applying this exact
+count correction, fresh native collection and full policy verification, then
+one further push/CI cycle.** No code repair or new local tests were performed
+after the second push; no third push or rerun occurred.
+
+The monitor finished; no CI or test process remains in flight. No merge,
+release kit, Gate A, soak, service restart, tag or publication occurred. F-2
+remains unimplemented. The 795cdab5 beta.6 kit is unchanged and blocked.
+Older checkpoints below are historical snapshots, not current action authority.
+
+## 2026-09-10 local CI repairs checkpoint (historical pre-second-push snapshot)
 
 Current branch: `fix/f1-reload-readiness-20260910`.
 Local correction source/proof HEAD: `59ef1be6498e5a4eced081d7c412df1176fefdb0`.

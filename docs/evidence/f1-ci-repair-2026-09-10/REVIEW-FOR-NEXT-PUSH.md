@@ -1,5 +1,11 @@
 # Review prepared for the next owner-authorized push
 
+Post-push correction: the second cycle at `2dd9287c` exposed a missed exact
+native collection-count assertion. The Engineering/Tests/QA pass conclusions
+below are superseded by that finding. See `CI-SECOND-RESULT.md` for the actual
+results and the still-unapplied correction. This file otherwise preserves the
+pre-push review rather than rewriting its history.
+
 Date: 2026-09-10. This is a local review; no second push has occurred.
 Source/proof anchor: `59ef1be6498e5a4eced081d7c412df1176fefdb0`.
 The following documentation checkpoint changes no verified source files.

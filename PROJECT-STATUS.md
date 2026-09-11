@@ -1,6 +1,16 @@
 # CivicCast Native — full project status and cold-start handoff
 
-> **2026-09-10 update: local CI corrections passed; PR #219 still has red CI.**
+> **2026-09-10 latest: PR #219's authorized second CI cycle is complete and red.**
+> Pushed source: `2dd9287c8426f21a0464f6d13fb5d5e76cb724fb`. Final checks:
+> 17 passed, 4 failed, 3 skipped. Unit, randomized and mutation-baseline failures
+> all identify one missed exact native collection-count assertion: actual
+> (1823, 2024), expected (1819, 2020). The dependent claims verifier also failed.
+> Windows launcher tests and changed-builder reproducibility passed on this SHA.
+> See `docs/evidence/f1-ci-repair-2026-09-10/CI-SECOND-RESULT.md`. An independently
+> reviewed one-file correction is proposed but unapplied; no third push or rerun.
+> Main remains `d77b634e`. F-2 and release gates remain open; the old kit is blocked.
+
+> **Historical pre-second-push checkpoint: local CI corrections passed.**
 > Scott authorized the three local repairs. Their source/proof anchor is
 > `59ef1be6498e5a4eced081d7c412df1176fefdb0`: 213 integrated tests passed,
 > an independent reviewer passed 88 tests, and the uv 0.12.12/0.12.13 execution
@@ -9,8 +19,8 @@
 > No second push occurred. Remote PR HEAD remains
 > `f9b5e1aa71e8860e8fff41c1cb572b80bbbc8e2b`, with 16 passed, 5 failed and 3 skipped
 > checks. Main remains `d77b634e3685de8fb077956b8099fc92c3927243`. The old kit is unchanged.
-> Next action requires Scott's approval to push the corrected existing PR and
-> run another CI cycle. F-2 and release gates remain open.
+> The next-action boundary in this historical paragraph was superseded by the
+> authorized second push and completed results above.
 
 > **2026-09-10 update: F-1 local implementation passed local verification.** Scott
 > authorized GO after the cold takeover. Work is isolated on

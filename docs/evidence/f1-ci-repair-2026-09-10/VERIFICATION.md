@@ -1,5 +1,11 @@
 # F-1 PR #219: local CI corrections
 
+Post-push update: Scott authorized pushing `2dd9287c`; its second CI cycle
+finished with 17 passing, 4 failing and 3 skipped checks. The launcher and
+reproducibility checks passed, but a missed exact test-count assertion keeps
+the cycle red. See `CI-SECOND-RESULT.md`. The remaining text records the local
+pre-push proof and its original scope; it is not the current remote CI verdict.
+
 Recorded 2026-09-10. Scott authorized local corrections and focused verification
 after the first CI cycle. These changes have not been pushed. The remote PR
 remains at `f9b5e1aa71e8860e8fff41c1cb572b80bbbc8e2b`, with 16 passing, 5 failing
