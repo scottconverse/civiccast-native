@@ -2,6 +2,12 @@
 
 ## 2026-09-11 full delivery authorization and source checkpoint
 
+Candidate preflight also corrected the beta.5 Gate A baseline index pin: 48608252
+is the retained148c8d21 build index; the previous044a9c8b belongs to earlier39d852e5.
+No retained bytes were regenerated or re-signed. Provenance is recorded in
+docs/evidence/f2-local-2026-09-11/BASELINE-IDENTITY.md. This removes a concrete
+dirty/download-only gate mismatch; it does not claim a new Gate A pass.
+
 PR219 advanced to 88935dccb9ece46d3b7e8b7e210fb128257382d3. Its first headend
 gate (34621294908) found Ruff RUF036: place None last in a type union. This
 annotation-only correction follows that push; runtime logic and native proof

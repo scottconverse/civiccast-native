@@ -1,5 +1,12 @@
 # Consolidated beta repair self-audit - 2026-09-11
 
+Baseline delta audit: engineering PASS after independent root hashes of original
+build mirror, staging and safe copies (48608252), and earlier candidate (044a9c8b).
+Only the stale baseline index pin and matching historical documentary values
+change. UX unchanged; tests use the existing Gate A contract checks; docs carry
+provenance and explicitly qualify current GitHub metadata as mutable. QA PASS:
+source/build/installer/version pins stay unchanged, and no old bytes are modified.
+
 Post-push delta audit: headend run34621294908 on88935dccb9ece46d3b7e8b7e210fb128257382d3
 reported RUF036. The correction only moves None last in one type union.
 Engineering/UX/tests/docs/QA PASS for this annotation-only delta; no executable
