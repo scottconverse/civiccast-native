@@ -1,0 +1,97 @@
+{
+  "schema": "civiccast-tester-loop-repair-v1",
+  "mission": "soak8-e1acfe6",
+  "hostname": "DESKTOP-VBMA6O5",
+  "repaired_utc": "2026-09-12T02:37:11.0427938Z",
+  "station_changes": false,
+  "root_cause": [
+    "CIVICCAST_SOAK_NO_AUTORUN was absent from process, user, and machine scope; it was not suppressing execution.",
+    "R1 and R2 executed but failed during ConvertTo-Json with OutOfMemoryException.",
+    "R3 was marked done and its poll task was terminated before it emitted output.",
+    "poll-directives.ps1 copied autorun logs into soak/autorun-logs but used ordinary git add; .gitignore ignores *.log, so execution output was never staged or published.",
+    "Heartbeat previously had no serialized rebase/retry publish path, allowing concurrent evidence-writer divergence."
+  ],
+  "backups": {
+    "poll_sha256": "6BF39AD91134EB4DF4B6AC640A50BA576D8C406371EDDF336CEC89E1C9E0CC61",
+    "heartbeat_sha256": "9A98D4C30FEDC35F911D38CDA977BDA05A2394A53A04EF1478B206AA601B234E",
+    "directory": "C:\\CivicCastSoak\\bin\\backup-20260912T023341Z"
+  },
+  "changed_files": [
+    {
+      "path": "C:\\CivicCastSoak\\bin\\poll-directives.ps1",
+      "sha256": "01783BAC607005DFD718EB8F336CB8534FB0577DC906C02CD1C1630F13D9C874",
+      "changes": [
+        "force-stage only the intended autorun log",
+        "check git add/diff/commit/push exit codes",
+        "normal pull --rebase then push retry",
+        "serialize evidence commits with a local mutex",
+        "record publishing failures in poll.log"
+      ]
+    },
+    {
+      "path": "C:\\CivicCastSoak\\bin\\heartbeat.ps1",
+      "sha256": "790AC6E79180CBEEF7980CACB30B78AD9FDBA379896780489A4CE0ACD47B7F94",
+      "changes": [
+        "serialize heartbeat publication with same local mutex",
+        "check git add/diff/commit/push exit codes",
+        "normal pull --rebase then push retry",
+        "record publishing failures locally"
+      ]
+    }
+  ],
+  "recovered_evidence": {
+    "r2_log": "soak/autorun-logs/AUTORUN-SEP11-FIXED-BETA-READINESS-R2-20260912T015611Z.log",
+    "r1_log": "soak/autorun-logs/AUTORUN-SEP11-FIXED-BETA-READINESS-R1-20260912T014612Z.log",
+    "recovery_commit": "61a8b86ebe7ab0a0f44e4031630dc7eda86264a5",
+    "historical_orders_replayed": false,
+    "r3_receipt": "soak/fixed-beta-39e7/readiness-return-r3.json"
+  },
+  "scheduled_probe": {
+    "order": "AUTORUN-LOCAL-LOOP-REPAIR-PROBE-20260912.ps1",
+    "log_commit": "7b1a2b4d",
+    "station_changes": false,
+    "exit_code": 0,
+    "log_path": "soak/autorun-logs/AUTORUN-LOCAL-LOOP-REPAIR-PROBE-20260912-20260912T023531Z.log"
+  },
+  "heartbeat_proof": {
+    "remote_confirmed": true,
+    "commit": "65f75f4996c0f19a85d44e225bfd16eda2e8af33",
+    "task_result": 0
+  },
+  "tasks": [
+    {
+      "name": "CivicCastSoak-Poll",
+      "enabled": true,
+      "state": "Ready",
+      "action": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\CivicCastSoak\\bin\\poll-directives.ps1",
+      "last_run_utc": "2026-09-12T02:36:11.0000000Z",
+      "last_result": 0,
+      "trigger": [
+        "MSFT_TaskTimeTrigger"
+      ]
+    },
+    {
+      "name": "CivicCastSoak-Heartbeat",
+      "enabled": true,
+      "state": "Ready",
+      "action": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\CivicCastSoak\\bin\\heartbeat.ps1",
+      "last_run_utc": "2026-09-12T02:36:11.0000000Z",
+      "last_result": 0,
+      "trigger": [
+        "MSFT_TaskTimeTrigger"
+      ]
+    },
+    {
+      "name": "CivicCastSoak-Boot",
+      "enabled": true,
+      "state": "Ready",
+      "action": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\CivicCastSoak\\bin\\boot-marker.ps1",
+      "last_run_utc": "2026-09-09T04:24:33.0000000Z",
+      "last_result": 3221225786,
+      "trigger": [
+        "MSFT_TaskLogonTrigger"
+      ]
+    }
+  ],
+  "remaining_blocker": "R1/R2 readiness payload serialization failed in coordinator-supplied orders; preserved error evidence was returned. No station action, kit installation, or historical-order replay was performed during this repair."
+}
