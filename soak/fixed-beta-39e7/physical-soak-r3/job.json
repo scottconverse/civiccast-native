@@ -2,14 +2,14 @@
     "hostname":  "DESKTOP-VBMA6O5",
     "source_sha":  "39e7ec3cbb4ccbeb3009ff3257dfc314010151f3",
     "job_started_utc":  "2026-09-12T05:46:16.8983478Z",
-    "job_state":  "STARTED",
+    "job_state":  "FAIL",
     "minutes_per_phase":  120,
     "phases":  [
                    "ON",
                    "OFF"
                ],
     "result":  null,
-    "error":  null,
+    "error":  "ON channel government stopped producing a live ON_AIR worker.",
     "installed_identity":  {
                                "runtime_file_sha256":  {
                                                            "Lib/site-packages/civiccast/egress/daemon.py":  "18b5390883e61b475b3a4240a740c7f032780e93ce0d0bb182d4e39d8305da2e",
@@ -22,5 +22,6 @@
                            },
     "current_phase":  "ON",
     "measured_phase_begin_utc":  "2026-09-12T05:46:33.5138284Z",
-    "measured_phase_planned_end_utc":  "2026-09-12T07:46:33.5138284Z"
+    "measured_phase_planned_end_utc":  "2026-09-12T07:46:33.5138284Z",
+    "finished_utc":  "2026-09-12T05:56:10.0312458Z"
 }
