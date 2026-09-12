@@ -1,6 +1,9 @@
 # soak8-e1acfe6 Latest Test Directive
-Current: soak/DIRECTIVE-4.md
+Current: soak/DIRECTIVE-5.md
 Branch: soak8-e1acfe6-directives
+Updated: 2026-09-12T01:40Z - Fixed beta takeover. New read-only readiness order:
+soak/autorun/AUTORUN-SEP11-FIXED-BETA-READINESS-R1.ps1. Candidate39e7ec3c/build34633364038.
+The dated entries below are historical, not new install orders.
 Updated: 2026-09-05T19:19Z (rev 23 - AUTORUN-9o read-only: is the caption-tap fix active? runtime-status.json, caption/stall/relaunch log lines, station profile, per-process CPU)
 Updated: 2026-09-05T18:47Z (rev 22 - AUTORUN-3 verdict: 3-minute warm-up grace after soak-started; warm-up probes listed in warmup_probes_excluded, never deleted)
 Updated: 2026-09-05T18:34Z (rev 21 - AUTORUN-9m: the channels are up but on FALLBACK_SLATE because soak #1 schedule ran out; reschedule 2h15 of the approved soak assets per channel + commit-to-air, start, wait ON_AIR, archive soak #1, start soak #2)
