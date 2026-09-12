@@ -5,7 +5,11 @@
 Current branch: `fix/beta7-control-ready-v2`.
 Current source proof anchor: `362fc48ed8dff20f41dde703285d8773ff6326c5`,
 based on merged `main` at `cd54767bc3c3cd3fcacf6aa5642f1df459a4fdea`.
-No replacement PR, build, installer, or kit exists yet.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/224.
+The first pushed PR head is `bc0e998898478eec43cc3d58d2861e28a905d80b`;
+this post-push status commit follows it, so use `git rev-parse HEAD` and
+PR #224 for the exact current branch head and CI runs. No replacement
+build, installer, or kit exists yet.
 
 The `cd54767` beta.7 candidate is rejected. Build run `34699190826` succeeded,
 but its fresh 15-minute Windows Sandbox soak failed with one education reload
@@ -26,7 +30,7 @@ or latch/cooldown mutation. Focused result: 336 passed, 7 expected skips; Ruff,
 format, mypy, diff checks, and independent adversarial review pass. Evidence is
 in `.agent-runs/native-windows/beta7-control-ready/evidence/`.
 
-Required sequence: open PR, pass required CI, merge, build a fresh candidate
+Required sequence: pass required PR CI, merge, build a fresh candidate
 from the new exact `main`, pass fresh Sandbox and Gate A, run the dedicated
 physical tester overnight soak, then publish only on passing evidence. beta.5,
 beta.6, `99705005`, and `cd54767` must not be published. Full owner authorization

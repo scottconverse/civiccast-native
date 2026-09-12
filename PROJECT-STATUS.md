@@ -16,7 +16,10 @@
 > gates both automatic reload paths on the worker's initial Windows control
 > connection. Focused verification: 336 passed, 7 expected platform skips;
 > Ruff, format, mypy, diff checks, and independent adversarial review pass.
-> No replacement build exists yet. PR, required CI, merge, fresh build,
+> PR #224 is open at https://github.com/scottconverse/civiccast-native/pull/224;
+> its first pushed head is `bc0e998898478eec43cc3d58d2861e28a905d80b`.
+> This post-push status commit follows it, so use the PR for current HEAD and
+> CI run IDs. No replacement build exists yet. Required CI, merge, fresh build,
 > Sandbox, Gate A, physical tester soak, and publication remain. Evidence:
 > `.agent-runs/native-windows/beta7-control-ready/evidence/LOCAL-VERIFICATION.md`.
 > Full owner authorization remains in force. Older entries are historical.

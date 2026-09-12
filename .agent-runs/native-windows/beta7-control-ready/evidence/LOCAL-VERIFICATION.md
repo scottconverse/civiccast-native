@@ -7,8 +7,9 @@ Date: 2026-09-12
 - Source proof commit: `362fc48ed8dff20f41dde703285d8773ff6326c5`
 - Parent / rejected candidate source: `cd54767bc3c3cd3fcacf6aa5642f1df459a4fdea`
 - Branch: `fix/beta7-control-ready-v2`
-- Release status: source correction only. A replacement installer and kit do
-  not exist yet; Sandbox, Gate A, physical tester soak, and publication remain.
+- Release status: source correction on PR #224. A replacement installer and
+  kit do not exist yet; required CI, merge, Sandbox, Gate A, physical tester
+  soak, and publication remain.
 
 The rejected `cd54767` candidate is build run `34699190826`, candidate artifact
 ID `10299893320`, candidate artifact digest
@@ -80,7 +81,7 @@ naming, then accepted the final integrated correction with no blocking findings.
 
 ## Remaining release gates
 
-Open and pass required PR CI, merge to `main`, build a fresh exact-source kit,
+Pass PR #224's required CI, merge to `main`, build a fresh exact-source kit,
 pass a fresh Sandbox soak, pass Gate A, pass the dedicated physical tester
 overnight soak, and only then publish beta.7. No result from `cd54767` or any
 older candidate carries forward.
