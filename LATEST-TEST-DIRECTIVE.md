@@ -1,6 +1,12 @@
 # soak8-e1acfe6 Latest Test Directive
 
-Current: soak/DIRECTIVE-BETA7-TESTER-MISSION-R1.md
+Current: `soak/DIRECTIVE-BETA7-TESTER-SOAK-R2.md`
+Autorun: `soak/autorun/AUTORUN-BETA7-TESTER-SOAK-R2.ps1`
+Updated: 2026-09-12 - Preserve beta.7 R1 failure. R2 reuses its schedule and
+verified installation/configuration, admits transport after an excluded
+acquisition diagnostic, then runs a fresh full ON/OFF measurement once.
+
+Previous preserved R1: soak/DIRECTIVE-BETA7-TESTER-MISSION-R1.md
 Branch: soak8-e1acfe6-directives
 Updated: 2026-09-12 3:15 PM Mountain - Gate A run 34710327291 passed all three
 lanes for exact beta.7 source a963c39cc44e2643065a818aac0206b110d515d4 and

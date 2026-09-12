@@ -11,6 +11,7 @@ param(
     [string]$TspExe = 'C:\CivicCastHostStore\install\packs\native-server-binaries\payload\tsduck\bin\tsp.exe',
     [switch]$ReplaceOverlappingTestSchedule,
     [string]$ExistingRunRoot,
+    [switch]$RequireTransportAdmission,
     [scriptblock]$OnPhaseStarted,
     [switch]$SelfTest,
     [hashtable]$ExpectedElementsPerPhase=@{}
@@ -200,6 +201,7 @@ try {
             sinks=@($config.sinks | Select-Object kind,label,uri,latency_ms,loudness_regime,eas_tone_strip_enabled)}
     }
     if ($ExistingRunRoot) {
+        if ($RequireTransportAdmission -and $Mode -ne 'Both') { throw 'Transport admission recovery requires the complete ON/OFF mission.' }
         $previousIdentity=Get-Content -LiteralPath (Join-Path $ExistingRunRoot 'IDENTITY.json') -Raw | ConvertFrom-Json
         if ($previousIdentity.source_sha -ne $SourceSha) { throw 'Existing schedule evidence belongs to a different candidate.' }
         $planData=Get-Content -LiteralPath (Join-Path $ExistingRunRoot 'published-plan.json') -Raw | ConvertFrom-Json
@@ -217,7 +219,7 @@ try {
         $owned=@($channels.id)
         Save-Result @{run_id=$runId;source_sha=$SourceSha;minutes_per_phase=$Minutes;phases=$phases;attached_schedule_evidence=$ExistingRunRoot;existing_config_snapshots=$configSnapshots} 'IDENTITY.json'
         Save-Result $plan 'published-plan.json'
-        Write-ProgressLog 'Attached measurement to existing published schedule; no schedule or initial playout restart.'
+        Write-ProgressLog 'Attached recovery to existing published schedule and verified configs; stopped workers will start outside measurement.'
     } else {
     $assets = @()
     $assetLabels = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -309,14 +311,21 @@ try {
         $profile = Invoke-Station GET '/api/staff/station/profile'
         if ($profile.live_captions_enabled -ne $enabled) { throw 'Caption-mode readback mismatch.' }
         Save-Result @{phase=$phase;captions_enabled=$profile.live_captions_enabled} "$phase/profile.json"
-        if (-not $attachOn) {
-        foreach ($channel in $channels) {
-            $config = @{channel_id=$channel.id;enabled=$true;auto_start=$true;allow_software_fallback=$false;fill_policy='slate';slate_message="Owned $runId";
-                sinks=@(@{kind='udp-ts';label=$runId;uri="udp://127.0.0.1:$($channel.port)";latency_ms=2000;loudness_regime='inherit';eas_tone_strip_enabled=$true})}
-            Invoke-Station PUT "/api/staff/egress/channels/$($channel.id)/config" $config | Out-Null
-            if ($owned -notcontains $channel.id) { $owned += $channel.id }
-            Invoke-Station POST "/api/staff/egress/channels/$($channel.id)/commands" @{action='start'} | Out-Null
-        }
+        if (-not $ExistingRunRoot) {
+            foreach ($channel in $channels) {
+                $config = @{channel_id=$channel.id;enabled=$true;auto_start=$true;allow_software_fallback=$false;fill_policy='slate';slate_message="Owned $runId";
+                    sinks=@(@{kind='udp-ts';label=$runId;uri="udp://127.0.0.1:$($channel.port)";latency_ms=2000;loudness_regime='inherit';eas_tone_strip_enabled=$true})}
+                Invoke-Station PUT "/api/staff/egress/channels/$($channel.id)/config" $config | Out-Null
+                if ($owned -notcontains $channel.id) { $owned += $channel.id }
+                Invoke-Station POST "/api/staff/egress/channels/$($channel.id)/commands" @{action='start'} | Out-Null
+            }
+        } else {
+            # Recovery uses the already-verified configs. R1 left them stopped;
+            # OFF also needs a start after the intentional phase transition.
+            foreach ($channel in $channels) {
+                Invoke-Station POST "/api/staff/egress/channels/$($channel.id)/commands" @{action='start'} | Out-Null
+            }
+            Write-ProgressLog "$phase recovery started the three existing channel configs; no channel configuration or schedule was changed."
         }
         $startupAnchor=[datetime]::UtcNow
         if ($scheduleStart -gt $startupAnchor) { $startupAnchor=$scheduleStart }
@@ -332,6 +341,31 @@ try {
         if (-not $ready) {
             $null=Copy-PhaseLogs "${phase}-startup" $offsets
             throw "${phase}: all three channels did not reach ON_AIR."
+        }
+        if ($RequireTransportAdmission) {
+            $admissionRounds=@()
+            foreach ($admissionName in @('acquisition-diagnostic','clean-admission')) {
+                $admissionPending=@{}
+                foreach ($channel in $channels) {
+                    $admissionPending[$channel.id]=Start-Beta7TransportProbe -TspExe $TspExe -Port $channel.port -OutputDirectory (Join-Path $runRoot "$phase/admission/$admissionName") -Label $channel.id
+                }
+                while ($admissionPending.Count) {
+                    foreach ($probeChannel in @($admissionPending.Keys)) {
+                        $admissionResult=Complete-Beta7TransportProbe $admissionPending[$probeChannel]
+                        if ($null -ne $admissionResult) {
+                            $admissionRounds += [pscustomobject]@{round=$admissionName;excluded_from_verdict=($admissionName -eq 'acquisition-diagnostic');result=$admissionResult}
+                            $admissionPending.Remove($probeChannel)
+                        }
+                    }
+                    if ($admissionPending.Count) { Start-Sleep -Seconds 1 }
+                }
+                Save-Result $admissionRounds "$phase/TRANSPORT-ADMISSION.json"
+                if ($admissionName -eq 'clean-admission') {
+                    $failedAdmission=@($admissionRounds | Where-Object {$_.round -eq 'clean-admission' -and $_.result.verdict -ne 'PASS'})
+                    if ($failedAdmission.Count) { throw "${phase} transport admission did not produce a clean 0/0/0 round on all three channels." }
+                }
+            }
+            Write-ProgressLog "${phase} acquisition diagnostic preserved outside verdict; second 30-second transport round passed 0/0/0 on all three channels."
         }
         # Setup and startup allowance do not count toward the measured window.
         while ([datetime]::UtcNow -lt $scheduleStart) { Start-Sleep -Seconds 2 }
