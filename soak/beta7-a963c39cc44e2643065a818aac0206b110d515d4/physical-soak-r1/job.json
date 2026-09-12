@@ -1,0 +1,23 @@
+﻿{
+    "hostname":  "DESKTOP-VBMA6O5",
+    "source_sha":  "a963c39cc44e2643065a818aac0206b110d515d4",
+    "job_started_utc":  "2026-09-12T22:45:35.8117980Z",
+    "job_state":  "STARTED",
+    "minutes_per_phase":  120,
+    "phases":  [
+                   "ON",
+                   "OFF"
+               ],
+    "result":  null,
+    "error":  null,
+    "installed_identity":  {
+                               "runtime_file_sha256":  {
+                                                           "Lib/site-packages/civiccast/egress/daemon.py":  "b0af145243f6b28e80f7b1bc64aebe4ca930865eea26c06db6550d5dbb1bba04",
+                                                           "Lib/site-packages/civiccast/egress/gst/strategy.py":  "5d4a8f498f974a86887a25d89b972f273af8353f7fbefbe6d4eb8cfae627cdd9"
+                                                       },
+                               "installer_sha256":  "9346c3a791d20dedb9c17905f9c8982bb0e92773a2e0eac3d7735c0cd374ede7",
+                               "verified_utc":  "2026-09-12T22:45:36.4052276Z",
+                               "version":  "1.0.0-beta.7",
+                               "app_pack_source_sha":  "a963c39cc44e2643065a818aac0206b110d515d4"
+                           }
+}
