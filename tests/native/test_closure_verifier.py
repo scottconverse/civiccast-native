@@ -28,6 +28,7 @@ from scripts.verify_native_runtime_closure import (
     HARDWARE_GATED_FACTORIES,
     CheckResult,
     _caption_probe_survived,
+    _classify_traced_accesses,
     _interpret_child_output,
     _match_declared_dependency,
     _OpenHandleSampler,
@@ -65,6 +66,20 @@ def test_hostile_environment_sets_every_documented_variable(tmp_path: Path) -> N
     assert env["GI_TYPELIB_PATH"] == str(tree / "lib" / "girepository-1.0")
     assert env["GIO_MODULE_DIR"] == str(tree / "lib" / "gio" / "modules")
     assert env["PYTHONPATH"] == str(tree / "python")
+
+
+def test_hostile_environment_preserves_windows_known_cache_roots(tmp_path: Path) -> None:
+    tree = tmp_path / "out"
+    base_env = {
+        "SystemRoot": r"C:\Windows",
+        "LOCALAPPDATA": r"C:\Users\station\AppData\Local",
+        "PROGRAMDATA": r"C:\ProgramData",
+    }
+
+    env = build_hostile_environment(tree, base_env=base_env, registry_path=tmp_path / "r.bin")
+
+    assert env["LOCALAPPDATA"] == base_env["LOCALAPPDATA"]
+    assert env["PROGRAMDATA"] == base_env["PROGRAMDATA"]
 
 
 def test_consumer_check_fails_when_the_verified_tree_has_no_cli_consumer(tmp_path: Path) -> None:
@@ -961,6 +976,68 @@ def test_the_trace_states_its_remaining_blind_spot_rather_than_claiming_complete
     assert "BLIND SPOT" in result.detail
     assert "SAMPLED" in result.detail
     assert "handle table" in result.detail
+
+
+@pytest.mark.windows_only
+@_WINDOWS_PATH_TEST
+@pytest.mark.parametrize("variable", ("LOCALAPPDATA", "PROGRAMDATA"))
+def test_exact_windows_cache_database_is_reported_as_os_activity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    local_root = tmp_path / "local-appdata"
+    program_root = tmp_path / "programdata"
+    monkeypatch.setenv("LOCALAPPDATA", str(local_root))
+    monkeypatch.setenv("PROGRAMDATA", str(program_root))
+    selected_root = local_root if variable == "LOCALAPPDATA" else program_root
+    cache = selected_root / "Microsoft" / "Windows" / "Caches" / "{GUID}.1.ver.db"
+    cache.parent.mkdir(parents=True)
+    cache.write_bytes(b"windows-cache")
+
+    inside, outside, unreviewed = _classify_traced_accesses([str(cache)], [], tree=tree)
+
+    assert inside == []
+    assert outside == []
+    assert unreviewed == [str(cache.resolve())]
+
+
+@pytest.mark.windows_only
+@_WINDOWS_PATH_TEST
+@pytest.mark.parametrize("shape", ("dll", "nested-db", "lookalike", "literal-systemdrive"))
+def test_windows_cache_exception_rejects_non_database_and_lookalike_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str
+) -> None:
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    local_root = tmp_path / "local-appdata"
+    program_root = tmp_path / "programdata"
+    monkeypatch.setenv("LOCALAPPDATA", str(local_root))
+    monkeypatch.setenv("PROGRAMDATA", str(program_root))
+    canonical = local_root / "Microsoft" / "Windows" / "Caches"
+    candidates = {
+        "dll": canonical / "outside.dll",
+        "nested-db": canonical / "nested" / "outside.db",
+        "lookalike": tmp_path / "lookalike" / "Microsoft" / "Windows" / "Caches" / "outside.db",
+        "literal-systemdrive": (
+            tmp_path
+            / "%SystemDrive%"
+            / "ProgramData"
+            / "Microsoft"
+            / "Windows"
+            / "Caches"
+            / "outside.db"
+        ),
+    }
+    candidate = candidates[shape]
+    candidate.parent.mkdir(parents=True)
+    candidate.write_bytes(b"outside")
+
+    inside, outside, unreviewed = _classify_traced_accesses([str(candidate)], [], tree=tree)
+
+    assert inside == []
+    assert unreviewed == []
+    assert outside == [str(candidate.resolve())]
 
 
 @pytest.mark.windows_only

@@ -167,6 +167,14 @@ _SYSTEM_PATH_RELATIVE_DIRS: tuple[str, ...] = (
 #: hostile values below, regardless of what the caller happened to have.
 _PASSTHROUGH_ENV_VARS: tuple[str, ...] = (
     "SystemDrive",
+    # Windows known-folder and cache discovery reads these directly. Dropping
+    # them made a real self-hosted run fall back to unexpanded registry text
+    # such as ``%SystemDrive%\\ProgramData`` and create relative cache paths
+    # under the checkout. They are process-bootstrap locations, not media or
+    # plugin search paths, so preserving them does not weaken the hostile PATH
+    # or any GStreamer/Python isolation below.
+    "LOCALAPPDATA",
+    "PROGRAMDATA",
     "TEMP",
     "TMP",
     "USERPROFILE",
@@ -1598,6 +1606,33 @@ def _permitted_trace_roots(tree: Path) -> tuple[Path, ...]:
     return tuple(dict.fromkeys(permitted))
 
 
+def _is_windows_cache_database(candidate: Path) -> bool:
+    """Return whether ``candidate`` is one exact Windows cache DB file.
+
+    Windows opens per-user and machine cache databases while initializing
+    otherwise self-contained media processes. These are OS-managed data, not
+    executable code the packaged GStreamer closure must ship. Keep this
+    narrower than a permitted root: only an existing ``.db`` file immediately
+    inside the canonical Windows cache directory qualifies. DLLs, executables,
+    nested paths, lookalike directories, and unexpanded ``%SystemDrive%`` paths
+    remain closure failures.
+    """
+    if candidate.suffix.lower() != ".db":
+        return False
+
+    cache_roots: list[Path] = []
+    for variable in ("LOCALAPPDATA", "PROGRAMDATA"):
+        value = os.environ.get(variable)
+        if value:
+            cache_roots.append(Path(value) / "Microsoft" / "Windows" / "Caches")
+
+    try:
+        parent = os.path.normcase(str(candidate.resolve().parent))
+        return any(parent == os.path.normcase(str(root.resolve())) for root in cache_roots)
+    except OSError:
+        return False
+
+
 def _classify_traced_accesses(
     accessed: Iterable[str], loaded: Iterable[str], *, tree: Path
 ) -> tuple[list[str], list[str], list[str]]:
@@ -1626,6 +1661,9 @@ def _classify_traced_accesses(
         # resolved form alone reports the test harness as an outside-tree load.
         # Argument order matters: is_inside_tree(TREE, CANDIDATE).
         candidates = (path, resolved)
+        if any(_is_windows_cache_database(candidate) for candidate in candidates):
+            unreviewed.append(str(resolved))
+            continue
         if any(is_inside_tree(root, candidate) for root in roots for candidate in candidates):
             inside.append(str(resolved))
             continue
