@@ -1,4 +1,21 @@
-> Latest September 11: candidate39e7ec3c build34633364038 passed. Two-hour Sandbox
+> **2026-09-12 1:12 AM Mountain - beta.7 repair candidate in preparation.**
+> beta.5 and beta.6 are both rejected after physical tester failures; neither is
+> a fallback or publication candidate. Current green `main` is
+> `5e8551a0b8983b8a3b2f54f7cb1641f55bec54cc`. The beta.7 branch is
+> `fix/f1-stall-recovery-20260912`; its isolated GStreamer repair commit is
+> `24e81a7abd8313538c4df0baf03a6fdba2e72d14`, followed by the beta.7 identity,
+> generated docs, and this status update in the pending release-prep commit.
+> The repair forces a fully prerolled deferred replacement through the existing
+> guarded commit path when the outgoing programme stalls without EOS. Local
+> candidate checks pass: 143 focused tests, including 79 GStreamer ordering and
+> watchdog regressions; release identity, candidate boundary, generated OpenAPI,
+> rendered manual, and diff checks pass. No beta.7 installer or kit exists yet.
+> PR CI, signed build, Sandbox, Gate A, dedicated-tester soak, and publication
+> remain outstanding. The existing beta.6 artifacts and evidence remain rejected.
+> Scott's full delivery authorization remains in force. All entries below this
+> paragraph are historical checkpoints unless they explicitly name beta.7.
+>
+> Historical September 11 checkpoint: candidate39e7ec3c build34633364038 passed. Two-hour Sandbox
 > evidence is accepted after independently reproducing and correcting an empty-array
 > grading defect;723 raw commits,zero exits/timeouts. Gate A34651334966 failed T4
 > because harness schema discovery omitted staff auth. The harness correction is

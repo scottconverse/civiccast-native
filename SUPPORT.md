@@ -9,7 +9,7 @@
 > now superseded.
 > `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also
 > superseded. `v1.0.0-beta.2` was never published -- it exists only as an
-> internal Gate A upgrade-baseline kit. `v1.0.0-beta.6` is the next
+> internal Gate A upgrade-baseline kit. `v1.0.0-beta.7` is the next
 > candidate and the current owner-held unpublished candidate; it does not
 > change the beta.5 install story above. Community support does not turn
 > this beta into a supported, SLA'd field release.
@@ -81,7 +81,7 @@ release, `v1.0.0-beta.5`, is downloadable (setup.exe and the runtime packs
 on its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5)),
 a download-only upgrade for stations already on `v1.0.0-beta.4` (now
 superseded), but there is still no dedicated, SLA'd support intake for it --
-the same community-driven, no-SLA posture above applies. `v1.0.0-beta.6` is
+the same community-driven, no-SLA posture above applies. `v1.0.0-beta.7` is
 the next candidate and the current owner-held unpublished candidate; it has
 no installer asset and does not change the beta.5 install story above.
 

@@ -1,5 +1,35 @@
 # HANDOFF
 
+## 2026-09-12 beta.7 GStreamer repair prepared for first push
+
+Current branch: `fix/f1-stall-recovery-20260912`.
+Current committed HEAD before the release-prep commit:
+`24e81a7abd8313538c4df0baf03a6fdba2e72d14`, based on green `main`
+`5e8551a0b8983b8a3b2f54f7cb1641f55bec54cc`. Current PR: none; open the PR
+after the first branch push and use its body for the exact pushed HEAD and CI
+run IDs. The release-prep commit contains the beta.7 version surfaces,
+generated OpenAPI/manual artifacts, current release posture, and this handoff.
+
+beta.5 and beta.6 are rejected. Do not reuse or publish either beta.6 build or
+kit. The beta.7 repair handles the dedicated tester's reproduced failure: a
+fully prerolled deferred replacement waits for outgoing EOS, output stalls,
+and the ordinary 10-second watchdog kills the worker before the 900-second
+defer watchdog can force the switch. The engine now admits only the current,
+fully ready, hold-free deferred transaction to the existing lock-safe forced
+boundary and commit path; incomplete or stale transactions retain normal stall
+handling. The tester diagnostic is commit `b500789a` on
+`tester/soak8-e1acfe6-DESKTOP-VBMA6O5` and reports `station_changes: false`.
+
+Local candidate verification passes: 143 focused tests, including 79 affected
+GStreamer ordering/watchdog tests; release identity, candidate-boundary,
+generated OpenAPI, rendered-manual, and diff checks pass. Independent review
+caught and corrected a downloader default-pair mismatch before push. The
+downloader now uses beta.7/beta.7 consistently and explains the explicit
+beta.5/beta.5 pair while beta.7 is unpublished. No beta.7 artifact has been
+built. Remaining sequence: push and PR, required CI, signed beta.7 build,
+Sandbox, Gate A, dedicated-tester soak, then publish only on passing evidence.
+Full owner authorization remains in force. Older entries below are historical.
+
 ## 2026-09-11 candidate built; harness corrections for Gate A
 
 Branch: fix/beta-harness-auth-20260911, based on merged main39e7ec3c.

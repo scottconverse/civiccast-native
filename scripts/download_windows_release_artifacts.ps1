@@ -17,6 +17,11 @@ Two asset-set families are supported:
     constants by tests/policy/test_windows_release_downloader.py so the two
     cannot drift.
 
+The default tag and expected version match this source tree's owner-held
+beta.7 candidate and become downloadable after it is published. Until then,
+fetch the current published beta.5 release explicitly with both
+`-Tag v1.0.0-beta.5 -Version 1.0.0-beta.5`.
+
   ProofKit / TesterPackage / All (the retired WSL2 rc line's shape): fetch the
     release-artifacts manifest plus the tester package and/or proof kit,
     verified against the manifest's SHA-256 values (falling back to the
@@ -26,8 +31,8 @@ Two asset-set families are supported:
 [CmdletBinding()]
 param(
   [string]$Repository = "scottconverse/civiccast-native",
-  [string]$Tag = "v1.0.0-beta.6",
-  [string]$Version = "1.0.0-beta.6",
+  [string]$Tag = "v1.0.0-beta.7",
+  [string]$Version = "1.0.0-beta.7",
   [ValidateSet("", "NativeCandidate", "ProofKit", "TesterPackage", "All")]
   [string]$AssetSet = "",
   [switch]$IncludePacks,
