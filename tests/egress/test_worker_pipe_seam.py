@@ -506,6 +506,19 @@ class _ReadOrderingServer(_ImmediateAckServer):
         return super().read_line()
 
 
+def test_channel_reports_when_the_worker_completes_its_initial_connection() -> None:
+    server = _NeverConnectServer()
+    channel = _WindowsPipeChannel("c1", server=server, ack_timeout_s=0.05)
+    channel.start()
+    try:
+        assert channel.worker_initial_control_connection_observed() is False
+        server._release_accept.set()
+        assert channel._connected_event.wait(0.5) is True
+        assert channel.worker_initial_control_connection_observed() is True
+    finally:
+        channel.close()
+
+
 def test_channel_does_not_start_a_blocking_read_before_its_first_write() -> None:
     server = _ReadOrderingServer()
     channel = _WindowsPipeChannel("c1", server=server, ack_timeout_s=2.0)

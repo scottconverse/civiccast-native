@@ -748,6 +748,12 @@ class ChannelAutomationService:
             if state_row is not None and state_row.state == "ON_AIR":
                 self._replan_retry_at.pop(channel_id, None)
             return
+        if not self._daemon_worker_initial_control_connection_observed(channel_id):
+            # A fallback worker started because the original scheduled plan
+            # expired during preparation. Wait for that new worker's initial
+            # pipe connection before asking it to reload back to the schedule.
+            # Do not consume the latch/cooldown or call the provider yet.
+            return
         if channel_id in self._reload_issued:
             return
         # Audit ENG-002: when the due item persistently fails PREPARATION,
@@ -1006,6 +1012,13 @@ class ChannelAutomationService:
             )
             return
         _, plan_end_at, last_segment_start_at, planned_seconds = tracked
+
+        # A newly started Windows worker can report ON_AIR before its pipe-reader
+        # thread has accepted the daemon's control connection. Do not consume any
+        # rollover latch or query/prepare the incoming plan during that narrow
+        # window: the next automation tick retries as soon as the pipe is ready.
+        if not self._daemon_worker_initial_control_connection_observed(channel_id):
+            return
 
         stale_horizon_recovery = False
         if plan_end_at <= now:
@@ -1553,6 +1566,19 @@ class ChannelAutomationService:
         reader = getattr(self._daemon, "has_pending_reload_settlement", None)
         if not callable(reader):
             return False
+        return bool(reader(channel_id))
+
+    def _daemon_worker_initial_control_connection_observed(self, channel_id: str) -> bool:
+        """Read the optional initial worker-control connection observation.
+
+        Older daemon doubles and non-GStreamer strategies have no asynchronous
+        Windows pipe-connect phase, so absence preserves the existing ready
+        behavior.
+        """
+
+        reader = getattr(self._daemon, "worker_initial_control_connection_observed", None)
+        if not callable(reader):
+            return True
         return bool(reader(channel_id))
 
     def _enqueue(
