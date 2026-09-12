@@ -1,0 +1,45 @@
+{
+  "schema": "civiccast-native-tester-run-identity-v3",
+  "mission": "beta7-sep12-a963c39cc44e2643065a818aac0206b110d515d4",
+  "candidate_source_sha": "a963c39cc44e2643065a818aac0206b110d515d4",
+  "build_source_sha": "a963c39cc44e2643065a818aac0206b110d515d4",
+  "gate_a_source_sha": "a963c39cc44e2643065a818aac0206b110d515d4",
+  "expected_manifest_sha256": "878b168e149fd19ca905baa10c2047c9c2418cb5b40a729d503050fde75074c1",
+  "actual_manifest_sha256": null,
+  "expected_installer_sha256": "9346c3a791d20dedb9c17905f9c8982bb0e92773a2e0eac3d7735c0cd374ede7",
+  "actual_installer_sha256": null,
+  "expected_version": "1.0.0-beta.7",
+  "build_run_id": "34706796638",
+  "build_conclusion": "success",
+  "gate_a_run_id": "34710327291",
+  "gate_a_verdict": "PASS",
+  "kit_base_url": "http://192.168.0.135:8766/a963c39cc44e2643065a818aac0206b110d515d4/",
+  "return_repository_url": "https://github.com/scottconverse/civiccast-native.git",
+  "return_branch": "tester/soak8-e1acfe6-DESKTOP-VBMA6O5",
+  "hostname": "DESKTOP-VBMA6O5",
+  "expected_hostname": "DESKTOP-VBMA6O5",
+  "tester_root": "C:\\CivicCastSoak",
+  "mission_state_root": "C:\\CivicCastSoak\\missions\\beta7-sep12-a963c39cc44e2643065a818aac0206b110d515d4",
+  "return_repo_path": "C:\\CivicCastSoak\\missions\\beta7-sep12-a963c39cc44e2643065a818aac0206b110d515d4\\return-repo",
+  "install_root": "C:\\CivicCastHostStore\\install",
+  "expected_elements_per_phase": {
+    "ON": {"public":[132,146],"education":[132,146],"government":[132,146]},
+    "OFF": {"public":[33,47],"education":[33,47],"government":[33,47]}
+  },
+  "planned_seconds": 14400,
+  "sample_interval_seconds": 30,
+  "channels": [
+    {
+      "channel_id": "public",
+      "udp_port": 9001
+    },
+    {
+      "channel_id": "education",
+      "udp_port": 9002
+    },
+    {
+      "channel_id": "government",
+      "udp_port": 9003
+    }
+  ]
+}

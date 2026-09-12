@@ -1,6 +1,12 @@
 # soak8-e1acfe6 Latest Test Directive
-Current: soak/DIRECTIVE-16.md
+
+Current: soak/DIRECTIVE-BETA7-TESTER-MISSION-R1.md
 Branch: soak8-e1acfe6-directives
+Updated: 2026-09-12 3:15 PM Mountain - Gate A run 34710327291 passed all three
+lanes for exact beta.7 source a963c39cc44e2643065a818aac0206b110d515d4 and
+build 34706796638. Execute the new beta.7 mission autorun once. It installs only
+that exact signed kit, then starts the captions ON/OFF physical soak. See the
+current directive. Historical entries below are not new orders.
 Updated: 2026-09-12T06:19Z - Directive15 preserved; Windows locked a worker log
 during Get-FileHash. Retrieve the same bounded tails without hashing open files.
 See Directive16. beta.5/beta.6 rejected; next candidate beta.7.
