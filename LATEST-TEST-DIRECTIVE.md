@@ -1,6 +1,9 @@
 # soak8-e1acfe6 Latest Test Directive
-Current: soak/DIRECTIVE-15.md
+Current: soak/DIRECTIVE-16.md
 Branch: soak8-e1acfe6-directives
+Updated: 2026-09-12T06:19Z - Directive15 preserved; Windows locked a worker log
+during Get-FileHash. Retrieve the same bounded tails without hashing open files.
+See Directive16. beta.5/beta.6 rejected; next candidate beta.7.
 Updated: 2026-09-12T06:00Z - R3 measured ON phase failed on a real nonzero
 GStreamer output-stall exit. Return missing worker/service logs read-only; do not
 restart. See Directive15.
