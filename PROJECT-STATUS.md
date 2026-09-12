@@ -1,3 +1,21 @@
+> **2026-09-12 latest: beta.7 candidate `99705005` rejected; replacement
+> schedule-rollover repair is locally verified.** The rejected candidate is
+> build `34691600770`, installer SHA-256
+> `dd7fbe8051301f98f73ec72e6e267eb4fc0af8b8f17ce2856bdfe54a3bff03cf`, and
+> manifest SHA-256
+> `43d615c1b96a6bc37b7e7216e5063f6f8873ea1a51095a835f3b4e475f4f0e65`.
+> Its 15-minute Sandbox gate failed with clean worker exits and relaunches;
+> it is not a release candidate. Replacement source commit
+> `6697c40048a0488b0fb7998088366f5110b95121` on
+> `fix/beta7-stale-horizon-reload` gives short one-item plans their full preload
+> window and immediately reloads a live expired horizon instead of re-dating
+> the old dispatch. Focused verification: 75 passed plus Ruff, format, mypy,
+> diff checks, and independent review. No replacement build exists yet.
+> Required CI, merge, fresh build, Sandbox, Gate A, physical tester soak, and
+> publication remain outstanding. Do not reuse results or binaries from
+> `99705005`. See
+> `.agent-runs/native-windows/beta7-schedule-rollover/evidence/LOCAL-VERIFICATION.md`.
+
 > **2026-09-12 1:12 AM Mountain - beta.7 repair candidate in preparation.**
 > beta.5 and beta.6 are both rejected after physical tester failures; neither is
 > a fallback or publication candidate. Current green `main` is
