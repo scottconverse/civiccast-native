@@ -1,5 +1,38 @@
 # HANDOFF
 
+## 2026-09-12 rejected beta.7 candidate and schedule-rollover repair
+
+Current branch: `fix/beta7-stale-horizon-reload`.
+Current source proof anchor: `6697c40048a0488b0fb7998088366f5110b95121`,
+based on `main` at `99705005d63c5d9e23b6aca3bbb18654d2b5db3f`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/223.
+The first pushed branch head was
+`348f3693e6307857e70e36c7896c104c82f47b79`; this post-push status commit
+follows it, so use `git rev-parse HEAD` and PR #223 for the current branch HEAD
+and CI run IDs. No replacement build exists yet.
+
+The beta.7 candidate built from `99705005` is rejected. Its exact identity is
+build run `34691600770`, installer SHA-256
+`dd7fbe8051301f98f73ec72e6e267eb4fc0af8b8f17ce2856bdfe54a3bff03cf`,
+and manifest SHA-256
+`43d615c1b96a6bc37b7e7216e5063f6f8873ea1a51095a835f3b4e475f4f0e65`.
+It failed the local 15-minute Sandbox gate with clean worker exits and
+relaunches after short schedule-boundary races. It is not a publication
+candidate, and none of its test results may be carried to the replacement.
+
+The source repair starts one-item rollover preparation at the beginning of
+short programme windows and turns an expired live horizon into one immediate
+reload bound to the original boundary. Focused verification is 75 passing
+automation tests plus Ruff, format, mypy, and diff checks. Independent review
+found the final automation delta clean. Evidence and exact limits are in
+`.agent-runs/native-windows/beta7-schedule-rollover/evidence/LOCAL-VERIFICATION.md`.
+
+Required sequence: required PR CI, merge, fresh signed build from the new `main`
+SHA, fresh Sandbox, Gate A, physical tester soak, and publish only on passing
+evidence. beta.5, beta.6, and the rejected `99705005` beta.7 candidate must not
+be published. Full owner authorization remains in force. Older entries below
+are historical.
+
 ## 2026-09-12 beta.7 GStreamer repair - PR #221
 
 Current branch: `fix/f1-stall-recovery-20260912`.
