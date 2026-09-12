@@ -1,5 +1,10 @@
 # CivicCast
 
+Release testing: the fixed beta candidate has completed its two-hour Sandbox
+run. Gate A needs a rerun after correcting authenticated schema discovery in
+the test harness; see [candidate evidence](docs/evidence/beta-harness-2026-09-11.md).
+The new candidate is not published or cleared for station use yet.
+
 **CivicCast is an open-source, self-hostable civic broadcast platform for
 PEG/local-government stations** — record a meeting, generate offline
 captions, let an operator review and approve the recording, get an

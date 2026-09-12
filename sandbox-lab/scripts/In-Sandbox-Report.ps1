@@ -3455,7 +3455,7 @@ try {
                 $capEnqueueEndpoint = $null
                 $capSpecPaths = $null
                 try {
-                    $spec = Invoke-CivicCastApi -Method 'Get' -Url "$BASE/openapi.json" -LogFile $t3loop
+                    $spec = Invoke-CivicCastApi -Method 'Get' -Url "$BASE/openapi.json" -LogFile $t3loop -BearerToken $token
                     if ($spec.status -eq 200 -and $spec.body_json -and $spec.body_json.paths) {
                         $capSpecPaths = $spec.body_json.paths
                         $allPaths = $capSpecPaths.PSObject.Properties.Name
@@ -3661,7 +3661,7 @@ try {
                 # scans over Sandbox's slow virtualized/differencing disk --
                 # deliberately not reintroducing that class of scan here when
                 # the served spec already gives an authoritative, cheap answer.
-                $specR = Invoke-CivicCastApi -Method 'Get' -Url "$BASE/openapi.json" -LogFile $t4notes
+                $specR = Invoke-CivicCastApi -Method 'Get' -Url "$BASE/openapi.json" -LogFile $t4notes -BearerToken $engineToken
                 $egressPaths = @()
                 if ($specR.status -eq 200 -and $specR.body_json -and $specR.body_json.paths) {
                     $egressPaths = @($specR.body_json.paths.PSObject.Properties.Name | Where-Object { $_ -like '*egress*' } | Sort-Object)

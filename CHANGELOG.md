@@ -13,6 +13,13 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+### Release harness corrections
+
+- Authenticate Gate A's caption and egress schema-discovery requests with the
+  existing staff token so the gate exercises the installed product engine.
+- Preserve empty and single-item missing-commit lists in the Sandbox soak
+  caller, preventing a healthy run from failing with a blank channel name.
+
 ### Local beta reliability repair (candidate gates outstanding)
 
 - Preserve aborted-reload reasons in current state and durable proof history.

@@ -3019,11 +3019,11 @@ Write-SoakLog "poll loop complete: $cycleN cycles recorded, $($restartEventsArra
 # (DaemonLogPatterns.ps1), whose own ordering contract guarantees the
 # drain completes for every channel before the computation runs --
 # provable directly (Test-RestartClassifier.ps1) without a live soak.
-$reloadArmedNeverCommittedChannels = Invoke-FinalWorkerStdoutDrainAndComputeArmedNeverCommitted `
+$reloadArmedNeverCommittedChannels = @(Invoke-FinalWorkerStdoutDrainAndComputeArmedNeverCommitted `
     -ChannelIds @($channelSpecs | ForEach-Object { $_.id }) `
     -ArmedChannelIds @($script:reloadArmedChannels.Keys) `
     -WorkerStdoutCountsByChannel $script:workerStdoutCountsByChannel `
-    -DrainAction { param($cid) Update-WorkerStdoutCounters -ChannelId $cid }
+    -DrainAction { param($cid) Update-WorkerStdoutCounters -ChannelId $cid })
 if ($reloadArmedNeverCommittedChannels.Count -gt 0) {
     Write-SoakLog "reload_armed_never_committed: $($reloadArmedNeverCommittedChannels -join ', ') (daemon log confirmed armed, worker stdout never logged a commit)"
 }
