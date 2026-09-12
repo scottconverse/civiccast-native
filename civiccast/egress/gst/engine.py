@@ -1800,6 +1800,27 @@ class GstPlayoutEngine:
             return True
         if elapsed >= self.stall_timeout_s:
             pending = self._pending_reload
+            if (
+                pending is not None
+                and pending.get("switch_at_end_of_current", False)
+                and pending.get("new_leg_ready", False)
+                and not pending.get("old_leg_eos", False)
+                and not pending.get("commit_in_progress", False)
+            ):
+                # A fully prerolled replacement is held safely off the selector,
+                # but a broken outgoing leg can stop producing without ever
+                # delivering EOS. Once output has flatlined for the ordinary
+                # stall budget, force this transaction through the existing
+                # forced-boundary path instead of killing the worker and losing
+                # the ready replacement. The helper marks this transaction's
+                # boundary satisfied and reuses the normal lock-safe
+                # commit/retirement path.
+                forced = self._force_deferred_boundary(
+                    pending["txn_id"],
+                    reason="output stalled after replacement preroll; forcing switch",
+                )
+                if forced:
+                    return True
             if pending is not None and pending.get("commit_in_progress", False):
                 # Round-2 finding 2: the two watchdogs were racing and the WRONG
                 # one always won. A commit holds the replacement leg held (not
@@ -2354,6 +2375,7 @@ class GstPlayoutEngine:
             "switch_at_end_of_current": switch_at_end_of_current,
             "new_leg_ready": False,
             "old_leg_eos": not switch_at_end_of_current,
+            "boundary_forced": False,
             "defer_timeout_id": None,
             # Boundary-aligned switch state (deferred reloads only):
             #   new_src_pads   -- the new leg's own tail src pad(s) (video, audio).
@@ -2659,11 +2681,7 @@ class GstPlayoutEngine:
             self._commit_reload()
         return False
 
-    def _on_defer_switch_timeout(self, txn_id: int) -> bool:
-        """Safety watchdog (B3 fix): the outgoing leg's EOS never arrived within
-        ``defer_switch_timeout_s`` of the new leg becoming ready. Force the switch
-        rather than hold two legs open indefinitely -- the reload always eventually
-        commits."""
+    def _force_deferred_boundary(self, txn_id: int, *, reason: str) -> bool:
         pending = self._pending_reload
         if (
             pending is None
@@ -2671,20 +2689,34 @@ class GstPlayoutEngine:
             or pending.get("commit_in_progress", False)
             or not pending["switch_at_end_of_current"]
             or not pending["new_leg_ready"]
+            or pending.get("holds_awaited", 0) != 0
+            or pending.get("old_leg_eos", False)
+            or pending.get("boundary_forced", False)
         ):
-            return False  # already committed/aborted, or not a deferred reload
-        pending["defer_timeout_id"] = None
-        if pending["old_leg_eos"]:
-            return False  # EOS + commit already landed via the normal path
-        print(
-            f"CTRL reload: outgoing leg produced no EOS within "
-            f"{max(1, int(self.defer_switch_timeout_s))}s of the new leg being ready; "
-            "forcing the switch",
-            flush=True,
-        )
-        pending["old_leg_eos"] = True
+            return False
+        pending["boundary_forced"] = True
+        print(f"CTRL reload: {reason} (reload_id={txn_id})", flush=True)
         self._commit_reload()
-        return False  # one-shot
+        return True
+
+    def _on_defer_switch_timeout(self, txn_id: int) -> bool:
+        """Safety watchdog (B3 fix): the outgoing leg's EOS never arrived within
+        ``defer_switch_timeout_s`` of the new leg becoming ready. Force the switch
+        rather than hold two legs open indefinitely -- the reload always eventually
+        commits."""
+        pending = self._pending_reload
+        if pending is None or pending.get("txn_id") != txn_id:
+            return False
+        pending["defer_timeout_id"] = None
+        self._force_deferred_boundary(
+            txn_id,
+            reason=(
+                "outgoing leg produced no EOS within "
+                f"{max(1, int(self.defer_switch_timeout_s))}s of replacement readiness; "
+                "forcing switch"
+            ),
+        )
+        return False
 
     def _arm_commit_watchdog(self) -> tuple[threading.Timer, threading.Event]:
         """Item 85 (sandbox runs 12/14/15): ``_commit_reload`` must never be able to
@@ -2809,7 +2841,11 @@ class GstPlayoutEngine:
         # without readiness for every required stream of THIS transaction.
         if not pending["new_leg_ready"] or pending["holds_awaited"] != 0:
             return False
-        if pending["switch_at_end_of_current"] and not pending["old_leg_eos"]:
+        if (
+            pending["switch_at_end_of_current"]
+            and not pending["old_leg_eos"]
+            and not pending.get("boundary_forced", False)
+        ):
             return False
         print(f"CTRL reload: firing (reload_id={pending['txn_id']})", flush=True)
         pending["commit_in_progress"] = True
