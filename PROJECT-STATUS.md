@@ -4,13 +4,16 @@
 > `5e8551a0b8983b8a3b2f54f7cb1641f55bec54cc`. The beta.7 branch is
 > `fix/f1-stall-recovery-20260912`; its isolated GStreamer repair commit is
 > `24e81a7abd8313538c4df0baf03a6fdba2e72d14`, followed by the beta.7 identity,
-> generated docs, and this status update in the pending release-prep commit.
+> generated docs, and status at proof anchor
+> `ead9adda6f0573bc60333ce8f48a9863c248e6bb`. PR #221 is open; this
+> post-push status commit follows that proof anchor, so use the PR for its exact
+> current HEAD and CI run IDs.
 > The repair forces a fully prerolled deferred replacement through the existing
 > guarded commit path when the outgoing programme stalls without EOS. Local
 > candidate checks pass: 143 focused tests, including 79 GStreamer ordering and
 > watchdog regressions; release identity, candidate boundary, generated OpenAPI,
 > rendered manual, and diff checks pass. No beta.7 installer or kit exists yet.
-> PR CI, signed build, Sandbox, Gate A, dedicated-tester soak, and publication
+> Required PR CI, signed build, Sandbox, Gate A, dedicated-tester soak, and publication
 > remain outstanding. The existing beta.6 artifacts and evidence remain rejected.
 > Scott's full delivery authorization remains in force. All entries below this
 > paragraph are historical checkpoints unless they explicitly name beta.7.

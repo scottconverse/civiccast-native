@@ -1,14 +1,16 @@
 # HANDOFF
 
-## 2026-09-12 beta.7 GStreamer repair prepared for first push
+## 2026-09-12 beta.7 GStreamer repair - PR #221
 
 Current branch: `fix/f1-stall-recovery-20260912`.
-Current committed HEAD before the release-prep commit:
-`24e81a7abd8313538c4df0baf03a6fdba2e72d14`, based on green `main`
-`5e8551a0b8983b8a3b2f54f7cb1641f55bec54cc`. Current PR: none; open the PR
-after the first branch push and use its body for the exact pushed HEAD and CI
-run IDs. The release-prep commit contains the beta.7 version surfaces,
-generated OpenAPI/manual artifacts, current release posture, and this handoff.
+Current source/proof anchor:
+`ead9adda6f0573bc60333ce8f48a9863c248e6bb`, based on green `main`
+`5e8551a0b8983b8a3b2f54f7cb1641f55bec54cc`. Current PR:
+https://github.com/scottconverse/civiccast-native/pull/221. This post-push
+status commit follows the proof anchor; use `git rev-parse HEAD` and PR #221
+for the exact current branch HEAD and CI run IDs. The proof-anchor commit
+contains the beta.7 version surfaces, generated OpenAPI/manual artifacts, and
+the pre-push handoff/status state.
 
 beta.5 and beta.6 are rejected. Do not reuse or publish either beta.6 build or
 kit. The beta.7 repair handles the dedicated tester's reproduced failure: a
