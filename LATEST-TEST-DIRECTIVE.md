@@ -1,6 +1,8 @@
 # soak8-e1acfe6 Latest Test Directive
 Current: soak/DIRECTIVE-5.md
 Branch: soak8-e1acfe6-directives
+Updated: 2026-09-12T01:55Z - READINESS-R2 returns the readiness JSON explicitly;
+the existing poller's .log files are ignored by Git. See soak/DIRECTIVE-5.md.
 Updated: 2026-09-12T01:40Z - Fixed beta takeover. New read-only readiness order:
 soak/autorun/AUTORUN-SEP11-FIXED-BETA-READINESS-R1.ps1. Candidate39e7ec3c/build34633364038.
 The dated entries below are historical, not new install orders.

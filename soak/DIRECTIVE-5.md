@@ -16,6 +16,14 @@ A fresh heartbeat was received at 2026-09-12T01:36:11Z. It reports beta.5 and
 soak_started=false. Its ON_AIR labels with disconnected sinks do not prove playout.
 The new autorun receipt must establish that the poller is executing current orders.
 
+At 2026-09-12T01:46:12Z the tester acknowledged this directive. The existing
+poller saves autorun output as .log, but the tester repository ignores *.log;
+its ordinary git add does not publish those files. READINESS-R2 returns the R1
+JSON as an explicitly committed .json receipt and probes the candidate-only LAN
+manifest. If R1 output is absent or incomplete, R2 explicitly authorizes one
+new read-only R1 probe. It does not remove markers or change the station.
+The JSON receipt is soak/fixed-beta-39e7/readiness-r2.json on the tester branch.
+
 Next: use the readiness report to transfer and verify the fixed kit, then run
 the remaining installer acceptance and captions ON/OFF programme-change tests.
 No fixed candidate release or physical-tester soak PASS is claimed yet.
