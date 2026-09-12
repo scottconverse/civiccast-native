@@ -45,7 +45,7 @@ foreach($channel in @('public','education','government')){
 }
 $logRoot='C:\ProgramData\CivicCast\logs'
 if(Test-Path -LiteralPath $logRoot){
-    foreach($file in @(Get-ChildItem -LiteralPath $logRoot -File | Where-Object {$_.Name -match 'egress|supervisor|server'} | Sort-Object LastWriteTime -Descending | Select-Object -First 4)){
+    foreach($file in @(Get-ChildItem -LiteralPath $logRoot -File | Where-Object {$_.Name -match 'egress|supervisor|server|control_plane'} | Sort-Object LastWriteTime -Descending | Select-Object -First 4)){
         $report.files[('service/'+[string]$file.Name)]=Read-ProgressText $file.FullName
     }
 }
