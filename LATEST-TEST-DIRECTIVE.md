@@ -1,6 +1,8 @@
 # soak8-e1acfe6 Latest Test Directive
-Current: soak/DIRECTIVE-13.md
+Current: soak/DIRECTIVE-14.md
 Branch: soak8-e1acfe6-directives
+Updated: 2026-09-12T05:41Z - All three channels ON_AIR in returned logs. Attach
+R3 measurement to existing playout and publish actual phase starts. See Directive14.
 Updated: 2026-09-12T05:30Z - R2 startup timed out before measurement. Return
 worker/service log evidence via read-only Directive13; preserve failed runs.
 Updated: 2026-09-12T05:21Z - Return read-only R2 phase-start and progress evidence.

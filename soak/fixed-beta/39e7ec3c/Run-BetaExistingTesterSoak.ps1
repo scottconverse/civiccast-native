@@ -10,6 +10,8 @@ param(
     [string]$ProgramDataRoot = 'C:\ProgramData\CivicCast',
     [string]$TspExe = 'C:\CivicCastHostStore\install\packs\native-server-binaries\payload\tsduck\bin\tsp.exe',
     [switch]$ReplaceOverlappingTestSchedule,
+    [string]$ExistingRunRoot,
+    [scriptblock]$OnPhaseStarted,
     [switch]$SelfTest
 )
 $ErrorActionPreference = 'Stop'
@@ -155,6 +157,26 @@ try {
             allow_software_fallback=$config.allow_software_fallback;fill_policy=$config.fill_policy;
             sinks=@($config.sinks | Select-Object kind,label,uri,latency_ms,loudness_regime,eas_tone_strip_enabled)}
     }
+    if ($ExistingRunRoot) {
+        $previousIdentity=Get-Content -LiteralPath (Join-Path $ExistingRunRoot 'IDENTITY.json') -Raw | ConvertFrom-Json
+        if ($previousIdentity.source_sha -ne $SourceSha) { throw 'Existing schedule evidence belongs to a different candidate.' }
+        $planData=Get-Content -LiteralPath (Join-Path $ExistingRunRoot 'published-plan.json') -Raw | ConvertFrom-Json
+        $plan=@($planData)
+        if ($plan.Count -ne 180 -or @($plan.channel_id | Sort-Object -Unique).Count -ne 3) { throw 'Existing schedule evidence is incomplete.' }
+        $times=@($plan | ForEach-Object {[datetimeoffset]::Parse($_.scheduled_at).UtcDateTime} | Sort-Object)
+        $scheduleStart=$times[0]
+        $scheduleEnd=$times[-1].AddMinutes(5)
+        $slotCount=[int](($scheduleEnd-$scheduleStart).TotalMinutes/5)
+        if ($scheduleEnd -lt [datetime]::UtcNow.AddMinutes($Minutes*$phases.Count+15)) { throw 'Existing schedule has insufficient remaining horizon for both full phases.' }
+        foreach ($channel in $channels) {
+            $config=Invoke-Station GET "/api/staff/egress/channels/$($channel.id)/config"
+            if ($config.allow_software_fallback) { throw 'Existing playout allows software fallback; cannot attach this GStreamer measurement.' }
+        }
+        $owned=@($channels.id)
+        Save-Result @{run_id=$runId;source_sha=$SourceSha;minutes_per_phase=$Minutes;phases=$phases;attached_schedule_evidence=$ExistingRunRoot;existing_config_snapshots=$configSnapshots} 'IDENTITY.json'
+        Save-Result $plan 'published-plan.json'
+        Write-ProgressLog 'Attached measurement to existing published schedule; no schedule or initial playout restart.'
+    } else {
     $assets = @()
     $assetLabels = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $assetOffset = 0
@@ -221,16 +243,29 @@ try {
         Write-ProgressLog "Published $slotCount five-minute slots for $($channel.id)"
     }
     Save-Result $plan 'published-plan.json'
+    }
     foreach ($phase in $phases) {
-        if ($owned.Count) { Stop-OwnedChannels }
+        $attachOn=$ExistingRunRoot -and $phase -eq 'ON'
+        if ($owned.Count -and -not $attachOn) { Stop-OwnedChannels }
         # Include startup/preload proof for any reload that commits after the
         # measured window begins; intentional previous-phase Stop is excluded.
         $offsets = Get-LogOffsets
+        # A reload may already be prerolled when attachment begins. Preserve
+        # its preceding context separately from measured failure/lifetime logs.
+        foreach ($channel in $channels) {
+            $workerLog=Join-Path $ProgramDataRoot ("data/egress/$($channel.id)/logs/gst-worker.stdout.log")
+            if (Test-Path -LiteralPath $workerLog) {
+                $context=Join-Path $runRoot "$phase/preroll-context/$($channel.id)-stdout.log"
+                New-Item -ItemType Directory -Path (Split-Path $context) -Force | Out-Null
+                Get-Content -LiteralPath $workerLog -Tail 100 | Set-Content -LiteralPath $context -Encoding utf8
+            }
+        }
         $enabled = $phase -eq 'ON'
-        Invoke-Station PUT '/api/staff/station/profile' @{live_captions_enabled=$enabled} | Out-Null
+        if (-not $attachOn) { Invoke-Station PUT '/api/staff/station/profile' @{live_captions_enabled=$enabled} | Out-Null }
         $profile = Invoke-Station GET '/api/staff/station/profile'
         if ($profile.live_captions_enabled -ne $enabled) { throw 'Caption-mode readback mismatch.' }
         Save-Result @{phase=$phase;captions_enabled=$profile.live_captions_enabled} "$phase/profile.json"
+        if (-not $attachOn) {
         foreach ($channel in $channels) {
             $config = @{channel_id=$channel.id;enabled=$true;auto_start=$true;allow_software_fallback=$false;fill_policy='slate';slate_message="Owned $runId";
                 sinks=@(@{kind='udp-ts';label=$runId;uri="udp://127.0.0.1:$($channel.port)";latency_ms=2000;loudness_regime='inherit';eas_tone_strip_enabled=$true})}
@@ -238,21 +273,29 @@ try {
             if ($owned -notcontains $channel.id) { $owned += $channel.id }
             Invoke-Station POST "/api/staff/egress/channels/$($channel.id)/commands" @{action='start'} | Out-Null
         }
-        $deadline = [datetime]::UtcNow.AddMinutes(15)
+        }
+        $startupAnchor=[datetime]::UtcNow
+        if ($scheduleStart -gt $startupAnchor) { $startupAnchor=$scheduleStart }
+        $deadline=$startupAnchor.AddMinutes(5)
         do {
             $states = @($channels | ForEach-Object { Invoke-Station GET "/api/staff/egress/channels/$($_.id)/state" })
+            $startupSnapshot=@($states | ForEach-Object {@{channel_id=[string]$_.channel_id;state=[string]$_.state;pid=$_.pid;source=[string]$_.current_source_label;last_error=[string]$_.last_error}})
+            Save-Result @{at=[datetime]::UtcNow.ToString('o');deadline=$deadline.ToString('o');channels=$startupSnapshot} "$phase/STARTUP-STATE.json"
             $ready = $states.Count -eq 3 -and @($states | Where-Object { $_.state -ne 'ON_AIR' -or -not $_.pid }).Count -eq 0
             if ($ready) { break }
             Start-Sleep -Seconds 10
         } while ([datetime]::UtcNow -lt $deadline)
-        if (-not $ready) { throw "${phase}: all three channels did not reach ON_AIR." }
-        # Setup must not count as the two-hour programme window. At most the
-        # explicit 15-minute publication margin is spent on slate beforehand.
+        if (-not $ready) {
+            $null=Copy-PhaseLogs "${phase}-startup" $offsets
+            throw "${phase}: all three channels did not reach ON_AIR."
+        }
+        # Setup and startup allowance do not count toward the measured window.
         while ([datetime]::UtcNow -lt $scheduleStart) { Start-Sleep -Seconds 2 }
         $begin = [datetime]::UtcNow
         $end = $begin.AddMinutes($Minutes)
         if ($scheduleStart.AddMinutes(5*$slotCount) -lt $end.AddMinutes(1)) { throw 'Published horizon does not cover the full measured phase.' }
         Save-Result @{phase=$phase;begin=$begin.ToString('o');planned_end=$end.ToString('o');source_sha=$SourceSha} "$phase/SOAK-START.json"
+        if ($OnPhaseStarted) { & $OnPhaseStarted $phase $begin $end }
         $samples = [Collections.Generic.List[object]]::new()
         $captionSamples = [Collections.Generic.List[object]]::new()
         $expectedPids = @{}

@@ -11,18 +11,18 @@ if($env:COMPUTERNAME -ine 'DESKTOP-VBMA6O5'){throw 'This launch order targets DE
 $missionRoot='C:\CivicCastSoak\missions\beta6-sep11-39e7ec3cbb4c'
 $installedBin=Join-Path $missionRoot 'bin'
 $identityPath=Join-Path $installedBin 'run-identity.json'
-$bin=Join-Path $missionRoot 'physical-soak-r2-bin'
-$taskName='CivicCast-FixedBeta-39e7-PhysicalSoak-R2'
+$bin=Join-Path $missionRoot 'physical-soak-r3-bin'
+$taskName='CivicCast-FixedBeta-39e7-PhysicalSoak-R3'
 foreach($installedHelper in @($identityPath,(Join-Path $installedBin 'Beta5Tester.Common.ps1'))){if(-not(Test-Path -LiteralPath $installedHelper -PathType Leaf)){throw "Verified upgrade helper is missing: $installedHelper"}}
 $upgrade=Get-Content -LiteralPath (Join-Path $missionRoot 'upgrade-result.json') -Raw | ConvertFrom-Json
 if($upgrade.status -ne 'PASS' -or $upgrade.candidate_source_sha -ne '39e7ec3cbb4ccbeb3009ff3257dfc314010151f3'){throw 'Exact candidate upgrade has not passed.'}
-$previous=Get-ScheduledTask -TaskName 'CivicCast-FixedBeta-39e7-PhysicalSoak-R1' -ErrorAction SilentlyContinue
+$previous=Get-ScheduledTask -TaskName 'CivicCast-FixedBeta-39e7-PhysicalSoak-R2' -ErrorAction SilentlyContinue
 if($previous -and [string]$previous.State -eq 'Running'){throw 'Previous attempt is still running; preserve it.'}
-$previousResult=Get-Content -LiteralPath (Join-Path $missionRoot 'physical-soak-job.json') -Raw | ConvertFrom-Json
-if($previousResult.job_state -ne 'FAIL'){throw 'R2 requires the preserved failed R1 result.'}
+$previousResult=Get-Content -LiteralPath (Join-Path $missionRoot 'physical-soak-r2-job.json') -Raw | ConvertFrom-Json
+if($previousResult.job_state -ne 'FAIL'){throw 'R3 requires the preserved failed R2 result.'}
 if(Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue){throw 'Dedicated soak task already exists; do not launch it twice.'}
-if(Test-Path -LiteralPath (Join-Path $missionRoot 'physical-soak-r2')){throw 'Physical soak evidence already exists; preserve it.'}
-if(Test-Path -LiteralPath $bin){throw 'R2 stable script folder already exists; inspect before retry.'}
+if(Test-Path -LiteralPath (Join-Path $missionRoot 'physical-soak-r3')){throw 'Physical soak evidence already exists; preserve it.'}
+if(Test-Path -LiteralPath $bin){throw 'R3 stable script folder already exists; inspect before retry.'}
 New-Item -ItemType Directory -Path $bin | Out-Null
 foreach($name in $files){
     $destination=Join-Path $bin $name
@@ -36,4 +36,4 @@ $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Hours 
 $principal=New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Highest
 Register-ScheduledTask -TaskName $taskName -Action $action -Settings $settings -Principal $principal -Description 'Fixed CivicCast beta 39e7: two120-minute physical soak phases; once only.' | Out-Null
 Start-ScheduledTask -TaskName $taskName
-@{order='FIXED-BETA-PHYSICAL-SOAK-R2';task_name=$taskName;launch_requested_utc=[datetime]::UtcNow.ToString('o');candidate_source_sha='39e7ec3cbb4ccbeb3009ff3257dfc314010151f3';job_report='soak/fixed-beta-39e7/physical-soak-r2/job.json';status='LAUNCH_REQUESTED';measured_soak_started=$false} | ConvertTo-Json -Compress
+@{order='FIXED-BETA-PHYSICAL-SOAK-R3';task_name=$taskName;launch_requested_utc=[datetime]::UtcNow.ToString('o');candidate_source_sha='39e7ec3cbb4ccbeb3009ff3257dfc314010151f3';job_report='soak/fixed-beta-39e7/physical-soak-r3/job.json';status='LAUNCH_REQUESTED';measured_soak_started=$false} | ConvertTo-Json -Compress
