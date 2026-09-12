@@ -606,7 +606,7 @@ jobs:
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 1971 \
+            --floor 1978 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit
