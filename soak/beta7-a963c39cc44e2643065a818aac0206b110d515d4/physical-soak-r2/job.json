@@ -2,14 +2,14 @@
     "hostname":  "DESKTOP-VBMA6O5",
     "source_sha":  "a963c39cc44e2643065a818aac0206b110d515d4",
     "job_started_utc":  "2026-09-12T23:26:17.2297193Z",
-    "job_state":  "STARTED",
+    "job_state":  "FAIL",
     "minutes_per_phase":  120,
     "phases":  [
                    "ON",
                    "OFF"
                ],
     "result":  null,
-    "error":  null,
+    "error":  "ON transport admission did not produce a clean 0/0/0 round on all three channels.",
     "installed_identity":  {
                                "runtime_file_sha256":  {
                                                            "Lib/site-packages/civiccast/egress/daemon.py":  "b0af145243f6b28e80f7b1bc64aebe4ca930865eea26c06db6550d5dbb1bba04",
@@ -19,5 +19,6 @@
                                "verified_utc":  "2026-09-12T23:26:17.8910335Z",
                                "version":  "1.0.0-beta.7",
                                "app_pack_source_sha":  "a963c39cc44e2643065a818aac0206b110d515d4"
-                           }
+                           },
+    "finished_utc":  "2026-09-12T23:28:58.5251562Z"
 }
