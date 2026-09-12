@@ -1182,7 +1182,11 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # complete stale ZIP payloads, a larger replacement, and idempotence. The
     # Linux mutation baseline collected the exact new tuple (1823, 2024), so
     # both lanes advance by four.
-    assert (collect("not windows_only"), collect()) == (1823, 2024)
+    # 2026-09-12 Windows cache trace classification (PR #222): one platform-
+    # independent hostile-environment case plus six windows_only parameterized
+    # cache-boundary cases. Actual collect-only runs returned (1824, 2031), so
+    # the pure lane advances by one and the full lane advances by seven.
+    assert (collect("not windows_only"), collect()) == (1824, 2031)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
