@@ -1,6 +1,8 @@
 # soak8-e1acfe6 Latest Test Directive
-Current: soak/DIRECTIVE-10.md
+Current: soak/DIRECTIVE-11.md
 Branch: soak8-e1acfe6-directives
+Updated: 2026-09-12T05:02Z - R1 failed harness preflight before measurement.
+Correct array handling/report archiving and launch isolated R2. See Directive11.
 Updated: 2026-09-12T04:44Z - Physical job STARTED confirmed. Return a read-only
 phase-start/progress snapshot; leave the running soak unchanged. See Directive10.
 Updated: 2026-09-12T04:19Z - Exact candidate upgrade PASS and all three Gate A

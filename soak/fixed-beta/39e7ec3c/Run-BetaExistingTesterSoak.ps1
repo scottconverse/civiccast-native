@@ -40,7 +40,10 @@ function Invoke-Station([string]$Method, [string]$Path, $Body=$null, [int]$Timeo
     if ($token) { $arguments.Headers = @{Authorization='Bearer '+$token} }
     if ($null -ne $Body) { $arguments.ContentType='application/json'; $arguments.Body=$Body | ConvertTo-Json -Depth 12 -Compress }
     # Do not log request/response bodies: bootstrap and authentication responses contain secrets.
-    Invoke-RestMethod @arguments
+    # PowerShell 5.1 emits a REST JSON array as one pipeline object. Capture
+    # then return it so collection callers receive its individual rows.
+    $response = Invoke-RestMethod @arguments
+    return $response
 }
 function Upload-Sample($File, [string]$AssetId, [string]$Title) {
     Add-Type -AssemblyName System.Net.Http
@@ -139,6 +142,7 @@ try {
     $health = Invoke-Station GET '/health'
     if ($health.status -ne 'healthy' -or $health.schema -ne 'current' -or $health.version -ne '1.0.0-beta.6') { throw 'Installed fixed beta health/version/schema is not ready.' }
     $inventory = @(Invoke-Station GET '/api/staff/egress/channels')
+    Save-Result @{count=$inventory.Count;channel_ids=@($inventory | ForEach-Object {[string]$_.channel_id})} 'CHANNEL-INVENTORY.json'
     $expectedPorts = @{public=9001;education=9002;government=9003}
     $observed = @($inventory | Where-Object { $_.channel_id -and $expectedPorts.ContainsKey("$($_.channel_id)") })
     if ($inventory.Count -ne 3 -or $observed.Count -ne 3 -or @($observed.channel_id | Sort-Object -Unique).Count -ne 3) { throw 'Existing tester does not expose exactly public/education/government channel configs.' }
