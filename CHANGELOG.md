@@ -22,6 +22,10 @@ came across and what deliberately did not.
 
 ### beta.7 playout repair (candidate gates outstanding)
 
+- Start one-item scheduled rollovers at the beginning of short programme
+  windows, and turn an expired live horizon into one immediate reload against
+  its original boundary. This prevents the automation loop from repeatedly
+  re-dating an already-ended dispatch until the worker reaches clean EOS.
 - When a deferred replacement is fully prerolled but the outgoing programme
   stops producing output without EOS, force that transaction through the
   existing guarded commit path instead of killing the worker at the ordinary

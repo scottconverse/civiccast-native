@@ -189,6 +189,42 @@ def test_single_item_rollover_prepares_next_boundary_with_bounded_lead(duration:
     assert _pending_actions(store, "public") == ["reload"]
 
 
+def test_short_single_item_rollover_uses_the_whole_item_as_preparation_lead() -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config("public"))
+    store.write_state(
+        EgressStateRow(
+            channel_id="public",
+            state="ON_AIR",
+            current_source_label="Current programme",
+            current_proof_event_id="ev-1",
+            updated_at=_NOW,
+            pid=123,
+        )
+    )
+    daemon = _HorizonAwareDaemon(live_channels={"public"})
+    daemon.dispatched["public"] = ("ev-1", (30.0,), False)
+    sampled: list[datetime] = []
+
+    def next_plan(channel_id: str, boundary: datetime) -> EgressSourcePlan:
+        sampled.append(boundary)
+        return _plan_with_duration(channel_id, 30.0, source_ref="next-programme")
+
+    service = ChannelAutomationService(
+        store,
+        daemon,
+        lambda channel: _plan_with_duration(channel, 30.0),
+        settings=ChannelAutomationSettings(),
+        boundary_source_plan_provider=next_plan,
+    )
+    end = _NOW + timedelta(seconds=30)
+    service.run_once(now=_NOW)  # establish the active plan's horizon
+    service.run_once(now=_NOW + timedelta(seconds=2))
+
+    assert sampled == [end]
+    assert _pending_actions(store, "public") == ["reload"]
+
+
 class TestRelayIdentifierValidation:
     """Audit Critical (TEST-001/QA-001): the API layer must reject relay
     identifiers the relay runtime categorically rejects - otherwise a saved
@@ -1084,21 +1120,11 @@ class TestRolloverCadence:
         restarted. The shipped, scaled floor (used by every other test in
         this class) keeps that lead at a steady ~120s indefinitely instead.
 
-        Item 78 fix 2 (the stale-horizon guard in ``_check_plan_rollover``)
-        changes the EXACT dispatch cadence the flat-floor bug produces here
-        versus its original measurement: once a negative lead actually lands
-        the tracked horizon on a ``plan_end_at`` at or before "now", this
-        pass now discards it and re-establishes from the current dispatch
-        rather than blindly dispatching another rollover against a target
-        already behind wall clock -- see the two "was stale ... re-
-        establishing" log lines this simulation now emits. That backstop
-        bounds the damage (no runaway "one dispatch every single tick,
-        forever") but it does NOT make the flat floor safe: the boundary-
-        aligned lead still goes negative here, repeatedly and by a growing
-        margin, because the floor itself is still wrong for this plan
-        shape. The scaled floor below remains the real fix; this guard is
-        defense-in-depth for whatever gets past it (a stalled automation
-        pass, not merely a mistuned constant)."""
+        The stale-horizon recovery changes the exact broken cadence once the
+        flat floor pushes a dispatch to the boundary: it immediately rescues
+        the expired plan instead of waiting for the flat floor again. The
+        lead still goes negative because the floor remains wrong for this
+        plan shape. The scaled floor below remains the real cadence fix."""
 
         def flat_300s_floor(_planned_seconds: float) -> float:
             return 300.0
@@ -1117,8 +1143,8 @@ class TestRolloverCadence:
         buggy_leads = leads(buggy_dispatches)
         fixed_leads = leads(fixed_dispatches)
 
-        assert buggy_dispatches == [120.0, 420.0, 840.0, 1140.0, 1560.0]
-        assert buggy_leads == [120.0, 60.0, -120.0, -180.0, -360.0]
+        assert buggy_dispatches[:3] == [120.0, 420.0, 720.0]
+        assert buggy_leads[:3] == [120.0, 60.0, 0.0]
         assert min(buggy_leads) < 0  # the flat floor is still not safe
 
         assert fixed_dispatches[:5] == [120.0, 360.0, 600.0, 840.0, 1080.0]
@@ -2083,19 +2109,11 @@ class TestPerChannelClockIsReadFreshEachIteration:
         assert tracked_b[1] > post_block_now
 
 
-class TestStaleRolloverHorizonIsReestablishedNotDispatchedAgainst:
-    """Item 78 fix 2: once a tracked ``plan_end_at`` has slipped into the past
-    (the channel's own automation pass blocked long enough that wall clock
-    passed it by), the tracked horizon must be discarded and re-established
-    from the CURRENT proof event/dispatch -- never dispatched against as if
-    it were still a real future boundary. Dispatching against a stale,
-    already-past ``plan_end_at`` is the exact frozen-horizon bug (soak
-    evidence: "live plan ends in -698s", forever): the fresh plan the
-    provider hands back always ends further in the future than a target
-    stuck in the past, so every tick looks like a legitimate rollover and one
-    fires every single poll, forever."""
+class TestStaleRolloverHorizonDispatchesImmediateRecovery:
+    """A live finite plan that is already past due must switch to the current
+    schedule item instead of repeatedly re-dating the expired dispatch."""
 
-    def test_a_stale_horizon_is_discarded_instead_of_driving_an_unthrottled_dispatch(
+    def test_a_stale_horizon_dispatches_once_against_its_original_boundary(
         self,
     ) -> None:
         store = InMemoryEgressStore()
@@ -2107,28 +2125,97 @@ class TestStaleRolloverHorizonIsReestablishedNotDispatchedAgainst:
                 current_source_label="Council Meeting",
                 current_proof_event_id="ev-1",
                 updated_at=_NOW,
+                pid=123,
             )
         )
+
+        class _RecordingDaemon(_HorizonAwareDaemon):
+            def __init__(self) -> None:
+                super().__init__(live_channels={"public"})
+                self.dispatched["public"] = ("ev-1", (100.0,), False)
+                self.recorded: list[tuple[datetime, str | None]] = []
+
+            def record_rollover_plan_end(
+                self,
+                _channel_id: str,
+                plan_end_at: datetime,
+                *,
+                command_id: str | None,
+                force_fallback: bool = False,
+            ) -> None:
+                self.recorded.append((plan_end_at, command_id))
+
+        daemon = _RecordingDaemon()
         service = ChannelAutomationService(
             store,
-            _FakeDaemon(live_channels={"public"}),
+            daemon,
             lambda cid: _plan_with_duration(cid, 100.0),
             settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=lambda cid, _at: _plan_with_duration(
+                cid, 100.0, source_ref="current-programme"
+            ),
         )
 
         service.run_once(now=_NOW)  # establishes: ends at _NOW+100
         assert _pending_actions(store, "public") == []
+        # A recent ordinary dispatch must not suppress stale-plan recovery.
+        service._rollover_dispatched_at["public"] = service._monotonic()
 
-        # A huge jump forward with NO proof-event change -- the shape a
-        # long-blocked automation pass produces (item 78's diagnosed
-        # scenario): the tracked plan_end_at (_NOW+100) is now far in the
-        # past relative to "now". Without the fix, this dispatches a reload
-        # (any fresh re-query trivially "ends later" than a target already
-        # thousands of seconds in the past) -- every single tick, forever.
         far_future = _NOW + timedelta(seconds=5000)
         service.run_once(now=far_future)
 
-        assert _pending_actions(store, "public") == []
+        pending = store.peek_pending_commands("public")
+        assert [command.action for command in pending] == ["reload"]
+        assert daemon.recorded == [(_NOW + timedelta(seconds=100), pending[0].command_id)]
+        assert service._plan_horizon["public"][1] == _NOW + timedelta(seconds=100)
+
+        # The issued latch prevents a second command while the first is waiting
+        # for the daemon to consume it.
+        service.run_once(now=far_future + timedelta(seconds=2))
+        assert len(store.peek_pending_commands("public")) == 1
+
+    def test_a_failing_stale_recovery_provider_keeps_its_retry_cooldown(self) -> None:
+        clock = {"now": 0.0}
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        store.write_state(
+            EgressStateRow(
+                channel_id="public",
+                state="ON_AIR",
+                current_source_label="Council Meeting",
+                current_proof_event_id="ev-1",
+                updated_at=_NOW,
+                pid=123,
+            )
+        )
+        daemon = _HorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", (100.0,), False)
+        provider_calls: list[datetime] = []
+
+        def failing_provider(_channel_id: str, boundary: datetime) -> EgressSourcePlan:
+            provider_calls.append(boundary)
+            raise SourcePrepareError("not ready")
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_duration(cid, 100.0),
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=failing_provider,
+            monotonic=lambda: clock["now"],
+        )
+        service.run_once(now=_NOW)
+        far_future = _NOW + timedelta(seconds=5000)
+        service.run_once(now=far_future)
+        assert provider_calls == [far_future]
+
+        clock["now"] = 2.0
+        service.run_once(now=far_future + timedelta(seconds=2))
+        assert provider_calls == [far_future]
+
+        clock["now"] = 31.0
+        service.run_once(now=far_future + timedelta(seconds=31))
+        assert provider_calls == [far_future, far_future + timedelta(seconds=31)]
 
 
 class _SettlingHorizonAwareDaemon(_HorizonAwareDaemon):
@@ -2291,11 +2378,12 @@ class TestStaleHorizonWaitsForASettlingSeamlessReload:
         with caplog.at_level(logging.WARNING, logger="civiccast.egress.automation"):
             service.run_once(now=_NOW + timedelta(seconds=614))
 
-        assert [r for r in caplog.records if "was stale" in r.getMessage()]
-        assert "public" not in service._rollover_issued
-        # Re-established from the (still old) dispatch record, dated from now.
-        assert service._plan_horizon["public"][1] == _NOW + timedelta(seconds=614 + 600)
-        assert _pending_actions(store, "public") == []
+        assert [r for r in caplog.records if "retry for public dispatched" in r.getMessage()]
+        assert "public" in service._rollover_issued
+        # The original boundary remains authoritative and the failed settlement
+        # is retried instead of re-dating the old dispatch from this tick.
+        assert service._plan_horizon["public"][1] == _NOW + timedelta(seconds=600)
+        assert _pending_actions(store, "public") == ["reload"]
 
     def test_a_deferred_anchor_more_than_a_lead_time_ahead_is_not_honoured(self) -> None:
         """Belt: even if a poisoned ``previous_end_at`` reaches the deferred-start

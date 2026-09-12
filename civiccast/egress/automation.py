@@ -1007,19 +1007,15 @@ class ChannelAutomationService:
             return
         _, plan_end_at, last_segment_start_at, planned_seconds = tracked
 
+        stale_horizon_recovery = False
         if plan_end_at <= now:
-            # Item 78 fix 2: the tracked horizon is STALE -- this channel's own
-            # pass (or an earlier channel's pass sharing the same "now" -- see
-            # fix 1 above for why that no longer happens in production either
-            # way) blocked long enough that the plan this tuple describes has
-            # already ended by wall clock. Dispatching a rollover against a
-            # past ``plan_end_at`` is exactly the frozen-horizon bug (soak
-            # evidence: "live plan ends in -698s", forever): the reload never
-            # gets ahead of anything because the target it is computed
-            # against is behind "now", not ahead of it. Discard the tuple and
-            # re-establish it from the CURRENT proof event/dispatch instead of
-            # dispatching against a lie -- the same logic the "fresh plan just
-            # took air" branch above already uses.
+            # The tracked finite plan has ended by wall clock. A seamless
+            # reload that is already settling may legitimately run a few
+            # seconds past this estimate, so leave that transaction alone.
+            # Otherwise resolve the item due now and preserve this original
+            # boundary on the recovery command; the daemon uses the expired
+            # timestamp to select an immediate cut after preroll instead of
+            # waiting for another outgoing EOS.
             if self._daemon_has_pending_reload_settlement(channel_id):
                 # Sandbox soak 39d852e (2026-09-09, government + education
                 # channels): a boundary-aligned seamless rollover was ARMED
@@ -1091,30 +1087,26 @@ class ChannelAutomationService:
                         self._monotonic() - last_warned_at,
                     )
                 return
-            _LOG.warning(
-                "Channel automation rollover horizon for %s was stale (plan_end_at "
-                "%s <= now %s); re-establishing instead of dispatching.",
-                channel_id,
-                plan_end_at.isoformat(),
-                now.isoformat(),
-            )
-            self._rollover_issued.discard(channel_id)
-            self._rollover_issued_at.pop(channel_id, None)
-            # Coordinator review, round 3, item E: same reasoning as the
-            # "fresh plan just took air" branch above -- a stale, discarded
-            # sequence must not suppress the first retry of whatever
-            # rollover the re-established horizon triggers next.
-            self._rollover_retry_dispatched_at.pop(channel_id, None)
-            self._rollover_retry_warned_at.pop(channel_id, None)
-            self._rollover_pid_age_warned_at.pop(channel_id, None)
-            self._reestablish_plan_horizon(
-                channel_id,
-                now=now,
-                proof_event_id=proof_event_id,
-                previous_end_at=plan_end_at,
-                previous_planned_seconds=planned_seconds,
-            )
-            return
+            if channel_id not in self._rollover_issued:
+                # A live worker whose finite plan is already past due needs the
+                # current scheduled item now. Re-reading the daemon's unchanged
+                # dispatch would only date the expired plan from this tick and
+                # let it run to EOS. Keep the true outgoing boundary and use the
+                # ordinary dispatch path below; the daemon sees that the recorded
+                # boundary is past and performs an immediate seamless cut once the
+                # incoming leg is ready.
+                _LOG.warning(
+                    "Channel automation rollover horizon for %s was stale (plan_end_at "
+                    "%s <= now %s); dispatching an immediate rollover.",
+                    channel_id,
+                    plan_end_at.isoformat(),
+                    now.isoformat(),
+                )
+                self._rollover_issued_at.pop(channel_id, None)
+                self._rollover_retry_dispatched_at.pop(channel_id, None)
+                self._rollover_retry_warned_at.pop(channel_id, None)
+                self._rollover_pid_age_warned_at.pop(channel_id, None)
+                stale_horizon_recovery = True
 
         retrying_undelivered = False
         if channel_id in self._rollover_issued:
@@ -1181,15 +1173,18 @@ class ChannelAutomationService:
             min_lead_seconds=self._rollover_min_lead_seconds(planned_seconds),
         )
         if self._boundary_source_plan_provider is not None:
-            # One scheduled item per plan: preload near its END, not at the
-            # start of a potentially hour-long item (the defer limit is 900s).
-            trigger_at = plan_end_at - timedelta(
-                seconds=self._rollover_min_lead_seconds(planned_seconds)
+            # One scheduled item per plan: give short items their whole life
+            # for preparation, while keeping the historic 120s cap for long
+            # programmes. This ensures the incoming leg can be prerolled before
+            # the outgoing finite pipeline reaches EOS.
+            trigger_at = max(
+                last_segment_start_at,
+                plan_end_at - timedelta(seconds=self._ROLLOVER_MIN_LEAD_SECONDS),
             )
         if now < trigger_at:
             return  # not yet at the boundary-aligned trigger point
 
-        if not retrying_undelivered:
+        if not retrying_undelivered and not stale_horizon_recovery:
             # D43 cadence floor, D45 fix: never dispatch rollovers for one
             # channel faster than _rollover_min_interval_seconds(planned_seconds)
             # apart -- sized to the plan actually on air, not a fixed
@@ -1203,7 +1198,7 @@ class ChannelAutomationService:
                 < self._rollover_min_interval_seconds(planned_seconds)
             ):
                 return
-        else:
+        elif retrying_undelivered:
             # Item 78 fix 2: the B2 "didn't land" retry path used to be fully
             # EXEMPT from the cadence floor above (deliberately -- see that
             # branch's own comment: "recovery, not cadence"), which meant a
