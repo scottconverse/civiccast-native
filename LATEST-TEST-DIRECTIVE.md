@@ -1,6 +1,8 @@
 # soak8-e1acfe6 Latest Test Directive
-Current: soak/DIRECTIVE-11.md
+Current: soak/DIRECTIVE-12.md
 Branch: soak8-e1acfe6-directives
+Updated: 2026-09-12T05:21Z - Return read-only R2 phase-start and progress evidence.
+Leave the current attempt unchanged. See soak/DIRECTIVE-12.md.
 Updated: 2026-09-12T05:02Z - R1 failed harness preflight before measurement.
 Correct array handling/report archiving and launch isolated R2. See Directive11.
 Updated: 2026-09-12T04:44Z - Physical job STARTED confirmed. Return a read-only
