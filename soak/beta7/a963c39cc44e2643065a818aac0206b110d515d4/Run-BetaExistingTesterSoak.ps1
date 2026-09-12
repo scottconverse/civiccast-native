@@ -10,6 +10,7 @@ param(
     [string]$ProgramDataRoot = 'C:\ProgramData\CivicCast',
     [string]$TspExe = 'C:\CivicCastHostStore\install\packs\native-server-binaries\payload\tsduck\bin\tsp.exe',
     [switch]$ReplaceOverlappingTestSchedule,
+    [string[]]$AllowedOverlapScheduleIds=@(),
     [string]$ExistingRunRoot,
     [switch]$RequireTransportAdmission,
     [scriptblock]$OnPhaseStarted,
@@ -26,6 +27,7 @@ $runRoot = Join-Path $OutputRoot $runId
 $token = $null
 $owned = @()
 $transportPending = @{}
+$admissionPending = @{}
 $channels = @(@{id='public';port=9001}, @{id='education';port=9002}, @{id='government';port=9003})
 $phases = if ($Mode -eq 'Both') { @('ON','OFF') } else { @($Mode) }
 New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
@@ -250,6 +252,13 @@ try {
         } | ForEach-Object { [pscustomobject]@{channel_id=$channel.id;schedule_id=$_.id;state=$_.state;scheduled_at=$_.scheduled_at;duration_seconds=$_.duration_seconds;asset_id=$_.asset_id} })
     }
     if ($overlaps.Count) {
+        $allowedOverlapSet=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        foreach($allowedId in @($AllowedOverlapScheduleIds)){if($allowedId){$null=$allowedOverlapSet.Add([string]$allowedId)}}
+        $unapprovedOverlaps=@($overlaps | Where-Object {-not $_.schedule_id -or -not $allowedOverlapSet.Contains([string]$_.schedule_id)})
+        if($unapprovedOverlaps.Count){
+            Save-Result @{verdict='UNAPPROVED_SCHEDULE_OVERLAP';conflicts=$unapprovedOverlaps;allowed_schedule_id_count=$allowedOverlapSet.Count;action='No cancellation performed.'} 'SCHEDULE-CONFLICT.json'
+            throw 'An overlapping schedule row is not bound to the explicitly allowed preserved plan; no rows were cancelled.'
+        }
         Save-Result @{verdict='SCHEDULE_CONFLICT';conflicts=$overlaps;replace_switch=$ReplaceOverlappingTestSchedule.IsPresent;action='Cancel only overlapping scheduled or published test rows through the supported store transition.'} 'SCHEDULE-CONFLICT.json'
         if (-not $ReplaceOverlappingTestSchedule) { throw 'Existing future schedule overlaps the requested clean horizon; rerun with -ReplaceOverlappingTestSchedule to cancel only those rows.' }
         if (@($overlaps | Where-Object { $_.state -notin @('scheduled','published') }).Count) { throw 'Overlapping rows contain an unsupported schedule state.' }
@@ -342,22 +351,25 @@ try {
             $null=Copy-PhaseLogs "${phase}-startup" $offsets
             throw "${phase}: all three channels did not reach ON_AIR."
         }
+        $phasePids=@{}; foreach($state in $states){$phasePids[[string]$state.channel_id]=[int]$state.pid}
         if ($RequireTransportAdmission) {
             $admissionRounds=@()
             foreach ($admissionName in @('acquisition-diagnostic','clean-admission')) {
-                $admissionPending=@{}
+                $admissionPending.Clear()
                 foreach ($channel in $channels) {
                     $admissionPending[$channel.id]=Start-Beta7TransportProbe -TspExe $TspExe -Port $channel.port -OutputDirectory (Join-Path $runRoot "$phase/admission/$admissionName") -Label $channel.id
-                }
-                while ($admissionPending.Count) {
-                    foreach ($probeChannel in @($admissionPending.Keys)) {
-                        $admissionResult=Complete-Beta7TransportProbe $admissionPending[$probeChannel]
+                    while ($admissionPending.Count) {
+                        foreach($liveChannel in $channels){
+                            $liveState=Invoke-Station GET "/api/staff/egress/channels/$($liveChannel.id)/state"
+                            if($liveState.state -ne 'ON_AIR' -or [int]$liveState.pid -ne [int]$phasePids[$liveChannel.id]){throw "$phase worker state/PID changed during serialized transport admission."}
+                        }
+                        $admissionResult=Complete-Beta7TransportProbe $admissionPending[$channel.id]
                         if ($null -ne $admissionResult) {
                             $admissionRounds += [pscustomobject]@{round=$admissionName;excluded_from_verdict=($admissionName -eq 'acquisition-diagnostic');result=$admissionResult}
-                            $admissionPending.Remove($probeChannel)
+                            $admissionPending.Remove($channel.id)
                         }
+                        if ($admissionPending.Count) { Start-Sleep -Seconds 1 }
                     }
-                    if ($admissionPending.Count) { Start-Sleep -Seconds 1 }
                 }
                 Save-Result $admissionRounds "$phase/TRANSPORT-ADMISSION.json"
                 if ($admissionName -eq 'clean-admission') {
@@ -376,11 +388,13 @@ try {
         if ($OnPhaseStarted) { & $OnPhaseStarted $phase $begin $end }
         $samples = [Collections.Generic.List[object]]::new()
         $captionSamples = [Collections.Generic.List[object]]::new()
-        $expectedPids = @{}
+        $expectedPids = $phasePids
         $nextCaption = $begin
         $nextProgress = $begin
         $nextTransport = $begin
         $transportRound = 0
+        $activeTransportRound = $null
+        $transportQueue=[Collections.Generic.Queue[object]]::new()
         $transportGrades = [Collections.Generic.List[object]]::new()
         Write-ProgressLog "${phase}: measured $Minutes-minute soak started on all three channels"
         while ([datetime]::UtcNow -lt $end) {
@@ -410,13 +424,18 @@ try {
                     $transportPending.Remove($probeChannel)
                     Save-Result @($transportGrades.ToArray()) "$phase/transport-results.json"
                     if ($transportResult.verdict -ne 'PASS') { throw "$phase transport proof failed for ${probeChannel}: $($transportResult.reason)" }
+                    if($transportQueue.Count){
+                        $nextProbeChannel=$transportQueue.Dequeue()
+                        $transportPending[$nextProbeChannel.id]=Start-Beta7TransportProbe -TspExe $TspExe -Port $nextProbeChannel.port -OutputDirectory (Join-Path $runRoot "$phase/transport/$activeTransportRound") -Label $nextProbeChannel.id
+                    }
                 }
             }
             if ($tick -ge $nextTransport -and $tick -lt $end.AddSeconds(-60)) {
-                if ($transportPending.Count) { throw 'Previous transport probes did not finish before the next collection.' }
-                foreach ($channel in $channels) {
-                    $transportPending[$channel.id] = Start-Beta7TransportProbe -TspExe $TspExe -Port $channel.port -OutputDirectory (Join-Path $runRoot "$phase/transport/$transportRound") -Label $channel.id
-                }
+                if ($transportPending.Count -or $transportQueue.Count) { throw 'Previous serialized transport round did not finish before the next collection.' }
+                foreach ($channel in $channels) { $transportQueue.Enqueue($channel) }
+                $activeTransportRound=$transportRound
+                $nextProbeChannel=$transportQueue.Dequeue()
+                $transportPending[$nextProbeChannel.id]=Start-Beta7TransportProbe -TspExe $TspExe -Port $nextProbeChannel.port -OutputDirectory (Join-Path $runRoot "$phase/transport/$activeTransportRound") -Label $nextProbeChannel.id
                 $transportRound++
                 $nextTransport = $nextTransport.AddMinutes(30)
             }
@@ -451,7 +470,7 @@ try {
         $logs += @(Copy-PhaseLogs $phase $offsets)
         $failureGrades = Get-Beta7FailureGrades $logs $phaseExpectedElements
         $workerTopology = Get-Beta7WorkerTopologyGrade $logs $channels $states $transportGrades.ToArray() $phaseExpectedElements
-        $transportComplete = $transportPending.Count -eq 0
+        $transportComplete = $transportPending.Count -eq 0 -and $transportQueue.Count -eq 0
         foreach ($channel in $channels) {
             $proofCount = @($transportGrades.ToArray() | Where-Object { $_.label -eq $channel.id -and $_.verdict -eq 'PASS' }).Count
             if ($proofCount -lt [math]::Ceiling($Minutes/30)) { $transportComplete = $false }
@@ -469,6 +488,9 @@ try {
     Save-Result @{verdict='FAIL';source_sha=$SourceSha;error=$_.Exception.Message} 'VERDICT.json'
     throw
 } finally {
+    foreach ($probe in @($admissionPending.Values)) {
+        try { Stop-Beta7TransportProbe $probe } catch { }
+    }
     foreach ($probe in @($transportPending.Values)) {
         try { Stop-Beta7TransportProbe $probe }
         catch { Write-ProgressLog "Transport probe cleanup failed: $($_.Exception.GetType().Name)" }
