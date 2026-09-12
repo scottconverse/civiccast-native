@@ -1,0 +1,99 @@
+﻿{
+    "schema":  "civiccast-native-fleet-heartbeat-v1",
+    "mission":  "soak8-e1acfe6",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "utc":  "20260912T230612Z",
+    "health":  {
+                   "status":  "healthy",
+                   "version":  "1.0.0-beta.7",
+                   "schema":  "current",
+                   "schema_db_revision":  "0087_retention_terms",
+                   "schema_expected_head":  "0087_retention_terms",
+                   "mode":  "normal"
+               },
+    "db_revision":  null,
+    "service":  "Running",
+    "cpu_pct":  14.9,
+    "mem_free_mb":  11211,
+    "disk_free_gb":  100,
+    "uptime_min":  5443,
+    "processes":  [
+                      {
+                          "ProcessName":  "ffmpeg",
+                          "Id":  21992,
+                          "rss_mb":  27,
+                          "cpu_s":  0.1
+                      },
+                      {
+                          "ProcessName":  "python",
+                          "Id":  2572,
+                          "rss_mb":  1070,
+                          "cpu_s":  918.5
+                      },
+                      {
+                          "ProcessName":  "python",
+                          "Id":  5204,
+                          "rss_mb":  294,
+                          "cpu_s":  79.6
+                      },
+                      {
+                          "ProcessName":  "python",
+                          "Id":  5460,
+                          "rss_mb":  229,
+                          "cpu_s":  80.2
+                      },
+                      {
+                          "ProcessName":  "python",
+                          "Id":  23012,
+                          "rss_mb":  238,
+                          "cpu_s":  76.5
+                      },
+                      {
+                          "ProcessName":  "pythonservice",
+                          "Id":  1968,
+                          "rss_mb":  87,
+                          "cpu_s":  6.8
+                      }
+                  ],
+    "engine_observed":  {
+                            "gst_launch_processes":  0,
+                            "ffmpeg_processes":  1,
+                            "inferred":  "ffmpeg-fallback"
+                        },
+    "egress_channels":  [
+                            {
+                                "channel_id":  "public",
+                                "state":  "ON_AIR",
+                                "engine":  null,
+                                "last_error":  null,
+                                "sink_connected":  {
+                                                       "f2hw-260912164550-a2097a":  false
+                                                   },
+                                "worker_processes":  null,
+                                "error":  null
+                            },
+                            {
+                                "channel_id":  "education",
+                                "state":  "ON_AIR",
+                                "engine":  null,
+                                "last_error":  null,
+                                "sink_connected":  {
+                                                       "f2hw-260912164550-a2097a":  false
+                                                   },
+                                "worker_processes":  null,
+                                "error":  null
+                            },
+                            {
+                                "channel_id":  "government",
+                                "state":  "ON_AIR",
+                                "engine":  null,
+                                "last_error":  null,
+                                "sink_connected":  {
+                                                       "f2hw-260912164550-a2097a":  false
+                                                   },
+                                "worker_processes":  null,
+                                "error":  null
+                            }
+                        ],
+    "soak_started":  false
+}
