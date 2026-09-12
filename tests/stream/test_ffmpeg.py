@@ -51,7 +51,30 @@ def test_run_ffmpeg_cancel_event_terminates_owned_process(monkeypatch: pytest.Mo
 def test_run_ffmpeg_pre_cancel_does_not_launch(monkeypatch: pytest.MonkeyPatch) -> None:
     cancel_event = threading.Event()
     cancel_event.set()
+    resolve_path = MagicMock(side_effect=AssertionError("cancelled work resolved ffmpeg"))
     popen = MagicMock()
+    monkeypatch.setattr(ffmpeg_module, "_ffmpeg_path", resolve_path)
+    monkeypatch.setattr(subprocess, "Popen", popen)
+
+    with pytest.raises(FfmpegCancelledError, match="before launch"):
+        run_ffmpeg(["-version"], cancel_event=cancel_event)
+
+    resolve_path.assert_not_called()
+    popen.assert_not_called()
+
+
+def test_run_ffmpeg_cancel_during_resolution_does_not_launch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancel_event = threading.Event()
+    popen = MagicMock()
+
+    def cancel_during_resolution(args: list[str], _path: str) -> list[str]:
+        cancel_event.set()
+        return args
+
+    monkeypatch.setattr(ffmpeg_module, "_ffmpeg_path", lambda: "ffmpeg")
+    monkeypatch.setattr(ffmpeg_module, "_resolve_video_encoder_args", cancel_during_resolution)
     monkeypatch.setattr(subprocess, "Popen", popen)
 
     with pytest.raises(FfmpegCancelledError, match="before launch"):

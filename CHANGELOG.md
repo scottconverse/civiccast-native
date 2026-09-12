@@ -26,6 +26,12 @@ came across and what deliberately did not.
   stops producing output without EOS, force that transaction through the
   existing guarded commit path instead of killing the worker at the ordinary
   stall threshold. beta.5 and beta.6 remain rejected; beta.7 is unpublished.
+- Reject an already-cancelled FFmpeg job before resolving the executable or
+  encoder. This keeps cancelled background work independent of host FFmpeg
+  availability and prevents it from failing with `FfmpegNotFoundError`.
+- Rebind the two historical GStreamer claims' current-source tripwires to the
+  repaired `engine.py` blob. This records source review only; it does not
+  reclassify the historical observations as beta.7 acceptance.
 
 ### Local beta reliability repair (candidate gates outstanding)
 

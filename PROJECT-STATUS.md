@@ -16,7 +16,20 @@
 > PR head `c11cafddb9a49b4365e73456df67d20f1e5aa369` exposed one omitted
 > artifact: docs run `34680422499` rejected the stale tracked PDF/DOCX manual
 > manifest. The three tracked manual artifacts are regenerated in the follow-up
-> commit and the local `--check-current` check passes; replacement CI is required.
+> commit and the local `--check-current` check passes. Replacement PR head
+> `4274e3eac5eae45bad73e5b359fe893e2df10bd6` passed the manual gate, but
+> deterministic-detectors run `34680753672` exposed a real pre-cancellation
+> ordering defect: `run_ffmpeg()` resolved a missing host FFmpeg executable
+> before honoring an already-set cancel event. The narrow correction now checks
+> cancellation before discovery; all 60 FFmpeg wrapper tests and Ruff pass
+> locally. The same run's randomized job exposed the repaired `engine.py` blob
+> still bound to its pre-repair hash in two historical claim entries. Both
+> current-source tripwires are rebound to blob
+> `3c1d1ef21b22d8f5840c9353551a43d8e370ddd4`; this does not reclassify their
+> historical evidence. The exact native Windows forced-stall regression also
+> passes against the worktree source with bundled GStreamer dependencies: one
+> guarded commit, resumed TS, clean teardown, and continuity checks in 63.48s.
+> Fresh replacement CI is required after these corrections are pushed.
 > Required PR CI, signed build, Sandbox, Gate A, dedicated-tester soak, and publication
 > remain outstanding. The existing beta.6 artifacts and evidence remain rejected.
 > Scott's full delivery authorization remains in force. All entries below this
@@ -114,16 +127,16 @@ the GitHub releases page daily.
 
 ---
 
-## 2. Where the project actually is, right now
+## 2. Historical 2026-09-10 snapshot (superseded by the beta.7 status above)
 
 | | |
 |---|---|
-| **main** | `6de69b8e` — green. (`795cdab5` was main when the beta.6 kit was built; the only commits since are this document and the soak evidence.) |
-| **Latest public release** | **v1.0.0-beta.5**, published 2026-09-09 10:14 PM |
-| **`docs/releases/release-truth.yaml` `current:`** | `v1.0.0-beta.5` |
-| **Product version in source** | `1.0.0-beta.6` (release-prep bump already landed) |
-| **beta.6 kit** | **built and byte-verified, NOT soaked, NOT gate-tested, NOT published** |
-| **Open PRs** | #202, #175, #155, #138 — all pre-existing, none from the 2026-09-09/10 work |
+| **main at that time** | `6de69b8e` - green. (`795cdab5` was main when the beta.6 kit was built.) |
+| **Latest public release at that time** | **v1.0.0-beta.5**, published 2026-09-09 10:14 PM |
+| **`docs/releases/release-truth.yaml` `current:` at that time** | `v1.0.0-beta.5` |
+| **Product version in source at that time** | `1.0.0-beta.6` (release-prep bump had landed) |
+| **beta.6 kit at that time** | **built and byte-verified, NOT soaked, NOT gate-tested, NOT published** |
+| **Open PRs at that time** | #202, #175, #155, #138 - all pre-existing, none from the 2026-09-09/10 work |
 
 ### The one thing that governs every decision from here
 

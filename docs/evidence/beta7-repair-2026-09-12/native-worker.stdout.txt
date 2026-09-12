@@ -1,0 +1,17 @@
+CTRL preroll: reached PLAYING after 3.1s pid=18580
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=1)
+CTRL reload: new leg preroll verified (reload_id=1) held_streams=1
+CTRL first-output: first buffer after 1.4s pid=18580
+CTRL reload: output stalled after replacement preroll; forcing switch (reload_id=1)
+CTRL reload: firing (reload_id=1)
+CTRL reload: boundary switch rebased to running time 3.233s
+CTRL reload: switching selector
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload: old leg disposed
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload: holds released
+CTRL reload diagnostic: stage=holds-released
+CTRL reload committed (elements=15)
+CTRL reload diagnostic: stage=committed elements=15
+CTRL output: 1090 buffers (+1088) since PLAYING
+WORKER_RESULT {'error': None, 'teardown_clean': True}

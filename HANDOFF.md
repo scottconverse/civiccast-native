@@ -28,7 +28,7 @@ generated OpenAPI, rendered-manual, and diff checks pass. Independent review
 caught and corrected a downloader default-pair mismatch before push. The
 downloader now uses beta.7/beta.7 consistently and explains the explicit
 beta.5/beta.5 pair while beta.7 is unpublished. No beta.7 artifact has been
-built. Remaining sequence: push and PR, required CI, signed beta.7 build,
+built. Remaining sequence: fresh required PR CI, merge, signed beta.7 build,
 Sandbox, Gate A, dedicated-tester soak, then publish only on passing evidence.
 Full owner authorization remains in force. Older entries below are historical.
 
@@ -36,7 +36,22 @@ First CI head `c11cafddb9a49b4365e73456df67d20f1e5aa369` exposed one missing
 generated set: docs run `34680422499` failed because the tracked PDF/DOCX manual
 manifest still named the earlier source hash. The PDF, DOCX, and manifest are
 regenerated in the follow-up commit; local `render_user_manual.py --check-current`
-passes. Required replacement CI remains outstanding.
+passes. Replacement head `4274e3eac5eae45bad73e5b359fe893e2df10bd6`
+passed that manual gate. Its deterministic-detectors run `34680753672` then
+exposed a real pre-cancellation ordering defect in `run_ffmpeg()`: an already
+cancelled job tried to locate host FFmpeg before raising cancellation. The
+narrow correction checks the event before executable discovery and strengthens
+the regression to reject any discovery call. All 60 FFmpeg wrapper tests and
+Ruff pass locally. The same run's randomized job failed because the two
+historical GStreamer claims still bound `engine.py` to its pre-repair blob.
+Their current-source tripwires now bind blob
+`3c1d1ef21b22d8f5840c9353551a43d8e370ddd4`; the historical observations remain
+historical. A native Windows regression against the worktree source and bundled
+GStreamer dependencies passed in 63.48s, forcing one guarded commit after an
+outgoing live source froze without EOS, resuming TS output, preserving commit
+ordering and continuity, and tearing down cleanly. Fresh replacement CI remains
+outstanding. Local evidence and limits are in
+`docs/evidence/beta7-repair-2026-09-12/LOCAL-VERIFICATION.md`.
 
 ## 2026-09-11 candidate built; harness corrections for Gate A
 
