@@ -1,0 +1,108 @@
+{
+    "schema_version":  1,
+    "verdict":  "FAIL",
+    "reason":  "seamless reload was expected but a content-reload aborted on channel=education (Seamless content-reload declined for education (worker never connected to its control pipe); falling back to restart.) -- fell back to a restart",
+    "first_failing_cycle":  null,
+    "cycles_total":  15,
+    "cycles_warmup":  3,
+    "cycles_evaluated":  12,
+    "unplanned_relaunch_count":  0,
+    "planned_restart_count":  1,
+    "incomplete_restart_count":  0,
+    "reload_aborted_count":  1,
+    "reload_abort_events":  [
+                                {
+                                    "channel_id":  "education",
+                                    "reason":  "Seamless content-reload declined for education (worker never connected to its control pipe); falling back to restart."
+                                }
+                            ],
+    "max_restart_gap_seconds":  20.4,
+    "restart_events":  [
+                           {
+                               "channel_id":  "education",
+                               "detected_utc":  "2026-09-12T15:23:16.4840020Z",
+                               "old_pid":  9876,
+                               "new_pid":  1884,
+                               "classification":  "planned_restart",
+                               "recovered":  true,
+                               "recovery_gap_seconds":  20.4,
+                               "superseded":  false,
+                               "incomplete":  false,
+                               "log_evidence":  "log"
+                           }
+                       ],
+    "harness_notes":  [
+
+                      ],
+    "soak_start_utc":  "2026-09-12T15:22:54.8932413Z",
+    "run_end_utc":  "2026-09-12T15:38:33.4212013Z",
+    "minutes_requested":  15,
+    "on_air_bound_minutes":  12,
+    "install_bound_minutes":  20,
+    "health_bound_minutes":  10,
+    "installer_exit_code":  0,
+    "installer_elapsed_seconds":  755.4,
+    "station_healthy":  true,
+    "samples_found":  4,
+    "assets_uploaded":  4,
+    "seamless_reload":  true,
+    "seamless_reload_override_requested":  true,
+    "seamless_reload_expected":  true,
+    "seamless_reload_verified":  "confirmed-via-registry-and-process",
+    "channels_started_utc":  "2026-09-12T15:22:39.3353794Z",
+    "first_state_row_s":  {
+                              "public":  0.1,
+                              "education":  0.1,
+                              "government":  15.5
+                          },
+    "time_to_on_air_s":  {
+                             "public":  15.3,
+                             "education":  15.4,
+                             "government":  15.5
+                         },
+    "captions_off_requested":  true,
+    "captions_enabled":  false,
+    "captions_off_verified":  true,
+    "worker_stdout_by_channel":  {
+                                     "education":  {
+                                                       "reload_committed_count":  31,
+                                                       "reload_aborted_count_worker":  0,
+                                                       "reload_aborted_reasons_worker":  [
+
+                                                                                         ],
+                                                       "worker_stall_count":  0,
+                                                       "worker_stall_stderr_count":  0
+                                                   },
+                                     "public":  {
+                                                    "reload_committed_count":  32,
+                                                    "reload_aborted_count_worker":  0,
+                                                    "reload_aborted_reasons_worker":  [
+
+                                                                                      ],
+                                                    "worker_stall_count":  0,
+                                                    "worker_stall_stderr_count":  0
+                                                },
+                                     "government":  {
+                                                        "reload_committed_count":  31,
+                                                        "reload_aborted_count_worker":  0,
+                                                        "reload_aborted_reasons_worker":  [
+
+                                                                                          ],
+                                                        "worker_stall_count":  0,
+                                                        "worker_stall_stderr_count":  0
+                                                    }
+                                 },
+    "reload_armed_channels":  [
+
+                              ],
+    "reload_armed_never_committed_channels":  [
+
+                                              ],
+    "worker_env_requested":  [
+
+                             ],
+    "worker_env_verified":  [
+
+                            ],
+    "gst_debug_file":  null
+}

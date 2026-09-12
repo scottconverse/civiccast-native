@@ -379,6 +379,44 @@ class TestSlateReplan:
         service.run_once(now=_NOW)
         assert _pending_actions(store, "public") == ["reload"]
 
+    def test_due_program_waits_for_the_fallback_workers_first_control_connection(
+        self,
+    ) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._slate_state(store, "public")
+        provider_calls = 0
+
+        class _ConnectingDaemon(_FakeDaemon):
+            initial_connection_observed = False
+
+            def worker_initial_control_connection_observed(self, _channel_id: str) -> bool:
+                return self.initial_connection_observed
+
+        daemon = _ConnectingDaemon(live_channels={"public"})
+
+        def provider(channel_id: str) -> EgressSourcePlan:
+            nonlocal provider_calls
+            provider_calls += 1
+            return _plan(channel_id)
+
+        service = ChannelAutomationService(
+            store, daemon, provider, settings=ChannelAutomationSettings()
+        )
+
+        service._check_slate_replan("public", now=_NOW)
+        assert provider_calls == 0
+        assert _pending_actions(store, "public") == []
+        assert "public" not in service._reload_issued
+        assert "public" not in service._replan_retry_at
+
+        daemon.initial_connection_observed = True
+        service._check_slate_replan("public", now=_NOW + timedelta(seconds=1))
+        assert provider_calls == 1
+        assert _pending_actions(store, "public") == ["reload"]
+        assert "public" in service._reload_issued
+        assert "public" in service._replan_retry_at
+
     def test_no_plan_or_unplayable_plan_stays_on_slate(self) -> None:
         store = InMemoryEgressStore()
         store.upsert_config(_config("public"))
@@ -2173,6 +2211,82 @@ class TestStaleRolloverHorizonDispatchesImmediateRecovery:
         # for the daemon to consume it.
         service.run_once(now=far_future + timedelta(seconds=2))
         assert len(store.peek_pending_commands("public")) == 1
+
+    def test_stale_short_horizon_waits_for_control_connection_then_dispatches_once(
+        self,
+    ) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("education"))
+        store.write_state(
+            EgressStateRow(
+                channel_id="education",
+                state="ON_AIR",
+                current_source_label="Education",
+                current_proof_event_id="ev-1",
+                updated_at=_NOW,
+                pid=9876,
+            )
+        )
+
+        class _ConnectingDaemon(_HorizonAwareDaemon):
+            def __init__(self) -> None:
+                super().__init__(live_channels={"education"})
+                self.dispatched["education"] = ("ev-1", (30.0,), False)
+                self.control_ready = False
+                self.recorded: list[tuple[datetime, str | None]] = []
+
+            def worker_initial_control_connection_observed(self, _channel_id: str) -> bool:
+                return self.control_ready
+
+            def record_rollover_plan_end(
+                self,
+                _channel_id: str,
+                plan_end_at: datetime,
+                *,
+                command_id: str | None,
+                force_fallback: bool = False,
+            ) -> None:
+                self.recorded.append((plan_end_at, command_id))
+
+        daemon = _ConnectingDaemon()
+        provider_boundaries: list[datetime] = []
+
+        def next_plan(channel_id: str, boundary: datetime) -> EgressSourcePlan:
+            provider_boundaries.append(boundary)
+            return _plan_with_duration(channel_id, 30.0, source_ref="next-education")
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_duration(cid, 30.0),
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=next_plan,
+        )
+
+        service.run_once(now=_NOW)  # establish the 30-second live horizon
+        for seconds in (31, 33):
+            service.run_once(now=_NOW + timedelta(seconds=seconds))
+
+        assert provider_boundaries == []
+        assert store.peek_pending_commands("education") == []
+        assert "education" not in service._rollover_issued
+        assert "education" not in service._rollover_dispatched_at
+        assert daemon.recorded == []
+
+        daemon.control_ready = True
+        ready_at = _NOW + timedelta(seconds=35)
+        service.run_once(now=ready_at)
+
+        pending = store.peek_pending_commands("education")
+        assert [command.action for command in pending] == ["reload"]
+        assert provider_boundaries == [ready_at]
+        assert daemon.recorded == [(_NOW + timedelta(seconds=30), pending[0].command_id)]
+        assert "education" in service._rollover_issued
+
+        service.run_once(now=ready_at + timedelta(seconds=2))
+        assert len(store.peek_pending_commands("education")) == 1
+        assert provider_boundaries == [ready_at]
+        assert len(daemon.recorded) == 1
 
     def test_a_failing_stale_recovery_provider_keeps_its_retry_cooldown(self) -> None:
         clock = {"now": 0.0}

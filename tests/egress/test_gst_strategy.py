@@ -435,6 +435,30 @@ def test_supports_content_reload_explicit_constructor_arg_wins_over_env(
     assert strategy.supports_content_reload is False
 
 
+def test_strategy_reports_the_workers_initial_control_connection(tmp_path) -> None:
+    class _ReadinessPipeChannel(_FakePipeChannel):
+        def __init__(self, channel_id: str) -> None:
+            super().__init__(channel_id)
+            self.connected = False
+
+        def worker_initial_control_connection_observed(self) -> bool:
+            return self.connected
+
+    channel = _ReadinessPipeChannel("ch1")
+    strategy = GstPlayoutStrategy(
+        worker_launcher=lambda *args: None,
+        pipe_channel_factory=lambda _channel_id: cast(_WindowsPipeChannel, channel),
+        is_windows=True,
+    )
+
+    assert strategy.worker_initial_control_connection_observed("ch1") is False
+    strategy.start(_start_request(tmp_path))
+    assert strategy.worker_initial_control_connection_observed("ch1") is False
+
+    channel.connected = True
+    assert strategy.worker_initial_control_connection_observed("ch1") is True
+
+
 def test_reload_ack_timeout_is_the_same_small_default_as_every_other_verb() -> None:
     """F1 redesign (F9): item 4's original widened bound (the worker's own
     reload_timeout_s plus a margin) was itself a bug -- a reload's ack now

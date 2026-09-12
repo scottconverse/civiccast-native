@@ -261,6 +261,10 @@ _SLOW_START_EXIT_CODES = frozenset(
 # treat the reload as lost and fall back to restart rather than wait forever.
 _PENDING_RELOAD_SETTLE_DEADLINE_S = 960.0
 _ROLLOVER_EXTENSION_TOLERANCE_S = 0.25
+_START_EXPIRED_FALLBACK_REASON = (
+    "Scheduled source plan expired during preparation; aired fallback slate while "
+    "automation resolves the current schedule."
+)
 
 
 class _PendingReloadSettlement(NamedTuple):
@@ -344,6 +348,7 @@ class OrphanInfo(NamedTuple):
 
 class _PreparationState(Enum):
     PENDING = "preparing"
+    START_EXPIRED = "start-expired"
 
 
 class _PreparationRequest(NamedTuple):
@@ -351,7 +356,9 @@ class _PreparationRequest(NamedTuple):
     config: EgressConfig
 
 
-_PreparationSteps = Generator[_PreparationRequest, SourcePreparationReport, bool | None]
+_PreparationSteps = Generator[
+    _PreparationRequest, SourcePreparationReport, bool | _PreparationState | None
+]
 AsyncSourcePreparerFunc = Callable[
     [EgressSourcePlan, EgressConfig, Event, frozenset[Path]], SourcePreparationReport
 ]
@@ -808,7 +815,7 @@ class EgressDaemon:
             try:
                 request = next(steps)
             except StopIteration as done:
-                return cast(bool | None, done.value)
+                return cast(bool | _PreparationState | None, done.value)
             preparer = self._source_preparer
             assert preparer is not None
             executor = self._preparation_executor
@@ -821,7 +828,7 @@ class EgressDaemon:
                     else:
                         steps.send(report)
                 except StopIteration as done:
-                    return cast(bool | None, done.value)
+                    return cast(bool | _PreparationState | None, done.value)
                 raise RuntimeError("Unexpected second media preparation in one operation")
 
             cancel = Event()
@@ -861,6 +868,8 @@ class EgressDaemon:
                 self._request_reload(channel_id)
                 return
             self._preparations.pop(channel_id)
+            completed = False
+            outcome: bool | _PreparationState | None = None
             try:
                 try:
                     report = pending.future.result()
@@ -869,11 +878,20 @@ class EgressDaemon:
                 else:
                     pending.steps.send(report)
             except StopIteration as done:
-                if pending.kind == "reload" and done.value is False:
-                    self._fall_back_to_restart_reload(channel_id)
-                return
+                completed = True
+                outcome = cast(bool | _PreparationState | None, done.value)
             finally:
                 pending.steps.close()
+            if completed:
+                if pending.kind == "reload" and outcome is False:
+                    self._fall_back_to_restart_reload(channel_id)
+                elif pending.kind == "start" and outcome is _PreparationState.START_EXPIRED:
+                    self._start(
+                        channel_id,
+                        force_fallback_slate=True,
+                        force_fallback_reason=_START_EXPIRED_FALLBACK_REASON,
+                    )
+                return
             raise RuntimeError("Unexpected second media preparation in one operation")
 
     def process_once(self, channel_id: str) -> int:
@@ -1181,11 +1199,12 @@ class EgressDaemon:
         force_fallback_slate: bool = False,
         force_fallback_reason: str | None = None,
         resolved_plan: EgressSourcePlan | None = None,
+        plan_resolution_started_at: float | None = None,
     ) -> None:
         with self._preparation_guard:
             if channel_id in self._preparations:
                 return
-            self._drive_preparation(
+            result = self._drive_preparation(
                 channel_id,
                 self._start_steps(
                     channel_id,
@@ -1194,9 +1213,20 @@ class EgressDaemon:
                     force_fallback_slate=force_fallback_slate,
                     force_fallback_reason=force_fallback_reason,
                     resolved_plan=resolved_plan,
+                    plan_resolution_started_at=(
+                        self._monotonic()
+                        if plan_resolution_started_at is None
+                        else plan_resolution_started_at
+                    ),
                 ),
                 kind="start",
             )
+            if result is _PreparationState.START_EXPIRED:
+                self._start(
+                    channel_id,
+                    force_fallback_slate=True,
+                    force_fallback_reason=_START_EXPIRED_FALLBACK_REASON,
+                )
 
     def _start_steps(
         self,
@@ -1207,6 +1237,7 @@ class EgressDaemon:
         force_fallback_slate: bool = False,
         force_fallback_reason: str | None = None,
         resolved_plan: EgressSourcePlan | None = None,
+        plan_resolution_started_at: float,
     ) -> _PreparationSteps:
         # ``resolved_plan``: a program plan the caller ALREADY resolved from
         # ``source_plan_provider`` this same tick (the slate-EOS relaunch
@@ -1355,6 +1386,16 @@ class EgressDaemon:
                     f"Source plan channel {source_plan.channel_id!r} does not match "
                     f"requested channel {channel_id!r}."
                 )
+            first_program_remaining_seconds = (
+                source_plan.segments[0].duration_seconds
+                if (
+                    not using_fallback_slate
+                    and self._boundary_source_plan_provider is not None
+                    and not self.has_manual_override(channel_id)
+                    and source_plan.segments[0].kind == "program"
+                )
+                else None
+            )
             if not using_fallback_slate:
                 # Clean-machine walkthrough of beta.5 (2026-09-09 MDT): an
                 # operator Start at 22:00:39 still read Stopped at 22:00:41
@@ -1397,6 +1438,29 @@ class EgressDaemon:
                     self._last_loudness_lufs.pop(channel_id, None)
             else:
                 self._last_loudness_lufs.pop(channel_id, None)
+
+            # A cold conform can outlast a short scheduled item's remaining
+            # window. Starting that categorically expired first program segment
+            # guarantees stale-horizon recovery at startup. Do not compare plan
+            # identity: adjacent schedule occurrences may use the same asset.
+            # Release this unused prepared directory once and return a distinct
+            # result; the caller starts one freshly prepared fallback operation.
+            if (
+                not using_fallback_slate
+                and first_program_remaining_seconds is not None
+                and (
+                    self._monotonic() - plan_resolution_started_at
+                    >= first_program_remaining_seconds
+                )
+            ):
+                self._release_prepared_plan_dir(prepared_plan_dir)
+                if self._fallback_source_provider is None:
+                    raise SourcePrepareError(
+                        "Scheduled source plan expired during preparation and no fallback "
+                        "source is configured."
+                    )
+                _LOG.warning("channel %s: %s", channel_id, _START_EXPIRED_FALLBACK_REASON)
+                return _PreparationState.START_EXPIRED
 
             # Hostile-review follow-up (third pass), P0: captured right here,
             # BEFORE the encoder-unavailable retry below gets a chance to flip
@@ -2362,6 +2426,7 @@ class EgressDaemon:
         )
         force_fallback_reason: str | None = None
         source_plan: EgressSourcePlan | None = None
+        source_plan_resolution_started_at: float | None = None
         if force_fallback_slate:
             force_fallback_reason = (
                 f"Live source failed to stay on air after {streak} consecutive "
@@ -2370,6 +2435,7 @@ class EgressDaemon:
             )
         else:
             try:
+                source_plan_resolution_started_at = self._monotonic()
                 source_plan = self._source_plan_provider(channel_id)
             except SourcePrepareError as exc:
                 _LOG.info(
@@ -2436,6 +2502,7 @@ class EgressDaemon:
             force_fallback_slate=force_fallback_slate,
             force_fallback_reason=force_fallback_reason,
             resolved_plan=source_plan,
+            plan_resolution_started_at=source_plan_resolution_started_at,
         )
         return True, None
 
@@ -2965,6 +3032,21 @@ class EgressDaemon:
         retry -- wait for this daemon's own deadline) apart from "genuinely
         dropped" (retry after ``_ROLLOVER_ISSUED_TIMEOUT_SECONDS``)."""
         return channel_id in self._pending_reload_settle or channel_id in self._preparations
+
+    def worker_initial_control_connection_observed(self, channel_id: str) -> bool:
+        """Return whether the worker has made its first control connection.
+
+        Strategies without in-place reloads take the existing planned-restart
+        path and need no control-channel gate. Readiness is optional for other
+        strategies so their established behavior remains unchanged.
+        """
+
+        if not getattr(self._encoder_strategy, "supports_content_reload", False):
+            return True
+        reader = getattr(self._encoder_strategy, "worker_initial_control_connection_observed", None)
+        if not callable(reader):
+            return True
+        return bool(reader(channel_id))
 
     def _try_content_reload(
         self,

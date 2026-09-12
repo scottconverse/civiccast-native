@@ -1,0 +1,144 @@
+2026-09-12T15:08:18.1044557Z shipper spawned (mirrors C:\CivicCastSoakLocal -> C:\CivicCastSoakOutput every 15s)
+2026-09-12T15:08:18.2107295Z watchdog spawned (pre-soak bound=45m; post-soak bound=soak_start_utc+Minutes(15)+10m)
+2026-09-12T15:08:18.3233107Z run header: minutes=15 seamless_reload_override_requested=True seamless_reload_expected=True install_bound_minutes=20 health_bound_minutes=10 worker_env_requested= gst_debug_file=
+2026-09-12T15:08:18.3683368Z installer: C:\CivicCastKit\CivicCast (Native)_1.0.0-beta.7_x64-setup.exe
+2026-09-12T15:08:18.3683368Z running silent install (bounded to 20m, heartbeat every 60s): /S /D=C:\CivicCastSoakInstall
+2026-09-12T15:09:19.8308467Z installer still running, 61s elapsed
+2026-09-12T15:10:19.8380446Z installer still running, 121s elapsed
+2026-09-12T15:11:19.8486906Z installer still running, 181s elapsed
+2026-09-12T15:12:19.8610325Z installer still running, 241s elapsed
+2026-09-12T15:13:19.8738068Z installer still running, 301s elapsed
+2026-09-12T15:14:19.8863293Z installer still running, 362s elapsed
+2026-09-12T15:15:19.8996125Z installer still running, 422s elapsed
+2026-09-12T15:16:19.9103137Z installer still running, 482s elapsed
+2026-09-12T15:17:19.9192527Z installer still running, 542s elapsed
+2026-09-12T15:18:19.9236478Z installer still running, 602s elapsed
+2026-09-12T15:19:19.9244028Z installer still running, 662s elapsed
+2026-09-12T15:20:19.9392102Z installer still running, 722s elapsed
+2026-09-12T15:20:53.8029475Z installer done: exit_code=0 exited=True elapsed_seconds=755.4 error=
+2026-09-12T15:20:54.0108508Z phase marker written: PHASE-INSTALL-DONE.json
+2026-09-12T15:20:54.1047701Z worker_env: wrote HKLM:\SYSTEM\CurrentControlSet\Services\CivicCastSupervisor\Environment (REG_MULTI_SZ, 1 entries; seamless_reload=True, worker_env_entries=0); read-back matches every requested entry: True
+2026-09-12T15:21:25.6033069Z worker_env: Stop-Service CivicCastSupervisor requested (forcing a fresh launch that reads the just-written per-service Environment)
+2026-09-12T15:21:27.4783708Z Start-Service CivicCastSupervisor: requested
+2026-09-12T15:21:27.4943387Z CivicCastSupervisor service status after Start-Service: Running (serviceRunning=True)
+2026-09-12T15:21:27.4943387Z polling for station health (bounded to 10m): require status=='healthy' AND schema=='current'
+2026-09-12T15:21:43.8588210Z station healthy: True (last body: status=healthy schema=current)
+2026-09-12T15:21:43.8588210Z phase marker written: PHASE-HEALTHY.json
+2026-09-12T15:21:44.1749398Z worker_env verification: control-plane process found post-restart pid=7348
+2026-09-12T15:21:44.1749398Z seamless_reload verification: HKLM:\SYSTEM\CurrentControlSet\Services\CivicCastSupervisor\Environment still contains the flag: True
+2026-09-12T15:21:44.2102531Z seamless_reload verification: confirmed via registry read-back + a live post-restart control-plane process; no log line additionally corroborated it (checked C:\ProgramData\CivicCast\logs\control_plane.log, C:\ProgramData\CivicCast\logs\control_plane-app.log)
+2026-09-12T15:21:44.2244004Z tsp.exe: C:\CivicCastSoakInstall\packs\native-server-binaries\payload\tsduck\bin\tsp.exe
+2026-09-12T15:21:44.2384343Z ffmpeg.exe: C:\CivicCastSoakInstall\dependencies\ffmpeg\bin\ffmpeg.exe; ffprobe.exe: C:\CivicCastSoakInstall\dependencies\ffmpeg\bin\ffprobe.exe
+2026-09-12T15:21:44.6032601Z firewall_rule name=CivicCast Sandbox Soak - TSDuck tsp program=C:\CivicCastSoakInstall\packs\native-server-binaries\payload\tsduck\bin\tsp.exe dir=in+out result=ALLOWED
+2026-09-12T15:21:44.9234010Z firewall_rule name=CivicCast Sandbox Soak - ffmpeg program=C:\CivicCastSoakInstall\dependencies\ffmpeg\bin\ffmpeg.exe dir=in+out result=ALLOWED
+2026-09-12T15:21:45.2198924Z firewall_rule name=CivicCast Sandbox Soak - ffprobe program=C:\CivicCastSoakInstall\dependencies\ffmpeg\bin\ffprobe.exe dir=in+out result=ALLOWED
+2026-09-12T15:21:45.2356560Z phase marker written: PHASE-FIREWALL-RULES.json
+2026-09-12T15:21:45.9010297Z first-admin: complete
+2026-09-12T15:21:45.9010297Z captions_off: requesting live_captions_enabled=false via PUT http://127.0.0.1:8000/api/staff/station/profile
+2026-09-12T15:21:46.0649307Z captions_off: PUT status=200 body={"station_name":"Sandbox Soak","admin_display_name":"Soak Operator","admin_username":"soakadmin","default_channel_id":"government","public_base_url":null,"station_timezone":"local","storage_locations":{"media_library":"C:\\Windows\\system32\\config\\systemprofile\\AppData\\Local\\CivicCast\\media","recordings":"C:\\Windows\\system32\\config\\systemprofile\\AppData\\Local\\CivicCast\\recordings","backups":"C:\\Windows\\system32\\config\\systemprofile\\AppData\\Local\\CivicCast\\backups"},"channel_count":3,"channel_profiles":[{"channel_id":"public","display_name":"Public Channel","purpose":"Public meetings, civic boards, and community access."},{"channel_id":"education","display_name":"Education Channel","purpose":"School board, campus, student, and athletics programming."},{"channel_id":"government","display_name":"Government Channel","purpose":"Council, board, and commission meetings and official notices."}],"sample_content_enabled":false,"initial_schedule_enabled":false,"live_captions_enabled":false,"default_roles":["setup_admin","publish_operator","support_admin","viewer"],"operation_mode":"test","dashboard_ready_state":"not_ready","recovery_kit_id":"rk_qtNXJWQAzpkPagZA","recovery_kit_generated_at":"2026-09-12T15:21:45.267248Z"} error=
+2026-09-12T15:21:46.1206338Z captions_off: GET status=200 body={"station_name":"Sandbox Soak","admin_display_name":"Soak Operator","admin_username":"soakadmin","default_channel_id":"government","public_base_url":null,"station_timezone":"local","storage_locations":{"media_library":"C:\\Windows\\system32\\config\\systemprofile\\AppData\\Local\\CivicCast\\media","recordings":"C:\\Windows\\system32\\config\\systemprofile\\AppData\\Local\\CivicCast\\recordings","backups":"C:\\Windows\\system32\\config\\systemprofile\\AppData\\Local\\CivicCast\\backups"},"channel_count":3,"channel_profiles":[{"channel_id":"public","display_name":"Public Channel","purpose":"Public meetings, civic boards, and community access."},{"channel_id":"education","display_name":"Education Channel","purpose":"School board, campus, student, and athletics programming."},{"channel_id":"government","display_name":"Government Channel","purpose":"Council, board, and commission meetings and official notices."}],"sample_content_enabled":false,"initial_schedule_enabled":false,"live_captions_enabled":false,"default_roles":["setup_admin","publish_operator","support_admin","viewer"],"operation_mode":"test","dashboard_ready_state":"not_ready","recovery_kit_id":"rk_qtNXJWQAzpkPagZA","recovery_kit_generated_at":"2026-09-12T15:21:45.267248Z"} error=
+2026-09-12T15:21:46.1401617Z captions_off: verified=True captions_enabled=False read_back_value=False
+2026-09-12T15:21:46.1683944Z samples found: 4
+2026-09-12T15:21:47.0545071Z asset uploaded: sbsoak-260912092146-udoi-1 (YTDown.com_YouTube_Help-Upgrade-the-LPM-Podcast-Studio_Media_oiYNSJEysvs_001_1080p.mp4, duration pinned to 30s)
+2026-09-12T15:21:47.3244949Z asset uploaded: sbsoak-260912092146-udoi-2 (YTDown.com_YouTube_Help-Upgrade-the-LPM-Podcast-Studio_Media_oiYNSJEysvs_003_360p.mp4, duration pinned to 30s)
+2026-09-12T15:21:48.4147313Z asset uploaded: sbsoak-260912092146-udoi-3 (YTDown.com_YouTube_Longmont-Weather-Report-July-23-2026-to-_Media_6yBccmsSnDc_002_360p.mp4, duration pinned to 30s)
+2026-09-12T15:22:11.3444641Z asset uploaded: sbsoak-260912092146-udoi-4 (YTDown.com_YouTube_Serving-Locally-with-Michelle-SMART-Reco_Media_lVVzrRCX9_w_001_1080p.mp4, duration pinned to 30s)
+2026-09-12T15:22:11.3498263Z scheduling 80 items/channel @ 30s each (sized for the ON_AIR bound's worst case: ceil((Minutes=15 + OnAirBoundMinutes=12 + 13) * 60 / 30))
+2026-09-12T15:22:20.2324678Z channel=public schedule_items=80 committed=80 contiguous_from_slot0=80 (target=80)
+2026-09-12T15:22:29.2813046Z channel=education schedule_items=80 committed=80 contiguous_from_slot0=80 (target=80)
+2026-09-12T15:22:38.9712879Z channel=government schedule_items=80 committed=80 contiguous_from_slot0=80 (target=80)
+2026-09-12T15:22:38.9902366Z schedule coverage: min contiguous committed items across all channels = 80 (of target 80)
+2026-09-12T15:22:39.0977232Z start command public: sent_body={"action":"start"} status=202 response_body={"command":{"channel_id":"public","action":"start","issued_at":"2026-09-12T15:22:39.050592Z","issued_by":"soakadmin","command_id":"egress-3ed129bf-66df-4e90-8dfa-a48b70666e13"},"queued":true} error=
+2026-09-12T15:22:39.2086844Z start command education: sent_body={"action":"start"} status=202 response_body={"command":{"channel_id":"education","action":"start","issued_at":"2026-09-12T15:22:39.161358Z","issued_by":"soakadmin","command_id":"egress-048fd027-0306-4eda-b930-5d6270ab5f9a"},"queued":true} error=
+2026-09-12T15:22:39.3353794Z start command government: sent_body={"action":"start"} status=202 response_body={"command":{"channel_id":"government","action":"start","issued_at":"2026-09-12T15:22:39.287693Z","issued_by":"soakadmin","command_id":"egress-ab1c7d06-9c54-497a-b278-521e99194b63"},"queued":true} error=
+2026-09-12T15:22:39.3985654Z ON_AIR poll #1 channel=public: state=STARTING pid= src=YTDown.com_YouTube_Longmont-Weather-Report-July-23-2026-to-_Media_6yBccmsSnDc_002_360p.mp4 err=
+2026-09-12T15:22:39.3985654Z ON_AIR poll #1 channel=public raw state body (first-seen or changed): {"channel_id":"public","state":"STARTING","current_source_label":"YTDown.com_YouTube_Longmont-Weather-Report-July-23-2026-to-_Media_6yBccmsSnDc_002_360p.mp4","current_proof_event_id":null,"updated_at":"2026-09-12T15:22:39.224785Z","pid":null,"last_error":null}
+2026-09-12T15:22:39.4621609Z ON_AIR poll #1 channel=education: state=STARTING pid= src=YTDown.com_YouTube_Longmont-Weather-Report-July-23-2026-to-_Media_6yBccmsSnDc_002_360p.mp4 err=
+2026-09-12T15:22:39.4621609Z ON_AIR poll #1 channel=education raw state body (first-seen or changed): {"channel_id":"education","state":"STARTING","current_source_label":"YTDown.com_YouTube_Longmont-Weather-Report-July-23-2026-to-_Media_6yBccmsSnDc_002_360p.mp4","current_proof_event_id":null,"updated_at":"2026-09-12T15:22:39.192963Z","pid":null,"last_error":null}
+2026-09-12T15:22:39.5100117Z ON_AIR poll #1 channel=government: state= pid= src= err=
+2026-09-12T15:22:39.5100117Z ON_AIR poll #1 channel=government raw state body (first-seen or changed): null
+2026-09-12T15:22:39.5736910Z ON_AIR poll #1 channel=government: state is null -- health?limit=1 status=200 body=[] error= (distinguishes an uninitialized state row from a dead daemon)
+2026-09-12T15:22:54.6701316Z ON_AIR poll #2 channel=public: state=ON_AIR pid=9984 src=YTDown.com_YouTube_Longmont-Weather-Report-July-23-2026-to-_Media_6yBccmsSnDc_002_360p.mp4 err=
+2026-09-12T15:22:54.6820280Z ON_AIR poll #2 channel=public raw state body (first-seen or changed): {"channel_id":"public","state":"ON_AIR","current_source_label":"YTDown.com_YouTube_Longmont-Weather-Report-July-23-2026-to-_Media_6yBccmsSnDc_002_360p.mp4","current_proof_event_id":"egress-proof-cdbdca30-10a7-48dd-aa11-2df711c96f99","updated_at":"2026-09-12T15:22:48.081390Z","pid":9984,"last_error":null}
+2026-09-12T15:22:54.7667082Z ON_AIR poll #2 channel=education: state=ON_AIR pid=9876 src=YTDown.com_YouTube_Longmont-Weather-Report-July-23-2026-to-_Media_6yBccmsSnDc_002_360p.mp4 err=
+2026-09-12T15:22:54.7667082Z ON_AIR poll #2 channel=education raw state body (first-seen or changed): {"channel_id":"education","state":"ON_AIR","current_source_label":"YTDown.com_YouTube_Longmont-Weather-Report-July-23-2026-to-_Media_6yBccmsSnDc_002_360p.mp4","current_proof_event_id":"egress-proof-6e95297c-fdf6-44a3-b585-dd225d651160","updated_at":"2026-09-12T15:22:50.125475Z","pid":9876,"last_error":null}
+2026-09-12T15:22:54.8460387Z ON_AIR poll #2 channel=government: state=ON_AIR pid=6536 src=YTDown.com_YouTube_Serving-Locally-with-Michelle-SMART-Reco_Media_lVVzrRCX9_w_001_1080p.mp4 err=
+2026-09-12T15:22:54.8726745Z ON_AIR poll #2 channel=government raw state body (first-seen or changed): {"channel_id":"government","state":"ON_AIR","current_source_label":"YTDown.com_YouTube_Serving-Locally-with-Michelle-SMART-Reco_Media_lVVzrRCX9_w_001_1080p.mp4","current_proof_event_id":"egress-proof-ba3095a9-d015-404b-8c42-ad9118e38be5","updated_at":"2026-09-12T15:22:48.006335Z","pid":6536,"last_error":null}
+2026-09-12T15:22:54.8822275Z channel=public product metrics: first_state_row_s=0.1 time_to_on_air_s=15.3
+2026-09-12T15:22:54.8860851Z channel=education product metrics: first_state_row_s=0.1 time_to_on_air_s=15.4
+2026-09-12T15:22:54.8860851Z channel=government product metrics: first_state_row_s=15.5 time_to_on_air_s=15.5
+2026-09-12T15:22:54.9090976Z schedule coverage check: coverage_end_utc=2026-09-12T16:01:11.3498263Z required (soak_start+Minutes+3m)=2026-09-12T15:40:54.8932413Z
+2026-09-12T15:22:54.9090976Z SOAK CLOCK STARTED (UTC): 2026-09-12T15:22:54.8932413Z -- ALL THREE channels confirmed ON_AIR
+2026-09-12T15:22:54.9408110Z phase marker written: SOAK-START.json
+2026-09-12T15:22:55.0834604Z entering poll loop: -Minutes 15 SOAK minutes from soak_start_utc (deadline 2026-09-12T15:37:54.8932413Z); state sampled for all channels before each channel's own tsp probe (~3x/cycle), tsp probe cycle ~60-75s
+2026-09-12T15:22:55.3874078Z reload_aborted channel=education reason=Seamless content-reload declined for education (worker never connected to its control pipe); falling back to restart.
+2026-09-12T15:22:55.9615930Z worker stdout channel=public: reload committed x1 (cumulative=1)
+2026-09-12T15:23:16.5012447Z restart DETECTED channel=education old_pid=9876 new_pid=1884 classification=planned_restart log_evidence=log
+2026-09-12T15:23:36.8921926Z restart RECOVERED channel=education classification=planned_restart gap_seconds=20.4 superseded=False log_evidence=log
+2026-09-12T15:23:36.9556593Z worker stdout channel=government: reload committed x1 (cumulative=1)
+2026-09-12T15:23:58.8414632Z cycle 1 @ 2026-09-12T15:22:55.0994056Z (period=60s): public=ON_AIR/gstreamer/tsp=pass/restart_window=False education=ON_AIR/gstreamer/tsp=pass/restart_window=True government=ON_AIR/gstreamer/tsp=pass/restart_window=False global: ffmpeg=1 gst_workers=3
+2026-09-12T15:23:59.0731235Z worker stdout channel=public: reload committed x2 (cumulative=3)
+2026-09-12T15:24:19.4286189Z worker stdout channel=education: reload committed x3 (cumulative=3)
+2026-09-12T15:24:39.8096447Z worker stdout channel=government: reload committed x3 (cumulative=4)
+2026-09-12T15:25:00.9643111Z cycle 2 @ 2026-09-12T15:23:58.8576207Z (period=63.8s): public=ON_AIR/gstreamer/tsp=pass/restart_window=False education=ON_AIR/gstreamer/tsp=pass/restart_window=False government=ON_AIR/gstreamer/tsp=pass/restart_window=False global: ffmpeg=1 gst_workers=3
+2026-09-12T15:25:01.1706584Z worker stdout channel=public: reload committed x2 (cumulative=5)
+2026-09-12T15:25:21.5732698Z worker stdout channel=education: reload committed x2 (cumulative=5)
+2026-09-12T15:25:41.9917306Z worker stdout channel=government: reload committed x2 (cumulative=6)
+2026-09-12T15:26:03.1514029Z cycle 3 @ 2026-09-12T15:25:00.9643111Z (period=62.1s): public=ON_AIR/gstreamer/tsp=pass/restart_window=False education=ON_AIR/gstreamer/tsp=pass/restart_window=False government=ON_AIR/gstreamer/tsp=pass/restart_window=False global: ffmpeg=1 gst_workers=3
+2026-09-12T15:26:03.4695603Z rollup + log checkpoint written at cycle 3
+2026-09-12T15:26:03.6921063Z worker stdout channel=public: reload committed x2 (cumulative=7)
+2026-09-12T15:26:24.1405838Z worker stdout channel=education: reload committed x2 (cumulative=7)
+2026-09-12T15:26:44.9448914Z worker stdout channel=government: reload committed x2 (cumulative=8)
+2026-09-12T15:27:07.5384114Z cycle 4 @ 2026-09-12T15:26:03.4695603Z (period=62.5s): public=ON_AIR/gstreamer/tsp=pass/restart_window=False education=ON_AIR/gstreamer/tsp=pass/restart_window=False government=ON_AIR/gstreamer/tsp=pass/restart_window=False global: ffmpeg=2 gst_workers=3
+2026-09-12T15:27:07.8461580Z worker stdout channel=public: reload committed x2 (cumulative=9)
+2026-09-12T15:27:28.3359402Z worker stdout channel=education: reload committed x2 (cumulative=9)
+2026-09-12T15:27:48.8587625Z worker stdout channel=government: reload committed x2 (cumulative=10)
+2026-09-12T15:28:10.1012239Z cycle 5 @ 2026-09-12T15:27:07.5441982Z (period=64.1s): public=ON_AIR/gstreamer/tsp=pass/restart_window=False education=ON_AIR/gstreamer/tsp=pass/restart_window=False government=ON_AIR/gstreamer/tsp=pass/restart_window=False global: ffmpeg=2 gst_workers=3
+2026-09-12T15:28:10.4084197Z worker stdout channel=public: reload committed x3 (cumulative=12)
+2026-09-12T15:28:30.9311219Z worker stdout channel=education: reload committed x2 (cumulative=11)
+2026-09-12T15:28:51.4238413Z worker stdout channel=government: reload committed x2 (cumulative=12)
+2026-09-12T15:29:12.6946042Z cycle 6 @ 2026-09-12T15:28:10.1052567Z (period=62.6s): public=ON_AIR/gstreamer/tsp=pass/restart_window=False education=ON_AIR/gstreamer/tsp=pass/restart_window=False government=ON_AIR/gstreamer/tsp=pass/restart_window=False global: ffmpeg=2 gst_workers=3
+2026-09-12T15:29:13.0085048Z rollup + log checkpoint written at cycle 6
+2026-09-12T15:29:13.3374469Z worker stdout channel=public: reload committed x2 (cumulative=14)
+2026-09-12T15:29:33.8183233Z worker stdout channel=education: reload committed x2 (cumulative=13)
+2026-09-12T15:29:54.3379778Z worker stdout channel=government: reload committed x2 (cumulative=14)
+2026-09-12T15:30:15.5868184Z cycle 7 @ 2026-09-12T15:29:13.0125888Z (period=62.9s): public=ON_AIR/gstreamer/tsp=pass/restart_window=False education=ON_AIR/gstreamer/tsp=pass/restart_window=False government=ON_AIR/gstreamer/tsp=pass/restart_window=False global: ffmpeg=2 gst_workers=3
+2026-09-12T15:30:15.8735523Z worker stdout channel=public: reload committed x2 (cumulative=16)
+2026-09-12T15:30:36.4106520Z worker stdout channel=education: reload committed x2 (cumulative=15)
+2026-09-12T15:30:56.8830152Z worker stdout channel=government: reload committed x2 (cumulative=16)
+2026-09-12T15:31:18.1433515Z cycle 8 @ 2026-09-12T15:30:15.5868184Z (period=62.6s): public=ON_AIR/gstreamer/tsp=pass/restart_window=False education=ON_AIR/gstreamer/tsp=pass/restart_window=False government=ON_AIR/gstreamer/tsp=pass/restart_window=False global: ffmpeg=1 gst_workers=3
+2026-09-12T15:31:18.4214230Z worker stdout channel=public: reload committed x2 (cumulative=18)
+2026-09-12T15:31:38.9441252Z worker stdout channel=education: reload committed x3 (cumulative=18)
+2026-09-12T15:31:59.4325794Z worker stdout channel=government: reload committed x2 (cumulative=18)
+2026-09-12T15:32:20.6562848Z cycle 9 @ 2026-09-12T15:31:18.1474111Z (period=62.6s): public=ON_AIR/gstreamer/tsp=pass/restart_window=False education=ON_AIR/gstreamer/tsp=pass/restart_window=False government=ON_AIR/gstreamer/tsp=pass/restart_window=False global: ffmpeg=1 gst_workers=3
+2026-09-12T15:32:20.9570422Z rollup + log checkpoint written at cycle 9
+2026-09-12T15:32:21.1448501Z worker stdout channel=public: reload committed x2 (cumulative=20)
+2026-09-12T15:32:41.4659699Z worker stdout channel=education: reload committed x2 (cumulative=20)
+2026-09-12T15:33:01.8095373Z worker stdout channel=government: reload committed x2 (cumulative=20)
+2026-09-12T15:33:22.9414850Z cycle 10 @ 2026-09-12T15:32:20.9590518Z (period=62.8s): public=ON_AIR/gstreamer/tsp=pass/restart_window=False education=ON_AIR/gstreamer/tsp=pass/restart_window=False government=ON_AIR/gstreamer/tsp=pass/restart_window=False global: ffmpeg=0 gst_workers=3
+2026-09-12T15:33:23.1282689Z worker stdout channel=public: reload committed x2 (cumulative=22)
+2026-09-12T15:33:43.4775128Z worker stdout channel=education: reload committed x2 (cumulative=22)
+2026-09-12T15:34:03.7862476Z worker stdout channel=government: reload committed x2 (cumulative=22)
+2026-09-12T15:34:24.9384856Z cycle 11 @ 2026-09-12T15:33:22.9414850Z (period=62s): public=ON_AIR/gstreamer/tsp=pass/restart_window=False education=ON_AIR/gstreamer/tsp=pass/restart_window=False government=ON_AIR/gstreamer/tsp=pass/restart_window=False global: ffmpeg=0 gst_workers=3
+2026-09-12T15:34:25.1291380Z worker stdout channel=public: reload committed x2 (cumulative=24)
+2026-09-12T15:34:45.4503386Z worker stdout channel=education: reload committed x2 (cumulative=24)
+2026-09-12T15:35:05.7624178Z worker stdout channel=government: reload committed x2 (cumulative=24)
+2026-09-12T15:35:26.9066699Z cycle 12 @ 2026-09-12T15:34:24.9384856Z (period=62s): public=ON_AIR/gstreamer/tsp=pass/restart_window=False education=ON_AIR/gstreamer/tsp=pass/restart_window=False government=ON_AIR/gstreamer/tsp=pass/restart_window=False global: ffmpeg=0 gst_workers=3
+2026-09-12T15:35:27.0810476Z rollup + log checkpoint written at cycle 12
+2026-09-12T15:35:27.2550403Z worker stdout channel=public: reload committed x2 (cumulative=26)
+2026-09-12T15:35:47.5458039Z worker stdout channel=education: reload committed x2 (cumulative=26)
+2026-09-12T15:36:07.9749971Z worker stdout channel=government: reload committed x3 (cumulative=27)
+2026-09-12T15:36:29.1290585Z cycle 13 @ 2026-09-12T15:35:27.0810476Z (period=62.1s): public=ON_AIR/gstreamer/tsp=pass/restart_window=False education=ON_AIR/gstreamer/tsp=pass/restart_window=False government=ON_AIR/gstreamer/tsp=pass/restart_window=False global: ffmpeg=0 gst_workers=3
+2026-09-12T15:36:29.3353311Z worker stdout channel=public: reload committed x2 (cumulative=28)
+2026-09-12T15:36:49.6639076Z worker stdout channel=education: reload committed x2 (cumulative=28)
+2026-09-12T15:37:09.9470998Z worker stdout channel=government: reload committed x2 (cumulative=29)
+2026-09-12T15:37:31.0691772Z cycle 14 @ 2026-09-12T15:36:29.1290585Z (period=62s): public=ON_AIR/gstreamer/tsp=pass/restart_window=False education=ON_AIR/gstreamer/tsp=pass/restart_window=False government=ON_AIR/gstreamer/tsp=pass/restart_window=False global: ffmpeg=0 gst_workers=3
+2026-09-12T15:37:31.2580894Z worker stdout channel=public: reload committed x2 (cumulative=30)
+2026-09-12T15:37:51.6014513Z worker stdout channel=education: reload committed x2 (cumulative=30)
+2026-09-12T15:38:11.9229519Z worker stdout channel=government: reload committed x2 (cumulative=31)
+2026-09-12T15:38:33.0917723Z cycle 15 @ 2026-09-12T15:37:31.0691772Z (period=61.9s): public=ON_AIR/gstreamer/tsp=pass/restart_window=False education=ON_AIR/gstreamer/tsp=pass/restart_window=False government=ON_AIR/gstreamer/tsp=pass/restart_window=False global: ffmpeg=0 gst_workers=3
+2026-09-12T15:38:33.2460037Z rollup + log checkpoint written at cycle 15
+2026-09-12T15:38:33.2617428Z poll loop complete: 15 cycles recorded, 1 restart event(s) (1 planned, 0 unplanned)
+2026-09-12T15:38:33.2934280Z worker stdout channel=public: reload committed x2 (cumulative=32)
+2026-09-12T15:38:33.2934280Z worker stdout channel=education: reload committed x1 (cumulative=31)
+2026-09-12T15:38:33.5638462Z VERDICT: FAIL -- seamless reload was expected but a content-reload aborted on channel=education (Seamless content-reload declined for education (worker never connected to its control pipe); falling back to restart.) -- fell back to a restart

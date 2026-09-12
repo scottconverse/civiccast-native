@@ -318,6 +318,32 @@ def test_daemon_caption_sender_uses_its_running_encoder_strategy(tmp_path: Path)
     ]
 
 
+def test_daemon_reports_the_workers_initial_control_connection(tmp_path: Path) -> None:
+    class _ReadinessStrategy:
+        supports_content_reload = True
+
+        def __init__(self) -> None:
+            self.ready = False
+            self.calls: list[str] = []
+
+        def worker_initial_control_connection_observed(self, channel_id: str) -> bool:
+            self.calls.append(channel_id)
+            return self.ready
+
+    strategy = _ReadinessStrategy()
+    daemon = EgressDaemon(
+        InMemoryEgressStore(),
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+        encoder_strategy=strategy,  # type: ignore[arg-type]
+    )
+
+    assert daemon.worker_initial_control_connection_observed("education") is False
+    strategy.ready = True
+    assert daemon.worker_initial_control_connection_observed("education") is True
+    assert strategy.calls == ["education", "education"]
+
+
 def test_daemon_prepares_source_plan_before_starting_encoder(tmp_path: Path) -> None:
     store = InMemoryEgressStore()
     store.upsert_config(_config())
@@ -3292,6 +3318,132 @@ def _prepare_with_tracked_plan_dirs(
         return SourcePreparationReport(source_plan=source_plan, records=(), plan_dir=plan_dir)
 
     return prepare
+
+
+def test_async_start_expiring_during_preparation_releases_once_then_prepares_fresh_slate(
+    tmp_path: Path,
+) -> None:
+    """A short scheduled item that expires before launch is never spawned.
+
+    The completed async operation must be removed before the one bounded
+    fallback operation is queued, and only the fallback's freshly prepared
+    directory may become active.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    clock = [0.0]
+    provider_calls = 0
+    prepared_labels: list[str] = []
+    released: list[Path] = []
+    started: list[_FakeProcess] = []
+    started_labels: list[str] = []
+    counter = {"n": 0}
+    base_prepare = _prepare_with_tracked_plan_dirs(tmp_path, counter)
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        nonlocal provider_calls
+        provider_calls += 1
+        clock[0] += 20.0
+        plan = _source_plan(tmp_path)
+        segment = plan.segments[0].model_copy(update={"duration_seconds": 30.0})
+        return plan.model_copy(update={"segments": [segment]})
+
+    def prepare(plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
+        prepared_labels.append(plan.segments[0].label)
+        if plan.segments[0].label == "Council meeting":
+            clock[0] += 10.0
+        return base_prepare(plan, config)
+
+    class _CapturingStrategy(_FakeContentReloadStrategy):
+        def start(self, request: EncoderStartRequest) -> EncoderStartResult:
+            started_labels.append(request.source_plan.segments[0].label)
+            return super().start(request)
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        boundary_source_plan_provider=lambda _channel_id, _at: pytest.fail(
+            "startup expiry must not chase the schedule"
+        ),
+        encoder_strategy=_CapturingStrategy([_FakeProcess(pid=111)], started),
+        source_preparer=prepare,
+        prepared_plan_release=released.append,
+        monotonic=lambda: clock[0],
+    )
+    daemon.enable_async_preparation()
+    try:
+        daemon.process_once("gov")
+        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
+
+        daemon.process_once("gov")
+        assert set(daemon._preparations) == {"gov"}  # type: ignore[attr-defined]
+        assert released == [tmp_path / "plan-1"]
+        assert started_labels == []
+
+        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
+        daemon.process_once("gov")
+
+        assert provider_calls == 1
+        assert prepared_labels == ["Council meeting", "Fallback slate"]
+        assert started_labels == ["Fallback slate"]
+        assert released == [tmp_path / "plan-1"]
+        assert daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-2"})
+        assert store.read_state("gov").state == "FALLBACK_SLATE"  # type: ignore[union-attr]
+    finally:
+        daemon.shutdown_preparation()
+
+
+def test_unexpired_scheduled_start_still_launches_the_prepared_program(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    clock = [0.0]
+    fallback_calls = 0
+    started: list[_FakeProcess] = []
+    started_labels: list[str] = []
+    counter = {"n": 0}
+    base_prepare = _prepare_with_tracked_plan_dirs(tmp_path, counter)
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan:
+        clock[0] += 20.0
+        plan = _source_plan(tmp_path)
+        segment = plan.segments[0].model_copy(update={"duration_seconds": 30.0})
+        return plan.model_copy(update={"segments": [segment]})
+
+    def fallback_provider(_config: EgressConfig) -> EgressSourcePlan:
+        nonlocal fallback_calls
+        fallback_calls += 1
+        return _slate_plan(tmp_path)
+
+    def prepare(plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
+        clock[0] += 9.0
+        return base_prepare(plan, config)
+
+    class _CapturingStrategy(_FakeContentReloadStrategy):
+        def start(self, request: EncoderStartRequest) -> EncoderStartResult:
+            started_labels.append(request.source_plan.segments[0].label)
+            return super().start(request)
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        fallback_source_provider=fallback_provider,
+        boundary_source_plan_provider=lambda _channel_id, _at: pytest.fail("not called"),
+        encoder_strategy=_CapturingStrategy([_FakeProcess(pid=111)], started),
+        source_preparer=prepare,
+        monotonic=lambda: clock[0],
+    )
+
+    daemon.process_once("gov")
+
+    assert fallback_calls == 0
+    assert started_labels == ["Council meeting"]
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-1"})
+    assert store.read_state("gov").state == "ON_AIR"  # type: ignore[union-attr]
 
 
 def test_superseding_a_pending_reload_releases_its_previous_plan_dir(tmp_path: Path) -> None:

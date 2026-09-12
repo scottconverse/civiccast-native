@@ -486,6 +486,11 @@ class _WindowsPipeChannel:
             daemon=True,
         ).start()
 
+    def worker_initial_control_connection_observed(self) -> bool:
+        """Return whether the worker completed its initial pipe connection."""
+
+        return self._connected_event.is_set()
+
     def send_and_wait(
         self,
         verb: Verb,
@@ -1064,6 +1069,19 @@ class GstPlayoutStrategy:
             os.close(fd)
         self._last_send_command_failure.pop(channel_id, None)
         return True
+
+    def worker_initial_control_connection_observed(self, channel_id: str) -> bool:
+        """Return whether the worker has made its initial control connection.
+
+        This deliberately says nothing about GStreamer PLAYING or main-loop
+        readiness: pipe acceptance precedes both. POSIX FIFO behavior is
+        unchanged and has no equivalent asynchronous server-accept phase.
+        """
+
+        if not self._is_windows:
+            return True
+        channel = self._pipe_channels.get(channel_id)
+        return channel is not None and channel.worker_initial_control_connection_observed()
 
     def last_send_command_failure_reason(self, channel_id: str) -> str | None:
         """Why the most recent ``send_command``/``reload_content`` call for

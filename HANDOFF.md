@@ -1,5 +1,41 @@
 # HANDOFF
 
+## 2026-09-12 rejected cd54767 candidate and startup readiness repair
+
+Current branch: `fix/beta7-control-ready-v2`.
+Current source proof anchor: `362fc48ed8dff20f41dde703285d8773ff6326c5`,
+based on merged `main` at `cd54767bc3c3cd3fcacf6aa5642f1df459a4fdea`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/224.
+The first pushed PR head is `bc0e998898478eec43cc3d58d2861e28a905d80b`;
+this post-push status commit follows it, so use `git rev-parse HEAD` and
+PR #224 for the exact current branch head and CI runs. No replacement
+build, installer, or kit exists yet.
+
+The `cd54767` beta.7 candidate is rejected. Build run `34699190826` succeeded,
+but its fresh 15-minute Windows Sandbox soak failed with one education reload
+abort before the worker's initial control connection and one planned restart.
+The replacement worker recovered in 20.4 seconds, followed by 94 successful
+reload commits, zero stalls, and zero unplanned relaunches. Exact installer
+SHA-256 is `b9a327094706f7dc07a75432ffa3875e84339b78afeb6e2d8eb9422df9dced08`;
+manifest SHA-256 is
+`d28e74b41bb0cfdc22631fac5a14322e746cc819b76fb52ba129c3e73bf16d8c`.
+This kit is not a release candidate and must not be reused or published.
+
+The repair rejects an initial scheduled plan when resolution and preparation
+consume the originally selected first programme segment's remaining lifetime.
+It releases the unused prepared directory and starts one separately prepared
+fallback operation. Both fallback replanning and ordinary finite-plan rollover
+wait for the worker's initial Windows control connection before provider lookup
+or latch/cooldown mutation. Focused result: 336 passed, 7 expected skips; Ruff,
+format, mypy, diff checks, and independent adversarial review pass. Evidence is
+in `.agent-runs/native-windows/beta7-control-ready/evidence/`.
+
+Required sequence: pass required PR CI, merge, build a fresh candidate
+from the new exact `main`, pass fresh Sandbox and Gate A, run the dedicated
+physical tester overnight soak, then publish only on passing evidence. beta.5,
+beta.6, `99705005`, and `cd54767` must not be published. Full owner authorization
+remains in force. Older entries below are historical.
+
 ## 2026-09-12 rejected beta.7 candidate and schedule-rollover repair
 
 Current branch: `fix/beta7-stale-horizon-reload`.

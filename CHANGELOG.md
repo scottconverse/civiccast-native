@@ -22,6 +22,11 @@ came across and what deliberately did not.
 
 ### beta.7 playout repair (candidate gates outstanding)
 
+- Refuse to launch a scheduled programme whose first segment expired while
+  its initial plan was being resolved and prepared; release that unused plan and
+  start one bounded fallback operation. Automatic fallback replanning and finite
+  plan rollover now wait for the Windows worker's initial control connection,
+  preventing the startup reload abort and restart reproduced on `cd54767`.
 - Start one-item scheduled rollovers at the beginning of short programme
   windows, and turn an expired live horizon into one immediate reload against
   its original boundary. This prevents the automation loop from repeatedly
