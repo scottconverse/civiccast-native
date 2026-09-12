@@ -9,11 +9,13 @@
 > `6697c40048a0488b0fb7998088366f5110b95121` on
 > `fix/beta7-stale-horizon-reload` gives short one-item plans their full preload
 > window and immediately reloads a live expired horizon instead of re-dating
-> the old dispatch. Focused verification: 75 passed plus Ruff, format, mypy,
-> diff checks, and independent review. No replacement build exists yet.
-> Required CI, merge, fresh build, Sandbox, Gate A, physical tester soak, and
-> publication remain outstanding. Do not reuse results or binaries from
-> `99705005`. See
+> the old dispatch. PR #223 is open at
+> https://github.com/scottconverse/civiccast-native/pull/223; its first pushed
+> head was `348f3693e6307857e70e36c7896c104c82f47b79`, and required CI is running.
+> Focused verification: 75 passed plus Ruff, format, mypy, diff checks, and
+> independent review. No replacement build exists yet. Merge, fresh build,
+> Sandbox, Gate A, physical tester soak, and publication remain outstanding.
+> Do not reuse results or binaries from `99705005`. See
 > `.agent-runs/native-windows/beta7-schedule-rollover/evidence/LOCAL-VERIFICATION.md`.
 
 > **2026-09-12 1:12 AM Mountain - beta.7 repair candidate in preparation.**

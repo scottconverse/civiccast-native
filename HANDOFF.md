@@ -5,7 +5,11 @@
 Current branch: `fix/beta7-stale-horizon-reload`.
 Current source proof anchor: `6697c40048a0488b0fb7998088366f5110b95121`,
 based on `main` at `99705005d63c5d9e23b6aca3bbb18654d2b5db3f`.
-No PR or replacement build exists yet at this checkpoint.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/223.
+The first pushed branch head was
+`348f3693e6307857e70e36c7896c104c82f47b79`; this post-push status commit
+follows it, so use `git rev-parse HEAD` and PR #223 for the current branch HEAD
+and CI run IDs. No replacement build exists yet.
 
 The beta.7 candidate built from `99705005` is rejected. Its exact identity is
 build run `34691600770`, installer SHA-256
@@ -23,11 +27,11 @@ automation tests plus Ruff, format, mypy, and diff checks. Independent review
 found the final automation delta clean. Evidence and exact limits are in
 `.agent-runs/native-windows/beta7-schedule-rollover/evidence/LOCAL-VERIFICATION.md`.
 
-Required sequence: push and PR, required CI, merge, fresh signed build from the
-new `main` SHA, fresh Sandbox, Gate A, physical tester soak, and publish only on
-passing evidence. beta.5, beta.6, and the rejected `99705005` beta.7 candidate
-must not be published. Full owner authorization remains in force. Older entries
-below are historical.
+Required sequence: required PR CI, merge, fresh signed build from the new `main`
+SHA, fresh Sandbox, Gate A, physical tester soak, and publish only on passing
+evidence. beta.5, beta.6, and the rejected `99705005` beta.7 candidate must not
+be published. Full owner authorization remains in force. Older entries below
+are historical.
 
 ## 2026-09-12 beta.7 GStreamer repair - PR #221
 
