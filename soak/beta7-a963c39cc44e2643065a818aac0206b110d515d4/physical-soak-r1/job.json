@@ -19,5 +19,8 @@
                                "verified_utc":  "2026-09-12T22:45:36.4052276Z",
                                "version":  "1.0.0-beta.7",
                                "app_pack_source_sha":  "a963c39cc44e2643065a818aac0206b110d515d4"
-                           }
+                           },
+    "current_phase":  "ON",
+    "measured_phase_begin_utc":  "2026-09-12T23:01:43.0424069Z",
+    "measured_phase_planned_end_utc":  "2026-09-13T01:01:43.0424069Z"
 }
