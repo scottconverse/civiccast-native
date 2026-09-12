@@ -2,14 +2,14 @@
     "hostname":  "DESKTOP-VBMA6O5",
     "source_sha":  "a963c39cc44e2643065a818aac0206b110d515d4",
     "job_started_utc":  "2026-09-12T22:45:35.8117980Z",
-    "job_state":  "STARTED",
+    "job_state":  "FAIL",
     "minutes_per_phase":  120,
     "phases":  [
                    "ON",
                    "OFF"
                ],
     "result":  null,
-    "error":  null,
+    "error":  "ON transport proof failed for education: stream errors present",
     "installed_identity":  {
                                "runtime_file_sha256":  {
                                                            "Lib/site-packages/civiccast/egress/daemon.py":  "b0af145243f6b28e80f7b1bc64aebe4ca930865eea26c06db6550d5dbb1bba04",
@@ -22,5 +22,6 @@
                            },
     "current_phase":  "ON",
     "measured_phase_begin_utc":  "2026-09-12T23:01:43.0424069Z",
-    "measured_phase_planned_end_utc":  "2026-09-13T01:01:43.0424069Z"
+    "measured_phase_planned_end_utc":  "2026-09-13T01:01:43.0424069Z",
+    "finished_utc":  "2026-09-12T23:03:15.1102930Z"
 }
