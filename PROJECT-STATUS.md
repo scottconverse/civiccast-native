@@ -1,4 +1,41 @@
-> Latest September 11: candidate39e7ec3c build34633364038 passed. Two-hour Sandbox
+> **2026-09-12 1:12 AM Mountain - beta.7 repair candidate in preparation.**
+> beta.5 and beta.6 are both rejected after physical tester failures; neither is
+> a fallback or publication candidate. Current green `main` is
+> `5e8551a0b8983b8a3b2f54f7cb1641f55bec54cc`. The beta.7 branch is
+> `fix/f1-stall-recovery-20260912`; its isolated GStreamer repair commit is
+> `24e81a7abd8313538c4df0baf03a6fdba2e72d14`, followed by the beta.7 identity,
+> generated docs, and status at proof anchor
+> `ead9adda6f0573bc60333ce8f48a9863c248e6bb`. PR #221 is open; this
+> post-push status commit follows that proof anchor, so use the PR for its exact
+> current HEAD and CI run IDs.
+> The repair forces a fully prerolled deferred replacement through the existing
+> guarded commit path when the outgoing programme stalls without EOS. Local
+> candidate checks pass: 143 focused tests, including 79 GStreamer ordering and
+> watchdog regressions; release identity, candidate boundary, generated OpenAPI,
+> rendered manual, and diff checks pass. No beta.7 installer or kit exists yet.
+> PR head `c11cafddb9a49b4365e73456df67d20f1e5aa369` exposed one omitted
+> artifact: docs run `34680422499` rejected the stale tracked PDF/DOCX manual
+> manifest. The three tracked manual artifacts are regenerated in the follow-up
+> commit and the local `--check-current` check passes. Replacement PR head
+> `4274e3eac5eae45bad73e5b359fe893e2df10bd6` passed the manual gate, but
+> deterministic-detectors run `34680753672` exposed a real pre-cancellation
+> ordering defect: `run_ffmpeg()` resolved a missing host FFmpeg executable
+> before honoring an already-set cancel event. The narrow correction now checks
+> cancellation before discovery; all 60 FFmpeg wrapper tests and Ruff pass
+> locally. The same run's randomized job exposed the repaired `engine.py` blob
+> still bound to its pre-repair hash in two historical claim entries. Both
+> current-source tripwires are rebound to blob
+> `3c1d1ef21b22d8f5840c9353551a43d8e370ddd4`; this does not reclassify their
+> historical evidence. The exact native Windows forced-stall regression also
+> passes against the worktree source with bundled GStreamer dependencies: one
+> guarded commit, resumed TS, clean teardown, and continuity checks in 63.48s.
+> Fresh replacement CI is required after these corrections are pushed.
+> Required PR CI, signed build, Sandbox, Gate A, dedicated-tester soak, and publication
+> remain outstanding. The existing beta.6 artifacts and evidence remain rejected.
+> Scott's full delivery authorization remains in force. All entries below this
+> paragraph are historical checkpoints unless they explicitly name beta.7.
+>
+> Historical September 11 checkpoint: candidate39e7ec3c build34633364038 passed. Two-hour Sandbox
 > evidence is accepted after independently reproducing and correcting an empty-array
 > grading defect;723 raw commits,zero exits/timeouts. Gate A34651334966 failed T4
 > because harness schema discovery omitted staff auth. The harness correction is
@@ -90,16 +127,16 @@ the GitHub releases page daily.
 
 ---
 
-## 2. Where the project actually is, right now
+## 2. Historical 2026-09-10 snapshot (superseded by the beta.7 status above)
 
 | | |
 |---|---|
-| **main** | `6de69b8e` — green. (`795cdab5` was main when the beta.6 kit was built; the only commits since are this document and the soak evidence.) |
-| **Latest public release** | **v1.0.0-beta.5**, published 2026-09-09 10:14 PM |
-| **`docs/releases/release-truth.yaml` `current:`** | `v1.0.0-beta.5` |
-| **Product version in source** | `1.0.0-beta.6` (release-prep bump already landed) |
-| **beta.6 kit** | **built and byte-verified, NOT soaked, NOT gate-tested, NOT published** |
-| **Open PRs** | #202, #175, #155, #138 — all pre-existing, none from the 2026-09-09/10 work |
+| **main at that time** | `6de69b8e` - green. (`795cdab5` was main when the beta.6 kit was built.) |
+| **Latest public release at that time** | **v1.0.0-beta.5**, published 2026-09-09 10:14 PM |
+| **`docs/releases/release-truth.yaml` `current:` at that time** | `v1.0.0-beta.5` |
+| **Product version in source at that time** | `1.0.0-beta.6` (release-prep bump had landed) |
+| **beta.6 kit at that time** | **built and byte-verified, NOT soaked, NOT gate-tested, NOT published** |
+| **Open PRs at that time** | #202, #175, #155, #138 - all pre-existing, none from the 2026-09-09/10 work |
 
 ### The one thing that governs every decision from here
 

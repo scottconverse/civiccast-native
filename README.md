@@ -41,7 +41,7 @@ checks, sandbox soaks, and the known issues carried forward), and
 [`docs/releases/2026-09-04-beta5-release-notes.md`](docs/releases/2026-09-04-beta5-release-notes.md)
 for the publish record and the upgrade steps.
 
-`v1.0.0-beta.6` is the next candidate and the current owner-held unpublished candidate
+`v1.0.0-beta.7` is the next candidate and the current owner-held unpublished candidate
 (unpublished; no installer asset) -- it does not change the install story
 above, which still targets `v1.0.0-beta.5`.
 

@@ -1376,6 +1376,72 @@ def test_stall_watchdog_fires_when_live_source_freezes(tmp_path: Path) -> None:
     assert rc not in (0, None), f"stall exit must be non-zero for daemon relaunch (rc={rc})"
 
 
+def test_stall_watchdog_commits_ready_deferred_reload_when_live_source_freezes(
+    tmp_path: Path,
+) -> None:
+    """beta.7 regression: a ready deferred replacement survives outgoing silence.
+
+    The outgoing live UDP leg freezes without EOS after the segment-timed
+    replacement has completed its first-buffer hold. The ordinary stall budget
+    must force the guarded boundary, commit once, and resume TS output instead
+    of terminating the worker.
+    """
+    port = _free_udp_port()
+    out_ts = tmp_path / "out.ts"
+    start_graph = _filesink_graph(_udpsrc_program_graph(port), out_ts)
+    reload_path = tmp_path / f"stall-recovery{reloadpolicy.DEFERRED_SWITCH_SUFFIX}"
+    reload_path.write_text(
+        graphmod.graph_to_json(_segment_timed_reload_graph(18, audio=False)),
+        encoding="utf-8",
+    )
+    sender = _LiveUdpSender(port, bitrate_kbps=1500, gop=30)
+    proc, control, log = _launch_worker(
+        tmp_path,
+        start_graph,
+        out_ts,
+        env_extra={
+            "CIVICCAST_STALL_TIMEOUT_S": "3",
+            "CIVICCAST_DEFER_SWITCH_TIMEOUT_S": "30",
+        },
+    )
+    try:
+        time.sleep(3.0)
+        _send(control, f"reload {reload_path}")
+        _wait_for_log(log, "CTRL reload: new leg preroll verified", timeout=15.0)
+        sender.freeze()
+        force_marker = "output stalled after replacement preroll; forcing switch"
+        _wait_for_log(log, force_marker, timeout=15.0)
+        _wait_for_log(log, "CTRL reload committed", timeout=15.0)
+        committed_at_size = out_ts.stat().st_size
+        time.sleep(1.5)
+        assert proc.poll() is None, log.read_text(encoding="utf-8", errors="replace")
+        assert out_ts.stat().st_size > committed_at_size, (
+            "replacement committed but TS output did not resume;\n"
+            + log.read_text(encoding="utf-8", errors="replace")
+        )
+        _send(control, "stop")
+        rc = proc.wait(timeout=25)
+    finally:
+        _reap(proc)
+        sender.stop()
+
+    text = log.read_text(encoding="utf-8", errors="replace")
+    assert rc == 0, f"unclean teardown after forced deferred commit (rc={rc});\n{text}"
+    assert text.count(force_marker) == 1, text
+    assert text.count("CTRL reload committed") == 1, text
+    assert "CTRL stall: no output for" not in text, text
+    ordering = [
+        text.index(force_marker),
+        text.index("CTRL reload: firing"),
+        text.index("CTRL reload: switching selector"),
+        text.index("CTRL reload: old leg disposed"),
+        text.index("CTRL reload: holds released"),
+        text.index("CTRL reload committed"),
+    ]
+    assert ordering == sorted(ordering), f"forced commit ordering regressed;\n{text}"
+    _assert_continuous(out_ts, text)
+
+
 def test_stall_watchdog_does_not_fire_on_healthy_output(tmp_path: Path) -> None:
     """S9-5 fail-closed check: with a SHORT stall_timeout, healthy flowing output must
     NOT trip the watchdog — every output buffer resets it. Runs well past the timeout."""
@@ -1906,7 +1972,7 @@ def _finite_program_av_graph(*, seconds: float = 5.0):
     )
 
 
-def _segment_timed_reload_graph(pattern: int = 18):
+def _segment_timed_reload_graph(pattern: int = 18, *, audio: bool = True):
     """A reload payload that is SEGMENT-TIMED and endless -- the rollover successor.
     Endless so it is still producing when the test stops the worker; segment-timed so
     ``reload_program`` takes the hold-and-rebase path under test."""
@@ -1921,9 +1987,11 @@ def _segment_timed_reload_graph(pattern: int = 18):
             _E("audioconvert"),
             _E("audioresample"),
             _E("capsfilter", props={"caps": _ACAPS}),
-        ),
+        )
+        if audio
+        else (),
     )
-    base = _av_demo_graph(nsrc=2)
+    base = _av_demo_graph(nsrc=2) if audio else graphmod.demo_test_graph(nsrc=2)
     return graphmod.PlayoutGraph(
         sources=(program, base.sources[1]),
         encoder=base.encoder,

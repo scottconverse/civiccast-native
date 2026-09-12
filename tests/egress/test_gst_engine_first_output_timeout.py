@@ -204,6 +204,91 @@ def test_check_stall_still_applies_the_ordinary_stall_bound_after_first_output(
     assert "CTRL first-output: first buffer after" in err  # the SUCCESS marker, printed once
 
 
+def test_check_stall_forces_a_ready_reload_when_outgoing_eos_is_missing(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A ready deferred replacement must recover a frozen outgoing leg instead
+    of exiting the worker before the existing forced-switch timeout can fire."""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine._first_output_seen = True
+    engine._output_buffers = 2
+    engine._stall_last_count = 2
+    engine._stall_last_advance_t = 0.0
+    engine._pending_reload = {
+        "txn_id": 7,
+        "switch_at_end_of_current": True,
+        "new_leg_ready": True,
+        "holds_awaited": 0,
+        "old_leg_eos": False,
+        "commit_in_progress": False,
+    }
+    commits: list[bool] = []
+    engine._commit_reload = lambda: commits.append(True)  # type: ignore[method-assign]
+
+    clock["t"] = 11.0
+    assert engine._check_stall() is True
+    assert commits == [True]
+    assert engine._pending_reload["boundary_forced"] is True
+    assert (
+        "output stalled after replacement preroll; forcing switch (reload_id=7)"
+        in capsys.readouterr().out
+    )
+    assert engine._error is None
+
+
+def test_check_stall_does_not_suppress_stall_when_reload_holds_remain(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = {"t": 0.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine._loop = _FakeLoop()
+    engine._first_output_seen = True
+    engine._output_buffers = 2
+    engine._stall_last_count = 2
+    engine._pending_reload = {
+        "txn_id": 7,
+        "switch_at_end_of_current": True,
+        "new_leg_ready": True,
+        "holds_awaited": 1,
+        "old_leg_eos": False,
+        "boundary_forced": False,
+        "commit_in_progress": False,
+    }
+
+    clock["t"] = 11.0
+    assert engine._check_stall() is False
+    assert engine._error == ("stall", "output stalled")
+    assert engine._loop.quit_calls == 1
+
+
+@pytest.mark.parametrize("field", ["holds_awaited", "old_leg_eos", "boundary_forced"])
+def test_force_deferred_boundary_rejects_non_forceable_reload(engine_module, field: str) -> None:
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine._pending_reload = {
+        "txn_id": 7,
+        "switch_at_end_of_current": True,
+        "new_leg_ready": True,
+        "holds_awaited": 0,
+        "old_leg_eos": False,
+        "boundary_forced": False,
+        "commit_in_progress": False,
+    }
+    engine._pending_reload[field] = {
+        "holds_awaited": 1,
+        "old_leg_eos": True,
+        "boundary_forced": True,
+    }[field]
+    commits: list[bool] = []
+    engine._commit_reload = lambda: commits.append(True)  # type: ignore[method-assign]
+
+    assert engine._force_deferred_boundary(7, reason="test") is False
+    assert commits == []
+    assert engine._pending_reload["boundary_forced"] is (field == "boundary_forced")
+
+
 def test_check_stall_ordinary_stall_disabled_at_zero_after_first_output(
     engine_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:

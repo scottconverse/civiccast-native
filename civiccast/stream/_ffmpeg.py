@@ -478,6 +478,9 @@ def run_ffmpeg(
     running at the process's normal priority, so this must never become a
     blanket default here.
     """
+    if cancel_event is not None and cancel_event.is_set():
+        raise FfmpegCancelledError("ffmpeg cancelled before launch")
+
     ffmpeg_path = _ffmpeg_path()
     resolved_args = _resolve_video_encoder_args(args, ffmpeg_path)
 

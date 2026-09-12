@@ -20,6 +20,19 @@ came across and what deliberately did not.
 - Preserve empty and single-item missing-commit lists in the Sandbox soak
   caller, preventing a healthy run from failing with a blank channel name.
 
+### beta.7 playout repair (candidate gates outstanding)
+
+- When a deferred replacement is fully prerolled but the outgoing programme
+  stops producing output without EOS, force that transaction through the
+  existing guarded commit path instead of killing the worker at the ordinary
+  stall threshold. beta.5 and beta.6 remain rejected; beta.7 is unpublished.
+- Reject an already-cancelled FFmpeg job before resolving the executable or
+  encoder. This keeps cancelled background work independent of host FFmpeg
+  availability and prevents it from failing with `FfmpegNotFoundError`.
+- Rebind the two historical GStreamer claims' current-source tripwires to the
+  repaired `engine.py` blob. This records source review only; it does not
+  reclassify the historical observations as beta.7 acceptance.
+
 ### Local beta reliability repair (candidate gates outstanding)
 
 - Preserve aborted-reload reasons in current state and durable proof history.
@@ -69,7 +82,7 @@ came across and what deliberately did not.
   second-cycle Windows tests and payload reproducibility passed at 2dd9287c;
   candidate verification remains outstanding.
 
-`v1.0.0-beta.6` is the next candidate and the current owner-held unpublished
+`v1.0.0-beta.7` is the next candidate and the current owner-held unpublished
 candidate; it does not change the `v1.0.0-beta.4` install story documented
 below.
 

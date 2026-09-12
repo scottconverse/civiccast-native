@@ -1,5 +1,58 @@
 # HANDOFF
 
+## 2026-09-12 beta.7 GStreamer repair - PR #221
+
+Current branch: `fix/f1-stall-recovery-20260912`.
+Current source/proof anchor:
+`ead9adda6f0573bc60333ce8f48a9863c248e6bb`, based on green `main`
+`5e8551a0b8983b8a3b2f54f7cb1641f55bec54cc`. Current PR:
+https://github.com/scottconverse/civiccast-native/pull/221. This post-push
+status commit follows the proof anchor; use `git rev-parse HEAD` and PR #221
+for the exact current branch HEAD and CI run IDs. The proof-anchor commit
+contains the beta.7 version surfaces, generated OpenAPI/manual artifacts, and
+the pre-push handoff/status state.
+
+beta.5 and beta.6 are rejected. Do not reuse or publish either beta.6 build or
+kit. The beta.7 repair handles the dedicated tester's reproduced failure: a
+fully prerolled deferred replacement waits for outgoing EOS, output stalls,
+and the ordinary 10-second watchdog kills the worker before the 900-second
+defer watchdog can force the switch. The engine now admits only the current,
+fully ready, hold-free deferred transaction to the existing lock-safe forced
+boundary and commit path; incomplete or stale transactions retain normal stall
+handling. The tester diagnostic is commit `b500789a` on
+`tester/soak8-e1acfe6-DESKTOP-VBMA6O5` and reports `station_changes: false`.
+
+Local candidate verification passes: 143 focused tests, including 79 affected
+GStreamer ordering/watchdog tests; release identity, candidate-boundary,
+generated OpenAPI, rendered-manual, and diff checks pass. Independent review
+caught and corrected a downloader default-pair mismatch before push. The
+downloader now uses beta.7/beta.7 consistently and explains the explicit
+beta.5/beta.5 pair while beta.7 is unpublished. No beta.7 artifact has been
+built. Remaining sequence: fresh required PR CI, merge, signed beta.7 build,
+Sandbox, Gate A, dedicated-tester soak, then publish only on passing evidence.
+Full owner authorization remains in force. Older entries below are historical.
+
+First CI head `c11cafddb9a49b4365e73456df67d20f1e5aa369` exposed one missing
+generated set: docs run `34680422499` failed because the tracked PDF/DOCX manual
+manifest still named the earlier source hash. The PDF, DOCX, and manifest are
+regenerated in the follow-up commit; local `render_user_manual.py --check-current`
+passes. Replacement head `4274e3eac5eae45bad73e5b359fe893e2df10bd6`
+passed that manual gate. Its deterministic-detectors run `34680753672` then
+exposed a real pre-cancellation ordering defect in `run_ffmpeg()`: an already
+cancelled job tried to locate host FFmpeg before raising cancellation. The
+narrow correction checks the event before executable discovery and strengthens
+the regression to reject any discovery call. All 60 FFmpeg wrapper tests and
+Ruff pass locally. The same run's randomized job failed because the two
+historical GStreamer claims still bound `engine.py` to its pre-repair blob.
+Their current-source tripwires now bind blob
+`3c1d1ef21b22d8f5840c9353551a43d8e370ddd4`; the historical observations remain
+historical. A native Windows regression against the worktree source and bundled
+GStreamer dependencies passed in 63.48s, forcing one guarded commit after an
+outgoing live source froze without EOS, resuming TS output, preserving commit
+ordering and continuity, and tearing down cleanly. Fresh replacement CI remains
+outstanding. Local evidence and limits are in
+`docs/evidence/beta7-repair-2026-09-12/LOCAL-VERIFICATION.md`.
+
 ## 2026-09-11 candidate built; harness corrections for Gate A
 
 Branch: fix/beta-harness-auth-20260911, based on merged main39e7ec3c.

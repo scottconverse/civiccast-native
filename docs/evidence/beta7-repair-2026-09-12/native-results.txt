@@ -1,0 +1,26 @@
+beta.7 native forced-stall regression receipt
+Recorded: 2026-09-12 Mountain time
+Branch: fix/f1-stall-recovery-20260912
+Pre-run committed HEAD: 4274e3eac5eae45bad73e5b359fe893e2df10bd6
+Worktree product identity: 1.0.0-beta.7
+Python: CPython 3.12.10
+GStreamer: GStreamer 1.28.5
+Runtime dependency root: C:\CivicCastTester\candidates\39e7ec3cbb4ccbeb3009ff3257dfc314010151f3\candidate\trust-bridge-install\runtime
+Runtime dependency limitation: candidate 39e7 supplied bundled runtime dependencies only; its product bytes remain rejected and were not executed as the beta.7 candidate.
+Imported civiccast package: C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f1-stall-fix\civiccast\__init__.py
+Worker source launched by test: C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f1-stall-fix\civiccast\egress\gst\worker.py
+
+Environment:
+  CIVICCAST_GSTREAMER_RUNTIME_ROOT=C:\CivicCastTester\candidates\39e7ec3cbb4ccbeb3009ff3257dfc314010151f3\candidate\trust-bridge-install\runtime
+  UV_PROJECT_ENVIRONMENT=.venv312
+
+Command:
+  uv run --frozen --no-sync --python 3.12 pytest tests/egress/test_gst_engine_wsl.py::test_stall_watchdog_commits_ready_deferred_reload_when_live_source_freezes -p no:randomly -p no:cacheprovider -q --basetemp=C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\outputs\beta7-native-stall-20260912-0220
+
+Output:
+  .                                                                        [100%]
+  1 passed in 63.48s (0:01:03)
+
+Exit code: 0
+Capture: out.ts, 552720 bytes
+Worker log: native-worker.stdout.txt
