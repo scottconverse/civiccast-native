@@ -1,6 +1,8 @@
 # soak8-e1acfe6 Latest Test Directive
-Current: soak/DIRECTIVE-6.md
+Current: soak/DIRECTIVE-7.md
 Branch: soak8-e1acfe6-directives
+Updated: 2026-09-12T02:49Z - Tester execution/reporting repaired. R4 replaces
+failed readiness serialization with bounded scalar data. See soak/DIRECTIVE-7.md.
 Updated: 2026-09-12T02:12Z - R3 returns the poll and R1/R2 error evidence directly,
 without rerunning probes or changing the station. See soak/DIRECTIVE-6.md.
 Updated: 2026-09-12T01:55Z - READINESS-R2 returns the readiness JSON explicitly;
