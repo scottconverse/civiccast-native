@@ -32,6 +32,12 @@ built. Remaining sequence: push and PR, required CI, signed beta.7 build,
 Sandbox, Gate A, dedicated-tester soak, then publish only on passing evidence.
 Full owner authorization remains in force. Older entries below are historical.
 
+First CI head `c11cafddb9a49b4365e73456df67d20f1e5aa369` exposed one missing
+generated set: docs run `34680422499` failed because the tracked PDF/DOCX manual
+manifest still named the earlier source hash. The PDF, DOCX, and manifest are
+regenerated in the follow-up commit; local `render_user_manual.py --check-current`
+passes. Required replacement CI remains outstanding.
+
 ## 2026-09-11 candidate built; harness corrections for Gate A
 
 Branch: fix/beta-harness-auth-20260911, based on merged main39e7ec3c.

@@ -13,6 +13,10 @@
 > candidate checks pass: 143 focused tests, including 79 GStreamer ordering and
 > watchdog regressions; release identity, candidate boundary, generated OpenAPI,
 > rendered manual, and diff checks pass. No beta.7 installer or kit exists yet.
+> PR head `c11cafddb9a49b4365e73456df67d20f1e5aa369` exposed one omitted
+> artifact: docs run `34680422499` rejected the stale tracked PDF/DOCX manual
+> manifest. The three tracked manual artifacts are regenerated in the follow-up
+> commit and the local `--check-current` check passes; replacement CI is required.
 > Required PR CI, signed build, Sandbox, Gate A, dedicated-tester soak, and publication
 > remain outstanding. The existing beta.6 artifacts and evidence remain rejected.
 > Scott's full delivery authorization remains in force. All entries below this
