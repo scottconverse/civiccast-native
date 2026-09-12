@@ -1,6 +1,8 @@
 # soak8-e1acfe6 Latest Test Directive
-Current: soak/DIRECTIVE-5.md
+Current: soak/DIRECTIVE-6.md
 Branch: soak8-e1acfe6-directives
+Updated: 2026-09-12T02:12Z - R3 returns the poll and R1/R2 error evidence directly,
+without rerunning probes or changing the station. See soak/DIRECTIVE-6.md.
 Updated: 2026-09-12T01:55Z - READINESS-R2 returns the readiness JSON explicitly;
 the existing poller's .log files are ignored by Git. See soak/DIRECTIVE-5.md.
 Updated: 2026-09-12T01:40Z - Fixed beta takeover. New read-only readiness order:
