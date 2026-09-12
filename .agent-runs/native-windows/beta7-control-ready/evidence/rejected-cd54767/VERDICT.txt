@@ -1,0 +1,1 @@
+verdict=FAIL reason=seamless reload was expected but a content-reload aborted on channel=education (Seamless content-reload declined for education (worker never connected to its control pipe); falling back to restart.) -- fell back to a restart cycles_total=15 cycles_evaluated=12

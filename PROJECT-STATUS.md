@@ -1,3 +1,26 @@
+> **2026-09-12 latest: `cd54767` beta.7 candidate rejected; startup
+> control-readiness repair is locally verified.** The rejected exact-source
+> candidate is build `34699190826`, installer SHA-256
+> `b9a327094706f7dc07a75432ffa3875e84339b78afeb6e2d8eb9422df9dced08`, and
+> manifest SHA-256
+> `d28e74b41bb0cfdc22631fac5a14322e746cc819b76fb52ba129c3e73bf16d8c`.
+> Its fresh 15-minute Sandbox run failed with one education reload abort before
+> the worker's first control connection, one 20.4-second planned restart, and
+> verdict FAIL; 94 later reload commits succeeded with zero stalls or unplanned
+> relaunches. Do not reuse or publish this candidate.
+>
+> Replacement source proof is `362fc48ed8dff20f41dde703285d8773ff6326c5`
+> on `fix/beta7-control-ready-v2`, based on `cd54767`. It refuses an initial
+> programme plan whose first segment expired during resolution/preparation,
+> releases its prepared directory, starts one bounded fallback operation, and
+> gates both automatic reload paths on the worker's initial Windows control
+> connection. Focused verification: 336 passed, 7 expected platform skips;
+> Ruff, format, mypy, diff checks, and independent adversarial review pass.
+> No replacement build exists yet. PR, required CI, merge, fresh build,
+> Sandbox, Gate A, physical tester soak, and publication remain. Evidence:
+> `.agent-runs/native-windows/beta7-control-ready/evidence/LOCAL-VERIFICATION.md`.
+> Full owner authorization remains in force. Older entries are historical.
+>
 > **2026-09-12 latest: beta.7 candidate `99705005` rejected; replacement
 > schedule-rollover repair is locally verified.** The rejected candidate is
 > build `34691600770`, installer SHA-256
