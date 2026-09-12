@@ -1,6 +1,8 @@
 # soak8-e1acfe6 Latest Test Directive
-Current: soak/DIRECTIVE-12.md
+Current: soak/DIRECTIVE-13.md
 Branch: soak8-e1acfe6-directives
+Updated: 2026-09-12T05:30Z - R2 startup timed out before measurement. Return
+worker/service log evidence via read-only Directive13; preserve failed runs.
 Updated: 2026-09-12T05:21Z - Return read-only R2 phase-start and progress evidence.
 Leave the current attempt unchanged. See soak/DIRECTIVE-12.md.
 Updated: 2026-09-12T05:02Z - R1 failed harness preflight before measurement.
