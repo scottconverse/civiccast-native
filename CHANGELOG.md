@@ -22,6 +22,15 @@ came across and what deliberately did not.
 
 ### beta.7 playout repair (candidate gates outstanding)
 
+- Quiesce both outgoing programme tail pads with GStreamer IDLE probes before
+  changing `input-selector`, fence late old-leg buffers locally, and detach the
+  old request pads without sending a synchronous flush event into a selector
+  handoff. This addresses the `93f9168` Sandbox failure where one stream was
+  still active and retirement blocked inside `FLUSH_START`. Pre-handoff probe,
+  thread-start, selector, and shutdown failures restore the current programme;
+  a partial A/V selector mutation remains owned by the nonzero worker-recovery
+  watchdog. Three native Windows workers completed 18 real MPEG-TS rollovers
+  with stable element counts and clean teardown; candidate gates remain open.
 - Hold and preroll both streams of an immediate finite programme replacement,
   rebase them together onto the running broadcast timeline, and release them
   only after the outgoing leg is retired. This addresses the physical R6 failure

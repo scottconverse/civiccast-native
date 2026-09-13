@@ -2372,6 +2372,20 @@ class GstPlayoutEngine:
             "commit_watchdog": None,
             "commit_completed": None,
             "retirement_result": None,
+            # The outgoing leg is fenced at its own tail pads before selector
+            # mutation.  An IDLE probe is a blocking probe: its callback is the
+            # proof that no buffer/event push is still inside input-selector.
+            # A non-blocking DROP probe is installed beside it before handoff;
+            # retirement can then unlink the selector request pads, remove the
+            # IDLE blocks, and let any late producer work drain harmlessly into
+            # the DROP fence while the old elements transition to NULL.
+            "old_tail_src_pads": [],
+            "old_tail_quiescence_probes": [],
+            "old_tail_quiesced": set(),
+            "old_tail_quiescence_armed": False,
+            "old_tail_drop_probes": [],
+            "handoff_started": False,
+            "selector_handoff_started": False,
             # Every switch waits for this transaction's first buffer. Only the
             # outgoing-EOS condition starts satisfied for an immediate switch.
             "switch_at_end_of_current": switch_at_end_of_current,
@@ -2810,27 +2824,20 @@ class GstPlayoutEngine:
         return timer, completed
 
     def _commit_reload(self) -> bool:
-        """Begin one main-loop-owned commit and retire only its old leg off-loop.
+        """Quiesce the old leg, hand off on the main loop, then retire it off-loop.
 
         A no-op if the reload was aborted/superseded before this fired. ``return
         False`` keeps the GLib timeout/idle source one-shot. Transaction state,
         selector switching, hold release, final logs, and settlement callbacks stay
         on the main loop. Only ``_dispose_source_leg`` runs on the retirement thread.
 
-        Item 85 status: physical beta.5 and native production-shaped traces
-        localized the wedge after the selector switch/hold release, inside old-leg
-        disposal at ``set_state(NULL)`` or ``release_request_pad``. GStreamer 1.28.5
-        records ``active-pad`` as pending and commits it from a streaming path; that
-        path holds ``input-selector``'s active-pad reader lock across its downstream
-        push, while request-pad release takes the writer lock.
-
-        Native isolation verified the combination of bounded queues immediately
-        after the selectors, replacement holds retained through retirement, and an
-        available main loop while retirement waits. Two independent
-        three-worker/six-rollover runs passed with that combination; the tested
-        alternatives reproduced a NULL or request-pad-release wedge. This is
-        evidence for the combined topology/lifecycle, not a claim about every
-        untested subset.
+        The 93f9168 Sandbox candidate's failure stack stopped inside
+        ``peer.push_event(FLUSH_START)`` while the selector switch was pending and
+        the other outgoing stream was still live. This path follows GStreamer's
+        dynamic-unlink protocol instead: wait until IDLE probes prove every old
+        tail is between pushes, install local DROP fences, hand off the selectors,
+        detach the old request pads while their producers cannot race, then
+        unblock and NULL the isolated old elements.
 
         Four staged stderr prints ("switching selector" / "old leg disposed" /
         "holds released" / "committed (elements=N)") show exactly where any future
@@ -2855,8 +2862,121 @@ class GstPlayoutEngine:
             return False
         print(f"CTRL reload: firing (reload_id={pending['txn_id']})", flush=True)
         pending["commit_in_progress"] = True
-        start_retirement = threading.Event()
         pending["retirement_cancelled"] = False
+        try:
+            watchdog, completed = self._arm_commit_watchdog()
+        except Exception as exc:
+            pending["commit_in_progress"] = False
+            print(f"ERROR: reload commit watchdog did not start: {exc!r}", flush=True)
+            self._abort_pending_reload("commit-watchdog-start")
+            return False
+        pending["commit_watchdog"] = watchdog
+        pending["commit_completed"] = completed
+        try:
+            self._arm_old_tail_quiescence(pending)
+        except Exception as exc:
+            pending["commit_in_progress"] = False
+            self._release_old_tail_drop_fences(pending)
+            self._release_old_tail_quiescence(pending)
+            self._finish_commit_watchdog(pending)
+            print(f"ERROR: reload old-tail quiescence did not arm: {exc!r}", flush=True)
+            self._abort_pending_reload("old-tail-quiescence")
+            return False
+        return False
+
+    def _arm_old_tail_quiescence(self, pending: dict[str, Any]) -> None:
+        """Block each outgoing tail only after its current selector push returns.
+
+        ``IDLE`` is GStreamer's documented dynamic-unlink probe: if the pad is
+        already idle its callback runs immediately; otherwise it runs between
+        pushes and keeps the pad blocked until removed.  The callback only queues
+        main-loop state, so no graph or element-state work runs on a streaming
+        thread.
+        """
+        src_pads: list[Gst.Pad] = []
+        for selector_pad in (pending["old_video_pad"], pending["old_audio_pad"]):
+            if selector_pad is None:
+                continue
+            peer = selector_pad.get_peer()
+            if peer is not None:
+                src_pads.append(peer)
+        pending["old_tail_src_pads"] = src_pads
+        pending["old_tail_quiescence_probes"] = []
+        pending["old_tail_quiesced"] = set()
+        pending["old_tail_quiescence_armed"] = False
+        pending["old_tail_drop_probes"] = []
+        pending["handoff_started"] = False
+        pending["selector_handoff_started"] = False
+        for src_pad in src_pads:
+            probe_id = src_pad.add_probe(
+                Gst.PadProbeType.IDLE,
+                self._on_old_tail_quiesced_probe,
+                pending["txn_id"],
+            )
+            pending["old_tail_quiescence_probes"].append((src_pad, probe_id))
+        # An IDLE callback can run synchronously from add_probe().  Mark the set
+        # complete only after every returned probe id is recorded, then re-check.
+        pending["old_tail_quiescence_armed"] = True
+        self._maybe_start_quiesced_reload_commit(pending)
+
+    def _on_old_tail_quiesced_probe(
+        self, pad: Gst.Pad, _info: Gst.PadProbeInfo, txn_id: int
+    ) -> Gst.PadProbeReturn:
+        """Streaming thread: report one actually-idle old tail to the main loop."""
+        GLib.idle_add(self._on_old_tail_quiesced, pad, txn_id)
+        return Gst.PadProbeReturn.OK
+
+    def _on_old_tail_quiesced(self, pad: Gst.Pad, txn_id: int) -> bool:
+        """Main-loop half of the old-tail IDLE-probe handshake."""
+        pending = self._pending_reload
+        if (
+            pending is None
+            or pending["txn_id"] != txn_id
+            or not pending.get("commit_in_progress", False)
+        ):
+            return False
+        if pad not in pending.get("old_tail_src_pads", ()):
+            return False
+        pending["old_tail_quiesced"].add(pad)
+        self._maybe_start_quiesced_reload_commit(pending)
+        return False
+
+    def _maybe_start_quiesced_reload_commit(self, pending: dict[str, Any]) -> None:
+        """Start selector handoff once every outgoing tail is IDLE-blocked."""
+        if (
+            self._pending_reload is not pending
+            or self._stopping
+            or not pending.get("commit_in_progress", False)
+            or not pending.get("old_tail_quiescence_armed", False)
+            or pending.get("handoff_started", False)
+            or not (
+                set(pending.get("old_tail_src_pads", ())) <= pending.get("old_tail_quiesced", set())
+            )
+        ):
+            return
+        pending["handoff_started"] = True
+        print("CTRL reload diagnostic: stage=old-tail-quiesced", file=sys.stderr, flush=True)
+        try:
+            for src_pad in pending["old_tail_src_pads"]:
+                probe_id = src_pad.add_probe(
+                    Gst.PadProbeType.BUFFER
+                    | Gst.PadProbeType.BUFFER_LIST
+                    | Gst.PadProbeType.EVENT_DOWNSTREAM,
+                    _drop_everything_probe,
+                )
+                pending["old_tail_drop_probes"].append((src_pad, probe_id))
+        except Exception as exc:
+            pending["handoff_started"] = False
+            pending["commit_in_progress"] = False
+            self._release_old_tail_drop_fences(pending)
+            self._release_old_tail_quiescence(pending)
+            self._finish_commit_watchdog(pending)
+            print(f"ERROR: reload old-tail drop fence did not arm: {exc!r}", flush=True)
+            self._abort_pending_reload("old-tail-fence")
+            return
+
+        start_retirement = threading.Event()
+        pending["retirement_start_event"] = start_retirement
         try:
             thread = threading.Thread(
                 target=self._retire_reload_old_leg,
@@ -2866,35 +2986,44 @@ class GstPlayoutEngine:
             )
             thread.start()
         except Exception as exc:
+            pending["handoff_started"] = False
             pending["commit_in_progress"] = False
+            self._release_old_tail_drop_fences(pending)
+            self._release_old_tail_quiescence(pending)
+            self._finish_commit_watchdog(pending)
             print(f"ERROR: reload retirement thread did not start: {exc!r}", flush=True)
             self._abort_pending_reload("commit-thread-start")
-            return False
+            return
         self._reload_commit_thread = thread
-        try:
-            watchdog, completed = self._arm_commit_watchdog()
-        except Exception as exc:
-            pending["retirement_cancelled"] = True
-            start_retirement.set()
-            thread.join(timeout=min(1.0, self.teardown_timeout_s))
-            self._reload_commit_thread = None
-            pending["commit_in_progress"] = False
-            print(f"ERROR: reload commit watchdog did not start: {exc!r}", flush=True)
-            self._abort_pending_reload("commit-watchdog-start")
-            return False
-        pending["commit_watchdog"] = watchdog
-        pending["commit_completed"] = completed
         try:
             self._begin_reload_commit(pending)
         except Exception as exc:
             pending["retirement_cancelled"] = True
             start_retirement.set()
             thread.join(timeout=min(1.0, self.teardown_timeout_s))
-            pending["retirement_result"] = (False, f"commit setup failed: {exc!r}")
-            self._finish_reload_commit(pending)
-            return False
+            self._reload_commit_thread = None
+            if not pending.get("selector_handoff_started", False):
+                # Nothing reached either selector. Restore the outgoing leg exactly
+                # as it was before the attempt, then retire the unused replacement.
+                pending["handoff_started"] = False
+                pending["commit_in_progress"] = False
+                self._release_old_tail_drop_fences(pending)
+                self._release_old_tail_quiescence(pending)
+                self._finish_commit_watchdog(pending)
+                print(f"ERROR: reload commit setup failed before handoff: {exc!r}", flush=True)
+                self._abort_pending_reload("commit-setup")
+            else:
+                # Once the first selector mutation starts there is no atomic rollback
+                # for a possible split A/V handoff. Keep the watchdog armed so this
+                # worker exits nonzero and the daemon rebuilds a coherent pipeline.
+                print(
+                    f"ERROR: reload selector handoff failed: {exc!r}; "
+                    "commit watchdog will force worker recovery",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return
         start_retirement.set()
-        return False
 
     def _begin_reload_commit(self, pending: dict[str, Any]) -> None:
         """Main-loop half: rebase/select the replacement, but keep it held."""
@@ -2946,6 +3075,10 @@ class GstPlayoutEngine:
         print("CTRL reload: switching selector", flush=True)
         print("CTRL reload diagnostic: stage=switching-selector", file=sys.stderr, flush=True)
         selector.set_property("active-pad", new_video_pad)
+        # This flag means the first selector mutation completed, not merely that
+        # it was attempted. A failure before this line can restore the old leg;
+        # a later A/V-partial failure cannot be rolled back atomically.
+        pending["selector_handoff_started"] = True
         audio_selector = self.audio_selector
         if new_audio_pad is not None and audio_selector is not None:
             audio_selector.set_property("active-pad", new_audio_pad)
@@ -2964,9 +3097,7 @@ class GstPlayoutEngine:
         if pending.get("retirement_cancelled", False):
             return
         try:
-            result = self._dispose_source_leg(
-                pending["old_video_pad"], pending["old_audio_pad"], pending["old_elements"]
-            )
+            result = self._dispose_quiesced_source_leg(pending)
         except Exception as exc:  # defensive: disposal normally returns a failure result
             result = (False, f"unexpected retirement error: {exc!r}")
         pending["retirement_result"] = result
@@ -3010,6 +3141,7 @@ class GstPlayoutEngine:
             for pad, probe_id in pending["boundary_probes"]:
                 with contextlib.suppress(Exception):
                     pad.remove_probe(probe_id)
+            self._release_old_tail_quiescence(pending)
             self._release_hold_probes(pending)
             self._pending_reload = None
             self._notify_reload_settled(pending["on_settled"], False, reason)
@@ -3025,6 +3157,7 @@ class GstPlayoutEngine:
         for pad, probe_id in pending["boundary_probes"]:
             with contextlib.suppress(Exception):  # probe may already have auto-removed
                 pad.remove_probe(probe_id)
+        self._release_old_tail_quiescence(pending)
         # The selector was requested before retirement, but the replacement stayed
         # held so it could not acquire input-selector's streaming reader lock while
         # old request-pad release needed the writer lock. Let it flow only now.
@@ -3209,6 +3342,68 @@ class GstPlayoutEngine:
             with contextlib.suppress(Exception):
                 pad.remove_probe(probe_id)
         pending["hold_probes"] = []
+
+    @staticmethod
+    def _release_old_tail_quiescence(pending: dict[str, Any]) -> None:
+        """Remove recorded old-tail IDLE blocks; idempotent and best-effort."""
+        for pad, probe_id in pending.get("old_tail_quiescence_probes", ()):
+            with contextlib.suppress(Exception):
+                pad.remove_probe(probe_id)
+        pending["old_tail_quiescence_probes"] = []
+
+    @staticmethod
+    def _release_old_tail_drop_fences(pending: dict[str, Any]) -> None:
+        """Restore an outgoing leg when commit fails before selector handoff."""
+        for pad, probe_id in pending.get("old_tail_drop_probes", ()):
+            with contextlib.suppress(Exception):
+                pad.remove_probe(probe_id)
+        pending["old_tail_drop_probes"] = []
+
+    def _dispose_quiesced_source_leg(self, pending: dict[str, Any]) -> tuple[bool, str | None]:
+        """Detach and retire a leg whose own tail pads are proven IDLE-blocked.
+
+        The DROP probes were installed while those IDLE blocks were held.  This
+        makes unlink-before-NULL safe for this path: after request-pad release the
+        IDLE blocks are removed, but every late buffer/event is consumed at the
+        old leg's own src pad instead of returning ``GST_FLOW_NOT_LINKED`` or
+        entering input-selector.  No synchronous flush event is needed.
+        """
+        warnings: list[str] = []
+        failures: list[str] = []
+        for stream, selector, selector_pad in (
+            ("video", self.selector, pending["old_video_pad"]),
+            ("audio", self.audio_selector, pending["old_audio_pad"]),
+        ):
+            if selector is None or selector_pad is None:
+                continue
+            try:
+                peer = selector_pad.get_peer()
+                if peer is not None and peer.unlink(selector_pad) is False:
+                    warnings.append(f"selector-unlink-failed:{stream}")
+                selector.release_request_pad(selector_pad)
+            except Exception as exc:
+                warnings.append(f"selector-release-error:{stream}:{exc!r}")
+        self._release_old_tail_quiescence(pending)
+        for index, element in enumerate(pending["old_elements"]):
+            self._null_retiring_element(element, index + 1, failures)
+        for index, element in enumerate(pending["old_elements"]):
+            try:
+                if self.pipeline.remove(element) is False:
+                    warnings.append(f"element-remove-failed:{index + 1}")
+            except Exception as exc:
+                warnings.append(f"element-remove-error:{index + 1}:{exc!r}")
+        if not failures:
+            # The old producers are now NULL, so their DROP fences have finished
+            # their job and can release their pad references. Keep them installed
+            # only when a producer failed to stop and could still emit late data.
+            self._release_old_tail_drop_fences(pending)
+        if warnings:
+            print(f"WARN: leg disposal incomplete: {'; '.join(warnings)}", flush=True)
+        if failures:
+            reason = "; ".join(failures)
+            print(f"WARN: leg disposal did not reach NULL: {reason}", flush=True)
+            return False, reason
+        return True, None
 
     def _belongs_to_pending_reload(self, src: object) -> bool:
         """True if ``src`` (a bus-message source) is one of the pending reload leg's
@@ -3688,10 +3883,26 @@ class GstPlayoutEngine:
             self._caption_gap_probe = None
 
         pending = self._pending_reload
-        if pending is not None and not pending.get("commit_in_progress", False):
+        if pending is not None and (
+            not pending.get("commit_in_progress", False)
+            or not pending.get("selector_handoff_started", True)
+        ):
             # Do not synchronously dispose a still-prerolling leg here. Release its
             # probes and let the whole-pipeline NULL below own teardown under the
             # same bound.
+            if pending.get("commit_in_progress", False):
+                # Quiescence may be waiting for one old stream's IDLE callback.
+                # Make that transaction terminal before pipeline teardown so a
+                # queued callback cannot start a selector handoff during stop.
+                pending["retirement_cancelled"] = True
+                start_event = pending.get("retirement_start_event")
+                if start_event is not None:
+                    start_event.set()
+                pending["commit_in_progress"] = False
+                pending["handoff_started"] = False
+                self._release_old_tail_drop_fences(pending)
+                self._release_old_tail_quiescence(pending)
+                self._finish_commit_watchdog(pending)
             self._pending_reload = None
             if pending["probe_id"] is not None:
                 with contextlib.suppress(Exception):

@@ -2,19 +2,15 @@
 # Copyright (c) The CivicCast Authors
 """GI-free reload-commit ordering, stale-callback, logging, and watchdog tests.
 
-Physical beta.5 and native production-shaped traces localized the reload
-wedge to synchronous old-leg disposal after the selector switch and new-leg
-hold release. GStreamer 1.28.5 holds input-selector's active-pad reader lock
-across a downstream push while request-pad release needs its writer lock.
-Holding the replacement through synchronous main-loop retirement was also
-disproven: the old audio concat then blocks because the main loop cannot
-advance downstream caption flow. Native diagnostics verified a combination
-that inserts bounded post-selector queues, keeps the GLib loop available while
-a retirement thread cleans the old leg, and releases replacement holds only
-after cleanup. The tests cover that production phase order, transaction
-ownership, and diagnostics.
-Releasing before selecting would lose the replacement's first buffers at a
-non-caching selector; unlinking before NULL risks ``GST_FLOW_NOT_LINKED``.
+The 93f9168 Sandbox candidate completed 94 reloads but wedged once while a
+retirement thread synchronously pushed ``FLUSH_START`` from an outgoing tail
+into ``input-selector``. Video EOS had started the commit while old audio was
+still streaming, so selector handoff and flush handling raced on a live path.
+
+The replacement protocol first IDLE-blocks every outgoing tail, installs DROP
+fences while those blocks are held, switches selectors, detaches the old request
+pads, then unblocks and NULLs the isolated old leg. The tests cover that order,
+pre-handoff rollback, stop races, transaction ownership, and diagnostics.
 
 These tests load ``civiccast.egress.gst.engine`` fresh against a small fake
 ``gi``/``Gst`` (the same technique as the concat-naming tests). They exercise
@@ -60,6 +56,7 @@ class _FakePadProbeType:
     BUFFER = 1
     BUFFER_LIST = 2
     EVENT_DOWNSTREAM = 4
+    IDLE = 8
 
 
 class _FakePadProbeReturn:
@@ -131,12 +128,25 @@ class _FakeSelector:
 
 
 class _FakePeer:
-    def __init__(self, name: str, recorder: _Recorder) -> None:
+    def __init__(self, name: str, recorder: _Recorder, *, fail_mask: Any = None) -> None:
         self.name = name
         self.recorder = recorder
+        self.fail_mask = fail_mask
 
     def unlink(self, pad: _FakeOldPad) -> None:
         self.recorder.calls.append(f"peer.unlink:{self.name}->{pad.name}")
+
+    def add_probe(self, mask: Any, callback: Any, *args: Any) -> str:
+        self.recorder.calls.append(f"add_probe:{self.name}:{mask}:{callback.__name__}")
+        if mask == self.fail_mask:
+            raise RuntimeError(f"probe unavailable: {mask}")
+        probe_id = f"{self.name}-probe-{mask}"
+        if mask == _FakePadProbeType.IDLE:
+            callback(self, None, *args)
+        return probe_id
+
+    def remove_probe(self, probe_id: Any) -> None:
+        self.recorder.calls.append(f"remove_probe:{self.name}:{probe_id}")
 
     def push_event(self, event: Any) -> bool:
         self.recorder.calls.append(f"peer.push_event:{self.name}:{event}")
@@ -645,6 +655,207 @@ def test_commit_retires_old_leg_before_releasing_replacement(engine_module) -> N
     assert switch_audio < old_null < release_audio < remove_audio, calls
 
 
+def test_commit_quiesces_and_fences_old_tails_before_selector_handoff(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The production path follows GStreamer's dynamic-unlink protocol.
+
+    Both old tail pads must enter an IDLE blocking probe, then receive a DROP
+    fence, before the selectors switch.  Retirement detaches the request pads
+    while the IDLE blocks are held, removes those blocks only after detach, and
+    then NULLs the old elements.  The synchronous FLUSH_START call that wedged
+    the sandbox worker is absent from this path.
+    """
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.teardown_timeout_s = 0.1
+    engine.commit_timeout_s = 5.0
+    monkeypatch.setattr(
+        engine,
+        "_arm_commit_watchdog",
+        lambda: (types.SimpleNamespace(cancel=lambda: None), threading.Event()),
+    )
+
+    old_video_peer = _FakePeer("old-video-peer", recorder)
+    old_audio_peer = _FakePeer("old-audio-peer", recorder)
+    hold_video = _FakeHoldPad("hold-video", recorder)
+    hold_audio = _FakeHoldPad("hold-audio", recorder)
+    pending: dict[str, Any] = {
+        "txn_id": 22,
+        "new_leg_ready": True,
+        "holds_awaited": 0,
+        "switch_at_end_of_current": True,
+        "old_leg_eos": True,
+        "timeout_id": None,
+        "defer_timeout_id": None,
+        "probe_id": None,
+        "new_video_pad": object(),
+        "new_audio_pad": object(),
+        "new_elements": [],
+        "new_src_pads": [hold_video, hold_audio],
+        "hold_probes": [(hold_video, "new-video-hold"), (hold_audio, "new-audio-hold")],
+        "boundary_probes": [],
+        "old_video_pad": _FakeOldPad("old-video", recorder, old_video_peer),
+        "old_audio_pad": _FakeOldPad("old-audio", recorder, old_audio_peer),
+        "old_elements": [_FakeOldElement("old-elem", recorder)],
+        "rebase_new_leg": False,
+        "on_settled": None,
+        "commit_in_progress": False,
+        "retirement_result": None,
+        "commit_watchdog": None,
+        "commit_completed": None,
+    }
+    engine._pending_reload = pending
+
+    assert engine._commit_reload() is False
+    thread = engine._reload_commit_thread
+    if thread is not None:
+        thread.join(timeout=5.0)
+
+    calls = recorder.calls
+    video_idle = _index_of(calls, "add_probe:old-video-peer:8")
+    audio_idle = _index_of(calls, "add_probe:old-audio-peer:8")
+    video_drop = _index_of(calls, "add_probe:old-video-peer:7")
+    audio_drop = _index_of(calls, "add_probe:old-audio-peer:7")
+    switch_video = _index_of(calls, "video_sel.set_property:active-pad")
+    switch_audio = _index_of(calls, "audio_sel.set_property:active-pad")
+    unlink_video = _index_of(calls, "peer.unlink:old-video-peer")
+    unlink_audio = _index_of(calls, "peer.unlink:old-audio-peer")
+    release_video = _index_of(calls, "video_sel.release_request_pad:old-video")
+    release_audio = _index_of(calls, "audio_sel.release_request_pad:old-audio")
+    unblock_video = _index_of(calls, "remove_probe:old-video-peer")
+    unblock_audio = _index_of(calls, "remove_probe:old-audio-peer")
+    old_null = _index_of(calls, "set_state:old-elem:NULL")
+    release_new_video = _index_of(calls, "remove_probe:hold-video")
+    release_new_audio = _index_of(calls, "remove_probe:hold-audio")
+
+    assert max(video_idle, audio_idle) < min(video_drop, audio_drop), calls
+    assert max(video_drop, audio_drop) < min(switch_video, switch_audio), calls
+    assert max(switch_video, switch_audio) < min(unlink_video, unlink_audio), calls
+    assert max(unlink_video, unlink_audio, release_video, release_audio) < min(
+        unblock_video, unblock_audio
+    ), calls
+    assert max(unblock_video, unblock_audio) < old_null, calls
+    assert old_null < min(release_new_video, release_new_audio), calls
+    assert not any(call.startswith("peer.push_event:") for call in calls), calls
+
+
+def test_partial_old_tail_fence_failure_restores_current_leg(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A partially-installed DROP fence must not silence the current programme."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.teardown_timeout_s = 0.1
+    engine.commit_timeout_s = 5.0
+    monkeypatch.setattr(
+        engine,
+        "_arm_commit_watchdog",
+        lambda: (types.SimpleNamespace(cancel=lambda: None), threading.Event()),
+    )
+
+    video_peer = _FakePeer("old-video-peer", recorder)
+    audio_peer = _FakePeer("old-audio-peer", recorder, fail_mask=7)
+    hold_video = _FakeHoldPad("hold-video", recorder)
+    hold_audio = _FakeHoldPad("hold-audio", recorder)
+    results: list[tuple[bool, str | None]] = []
+    pending: dict[str, Any] = {
+        "txn_id": 23,
+        "new_leg_ready": True,
+        "holds_awaited": 0,
+        "switch_at_end_of_current": True,
+        "old_leg_eos": True,
+        "timeout_id": None,
+        "defer_timeout_id": None,
+        "probe_id": None,
+        "new_video_pad": object(),
+        "new_audio_pad": object(),
+        "new_elements": [],
+        "new_src_pads": [hold_video, hold_audio],
+        "hold_probes": [(hold_video, "new-video-hold"), (hold_audio, "new-audio-hold")],
+        "readiness_probes": [],
+        "boundary_probes": [],
+        "old_video_pad": _FakeOldPad("old-video", recorder, video_peer),
+        "old_audio_pad": _FakeOldPad("old-audio", recorder, audio_peer),
+        "old_elements": [],
+        "rebase_new_leg": False,
+        "on_settled": lambda committed, reason: results.append((committed, reason)),
+        "commit_in_progress": False,
+    }
+    engine._pending_reload = pending
+
+    assert engine._commit_reload() is False
+
+    calls = recorder.calls
+    video_drop_add = _index_of(calls, "add_probe:old-video-peer:7")
+    video_drop_remove = _index_of(calls, "remove_probe:old-video-peer:old-video-peer-probe-7")
+    video_idle_remove = _index_of(calls, "remove_probe:old-video-peer:old-video-peer-probe-8")
+    audio_idle_remove = _index_of(calls, "remove_probe:old-audio-peer:old-audio-peer-probe-8")
+    assert video_drop_add < video_drop_remove < min(video_idle_remove, audio_idle_remove), calls
+    assert not any(call.startswith("video_sel.set_property") for call in calls), calls
+    assert not any(call.startswith("audio_sel.set_property") for call in calls), calls
+    assert results == [(False, "old-tail-fence")]
+    assert engine._pending_reload is None
+
+
+def test_first_selector_setter_failure_restores_current_leg(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed first selector mutation is still a fully rollbackable attempt."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.teardown_timeout_s = 0.1
+    engine.commit_timeout_s = 5.0
+    results: list[tuple[bool, str | None]] = []
+
+    class _FailFirstSelector(_FakeSelector):
+        def set_property(self, key: str, value: Any) -> None:
+            super().set_property(key, value)
+            raise RuntimeError("selector rejected handoff")
+
+    engine.selector = _FailFirstSelector("video_sel", recorder)
+    monkeypatch.setattr(
+        engine,
+        "_arm_commit_watchdog",
+        lambda: (types.SimpleNamespace(cancel=lambda: None), threading.Event()),
+    )
+    old_peer = _FakePeer("old-video-peer", recorder)
+    new_tail = _FakeHoldPad("new-video", recorder)
+    engine._pending_reload = {
+        "txn_id": 24,
+        "new_leg_ready": True,
+        "holds_awaited": 0,
+        "switch_at_end_of_current": True,
+        "old_leg_eos": True,
+        "timeout_id": None,
+        "defer_timeout_id": None,
+        "probe_id": None,
+        "new_video_pad": object(),
+        "new_audio_pad": None,
+        "new_elements": [],
+        "new_src_pads": [new_tail],
+        "hold_probes": [(new_tail, "new-video-hold")],
+        "readiness_probes": [],
+        "boundary_probes": [],
+        "old_video_pad": _FakeOldPad("old-video", recorder, old_peer),
+        "old_audio_pad": None,
+        "old_elements": [],
+        "rebase_new_leg": False,
+        "on_settled": lambda committed, reason: results.append((committed, reason)),
+        "commit_in_progress": False,
+    }
+
+    assert engine._commit_reload() is False
+
+    calls = recorder.calls
+    attempted_switch = _index_of(calls, "video_sel.set_property:active-pad")
+    drop_remove = _index_of(calls, "remove_probe:old-video-peer:old-video-peer-probe-7")
+    idle_remove = _index_of(calls, "remove_probe:old-video-peer:old-video-peer-probe-8")
+    assert attempted_switch < drop_remove < idle_remove, calls
+    assert results == [(False, "commit-setup")]
+    assert engine._pending_reload is None
+
+
 def test_commit_disposes_old_leg_by_nulling_before_unlinking(engine_module) -> None:
     """The retiring leg's elements
     are told ``set_state(NULL)`` BEFORE the selector unlinks/releases that
@@ -1044,6 +1255,7 @@ def test_retirement_thread_start_failure_aborts_before_selector_switch(
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)
     engine.teardown_timeout_s = 0.1
+    engine.commit_timeout_s = 1.0
     results: list[tuple[bool, str | None]] = []
     new_pad = _FakeOldPad("new-video", recorder, peer=None)
     engine._pending_reload = {
@@ -1058,6 +1270,9 @@ def test_retirement_thread_start_failure_aborts_before_selector_switch(
         "new_video_pad": new_pad,
         "new_audio_pad": None,
         "new_elements": [],
+        "old_video_pad": _FakeOldPad("old-video", recorder, peer=None),
+        "old_audio_pad": None,
+        "old_elements": [],
         "hold_probes": [],
         "boundary_probes": [],
         "on_settled": lambda committed, reason: results.append((committed, reason)),
@@ -1071,6 +1286,11 @@ def test_retirement_thread_start_failure_aborts_before_selector_switch(
         def start(self) -> None:
             raise RuntimeError("thread unavailable")
 
+    monkeypatch.setattr(
+        engine,
+        "_arm_commit_watchdog",
+        lambda: (types.SimpleNamespace(cancel=lambda: None), threading.Event()),
+    )
     monkeypatch.setattr(engine_module.threading, "Thread", _NoStartThread)
 
     assert engine._commit_reload() is False
@@ -1154,6 +1374,62 @@ def test_stop_settles_current_callback_once(engine_module) -> None:
     assert engine.stop(force_exit_on_hang=False) is True
     assert current == [(False, "stopped")]
     assert engine._pending_reload is None
+
+
+def test_stop_cancels_quiescing_commit_before_selector_handoff(engine_module) -> None:
+    """A queued IDLE receipt cannot start a handoff after shutdown begins."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.teardown_timeout_s = 0.1
+    engine.audio_tap_writer = None
+    current: list[tuple[bool, str | None]] = []
+    old_peer = _FakePeer("old-video-peer", recorder)
+    new_tail = _FakeHoldPad("new-video", recorder)
+    completed = threading.Event()
+
+    class _StopPipeline(_FakePipeline):
+        def set_state(self, state: Any) -> str:
+            assert state == _FakeState.NULL
+            return _FakeStateChangeReturn.SUCCESS
+
+        def get_state(self, _timeout: int) -> tuple[str, None, None]:
+            return _FakeStateChangeReturn.SUCCESS, None, None
+
+    engine.pipeline = _StopPipeline(recorder)
+    engine._pending_reload = {
+        "txn_id": 25,
+        "commit_in_progress": True,
+        "selector_handoff_started": False,
+        "handoff_started": False,
+        "retirement_cancelled": False,
+        "retirement_result": None,
+        "retirement_start_event": threading.Event(),
+        "old_tail_drop_probes": [(old_peer, "old-video-peer-probe-7")],
+        "old_tail_quiescence_probes": [(old_peer, "old-video-peer-probe-8")],
+        "old_tail_src_pads": [old_peer],
+        "old_tail_quiesced": set(),
+        "probe_id": None,
+        "readiness_probes": [],
+        "boundary_probes": [],
+        "new_video_pad": object(),
+        "new_src_pads": [new_tail],
+        "hold_probes": [(new_tail, "new-video-hold")],
+        "timeout_id": None,
+        "defer_timeout_id": None,
+        "on_settled": lambda committed, reason: current.append((committed, reason)),
+        "commit_completed": completed,
+        "commit_watchdog": types.SimpleNamespace(cancel=lambda: None),
+    }
+
+    assert engine.stop(force_exit_on_hang=False) is True
+    assert current == [(False, "stopped")]
+    assert completed.is_set()
+    assert engine._pending_reload is None
+    assert engine._stopping is True
+    assert not any(call.startswith("video_sel.set_property") for call in recorder.calls)
+    drop_remove = _index_of(recorder.calls, "remove_probe:old-video-peer:old-video-peer-probe-7")
+    idle_remove = _index_of(recorder.calls, "remove_probe:old-video-peer:old-video-peer-probe-8")
+    assert drop_remove < idle_remove, recorder.calls
 
 
 def test_stop_bounds_a_pipeline_set_state_null_call_that_blocks(engine_module) -> None:
