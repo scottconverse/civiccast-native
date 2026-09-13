@@ -332,10 +332,9 @@ class TestSourceLegIsClockTimed:
     def test_an_unknown_factory_is_the_fail_safe_segment_timed_default(self) -> None:
         """Documents the chosen behaviour: a factory this module has never heard of
         (not in ``CLOCK_TIMED_SOURCE_FACTORIES`` and carrying no ``is-live`` prop) is
-        NOT assumed clock-timed. The fail-safe side is segment-timed (``False``) --
-        a boundary-aligned rollover neither holds nor rebases such a leg, which is
-        the pre-existing default behaviour, not a live-content hazard. This is the
-        opposite of an earlier draft of this module's own docstring, which claimed
+        NOT assumed clock-timed. The fail-safe side is segment-timed (``False``), so
+        an immediate or boundary-aligned replacement holds and rebases such a leg.
+        This is the opposite of an earlier draft of this module's own docstring, which claimed
         an unknown leg answers ``True``; the code has always returned ``False`` here
         (an empty/no-match ``any()``), and the docstring was the thing that was wrong.
 

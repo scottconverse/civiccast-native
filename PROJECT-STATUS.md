@@ -1,3 +1,21 @@
+> **2026-09-12 latest: physical R6 source repair verified locally; no new candidate yet.**
+> The `a963c39cc44e2643065a818aac0206b110d515d4` beta.7 kit is rejected after
+> all three tester channels failed the live-slate to immediate finite-programme
+> transition. The incoming `filesrc` / `decodebin` programme logged
+> `held_streams=0`, was selected without a running-time rebase, and then failed
+> with propagated GStreamer flow error `-5`. Branch
+> `fix/beta7-zero-held-preroll` now makes every finite immediate replacement use
+> the existing two-stream held-preroll and common-offset transaction while
+> preserving the proven old-leg teardown order. The soak grader now rejects a
+> finite commit without matching hold and rebase receipts. Focused verification: 83
+> GI-free checks passed; the exact native Windows R6 topology passed, its three
+> neighboring switch modes passed together, and the exact regression passed
+> five more consecutive runs. No replacement build exists. Required sequence:
+> push/PR CI, merge, exact signed build, 15-minute Sandbox, Gate A, dedicated
+> physical overnight soak, then publication only on passing evidence. See
+> `.agent-runs/native-windows/beta7-r6-immediate-finite/evidence/LOCAL-VERIFICATION.md`.
+> Full owner authorization remains in force. Older entries are historical.
+>
 > **2026-09-12 latest: `cd54767` beta.7 candidate rejected; startup
 > control-readiness repair is locally verified.** The rejected exact-source
 > candidate is build `34699190826`, installer SHA-256

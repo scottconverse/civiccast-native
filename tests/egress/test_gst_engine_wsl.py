@@ -2157,7 +2157,7 @@ def test_deferred_rollover_switches_at_the_boundary_without_eos(tmp_path: Path) 
 
     assert returncode == 0, f"unclean teardown after a boundary rollover (rc={returncode});\n{text}"
     _assert_reload_committed(text)
-    assert "boundary switch rebased to running time" in text, (
+    assert "finite switch rebased to running time" in text, (
         f"the deferred switch did not rebase the new leg's running time;\n{text}"
     )
     after = out_ts.stat().st_size
@@ -2344,6 +2344,76 @@ def _multi_segment_playlist_reload_graph(clip_paths: list[Path], *, video_caps: 
         mux=base.mux,
         sinks=base.sinks,
     )
+
+
+def test_immediate_finite_playlist_reload_holds_rebases_and_stays_on_air(
+    tmp_path: Path,
+) -> None:
+    """R6: a due finite programme can immediately replace a running live slate.
+
+    The physical beta.7 R6 failure took this exact path. The incoming production-
+    shaped ``filesrc ! decodebin`` playlist was observed but not held, so its
+    segment starting at running time zero crossed into an already-running encoder
+    and mux. All three workers then reported ``tsdemux`` flow error -5 and died.
+
+    Prove that an immediate finite A/V replacement now uses the same transaction as
+    a deferred finite replacement: both streams held, one common running-time
+    rebase, selector switch while held, old-leg retirement, then hold release.
+    """
+    out_ts = tmp_path / "immediate-finite.ts"
+    graph = _paced_filesink_graph(_av_demo_graph(nsrc=2), out_ts)
+
+    clip_paths = [tmp_path / f"immediate-segment-{i}.ts" for i in range(4)]
+    for i, clip in enumerate(clip_paths):
+        _write_short_av_ts_clip(clip, seconds=0.8, pattern=(0, 18)[i % 2])
+
+    reload_path = tmp_path / "immediate-program.json"
+    reload_path.write_text(
+        graphmod.graph_to_json(_multi_segment_playlist_reload_graph(clip_paths)),
+        encoding="utf-8",
+    )
+    assert not reloadpolicy.reload_switch_is_deferred(str(reload_path)), (
+        "the R6 regression must use the immediate switch path"
+    )
+
+    proc, control, log = _launch_worker(tmp_path, graph, out_ts)
+    try:
+        _wait_for_log(log, "CTRL first-output:", timeout=20.0)
+        time.sleep(1.0)  # advance the persistent output timeline before the cut
+        before_reload = out_ts.stat().st_size
+        _send(control, f"reload {reload_path}")
+        _wait_for_log(log, "CTRL reload committed", timeout=30.0)
+        committed_at_size = out_ts.stat().st_size
+        time.sleep(1.0)
+        text = log.read_text(encoding="utf-8", errors="replace")
+        assert proc.poll() is None, f"worker exited after the immediate finite switch;\n{text}"
+        _send(control, "stop")
+        returncode = proc.wait(timeout=25)
+    finally:
+        _reap(proc)
+
+    text = log.read_text(encoding="utf-8", errors="replace")
+    assert returncode == 0, f"unclean teardown after immediate finite switch;\n{text}"
+    assert "new leg preroll verified" in text and "held_streams=2" in text, text
+    assert "finite switch rebased to running time" in text and "mode=immediate" in text, text
+    assert "Internal data stream error" not in text, text
+    stages = (
+        "CTRL reload: switching selector",
+        "CTRL reload: old leg disposed",
+        "CTRL reload: holds released",
+        "CTRL reload committed",
+    )
+    assert all(stage in text for stage in stages), text
+    assert [text.index(stage) for stage in stages] == sorted(text.index(stage) for stage in stages)
+    # The commit marker is written immediately after lifting the holds, before the
+    # newly released buffers necessarily reach the filesink. Require growth after
+    # the commit instead of racing that first write at the marker boundary.
+    assert out_ts.stat().st_size > committed_at_size >= before_reload, (
+        "transport stream did not advance after the immediate finite switch"
+    )
+    _assert_continuous(out_ts, text, require_audio_pid=True)
+    assert _pes_pts_backward_steps(out_ts) == {}, text
+    assert {"video", "audio"} <= _ffprobe_codec_types(out_ts), text
 
 
 def _production_pressure_playlist_graph(

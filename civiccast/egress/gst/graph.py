@@ -108,19 +108,18 @@ class PlaylistLeg:
 #: i.e. a leg built from one of these already runs on the pipeline's running-time
 #: base the moment it starts, however long the channel has been up.
 #:
-#: The distinction matters for exactly one decision, and it is not cosmetic: a
-#: boundary-aligned rollover (``GstPlayoutEngine.reload_program`` with
-#: ``switch_at_end_of_current=True``) HOLDS the new leg at its first buffer and
-#: then REBASES its running time onto the outgoing leg's end. Both are right for a
-#: segment-timed leg (``filesrc``/``decodebin``: it starts at running time ~0 no
-#: matter what the wall clock says) and both are WRONG for a clock-timed one --
+#: The distinction matters for exactly one decision, and it is not cosmetic: every
+#: finite/segment-timed replacement, whether immediate or boundary-aligned, is HELD
+#: at its first buffer and then REBASED onto the running output timeline. Both are
+#: right for a segment-timed leg (``filesrc``/``decodebin``: it starts at running
+#: time ~0 no matter what the wall clock says) and both are WRONG for a clock-timed one --
 #: you cannot pause live content without it going stale, and its timeline is
 #: already the pipeline's, so rebasing would shove it forward by the whole wait.
 #:
 #: Anything not listed here that does not declare ``is-live`` is treated as
-#: segment-timed. ``appsrc`` is deliberately listed: whether it timestamps from
-#: the clock depends on its ``do-timestamp`` property, and the fail-safe answer
-#: for an unknown leg is the pre-existing behaviour (no hold, no rebase).
+#: segment-timed, so it is held and rebased before selection. ``appsrc`` is
+#: deliberately listed: whether it timestamps from the clock depends on its
+#: ``do-timestamp`` property, and current product uses are clock-timed.
 #: NOT listed: ``interpipesrc``/``interpipesink`` (the RidgeRun interpipe
 #: plugin, along with ``compositor``/``hlssink3``/``pango``, was demoted from
 #: the shipped GStreamer closure by an owner-confirmed spec decision and is
@@ -173,9 +172,9 @@ def source_leg_is_clock_timed(leg: SourceLeg | PlaylistLeg) -> bool:
     Gi-free on purpose (like ``reload_policy``): the engine cannot be imported
     without a real GStreamer, and this decision is worth unit-testing on a bare
     checkout. See ``CLOCK_TIMED_SOURCE_FACTORIES`` for what the answer is used
-    for and why an unknown leg answers False (the fail-safe side: treated as
-    segment-timed, so a boundary-aligned rollover neither holds nor rebases
-    it -- the pre-existing behaviour)."""
+    for and why an unknown leg answers False (the fail-safe side: treat it as
+    segment-timed, so every immediate or boundary-aligned replacement holds and
+    rebases it before selection)."""
 
     if isinstance(leg, PlaylistLeg):
         chains: tuple[tuple[ElementSpec, ...], ...] = (*leg.subchains, leg.audio_tail)
