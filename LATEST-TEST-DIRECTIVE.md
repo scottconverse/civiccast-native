@@ -1,10 +1,13 @@
 # soak8-e1acfe6 Latest Test Directive
 
-Current: `soak/DIRECTIVE-BETA7-TESTER-SOAK-R5.md`
-Autorun: `soak/autorun/AUTORUN-BETA7-TESTER-SOAK-R5.ps1`
-Updated: 2026-09-12 - Preserve R1/R2, exact R3 FAIL receipt, and R4 autorun
-history. R5 replaces the nonexistent R3 output prerequisite while retaining
-R4's PS5.1 plan fix and all bounded physical-soak controls.
+Current: `soak/DIRECTIVE-BETA7-TESTER-SOAK-R6.md`
+Autorun: `soak/autorun/AUTORUN-BETA7-TESTER-SOAK-R6.ps1`
+Updated: 2026-09-12 - Preserve R1-R5. R6 corrects only R5's probe acquisition window:
+the excluded diagnostic remains untrimmed, while clean admission and measured probes
+discard five seconds inside the same TSDuck process before a 30-second analyzed
+window. All measured discontinuities, invalid syncs, and transport errors remain
+zero tolerance. Candidate, schedule cancellation, duration, and safety gates remain
+bound to the exact preserved evidence.
 
 Previous preserved R1: soak/DIRECTIVE-BETA7-TESTER-MISSION-R1.md
 Branch: soak8-e1acfe6-directives
