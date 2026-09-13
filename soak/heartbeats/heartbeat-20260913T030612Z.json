@@ -1,0 +1,87 @@
+﻿{
+    "schema":  "civiccast-native-fleet-heartbeat-v1",
+    "mission":  "soak8-e1acfe6",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "utc":  "20260913T030612Z",
+    "health":  {
+                   "status":  "healthy",
+                   "version":  "1.0.0-beta.7",
+                   "schema":  "current",
+                   "schema_db_revision":  "0087_retention_terms",
+                   "schema_expected_head":  "0087_retention_terms",
+                   "mode":  "normal"
+               },
+    "db_revision":  null,
+    "service":  "Running",
+    "cpu_pct":  13.7,
+    "mem_free_mb":  9673,
+    "disk_free_gb":  77.4,
+    "uptime_min":  5683,
+    "processes":  [
+                      {
+                          "ProcessName":  "python",
+                          "Id":  2572,
+                          "rss_mb":  1076,
+                          "cpu_s":  6432.6
+                      },
+                      {
+                          "ProcessName":  "python",
+                          "Id":  4832,
+                          "rss_mb":  877,
+                          "cpu_s":  31.4
+                      },
+                      {
+                          "ProcessName":  "python",
+                          "Id":  17084,
+                          "rss_mb":  867,
+                          "cpu_s":  28.3
+                      },
+                      {
+                          "ProcessName":  "pythonservice",
+                          "Id":  1968,
+                          "rss_mb":  87,
+                          "cpu_s":  36.3
+                      }
+                  ],
+    "engine_observed":  {
+                            "gst_launch_processes":  0,
+                            "ffmpeg_processes":  0,
+                            "inferred":  "none-running"
+                        },
+    "egress_channels":  [
+                            {
+                                "channel_id":  "public",
+                                "state":  "FALLBACK_SLATE",
+                                "engine":  null,
+                                "last_error":  null,
+                                "sink_connected":  {
+                                                       "f2hw-260912185622-fd0119":  true
+                                                   },
+                                "worker_processes":  null,
+                                "error":  null
+                            },
+                            {
+                                "channel_id":  "education",
+                                "state":  "STARTING",
+                                "engine":  null,
+                                "last_error":  "GStreamer playout worker child exited non-zero; relaunching encoder. Last child stderr: CTRL output: 782 buffers (+780) since PLAYING | CTRL output: 1166 buffers (+1164) since PLAYING | CTRL output: 1550 buffers (+1548) since PLAYING | CTRL output: 2013 buffers (+2011) since PLAYING | CTRL output: 3752 buffers (+3750) since PLAYING | CTRL output: 3765 buffers (+3763) since PLAYING | CTRL output: 3765 buffers (+3763) since PLAYING | CTRL stall: no output for 10s - quitting for daemon restart",
+                                "sink_connected":  {
+
+                                                   },
+                                "worker_processes":  null,
+                                "error":  null
+                            },
+                            {
+                                "channel_id":  "government",
+                                "state":  "FALLBACK_SLATE",
+                                "engine":  null,
+                                "last_error":  null,
+                                "sink_connected":  {
+                                                       "f2hw-260912185622-fd0119":  true
+                                                   },
+                                "worker_processes":  null,
+                                "error":  null
+                            }
+                        ],
+    "soak_started":  false
+}
