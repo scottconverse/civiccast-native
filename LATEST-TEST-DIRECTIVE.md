@@ -1,10 +1,10 @@
 # soak8-e1acfe6 Latest Test Directive
 
-Current: `soak/DIRECTIVE-BETA7-TESTER-SOAK-R4.md`
-Autorun: `soak/autorun/AUTORUN-BETA7-TESTER-SOAK-R4.ps1`
-Updated: 2026-09-12 - Preserve beta.7 R1/R2/R3 failures. R4 fixes PS5.1
-top-level plan-array enumeration, then retains R3's bounded fresh schedule,
-serialized strict TSDuck, and full admitted ON/OFF measurement.
+Current: `soak/DIRECTIVE-BETA7-TESTER-SOAK-R5.md`
+Autorun: `soak/autorun/AUTORUN-BETA7-TESTER-SOAK-R5.ps1`
+Updated: 2026-09-12 - Preserve R1/R2, exact R3 FAIL receipt, and R4 autorun
+history. R5 replaces the nonexistent R3 output prerequisite while retaining
+R4's PS5.1 plan fix and all bounded physical-soak controls.
 
 Previous preserved R1: soak/DIRECTIVE-BETA7-TESTER-MISSION-R1.md
 Branch: soak8-e1acfe6-directives
