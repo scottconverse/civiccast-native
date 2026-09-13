@@ -24,11 +24,14 @@
 >
 > Branch `fix/beta7-quiescence-deadlock` is based on
 > `ad17971df5360c87ed10f52f3d2978f9da2dcf53`. Implementation and local-proof
-> anchor is `ffbc1bdaa157ca4f1c9f20af79e6e45e2b83e899`; no PR or replacement
-> candidate exists yet. Final local results: 56 deterministic handoff tests,
-> 145 focused reload/timeout/worker tests, immediate finite plus three-channel
-> captions native GStreamer tests (`2 passed in 80.10s`), and two adjacent
-> deferred native tests (`2 passed in 15.59s`). Each captioned worker completed
+> anchor is `ffbc1bdaa157ca4f1c9f20af79e6e45e2b83e899`. PR #228 is
+> https://github.com/scottconverse/civiccast-native/pull/228; its initial pushed
+> evidence head is `c81cc62605e02e426c0aaace0f53bd24d1cc7f17`. This status
+> correction follows that head, so use the PR for the live head and CI run IDs.
+> No replacement candidate exists yet. Final local results: 56 deterministic
+> handoff tests, 145 focused reload/timeout/worker tests, immediate finite plus
+> three-channel captions native GStreamer tests (`2 passed in 80.10s`), and two
+> adjacent deferred native tests (`2 passed in 15.59s`). Each captioned worker completed
 > six reloads with six confirmed handoffs, six old-tail detach receipts,
 > constant `elements=77`, zero errors, zero stalls, and clean teardown. Ruff,
 > format, mypy, compileall, claims drift, and diff checks pass. Two independent

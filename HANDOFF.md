@@ -6,8 +6,10 @@ Current branch: `fix/beta7-quiescence-deadlock`.
 Base `main`: `ad17971df5360c87ed10f52f3d2978f9da2dcf53`.
 Implementation and local-proof anchor:
 `ffbc1bdaa157ca4f1c9f20af79e6e45e2b83e899`.
-Current PR: none yet. This handoff/status commit follows the implementation
-anchor, so the later PR will carry the current branch HEAD and final CI state.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/228.
+Initial pushed evidence head: `c81cc62605e02e426c0aaace0f53bd24d1cc7f17`.
+This handoff/status correction follows that head, so use PR #228 for the live
+branch HEAD and matching CI run IDs.
 Current published tag: `v1.0.0-beta.5`; beta.7 has no tag. No replacement
 installer or kit exists.
 
