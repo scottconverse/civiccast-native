@@ -4,7 +4,12 @@
 
 Current branch: `fix/beta7-zero-held-preroll`.
 Base `main`: `a963c39cc44e2643065a818aac0206b110d515d4`.
-No PR, replacement build, installer, or kit exists yet.
+Source and local-proof anchor:
+`d5c9eb4827be2cb6bc8a40049dfc733d0cd579cd`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/225.
+This post-push status commit follows the source anchor, so use PR #225 for the
+current branch HEAD and exact CI state. No replacement build, installer, or kit
+exists yet.
 
 The exact `a963c39` beta.7 kit is rejected. On the dedicated tester, all three
 channels failed while switching from their live fallback slate to an immediate
@@ -31,11 +36,16 @@ passed; immediate-live and deferred-finite compatibility passed; and the exact
 R6 regression passed five additional consecutive runs. Evidence:
 `.agent-runs/native-windows/beta7-r6-immediate-finite/evidence/LOCAL-VERIFICATION.md`.
 
-Required sequence: five-lens audit, commit/push, PR CI, merge, exact signed
-build, fresh 15-minute Sandbox, Gate A, dedicated overnight physical tester
-soak, and publication only after all exact-candidate gates pass. Full owner
-authorization remains in force. Do not publish beta.5, beta.6, `99705005`,
-`cd54767`, or `a963c39`.
+The first source-head CI runs started for `d5c9eb48`: ci-test `34734767498`,
+deterministic-detectors `34734767465`, Windows reproducibility `34734767475`,
+lint `34734767466`, docs `34734767520`, operator build `34734767486`, and
+accessibility `34734767500`. Some fast policy and security lanes have already
+passed; the required cycle is still in progress.
+
+Required sequence: pass PR CI, merge, exact signed build, fresh 15-minute
+Sandbox, Gate A, dedicated overnight physical tester soak, and publication only
+after all exact-candidate gates pass. Full owner authorization remains in force.
+Do not publish beta.5, beta.6, `99705005`, `cd54767`, or `a963c39`.
 
 ## 2026-09-12 rejected cd54767 candidate and startup readiness repair
 

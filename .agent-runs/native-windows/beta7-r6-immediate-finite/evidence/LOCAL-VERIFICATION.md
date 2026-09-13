@@ -6,6 +6,10 @@ Branch: `fix/beta7-zero-held-preroll`
 
 Base `main`: `a963c39cc44e2643065a818aac0206b110d515d4`
 
+Source and local-proof anchor: `d5c9eb4827be2cb6bc8a40049dfc733d0cd579cd`
+
+PR: https://github.com/scottconverse/civiccast-native/pull/225
+
 Candidate status: no installer or release candidate has been built from this
 change. beta.5, beta.6, and the `a963c39` beta.7 kit remain rejected.
 

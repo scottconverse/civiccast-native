@@ -11,7 +11,9 @@
 > GI-free checks passed; the exact native Windows R6 topology passed, its three
 > neighboring switch modes passed together, and the exact regression passed
 > five more consecutive runs. No replacement build exists. Required sequence:
-> push/PR CI, merge, exact signed build, 15-minute Sandbox, Gate A, dedicated
+> PR #225 is open from source/proof anchor
+> `d5c9eb4827be2cb6bc8a40049dfc733d0cd579cd`; its first required CI cycle is
+> in progress. Then merge, exact signed build, 15-minute Sandbox, Gate A, dedicated
 > physical overnight soak, then publication only on passing evidence. See
 > `.agent-runs/native-windows/beta7-r6-immediate-finite/evidence/LOCAL-VERIFICATION.md`.
 > Full owner authorization remains in force. Older entries are historical.
