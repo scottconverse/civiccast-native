@@ -1,0 +1,40 @@
+﻿{
+    "events":  [
+                   {
+                       "channel_id":  "education",
+                       "detected_utc":  "2026-09-13T12:04:18.4376489Z",
+                       "old_pid":  4888,
+                       "new_pid":  15188,
+                       "classification":  "unplanned_relaunch",
+                       "recovered":  false,
+                       "recovery_gap_seconds":  null,
+                       "superseded":  true,
+                       "incomplete":  false,
+                       "log_evidence":  "log"
+                   },
+                   {
+                       "channel_id":  "education",
+                       "detected_utc":  "2026-09-13T12:04:46.8373491Z",
+                       "old_pid":  15188,
+                       "new_pid":  12088,
+                       "classification":  "unplanned_relaunch",
+                       "recovered":  true,
+                       "recovery_gap_seconds":  24.1,
+                       "superseded":  false,
+                       "incomplete":  false,
+                       "log_evidence":  "log"
+                   },
+                   {
+                       "channel_id":  "public",
+                       "detected_utc":  "2026-09-13T12:07:09.2647453Z",
+                       "old_pid":  4920,
+                       "new_pid":  10780,
+                       "classification":  "unplanned_relaunch",
+                       "recovered":  true,
+                       "recovery_gap_seconds":  41.2,
+                       "superseded":  false,
+                       "incomplete":  false,
+                       "log_evidence":  "log"
+                   }
+               ]
+}

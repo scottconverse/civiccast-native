@@ -1,0 +1,1 @@
+﻿verdict=FAIL reason=worker exit/relaunch occurred in the full post-start window (exits=3, clean=1, nonzero=2, channels=education,public); zero is required cycles_total=11 cycles_evaluated=8

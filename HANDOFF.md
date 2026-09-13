@@ -1,5 +1,71 @@
 # HANDOFF
 
+## 2026-09-13 current: rejected ad17971 candidate and selector handoff repair
+
+Current branch: `fix/beta7-quiescence-deadlock`.
+Base `main`: `ad17971df5360c87ed10f52f3d2978f9da2dcf53`.
+Implementation and local-proof anchor:
+`ffbc1bdaa157ca4f1c9f20af79e6e45e2b83e899`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/228.
+Initial pushed evidence head: `c81cc62605e02e426c0aaace0f53bd24d1cc7f17`.
+This handoff/status correction follows that head, so use PR #228 for the live
+branch HEAD and matching CI run IDs.
+Current published tag: `v1.0.0-beta.5`; beta.7 has no tag. No replacement
+installer or kit exists.
+
+The exact signed `ad17971` beta.7 candidate is rejected. Build run
+`34751773391` produced installer SHA-256
+`d10157ab7ba37fb7cb761b30f264f77e86f97706dfdb19f9f6814fa6ab555110`.
+The byte-verified kit is quarantined at
+`C:\CivicCastTester\kit-safe\ad17971df5360c87ed10f52f3d2978f9da2dcf53`.
+Its captions-OFF Sandbox passed, but the captions-ON Sandbox failed with three
+post-start worker exits/relaunches across public and education, including two
+nonzero exits, one clean exit, and a 41.2 second maximum gap. Do not Gate A,
+soak, reuse, or publish this kit. Compact verdict evidence is copied under
+`.agent-runs/native-windows/beta7-r7-quiescence/evidence/rejected-ad17971/`.
+
+The failed path matches GStreamer 1.28.5's two-phase `input-selector` switch.
+Setting `active-pad` can leave a pending pad until a later buffer or serialized
+event commits it. The prior protocol could block both outgoing A/V tails while
+both replacement tails remained held, removing every trigger and wedging the
+coupled A/V and mux path. The repair requests both selectors while the old leg
+still flows, releases both replacement holds, requires notification and exact
+readback for both active pads, and only then publishes the replacement role and
+retires the old leg.
+
+Finite replacements first install nonblocking DROP probes on both old selector
+sink pads, then sample the outgoing timestamp edge and apply one common offset.
+Any old buffer already past those probes has crossed the timestamp observer;
+later buffers are dropped before entering the selector. After confirmed
+handoff, source-peer DROP probes remain through release of both selector-owned
+request pads. The commit path has no IDLE barrier, manual peer unlink, or
+synchronous flush into `input-selector`.
+
+Final local verification on the implementation anchor:
+
+- 56 deterministic selector handoff and recovery tests passed.
+- 145 focused reload, timeout, worker, and daemon tests passed.
+- The immediate finite and three-channel captioned production-pressure native
+  GStreamer tests passed together in 80.10 seconds.
+- Public, education, and government each completed six reloads with six
+  `selector-handoff-confirmed` and six `old-tail-detached` receipts, constant
+  `elements=77`, zero errors, zero stalls, and clean teardown.
+- Two adjacent deferred native GStreamer tests passed in 15.59 seconds.
+- Ruff, format, mypy, compileall, claims drift, and diff checks passed.
+- Two independent read-only reviews returned GO with no release blocker.
+
+Evidence is under
+`.agent-runs/native-windows/beta7-r7-quiescence/evidence/`. This is local source
+and staged-runtime proof. It is not signed-installer, Sandbox, Gate A, physical
+tester, or publication proof.
+
+The PR #226 IDLE/quiescence protocol in the historical section below is
+superseded. Required sequence: push and open the PR, pass required CI, merge,
+build a fresh signed candidate from the exact merge SHA, run captions-OFF and
+captions-ON Sandbox qualifications from first start, run Gate A, then run the
+dedicated physical tester soak. Publish beta.7 only if every exact-candidate
+gate passes. Full owner authorization remains in force.
+
 ## 2026-09-13 rejected 8bcf012 candidate and retiring old-leg error repair
 
 Current branch: `fix/beta7-immediate-finite-reload-error`.

@@ -1,0 +1,109 @@
+﻿{
+    "schema_version":  1,
+    "verdict":  "PASS",
+    "reason":  null,
+    "first_failing_cycle":  null,
+    "cycles_total":  15,
+    "cycles_warmup":  3,
+    "cycles_evaluated":  12,
+    "unplanned_relaunch_count":  0,
+    "planned_restart_count":  0,
+    "incomplete_restart_count":  0,
+    "reload_aborted_count":  0,
+    "reload_abort_events":  [
+
+                            ],
+    "max_restart_gap_seconds":  null,
+    "restart_events":  [
+
+                       ],
+    "harness_notes":  [
+
+                      ],
+    "soak_start_utc":  "2026-09-13T11:23:34.7330418Z",
+    "run_end_utc":  "2026-09-13T11:39:13.1468653Z",
+    "minutes_requested":  15,
+    "on_air_bound_minutes":  12,
+    "install_bound_minutes":  20,
+    "health_bound_minutes":  10,
+    "installer_exit_code":  0,
+    "installer_elapsed_seconds":  754.8,
+    "station_healthy":  true,
+    "samples_found":  4,
+    "assets_uploaded":  4,
+    "seamless_reload":  true,
+    "seamless_reload_override_requested":  true,
+    "seamless_reload_expected":  true,
+    "seamless_reload_verified":  "confirmed-via-registry-and-process",
+    "channels_started_utc":  "2026-09-13T11:23:19.0114015Z",
+    "first_state_row_s":  {
+                              "public":  0.3,
+                              "education":  0.3,
+                              "government":  0.4
+                          },
+    "time_to_on_air_s":  {
+                             "public":  15.5,
+                             "education":  15.6,
+                             "government":  15.6
+                         },
+    "captions_off_requested":  true,
+    "captions_on_requested":  false,
+    "captions_enabled":  false,
+    "captions_off_verified":  true,
+    "captions_on_verified":  false,
+    "schedule_anchor_utc":  "2026-09-13T11:23:16.9846706Z",
+    "schedule_commit_end_utc":  "2026-09-13T11:22:14.1377922Z",
+    "schedule_commit_lead_remaining_seconds":  62.847,
+    "schedule_start_target_utc":  "2026-09-13T11:23:18.9846706Z",
+    "schedule_start_actual_utc":  "2026-09-13T11:23:19.0114015Z",
+    "schedule_first_item_remaining_after_starts_seconds":  27.783,
+    "startup_worker_exit_count":  0,
+    "startup_clean_worker_exit_count":  0,
+    "startup_nonzero_worker_exit_count":  0,
+    "startup_relaunch_count":  0,
+    "startup_worker_scan_verified":  true,
+    "post_start_worker_exit_count":  0,
+    "post_start_worker_scan_verified":  true,
+    "worker_stdout_by_channel":  {
+                                     "education":  {
+                                                       "reload_committed_count":  32,
+                                                       "reload_aborted_count_worker":  0,
+                                                       "reload_aborted_reasons_worker":  [
+
+                                                                                         ],
+                                                       "worker_stall_count":  0,
+                                                       "worker_stall_stderr_count":  0
+                                                   },
+                                     "public":  {
+                                                    "reload_committed_count":  32,
+                                                    "reload_aborted_count_worker":  0,
+                                                    "reload_aborted_reasons_worker":  [
+
+                                                                                      ],
+                                                    "worker_stall_count":  0,
+                                                    "worker_stall_stderr_count":  0
+                                                },
+                                     "government":  {
+                                                        "reload_committed_count":  32,
+                                                        "reload_aborted_count_worker":  0,
+                                                        "reload_aborted_reasons_worker":  [
+
+                                                                                          ],
+                                                        "worker_stall_count":  0,
+                                                        "worker_stall_stderr_count":  0
+                                                    }
+                                 },
+    "reload_armed_channels":  [
+
+                              ],
+    "reload_armed_never_committed_channels":  [
+
+                                              ],
+    "worker_env_requested":  [
+
+                             ],
+    "worker_env_verified":  [
+
+                            ],
+    "gst_debug_file":  null
+}

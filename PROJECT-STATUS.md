@@ -1,3 +1,50 @@
+> **2026-09-13 current: `ad17971` beta.7 candidate rejected; two-phase
+> selector-handoff repair is locally verified.** Signed build run `34751773391`
+> produced installer SHA-256
+> `d10157ab7ba37fb7cb761b30f264f77e86f97706dfdb19f9f6814fa6ab555110`.
+> The quarantined kit is
+> `C:\CivicCastTester\kit-safe\ad17971df5360c87ed10f52f3d2978f9da2dcf53`.
+> Its captions-OFF Sandbox passed, but the captions-ON Sandbox failed with
+> three post-start worker exits/relaunches across public and education,
+> including two nonzero exits, one clean exit, and a 41.2 second maximum gap.
+> Do not Gate A, tester-soak, reuse, or publish this kit.
+>
+> GStreamer 1.28.5 `input-selector` does not prove a switch when its
+> `active-pad` setter returns. It records a pending pad and commits it when a
+> later buffer or serialized event arrives. The rejected protocol could block
+> both outgoing A/V tails while both replacement tails remained held, removing
+> every trigger and wedging the coupled A/V and mux path. The repair requests
+> both switches while the old leg still flows, releases both replacement holds,
+> requires notification and exact A/V active-pad readback, and only then
+> publishes the replacement and retires the old leg. For finite replacements,
+> nonblocking DROP probes close both old selector-sink timestamp boundaries
+> before the rebase snapshot; separate source-peer DROP probes protect request
+> pad release. The commit path has no IDLE barrier, manual peer unlink, or
+> synchronous flush into the selector.
+>
+> Branch `fix/beta7-quiescence-deadlock` is based on
+> `ad17971df5360c87ed10f52f3d2978f9da2dcf53`. Implementation and local-proof
+> anchor is `ffbc1bdaa157ca4f1c9f20af79e6e45e2b83e899`. PR #228 is
+> https://github.com/scottconverse/civiccast-native/pull/228; its initial pushed
+> evidence head is `c81cc62605e02e426c0aaace0f53bd24d1cc7f17`. This status
+> correction follows that head, so use the PR for the live head and CI run IDs.
+> No replacement candidate exists yet. Final local results: 56 deterministic
+> handoff tests, 145 focused reload/timeout/worker tests, immediate finite plus
+> three-channel captions native GStreamer tests (`2 passed in 80.10s`), and two
+> adjacent deferred native tests (`2 passed in 15.59s`). Each captioned worker completed
+> six reloads with six confirmed handoffs, six old-tail detach receipts,
+> constant `elements=77`, zero errors, zero stalls, and clean teardown. Ruff,
+> format, mypy, compileall, claims drift, and diff checks pass. Two independent
+> reviews are GO. Evidence is under
+> `.agent-runs/native-windows/beta7-r7-quiescence/evidence/`.
+>
+> The IDLE/quiescence protocol described in the historical PR #226 entry below
+> is superseded and must not be treated as current. Required sequence: push and
+> open the PR, pass CI, merge, build a fresh exact-merge signed candidate, run
+> captions-OFF and captions-ON Sandbox from first start, Gate A, and a dedicated
+> physical tester soak. Publish beta.7 only after all exact-candidate gates pass.
+> Full owner authorization remains in force. Older entries are historical.
+>
 > **2026-09-13 latest: signed `8bcf012` beta.7 candidate rejected; retiring
 > fallback-leg error repair is locally verified.** Build `34745799145` produced
 > installer SHA-256

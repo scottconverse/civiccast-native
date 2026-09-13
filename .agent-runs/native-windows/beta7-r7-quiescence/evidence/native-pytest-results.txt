@@ -1,0 +1,7 @@
+Immediate finite rollover plus three-channel captioned production pressure:
+..                                                                       [100%]
+2 passed in 80.10s (0:01:20)
+
+Adjacent deferred boundary and multi-segment rollover cases:
+..                                                                       [100%]
+2 passed in 15.59s

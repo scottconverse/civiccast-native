@@ -2358,7 +2358,8 @@ def test_immediate_finite_playlist_reload_holds_rebases_and_stays_on_air(
 
     Prove that an immediate finite A/V replacement now uses the same transaction as
     a deferred finite replacement: both streams held, one common running-time
-    rebase, selector switch while held, old-leg retirement, then hold release.
+    rebase, both selector switches requested, both holds released so GStreamer 1.28
+    can apply them, confirmed handoff, then old-leg retirement.
     """
     out_ts = tmp_path / "immediate-finite.ts"
     finite_slate = tmp_path / "finite-slate.ts"
@@ -2426,19 +2427,20 @@ def test_immediate_finite_playlist_reload_holds_rebases_and_stays_on_air(
     assert "new leg preroll verified" in text and "held_streams=2" in text, text
     assert "finite switch rebased to running time" in text and "mode=immediate" in text, text
     if "Internal data stream error" in text:
-        assert "contained retiring old-leg error after selector handoff" in text, text
+        assert "contained retiring old-leg error after confirmed selector handoff" in text, text
     assert "WORKER_RESULT {'error': None, 'teardown_clean': True}" in text, text
     stages = (
         "CTRL reload: switching selector",
-        "CTRL reload: old leg disposed",
         "CTRL reload: holds released",
+        "CTRL reload diagnostic: stage=selector-handoff-confirmed",
+        "CTRL reload: old leg disposed",
         "CTRL reload committed",
     )
     assert all(stage in text for stage in stages), text
     assert [text.index(stage) for stage in stages] == sorted(text.index(stage) for stage in stages)
-    # The commit marker is written immediately after lifting the holds, before the
-    # newly released buffers necessarily reach the filesink. Require growth after
-    # the commit instead of racing that first write at the marker boundary.
+    # The commit marker can still precede the newly released buffers reaching the
+    # filesink. Require growth after the commit instead of racing that first write
+    # at the marker boundary.
     assert out_ts.stat().st_size > committed_at_size >= before_reload, (
         "transport stream did not advance after the immediate finite switch"
     )
@@ -2526,20 +2528,25 @@ def test_deferred_rollover_commits_with_a_multi_segment_concat_playlist_reload(
         _send(control, f"reload {reload_path}")
         _wait_for_log(log, "CTRL reload committed", timeout=program_seconds + 30.0)
         text = log.read_text(encoding="utf-8", errors="replace")
-        # The staged commit prints prove the lock-safe order: request the switch,
-        # retire the old leg while the replacement remains held, release it, settle.
+        # The staged commit prints prove the GStreamer 1.28 two-phase order:
+        # request both switches, release both held first buffers so the switches can
+        # apply, confirm both active pads, retire the old leg, then settle.
         for marker in (
             "CTRL reload: switching selector",
-            "CTRL reload: old leg disposed",
             "CTRL reload: holds released",
+            "CTRL reload diagnostic: stage=selector-handoff-confirmed",
+            "CTRL reload: old leg disposed",
             "CTRL reload committed",
         ):
             assert marker in text, f"missing staged commit log line {marker!r};\n{text}"
         assert text.index("CTRL reload: switching selector") < text.index(
-            "CTRL reload: old leg disposed"
-        )
-        assert text.index("CTRL reload: old leg disposed") < text.index(
             "CTRL reload: holds released"
+        )
+        assert text.index("CTRL reload: holds released") < text.index(
+            "CTRL reload diagnostic: stage=selector-handoff-confirmed"
+        )
+        assert text.index("CTRL reload diagnostic: stage=selector-handoff-confirmed") < text.index(
+            "CTRL reload: old leg disposed"
         )
         assert text.index("CTRL reload: holds released") < text.index("CTRL reload committed")
         # Regression assertion (mirrors the single-segment test above): the
@@ -2668,7 +2675,8 @@ def test_repeated_deferred_rollovers_retire_complete_ts_av_playlist_legs(
     for _proc, _control, log, out_ts, tap_dir, channel_dir in workers:
         text = log.read_text(encoding="utf-8", errors="replace")
         assert text.count("CTRL reload committed") == 6, text
-        assert text.count("stage=old-tail-quiesced") == 6, text
+        assert text.count("stage=selector-handoff-confirmed") == 6, text
+        assert text.count("stage=old-tail-detached") == 6, text
         element_counts = {
             int(match) for match in re.findall(r"CTRL reload committed \(elements=([0-9]+)\)", text)
         }
