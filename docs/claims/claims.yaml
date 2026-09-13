@@ -1058,11 +1058,16 @@ entries:
       # not rerun or promote the historical decision-gate observation. The
       # same CI failure exposed a pre-existing graph.py registry drift on the
       # PR base; its current blob is reconciled here for future D2 detection.
+      # The 2026-09-13 immediate finite fallback repair contains only bus
+      # errors proven to originate from the retiring old leg after selector
+      # handoff. The bound native test now reproduces production's 12-subchain
+      # finite fallback topology. This rebind records current-source drift
+      # detection; it does not promote the historical decision-gate evidence.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: 3e435a2ff0ff4e947ce37e109edd41ecdfaf2633
         - path: civiccast/egress/gst/engine.py
-          blob: 545ea79f8f2e1190842ecfad201f0f663cd56c16
+          blob: 414e0c95706801f49a78134c00d643e204a5f73d
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -1075,7 +1080,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 1a0708b5c5719dae5ea260d84622bfc88e9e9f7d
+        blob: 35da6b217ed9558642048dc0abd9755492b19feb
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -1963,11 +1968,16 @@ entries:
       # not rerun or promote the historical pre-login service observation.
       # The same CI failure exposed a pre-existing graph.py registry drift on
       # the PR base; its current blob is reconciled here for D2 detection.
+      # The 2026-09-13 immediate finite fallback repair contains only bus
+      # errors proven to originate from the retiring old leg after selector
+      # handoff. The bound native test now reproduces production's 12-subchain
+      # finite fallback topology. This rebind records current-source drift
+      # detection; it does not promote the historical pre-login observation.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: 3e435a2ff0ff4e947ce37e109edd41ecdfaf2633
         - path: civiccast/egress/gst/engine.py
-          blob: 545ea79f8f2e1190842ecfad201f0f663cd56c16
+          blob: 414e0c95706801f49a78134c00d643e204a5f73d
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -1980,7 +1990,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 1a0708b5c5719dae5ea260d84622bfc88e9e9f7d
+        blob: 35da6b217ed9558642048dc0abd9755492b19feb
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py

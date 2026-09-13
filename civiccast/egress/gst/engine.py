@@ -1560,6 +1560,28 @@ class GstPlayoutEngine:
 
     def _on_bus(self, _bus: Gst.Bus, message: Gst.Message) -> bool:
         if message.type == Gst.MessageType.ERROR:
+            # A finite outgoing playlist can report GST_FLOW_ERROR while its
+            # already-off-air demux/decode chain is being detached and driven to
+            # NULL.  Once selector handoff has happened this error belongs to
+            # retirement; the selected replacement and persistent output path are
+            # still healthy.  Contain only errors proven to come from that old leg.
+            pending = self._pending_reload
+            if (
+                pending is not None
+                and pending.get("commit_in_progress", False)
+                and pending.get("selector_handoff_started", False)
+                and self._belongs_to_retiring_reload(message.src)
+            ):
+                err, _debug = message.parse_error()
+                source_name = "unknown"
+                with contextlib.suppress(Exception):
+                    source_name = message.src.get_name()
+                print(
+                    "CTRL reload: contained retiring old-leg error after selector handoff "
+                    f"(source={source_name}): {err}",
+                    flush=True,
+                )
+                return True
             # ENG-009: an async error on the not-yet-committed reload leg (e.g. a live
             # source whose connection is refused) must NOT take the channel off air.
             # Abort the reload and keep the current program playing.
@@ -3415,6 +3437,19 @@ class GstPlayoutEngine:
         node = src
         while node is not None:
             if node in new_elements:
+                return True
+            node = node.get_parent() if hasattr(node, "get_parent") else None
+        return False
+
+    def _belongs_to_retiring_reload(self, src: object) -> bool:
+        """True when ``src`` belongs to the old leg currently being retired."""
+        pending = self._pending_reload
+        if pending is None or src is None:
+            return False
+        old_elements = pending.get("old_elements", ())
+        node = src
+        while node is not None:
+            if node in old_elements:
                 return True
             node = node.get_parent() if hasattr(node, "get_parent") else None
         return False
