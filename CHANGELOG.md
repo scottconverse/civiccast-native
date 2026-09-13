@@ -29,20 +29,24 @@ came across and what deliberately did not.
   the incoming leg, shared encoder/mux/output path, and the old leg before
   handoff remain fatal. This addresses the three startup worker replacements
   found in the complete logs from the rejected `8bcf012` Sandbox candidate.
-- Quiesce both outgoing programme tail pads with GStreamer IDLE probes before
-  changing `input-selector`, fence late old-leg buffers locally, and detach the
-  old request pads without sending a synchronous flush event into a selector
-  handoff. This addresses the `93f9168` Sandbox failure where one stream was
-  still active and retirement blocked inside `FLUSH_START`. Pre-handoff probe,
-  thread-start, selector, and shutdown failures restore the current programme;
-  a partial A/V selector mutation remains owned by the nonzero worker-recovery
-  watchdog. Three native Windows workers completed 18 real MPEG-TS rollovers
-  with stable element counts and clean teardown; candidate gates remain open.
+- Apply GStreamer 1.28.5's two-phase `input-selector` handoff explicitly:
+  request both A/V switches while the old leg can still flow, release both held
+  replacement streams, and require notification plus exact active-pad readback
+  before publishing the replacement or retiring the old leg. Nonblocking DROP
+  probes close both old selector-sink timestamp boundaries before the rebase
+  snapshot, and source-peer DROP probes protect request-pad release. The commit
+  path no longer uses the coupled IDLE barrier or synchronous `FLUSH_START` that
+  failed the `93f9168` and `ad17971` Sandbox candidates. Three native Windows
+  workers completed 18 captioned MPEG-TS rollovers with confirmed handoffs,
+  stable element counts, zero errors or stalls, and clean teardown; signed
+  candidate gates remain open.
 - Hold and preroll both streams of an immediate finite programme replacement,
-  rebase them together onto the running broadcast timeline, and release them
-  only after the outgoing leg is retired. This addresses the physical R6
-  `held_streams=0` failure where a due MPEG-TS programme reached the persistent
-  output pipeline with a zero-based timeline. The adjacent flow error `-5` was
+  rebase them together onto the closed outgoing timestamp edge, request both
+  selector switches, and release them so the pending handoff can complete. The
+  outgoing leg retires only after both active pads are confirmed. This addresses
+  the physical R6 `held_streams=0` failure where a due MPEG-TS programme reached
+  the persistent output pipeline with a zero-based timeline. The adjacent flow
+  error `-5` was
   originally attributed to the incoming programme, but later production-topology
   proof showed that the finite fallback owns the same `decodebin` / `tsdemux`
   element families, so that historical error source is unproven. Reload receipts

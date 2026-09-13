@@ -1,0 +1,144 @@
+﻿{
+    "schema_version":  1,
+    "verdict":  "FAIL",
+    "reason":  "worker exit/relaunch occurred in the full post-start window (exits=3, clean=1, nonzero=2, channels=education,public); zero is required",
+    "first_failing_cycle":  "2026-09-13T12:04:18.4376489Z",
+    "cycles_total":  11,
+    "cycles_warmup":  3,
+    "cycles_evaluated":  8,
+    "unplanned_relaunch_count":  3,
+    "planned_restart_count":  0,
+    "incomplete_restart_count":  0,
+    "reload_aborted_count":  0,
+    "reload_abort_events":  [
+
+                            ],
+    "max_restart_gap_seconds":  41.2,
+    "restart_events":  [
+                           {
+                               "channel_id":  "education",
+                               "detected_utc":  "2026-09-13T12:04:18.4376489Z",
+                               "old_pid":  4888,
+                               "new_pid":  15188,
+                               "classification":  "unplanned_relaunch",
+                               "recovered":  false,
+                               "recovery_gap_seconds":  null,
+                               "superseded":  true,
+                               "incomplete":  false,
+                               "log_evidence":  "log"
+                           },
+                           {
+                               "channel_id":  "education",
+                               "detected_utc":  "2026-09-13T12:04:46.8373491Z",
+                               "old_pid":  15188,
+                               "new_pid":  12088,
+                               "classification":  "unplanned_relaunch",
+                               "recovered":  true,
+                               "recovery_gap_seconds":  24.1,
+                               "superseded":  false,
+                               "incomplete":  false,
+                               "log_evidence":  "log"
+                           },
+                           {
+                               "channel_id":  "public",
+                               "detected_utc":  "2026-09-13T12:07:09.2647453Z",
+                               "old_pid":  4920,
+                               "new_pid":  10780,
+                               "classification":  "unplanned_relaunch",
+                               "recovered":  true,
+                               "recovery_gap_seconds":  41.2,
+                               "superseded":  false,
+                               "incomplete":  false,
+                               "log_evidence":  "log"
+                           }
+                       ],
+    "harness_notes":  [
+
+                      ],
+    "soak_start_utc":  "2026-09-13T11:57:07.6761772Z",
+    "run_end_utc":  "2026-09-13T12:12:43.3437959Z",
+    "minutes_requested":  15,
+    "on_air_bound_minutes":  12,
+    "install_bound_minutes":  20,
+    "health_bound_minutes":  10,
+    "installer_exit_code":  0,
+    "installer_elapsed_seconds":  767.5,
+    "station_healthy":  true,
+    "samples_found":  4,
+    "assets_uploaded":  4,
+    "seamless_reload":  true,
+    "seamless_reload_override_requested":  true,
+    "seamless_reload_expected":  true,
+    "seamless_reload_verified":  "confirmed-via-registry-and-process",
+    "channels_started_utc":  "2026-09-13T11:56:51.8498945Z",
+    "first_state_row_s":  {
+                              "public":  0.3,
+                              "education":  0.3,
+                              "government":  0.4
+                          },
+    "time_to_on_air_s":  {
+                             "public":  15.5,
+                             "education":  15.6,
+                             "government":  15.7
+                         },
+    "captions_off_requested":  false,
+    "captions_on_requested":  true,
+    "captions_enabled":  true,
+    "captions_off_verified":  false,
+    "captions_on_verified":  true,
+    "schedule_anchor_utc":  "2026-09-13T11:56:49.8454649Z",
+    "schedule_commit_end_utc":  "2026-09-13T11:55:46.8431830Z",
+    "schedule_commit_lead_remaining_seconds":  63.002,
+    "schedule_start_target_utc":  "2026-09-13T11:56:51.8454649Z",
+    "schedule_start_actual_utc":  "2026-09-13T11:56:51.8498945Z",
+    "schedule_first_item_remaining_after_starts_seconds":  27.805,
+    "startup_worker_exit_count":  0,
+    "startup_clean_worker_exit_count":  0,
+    "startup_nonzero_worker_exit_count":  0,
+    "startup_relaunch_count":  0,
+    "startup_worker_scan_verified":  true,
+    "post_start_worker_exit_count":  3,
+    "post_start_worker_scan_verified":  true,
+    "worker_stdout_by_channel":  {
+                                     "education":  {
+                                                       "reload_committed_count":  31,
+                                                       "reload_aborted_count_worker":  0,
+                                                       "reload_aborted_reasons_worker":  [
+
+                                                                                         ],
+                                                       "worker_stall_count":  0,
+                                                       "worker_stall_stderr_count":  1
+                                                   },
+                                     "public":  {
+                                                    "reload_committed_count":  32,
+                                                    "reload_aborted_count_worker":  0,
+                                                    "reload_aborted_reasons_worker":  [
+
+                                                                                      ],
+                                                    "worker_stall_count":  0,
+                                                    "worker_stall_stderr_count":  3
+                                                },
+                                     "government":  {
+                                                        "reload_committed_count":  32,
+                                                        "reload_aborted_count_worker":  0,
+                                                        "reload_aborted_reasons_worker":  [
+
+                                                                                          ],
+                                                        "worker_stall_count":  0,
+                                                        "worker_stall_stderr_count":  0
+                                                    }
+                                 },
+    "reload_armed_channels":  [
+
+                              ],
+    "reload_armed_never_committed_channels":  [
+
+                                              ],
+    "worker_env_requested":  [
+
+                             ],
+    "worker_env_verified":  [
+
+                            ],
+    "gst_debug_file":  null
+}

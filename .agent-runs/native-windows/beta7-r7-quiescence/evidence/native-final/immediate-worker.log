@@ -1,0 +1,29 @@
+CTRL preroll: reached PLAYING after 0.1s pid=16872
+CTRL first-output: first buffer after 0.8s pid=16872
+CTRL output: 528 buffers (+525) since PLAYING
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=1)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=1)
+CTRL reload: new leg preroll verified (reload_id=1) held_streams=2 timing=finite mode=immediate
+CTRL reload: firing (reload_id=1)
+CTRL reload: finite switch rebased to running time 6.472s mode=immediate streams=2 reload_id=1
+CTRL reload: switching selector
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload: holds released
+CTRL reload diagnostic: stage=holds-released
+CTRL reload diagnostic: stage=selector-handoff-confirmed
+CTRL reload diagnostic: stage=old-tail-detached
+CTRL reload: contained retiring old-leg error after confirmed selector handoff (source=tsdemux0): gst-stream-error-quark: Internal data stream error. (1)
+CTRL reload: contained retiring old-leg error after confirmed selector handoff (source=tsdemux3): gst-stream-error-quark: Internal data stream error. (1)
+CTRL reload: contained retiring old-leg error after confirmed selector handoff (source=tsdemux5): gst-stream-error-quark: Internal data stream error. (1)
+CTRL reload: contained retiring old-leg error after confirmed selector handoff (source=tsdemux6): gst-stream-error-quark: Internal data stream error. (1)
+CTRL reload: contained retiring old-leg error after confirmed selector handoff (source=tsdemux9): gst-stream-error-quark: Internal data stream error. (1)
+CTRL reload: contained retiring old-leg error after confirmed selector handoff (source=tsdemux7): gst-stream-error-quark: Internal data stream error. (1)
+CTRL reload: contained retiring old-leg error after confirmed selector handoff (source=tsdemux8): gst-stream-error-quark: Internal data stream error. (1)
+CTRL reload: contained retiring old-leg error after confirmed selector handoff (source=tsdemux10): gst-stream-error-quark: Internal data stream error. (1)
+CTRL reload: contained retiring old-leg error after confirmed selector handoff (source=tsdemux2): gst-stream-error-quark: Internal data stream error. (1)
+CTRL reload: contained retiring old-leg error after confirmed selector handoff (source=tsdemux4): gst-stream-error-quark: Internal data stream error. (1)
+CTRL reload: old leg disposed
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload committed (elements=36)
+CTRL reload diagnostic: stage=committed elements=36
+WORKER_RESULT {'error': None, 'teardown_clean': True}
