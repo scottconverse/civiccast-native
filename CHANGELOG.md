@@ -22,6 +22,13 @@ came across and what deliberately did not.
 
 ### beta.7 playout repair (candidate gates outstanding)
 
+- Hold and preroll both streams of an immediate finite programme replacement,
+  rebase them together onto the running broadcast timeline, and release them
+  only after the outgoing leg is retired. This addresses the physical R6 failure
+  where a due MPEG-TS programme reached the persistent output pipeline with a
+  zero-based timeline and all three workers exited on propagated flow error -5.
+  Reload receipts now identify finite versus clock-timed inputs, and the soak
+  grader rejects a finite commit without transaction-matched hold and rebase proof.
 - Refuse to launch a scheduled programme whose first segment expired while
   its initial plan was being resolved and prepared; release that unused plan and
   start one bounded fallback operation. Automatic fallback replanning and finite

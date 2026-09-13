@@ -2198,12 +2198,12 @@ class GstPlayoutEngine:
         point depends on ``switch_at_end_of_current`` (B3 fix, kit 4b30c99 soak
         evidence):
 
-        * ``False`` (default, unchanged behavior) — switches the selector(s) to the
-          new leg on its FIRST BUFFER (via a pad probe → main-loop idle, so the run
-          loop is never blocked waiting on preroll). This is correct for a
-          FALLBACK_SLATE gap-replan (issue #157: filler must be interrupted the
-          moment a due program is ready) and for an operator-initiated live
-          takeover / forced slate (a deliberate "now").
+        * ``False`` — an IMMEDIATE switch. A finite/segment-timed replacement is
+          still held after both audio and video preroll and rebased onto the running
+          output timeline before it is selected. A clock-timed live replacement is
+          observed without blocking and switches once all of its streams produce a
+          first buffer. This is used when a due programme must interrupt a
+          FALLBACK_SLATE and for an operator-initiated live takeover / forced slate.
         * ``True`` — a BOUNDARY-ALIGNED switch. The new leg is built and prerolled
           exactly far enough to prove it decodes (its first buffer), then HELD
           there by a blocking pad probe on its own tail src pad; the switch happens
@@ -2234,7 +2234,7 @@ class GstPlayoutEngine:
              mux's audio pad and every post-switch audio buffer is refused. Video
              and audio each get the same drop-probe, and the commit fires on
              whichever end arrives first.
-          3. **The new leg's running time is rebased onto the old leg's end.** A
+          3. **A finite new leg's running time is rebased onto the old leg's end.** A
              freshly built leg starts at running time ~0 while the pipeline is
              hours in; without a rebase the output timeline jumps backwards at the
              switch (PCR/PTS discontinuity). ``_commit_reload`` reads the exact end
@@ -2249,7 +2249,9 @@ class GstPlayoutEngine:
              instead does NOT work — the segment has already crossed that pad by
              then and the stored copy is not rewritten.
 
-          The hold probe is also what bounds the cost of preparing early. A leg
+          The same finite-leg hold/rebase transaction is used for immediate and
+          boundary-aligned switches. The hold probe also bounds the cost of
+          preparing early. A leg
           held for the whole (up to ``defer_switch_timeout_s``) wait decodes one
           buffer plus whatever ``decodebin``'s internal multiqueue admits, then
           blocks its own streaming thread. Without it the leg keeps decoding for
@@ -2377,7 +2379,7 @@ class GstPlayoutEngine:
             "old_leg_eos": not switch_at_end_of_current,
             "boundary_forced": False,
             "defer_timeout_id": None,
-            # Boundary-aligned switch state (deferred reloads only):
+            # Finite replacement timing state (immediate or deferred):
             #   new_src_pads   -- the new leg's own tail src pad(s) (video, audio).
             #                     These carry the hold probes AND the running-time
             #                     rebase (Gst.Pad.set_offset), NOT the selector's
@@ -2386,7 +2388,10 @@ class GstPlayoutEngine:
             #                     leg at its first buffer.
             #   holds_awaited  -- how many hold probes have not yet fired; the leg
             #                     is "ready" only when EVERY stream has decoded.
-            #   boundary_probes-- (pad, probe_id) drop-probes on the OUTGOING pads.
+            #   boundary_probes-- (pad, probe_id) observers/drop-probes on the
+            #                     OUTGOING pads. Deferred switches wait for their
+            #                     EOS; immediate finite switches use their most
+            #                     recent buffer end as the rebase point.
             #   outgoing_end   -- per outgoing pad: running time of the end of its
             #                     last buffer, and the pad's cached segment.
             #   outgoing_eos_pads -- outgoing pads whose EOS callback has reached
@@ -2399,22 +2404,21 @@ class GstPlayoutEngine:
             "outgoing_end": {},
             "outgoing_eos_pads": set(),
         }
-        # A clock-timed (live) new leg is ALREADY on the pipeline's running-time
-        # base and cannot be paused without going stale, so it is never held and
-        # never rebased -- see graph.CLOCK_TIMED_SOURCE_FACTORIES. It still gets
-        # the deferred switch and, critically, the outgoing EOS drop below.
-        pending["rebase_new_leg"] = switch_at_end_of_current and not source_leg_is_clock_timed(
-            new_leg
-        )
+        # A finite/segment-timed leg starts near running time zero even during an
+        # immediate slate-to-programme switch. Hold and rebase it before selection.
+        # A clock-timed live leg is already on the pipeline running-time base and
+        # cannot be paused without going stale, so it remains unheld/unrebased.
+        pending["rebase_new_leg"] = not source_leg_is_clock_timed(new_leg)
         self._pending_reload = pending
         try:
-            if switch_at_end_of_current:
+            if switch_at_end_of_current or pending["rebase_new_leg"]:
                 # Watch BOTH outgoing pads (video AND audio -- an unhandled audio
                 # EOS latches the mux's audio pad just as fatally as a video one
                 # takes the whole pipeline down): track each pad's last-buffer end
                 # running time (the rebase reference) and DROP its EOS, so no
                 # pipeline-level EOS is ever produced at the boundary. Armed for
-                # EVERY deferred switch, clock-timed new leg or not.
+                # EVERY deferred switch, plus an immediate finite switch so its
+                # replacement can be rebased to the actual outgoing A/V edge.
                 for pad in (old_video_pad, old_audio_pad):
                     if pad is None:
                         continue
@@ -2425,7 +2429,7 @@ class GstPlayoutEngine:
                     )
                     pending["boundary_probes"].append((pad, probe_id))
             if pending["rebase_new_leg"]:
-                # ENG-002 (boundary form): hold the new leg AT its first buffer.
+                # ENG-002: hold a finite new leg AT its first buffer.
                 # BLOCK|BUFFER lets the sticky STREAM_START/CAPS/SEGMENT through
                 # (so the leg is fully linked and negotiated) but blocks the very
                 # first buffer, which is both the readiness proof AND the point
@@ -2441,8 +2445,8 @@ class GstPlayoutEngine:
             else:
                 # Live/clock-timed streams must keep flowing, but video alone is
                 # not proof that the replacement audio decoded. Observe each
-                # stream without blocking or rebasing it, including immediate
-                # reloads. For deferred switches, readiness still waits for EOS.
+                # stream without blocking or rebasing it. For deferred switches,
+                # readiness still waits for the outgoing boundary.
                 for pad in pending["new_src_pads"]:
                     probe_id = pad.add_probe(
                         Gst.PadProbeType.BUFFER, self._on_reload_first_buffer, pending["txn_id"]
@@ -2498,9 +2502,11 @@ class GstPlayoutEngine:
                 GLib.source_remove(pending["timeout_id"])
             pending["timeout_id"] = None
         pending["new_leg_ready"] = True
+        timing = "finite" if pending["rebase_new_leg"] else "clock"
+        switch_mode = "deferred" if pending["switch_at_end_of_current"] else "immediate"
         print(
             f"CTRL reload: new leg preroll verified (reload_id={txn_id}) "
-            f"held_streams={len(pending['hold_probes'])}",
+            f"held_streams={len(pending['hold_probes'])} timing={timing} mode={switch_mode}",
             flush=True,
         )
         if pending["switch_at_end_of_current"] and not pending["old_leg_eos"]:
@@ -2514,7 +2520,7 @@ class GstPlayoutEngine:
     def _on_new_leg_hold(
         self, pad: Gst.Pad, _info: Gst.PadProbeInfo, txn_id: int
     ) -> Gst.PadProbeReturn:
-        """Streaming thread, deferred switch: the new leg produced its first buffer
+        """Streaming thread: a finite new leg produced its first buffer
         on ``pad``. Returning from a BLOCK probe leaves the pad BLOCKED (and the
         callback is not re-entered until the probe is removed), which is exactly
         what is wanted: the buffer proves the leg really decodes, and the block
@@ -2573,8 +2579,7 @@ class GstPlayoutEngine:
     def _on_outgoing_pad_data(
         self, pad: Gst.Pad, info: Gst.PadProbeInfo, txn_id: int
     ) -> Gst.PadProbeReturn:
-        """Streaming thread, deferred switch: everything that crosses an OUTGOING
-        selector sink pad while the boundary is pending.
+        """Streaming thread: data crossing an outgoing pad while a switch is pending.
 
         * BUFFER -- record the running time of this buffer's END. That value (not
           the pipeline clock) is the rebase reference the new leg's running time
@@ -2649,8 +2654,9 @@ class GstPlayoutEngine:
             return False  # aborted or superseded before this fired
         # ``idle_add`` outlives the streaming-thread callback that queued it. A
         # superseding reload can replace ``_pending_reload`` before this runs; an
-        # EOS from that older leg must never settle the new transaction (including
-        # an immediate reload, whose expected set is empty).
+        # EOS from that older leg must never settle the new transaction. An
+        # immediate finite reload now has outgoing observers too, so transaction
+        # identity remains load-bearing for both switch modes.
         #
         # Round-2 finding 5: the pad identity alone cannot make that distinction.
         # The boundary probes sit on the OUTGOING pads, and those are the SAME pad
@@ -2930,9 +2936,11 @@ class GstPlayoutEngine:
                 # the stored copy is not rewritten (measured, GStreamer 1.28.5).
                 with contextlib.suppress(Exception):
                     pad.set_offset(switch_running_time)
+            switch_mode = "deferred" if pending["switch_at_end_of_current"] else "immediate"
             print(
-                "CTRL reload: boundary switch rebased to running time "
-                f"{switch_running_time / Gst.SECOND:.3f}s",
+                "CTRL reload: finite switch rebased to running time "
+                f"{switch_running_time / Gst.SECOND:.3f}s mode={switch_mode} "
+                f"streams={len(pending['new_src_pads'])} reload_id={pending['txn_id']}",
                 flush=True,
             )
         print("CTRL reload: switching selector", flush=True)
