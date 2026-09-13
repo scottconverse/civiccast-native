@@ -1,5 +1,62 @@
 # HANDOFF
 
+## 2026-09-13 beta.7 selector-handoff retirement repair - PR #226
+
+Current branch: `fix/beta7-retirement-flush-deadlock`.
+Base `main`: `93f916871a5d22fc4fa149f158eab349052eb503`.
+Implementation and local-proof anchor:
+`691776072e1d8b4ffe21bcb730014924d0446d4b`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/226.
+This handoff/status commit follows the implementation anchor, so use PR #226
+for the current branch HEAD and final CI state.
+
+The signed `93f9168` beta.7 kit is rejected. Its fresh 15-minute Sandbox run
+completed 94 reload commits, but the public worker relaunched once. At buffer
+49184 the first outgoing EOS was audio, the commit reached
+`stage=switching-selector`, and the retirement thread blocked inside
+`peer.push_event(Gst.Event.new_flush_start())` while the other stream remained
+active. The commit watchdog exited nonzero and the daemon restored the channel
+in 21.4 seconds. Recovery worked, but the release gate permits no worker
+replacement. Do not reuse or publish that installer or kit.
+
+The replacement quiesces both outgoing A/V tail pads with GStreamer IDLE probes
+before selector mutation, installs local DROP fences while those blocks are
+held, switches the selectors, detaches the old request pads while their
+producers cannot race, then removes the IDLE blocks and NULLs the isolated old
+leg. No synchronous flush event enters `input-selector` on this commit path.
+Partial probe/thread setup, a failed first selector setter, and stop before
+handoff remove the temporary fences and preserve the current programme. Once a
+first selector mutation succeeds, an unexpected partial A/V failure remains
+owned by the existing nonzero commit watchdog because it cannot be rolled back
+atomically.
+
+Local verification against the exact proof-anchor tree: 124 focused tests pass;
+Ruff, format, compileall, and `uv run mypy civiccast` pass, with mypy checking
+676 source files. A real Windows GStreamer 1.28.5 multisegment rollover passed
+in 7.90 seconds. The final three-worker production-pressure test passed in
+69.35 seconds: all 18 reloads committed, every commit logged
+`stage=old-tail-quiesced`, every worker stayed at `elements=77` for all six
+cycles, no worker logged `ERROR:`, and all three reported `error: None` with
+clean teardown. Independent hostile review returned GO with no remaining
+correctness, deadlock, or continuity blocker.
+
+On head `cd8546a42a97bf98d44a3795e13e2c042342a0f4`, Windows reproducibility run
+`34742208268`, native Windows in unit run `34742208227`, lint/type
+`34742208250`, virtual headend `34742208238`, docs `34742208235`, operator
+build `34742208243`, accessibility `34742208246`, security `34742208233`, and
+policy `34742208240` passed. The Linux unit job in `34742208227` ran 10,260
+tests: 10,171 passed, 70 skipped, and all 19 failures were claims-registry D2
+blob drift for the changed engine/test plus pre-existing `graph.py` registry
+drift. The current tree rebinds those exact blobs while explicitly preserving
+the historical-claim boundary. Direct blob-drift count is zero and the full
+focused claims policy suite passes 125/125. This handoff/status commit follows
+the proof anchor; use PR #226 for the current branch HEAD and final CI results.
+
+Required sequence: pass current PR CI, merge, build a fresh signed kit from the
+exact merged SHA, run a fresh 15-minute Sandbox, Gate A, and the dedicated
+physical overnight soak, then publish beta.7 only if every exact-candidate gate
+passes. Full owner authorization remains in force.
+
 ## 2026-09-12 beta.7 physical R6 immediate finite switch repair
 
 Current branch: `fix/beta7-zero-held-preroll`.

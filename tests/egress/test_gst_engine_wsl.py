@@ -2637,6 +2637,13 @@ def test_repeated_deferred_rollovers_retire_complete_ts_av_playlist_legs(
     for _proc, _control, log, out_ts, tap_dir, channel_dir in workers:
         text = log.read_text(encoding="utf-8", errors="replace")
         assert text.count("CTRL reload committed") == 6, text
+        assert text.count("stage=old-tail-quiesced") == 6, text
+        element_counts = {
+            int(match) for match in re.findall(r"CTRL reload committed \(elements=([0-9]+)\)", text)
+        }
+        assert len(element_counts) == 1, (
+            f"pipeline element count changed across retirements: {element_counts};\n{text}"
+        )
         assert "CTRL reload: commit did not finish" not in text, text
         assert "CTRL stall:" not in text, text
         assert "CTRL caption dropped:" not in text, text

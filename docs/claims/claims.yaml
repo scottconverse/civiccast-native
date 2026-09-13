@@ -1050,24 +1050,32 @@ entries:
       # These local source/runtime checks do not rerun either historical
       # claim node or provide installed-service, boot/pre-login or field
       # acceptance. Rebinding restores D2 change detection only.
+      # PR 226 current-source review (2026-09-13): engine.py now quiesces both
+      # outgoing tail pads before selector handoff and old-leg disposal. The
+      # bound native test file carries current Windows/GStreamer coverage; the
+      # registered node ID below remains the historical claim's named test.
+      # New rollover proof and its limits are recorded in HANDOFF.md. This does
+      # not rerun or promote the historical decision-gate observation. The
+      # same CI failure exposed a pre-existing graph.py registry drift on the
+      # PR base; its current blob is reconciled here for future D2 detection.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: 3e435a2ff0ff4e947ce37e109edd41ecdfaf2633
         - path: civiccast/egress/gst/engine.py
-          blob: 3c1d1ef21b22d8f5840c9353551a43d8e370ddd4
+          blob: 545ea79f8f2e1190842ecfad201f0f663cd56c16
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
-          blob: 02dad4550596e96cd5fcd57986604b47d8380bbc
+          blob: 690774fcbab10b4da9e753f1431e62ba0f50b31b
         - path: civiccast/egress/gst/control.py
           blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
         - path: civiccast/egress/gst/audio_tap.py
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 70cabce5ea6825b10fca5f2498dc03d6298fd602
+        blob: 1a0708b5c5719dae5ea260d84622bfc88e9e9f7d
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -1098,7 +1106,7 @@ entries:
       # exact-config artifact that was never committed for this spike.
       fixtures:
         - path: civiccast/egress/gst/graph.py
-          blob: 02dad4550596e96cd5fcd57986604b47d8380bbc
+          blob: 690774fcbab10b4da9e753f1431e62ba0f50b31b
     controls:
       - id: native-decision-gate-authority-record
         command: >-
@@ -1947,24 +1955,32 @@ entries:
       # These local source/runtime checks do not rerun either historical
       # claim node or provide installed-service, boot/pre-login or field
       # acceptance. Rebinding restores D2 change detection only.
+      # PR 226 current-source review (2026-09-13): engine.py now quiesces both
+      # outgoing tail pads before selector handoff and old-leg disposal. The
+      # bound native test file carries current Windows/GStreamer coverage; the
+      # registered node ID below remains the historical claim's named test.
+      # New rollover proof and its limits are recorded in HANDOFF.md. This does
+      # not rerun or promote the historical pre-login service observation.
+      # The same CI failure exposed a pre-existing graph.py registry drift on
+      # the PR base; its current blob is reconciled here for D2 detection.
       code:
         - path: civiccast/egress/gst/worker.py
           blob: 3e435a2ff0ff4e947ce37e109edd41ecdfaf2633
         - path: civiccast/egress/gst/engine.py
-          blob: 3c1d1ef21b22d8f5840c9353551a43d8e370ddd4
+          blob: 545ea79f8f2e1190842ecfad201f0f663cd56c16
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
-          blob: 02dad4550596e96cd5fcd57986604b47d8380bbc
+          blob: 690774fcbab10b4da9e753f1431e62ba0f50b31b
         - path: civiccast/egress/gst/control.py
           blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
         - path: civiccast/egress/gst/audio_tap.py
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 70cabce5ea6825b10fca5f2498dc03d6298fd602
+        blob: 1a0708b5c5719dae5ea260d84622bfc88e9e9f7d
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
