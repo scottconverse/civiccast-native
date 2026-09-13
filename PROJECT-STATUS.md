@@ -1,3 +1,34 @@
+> **2026-09-13 latest: signed `8bcf012` beta.7 candidate rejected; retiring
+> fallback-leg error repair is locally verified.** Build `34745799145` produced
+> installer SHA-256
+> `11ed7e9bd63d627103f45bfdeb500840b991569793a939a15e303da024c4eb27`.
+> The quarantined kit is
+> `C:\CivicCastTester\kit-safe\8bcf012db69a306bf6e163322ed25f2c671e93e4`;
+> its whole-kit `SHA256SUMS.txt` hash is
+> `8cfa72de1f83509e15b89eeed0e4375f63793cfaac5537c5b9b6db735afcf1b2`.
+> The 15-minute Sandbox phase completed 93 reloads with stable PIDs and zero
+> continuity errors, but complete startup-to-finish logs exposed one real worker
+> error and relaunch per channel before `SOAK-START`. During each initial
+> fallback-to-programme switch, selector handoff completed and a retiring
+> fallback `tsdemux` then reported flow error `-5`; the generic bus-error path
+> killed the worker before old-leg disposal and commit. All channels recovered,
+> but any worker replacement fails qualification. Do not Gate A, tester-soak,
+> reuse, or publish this kit.
+>
+> Branch `fix/beta7-immediate-finite-reload-error`, based exactly on merged main
+> `8bcf012db69a306bf6e163322ed25f2c671e93e4`, contains only errors proven to
+> originate from the retiring old leg after selector handoff. Incoming,
+> shared-path, and pre-handoff errors remain fatal. The exact production-shaped
+> 12-subchain native reproduction failed before the fix and passes after it;
+> 52 deterministic bus/ordering tests, 141 focused reload/timeout/worker tests,
+> the exact native regression, and two adjacent deferred native cases pass, as
+> do Ruff, mypy, compileall, format, and diff checks. Independent hostile review
+> is GO. No replacement candidate exists. Required sequence: five-lens audit,
+> PR/CI/merge, fresh exact-SHA signed build, captions-OFF and captions-ON Sandbox
+> from first start, Gate A, dedicated 4h-ON plus 4h-OFF tester soak, then
+> publication only on passing evidence. Full owner authorization remains in
+> force. Older entries are historical.
+>
 > **2026-09-13 latest: `93f9168` beta.7 candidate rejected; selector-handoff
 > repair is locally verified in PR #226.** The rejected signed kit completed 94
 > Sandbox reloads but relaunched the public worker once after old-leg retirement
@@ -32,10 +63,13 @@
 >
 > **2026-09-12 latest: physical R6 source repair verified locally; no new candidate yet.**
 > The `a963c39cc44e2643065a818aac0206b110d515d4` beta.7 kit is rejected after
-> all three tester channels failed the live-slate to immediate finite-programme
-> transition. The incoming `filesrc` / `decodebin` programme logged
-> `held_streams=0`, was selected without a running-time rebase, and then failed
-> with propagated GStreamer flow error `-5`. Branch
+> all three tester channels failed the fallback-slate to immediate finite-programme
+> transition. The path logged `held_streams=0`, proving that the finite replacement
+> was selected without held preroll or a running-time rebase. The accompanying
+> GStreamer flow error `-5` was originally attributed specifically to the incoming
+> programme, but later production-topology proof invalidated that attribution: the
+> fallback slate is itself a 12-subchain finite MPEG-TS playlist with `filesrc` /
+> `decodebin` / `tsdemux` elements. The historical error source is unproven. Branch
 > `fix/beta7-zero-held-preroll` now makes every finite immediate replacement use
 > the existing two-stream held-preroll and common-offset transaction while
 > preserving the proven old-leg teardown order. The soak grader now rejects a

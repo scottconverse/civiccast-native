@@ -1,5 +1,53 @@
 # HANDOFF
 
+## 2026-09-13 rejected 8bcf012 candidate and retiring old-leg error repair
+
+Current branch: `fix/beta7-immediate-finite-reload-error`.
+Base `main`: `8bcf012db69a306bf6e163322ed25f2c671e93e4`.
+The repair is locally verified but not yet committed or pushed. No replacement
+installer or kit exists.
+
+The exact signed `8bcf012` beta.7 kit is rejected. Build run `34745799145`
+produced installer SHA-256
+`11ed7e9bd63d627103f45bfdeb500840b991569793a939a15e303da024c4eb27`.
+The byte-verified kit is quarantined at
+`C:\CivicCastTester\kit-safe\8bcf012db69a306bf6e163322ed25f2c671e93e4`;
+its whole-kit `SHA256SUMS.txt` hash is
+`8cfa72de1f83509e15b89eeed0e4375f63793cfaac5537c5b9b6db735afcf1b2`.
+Its 15-minute Sandbox phase completed 93 reloads with stable PIDs, zero
+continuity errors, and no in-phase worker replacement, but the full log window
+showed one real worker error and relaunch on each channel before `SOAK-START`.
+The initial fallback-to-programme switch reached selector handoff, then a
+retiring fallback `tsdemux` reported flow error `-5`; the undifferentiated bus
+error path killed the worker before old-leg disposal and commit. The daemon
+recovered all three channels, but any worker replacement fails qualification.
+Do not Gate A, soak, reuse, or publish this kit. Raw evidence is under
+`sandbox-lab/soak-output/soak-8bcf012-20260913-081856Z/`.
+
+Production creates the fallback slate as a 12-subchain finite MPEG-TS
+playlist, so the observed `decodebin11`, `decodebin6`, and `decodebin4`
+families belong to the outgoing old leg. The repair contains and logs a bus
+error only when a reload commit is active, selector handoff has started, and
+the source's parent chain reaches that transaction's `old_elements`. Errors
+from the replacement leg, shared encoder/mux/output path, or the old leg before
+handoff remain fatal and retain worker recovery.
+
+The exact native 12-subchain reproduction failed before the repair and passes
+after it. One post-repair run contained nine retiring-leg flow errors, then
+logged old-leg disposal, hold release, commit, and `WORKER_RESULT` with
+`error: None` and clean teardown. Final checks: 52/52 deterministic bus and
+commit-ordering tests, 141/141 focused reload/timeout/worker tests, the exact
+native regression, two neighboring deferred native reload tests, Ruff, mypy,
+compileall, formatting, and diff checks pass. Independent hostile review is GO
+with no release-blocking correctness issue.
+
+Required sequence: commit and push after the mandatory five-lens audit, pass
+required PR CI, merge, build a fresh exact-merge signed candidate, run corrected
+captions-OFF and captions-ON Sandbox qualifications from first channel start,
+then Gate A and the dedicated 4h-ON plus 4h-OFF physical tester soak. Publish
+beta.7 only if all exact-candidate gates pass. Full owner authorization remains
+in force.
+
 ## 2026-09-13 beta.7 selector-handoff retirement repair - PR #226
 
 Current branch: `fix/beta7-retirement-flush-deadlock`.
@@ -69,11 +117,14 @@ current branch HEAD and exact CI state. No replacement build, installer, or kit
 exists yet.
 
 The exact `a963c39` beta.7 kit is rejected. On the dedicated tester, all three
-channels failed while switching from their live fallback slate to an immediate
-finite MPEG-TS programme. The incoming programme's `decodebin` / `tsdemux` leg
-reported propagated GStreamer flow error `-5` after the engine logged
-`held_streams=0`. The slate contains neither element, so the abandoned local
-old-leg error-suppression theory was removed.
+channels failed while switching from their fallback slate to an immediate
+finite MPEG-TS programme. That path logged `held_streams=0`, proving the finite
+replacement was selected without held preroll or a running-time rebase. The
+adjacent GStreamer flow error `-5` was originally attributed specifically to
+the incoming programme. Later production-topology proof invalidated that source
+attribution: the fallback slate is itself a 12-subchain finite MPEG-TS playlist
+and therefore also owns `decodebin` / `tsdemux` elements. The held-preroll defect
+and its repair remain valid; the source of that historical `-5` is unproven.
 
 The repair applies CivicCast's existing finite held-preroll and running-time
 rebase transaction to immediate switches as well as deferred switches. Both new

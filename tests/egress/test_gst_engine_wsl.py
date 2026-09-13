@@ -2349,27 +2349,56 @@ def _multi_segment_playlist_reload_graph(clip_paths: list[Path], *, video_caps: 
 def test_immediate_finite_playlist_reload_holds_rebases_and_stays_on_air(
     tmp_path: Path,
 ) -> None:
-    """R6: a due finite programme can immediately replace a running live slate.
+    """R6: a due finite programme can immediately replace a finite fallback slate.
 
-    The physical beta.7 R6 failure took this exact path. The incoming production-
-    shaped ``filesrc ! decodebin`` playlist was observed but not held, so its
-    segment starting at running time zero crossed into an already-running encoder
-    and mux. All three workers then reported ``tsdemux`` flow error -5 and died.
+    The beta.7 ``8bcf012`` Sandbox failure took this exact path. After selector handoff,
+    retirement of the old 12-subchain fallback slate made one of its internal
+    ``tsdemux`` elements report flow error -5. The replacement was already on air,
+    but the undifferentiated bus-error path killed the worker before commit.
 
     Prove that an immediate finite A/V replacement now uses the same transaction as
     a deferred finite replacement: both streams held, one common running-time
     rebase, selector switch while held, old-leg retirement, then hold release.
     """
     out_ts = tmp_path / "immediate-finite.ts"
-    graph = _paced_filesink_graph(_av_demo_graph(nsrc=2), out_ts)
+    finite_slate = tmp_path / "finite-slate.ts"
+    _write_short_av_ts_clip(finite_slate, seconds=10.0, pattern=2, video_caps=_PRODUCTION_CAPS)
+    # Production's SlateSourceGenerator repeats one rendered finite slate up to
+    # MAX_PLAYLIST_SUBCHAINS (12); the Sandbox error came from one of those
+    # retiring decodebin/tsdemux children, not from an endless synthetic slate.
+    old_clip_paths = [finite_slate] * 12
+    source_graph = _multi_segment_playlist_reload_graph(old_clip_paths, video_caps=_PRODUCTION_CAPS)
+    graph = graphmod.PlayoutGraph(
+        sources=source_graph.sources,
+        encoder=(
+            _E("videoconvert"),
+            _E("videoscale"),
+            _E("videorate"),
+            _E("capsfilter", props={"caps": _PRODUCTION_CAPS}),
+            _E("openh264enc", props={"bitrate": 6_000_000}),
+            _E("h264parse", props={"config-interval": -1}),
+        ),
+        audio_encoder=graphmod.audio_encode_specs(
+            codec="avenc_aac", bitrate_kbps=192, sample_rate=48_000
+        ),
+        mux=_E("mpegtsmux", name="mux"),
+        sinks=(
+            (
+                _E("queue"),
+                _E("identity", props={"sync": True}),
+                _E("filesink", props={"location": str(out_ts)}),
+            ),
+        ),
+    )
 
-    clip_paths = [tmp_path / f"immediate-segment-{i}.ts" for i in range(4)]
-    for i, clip in enumerate(clip_paths):
-        _write_short_av_ts_clip(clip, seconds=0.8, pattern=(0, 18)[i % 2])
+    clip_paths = [tmp_path / "immediate-program.ts"]
+    _write_short_av_ts_clip(clip_paths[0], seconds=10.0, pattern=18, video_caps=_PRODUCTION_CAPS)
 
     reload_path = tmp_path / "immediate-program.json"
     reload_path.write_text(
-        graphmod.graph_to_json(_multi_segment_playlist_reload_graph(clip_paths)),
+        graphmod.graph_to_json(
+            _multi_segment_playlist_reload_graph(clip_paths, video_caps=_PRODUCTION_CAPS)
+        ),
         encoding="utf-8",
     )
     assert not reloadpolicy.reload_switch_is_deferred(str(reload_path)), (
@@ -2379,7 +2408,7 @@ def test_immediate_finite_playlist_reload_holds_rebases_and_stays_on_air(
     proc, control, log = _launch_worker(tmp_path, graph, out_ts)
     try:
         _wait_for_log(log, "CTRL first-output:", timeout=20.0)
-        time.sleep(1.0)  # advance the persistent output timeline before the cut
+        time.sleep(5.5)  # cut near the finite slate's end, matching the Sandbox failure
         before_reload = out_ts.stat().st_size
         _send(control, f"reload {reload_path}")
         _wait_for_log(log, "CTRL reload committed", timeout=30.0)
@@ -2396,7 +2425,9 @@ def test_immediate_finite_playlist_reload_holds_rebases_and_stays_on_air(
     assert returncode == 0, f"unclean teardown after immediate finite switch;\n{text}"
     assert "new leg preroll verified" in text and "held_streams=2" in text, text
     assert "finite switch rebased to running time" in text and "mode=immediate" in text, text
-    assert "Internal data stream error" not in text, text
+    if "Internal data stream error" in text:
+        assert "contained retiring old-leg error after selector handoff" in text, text
+    assert "WORKER_RESULT {'error': None, 'teardown_clean': True}" in text, text
     stages = (
         "CTRL reload: switching selector",
         "CTRL reload: old leg disposed",

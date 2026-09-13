@@ -1249,6 +1249,102 @@ def test_new_active_leg_bus_error_during_retirement_is_fatal(engine_module) -> N
     assert engine._loop.quit_called is True
 
 
+def test_retiring_old_leg_bus_error_after_selector_handoff_is_contained(
+    engine_module, capsys
+) -> None:
+    """A finite old playlist may surface FLOW_ERROR while being detached.
+
+    The selector already points at the replacement, so an error proven to come
+    from a descendant of the retiring leg must not kill the producing worker.
+    """
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    old_element = _FakeOldElement("old-program", recorder)
+
+    class _OldDescendant:
+        @staticmethod
+        def get_name() -> str:
+            return "old-tsdemux"
+
+        @staticmethod
+        def get_parent() -> _FakeOldElement:
+            return old_element
+
+    source = _OldDescendant()
+    engine._pending_reload = {
+        "commit_in_progress": True,
+        "selector_handoff_started": True,
+        "new_elements": [object()],
+        "old_elements": [old_element],
+    }
+
+    class _Loop:
+        quit_called = False
+
+        def quit(self) -> None:
+            self.quit_called = True
+
+    class _Message:
+        type = _FakeMessageType.ERROR
+        src = source
+
+        @staticmethod
+        def parse_error() -> tuple[str, str]:
+            return "streaming stopped, reason error (-5)", "debug"
+
+    engine._loop = _Loop()
+
+    assert engine._on_bus(None, _Message()) is True
+    assert engine._error is None
+    assert engine._loop.quit_called is False
+    assert "contained retiring old-leg error after selector handoff" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("source_kind", "selector_handoff_started"),
+    [("old", False), ("new", True), ("shared", True)],
+)
+def test_bus_error_outside_retiring_post_handoff_leg_remains_fatal(
+    engine_module, source_kind: str, selector_handoff_started: bool
+) -> None:
+    """Old pre-handoff, selected-new, and shared errors still recover worker."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    old_source = _FakeOldElement("old-program", recorder)
+    new_source = _FakeOldElement("new-program", recorder)
+    source = {
+        "old": old_source,
+        "new": new_source,
+        "shared": _FakeOldElement("shared-mux", recorder),
+    }[source_kind]
+    engine._pending_reload = {
+        "commit_in_progress": True,
+        "selector_handoff_started": selector_handoff_started,
+        "new_elements": [new_source],
+        "old_elements": [old_source],
+    }
+
+    class _Loop:
+        quit_called = False
+
+        def quit(self) -> None:
+            self.quit_called = True
+
+    class _Message:
+        type = _FakeMessageType.ERROR
+        src = source
+
+        @staticmethod
+        def parse_error() -> tuple[str, str]:
+            return "fatal stream error", "debug"
+
+    engine._loop = _Loop()
+
+    assert engine._on_bus(None, _Message()) is True
+    assert engine._error == ("fatal stream error", "debug")
+    assert engine._loop.quit_called is True
+
+
 def test_retirement_thread_start_failure_aborts_before_selector_switch(
     engine_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
