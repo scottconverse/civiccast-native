@@ -1,3 +1,30 @@
+> **2026-09-13 latest: `93f9168` beta.7 candidate rejected; selector-handoff
+> repair is locally verified in PR #226.** The rejected signed kit completed 94
+> Sandbox reloads but relaunched the public worker once after old-leg retirement
+> blocked inside synchronous `FLUSH_START` while the other outgoing stream was
+> still active. The daemon recovered in 21.4 seconds, but any worker replacement
+> fails the release gate. Do not reuse or publish that installer or kit.
+>
+> Replacement proof anchor `691776072e1d8b4ffe21bcb730014924d0446d4b`
+> on `fix/beta7-retirement-flush-deadlock` IDLE-blocks both outgoing A/V tail
+> pads, installs local DROP fences, switches selectors only after both tails are
+> quiescent, detaches the old request pads, then unblocks and NULLs the isolated
+> old leg. Pre-handoff and shutdown failures restore the current programme; a
+> partial A/V selector mutation remains owned by the existing nonzero recovery
+> watchdog. Local checks: 124 focused tests; Ruff, format, compileall, and mypy
+> pass; one native rollover passed; then three concurrent native Windows workers
+> completed 18/18 MPEG-TS rollovers with 18 quiescence receipts, flat
+> `elements=77`, zero `ERROR:` lines, and clean teardown. Independent review is
+> GO. PR: https://github.com/scottconverse/civiccast-native/pull/226. Initial CI
+> runs at the proof anchor include unit `34742103569`, lint `34742103571`,
+> deterministic detectors `34742103587`, Windows reproducibility `34742103583`,
+> and virtual headend `34742103575`; this status commit follows the proof anchor,
+> so use PR #226 for the current head and final check state. No replacement build
+> exists yet. Required sequence: CI, merge, fresh exact-SHA signed build,
+> Sandbox, Gate A, dedicated physical overnight soak, then publication only on
+> passing evidence. Full owner authorization remains in force. Older entries are
+> historical.
+>
 > **2026-09-12 latest: physical R6 source repair verified locally; no new candidate yet.**
 > The `a963c39cc44e2643065a818aac0206b110d515d4` beta.7 kit is rejected after
 > all three tester channels failed the live-slate to immediate finite-programme
