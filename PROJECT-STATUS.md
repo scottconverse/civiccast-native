@@ -23,8 +23,12 @@
 > 52 deterministic bus/ordering tests, 141 focused reload/timeout/worker tests,
 > the exact native regression, and two adjacent deferred native cases pass, as
 > do Ruff, mypy, compileall, format, and diff checks. Independent hostile review
-> is GO. No replacement candidate exists. Required sequence: five-lens audit,
-> PR/CI/merge, fresh exact-SHA signed build, captions-OFF and captions-ON Sandbox
+> is GO. Implementation and local-proof anchor is
+> `be2854d52d4e125e73977bb54e7d336e4e86686d`; PR #227 is
+> https://github.com/scottconverse/civiccast-native/pull/227. This status commit
+> follows that anchor, so use the PR for current HEAD and final CI state. No
+> replacement candidate exists. Required sequence: PR CI/merge, fresh exact-SHA
+> signed build, captions-OFF and captions-ON Sandbox
 > from first start, Gate A, dedicated 4h-ON plus 4h-OFF tester soak, then
 > publication only on passing evidence. Full owner authorization remains in
 > force. Older entries are historical.

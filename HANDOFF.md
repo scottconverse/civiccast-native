@@ -4,8 +4,12 @@
 
 Current branch: `fix/beta7-immediate-finite-reload-error`.
 Base `main`: `8bcf012db69a306bf6e163322ed25f2c671e93e4`.
-The repair is locally verified but not yet committed or pushed. No replacement
-installer or kit exists.
+Implementation and local-proof anchor:
+`be2854d52d4e125e73977bb54e7d336e4e86686d`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/227.
+This handoff/status commit follows the implementation anchor, so use PR #227
+for the current branch HEAD and final CI state. No replacement installer or kit
+exists.
 
 The exact signed `8bcf012` beta.7 kit is rejected. Build run `34745799145`
 produced installer SHA-256
@@ -41,9 +45,9 @@ native regression, two neighboring deferred native reload tests, Ruff, mypy,
 compileall, formatting, and diff checks pass. Independent hostile review is GO
 with no release-blocking correctness issue.
 
-Required sequence: commit and push after the mandatory five-lens audit, pass
-required PR CI, merge, build a fresh exact-merge signed candidate, run corrected
-captions-OFF and captions-ON Sandbox qualifications from first channel start,
+Required sequence: pass required PR CI, merge, build a fresh exact-merge signed
+candidate, then run corrected captions-OFF and captions-ON Sandbox
+qualifications from first channel start,
 then Gate A and the dedicated 4h-ON plus 4h-OFF physical tester soak. Publish
 beta.7 only if all exact-candidate gates pass. Full owner authorization remains
 in force.
