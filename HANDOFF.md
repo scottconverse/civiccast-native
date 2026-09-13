@@ -40,11 +40,17 @@ cycles, no worker logged `ERROR:`, and all three reported `error: None` with
 clean teardown. Independent hostile review returned GO with no remaining
 correctness, deadlock, or continuity blocker.
 
-Initial proof-anchor CI runs are unit `34742103569`, lint `34742103571`,
-deterministic detectors `34742103587`, Windows reproducibility `34742103583`,
-virtual headend `34742103575`, docs `34742103568`, operator build `34742103578`,
-and accessibility `34742103577`. The status commit follows those runs; use PR
-#226 for current final results.
+On head `cd8546a42a97bf98d44a3795e13e2c042342a0f4`, Windows reproducibility run
+`34742208268`, native Windows in unit run `34742208227`, lint/type
+`34742208250`, virtual headend `34742208238`, docs `34742208235`, operator
+build `34742208243`, accessibility `34742208246`, security `34742208233`, and
+policy `34742208240` passed. The Linux unit job in `34742208227` ran 10,260
+tests: 10,171 passed, 70 skipped, and all 19 failures were claims-registry D2
+blob drift for the changed engine/test plus pre-existing `graph.py` registry
+drift. The current tree rebinds those exact blobs while explicitly preserving
+the historical-claim boundary. Direct blob-drift count is zero and the full
+focused claims policy suite passes 125/125. This handoff/status commit follows
+the proof anchor; use PR #226 for the current branch HEAD and final CI results.
 
 Required sequence: pass current PR CI, merge, build a fresh signed kit from the
 exact merged SHA, run a fresh 15-minute Sandbox, Gate A, and the dedicated

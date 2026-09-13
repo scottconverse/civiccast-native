@@ -15,11 +15,16 @@
 > pass; one native rollover passed; then three concurrent native Windows workers
 > completed 18/18 MPEG-TS rollovers with 18 quiescence receipts, flat
 > `elements=77`, zero `ERROR:` lines, and clean teardown. Independent review is
-> GO. PR: https://github.com/scottconverse/civiccast-native/pull/226. Initial CI
-> runs at the proof anchor include unit `34742103569`, lint `34742103571`,
-> deterministic detectors `34742103587`, Windows reproducibility `34742103583`,
-> and virtual headend `34742103575`; this status commit follows the proof anchor,
-> so use PR #226 for the current head and final check state. No replacement build
+> GO. PR: https://github.com/scottconverse/civiccast-native/pull/226. On head
+> `cd8546a42a97bf98d44a3795e13e2c042342a0f4`, Windows reproducibility, native
+> Windows, lint/type, virtual headend, docs, operator build, accessibility,
+> security and policy checks passed. Unit run `34742208227` ran 10,260 tests:
+> 10,171 passed, 70 skipped, and its 19 failures all traced to stale D2 blob
+> bindings in `docs/claims/claims.yaml` for the changed engine/test plus a
+> pre-existing `graph.py` registry drift. The current tree rebinds those exact
+> blobs without promoting the historical claims; the focused claims suite is
+> 125/125 and direct blob-drift count is zero. This status commit follows the
+> proof anchor, so use PR #226 for the current head and final CI state. No replacement build
 > exists yet. Required sequence: CI, merge, fresh exact-SHA signed build,
 > Sandbox, Gate A, dedicated physical overnight soak, then publication only on
 > passing evidence. Full owner authorization remains in force. Older entries are
