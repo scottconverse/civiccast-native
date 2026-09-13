@@ -1,10 +1,10 @@
 # soak8-e1acfe6 Latest Test Directive
 
-Current: `soak/DIRECTIVE-BETA7-TESTER-SOAK-R3.md`
-Autorun: `soak/autorun/AUTORUN-BETA7-TESTER-SOAK-R3.ps1`
-Updated: 2026-09-12 - Preserve beta.7 R1/R2 failures. R3 creates a supported
-fresh test schedule, serializes strict TSDuck probes with a 10-second receive
-timeout and 60-second process bound, then runs full admitted ON/OFF measurement.
+Current: `soak/DIRECTIVE-BETA7-TESTER-SOAK-R4.md`
+Autorun: `soak/autorun/AUTORUN-BETA7-TESTER-SOAK-R4.ps1`
+Updated: 2026-09-12 - Preserve beta.7 R1/R2/R3 failures. R4 fixes PS5.1
+top-level plan-array enumeration, then retains R3's bounded fresh schedule,
+serialized strict TSDuck, and full admitted ON/OFF measurement.
 
 Previous preserved R1: soak/DIRECTIVE-BETA7-TESTER-MISSION-R1.md
 Branch: soak8-e1acfe6-directives
