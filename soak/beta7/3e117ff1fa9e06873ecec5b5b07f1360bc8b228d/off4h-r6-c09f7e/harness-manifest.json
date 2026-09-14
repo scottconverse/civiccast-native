@@ -21,7 +21,7 @@
     },
     {
       "path": "Invoke-Beta7TesterUpgrade.ps1",
-      "sha256": "373c6b619b15595c9eb6d210f691e5b3ad74d6a84d1621c3f25b1e416108e8da"
+      "sha256": "c283897218b3e99c6ec9dfbec25c746c8d636ba3023fe386ea871095f6fcc976"
     },
     {
       "path": "Run-Beta7PhysicalOFF4HJob.ps1",
@@ -41,7 +41,7 @@
     },
     {
       "path": "Test-Beta7R6Harness.ps1",
-      "sha256": "81410b1a67c808bcda5191a3b797890e23eebd3fbfc8e63a289f1cf04d178578"
+      "sha256": "9b57b0e063f521e2673e21778d46502b1ad1a236ab2bf99e0a95d41b1bb13202"
     },
     {
       "path": "TSDuckReportClassifierR6.ps1",

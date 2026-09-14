@@ -100,7 +100,30 @@ function Invoke-GitStderrFixture {
         $failed=$false
         try{$null=Invoke-Beta5Git -Repository $repo -Arguments @('definitely-not-a-command')}catch{$failed=$true}
         Assert-Check $failed 'Nonzero Git exit did not fail closed.'
-    }finally{if(Test-Path -LiteralPath $repo){[IO.Directory]::Delete($repo,$true)}}
+
+        # Reproduce the tester's CRLF working file versus LF Git object. The
+        # evidence binding must use the normalized index object, not a raw
+        # working-file hash.
+        $null=Invoke-Beta5Git -Repository $repo -Arguments @('config','core.autocrlf','true')
+        $null=Invoke-Beta5Git -Repository $repo -Arguments @('config','user.name','R6 fixture')
+        $null=Invoke-Beta5Git -Repository $repo -Arguments @('config','user.email','r6-fixture@civiccast.invalid')
+        $receiptPath=Join-Path $repo 'receipt.json'
+        [IO.File]::WriteAllText($receiptPath,"{`r`n  `"status`": `"R5_INVALIDATED`"`r`n}",[Text.UTF8Encoding]::new($false))
+        $null=Invoke-Beta5Git -Repository $repo -Arguments @('add','--','receipt.json')
+        $indexBlob=(Invoke-Beta5Git -Repository $repo -Arguments @('rev-parse',':receipt.json')|Select-Object -First 1).Trim()
+        $rawBlob=(Invoke-Beta5Git -Repository $repo -Arguments @('hash-object','--no-filters',$receiptPath)|Select-Object -First 1).Trim()
+        $null=Invoke-Beta5Git -Repository $repo -Arguments @('commit','-m','fixture receipt','--','receipt.json')
+        $committedBlob=(Invoke-Beta5Git -Repository $repo -Arguments @('rev-parse','HEAD:receipt.json')|Select-Object -First 1).Trim()
+        Assert-Check ($indexBlob -ceq $committedBlob) 'Normalized index receipt blob does not equal the committed receipt blob.'
+        Assert-Check ($rawBlob -cne $committedBlob) 'CRLF fixture did not distinguish raw working bytes from normalized Git evidence.'
+    }finally{
+        if(Test-Path -LiteralPath $repo){
+            # Git object files are read-only on Windows. Clear that attribute
+            # only inside this disposable fixture before recursive deletion.
+            foreach($file in @(Get-ChildItem -LiteralPath $repo -Recurse -Force -File -ErrorAction SilentlyContinue)){$file.IsReadOnly=$false}
+            [IO.Directory]::Delete($repo,$true)
+        }
+    }
 }
 
 function Invoke-PowerShellArrayCompatibilityFixtures {
@@ -184,6 +207,10 @@ function Invoke-ChildPreflight {
     $scheduleCleanupGuard = '(?s)# A schedule POST may commit remotely.*?if\s*\(\s*\$token\s*\)\s*\{\s*try\s*\{\s*\$scheduleCleanup\s*=\s*Remove-RemainingOwnedSchedule\s*;\s*Save-Result\s+\$scheduleCleanup\s+''SCHEDULE-CLEANUP-VERIFIED\.json'''
     Assert-Check ($driverText -match $scheduleCleanupGuard) 'R6 finalizer must invoke exact-notes schedule discovery behind the exact token-only guard, independent of recorded IDs.'
     Invoke-PowerShellArrayCompatibilityFixtures -DriverText $driverText
+
+    $upgradeText = Get-Content -LiteralPath (Join-Path $root 'Invoke-Beta7TesterUpgrade.ps1') -Raw
+    Assert-Check ($upgradeText -match '(?s)\$localBlob\s*=\s*\(Invoke-Beta5Git.{0,300}''rev-parse''.{0,100}:\$relativeInvalidation') 'R6 adoption does not compare the normalized local invalidation index blob.'
+    Assert-Check ($upgradeText -notmatch '(?s)\$localBlob\s*=.{0,300}''hash-object''.{0,100}''--no-filters''') 'R6 adoption still compares raw CRLF invalidation bytes with a normalized remote blob.'
     $selfTestRoot = Join-Path ([IO.Path]::GetTempPath()) ('civiccast-r6-harness-' + [guid]::NewGuid().ToString('N'))
     # -SelfTest returns before station/token/network access. Its disposable
     # output is outside the package and contains only synthetic test evidence.

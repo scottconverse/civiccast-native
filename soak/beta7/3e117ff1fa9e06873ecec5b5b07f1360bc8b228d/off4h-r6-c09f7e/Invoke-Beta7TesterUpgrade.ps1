@@ -59,7 +59,10 @@ try{
     $null=Invoke-Beta5Git -Repository $testerRepo -Arguments @('merge-base','--is-ancestor',[string]$id.r5_invalidation_remote_commit,"origin/$($id.return_branch)")
     $relativeInvalidation='soak/beta7-3e117ff1fa9e06873ecec5b5b07f1360bc8b228d/physical-soak-off4h-r5-e27a91/INVALIDATED.json'
     $remoteBlob=(Invoke-Beta5Git -Repository $testerRepo -Arguments @('rev-parse',"$($id.r5_invalidation_remote_commit)`:$relativeInvalidation")|Select-Object -First 1).Trim()
-    $localBlob=(Invoke-Beta5Git -Repository $testerRepo -Arguments @('hash-object','--no-filters',$invalidationPath)|Select-Object -First 1).Trim()
+    # Compare Git-normalized blobs. The Windows working file is CRLF while the
+    # committed object is LF; hashing raw working bytes would reject valid,
+    # exactly committed evidence.
+    $localBlob=(Invoke-Beta5Git -Repository $testerRepo -Arguments @('rev-parse',":$relativeInvalidation")|Select-Object -First 1).Trim()
     if($remoteBlob -cne $localBlob){throw 'Local R5 invalidation receipt does not equal the identity-bound remote commit.'}
     $bin=Join-Path $missionRoot 'bin';New-Item -ItemType Directory -Path $bin -Force|Out-Null
     foreach($entry in @($manifest.files)){Copy-Item -LiteralPath (Join-Path $PackageRoot ([string]$entry.path)) -Destination (Join-Path $bin ([string]$entry.path))}
