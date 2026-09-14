@@ -1,0 +1,105 @@
+{
+  "schema": "civiccast-native-tester-run-identity-v3",
+  "mission": "beta7-3e117ff1-off4h-r9-9df212",
+  "mission_nonce": "BETA7-3E117FF1-OFF4H-R9-9DF212",
+  "candidate_source_sha": "3e117ff1fa9e06873ecec5b5b07f1360bc8b228d",
+  "build_source_sha": "3e117ff1fa9e06873ecec5b5b07f1360bc8b228d",
+  "gate_a_source_sha": "3e117ff1fa9e06873ecec5b5b07f1360bc8b228d",
+  "expected_manifest_sha256": "2af18a8f5bea094cdf7af248eae04be58501e8a390a3099450500819e38d8eb8",
+  "actual_manifest_sha256": null,
+  "expected_installer_sha256": "07fc5259514a3e98164869efbbd9c5bdfb7d83dfe6a96c61d15795c6ace77a97",
+  "actual_installer_sha256": null,
+  "expected_version": "1.0.0-beta.7",
+  "expected_authenticode_status": "Valid",
+  "expected_installer_signer": "Scott Converse",
+  "build_run_id": "34762831824",
+  "build_conclusion": "success",
+  "gate_a_run_id": "34772707033",
+  "gate_a_verdict": "PASS",
+  "gate_a_verdict_artifact_sha256": {
+    "clean_install": "f09fc526aa40de18e5bdff1d444fa49184396f3e994542307e597bf3e2f6cd65",
+    "cross_version_upgrade": "3163c5b7e836bdd235593e215a3ed8beafe271ae5e73705965843dae93d3f06e",
+    "download_only": "1dbca663def8bdee613eaf2d0429a4488dbc4fe5bd1c881d1510544315a08052"
+  },
+  "gate_a_artifact_digest_sha256": {
+    "clean_install": "b8f22c2468abcbe74823f3814c213c009d19c1cbe01b6a5cba676cf151bf0706",
+    "cross_version_upgrade": "a750390c3feecc100600b5932f964dc4027f6175d1e99a2b6360c2ff3e8475c3",
+    "download_only": "f78d1a67813ed117d11776af08a6fedd4ba6d2a9a77c84ca634cc0bcd97b1e25"
+  },
+  "gate_a_artifact_id": {
+    "clean_install": "10324325038",
+    "cross_version_upgrade": "10325385103",
+    "download_only": "10325128671"
+  },
+  "kit_base_url": "http://192.168.0.135:8766/3e117ff1fa9e06873ecec5b5b07f1360bc8b228d/",
+  "coordinator_safe_kit_path": "C:\\CivicCastTester\\kit-safe\\3e117ff1fa9e06873ecec5b5b07f1360bc8b228d",
+  "return_repository_url": "https://github.com/scottconverse/civiccast-native.git",
+  "return_branch": "tester/soak8-e1acfe6-DESKTOP-VBMA6O5",
+  "hostname": "DESKTOP-VBMA6O5",
+  "expected_hostname": "DESKTOP-VBMA6O5",
+  "tester_root": "C:\\CivicCastSoak",
+  "mission_state_root": "C:\\CivicCastSoak\\missions\\beta7-3e117ff1-off4h-r9-9df212",
+  "return_repo_path": "C:\\CivicCastSoak\\missions\\beta7-3e117ff1-off4h-r9-9df212\\return-repo",
+  "install_root": "C:\\CivicCastHostStore\\install",
+  "task_name": "CivicCast-Beta7-3e117ff1-OFF4H-R9-9DF212",
+  "evidence_relative_root": "soak/beta7-3e117ff1fa9e06873ecec5b5b07f1360bc8b228d/physical-soak-off4h-r9-9df212",
+  "expected_elements_per_phase": {
+    "OFF": {
+      "public": [
+        146
+      ],
+      "education": [
+        146
+      ],
+      "government": [
+        146
+      ]
+    }
+  },
+  "topology_provenance": {
+    "kind": "historical-physical-baseline-plus-current-run-reestablishment",
+    "evidence_path": "docs/evidence/soak-2026-09-09-beta5/blackwell-evidence.zip",
+    "evidence_sha256": "685a20a351d4569d8b16aebc0b75718d1cdd7e977aa35d415fdb5842ea319bae",
+    "healthy_elements": 146,
+    "known_failed_elements": [
+      33,
+      56,
+      74
+    ],
+    "current_candidate_must_reestablish_before_measurement": true
+  },
+  "expected_harness_manifest_sha256": "03fdccc568ce02485ef89f13f89fe8ea807cbe5c5800d0b1b2c89126cbccf073",
+  "harness_source_commit": "5c254228d2eda991dc61ce3d61633bafc68c3da1",
+  "r5_invalidation_receipt_sha256": "413005ba893e81bc847d49b645bb5ae518c4101b0ed1b1b7a9e22903f79d0a7e",
+  "r5_invalidation_remote_commit": "0c90c8bce3f0cbe36af9671a5bbea91116d832a6",
+  "minutes_per_phase": 240,
+  "planned_seconds": 14400,
+  "state_sample_interval_seconds": 10,
+  "caption_status_interval_seconds": 30,
+  "hardware_sample_interval_seconds": 30,
+  "transport_round_interval_seconds": 1800,
+  "transport_round_offsets_seconds": [
+    0,
+    1800,
+    3600,
+    5400,
+    7200,
+    9000,
+    10800,
+    12600
+  ],
+  "channels": [
+    {
+      "channel_id": "public",
+      "udp_port": 9001
+    },
+    {
+      "channel_id": "education",
+      "udp_port": 9002
+    },
+    {
+      "channel_id": "government",
+      "udp_port": 9003
+    }
+  ]
+}
