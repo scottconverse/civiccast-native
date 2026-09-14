@@ -15,10 +15,10 @@ publication authorization.
   transport admission, and controlled programme-change topology proof
 - Mission: `BETA7-3E117FF1-OFF4H-R6-C09F7E`
 - Task: `CivicCast-Beta7-3e117ff1-OFF4H-R6-C09F7E`
-- Package source anchor: `2ec34a92cc41a65a237d38a939c263fe78a82251`
-- Package binding commit: `da2372cbdc0cdfd0cba0c16f59602f952acf0ef8`
+- Package source anchor: `e590a607174ba63b403a2f818e0170e38bbb049d`
+- Package binding commit: `55cf740e7bd3890ca7653fbba82c37fadf985e8b`
 - Harness manifest SHA-256:
-  `746acdfe0cbf44678a874a74c2c01f1460a1845445f622aefe7d793e8df0bc75`
+  `030d842ec1af77076485d624fba501cefff8d995f4a161fbe40b190a0b48d7c6`
 - R5 invalidation remote commit:
   `0c90c8bce3f0cbe36af9671a5bbea91116d832a6`
 - R5 tester working-byte receipt SHA-256:
