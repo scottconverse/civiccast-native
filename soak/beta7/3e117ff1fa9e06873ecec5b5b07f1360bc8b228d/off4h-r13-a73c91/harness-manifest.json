@@ -1,0 +1,51 @@
+{
+  "schema": "civiccast-beta7-harness-manifest-v1",
+  "candidate_source_sha": "3e117ff1fa9e06873ecec5b5b07f1360bc8b228d",
+  "mission_nonce": "BETA7-3E117FF1-OFF4H-R13-A73C91",
+  "files": [
+    {
+      "path": "Assert-Beta7CandidateBinding.ps1",
+      "sha256": "55992455143853e7a4c2729723aa35c86c24773db42e449acaf983ed81c36445"
+    },
+    {
+      "path": "BETA7-MISSION.md",
+      "sha256": "d04793cd58324d8073733fa40c1a25b54d70fd8c50706c9feb09824a2f1bc3d3"
+    },
+    {
+      "path": "Beta7Tester.Common.ps1",
+      "sha256": "534c0a0712468036cfb0cb370fa3b3591493f728f4d8ba92cd31d028fba93c73"
+    },
+    {
+      "path": "Beta7TransportProbeR13.ps1",
+      "sha256": "b7057ce56baaf1b118b81c3617c1e243d11a43f23a7d8b788bc4772f346f3279"
+    },
+    {
+      "path": "Invoke-Beta7TesterUpgrade.ps1",
+      "sha256": "cfc25c201af0ef8519359e5c3494e8904d6736c7c1ca3d209088e69bce74b942"
+    },
+    {
+      "path": "Run-Beta7PhysicalOFF4HJob.ps1",
+      "sha256": "b20a7ef51ae1a3d19c6b7261f3efb19bd5522462df56a055f7df528b81832295"
+    },
+    {
+      "path": "Run-BetaExistingTesterSoakR13.ps1",
+      "sha256": "5bd928a1dc10fe390143c5657ec26510cf938b00e3734e0d68dd297f115b52a9"
+    },
+    {
+      "path": "Start-Beta7PhysicalOFF4HJob.ps1",
+      "sha256": "2fad976814b791225ba6cd7fd1d329ef9053fd54d800502aa7ed07d3ee2104a5"
+    },
+    {
+      "path": "Test-Beta7HarnessPackage.ps1",
+      "sha256": "b3b79c840a689d47fda5f72ece8191df02876747d4b1b556b32e82885a942fff"
+    },
+    {
+      "path": "Test-Beta7R13Harness.ps1",
+      "sha256": "c55493bb38455ab38ab59d490aad5b82f467ad0865cf6567d828f9f71b622d22"
+    },
+    {
+      "path": "TSDuckReportClassifierR13.ps1",
+      "sha256": "84f321e79ae85921db1b51d23699440c050c65829f3f1c97a40f1cf6432b3acf"
+    }
+  ]
+}
