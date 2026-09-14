@@ -74,7 +74,7 @@
     ]
   },
   "expected_harness_manifest_sha256": "56dea7b20562bad3a9ad8ef81c9103408310c47dc8f961c66623f7cadcb233c6",
-  "harness_source_commit": "e599b896d8ddf6f5f028ddeeb4e631a134b3f478",
+  "harness_source_commit": "dedc03471a492a973efd73eb34d903dded2ee5ed",
   "r5_invalidation_receipt_sha256": "413005ba893e81bc847d49b645bb5ae518c4101b0ed1b1b7a9e22903f79d0a7e",
   "r5_invalidation_remote_commit": "0c90c8bce3f0cbe36af9671a5bbea91116d832a6",
   "minutes_per_phase": 240,
