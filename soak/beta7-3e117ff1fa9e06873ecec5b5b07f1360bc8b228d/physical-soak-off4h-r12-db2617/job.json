@@ -1,0 +1,35 @@
+{
+    "schema":  "civiccast-beta7-physical-job-v3",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "source_sha":  "3e117ff1fa9e06873ecec5b5b07f1360bc8b228d",
+    "mission_nonce":  "BETA7-3E117FF1-OFF4H-R12-DB2617",
+    "harness_source_commit":  "e599b896d8ddf6f5f028ddeeb4e631a134b3f478",
+    "harness_manifest_sha256":  "d1ddedf06fcf874ff81351c8986b1e75f74b3f85fe3a8f5ba4f072b6ff000731",
+    "evidence_relative_path":  "soak/beta7-3e117ff1fa9e06873ecec5b5b07f1360bc8b228d/physical-soak-off4h-r12-db2617/evidence.zip",
+    "completion_relative_path":  "soak/beta7-3e117ff1fa9e06873ecec5b5b07f1360bc8b228d/physical-soak-off4h-r12-db2617/COMPLETION.json",
+    "job_started_utc":  "2026-09-14T09:16:27.4606517Z",
+    "job_state":  "STARTED",
+    "minutes":  240,
+    "phases":  [
+                   "OFF"
+               ],
+    "result":  null,
+    "error":  null,
+    "task_entry":  {
+                       "enabled_after_disable":  false,
+                       "previous_state":  "Running",
+                       "observed_state":  "Running",
+                       "at":  "2026-09-14T09:16:28.7082227Z"
+                   },
+    "installed_identity":  {
+                               "verified_utc":  "2026-09-14T09:16:29.2080870Z",
+                               "version":  "1.0.0-beta.7",
+                               "service_process_id":  21040,
+                               "runtime_file_sha256":  {
+                                                           "Lib/site-packages/civiccast/egress/daemon.py":  "b0af145243f6b28e80f7b1bc64aebe4ca930865eea26c06db6550d5dbb1bba04",
+                                                           "Lib/site-packages/civiccast/egress/gst/strategy.py":  "5d4a8f498f974a86887a25d89b972f273af8353f7fbefbe6d4eb8cfae627cdd9"
+                                                       },
+                               "app_pack_source_sha":  "3e117ff1fa9e06873ecec5b5b07f1360bc8b228d",
+                               "installer_sha256":  "07fc5259514a3e98164869efbbd9c5bdfb7d83dfe6a96c61d15795c6ace77a97"
+                           }
+}
