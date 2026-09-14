@@ -1,8 +1,8 @@
 # soak8-e1acfe6 Latest Test Directive
 
-Current: soak/DIRECTIVE-BETA7-3E117FF1-OFF4H-R13-A73C91.md
+Current: soak/DIRECTIVE-BETA7-3E117FF1-OFF4H-R14-C84E2D.md
 
-Autorun: soak/autorun/AUTORUN-BETA7-3E117FF1-OFF4H-R13-A73C91.ps1
+Autorun: soak/autorun/AUTORUN-BETA7-3E117FF1-OFF4H-R14-C84E2D.ps1
 
 Candidate: 3e117ff1fa9e06873ecec5b5b07f1360bc8b228d, build 34762831824,
 Gate A PASS run 34772707033. Captions are OFF. The measured gate is exactly
@@ -34,11 +34,17 @@ continued output. R13 binds that R12 evidence hash and corrects only the stale
 topology rule while retaining worker-exit, missing-preroll, output-stall,
 wrong-source, missing-PID, `56`/`74`, and transport failures.
 
-R13's source anchor is dedc03471a492a973efd73eb34d903dded2ee5ed, its binding
-commit is 8bd7bbb236bdf4a6602bd30b44c5f2b31f0677d1, and its harness manifest
-SHA-256 is 56dea7b20562bad3a9ad8ef81c9103408310c47dc8f961c66623f7cadcb233c6.
+R13 then stopped in package preflight before a mission root or station change:
+Git supplied LF text on the tester and CRLF text on the coordinator, while R13
+compared raw manifest bytes. R14 normalizes UTF-8 text before hashing the
+manifest and all 11 files. Its two-runtime preflight converts a complete package
+fixture to CRLF and requires the same hash.
 
-Execute the R13 autorun once. It must refuse any identity, package, host,
+R14's source anchor is ec2931f22965974ad732e25107222f8ce898bdd4, its binding
+commit is 8606cac21ff6647a63654ae73ca90fd4af6ef69f, and its harness manifest
+SHA-256 is b6e5d56ff94b1ed43b702b65e067e7755f249d9bf43dd511b36b23c13baed837.
+
+Execute the R14 autorun once. It must refuse any identity, package, host,
 receipt, schedule, topology, task, or evidence mismatch. It must return
 success only after the physical task publishes and remotely verifies its
 STARTED receipt. Preserve all evidence on either pass or failure.
