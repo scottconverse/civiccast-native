@@ -103,6 +103,32 @@ function Invoke-GitStderrFixture {
     }finally{if(Test-Path -LiteralPath $repo){[IO.Directory]::Delete($repo,$true)}}
 }
 
+function Invoke-PowerShellArrayCompatibilityFixtures {
+    param([Parameter(Mandatory)][string]$DriverText)
+
+    # Match the real archived plan schema: it intentionally has no notes
+    # field. A top-level JSON array must become individual rows under both
+    # Windows PowerShell 5.1 and PowerShell 7.
+    $planData = '[{"channel_id":"public","schedule_id":"fixture-public","asset_id":"asset-public","asset_label":"Public fixture","scheduled_at":"2026-09-14T04:42:55Z"},{"channel_id":"education","schedule_id":"fixture-education","asset_id":"asset-education","asset_label":"Education fixture","scheduled_at":"2026-09-14T04:47:55Z"}]' | ConvertFrom-Json
+    $plan = @($planData | ForEach-Object { $_ })
+    Assert-Check ($plan.Count -eq 2) 'Top-level archived-plan JSON did not enumerate to two rows.'
+    Assert-Check ((@($plan.schedule_id) -join ',') -ceq 'fixture-public,fixture-education') 'Archived-plan schedule IDs were lost during enumeration.'
+    Assert-Check ($plan[0].PSObject.Properties.Name -notcontains 'notes') 'Archived-plan fixture no longer matches the real note-free schema.'
+
+    # Invoke-Station captures Invoke-RestMethod before returning it. This is
+    # load-bearing in Windows PowerShell 5.1, where returning the captured
+    # array enumerates its rows for collection callers.
+    function Invoke-CapturedArrayFixture {
+        $response = '[{"id":"public"},{"id":"education"}]' | ConvertFrom-Json
+        return $response
+    }
+    $apiRows = @(Invoke-CapturedArrayFixture)
+    Assert-Check ($apiRows.Count -eq 2 -and (@($apiRows.id) -join ',') -ceq 'public,education') 'Captured REST-array return did not enumerate to individual rows.'
+
+    Assert-Check ($DriverText -match '(?s)function\s+Invoke-Station.*?\$response\s*=\s*Invoke-RestMethod\s+@arguments\s*\r?\n\s*return\s+\$response') 'Invoke-Station no longer captures and returns REST arrays compatibly.'
+    Assert-Check ($DriverText -match '(?s)\$planData\s*=\s*Get-Content.*?published-plan\.json.*?ConvertFrom-Json\s*\r?\n\s*#.*?\r?\n\s*#.*?\r?\n\s*#.*?\r?\n\s*\$plan\s*=\s*@\(\$planData\s*\|\s*ForEach-Object\s*\{\s*\$_\s*\}\)') 'Existing-run recovery no longer explicitly enumerates top-level plan arrays.'
+}
+
 function Invoke-ChildPreflight {
     param([Parameter(Mandatory)][string]$Root)
     $root = (Resolve-Path -LiteralPath $Root).Path
@@ -157,6 +183,7 @@ function Invoke-ChildPreflight {
     Assert-Check ($driverText -notmatch 'CIVICAST_CAPTION_TAP') 'R6 driver contains the misspelled caption-tap environment prefix.'
     $scheduleCleanupGuard = '(?s)# A schedule POST may commit remotely.*?if\s*\(\s*\$token\s*\)\s*\{\s*try\s*\{\s*\$scheduleCleanup\s*=\s*Remove-RemainingOwnedSchedule\s*;\s*Save-Result\s+\$scheduleCleanup\s+''SCHEDULE-CLEANUP-VERIFIED\.json'''
     Assert-Check ($driverText -match $scheduleCleanupGuard) 'R6 finalizer must invoke exact-notes schedule discovery behind the exact token-only guard, independent of recorded IDs.'
+    Invoke-PowerShellArrayCompatibilityFixtures -DriverText $driverText
     $selfTestRoot = Join-Path ([IO.Path]::GetTempPath()) ('civiccast-r6-harness-' + [guid]::NewGuid().ToString('N'))
     # -SelfTest returns before station/token/network access. Its disposable
     # output is outside the package and contains only synthetic test evidence.

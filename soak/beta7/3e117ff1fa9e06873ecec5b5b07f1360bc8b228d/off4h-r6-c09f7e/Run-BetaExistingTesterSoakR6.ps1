@@ -614,7 +614,10 @@ try {
         $previousIdentity=Get-Content -LiteralPath (Join-Path $ExistingRunRoot 'IDENTITY.json') -Raw | ConvertFrom-Json
         if ($previousIdentity.source_sha -ne $SourceSha) { throw 'Existing schedule evidence belongs to a different candidate.' }
         $planData=Get-Content -LiteralPath (Join-Path $ExistingRunRoot 'published-plan.json') -Raw | ConvertFrom-Json
-        $plan=@($planData)
+        # Windows PowerShell 5.1 preserves a top-level JSON array as one
+        # Object[] pipeline item. Explicit enumeration keeps recovery checks
+        # operating on individual schedule rows in both supported runtimes.
+        $plan=@($planData | ForEach-Object { $_ })
         if ($plan.Count -ne 180 -or @($plan.channel_id | Sort-Object -Unique).Count -ne 3) { throw 'Existing schedule evidence is incomplete.' }
         $times=@($plan | ForEach-Object {[datetimeoffset]::Parse($_.scheduled_at).UtcDateTime} | Sort-Object)
         $scheduleStart=$times[0]
