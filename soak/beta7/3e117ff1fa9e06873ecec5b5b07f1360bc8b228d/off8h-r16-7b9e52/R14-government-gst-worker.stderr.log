@@ -1,0 +1,55 @@
+CTRL output: 72462 buffers (+72455) since PLAYING
+CTRL output: 72846 buffers (+72839) since PLAYING
+CTRL output: 73231 buffers (+73224) since PLAYING
+CTRL output: 73692 buffers (+73685) since PLAYING
+CTRL output: 74076 buffers (+74069) since PLAYING
+CTRL output: 74461 buffers (+74454) since PLAYING
+CTRL output: 74845 buffers (+74838) since PLAYING
+CTRL output: 75306 buffers (+75299) since PLAYING
+CTRL output: 75693 buffers (+75686) since PLAYING
+CTRL output: 76154 buffers (+76147) since PLAYING
+CTRL output: 76536 buffers (+76529) since PLAYING
+CTRL output: 76921 buffers (+76914) since PLAYING
+CTRL output: 77382 buffers (+77375) since PLAYING
+CTRL output: 77766 buffers (+77759) since PLAYING
+CTRL output: 78227 buffers (+78220) since PLAYING
+CTRL output: 78612 buffers (+78605) since PLAYING
+CTRL output: 79073 buffers (+79066) since PLAYING
+CTRL output: 79457 buffers (+79450) since PLAYING
+CTRL output: 79919 buffers (+79912) since PLAYING
+CTRL output: 80306 buffers (+80299) since PLAYING
+CTRL output: 80687 buffers (+80680) since PLAYING
+CTRL output: 81072 buffers (+81065) since PLAYING
+CTRL output: 81533 buffers (+81526) since PLAYING
+CTRL output: 81917 buffers (+81910) since PLAYING
+CTRL output: 82302 buffers (+82295) since PLAYING
+CTRL output: 82687 buffers (+82680) since PLAYING
+CTRL output: 83071 buffers (+83064) since PLAYING
+CTRL output: 83457 buffers (+83450) since PLAYING
+CTRL output: 83916 buffers (+83909) since PLAYING
+CTRL output: 84301 buffers (+84294) since PLAYING
+CTRL output: 84685 buffers (+84678) since PLAYING
+CTRL reload: outgoing EOS observed stream=audio (1/2 stream(s))
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload diagnostic: stage=holds-released
+CTRL reload diagnostic: stage=selector-handoff-confirmed
+CTRL reload diagnostic: stage=old-tail-detached
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload diagnostic: stage=committed elements=33
+CTRL output: 85062 buffers (+85055) since PLAYING
+CTRL output: 85454 buffers (+85447) since PLAYING
+CTRL output: 85831 buffers (+85824) since PLAYING
+CTRL output: 86254 buffers (+86247) since PLAYING
+CTRL output: 86609 buffers (+86602) since PLAYING
+CTRL output: 86984 buffers (+86977) since PLAYING
+CTRL output: 87443 buffers (+87436) since PLAYING
+CTRL output: 87854 buffers (+87847) since PLAYING
+CTRL output: 88242 buffers (+88235) since PLAYING
+CTRL output: 88598 buffers (+88591) since PLAYING
+CTRL output: 88997 buffers (+88990) since PLAYING
+CTRL output: 89392 buffers (+89385) since PLAYING
+CTRL output: 89752 buffers (+89745) since PLAYING
+CTRL output: 90151 buffers (+90144) since PLAYING
+CTRL output: 90533 buffers (+90526) since PLAYING
+CTRL output: 91002 buffers (+90995) since PLAYING
+CTRL output: 91468 buffers (+91461) since PLAYING

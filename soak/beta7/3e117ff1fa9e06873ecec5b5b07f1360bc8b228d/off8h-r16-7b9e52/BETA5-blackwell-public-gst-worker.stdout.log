@@ -1,0 +1,300 @@
+WORKER_RESULT {'error': ('stall', 'output stalled'), 'teardown_clean': True}
+WORKER_RESULT {'error': ('stall', 'output stalled'), 'teardown_clean': True}
+WORKER_RESULT {'error': ('stall', 'output stalled'), 'teardown_clean': True}
+WORKER_RESULT {'error': ('stall', 'output stalled'), 'teardown_clean': True}
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 590.160s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+WORKER_RESULT {'error': ('stall', 'output stalled'), 'teardown_clean': True}
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 355.419s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+WORKER_RESULT {'error': (gerror=GLib.Error('Internal data stream error.', 'gst-stream-error-quark', 1), debug='../libs/gst/base/gstbasesrc.c(3187): gst_base_src_loop (): /GstPipeline:civiccast-playout/GstFileSrc:filesrc3:\nstreaming stopped, reason error (-5)'), 'teardown_clean': True}
+CTRL reload aborted: new program errored before commit (source=filesrc9): gst-stream-error-quark: Internal data stream error. (1)
+WORKER_RESULT {'error': ('stall', 'output stalled'), 'teardown_clean': True}
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 354.331s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 951.728s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=56)
+WORKER_RESULT {'error': None, 'teardown_clean': True}
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 322.203s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=74)
+WORKER_RESULT {'error': None, 'teardown_clean': True}
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 419.701s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 353.659s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 944.144s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 339.707s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 948.688s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 341.595s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+ERROR: caption audio tap failed: caption audio tap writer is closed
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 938.512s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 336.667s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+ERROR: caption audio tap failed: caption audio tap writer is closed
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 934.096s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 347.803s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 936.880s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 334.971s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+WORKER_RESULT {'error': (gerror=GLib.Error('Internal data stream error.', 'gst-stream-error-quark', 1), debug='../libs/gst/base/gstbasesrc.c(3187): gst_base_src_loop (): /GstPipeline:civiccast-playout/GstFileSrc:filesrc3:\nstreaming stopped, reason error (-5)'), 'teardown_clean': True}
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 946.544s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=56)
+WORKER_RESULT {'error': None, 'teardown_clean': True}
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 211.003s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+WORKER_RESULT {'error': (gerror=GLib.Error('Internal data stream error.', 'gst-stream-error-quark', 1), debug='../libs/gst/base/gstbasesrc.c(3187): gst_base_src_loop (): /GstPipeline:civiccast-playout/GstFileSrc:filesrc3:\nstreaming stopped, reason error (-5)'), 'teardown_clean': True}
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 949.616s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=56)
+WORKER_RESULT {'error': None, 'teardown_clean': True}
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 215.419s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+WORKER_RESULT {'error': (gerror=GLib.Error('Internal data stream error.', 'gst-stream-error-quark', 1), debug='../libs/gst/base/gstbasesrc.c(3187): gst_base_src_loop (): /GstPipeline:civiccast-playout/GstFileSrc:filesrc3:\nstreaming stopped, reason error (-5)'), 'teardown_clean': True}
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 932.336s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 348.475s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+WORKER_RESULT {'error': (gerror=GLib.Error('Internal data stream error.', 'gst-stream-error-quark', 1), debug='../libs/gst/base/gstbasesrc.c(3187): gst_base_src_loop (): /GstPipeline:civiccast-playout/GstFileSrc:filesrc3:\nstreaming stopped, reason error (-5)'), 'teardown_clean': True}
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 949.328s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 333.499s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 930.640s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=56)
+WORKER_RESULT {'error': None, 'teardown_clean': True}
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 211.483s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 946.352s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=56)
+WORKER_RESULT {'error': None, 'teardown_clean': True}
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 203.707s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 935.728s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 335.355s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+WORKER_RESULT {'error': (gerror=GLib.Error('Internal data stream error.', 'gst-stream-error-quark', 1), debug='../libs/gst/base/gstbasesrc.c(3187): gst_base_src_loop (): /GstPipeline:civiccast-playout/GstFileSrc:filesrc3:\nstreaming stopped, reason error (-5)'), 'teardown_clean': True}
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll)
+CTRL reload: boundary switch rebased to running time 942.256s
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=146)
+CTRL reload: switching selector
+CTRL reload: old leg disposed
+CTRL reload: holds released
+CTRL reload committed (elements=56)
+WORKER_RESULT {'error': None, 'teardown_clean': True}
