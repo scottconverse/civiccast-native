@@ -1,0 +1,229 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+<#
+Non-mutating preflight for the beta.7 R6 physical-soak harness.
+
+The outer invocation runs this exact file in Windows PowerShell 5.1 and pwsh
+7.  Each child parses every package script, executes only the driver's pure
+self-test, and exercises the transport parser with synthetic data.  It never
+contacts the station API or starts a tester task.
+#>
+[CmdletBinding()]
+param(
+    [string]$PackageRoot = $PSScriptRoot,
+    [switch]$Child
+)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+function Assert-Check {
+    param([Parameter(Mandatory)][bool]$Condition, [Parameter(Mandatory)][string]$Message)
+    if (-not $Condition) { throw $Message }
+}
+
+function Assert-ContainsInOrder {
+    param([Parameter(Mandatory)][string]$Text, [Parameter(Mandatory)][string[]]$Needles, [Parameter(Mandatory)][string]$Message)
+    $offset = -1
+    foreach ($needle in $Needles) {
+        $next = $Text.IndexOf($needle, $offset + 1, [StringComparison]::Ordinal)
+        if ($next -lt 0) { throw "$Message Missing or out-of-order token: $needle" }
+        $offset = $next
+    }
+}
+
+function Test-AuthoritativePassState {
+    param($Job, $Completion)
+    if ($null -eq $Job -or $null -eq $Completion) { return $false }
+    return (
+        [string]$Job.job_state -eq 'PASS' -and
+        [string]$Completion.status -eq 'PASS' -and
+        -not [string]::IsNullOrWhiteSpace([string]$Completion.verified_evidence_commit) -and
+        -not [string]::IsNullOrWhiteSpace([string]$Completion.evidence_sha256) -and
+        [string]$Completion.evidence_relative_path -eq [string]$Job.evidence_relative_path
+    )
+}
+
+function Invoke-TransportFixtures {
+    param([Parameter(Mandatory)][string]$Root)
+    $transport = Join-Path $Root 'Beta7TransportProbeR6.ps1'
+    . $transport
+
+    $clean = [pscustomobject]@{
+        ts = [pscustomobject]@{ packets = [pscustomobject]@{ total = 188; 'invalid-syncs' = 0; 'transport-errors' = 0 } }
+        pids = @([pscustomobject]@{ packets = [pscustomobject]@{ discontinuities = 0 } })
+    }
+    $pass = Get-Beta7TransportGrade -Json $clean -Label 'public' -Port 9001 -ExitCode 0
+    Assert-Check ($pass.verdict -eq 'PASS') 'Clean 30-second TSDuck fixture did not pass.'
+
+    $variants = @(
+        @{ name = 'zero packets'; report = [pscustomobject]@{ ts = [pscustomobject]@{ packets = [pscustomobject]@{ total = 0; 'invalid-syncs' = 0; 'transport-errors' = 0 } }; pids = @([pscustomobject]@{ packets = [pscustomobject]@{ discontinuities = 0 } }) }; exit = 0 },
+        @{ name = 'invalid sync'; report = [pscustomobject]@{ ts = [pscustomobject]@{ packets = [pscustomobject]@{ total = 188; 'invalid-syncs' = 1; 'transport-errors' = 0 } }; pids = @([pscustomobject]@{ packets = [pscustomobject]@{ discontinuities = 0 } }) }; exit = 0 },
+        @{ name = 'transport error'; report = [pscustomobject]@{ ts = [pscustomobject]@{ packets = [pscustomobject]@{ total = 188; 'invalid-syncs' = 0; 'transport-errors' = 1 } }; pids = @([pscustomobject]@{ packets = [pscustomobject]@{ discontinuities = 0 } }) }; exit = 0 },
+        @{ name = 'PID discontinuity'; report = [pscustomobject]@{ ts = [pscustomobject]@{ packets = [pscustomobject]@{ total = 188; 'invalid-syncs' = 0; 'transport-errors' = 0 } }; pids = @([pscustomobject]@{ packets = [pscustomobject]@{ discontinuities = 1 } }) }; exit = 0 },
+        @{ name = 'nonzero tsp exit'; report = $clean; exit = 1 },
+        @{ name = 'missing report fields'; report = [pscustomobject]@{}; exit = 0 }
+    )
+    foreach ($variant in $variants) {
+        $result = Get-Beta7TransportGrade -Json $variant.report -Label 'public' -Port 9001 -ExitCode $variant.exit
+        Assert-Check ($result.verdict -eq 'FAIL') "TSDuck $($variant.name) fixture passed."
+    }
+
+    $cmd = [Environment]::GetEnvironmentVariable('ComSpec')
+    Assert-Check (-not [string]::IsNullOrWhiteSpace($cmd) -and (Test-Path -LiteralPath $cmd -PathType Leaf)) 'cmd.exe is unavailable for non-mutating transport report fixtures.'
+    $probeProcess = Start-Process -FilePath $cmd -ArgumentList @('/c', 'exit 0') -PassThru -WindowStyle Hidden
+    $null = $probeProcess.WaitForExit(10000)
+    $missingPath = Join-Path $Root ('missing-report-' + [guid]::NewGuid().ToString('N') + '.json')
+    Assert-Check (-not (Test-Path -LiteralPath $missingPath)) 'Synthetic missing-report path unexpectedly exists.'
+    $missingProbe = [pscustomobject]@{ Process = $probeProcess; StartedUtc = [datetime]::UtcNow; DeadlineUtc = [datetime]::UtcNow.AddSeconds(60); Port = 9001; Label = 'public'; AnalyzedSeconds = 30; ReportPath = $missingPath; StdoutPath = $null; StderrPath = $null }
+    $missing = Complete-Beta7TransportProbe $missingProbe
+    Assert-Check ($missing.verdict -eq 'FAIL' -and $missing.reason -eq 'missing report') 'Missing TSDuck report fixture did not fail as missing.'
+
+    $malformedProcess = Start-Process -FilePath $cmd -ArgumentList @('/c', 'exit 0') -PassThru -WindowStyle Hidden
+    $null = $malformedProcess.WaitForExit(10000)
+    $malformedProbe = [pscustomobject]@{ Process = $malformedProcess; StartedUtc = [datetime]::UtcNow; DeadlineUtc = [datetime]::UtcNow.AddSeconds(60); Port = 9001; Label = 'public'; AnalyzedSeconds = 30; ReportPath = $PSCommandPath; StdoutPath = $null; StderrPath = $null }
+    $malformed = Complete-Beta7TransportProbe $malformedProbe
+    Assert-Check ($malformed.verdict -eq 'FAIL' -and $malformed.reason -eq 'malformed report') 'Malformed TSDuck report fixture did not fail as malformed.'
+}
+
+function Invoke-GitStderrFixture {
+    param([Parameter(Mandatory)][string]$Root)
+    . (Join-Path $Root 'Beta7Tester.Common.ps1')
+    $repo=Join-Path ([IO.Path]::GetTempPath()) ('civiccast-r6-git-' + [guid]::NewGuid().ToString('N'))
+    try{
+        New-Item -ItemType Directory -Path $repo|Out-Null
+        $null=& git -C $repo init --quiet
+        if($LASTEXITCODE -ne 0){throw 'Could not create disposable Git fixture.'}
+        $null=& git -C $repo config alias.noisy '!echo normal-progress 1>&2'
+        if($LASTEXITCODE -ne 0){throw 'Could not configure disposable Git stderr fixture.'}
+        $lines=@(Invoke-Beta5Git -Repository $repo -Arguments @('noisy'))
+        Assert-Check (@($lines|Where-Object{$_ -match 'normal-progress'}).Count -eq 1) 'Git stderr success output was not captured.'
+        $failed=$false
+        try{$null=Invoke-Beta5Git -Repository $repo -Arguments @('definitely-not-a-command')}catch{$failed=$true}
+        Assert-Check $failed 'Nonzero Git exit did not fail closed.'
+    }finally{if(Test-Path -LiteralPath $repo){[IO.Directory]::Delete($repo,$true)}}
+}
+
+function Invoke-ChildPreflight {
+    param([Parameter(Mandatory)][string]$Root)
+    $root = (Resolve-Path -LiteralPath $Root).Path
+    $expected = @(
+        'Assert-Beta7CandidateBinding.ps1',
+        'Beta7Tester.Common.ps1',
+        'Beta7TransportProbeR6.ps1',
+        'Invoke-Beta7TesterUpgrade.ps1',
+        'Run-Beta7PhysicalOFF4HJob.ps1',
+        'Run-BetaExistingTesterSoakR6.ps1',
+        'Start-Beta7PhysicalOFF4HJob.ps1',
+        'Test-Beta7HarnessPackage.ps1',
+        'Test-Beta7R6Harness.ps1',
+        'TSDuckReportClassifierR6.ps1'
+    )
+    foreach ($name in $expected) {
+        Assert-Check (Test-Path -LiteralPath (Join-Path $root $name) -PathType Leaf) "Required R6 harness test or executable is missing: $name"
+    }
+    $scripts = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter '*.ps1')
+    Assert-Check ($scripts.Count -ge $expected.Count) 'R6 package does not contain every required PowerShell file.'
+    foreach ($script in $scripts) {
+        $tokens = $null; $parseErrors = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$parseErrors)
+        if (@($parseErrors).Count) {
+            $details = @($parseErrors | ForEach-Object { "$($_.Extent.StartLineNumber):$($_.Message)" }) -join '; '
+            throw "PowerShell parser rejected $($script.Name): $details"
+        }
+    }
+
+    $identityPath = Join-Path $root 'run-identity.json'
+    Assert-Check (Test-Path -LiteralPath $identityPath -PathType Leaf) 'R6 run identity is missing.'
+    $identity = Get-Content -LiteralPath $identityPath -Raw | ConvertFrom-Json
+    # The test is not allowed to report PASS for a loose collection of scripts.
+    # Prove the exact manifest bytes, every manifest-listed file, and the full
+    # candidate/R5/source binding that the live adoption path will enforce.
+    $packageProof = & (Join-Path $root 'Test-Beta7HarnessPackage.ps1') -PackageRoot $root -IdentityPath $identityPath
+    Assert-Check ($null -ne $packageProof -and "$($packageProof.manifest_sha256)" -ceq "$($identity.expected_harness_manifest_sha256)") 'R6 package proof did not bind the exact manifest hash.'
+    $boundIdentity = & (Join-Path $root 'Assert-Beta7CandidateBinding.ps1') -IdentityPath $identityPath
+    Assert-Check ($null -ne $boundIdentity -and "$($boundIdentity.mission_nonce)" -ceq 'BETA7-3E117FF1-OFF4H-R6-C09F7E') 'R6 candidate binding proof did not return the exact mission.'
+    $offsets = @($identity.transport_round_offsets_seconds | ForEach-Object { [int]$_ })
+    Assert-Check (($offsets -join ',') -eq '0,1800,3600,5400,7200,9000,10800,12600') 'R6 identity does not bind exactly eight 30-minute transport offsets.'
+    Assert-Check (@($offsets | Where-Object { $_ -lt 0 -or $_ -ge 14400 -or $_ % 1800 -ne 0 }).Count -eq 0) 'R6 transport offsets do not fit the measured four-hour cadence.'
+
+    $transportText = Get-Content -LiteralPath (Join-Path $root 'Beta7TransportProbeR6.ps1') -Raw
+    Assert-Check ($transportText -notmatch "(?i)'-P'\s*,\s*'skip'") 'R6 transport probe still invokes the unavailable skip plugin.'
+    Assert-Check ($transportText -match [regex]::Escape("@('-P','until','--seconds','30')")) 'R6 transport probe does not bind a 30-second until stage.'
+    Assert-Check ($transportText -match [regex]::Escape("@('-P','analyze','--json','--output-file',`$quotedReport,'-O','drop')")) 'R6 transport probe does not bind analyze JSON output and drop.'
+
+    $driver = Join-Path $root 'Run-BetaExistingTesterSoakR6.ps1'
+    $driverText = Get-Content -LiteralPath $driver -Raw
+    Assert-Check ($driverText -match [regex]::Escape("@('CIVICCAST_CAPTION_TAP','CIVICCAST_CAPTION_TAP_DIR')")) 'R6 caption-environment evidence does not use the product caption-tap variable names.'
+    Assert-Check ($driverText -notmatch 'CIVICAST_CAPTION_TAP') 'R6 driver contains the misspelled caption-tap environment prefix.'
+    $scheduleCleanupGuard = '(?s)# A schedule POST may commit remotely.*?if\s*\(\s*\$token\s*\)\s*\{\s*try\s*\{\s*\$scheduleCleanup\s*=\s*Remove-RemainingOwnedSchedule\s*;\s*Save-Result\s+\$scheduleCleanup\s+''SCHEDULE-CLEANUP-VERIFIED\.json'''
+    Assert-Check ($driverText -match $scheduleCleanupGuard) 'R6 finalizer must invoke exact-notes schedule discovery behind the exact token-only guard, independent of recorded IDs.'
+    $selfTestRoot = Join-Path ([IO.Path]::GetTempPath()) ('civiccast-r6-harness-' + [guid]::NewGuid().ToString('N'))
+    # -SelfTest returns before station/token/network access. Its disposable
+    # output is outside the package and contains only synthetic test evidence.
+    & $driver -BaseUrl 'http://127.0.0.1:1' -OutputRoot $selfTestRoot -SourceSha '3e117ff1fa9e06873ecec5b5b07f1360bc8b228d' -SelfTest | Out-Null
+    Invoke-TransportFixtures -Root $root
+    Invoke-GitStderrFixture -Root $root
+
+    $jobText = Get-Content -LiteralPath (Join-Path $root 'Run-Beta7PhysicalOFF4HJob.ps1') -Raw
+    $jobTokens=$null;$jobErrors=$null
+    $jobAst=[System.Management.Automation.Language.Parser]::ParseInput($jobText,[ref]$jobTokens,[ref]$jobErrors)
+    Assert-Check (@($jobErrors).Count -eq 0) 'R6 job could not be parsed for its actual terminal-state function.'
+    $stateFunction=@($jobAst.FindAll({param($node)$node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-AuthoritativeState'},$true))
+    Assert-Check ($stateFunction.Count -eq 1) 'R6 job must define exactly one Get-AuthoritativeState function.'
+    . ([scriptblock]::Create($stateFunction[0].Extent.Text))
+    Assert-Check ((Get-AuthoritativeState $false $false $false $false $false $false) -eq 'FAIL') 'Actual R6 state function accepted failed collection/cleanup.'
+    Assert-Check ((Get-AuthoritativeState $true $true $true $false $false $false) -eq 'EVIDENCE_PUBLISH_FAIL') 'Actual R6 state function accepted missing evidence publication.'
+    Assert-Check ((Get-AuthoritativeState $true $true $true $true $true $false) -eq 'EVIDENCE_PUBLISH_FAIL') 'Actual R6 state function accepted missing completion publication.'
+    Assert-Check ((Get-AuthoritativeState $true $true $true $true $true $true) -eq 'PASS') 'Actual R6 state function rejected the complete authoritative path.'
+    Assert-ContainsInOrder -Text $jobText -Needles @(
+        "STOP-VERIFIED.json",
+        "STOP-FAILED.json",
+        "SCHEDULE-CLEANUP-VERIFIED.json",
+        "SCHEDULE-CLEANUP-FAILED.json",
+        "throw 'R6 terminal channel and owned-schedule cleanup is not verified.'"
+    ) -Message 'R6 job does not fail closed on terminal channel and schedule cleanup.'
+    Assert-ContainsInOrder -Text $jobText -Needles @(
+        "`$report.job_state='COLLECTION_PASS_PENDING_EVIDENCE'",
+        'Build-EvidenceArchive',
+        '$report.evidence_verified_commit=Assert-RemoteBlobs',
+        "`$report.job_state='PASS'",
+        '$report.completion_commit=Sync-And-Push',
+        '$report.completion_verified_commit=Assert-RemoteBlobs',
+        "`$completionPushed=`$true",
+        '$report.job_state=Get-AuthoritativeState'
+    ) -Message 'R6 job can mark authoritative PASS before verified evidence and completion publication.'
+    Assert-Check ($jobText -match [regex]::Escape("'EVIDENCE_PUBLISH_FAIL'")) 'R6 job lacks an evidence-publication failure state.'
+    Assert-Check ($jobText -match [regex]::Escape("if(`$report.job_state -ne 'PASS'){throw")) 'R6 job can return success for a non-PASS job state.'
+    Assert-Check ($jobText -match '(?i)completion(?:_relative|Path|\.json)') 'R6 job lacks a separate completion receipt path.'
+    Assert-Check ($jobText -match '(?i)verified_evidence_commit') 'R6 completion receipt does not reference verified evidence.'
+    Assert-Check ($jobText -match '(?i)evidence_sha256') 'R6 completion receipt does not bind evidence bytes.'
+
+    $jobPass = [pscustomobject]@{ job_state = 'PASS'; evidence_relative_path = 'soak/r6/evidence.zip' }
+    $receiptPass = [pscustomobject]@{ status = 'PASS'; verified_evidence_commit = 'abc123'; evidence_sha256 = ('a' * 64); evidence_relative_path = 'soak/r6/evidence.zip' }
+    Assert-Check (Test-AuthoritativePassState $jobPass $receiptPass) 'Authoritative completion fixture did not pass.'
+    foreach ($fault in @(
+        [pscustomobject]@{ job_state = 'FAIL'; evidence_relative_path = 'soak/r6/evidence.zip' },
+        [pscustomobject]@{ job_state = 'EVIDENCE_PUBLISH_FAIL'; evidence_relative_path = 'soak/r6/evidence.zip' },
+        [pscustomobject]@{ job_state = 'PASS'; evidence_relative_path = 'soak/r6/evidence.zip' }
+    )) {
+        $receipt = if ($fault.job_state -eq 'PASS') { [pscustomobject]@{ status = 'FAIL'; verified_evidence_commit = $null; evidence_sha256 = $null; evidence_relative_path = 'soak/r6/evidence.zip' } } else { $receiptPass }
+        Assert-Check (-not (Test-AuthoritativePassState $fault $receipt)) "Fault state $($fault.job_state) could produce authoritative PASS."
+    }
+    [pscustomobject]@{ runtime = $PSVersionTable.PSEdition; version = $PSVersionTable.PSVersion.ToString(); parsed_scripts = @($scripts.Name | Sort-Object); verdict = 'PASS' }
+}
+
+$resolvedRoot = (Resolve-Path -LiteralPath $PackageRoot).Path
+if ($Child) {
+    $result = Invoke-ChildPreflight -Root $resolvedRoot
+    $result | ConvertTo-Json -Depth 6 -Compress
+    return
+}
+
+$windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$pwsh = (Get-Command pwsh -ErrorAction Stop).Source
+foreach ($psHostExe in @($windowsPowerShell, $pwsh)) {
+    Assert-Check (Test-Path -LiteralPath $psHostExe -PathType Leaf) "Required PowerShell host is absent: $psHostExe"
+    & $psHostExe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $PSCommandPath -PackageRoot $resolvedRoot -Child
+    if ($LASTEXITCODE -ne 0) { throw "R6 harness child preflight failed in $psHostExe with exit code $LASTEXITCODE." }
+}
+Write-Output 'R6 harness preflight PASS in Windows PowerShell 5.1 and pwsh 7.'
