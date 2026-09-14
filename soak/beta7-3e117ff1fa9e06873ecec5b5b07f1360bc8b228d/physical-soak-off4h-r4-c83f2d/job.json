@@ -3,13 +3,13 @@
     "source_sha":  "3e117ff1fa9e06873ecec5b5b07f1360bc8b228d",
     "mission_nonce":  "BETA7-3E117FF1-OFF4H-R4-C83F2D",
     "job_started_utc":  "2026-09-14T03:30:55.8720315Z",
-    "job_state":  "STARTED",
+    "job_state":  "FAIL",
     "minutes":  240,
     "phases":  [
                    "OFF"
                ],
     "result":  null,
-    "error":  null,
+    "error":  "Owned channels did not stop: public,education,government",
     "installed_identity":  {
                                "runtime_file_sha256":  {
                                                            "Lib/site-packages/civiccast/egress/daemon.py":  "b0af145243f6b28e80f7b1bc64aebe4ca930865eea26c06db6550d5dbb1bba04",
@@ -19,5 +19,6 @@
                                "verified_utc":  "2026-09-14T03:30:56.4407712Z",
                                "version":  "1.0.0-beta.7",
                                "app_pack_source_sha":  "3e117ff1fa9e06873ecec5b5b07f1360bc8b228d"
-                           }
+                           },
+    "finished_utc":  "2026-09-14T03:35:38.9816304Z"
 }
