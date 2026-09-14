@@ -15,10 +15,10 @@ publication authorization.
   transport admission, and controlled programme-change topology proof
 - Mission: `BETA7-3E117FF1-OFF4H-R8-4B387C`
 - Task: `CivicCast-Beta7-3e117ff1-OFF4H-R8-4B387C`
-- Package source anchor: `fb40f73a6b6fc7fdc2415b16f2dda349b6545438`
-- Package binding commit: `a92c9db4ba3b806bff69bfc0c43aac1024b25b42`
+- Package source anchor: `5c254228d2eda991dc61ce3d61633bafc68c3da1`
+- Package binding commit: `05f0225a8f0789010dceeb6c14f03a980611244c`
 - Harness manifest SHA-256:
-  `8711deff69e5c5f9a0954dcd560fd902123f004ecce360aad256cee6ccd677c0`
+  `217d7f390602a3b23bc0680201fa6148d5025bb898237cbc5f5e2087aaac2401`
 - R5 invalidation remote commit:
   `0c90c8bce3f0cbe36af9671a5bbea91116d832a6`
 - R5 tester working-byte receipt SHA-256:
@@ -51,8 +51,8 @@ are checked to ensure they cannot request that coordinator-only mode.
 R7 failed later in read-only adoption preflight at `directive-package-clean`.
 It attempted to use a lone backslash as a PowerShell regular expression while
 converting a Windows path to a Git path. R8 performs literal string replacement
-and its dual-runtime regression fixture executes the exact assignment parsed
-from the live adoption script.
+for both package adoption and evidence archive paths. Its dual-runtime regression
+fixtures execute both exact assignments parsed from the live scripts.
 
 ## Gate behavior
 

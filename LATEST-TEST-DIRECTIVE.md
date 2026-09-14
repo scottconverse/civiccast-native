@@ -15,9 +15,9 @@ PowerShell 7 on the Windows PowerShell 5 tester. R7 stopped later in read-only
 adoption preflight at `directive-package-clean`: its Windows-to-Git path
 conversion treated a lone backslash as a regular expression. R8 is the new
 once-only mission. Its source anchor is
-fb40f73a6b6fc7fdc2415b16f2dda349b6545438, its binding commit is
-a92c9db4ba3b806bff69bfc0c43aac1024b25b42, and its harness manifest SHA-256
-is 8711deff69e5c5f9a0954dcd560fd902123f004ecce360aad256cee6ccd677c0.
+5c254228d2eda991dc61ce3d61633bafc68c3da1, its binding commit is
+05f0225a8f0789010dceeb6c14f03a980611244c, and its harness manifest SHA-256
+is 217d7f390602a3b23bc0680201fa6148d5025bb898237cbc5f5e2087aaac2401.
 
 Execute the R8 autorun once. It must refuse any identity, package, host,
 receipt, schedule, topology, task, or evidence mismatch. It must return
