@@ -68,7 +68,7 @@
     ],
     "current_candidate_must_reestablish_before_measurement": true
   },
-  "expected_harness_manifest_sha256": "32d3fd93883fe4ced9cec66c843af58dc9c1ce78be2633b05520dca1ec2380d5",
+  "expected_harness_manifest_sha256": "42d3873515e5f48722964917f0a98c417e0ca766592586c48131d9047b83d889",
   "harness_source_commit": "e40b06cd76305ae41464b9b5fbb0133c10b74be3",
   "r5_invalidation_receipt_sha256": "413005ba893e81bc847d49b645bb5ae518c4101b0ed1b1b7a9e22903f79d0a7e",
   "r5_invalidation_remote_commit": "0c90c8bce3f0cbe36af9671a5bbea91116d832a6",

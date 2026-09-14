@@ -230,6 +230,13 @@ function Invoke-ChildPreflight {
     Assert-Check ((Get-AuthoritativeState $true $true $true $true $true $false) -eq 'EVIDENCE_PUBLISH_FAIL') 'Actual R6 state function accepted missing completion publication.'
     Assert-Check ((Get-AuthoritativeState $true $true $true $true $true $true) -eq 'PASS') 'Actual R6 state function rejected the complete authoritative path.'
     Assert-ContainsInOrder -Text $jobText -Needles @(
+        "`$report.started_commit=Sync-And-Push @(`$jobRelative)",
+        '$report.started_verified_commit=Assert-RemoteBlobs @($jobRelative)',
+        "throw 'Initial STARTED receipt was not verified at its pushed commit.'",
+        "(Join-Path `$missionRoot 'START-VERIFIED.json')",
+        '$phaseReceipt='
+    ) -Message 'R6 job can signal startup before the remote STARTED blob is verified.'
+    Assert-ContainsInOrder -Text $jobText -Needles @(
         "STOP-VERIFIED.json",
         "STOP-FAILED.json",
         "SCHEDULE-CLEANUP-VERIFIED.json",
