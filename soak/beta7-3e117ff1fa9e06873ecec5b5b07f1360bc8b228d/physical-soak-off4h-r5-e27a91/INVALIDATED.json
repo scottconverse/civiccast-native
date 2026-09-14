@@ -1,0 +1,370 @@
+{
+    "schema":  "civiccast-beta7-test-invalidation-v2",
+    "status":  "R5_INVALIDATED",
+    "recovery_order":  "BETA7-FINALIZE-R5-INVALIDATION-E27A91C",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "mission_nonce":  "BETA7-3E117FF1-OFF4H-R5-E27A91",
+    "candidate_source_sha":  "3e117ff1fa9e06873ecec5b5b07f1360bc8b228d",
+    "task_state":  "Disabled",
+    "terminal_cleanup_verified":  true,
+    "schedule_cleanup_verified":  true,
+    "invalid_reasons":  [
+                            "stale auto-start race",
+                            "non-stall worker exit false pass",
+                            "final sample gap",
+                            "cleanup false pass",
+                            "evidence publication false pass",
+                            "embargo overlap false fail",
+                            "unbound harness and topology provenance",
+                            "impossible transport cadence"
+                        ],
+    "verification_payload_sha256":  "04804e4c0e0570154dbfd1516b7cc4a6ef98431b6b0d6dc57c2a780679ef2e3e",
+    "verification":  {
+                         "verified_utc":  "2026-09-14T06:06:17.1644323Z",
+                         "directive":  {
+                                           "repository":  "https://github.com/scottconverse/civiccast-native.git",
+                                           "directive_branch":  "soak8-e1acfe6-directives",
+                                           "directive_commit":  "ab7f6b642e8fd9101bbeff2214f5f0c34dfbb56a",
+                                           "script":  {
+                                                          "path":  "C:\\CivicCastSoak\\directives\\soak\\autorun\\AUTORUN-00-BETA7-FINALIZE-R5-INVALIDATION-E27A91C.ps1",
+                                                          "size_bytes":  31628,
+                                                          "sha256":  "8ee22264f1785cbe47edd32c7fd86583e6951f98af628537207b7c2f63d7e340"
+                                                      },
+                                           "directive":  {
+                                                             "path":  "C:\\CivicCastSoak\\directives\\soak\\DIRECTIVE-BETA7-FINALIZE-R5-INVALIDATION-E27A91C.md",
+                                                             "size_bytes":  5602,
+                                                             "sha256":  "90652ab62843e805c371262a3de72be941df4a9ecbe7c28ca65b8dce4667c6a9"
+                                                         }
+                                       },
+                         "local_r5":  {
+                                          "previous_invalidation_done_marker":  {
+                                                                                    "path":  "C:\\CivicCastSoak\\state\\autorun-done\\AUTORUN-00-BETA7-INVALIDATE-R5-E27A91.ps1.done",
+                                                                                    "size_bytes":  18,
+                                                                                    "sha256":  "74bca60562a84c34782f685c62e57bef3219a54eaf255563e2c34cfe212ceaa3"
+                                                                                },
+                                          "failed_receipt_finalizer_done_marker":  {
+                                                                                       "path":  "C:\\CivicCastSoak\\state\\autorun-done\\AUTORUN-00-BETA7-FINALIZE-R5-INVALIDATION-E27A91.ps1.done",
+                                                                                       "size_bytes":  18,
+                                                                                       "sha256":  "1a6ca6b86638b6340073d9ce151d79cd202e71561a5fa65e42b0714d035091b0"
+                                                                                   },
+                                          "failed_receipt_finalizer_b_done_marker":  {
+                                                                                         "path":  "C:\\CivicCastSoak\\state\\autorun-done\\AUTORUN-00-BETA7-FINALIZE-R5-INVALIDATION-E27A91B.ps1.done",
+                                                                                         "size_bytes":  18,
+                                                                                         "sha256":  "c94d03a4e9a1a67b8b23c014caed00f7f259c2e1b76be755caa8765a29c295e0"
+                                                                                     },
+                                          "installed_identity":  {
+                                                                     "path":  "C:\\CivicCastSoak\\missions\\beta7-3e117ff1-off4h-r5-e27a91\\bin\\run-identity.json",
+                                                                     "size_bytes":  6533,
+                                                                     "sha256":  "3316fbbb5373c541914a865724605e79bce7e9405c26ba0974addd0ed8c2c7ba"
+                                                                 },
+                                          "local_job":  {
+                                                            "path":  "C:\\CivicCastSoak\\missions\\beta7-3e117ff1-off4h-r5-e27a91\\physical-soak-off4h-r5-e27a91-job.json",
+                                                            "size_bytes":  1410,
+                                                            "sha256":  "c2d3007700c01e82a499420025c9be9121703deb9a4e59b09dc7af96ca8a780c"
+                                                        },
+                                          "run_identity":  {
+                                                               "path":  "C:\\CivicCastSoak\\missions\\beta7-3e117ff1-off4h-r5-e27a91\\physical-soak-off4h-r5-e27a91\\f2hw-260913222754-b3bf0d\\IDENTITY.json",
+                                                               "size_bytes":  4484,
+                                                               "sha256":  "f1004833c858a4bdb68bfc6a9f453e05afe2340a5bc71a3a4400b4a54fcefe18"
+                                                           },
+                                          "published_plan":  {
+                                                                 "path":  "C:\\CivicCastSoak\\missions\\beta7-3e117ff1-off4h-r5-e27a91\\physical-soak-off4h-r5-e27a91\\f2hw-260913222754-b3bf0d\\published-plan.json",
+                                                                 "size_bytes":  67658,
+                                                                 "sha256":  "6c7b27b23595ea6779a8579c7d4fec3a4017dd6dbfe785b1b382a0a7c01a81a8"
+                                                             },
+                                          "run_verdict":  {
+                                                              "path":  "C:\\CivicCastSoak\\missions\\beta7-3e117ff1-off4h-r5-e27a91\\physical-soak-off4h-r5-e27a91\\f2hw-260913222754-b3bf0d\\VERDICT.json",
+                                                              "size_bytes":  198,
+                                                              "sha256":  "1be1200e1041711b66f84b6d88da7dab2c09a222234888374f344f9d0ebccf21"
+                                                          },
+                                          "captions_off_profile":  {
+                                                                       "path":  "C:\\CivicCastSoak\\missions\\beta7-3e117ff1-off4h-r5-e27a91\\physical-soak-off4h-r5-e27a91\\f2hw-260913222754-b3bf0d\\OFF\\profile.json",
+                                                                       "size_bytes":  63,
+                                                                       "sha256":  "32ee6125f59d91a5ab834b06c6b3f0284fd8d1d094f9137fccd2387e12c4ed4a"
+                                                                   },
+                                          "stop_verified":  {
+                                                                "path":  "C:\\CivicCastSoak\\missions\\beta7-3e117ff1-off4h-r5-e27a91\\physical-soak-off4h-r5-e27a91\\f2hw-260913222754-b3bf0d\\STOP-VERIFIED.json",
+                                                                "size_bytes":  190,
+                                                                "sha256":  "e7a6d0480a7f473667f7618692c9235f485bd1c19e7f44a75f2050fac02ca6cc"
+                                                            },
+                                          "stop_failed_absent":  true,
+                                          "run_directory":  "f2hw-260913222754-b3bf0d",
+                                          "run_id":  "f2hw-260913222754-b3bf0d",
+                                          "expected_notes":  "Owned f2hw-260913222754-b3bf0d",
+                                          "schedule_id_count":  180,
+                                          "schedule_ids":  [
+                                                               "0089e077-2899-432c-9922-26498251977e",
+                                                               "00f97a26-fc85-4695-8d9a-53a4423b88c1",
+                                                               "017d5367-6c48-4625-9978-f79d1315c02a",
+                                                               "0411baf2-54f5-48e6-95b5-1b48ff35c0f3",
+                                                               "042ba012-c166-42f1-8592-d9d7cfea2947",
+                                                               "060cf029-adce-4990-9503-e034030947c0",
+                                                               "0775f5b3-322f-4169-9a41-4f4ef428933a",
+                                                               "082a906d-5a4c-4e12-b4e0-3e9486653584",
+                                                               "0aa61c55-773d-4ff0-9ca2-43a01884865b",
+                                                               "0b57be11-32c0-4fcd-aead-9859b414691b",
+                                                               "0c56ea92-8c89-44ac-aa3d-b1c66f9168c2",
+                                                               "0e76b35a-dc63-4c0f-95b2-bf228a0ebe9e",
+                                                               "0f5db934-2534-4539-b9bb-0685e38d8efc",
+                                                               "104bcf8a-ef38-4fd3-b9da-507b81cfcdab",
+                                                               "1100f542-b6e7-49c3-b45b-8419d95deba0",
+                                                               "119482cc-7067-4a62-9aff-23a74fb55a56",
+                                                               "11afdf7f-1c19-496e-bbd0-11340b4c391d",
+                                                               "14ae8a00-7410-45d5-9d06-60987283de39",
+                                                               "14eaca7e-c303-47dd-be44-eea62918fc98",
+                                                               "17f75647-53ad-4663-ab7e-6bc3c3727b11",
+                                                               "1ae2e0b1-58d6-4885-b7e3-058321067552",
+                                                               "1b22492f-b523-47fb-950b-df0bfbd4086a",
+                                                               "1b6776ef-2503-4c97-b184-bb5f6f881302",
+                                                               "1be7a8e5-9299-4c15-ae3d-bfb68272d421",
+                                                               "22300167-0570-4668-830c-34f95cef7208",
+                                                               "23c34feb-6429-45c8-994f-544d7a3583cc",
+                                                               "25fb822e-8864-43b0-b400-012f39b49264",
+                                                               "2611823c-fe2a-4247-bbcb-76086cd6de44",
+                                                               "26960259-5789-4268-ac92-b4d8e0fa8ffc",
+                                                               "2798859c-ccae-4fe4-aedd-a8ec3b4edfd5",
+                                                               "2815bcce-54d6-48b1-b02d-3ac4ed5415bf",
+                                                               "28e3942f-2abf-4361-81af-231bd0a86e13",
+                                                               "29967471-6b80-4161-8ebc-e3980bc19352",
+                                                               "2a6da078-25e3-46bd-8109-838fe0be801d",
+                                                               "2b4cae64-1739-4ed9-9ab7-7073ca8ee8be",
+                                                               "2f9d0463-3bc8-426b-8504-da504ea293a6",
+                                                               "307adece-640d-4988-b61c-ee9f5636d347",
+                                                               "31b608b4-f28d-4f21-9476-b321962ce0f3",
+                                                               "3393d5d1-17be-43c8-b724-b2ec645e76b8",
+                                                               "34609e3c-f3e7-4caa-9010-357ca3e98c43",
+                                                               "3585c21c-89a9-4cae-b693-90e3db8c4fb0",
+                                                               "37572017-f200-4f9b-8179-e713e9f8d2d3",
+                                                               "37579dc0-075b-4518-ac0a-772afd439752",
+                                                               "375ce265-9a2a-410a-8648-a6f3aff122e7",
+                                                               "38bd69fb-3b55-4a47-bbc3-a97a67c74a80",
+                                                               "3d6d3482-c255-4856-8e8e-2348607c723c",
+                                                               "3d942ecf-bf8d-427a-8812-ee6790a681d5",
+                                                               "3dfa6278-aaee-41fb-aeab-19dd3ca98a41",
+                                                               "3e618640-9ac8-4cb2-83f2-4362af535d96",
+                                                               "404218d5-03b1-4ab1-82e9-91bcdf4ca373",
+                                                               "40e6098f-6d97-4cd1-bbaf-6d87d08c606f",
+                                                               "449bf66a-7a36-41ba-a92c-88b0f81b7049",
+                                                               "44ee7411-5ded-4720-bacb-2b35dd26efbc",
+                                                               "472d8ad0-b47f-4bea-bcaa-a9452df8423a",
+                                                               "48ac2218-5f67-48df-88c6-29c14b0c98c2",
+                                                               "4e38252c-c30b-4364-a870-92b011229343",
+                                                               "57a6223b-8a40-4e9a-a26c-0ca4071670ef",
+                                                               "5909fa1f-70c3-48ac-b50a-c3c4fd2d3f88",
+                                                               "597c066b-fc00-44e2-add6-132a60ae310a",
+                                                               "5a8d2a9c-2d81-4040-bf3e-2c861c67c62a",
+                                                               "5b854aad-d4a5-4218-ab05-7d936abb7186",
+                                                               "5bfde223-613b-4c0f-b938-df3e53273e5d",
+                                                               "5ce25cb2-4e88-4d8a-bb67-137bf30a073e",
+                                                               "5d11be8f-bb92-4867-8309-b138316855dc",
+                                                               "61b5fa0e-7bbd-45a9-9146-00c90d1b7dff",
+                                                               "62bac9fc-e6ad-401f-b3ae-63a88d3950c7",
+                                                               "63617571-038f-48f0-a312-bd76f294100f",
+                                                               "65a9d7c3-6080-43b2-98f6-6c99e7021930",
+                                                               "6a7f76b4-34e3-429c-8379-37d4688b2173",
+                                                               "6b109af5-72a6-4437-bf47-3310fed368cb",
+                                                               "6b9440f5-4e55-4f7b-bdf6-a6a915e053e1",
+                                                               "6c1639c4-1585-4ec6-8871-4bb668d7f4fa",
+                                                               "6c4d4ccc-ba9b-4795-8334-d90f79de4c8d",
+                                                               "6c91c4b5-d90a-44e4-ab84-f1f9dd5ea9fd",
+                                                               "6d2e3830-8ae4-429c-9a07-8c2e83bb3517",
+                                                               "6e56415b-fb3f-44fa-9add-67f1d4a33ea2",
+                                                               "6e6f5292-2732-44ef-b6be-00b1b9b73230",
+                                                               "6e834661-a501-41e4-a4ae-4f185cb5cf19",
+                                                               "6f34f9ec-7802-4d66-be38-4059d153c1b3",
+                                                               "6f511612-22f0-49d8-b11f-c7fab1c50c3b",
+                                                               "6facaf08-6814-4953-a037-cf82f33c318a",
+                                                               "72d4a66f-55ab-4920-978a-aa7cee8eab54",
+                                                               "73b95644-2065-412b-9e26-0cef5803d157",
+                                                               "74ab1570-01a7-45cc-808b-d20ea6c79d48",
+                                                               "75df0795-f1c7-4935-8852-b7bc8070cedf",
+                                                               "760f9768-0fb0-4096-b0cb-70e8e312549a",
+                                                               "7814a200-b7e8-4394-a064-a38fc4f53e70",
+                                                               "78f843b6-4abf-40d5-99a2-bb642981359e",
+                                                               "795a9b0d-8ead-4631-83d1-976f089f537a",
+                                                               "7f609c92-d98a-467c-be14-de1b463cca8a",
+                                                               "8024193d-431f-498b-94e5-0af6c02bcafe",
+                                                               "836e48d4-1156-4067-a78c-ea0f127062bf",
+                                                               "84aed747-94bd-403c-97d2-a03c1043fb9c",
+                                                               "8777c9cc-ced9-4dbf-84f2-60d2efcfca7e",
+                                                               "880907d3-3cff-4b93-93aa-985eeecd9074",
+                                                               "8849b137-f327-47ff-bbd6-134f8d4bc2b2",
+                                                               "8d0424a7-e3b6-405f-afd8-e1ff31cc0205",
+                                                               "8d8dd64f-788a-4859-bf4d-f422890d4595",
+                                                               "8fe00443-4320-4c11-af85-f04b7c41c42c",
+                                                               "905083a8-a08b-4d66-9ccf-053b7aa6afd7",
+                                                               "90f56cf7-0ef2-4403-9262-0c4ba999ddfb",
+                                                               "91894ce5-9942-4fbc-ac45-f92ec4e27a28",
+                                                               "9208eca0-f192-4415-8e71-64c25a0296d4",
+                                                               "95a93f3e-e6ed-4906-9633-7e1abafaf488",
+                                                               "95c016cd-f80c-45d2-899a-c62b7accbca5",
+                                                               "97400e94-90a5-4088-a0ec-d58d8dc5469f",
+                                                               "9a26e1ae-8539-4797-8ee6-b4555b902839",
+                                                               "9dd678eb-b79d-48b0-9499-d895b1e47b04",
+                                                               "9df1b618-7e5f-4cc4-bcb8-a40f2c3e3357",
+                                                               "9e11defd-7ad6-46e0-a38f-a7958bea17e9",
+                                                               "a17719d5-27b3-4c9c-91ab-bc33d461922a",
+                                                               "a2d39065-438f-4201-8a5d-8725fdebe599",
+                                                               "a3198f4d-a7b0-497a-affc-dcd63c7a4f7f",
+                                                               "a4097d1e-fe18-4ae5-b3fb-d7f0ebb9526f",
+                                                               "a545e98c-cb87-4507-ae15-e7d5a1670a29",
+                                                               "a6bdd83d-4320-4b89-aac2-abfca1ab48d5",
+                                                               "a832340f-2857-4c99-bb59-dda7cd12e01b",
+                                                               "a8d89165-d877-4a14-a5bb-ed5d7aa07e3a",
+                                                               "a9a0e4fa-f033-4d0f-ae4b-77b63f4aa00b",
+                                                               "ac7ae68e-9927-498f-8846-1e77078d9b60",
+                                                               "adaa2120-48b2-40cc-8d4a-ae1a43dd64ea",
+                                                               "ae319615-9faa-4822-be08-5b41eed97fcc",
+                                                               "aeaed9c8-9d28-4233-a4a7-51652cf5ba79",
+                                                               "b0723cdf-9a2c-4ec5-88dc-c470774f92ba",
+                                                               "b0b3fd99-3494-4789-a7ff-b0bab1060b8a",
+                                                               "b18c068a-6340-40df-ae6e-4636ab4148ad",
+                                                               "b2bf1f94-ed2f-4a6d-8412-2b70905d009f",
+                                                               "b2f2800b-4621-42f1-8090-0a0b44d92246",
+                                                               "b49c19cd-c174-49fe-92ce-2dfe57537d85",
+                                                               "b4c80b41-16b7-48e6-b3cf-cf3785cf9cb7",
+                                                               "b681dfc1-5478-401a-915c-e82a9a97a798",
+                                                               "b7d5d819-9ffd-4de1-8ba4-d741ee9860a0",
+                                                               "b8dd0b73-3da7-4988-b5c4-e9d61207d927",
+                                                               "b94da883-7e6f-4626-94eb-451c49df0237",
+                                                               "bc1f503b-ab53-4915-b2c5-73e22f713efd",
+                                                               "c393110b-7c2c-4f2e-a991-441dc2df62be",
+                                                               "c3ee2312-aee4-451c-95b3-05ac2f3307bc",
+                                                               "c4557081-4474-478c-95f1-46d9c7bae1a7",
+                                                               "ca56ef94-2644-4783-a167-3d7c753cb95a",
+                                                               "ca81bffd-a49c-4821-af98-97bdf0375260",
+                                                               "cbdab747-93b7-4243-82f6-3fd0749bc926",
+                                                               "d1b77658-69dd-450a-9351-ad0b887f158a",
+                                                               "d1eeb643-f457-4941-bc16-06d5b4cc1d8a",
+                                                               "d1f79c8c-043b-4968-b463-9b2eb0359876",
+                                                               "d1ffc42f-cd85-4bdc-8969-58218bac7868",
+                                                               "d38a591a-fef3-464b-93de-4121ed595e35",
+                                                               "d4dceafd-7cb2-47ad-98ba-a109a3427e8e",
+                                                               "d6a3fdbd-cf06-4c21-8261-685fd65f784b",
+                                                               "d6a4deb0-d1fe-4283-99fb-4716a4a2fc4a",
+                                                               "d76f1406-c82c-4a80-8f2f-d6f91b76f3d5",
+                                                               "d9eaa332-e23d-4909-adb4-4520bf5c1e12",
+                                                               "da10ffff-b263-4745-8fda-5ba1fbd5b626",
+                                                               "dacc8748-ca1c-466c-a90b-04a97812700d",
+                                                               "dafe35a5-e69e-46e0-8d04-8d58393a3245",
+                                                               "db6cc3fb-6585-48a7-934e-edd62c388fd0",
+                                                               "debce768-f679-4cf6-b28d-408a795458e8",
+                                                               "decaa2a7-9c77-438e-93aa-9c94916676d9",
+                                                               "dee9ca2e-0a95-4223-af06-b128f9df1ceb",
+                                                               "e20b87a7-1fb3-414a-9ee0-eba90ffba38f",
+                                                               "e229404c-f413-48c6-aa6a-b4b06e150f61",
+                                                               "e2d7e876-2621-4777-97f8-310a07ddfe52",
+                                                               "e521589c-7ad0-4b0d-833c-8861f9ca8d5b",
+                                                               "e63730dc-401f-48aa-a6e8-b7338d4c3f96",
+                                                               "e90cae72-d0e8-478b-ad4e-572e1609723b",
+                                                               "eacad9a9-7228-4458-a49f-a20d5dc0d6cd",
+                                                               "eb8226fd-d176-4ef0-b1cf-9188d79d0209",
+                                                               "eebac644-7db3-4047-970b-15c0430a4a9b",
+                                                               "ef041bd1-7279-4af4-817d-c50e79650063",
+                                                               "ef432e71-31f6-46cd-a82e-0b599d8e0d3b",
+                                                               "f02b21c2-5afc-4683-b012-2329a4e437d9",
+                                                               "f179c3fd-7aee-4efd-9a1b-640cf78a11d0",
+                                                               "f1f02f65-92e6-400b-9cbc-31931f1d7974",
+                                                               "f553f909-7a90-4cab-b331-fe78d71bab51",
+                                                               "f65717a9-ec99-43a9-86f0-f4f411c49553",
+                                                               "f88e64da-7ba6-49c7-ad17-d0daeb3ab5d5",
+                                                               "f9e3eecc-6771-40ec-864d-28af790c699a",
+                                                               "fab0c756-f9de-42ad-8b31-b37d2e2f05ec",
+                                                               "fb70153e-2610-494c-9c44-f1e35a4db8e6",
+                                                               "ff161564-0e4c-4b2f-8005-d18d5b848e7c",
+                                                               "ffcf027d-c4af-4162-a0d9-44886aeb2c00"
+                                                           ]
+                                      },
+                         "tester":  {
+                                        "task":  {
+                                                     "name":  "CivicCast-Beta7-3e117ff1-OFF4H-R5-E27A91",
+                                                     "present":  true,
+                                                     "state":  "Disabled"
+                                                 },
+                                        "process_match":  {
+                                                              "mission_root":  "C:\\CivicCastSoak\\missions\\beta7-3e117ff1-off4h-r5-e27a91",
+                                                              "output_name":  "physical-soak-off4h-r5-e27a91",
+                                                              "task_name":  "CivicCast-Beta7-3e117ff1-OFF4H-R5-E27A91",
+                                                              "matching_process_ids":  [
+
+                                                                                       ]
+                                                          },
+                                        "channel_configs":  [
+                                                                {
+                                                                    "channel_id":  "public",
+                                                                    "enabled":  true,
+                                                                    "auto_start":  false,
+                                                                    "full_config_sha256":  "ef5a440c4b45a440d42e468104790ef19759eb5b9a21246e021e834283d7848e"
+                                                                },
+                                                                {
+                                                                    "channel_id":  "education",
+                                                                    "enabled":  true,
+                                                                    "auto_start":  false,
+                                                                    "full_config_sha256":  "a3f8932d66171cc948415b9add39cb6865e7ca6b84868ee77188c2be7439222d"
+                                                                },
+                                                                {
+                                                                    "channel_id":  "government",
+                                                                    "enabled":  true,
+                                                                    "auto_start":  false,
+                                                                    "full_config_sha256":  "5ff16c2178fecae6fcf853c9f1a89b351b13c021eca37cd6e3b7becdc6dd6780"
+                                                                }
+                                                            ],
+                                        "channel_states":  [
+                                                               {
+                                                                   "channel_id":  "public",
+                                                                   "state":  "STOPPED",
+                                                                   "pid":  null,
+                                                                   "updated_at":  "2026-09-14T04:58:41.569991Z"
+                                                               },
+                                                               {
+                                                                   "channel_id":  "education",
+                                                                   "state":  "STOPPED",
+                                                                   "pid":  null,
+                                                                   "updated_at":  "2026-09-14T04:58:41.554239Z"
+                                                               },
+                                                               {
+                                                                   "channel_id":  "government",
+                                                                   "state":  "STOPPED",
+                                                                   "pid":  null,
+                                                                   "updated_at":  "2026-09-14T04:58:41.561270Z"
+                                                               }
+                                                           ],
+                                        "schedule":  [
+                                                         {
+                                                             "channel_id":  "public",
+                                                             "live_scheduled_or_published_rows_checked":  0,
+                                                             "exact_r5_notes":  "Owned f2hw-260913222754-b3bf0d",
+                                                             "exact_r5_schedule_ids_checked":  180,
+                                                             "exact_r5_live_matches":  [
+
+                                                                                       ]
+                                                         },
+                                                         {
+                                                             "channel_id":  "education",
+                                                             "live_scheduled_or_published_rows_checked":  0,
+                                                             "exact_r5_notes":  "Owned f2hw-260913222754-b3bf0d",
+                                                             "exact_r5_schedule_ids_checked":  180,
+                                                             "exact_r5_live_matches":  [
+
+                                                                                       ]
+                                                         },
+                                                         {
+                                                             "channel_id":  "government",
+                                                             "live_scheduled_or_published_rows_checked":  0,
+                                                             "exact_r5_notes":  "Owned f2hw-260913222754-b3bf0d",
+                                                             "exact_r5_schedule_ids_checked":  180,
+                                                             "exact_r5_live_matches":  [
+
+                                                                                       ]
+                                                         }
+                                                     ],
+                                        "mutation_performed":  false
+                                    }
+                     },
+    "publication":  {
+                        "repository":  "https://github.com/scottconverse/civiccast-native.git",
+                        "branch":  "tester/soak8-e1acfe6-DESKTOP-VBMA6O5",
+                        "job_path":  "soak/beta7-3e117ff1fa9e06873ecec5b5b07f1360bc8b228d/physical-soak-off4h-r5-e27a91/job.json",
+                        "receipt_path":  "soak/beta7-3e117ff1fa9e06873ecec5b5b07f1360bc8b228d/physical-soak-off4h-r5-e27a91/INVALIDATED.json"
+                    }
+}

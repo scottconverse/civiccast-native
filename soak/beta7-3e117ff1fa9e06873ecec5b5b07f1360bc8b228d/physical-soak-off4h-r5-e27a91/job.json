@@ -1,15 +1,15 @@
-﻿{
+{
     "hostname":  "DESKTOP-VBMA6O5",
     "source_sha":  "3e117ff1fa9e06873ecec5b5b07f1360bc8b228d",
     "mission_nonce":  "BETA7-3E117FF1-OFF4H-R5-E27A91",
     "job_started_utc":  "2026-09-14T04:27:40.0309503Z",
-    "job_state":  "FAIL",
+    "job_state":  "INVALIDATED",
     "minutes":  240,
     "phases":  [
                    "OFF"
                ],
     "result":  null,
-    "error":  "OFF transport admission did not produce a clean 0/0/0 round on all three channels.",
+    "error":  "R5 acceptance harness invalidated; this run is not release evidence.",
     "installed_identity":  {
                                "runtime_file_sha256":  {
                                                            "Lib/site-packages/civiccast/egress/daemon.py":  "b0af145243f6b28e80f7b1bc64aebe4ca930865eea26c06db6550d5dbb1bba04",
@@ -20,5 +20,10 @@
                                "version":  "1.0.0-beta.7",
                                "app_pack_source_sha":  "3e117ff1fa9e06873ecec5b5b07f1360bc8b228d"
                            },
-    "finished_utc":  "2026-09-14T04:45:26.0078250Z"
+    "finished_utc":  "2026-09-14T06:06:17.1644323Z",
+    "invalidation_receipt":  "INVALIDATED.json",
+    "invalidation_receipt_sha256":  "413005ba893e81bc847d49b645bb5ae518c4101b0ed1b1b7a9e22903f79d0a7e",
+    "invalidation_verification_sha256":  "04804e4c0e0570154dbfd1516b7cc4a6ef98431b6b0d6dc57c2a780679ef2e3e",
+    "invalidation_directive_commit":  "ab7f6b642e8fd9101bbeff2214f5f0c34dfbb56a",
+    "invalidation_recovery_order":  "BETA7-FINALIZE-R5-INVALIDATION-E27A91C"
 }
