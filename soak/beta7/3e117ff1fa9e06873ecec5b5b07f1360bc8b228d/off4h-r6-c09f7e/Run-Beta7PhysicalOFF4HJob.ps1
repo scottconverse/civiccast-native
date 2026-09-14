@@ -130,7 +130,17 @@ try{
     if([string]$report.started_verified_commit -cne [string]$report.started_commit){throw 'Initial STARTED receipt was not verified at its pushed commit.'}
     $startBlob=(Invoke-Beta5Git -Repository $returnRepo -Arguments @('rev-parse',"$($report.started_verified_commit)`:$jobRelative")|Select-Object -First 1).Trim()
     Write-Beta5JsonAtomic @{schema='civiccast-beta7-start-verified-v1';status='STARTED_AND_REMOTELY_VERIFIED';candidate_source_sha=[string]$id.candidate_source_sha;mission_nonce=[string]$id.mission_nonce;harness_source_commit=[string]$id.harness_source_commit;job_state='STARTED';job_started_utc=[string]$report.job_started_utc;remote_commit=[string]$report.started_verified_commit;remote_blob=$startBlob;job_relative_path=$jobRelative;verified_utc=[datetime]::UtcNow.ToString('o')} (Join-Path $missionRoot 'START-VERIFIED.json')
-    $phaseReceipt={param($phase,$begin,$end)$report.current_phase=[string]$phase;$report.measured_phase_begin_utc=$begin.ToString('o');$report.measured_phase_planned_end_utc=$end.ToString('o');Write-Job;$report.phase_commit=Sync-And-Push @($jobRelative) 'test: beta.7 R6 measured phase READY';$null=Assert-RemoteBlobs @($jobRelative)}
+    $phaseReceipt={
+    param($phase,$begin,$end)
+    $report.current_phase=[string]$phase
+    $report.measured_phase_begin_utc=$begin.ToString('o')
+    $report.measured_phase_planned_end_utc=$end.ToString('o')
+    Write-Job
+    $report.phase_commit=Sync-And-Push @($jobRelative) 'test: beta.7 R6 measured phase READY'
+    $report.phase_verified_commit=Assert-RemoteBlobs @($jobRelative)
+    if([string]$report.phase_verified_commit -cne [string]$report.phase_commit){throw 'Measured phase receipt was not verified at its pushed commit.'}
+    return [pscustomobject]@{status='PHASE_READY_AND_REMOTELY_VERIFIED';candidate_source_sha=[string]$id.candidate_source_sha;phase=[string]$phase;begin_utc=$begin.ToString('o');end_utc=$end.ToString('o');remote_commit=[string]$report.phase_verified_commit}
+}
     $expectedElements=@{}
     foreach($phaseProperty in $id.expected_elements_per_phase.PSObject.Properties){$phaseMap=@{};foreach($channelProperty in $phaseProperty.Value.PSObject.Properties){$phaseMap[$channelProperty.Name]=@($channelProperty.Value|ForEach-Object{[int]$_})};$expectedElements[$phaseProperty.Name]=$phaseMap}
     & (Join-Path $PSScriptRoot 'Run-BetaExistingTesterSoakR6.ps1') -BaseUrl 'http://127.0.0.1:8000' -OutputRoot $outputRoot -SourceSha $id.candidate_source_sha -Minutes 240 -Mode OFF -RequireTransportAdmission -ExpectedElementsPerPhase $expectedElements -OnPhaseStarted $phaseReceipt *> $jobLog

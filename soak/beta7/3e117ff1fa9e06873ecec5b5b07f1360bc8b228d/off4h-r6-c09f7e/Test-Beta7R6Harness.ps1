@@ -213,7 +213,7 @@ function Invoke-ChildPreflight {
     # real programme-change topology proof, remote phase receipt, then timing.
     Assert-ContainsInOrder -Text $driverText -Needles @(
         '$stableUntil=[datetime]::UtcNow.AddSeconds(30)',
-        '$stableState.state -ne ''ON_AIR''',
+        'if($stableState.state -ne ''ON_AIR'' -or [int]$stableState.pid -ne [int]$phasePids[$stableChannel.id])',
         '"$phase/STABILIZED.json"',
         'if ($RequireTransportAdmission) {',
         'Start-Beta7TransportProbe -TspExe',
@@ -223,7 +223,10 @@ function Invoke-ChildPreflight {
         '$begin = [datetime]::UtcNow.AddSeconds(60)',
         '$end = $begin.AddMinutes($Minutes)',
         '$receipt=@(& $OnPhaseStarted $phase $begin $end)',
-        'if(-not $receipt.Count)',
+        'if($receipt.Count -ne 1',
+        '[string]$receipt[0].status -cne ''PHASE_READY_AND_REMOTELY_VERIFIED''',
+        '[string]$receipt[0].candidate_source_sha -cne $SourceSha',
+        '[string]$receipt[0].remote_commit -notmatch ''^[0-9a-f]{40}$''',
         'while ([datetime]::UtcNow -lt $begin)',
         '"$phase/SOAK-START.json"'
     ) -Message 'R6 startup, admission, topology proof, receipt, and measured-clock order is not exact.'
@@ -254,6 +257,36 @@ function Invoke-ChildPreflight {
     $jobTokens=$null;$jobErrors=$null
     $jobAst=[System.Management.Automation.Language.Parser]::ParseInput($jobText,[ref]$jobTokens,[ref]$jobErrors)
     Assert-Check (@($jobErrors).Count -eq 0) 'R6 job could not be parsed for its actual terminal-state function.'
+    $phaseAssignments=@($jobAst.FindAll({param($node)
+        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Left.Extent.Text -ceq '$phaseReceipt'
+    },$true))
+    Assert-Check ($phaseAssignments.Count -eq 1) 'R6 job must define exactly one physical phase receipt callback.'
+    $phaseCallback=& ([scriptblock]::Create($phaseAssignments[0].Right.Extent.Text))
+    $report=[ordered]@{}
+    $id=[pscustomobject]@{candidate_source_sha='3e117ff1fa9e06873ecec5b5b07f1360bc8b228d'}
+    $jobRelative='soak/r6/job.json'
+    $fixtureCommit=('a' * 40)
+    $fixtureRemote=$fixtureCommit
+    function Write-Job {}
+    function Sync-And-Push { return $fixtureCommit }
+    function Assert-RemoteBlobs { return $fixtureRemote }
+    $fixtureBegin=[datetime]'2026-09-14T06:00:00Z'
+    $fixtureEnd=$fixtureBegin.AddMinutes(240)
+    $phaseAck=@(& $phaseCallback 'OFF' $fixtureBegin $fixtureEnd)
+    Assert-Check ($phaseAck.Count -eq 1 -and
+        [string]$phaseAck[0].status -ceq 'PHASE_READY_AND_REMOTELY_VERIFIED' -and
+        [string]$phaseAck[0].candidate_source_sha -ceq [string]$id.candidate_source_sha -and
+        [string]$phaseAck[0].phase -ceq 'OFF' -and
+        [string]$phaseAck[0].begin_utc -ceq $fixtureBegin.ToString('o') -and
+        [string]$phaseAck[0].end_utc -ceq $fixtureEnd.ToString('o') -and
+        [string]$phaseAck[0].remote_commit -ceq $fixtureCommit
+    ) 'Actual R6 physical phase callback did not return one exact verified acknowledgement.'
+    $fixtureRemote=('b' * 40)
+    $mismatchRejected=$false
+    try{$null=& $phaseCallback 'OFF' $fixtureBegin $fixtureEnd}catch{$mismatchRejected=$true}
+    Assert-Check $mismatchRejected 'Actual R6 physical phase callback accepted a remote commit mismatch.'
+
     $stateFunction=@($jobAst.FindAll({param($node)$node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-AuthoritativeState'},$true))
     Assert-Check ($stateFunction.Count -eq 1) 'R6 job must define exactly one Get-AuthoritativeState function.'
     . ([scriptblock]::Create($stateFunction[0].Extent.Text))
@@ -268,6 +301,14 @@ function Invoke-ChildPreflight {
         "(Join-Path `$missionRoot 'START-VERIFIED.json')",
         '$phaseReceipt='
     ) -Message 'R6 job can signal startup before the remote STARTED blob is verified.'
+    Assert-ContainsInOrder -Text $jobText -Needles @(
+        '$phaseReceipt={',
+        'Write-Job',
+        '$report.phase_commit=Sync-And-Push @($jobRelative)',
+        '$report.phase_verified_commit=Assert-RemoteBlobs @($jobRelative)',
+        'if([string]$report.phase_verified_commit -cne [string]$report.phase_commit)',
+        'return [pscustomobject]@{status=''PHASE_READY_AND_REMOTELY_VERIFIED'''
+    ) -Message 'R6 physical phase callback does not return an exact remotely verified acknowledgement.'
     Assert-ContainsInOrder -Text $jobText -Needles @(
         "STOP-VERIFIED.json",
         "STOP-FAILED.json",

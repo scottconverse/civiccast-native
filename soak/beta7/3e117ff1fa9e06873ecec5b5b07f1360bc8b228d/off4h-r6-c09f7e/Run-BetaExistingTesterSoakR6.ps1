@@ -807,7 +807,12 @@ try {
         if ($scheduleStart.AddMinutes(5*$slotCount) -lt $end.AddMinutes(1)) { throw 'Published horizon does not cover the full measured phase.' }
         if ($OnPhaseStarted) {
             $receipt=@(& $OnPhaseStarted $phase $begin $end)
-            if(-not $receipt.Count){throw "$phase synchronous phase receipt returned no acknowledgement."}
+            if($receipt.Count -ne 1 -or [string]$receipt[0].status -cne 'PHASE_READY_AND_REMOTELY_VERIFIED' -or
+                [string]$receipt[0].candidate_source_sha -cne $SourceSha -or [string]$receipt[0].phase -cne $phase -or
+                [string]$receipt[0].begin_utc -cne $begin.ToString('o') -or [string]$receipt[0].end_utc -cne $end.ToString('o') -or
+                [string]$receipt[0].remote_commit -notmatch '^[0-9a-f]{40}$'){
+                throw "$phase synchronous remotely verified phase receipt is absent or does not bind the exact measurement."
+            }
         }
         while ([datetime]::UtcNow -lt $begin) { Start-Sleep -Seconds 2 }
         if([datetime]::UtcNow -gt $begin.AddSeconds(15)){throw "$phase measured begin was missed after its synchronous receipt."}
