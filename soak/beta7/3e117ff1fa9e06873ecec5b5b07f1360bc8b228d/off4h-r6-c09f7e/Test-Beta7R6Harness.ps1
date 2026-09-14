@@ -208,6 +208,38 @@ function Invoke-ChildPreflight {
     Assert-Check ($driverText -match $scheduleCleanupGuard) 'R6 finalizer must invoke exact-notes schedule discovery behind the exact token-only guard, independent of recorded IDs.'
     Invoke-PowerShellArrayCompatibilityFixtures -DriverText $driverText
 
+    # Protect the exact ordering that prevents the old 2.1-second transport
+    # false failure: continuous same-PID stability, serialized admission, a
+    # real programme-change topology proof, remote phase receipt, then timing.
+    Assert-ContainsInOrder -Text $driverText -Needles @(
+        '$stableUntil=[datetime]::UtcNow.AddSeconds(30)',
+        '$stableState.state -ne ''ON_AIR''',
+        '"$phase/STABILIZED.json"',
+        'if ($RequireTransportAdmission) {',
+        'Start-Beta7TransportProbe -TspExe',
+        'if ($admissionResult.verdict -ne ''PASS'')',
+        '$premeasurementTopology=Invoke-PremeasurementTopologyProof',
+        '$offsets=Get-LogOffsets',
+        '$begin = [datetime]::UtcNow.AddSeconds(60)',
+        '$end = $begin.AddMinutes($Minutes)',
+        '$receipt=@(& $OnPhaseStarted $phase $begin $end)',
+        'if(-not $receipt.Count)',
+        'while ([datetime]::UtcNow -lt $begin)',
+        '"$phase/SOAK-START.json"'
+    ) -Message 'R6 startup, admission, topology proof, receipt, and measured-clock order is not exact.'
+    Assert-ContainsInOrder -Text $driverText -Needles @(
+        'function Invoke-PremeasurementTopologyProof',
+        '$transitionOffsets=Get-LogOffsets',
+        '$targets=@($Plan | Where-Object { ([datetimeoffset]::Parse([string]$_.scheduled_at).UtcDateTime) -gt $now }',
+        'if($targets.Count -ne $channels.Count)',
+        '$captureAt=$target.AddSeconds(90)',
+        'if($profile.live_captions_enabled -ne $false)',
+        '$grade=Get-Beta7FailureGrades $logs $ExpectedElements',
+        '$badTopology=@($commits | Where-Object {[int]$_ -ne 146})',
+        'expected at least one complete elements=146 transaction.',
+        'if(-not $grade.f1_pass -or -not $grade.f3_pass)'
+    ) -Message 'R6 premeasurement proof no longer requires a future controlled transition with complete elements=146 transaction evidence.'
+
     $upgradeText = Get-Content -LiteralPath (Join-Path $root 'Invoke-Beta7TesterUpgrade.ps1') -Raw
     Assert-Check ($upgradeText -match '(?s)\$localBlob\s*=\s*\(Invoke-Beta5Git.{0,300}''rev-parse''.{0,100}:\$relativeInvalidation') 'R6 adoption does not compare the normalized local invalidation index blob.'
     Assert-Check ($upgradeText -notmatch '(?s)\$localBlob\s*=.{0,300}''hash-object''.{0,100}''--no-filters''') 'R6 adoption still compares raw CRLF invalidation bytes with a normalized remote blob.'
