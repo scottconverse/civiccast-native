@@ -8,13 +8,13 @@
     "evidence_relative_path":  "soak/beta7-3e117ff1fa9e06873ecec5b5b07f1360bc8b228d/physical-soak-off4h-r12-db2617/evidence.zip",
     "completion_relative_path":  "soak/beta7-3e117ff1fa9e06873ecec5b5b07f1360bc8b228d/physical-soak-off4h-r12-db2617/COMPLETION.json",
     "job_started_utc":  "2026-09-14T09:16:27.4606517Z",
-    "job_state":  "STARTED",
+    "job_state":  "FAIL",
     "minutes":  240,
     "phases":  [
                    "OFF"
                ],
     "result":  null,
-    "error":  null,
+    "error":  "OFF premeasurement topology proof failed for public: expected at least one complete elements=146 transaction.",
     "task_entry":  {
                        "enabled_after_disable":  false,
                        "previous_state":  "Running",
@@ -31,5 +31,12 @@
                                                        },
                                "app_pack_source_sha":  "3e117ff1fa9e06873ecec5b5b07f1360bc8b228d",
                                "installer_sha256":  "07fc5259514a3e98164869efbbd9c5bdfb7d83dfe6a96c61d15795c6ace77a97"
-                           }
+                           },
+    "started_commit":  "7a6f79ed4f31fefa7b3b89fdc7e0c1d851eabb1f",
+    "started_verified_commit":  "7a6f79ed4f31fefa7b3b89fdc7e0c1d851eabb1f",
+    "finished_utc":  "2026-09-14T09:38:50.4915484Z",
+    "evidence":  {
+                     "size_bytes":  96015,
+                     "sha256":  "6bed7d091c1c82bd0fcfd3fe2d99edab4bda66c220d03c96d5f1290a67239f01"
+                 }
 }
