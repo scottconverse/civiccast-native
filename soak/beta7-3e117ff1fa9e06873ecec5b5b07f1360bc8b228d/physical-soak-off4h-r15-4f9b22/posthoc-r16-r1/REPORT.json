@@ -1,0 +1,17 @@
+{
+    "schema":  "civiccast-beta7-r15-posthoc-collection-v1",
+    "status":  "COLLECTED",
+    "hostname":  "DESKTOP-VBMA6O5",
+    "candidate_source_sha":  "3e117ff1fa9e06873ecec5b5b07f1360bc8b228d",
+    "mission_nonce":  "BETA7-3E117FF1-OFF4H-R15-4F9B22",
+    "r15_evidence_sha256":  "ee2edeb12d701d460f607acf4a400a180698107f9dcf5948464945c685ceb6d1",
+    "r15_run_id":  "f2hw-260914045645-eed6c5",
+    "source_snapshot":  "terminal all-raw copied by R15 after channel stop",
+    "selected_file_count":  18,
+    "all_log_count":  22,
+    "archive_sha256":  "a01288b8bc500206bdd96709ecff78a7bea57bdba5fcb82948decdfb95a97865",
+    "archive_size_bytes":  6927931,
+    "station_changes":  false,
+    "rerun":  false,
+    "collected_utc":  "2026-09-14T15:46:17.2342565Z"
+}
