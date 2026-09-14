@@ -1,8 +1,23 @@
 # soak8-e1acfe6 Latest Test Directive
 
-Current: soak/DIRECTIVE-BETA7-3E117FF1-OFF4H-R15-4F9B22.md
+Current: soak/DIRECTIVE-BETA7-R15-POSTHOC-R16-R1.md
 
-Autorun: soak/autorun/AUTORUN-BETA7-3E117FF1-OFF4H-R15-4F9B22.ps1
+Autorun: soak/autorun/AUTORUN-BETA7-R15-POSTHOC-R16-R1.ps1
+
+R15 completed the full four-hour clock with all 4,320 state samples ON_AIR,
+stable worker PIDs, 144/144 programme changes, 480/480 healthy service samples,
+and 24/24 clean transport probes. Its final log collector then mistook normal
+10 MiB `control_plane-app.log` rotation for truncation before grading the
+preserved terminal worker logs. R16-R1 retrieves the exact `all-raw` snapshot
+that R15 copied locally during cleanup. It is evidence recovery only: no station
+change and no soak rerun.
+
+The R15 failure archive SHA-256 is
+`ee2edeb12d701d460f607acf4a400a180698107f9dcf5948464945c685ceb6d1`.
+
+---
+
+Previous directive follows.
 
 Candidate: 3e117ff1fa9e06873ecec5b5b07f1360bc8b228d, build 34762831824,
 Gate A PASS run 34772707033. Captions are OFF. The measured gate is exactly
