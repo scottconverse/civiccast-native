@@ -8,13 +8,13 @@
     "evidence_relative_path":  "soak/beta7-3e117ff1fa9e06873ecec5b5b07f1360bc8b228d/physical-soak-off4h-r15-4f9b22/evidence.zip",
     "completion_relative_path":  "soak/beta7-3e117ff1fa9e06873ecec5b5b07f1360bc8b228d/physical-soak-off4h-r15-4f9b22/COMPLETION.json",
     "job_started_utc":  "2026-09-14T10:56:30.3688843Z",
-    "job_state":  "STARTED",
+    "job_state":  "FAIL",
     "minutes":  240,
     "phases":  [
                    "OFF"
                ],
     "result":  null,
-    "error":  null,
+    "error":  "Log rotated/truncated during measured phase: C:\\ProgramData\\CivicCast\\logs\\control_plane-app.log",
     "task_entry":  {
                        "enabled_after_disable":  false,
                        "previous_state":  "Running",
@@ -36,5 +36,12 @@
     "started_verified_commit":  "646ac8f90efed779f8750c8edba38a2c0c5ad8c4",
     "current_phase":  "OFF",
     "measured_phase_begin_utc":  "2026-09-14T11:19:16.6067771Z",
-    "measured_phase_planned_end_utc":  "2026-09-14T15:19:16.6067771Z"
+    "measured_phase_planned_end_utc":  "2026-09-14T15:19:16.6067771Z",
+    "phase_commit":  "b7c7d716eab6172ac3341f8161558eae45dac509",
+    "phase_verified_commit":  "b7c7d716eab6172ac3341f8161558eae45dac509",
+    "finished_utc":  "2026-09-14T15:19:57.1897460Z",
+    "evidence":  {
+                     "size_bytes":  354380,
+                     "sha256":  "ee2edeb12d701d460f607acf4a400a180698107f9dcf5948464945c685ceb6d1"
+                 }
 }
