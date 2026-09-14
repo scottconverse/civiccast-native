@@ -1,8 +1,8 @@
 # soak8-e1acfe6 Latest Test Directive
 
-Current: soak/DIRECTIVE-BETA7-3E117FF1-OFF4H-R14-C84E2D.md
+Current: soak/DIRECTIVE-BETA7-3E117FF1-OFF4H-R15-4F9B22.md
 
-Autorun: soak/autorun/AUTORUN-BETA7-3E117FF1-OFF4H-R14-C84E2D.ps1
+Autorun: soak/autorun/AUTORUN-BETA7-3E117FF1-OFF4H-R15-4F9B22.ps1
 
 Candidate: 3e117ff1fa9e06873ecec5b5b07f1360bc8b228d, build 34762831824,
 Gate A PASS run 34772707033. Captions are OFF. The measured gate is exactly
@@ -36,15 +36,25 @@ wrong-source, missing-PID, `56`/`74`, and transport failures.
 
 R13 then stopped in package preflight before a mission root or station change:
 Git supplied LF text on the tester and CRLF text on the coordinator, while R13
-compared raw manifest bytes. R14 normalizes UTF-8 text before hashing the
-manifest and all 11 files. Its two-runtime preflight converts a complete package
-fixture to CRLF and requires the same hash.
+compared raw manifest bytes. R14 corrected that boundary and reached complete
+controlled transitions on all three channels. It then falsely failed because
+stdout and stderr were sliced independently but the grader required their
+commit counts to match. Each channel had four complete stdout commits and one
+complete stderr diagnostic commit with subsequent output; there were no worker
+exits, stalls, or 56/74 partial graphs.
 
-R14's source anchor is ec2931f22965974ad732e25107222f8ce898bdd4, its binding
-commit is 8606cac21ff6647a63654ae73ca90fd4af6ef69f, and its harness manifest
-SHA-256 is b6e5d56ff94b1ed43b702b65e067e7755f249d9bf43dd511b36b23c13baed837.
+R15 removes only that invalid cross-file count assertion. Its tests replay the
+six exact R14 slices as a healthy 4-to-1 boundary and replay an exact beta.5
+Blackwell death log as a failure. Missing preroll, missing selector handoff or
+old-tail detach, 56/74/146 topology, clean worker exit, output stall, and no
+post-commit output remain failures. The exact committed package passed under
+Windows PowerShell 5.1 and PowerShell 7 from a fresh LF-only Git archive.
 
-Execute the R14 autorun once. It must refuse any identity, package, host,
+R15's source anchor is b4696c97c9f33cd6b81f6d73caa3cd879950e69f, its binding
+commit is d0da1b61acafff70d1a1e8be45667b587794f9b7, and its harness manifest
+SHA-256 is e6875a33e412f7597cb660a38cfe6d4856768384b52bd23f40ba653ff067b428.
+
+Execute the R15 autorun once. It must refuse any identity, package, host,
 receipt, schedule, topology, task, or evidence mismatch. It must return
 success only after the physical task publishes and remotely verifies its
 STARTED receipt. Preserve all evidence on either pass or failure.
