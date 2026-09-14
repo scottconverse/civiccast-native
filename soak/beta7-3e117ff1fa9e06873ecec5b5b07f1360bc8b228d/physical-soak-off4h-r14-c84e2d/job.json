@@ -8,13 +8,13 @@
     "evidence_relative_path":  "soak/beta7-3e117ff1fa9e06873ecec5b5b07f1360bc8b228d/physical-soak-off4h-r14-c84e2d/evidence.zip",
     "completion_relative_path":  "soak/beta7-3e117ff1fa9e06873ecec5b5b07f1360bc8b228d/physical-soak-off4h-r14-c84e2d/COMPLETION.json",
     "job_started_utc":  "2026-09-14T10:16:27.9529432Z",
-    "job_state":  "STARTED",
+    "job_state":  "FAIL",
     "minutes":  240,
     "phases":  [
                    "OFF"
                ],
     "result":  null,
-    "error":  null,
+    "error":  "OFF premeasurement logs contain a worker result, incomplete transaction, or output stall.",
     "task_entry":  {
                        "enabled_after_disable":  false,
                        "previous_state":  "Running",
@@ -31,5 +31,12 @@
                                                        },
                                "app_pack_source_sha":  "3e117ff1fa9e06873ecec5b5b07f1360bc8b228d",
                                "installer_sha256":  "07fc5259514a3e98164869efbbd9c5bdfb7d83dfe6a96c61d15795c6ace77a97"
-                           }
+                           },
+    "started_commit":  "ae5629e1ae8be64081441cf71f822d6986088f65",
+    "started_verified_commit":  "ae5629e1ae8be64081441cf71f822d6986088f65",
+    "finished_utc":  "2026-09-14T10:39:00.2544045Z",
+    "evidence":  {
+                     "size_bytes":  95985,
+                     "sha256":  "196bd382e96178141bc94a7265a7562277342ac76298442769b6ca02a1fb25fa"
+                 }
 }
