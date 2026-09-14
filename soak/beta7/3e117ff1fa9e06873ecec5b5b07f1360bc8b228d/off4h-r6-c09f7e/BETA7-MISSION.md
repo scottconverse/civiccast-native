@@ -1,10 +1,11 @@
 # Beta.7 `3e117ff1` dedicated physical tester mission
 
-Status: **STAGED FOR VERIFICATION; NOT YET ISSUED**. R5 is invalid evidence. It
-contained false-pass paths, a stale auto-start race, an impossible transport
-cadence, and a TSDuck `skip` plugin call that does not exist on the tester.
-R6 is a fresh once-only mission. It may be issued only after its exact files
-pass both independent reviews and the R5 invalidation receipt is present.
+Status: **R6 ONCE-ONLY PHYSICAL MISSION; BETA.7 REMAINS UNPUBLISHED**. R5 is
+invalid evidence. It contained false-pass paths, a stale auto-start race, an
+impossible transport cadence, and a TSDuck `skip` plugin call that does not
+exist on the tester. R6 may run exactly once from its manifest-bound package
+and the verified R5 invalidation receipt. Preserve its result whether it
+passes or fails; any corrected rerun requires a new mission nonce.
 
 Gate A run `34772707033` passed all three lanes,
 and `run-identity.json` binds each lane's artifact ID, artifact digest, and inner
