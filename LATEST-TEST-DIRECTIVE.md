@@ -1,8 +1,8 @@
 # soak8-e1acfe6 Latest Test Directive
 
-Current: soak/DIRECTIVE-BETA7-3E117FF1-OFF4H-R9-9DF212.md
+Current: soak/DIRECTIVE-BETA7-3E117FF1-OFF4H-R10-275243.md
 
-Autorun: soak/autorun/AUTORUN-BETA7-3E117FF1-OFF4H-R9-9DF212.ps1
+Autorun: soak/autorun/AUTORUN-BETA7-3E117FF1-OFF4H-R10-275243.ps1
 
 Candidate: 3e117ff1fa9e06873ecec5b5b07f1360bc8b228d, build 34762831824,
 Gate A PASS run 34772707033. Captions are OFF. The measured gate is exactly
@@ -16,12 +16,14 @@ adoption preflight at `directive-package-clean`: its Windows-to-Git path
 conversion treated a lone backslash as a regular expression. R8 stopped before
 station mutation because it incorrectly required a currently executing disabled
 Scheduled Task to report state Disabled; Windows correctly reports state Running
-with Settings.Enabled=false. R9 is the new once-only mission. Its source anchor
-is 43569b4de7661bb02933cf60a1393af605c6a742, its binding commit is
-2509b241115f7bfa9dcc63c4f58710e3c83e9366, and its harness manifest SHA-256
-is 03fdccc568ce02485ef89f13f89fe8ea807cbe5c5800d0b1b2c89126cbccf073.
+with Settings.Enabled=false. R9 stopped after publishing STARTED because the
+outer launcher compared the adoption-updated receipt with its stale pre-adoption
+identity. R10 reloads the installed identity before launch and verification. Its
+source anchor is b865de5867f3343e1ecd70bfa989168fbeafc73b, its binding commit is
+149e9e3372a6b5546ab0bcfc09b0cbd801ca6152, and its harness manifest SHA-256
+is 74ec5842ed82a84446b8fcc8fdea688ad6166d97d1425de055ac16d693144adc.
 
-Execute the R9 autorun once. It must refuse any identity, package, host,
+Execute the R10 autorun once. It must refuse any identity, package, host,
 receipt, schedule, topology, task, or evidence mismatch. It must return
 success only after the physical task publishes and remotely verifies its
 STARTED receipt. Preserve all evidence on either pass or failure.
