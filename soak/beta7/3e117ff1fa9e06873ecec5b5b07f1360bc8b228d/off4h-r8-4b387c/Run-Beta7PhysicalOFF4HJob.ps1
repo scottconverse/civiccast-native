@@ -80,7 +80,7 @@ function Build-EvidenceArchive {
     try{
         if(Test-Path -LiteralPath $outputRoot){
             foreach($file in @(Get-ChildItem -LiteralPath $outputRoot -Recurse -File|Where-Object{$_.FullName -notmatch '[\\/]all-raw[\\/]'})){
-                $relative='run/'+($file.FullName.Substring($outputRoot.Length).TrimStart('\','/') -replace '\','/')
+                $relative='run/'+$file.FullName.Substring($outputRoot.Length).TrimStart('\','/').Replace('\','/')
                 $null=[IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,$file.FullName,$relative,[IO.Compression.CompressionLevel]::Optimal)
             }
         }

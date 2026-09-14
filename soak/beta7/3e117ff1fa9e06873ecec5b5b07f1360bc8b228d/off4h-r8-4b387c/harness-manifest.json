@@ -25,7 +25,7 @@
     },
     {
       "path": "Run-Beta7PhysicalOFF4HJob.ps1",
-      "sha256": "c3e12e13abac7df4948cda33b87247ef5f16ee3ceba23c8c61e471f07371b3db"
+      "sha256": "8b60f81f99803d5d0927c27422f6d294bc7e46bd8741dbb56f6938f3adbf61de"
     },
     {
       "path": "Run-BetaExistingTesterSoakR8.ps1",
@@ -41,7 +41,7 @@
     },
     {
       "path": "Test-Beta7R8Harness.ps1",
-      "sha256": "17827b841cd027b818ecc5082355dc17f258b629dcffccb99f8b41aa9d3158f9"
+      "sha256": "094b755e61d0d686d64f0ff4d44191483e7f16eaa7b6cd9d9990ccde510ff91c"
     },
     {
       "path": "TSDuckReportClassifierR8.ps1",

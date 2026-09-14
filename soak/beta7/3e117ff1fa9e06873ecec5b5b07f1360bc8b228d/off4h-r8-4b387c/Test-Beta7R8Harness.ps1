@@ -276,6 +276,16 @@ function Invoke-ChildPreflight {
     $jobTokens=$null;$jobErrors=$null
     $jobAst=[System.Management.Automation.Language.Parser]::ParseInput($jobText,[ref]$jobTokens,[ref]$jobErrors)
     Assert-Check (@($jobErrors).Count -eq 0) 'R8 job could not be parsed for its actual terminal-state function.'
+    $evidenceRelativeAssignments=@($jobAst.FindAll({param($node)
+        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Left.Extent.Text -ceq '$relative'
+    },$true))
+    Assert-Check ($evidenceRelativeAssignments.Count -eq 1) 'R8 job must define exactly one evidence-entry relative-path assignment.'
+    $outputRoot='C:\fixture\output'
+    $file=[pscustomobject]@{FullName='C:\fixture\output\OFF\states.ndjson'}
+    $relative=$null
+    . ([scriptblock]::Create($evidenceRelativeAssignments[0].Extent.Text))
+    Assert-Check ($relative -ceq 'run/OFF/states.ndjson') 'Actual R8 evidence-entry path conversion did not produce the exact ZIP path.'
     $phaseAssignments=@($jobAst.FindAll({param($node)
         $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
         $node.Left.Extent.Text -ceq '$phaseReceipt'
