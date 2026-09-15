@@ -1159,7 +1159,7 @@
         outline-offset: 4px;
       }
     </style>
-    <!-- The WSL/mainline version identity is fully retired. v1.0.0-beta.5 is the current published release (2026-09-09), a download-only upgrade for stations already on v1.0.0-beta.4. Its GitHub Release carries setup.exe and runtime packs, SHA256SUMS.txt and installer sidecar metadata. The installer is Authenticode-signed; the JSON sidecar is not a separately signed attestation. v1.0.0-beta.4, v1.0.0-beta.3 (the first downloadable release) and v1.0.0-beta.1 (USB-delivered, no downloadable assets) are superseded. v1.0.0-beta.2 was never published and remains only an internal Gate A upgrade-baseline kit. The product source and unpublished candidate are v1.0.0-beta.7; that does not change the beta.5 install target. -->
+    <!-- The WSL/mainline version identity is fully retired. v1.0.0-beta.7 is the current published release (2026-09-15), a download-only upgrade for stations already on v1.0.0-beta.5. Its GitHub Release carries setup.exe and runtime packs, SHA256SUMS.txt and installer sidecar metadata. The installer is Authenticode-signed; the JSON sidecar is not a separately signed attestation. v1.0.0-beta.5, v1.0.0-beta.4, v1.0.0-beta.3 (the first downloadable release) and v1.0.0-beta.1 (USB-delivered, no downloadable assets) are superseded. v1.0.0-beta.2 was never published and remains only an internal Gate A upgrade-baseline kit. -->
   </head>
   <body>
     <a class="skip-link" href="#top">Skip to content</a>
@@ -2152,33 +2152,30 @@
           <details>
             <summary>Can we download a Windows beta installer today?</summary>
             <p>
-              Yes. <code>v1.0.0-beta.5</code> is the current release
-              (published 2026-09-09), a download-only upgrade for stations
-              already on <code>v1.0.0-beta.4</code>: <code>setup.exe</code>
+              Yes. <code>v1.0.0-beta.7</code> is the current release
+              (published 2026-09-15), a download-only upgrade for stations
+              already on <code>v1.0.0-beta.5</code>: <code>setup.exe</code>
               and the runtime packs are attached to the
-              <a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5">v1.0.0-beta.5 GitHub Release</a>,
+              <a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7">v1.0.0-beta.7 GitHub Release</a>,
               with <code>SHA256SUMS.txt</code> and installer sidecar metadata.
               Verify the installer's Authenticode signature separately --
               see the
-              <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.5-verification.md">release verification record</a>
+              <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.7-verification.md">release verification record</a>
               for the Gate A run, the asset/hash/signature checks, and the
-              known issues it ships with.
+              remaining acceptance boundary.
               It is still a beta, not a finished production release --
               read "What's proven in this candidate" in the README before
               relying on it. (<code>v1.0.0-beta.2</code> was never
               published -- it exists only as an internal Gate A
-              upgrade-baseline kit.) <code>v1.0.0-beta.4</code> and
+              upgrade-baseline kit.) <code>v1.0.0-beta.5</code>,
+              <code>v1.0.0-beta.4</code>, and
               <code>v1.0.0-beta.3</code>, the first downloadable release,
               are now superseded. The release before that,
               <code>v1.0.0-beta.1</code>, was delivered by USB rather
               than a GitHub download and is also superseded.
-              <code>v1.0.0-beta.7</code> is the next candidate and the
-              current owner-held unpublished candidate (unpublished; no
-              installer asset) -- it does not change the install story
-              above, which still targets <code>v1.0.0-beta.5</code>.
             </p>
             <p>
-              <code>v1.0.0-beta.5</code> enables in-place schedule rollover by default,
+              <code>v1.0.0-beta.7</code> carries in-place schedule rollover enabled by default,
               allowing the next plan and between-program filler to load without
               a planned encoder restart. Large bulletin rotations retain every
               approved, currently airable slide.
@@ -2190,17 +2187,18 @@
               Overlapping commit requests are declined into the existing
               full-graph restart recovery path; watchdog bounds and capabilities
               are unchanged. Ten clean runs bounds the failure rate rather than
-              proving absence, and this is diagnostic evidence only, not beta.5
-              field acceptance or a two-hour physical soak.
+              proving absence, and this is diagnostic evidence only, not beta.7
+              field acceptance. The release verification record contains the
+              passed eight-hour physical-machine soak.
               Live-caption timing is also isolated: at most one no-text timing
               signal can wait behind the signal currently being processed.
               Actual caption cues keep their existing path.
-              Live captions are off by default in beta.5; the release notes
+              Live captions are off by default in beta.7; the release notes
               explain how to turn them on. The soak history behind the
               published candidate is in the
               <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/beta5-recovery-2026-09-08.md">recovery record</a>
               and the release verification record linked above.
-              The bundled manual describes beta.5 operation; this page and the
+              The bundled manual describes beta.7 operation; this page and the
               exact GitHub Release provide current download and verification status.
             </p>
           </details>

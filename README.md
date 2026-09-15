@@ -1,9 +1,9 @@
 # CivicCast
 
-Release testing: the fixed beta candidate has completed its two-hour Sandbox
-run. Gate A needs a rerun after correcting authenticated schema discovery in
-the test harness; see [candidate evidence](docs/evidence/beta-harness-2026-09-11.md).
-The new candidate is not published or cleared for station use yet.
+`v1.0.0-beta.7` was published as a GitHub prerelease on 2026-09-15 after
+all three Gate A installation lanes passed and an eight-hour captions-off
+physical-machine soak passed. It remains a beta candidate pending human and
+station-specific acceptance; see the [verification record](docs/releases/v1.0.0-beta.7-verification.md).
 
 **CivicCast is an open-source, self-hostable civic broadcast platform for
 PEG/local-government stations** — record a meeting, generate offline
@@ -21,41 +21,36 @@ See [BRANCHES.md](BRANCHES.md) for the full explanation, including where an
 earlier, retired WSL2/Ubuntu lane's history now lives (a separate, private
 repository, not this one).
 
-**Current version: `v1.0.0-beta.5`** (published 2026-09-09) -- a
-download-only upgrade for stations already on `v1.0.0-beta.4`. `setup.exe`
+**Current version: `v1.0.0-beta.7`** (published 2026-09-15) -- a
+download-only upgrade for stations already on `v1.0.0-beta.5`. `setup.exe`
 and the five runtime `.ccpack` packs are attached to the
-[`v1.0.0-beta.5` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5),
+[`v1.0.0-beta.7` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7),
 with `SHA256SUMS.txt` and installer sidecar metadata for checksum checks;
 the installer itself carries the Authenticode signature. The ~21 GB AI-model
 `station\` bundle is deliberately not a release asset (see "Install and run"
-below). `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable public
+below). `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first downloadable public
 release) are now superseded; `v1.0.0-beta.1` (USB-delivered, no downloadable
 assets) remains superseded; `v1.0.0-beta.2` was never published -- it exists
 only as an internal Gate A upgrade-baseline kit (see
 [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)).
 See [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml)
 for the authored release-state record,
-[`docs/releases/v1.0.0-beta.5-verification.md`](docs/releases/v1.0.0-beta.5-verification.md)
+[`docs/releases/v1.0.0-beta.7-verification.md`](docs/releases/v1.0.0-beta.7-verification.md)
 for the release's verification record (Gate A run, asset/hash/signature
-checks, sandbox soaks, and the known issues carried forward), and
-[`docs/releases/2026-09-04-beta5-release-notes.md`](docs/releases/2026-09-04-beta5-release-notes.md)
-for the publish record and the upgrade steps.
-
-`v1.0.0-beta.7` is the next candidate and the current owner-held unpublished candidate
-(unpublished; no installer asset) -- it does not change the install story
-above, which still targets `v1.0.0-beta.5`.
+checks, the physical-machine soak, and the remaining acceptance boundary).
 
 The active local reliability repair addresses preparation blocking, reload
 acknowledgements, scheduled programme labels and caption-failure visibility.
 It also preserves reload-abort evidence, alerts on worker faults before recovery,
 and hides unverified worker PIDs in operator responses. UDP status distinguishes
 local sending from receiver verification.
-The observed old-leg retirement hang is repaired; all seven affected native
-checks pass. Current results and remaining candidate gates are recorded in
+The observed old-leg retirement hang is repaired and included in beta.7.
+Its local results are recorded in
 [the local verification note](docs/evidence/f2-local-2026-09-11/VERIFICATION.md).
-This work has not passed the installer, gate or sustained-soak release criteria.
+The signed beta.7 candidate subsequently passed Gate A and the eight-hour
+physical-machine soak recorded in the release verification record.
 
-`v1.0.0-beta.5` enables in-place schedule rollover by default.
+`v1.0.0-beta.7` carries in-place schedule rollover enabled by default.
 This lets the playout worker load the next plan without a planned encoder
 restart, including refreshing filler between programs. Bulletin rotations
 retain all approved, currently airable slides within the decoder-chain limit.
@@ -63,11 +58,11 @@ Channel status and health reporting distinguish scheduled programs from filler
 as soon as a handoff completes.
 Setting `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` explicitly selects the
 restart fallback for diagnosis and can interrupt output. Live captions are
-**off by default** in beta.5; the release notes explain how to turn them on
+**off by default** in beta.7; the release notes explain how to turn them on
 and what to expect. The soak history that led to the published candidate is
 in the [recovery record](docs/releases/beta5-recovery-2026-09-08.md) and the
 verification record linked above.
-The bundled beta.5 manual describes operation without freezing a mutable
+The bundled beta.7 manual describes operation without freezing a mutable
 publication status into the installer. Use this page and the exact GitHub
 Release for current download and verification status.
 
@@ -83,7 +78,7 @@ queue and no capability is disabled. Ten clean runs bounds the failure rate; it
 is not proof of absence. This is source/diagnostic evidence only; the
 published candidate's own sandbox-soak and Gate A evidence, and the known
 issues it ships with, are recorded in
-[`docs/releases/v1.0.0-beta.5-verification.md`](docs/releases/v1.0.0-beta.5-verification.md).
+[`docs/releases/v1.0.0-beta.7-verification.md`](docs/releases/v1.0.0-beta.7-verification.md).
 
 Live-caption timing now uses a separate forwarding queue. During intervals
 without text, CivicCast sends small timing signals; at most one can wait behind
@@ -290,12 +285,12 @@ things outside this repository's control:
   see [Install CivicCast On Windows](INSTALL-WINDOWS.md) and
   [Windows Release Trust And Verification](docs/install/windows-release-trust.md)
   for the setup path, Authenticode signature verification, and the pack-trust
-  model. `v1.0.0-beta.5` is the current release, a download-only upgrade
-  for stations already on `v1.0.0-beta.4`: `setup.exe`, the five runtime
+  model. `v1.0.0-beta.7` is the current release, a download-only upgrade
+  for stations already on `v1.0.0-beta.5`: `setup.exe`, the five runtime
   `.ccpack` packs, `SHA256SUMS.txt`, and installer sidecar metadata are
   attached to the
-  [`v1.0.0-beta.5` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5).
-  `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first **downloadable** release)
+  [`v1.0.0-beta.7` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7).
+  `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first **downloadable** release)
   are superseded.
   `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is superseded.
   `v1.0.0-beta.2` was never published -- it exists only as an internal
@@ -311,8 +306,8 @@ things outside this repository's control:
   [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md).
   From `v1.0.0-beta.3` on, a download-only **upgrade** of an
   already-installed station keeps the station's recordings, database, and
-  AI models -- this is the path for `v1.0.0-beta.4` -> `v1.0.0-beta.5`
-  (as it was for `v1.0.0-beta.3` -> `v1.0.0-beta.4`): run
+  AI models -- this is the path proven for `v1.0.0-beta.5` -> `v1.0.0-beta.7`
+  (as it was for earlier downloadable releases): run
   `setup.exe` (with the runtime packs) over the existing install, no
   `station\` folder and no re-downloading the AI-model bundle. See
   [BRANCHES.md](BRANCHES.md) for release identity and status.
@@ -400,7 +395,7 @@ status against evidence that actually exists on disk; treat "Built" there
 as "the code and its tests exist," not as a field-proven claim for this
 candidate — the "What's proven in this candidate" and "Honestly scoped"
 sections above are the accurate summary for a reader deciding whether to
-run beta.5 today.
+run beta.7 today.
 
 Proprietary-appliance capabilities are **out of scope** for V1 by explicit
 decision, documented in

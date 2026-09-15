@@ -21,7 +21,7 @@ schema_version: 1
 repository: scottconverse/civiccast-native
 
 # The tag that public surfaces may present as the current install target.
-current: v1.0.0-beta.5
+current: v1.0.0-beta.7
 # Live tags matching these regexes predate this manifest and are exempt from
 # per-entry listing (they remain visible on GitHub as history). Anything else
 # unlisted is drift.
@@ -37,13 +37,22 @@ historical_unlisted_patterns:
   - '^v4\.0\.0-rc\.'
 
 entries:
+  - tag: v1.0.0-beta.7
+    status: current
+    notes: >-
+      Published by publish_beta_candidate.py, source
+      3e117ff1fa9e06873ecec5b5b07f1360bc8b228d, build run 34762831824.
+      The clean Gate A lane passed in run 34772707033 and its exact verdict was
+      carried into run 35001270829; that run executed and passed the
+      cross-version and download-only lanes.
   # Native-Windows program (civiccast-native, THIS repository). Owner
   # decision 2026-09-02: the coordinating agent cuts beta-candidate releases
   # going forward via scripts/release/publish_beta_candidate.py; every green
   # build gets tagged and published as a GitHub pre-release because the beta
   # tester (Sergio, "LPM") checks GitHub daily.
   - tag: v1.0.0-beta.5
-    status: current
+    status: superseded
+    superseded_by: v1.0.0-beta.7
     notes: >-
       Published by publish_beta_candidate.py 2026-09-09 10:14 PM Mountain
       (2026-09-10 04:14Z), source 148c8d2172dd6b63cbbb856b429b68aa020dc421,
