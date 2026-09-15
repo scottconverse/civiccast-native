@@ -87,6 +87,11 @@ on:
           - cross-version-only
           - download-only-only
         default: full
+      carry_clean_from_run_id:
+        description: "Optional prior Gate A run carrying an exact PASS clean verdict to copy into a cross-version-only refresh run"
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   # Shared with native-beta-candidate-artifacts.yml's build_target:
@@ -691,6 +696,31 @@ jobs:
           $head = $head.Trim()
           Write-Host "Candidate migration head (build time): $head"
           "head=$head" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Verify an exact clean-lane verdict carried from the prior refresh
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.lane == 'cross-version-only' && inputs.carry_clean_from_run_id != '' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $dest = 'sandbox-lab/carried-clean-verdict'
+          $artifact = 'gate-a-verdict-${{ steps.run_id.outputs.run_id }}'
+          gh run download '${{ inputs.carry_clean_from_run_id }}' -R 'scottconverse/civiccast-native' -n $artifact -D $dest
+          if ($LASTEXITCODE -ne 0) { throw "Could not download $artifact from Gate A run ${{ inputs.carry_clean_from_run_id }}" }
+          $path = Join-Path $dest 'gate-a-verdict.json'
+          $verdict = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+          if ($verdict.verdict -ne 'PASS' -or $verdict.source_sha -ne '${{ steps.run_id.outputs.source_sha }}' -or [string]$verdict.run_id -ne '${{ steps.run_id.outputs.run_id }}' -or $verdict.harness_error) {
+            throw "Carried clean verdict identity/status mismatch: verdict=$($verdict.verdict) source_sha=$($verdict.source_sha) run_id=$($verdict.run_id) harness_error=$($verdict.harness_error)"
+          }
+
+      - name: Upload the carried clean-lane verdict into this refresh run
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.lane == 'cross-version-only' && inputs.carry_clean_from_run_id != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-a-verdict-${{ steps.run_id.outputs.run_id }}
+          path: sandbox-lab/carried-clean-verdict/gate-a-verdict.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Run Gate A (dirty lane)
         id: gate_a_dirty

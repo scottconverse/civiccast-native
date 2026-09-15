@@ -2213,6 +2213,28 @@ function Invoke-DirtyRemnantPrologue {
     } catch {
         "phase1_install_launch_error=$_" | Add-Content -Path $prep -Encoding UTF8
     }
+    "PHASE1_FIRST_INSTALL_EXIT=$(if ($null -ne $phase1Exit) { $phase1Exit } else { -998 })" | Add-Content -Path $prep -Encoding UTF8
+    # The immutable beta.5 baseline's activation self-test is cold-start
+    # sensitive in Windows Sandbox. It has returned its explicit activation
+    # failure code (setup exit 123) while leaving all signed packs verified;
+    # the same package has also passed this lane. Retry that predecessor once
+    # in the same fresh Sandbox so the gate can establish a real live previous
+    # station. The final PHASE1_INSTALL_EXIT below remains fail-closed, and the
+    # first outcome stays in evidence instead of being hidden.
+    if ($script:UpgradeMode -and $phase1Exit -eq 123) {
+        Save-Summary -Step 'dirty-prep-phase1-activation-retry-begin'
+        Start-Sleep -Seconds 10
+        $phase1RetryExit = $null
+        try {
+            $p1Retry = Start-Process -FilePath $dirtyExe.FullName -ArgumentList '/S /D=C:\CivicCastHostStore\install' -PassThru -Wait -WindowStyle Hidden
+            $phase1RetryExit = $p1Retry.ExitCode
+        } catch {
+            "phase1_retry_install_launch_error=$_" | Add-Content -Path $prep -Encoding UTF8
+        }
+        "PHASE1_RETRY_INSTALL_EXIT=$(if ($null -ne $phase1RetryExit) { $phase1RetryExit } else { -998 })" | Add-Content -Path $prep -Encoding UTF8
+        $phase1Exit = $phase1RetryExit
+        Save-Summary -Step 'dirty-prep-phase1-activation-retry-done'
+    }
     Exit-ShipperQuiesce
     "PHASE1_INSTALL_EXIT=$(if ($null -ne $phase1Exit) { $phase1Exit } else { -998 })" | Add-Content -Path $prep -Encoding UTF8
     Save-Summary -Step 'dirty-prep-phase1-install-done'

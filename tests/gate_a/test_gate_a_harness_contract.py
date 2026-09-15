@@ -1122,6 +1122,21 @@ def test_dirty_evidence_filenames_agree_between_powershell_and_judge() -> None:
         assert key in judge_text, f"the judge never checks {key}"
 
 
+def test_previous_activation_retry_is_single_bounded_and_fail_closed() -> None:
+    """A cold beta.5 activation may be retried once, but only for its
+    explicit setup exit 123 and only in cross-version mode. Both outcomes
+    remain in evidence and the judge-facing final exit follows the retry."""
+    driver = _code_only(_read(_DRIVER))
+    assert driver.count("if ($script:UpgradeMode -and $phase1Exit -eq 123)") == 1
+    assert driver.count("$p1Retry = Start-Process") == 1
+    first_at = driver.index("PHASE1_FIRST_INSTALL_EXIT=")
+    retry_at = driver.index("PHASE1_RETRY_INSTALL_EXIT=")
+    assign_at = driver.index("$phase1Exit = $phase1RetryExit")
+    final_at = driver.index("PHASE1_INSTALL_EXIT=", retry_at)
+    fail_at = driver.index("if ($phase1Exit -ne 0)", final_at)
+    assert first_at < retry_at < assign_at < final_at < fail_at
+
+
 def test_dirty_orphan_warning_pattern_matches_the_product_log_line() -> None:
     """The grep the harness runs against the supervisor log must actually
     match the WARNING station_runtime.py emits on the orphaned-tier degrade
@@ -1299,6 +1314,25 @@ def test_manual_gate_dispatch_can_run_only_the_cross_version_diagnostic_lane() -
     assert "inputs.lane != 'cross-version-only'" in clean_job
     assert "always()" in dirty_job
     assert "inputs.lane == 'cross-version-only'" in dirty_job
+
+
+def test_cross_version_refresh_carries_only_an_identity_verified_clean_pass() -> None:
+    workflow = _read(_WORKFLOW)
+    assert "carry_clean_from_run_id:" in workflow
+    dirty_job = workflow.split("  station-acceptance-dirty:", 1)[1].split(
+        "  station-acceptance-download-only:", 1
+    )[0]
+    verify_at = dirty_job.index("name: Verify an exact clean-lane verdict")
+    upload_at = dirty_job.index("name: Upload the carried clean-lane verdict")
+    run_at = dirty_job.index("name: Run Gate A (dirty lane)")
+    carry = dirty_job[verify_at:run_at]
+    assert verify_at < upload_at < run_at
+    assert "inputs.lane == 'cross-version-only'" in carry
+    assert "verdict.verdict -ne 'PASS'" in carry
+    assert "verdict.source_sha -ne '${{ steps.run_id.outputs.source_sha }}'" in carry
+    assert "[string]$verdict.run_id -ne '${{ steps.run_id.outputs.run_id }}'" in carry
+    assert "-or $verdict.harness_error" in carry
+    assert "if-no-files-found: error" in carry
 
 
 # --------------------------------------------------------------------------
