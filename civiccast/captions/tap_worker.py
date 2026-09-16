@@ -32,12 +32,10 @@ because on a real CPU-only station they did not:
 - overload backs OFF (:mod:`civiccast.captions.tap_backoff`) -- a channel that
   cannot keep up is paused for an exponentially growing window instead of
   retrying, and re-logging, every scan;
-- ASR concurrency is BOUNDED -- ONE channel's ASR call is in flight at a
-  time, station-wide, regardless of core count
-  (:func:`default_max_channel_workers`, item 79 tightened this from a
-  per-core-count formula, max 3, to a flat 1; see that function's docstring
-  for why this is knob hardening on top of the shared-runtime,
-  single-CT2-worker design, not a standalone fix for concurrent compute),
+- ASR concurrency is BOUNDED and hardware-aware -- CPU live captions keep one
+  channel's ASR call in flight station-wide, while CUDA live captions allow up
+  to three so a three-channel station can meet the five-second segment cadence
+  (:func:`default_max_channel_workers`),
   and the CTranslate2 model itself runs with 1-2 intra-op threads,
   core-count-aware and capped
   (:func:`civiccast.captions.runtime.default_live_tap_cpu_threads`), instead
@@ -126,7 +124,7 @@ _STATUS_REFRESH_SECONDS = 30.0
 _RETENTION_SWEEP_SECONDS = 60.0
 
 
-def default_max_channel_workers() -> int:
+def default_max_channel_workers(runtime: CaptionRuntime | None = None) -> int:
     """How many channels' ASR calls may be IN FLIGHT at once by default.
 
     MEASURED defect this bound originally replaced (tester DESKTOP-VBMA6O5,
@@ -135,38 +133,35 @@ def default_max_channel_workers() -> int:
     part of a control plane burning ~247% of a core while the playout workers
     were starved into their own 10-second stall watchdog.
 
+    CPU live captions remain flat at **1**, station-wide, regardless of core
+    count.  A CUDA live runtime uses up to three channel workers, capped by
+    the runtime's CTranslate2 ``num_workers``.  That distinction is required
+    for the station's three five-second audio streams: serial 2.75-second GPU
+    calls take roughly 8.25 seconds per cycle and inevitably build backlog,
+    while three GPU calls in flight stay inside the segment interval.
+
     Item 79 (sandbox candidate 3b, 10 "Caption tap overload" events, the same
-    GStreamer-worker-stall cluster as the tester's beta.4 soak): this bound is
-    now a flat **1**, station-wide, regardless of core count -- tightened
-    from the ``one concurrent channel per 8 CPUs, max 3`` formula it replaced.
-    Read this as KNOB HARDENING, not as the mechanism that fixed the field
-    defect above by itself: every channel already shares ONE
-    :class:`~civiccast.captions.runtime.FasterWhisperRuntime` instance
-    (``CaptionTapWorker._runtime``, injected once, used by every per-channel
-    :class:`~civiccast.captions.worker.LiveCaptionWorker`), and that instance
-    is built with ``num_workers=1`` (CTranslate2's ``inter_threads``) --
-    so the previous default of 3 concurrent Python callers never actually
-    produced 3 concurrent CTranslate2 inferences; CT2's own single-worker
-    queue was already serializing them. On an 8-core box this change is a
-    no-op for concurrency (the old formula already resolved to 1 there) and
-    changes only the paired ``cpu_threads`` cap and the backoff's first pause
-    (see :mod:`civiccast.captions.tap_backoff`). On a much bigger box (the
-    old formula's own ceiling was 3) it removes headroom for **Python-level**
-    submission concurrency that the shared runtime was never going to turn
-    into 3x compute in the first place. A station with more ON_AIR channels
-    than this bound will, in practice, spend most of a scan cycle transcribing
-    one channel while the others' settled backlog grows -- see the module
-    docstring and :meth:`CaptionTapWorker.run_once` for what happens to a
-    channel whose backlog exceeds ``max_backlog_segments`` while it waits:
-    its stale audio is DISCARDED (not queued) and it is paused under
-    exponential backoff, the same as any other overload.
+    GStreamer-worker-stall cluster as the tester's beta.4 soak) tightened CPU
+    operation from the ``one concurrent channel per 8 CPUs, max 3`` formula.
+    Every channel shares one
+    :class:`~civiccast.captions.runtime.FasterWhisperRuntime` instance.  Its
+    CPU live profile retains one CTranslate2 worker and the tap therefore
+    retains one Python caller.  Its CUDA live profile has three CTranslate2
+    workers, so this tap permits three callers to use that capacity.  A
+    station with more ON_AIR channels than its selected bound can still spend
+    most of a scan cycle waiting; when a channel exceeds
+    ``max_backlog_segments``, its stale audio is discarded and it is paused
+    under exponential backoff.
 
     Overridable end-to-end via ``CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS``,
     which still means what it always has: force a different concurrency for a
     station the operator has personally sized.
     """
 
-    return 1
+    on_cuda = getattr(runtime, "on_cuda", None)
+    if runtime is None or not callable(on_cuda) or not on_cuda():
+        return 1
+    return min(3, max(1, int(getattr(runtime, "num_workers", 1))))
 
 
 def _lower_current_thread_priority() -> None:
@@ -220,7 +215,9 @@ class CaptionTapWorkerSettings:
     atomic_segments: bool = False
     overlap_seconds: float = 4.0
     poll_seconds: float = 2.0
-    max_channel_workers: int = field(default_factory=default_max_channel_workers)
+    # ``None`` means select from the constructed runtime: one channel on CPU,
+    # up to three on CUDA.  An environment value remains an exact override.
+    max_channel_workers: int | None = None
     max_backlog_segments: int = 2
     overload_backoff_seconds: float = DEFAULT_BASE_BACKOFF_SECONDS
     max_overload_backoff_seconds: float = DEFAULT_MAX_BACKOFF_SECONDS
@@ -250,9 +247,10 @@ class CaptionTapWorkerSettings:
                 "CIVICCAST_CAPTION_TAP_OVERLAP_SECONDS", defaults.overlap_seconds
             ),
             poll_seconds=_env_float("CIVICCAST_CAPTION_TAP_POLL_SECONDS", defaults.poll_seconds),
-            max_channel_workers=_env_int(
-                "CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS",
-                defaults.max_channel_workers,
+            max_channel_workers=(
+                _env_int("CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS", 1)
+                if os.environ.get("CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS", "").strip()
+                else None
             ),
             max_backlog_segments=_env_int(
                 "CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS",
@@ -426,8 +424,9 @@ class CaptionTapWorker:
         if overlap_seconds <= 0:
             raise ValueError("Caption tap overlap_seconds must be greater than zero.")
         self._overlap_seconds = overlap_seconds
+        self._max_channel_workers_override = max_channel_workers
         if max_channel_workers is None:
-            max_channel_workers = default_max_channel_workers()
+            max_channel_workers = default_max_channel_workers(runtime)
         if max_channel_workers < 1:
             raise ValueError("Caption tap max_channel_workers must be at least 1.")
         if max_backlog_segments < 1:
@@ -476,9 +475,11 @@ class CaptionTapWorker:
         # `runtime` is a `CaptionRuntime` Protocol -- an injected test double
         # or the whisper.cpp/Vulkan runtime has no such attribute.
         _LOG.info(
-            "Caption tap starting: cpu_count=%s, max_channel_workers=%d, live_cpu_threads=%s",
+            "Caption tap starting: cpu_count=%s, max_channel_workers=%d, "
+            "runtime_workers=%s, live_cpu_threads=%s",
             os.cpu_count(),
             self._max_channel_workers,
+            getattr(runtime, "num_workers", "n/a"),
             getattr(runtime, "cpu_threads", "n/a"),
         )
 
@@ -596,6 +597,30 @@ class CaptionTapWorker:
             pending.append((channel_id, channel_dir, segments))
 
         if pending:
+            if self._max_channel_workers_override is None:
+                # Resolve the real faster-whisper device before creating a
+                # multi-channel executor. CUDA initialization may fall back to
+                # CPU; doing that here prevents the first scan from submitting
+                # three calls before the runtime has reduced its capacity.
+                prepare_runtime = getattr(self._runtime, "prepare", None)
+                if callable(prepare_runtime):
+                    # Model initialization and a possible CPU fallback can be
+                    # expensive too. Keep this supervisor-side preparation at
+                    # the same lowered priority as per-channel ASR work so it
+                    # cannot preempt playout during first use.
+                    _lower_current_thread_priority()
+                    prepare_runtime()
+                effective_workers = default_max_channel_workers(self._runtime)
+                if effective_workers != self._max_channel_workers:
+                    _LOG.info(
+                        "Caption tap adjusted channel concurrency after runtime device change: "
+                        "%d -> %d (device=%s, runtime_workers=%s)",
+                        self._max_channel_workers,
+                        effective_workers,
+                        getattr(self._runtime, "device", "unknown"),
+                        getattr(self._runtime, "num_workers", "n/a"),
+                    )
+                    self._max_channel_workers = effective_workers
             # The executor bound is the ASR concurrency bound: channels beyond
             # it are queued inside this same scan, never transcribed
             # simultaneously. See ``default_max_channel_workers``.
@@ -1082,12 +1107,10 @@ def build_tap_worker(
                 "large-v3 caption runtime."
             )
         if backend == "faster-whisper":
-            # NOT num_workers=max_channel_workers. Those are unrelated
-            # quantities: max_channel_workers is how many CHANNELS this worker
-            # may caption at once and is already spent on the
-            # ThreadPoolExecutor in _scan_once, while faster-whisper's
-            # num_workers is CTranslate2's inter_threads. Passing one as the
-            # other is a category error regardless of what it costs.
+            # Do not pass max_channel_workers into the runtime. The runtime
+            # selects its own device capacity (one CT2 worker on CPU, three on
+            # CUDA); the tap follows that capacity unless the operator set an
+            # explicit channel-pool override. They remain separate controls.
             #
             # MEASURED, and it does NOT cost what I claimed. I originally
             # changed this believing inter_threads replicated the model and

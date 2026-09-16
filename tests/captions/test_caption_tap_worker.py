@@ -24,8 +24,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from civiccast.captions import runtime as caption_runtime_module
 from civiccast.captions.models import AudioChunk, CaptionHypothesis, CustomVocabulary
 from civiccast.captions.review import InMemoryCaptionReviewStore
+from civiccast.captions.runtime import FasterWhisperRuntime
 from civiccast.captions.tap import TAP_SAMPLE_RATE_HZ
 from civiccast.captions.tap_backoff import CaptionBackoffPolicy
 from civiccast.captions.tap_worker import (
@@ -83,6 +85,16 @@ class _ConcurrencyProbeRuntime(_ScriptedRuntime):
         finally:
             with self._lock:
                 self._active -= 1
+
+
+class _CudaConcurrencyProbeRuntime(_ConcurrencyProbeRuntime):
+    """Three-worker CUDA shape used by the native live-caption runtime."""
+
+    num_workers = 3
+
+    @staticmethod
+    def on_cuda() -> bool:
+        return True
 
 
 class _FakeClock:
@@ -325,9 +337,9 @@ class TestCaptionTapWorker:
             _write_wav(tap_root / channel / "chunk-000000.wav")
             _write_wav(tap_root / channel / "chunk-000001.wav")
         runtime = _ConcurrencyProbeRuntime()
-        # Explicit: the DEFAULT bound is a flat 1, station-wide, regardless of
-        # core count (see test_default_concurrency_is_always_one_channel_station_wide
-        # and test_asr_concurrency_is_bounded_by_cpu_count). This test is
+        # Explicit: the CPU/default-unknown bound is a flat 1, station-wide,
+        # while the CUDA default is runtime-selected (see the neighboring
+        # tests). This test is
         # about the executor actually running channels in parallel when the
         # bound allows it, so it states the bound it is testing rather than
         # relying on the default.
@@ -342,6 +354,120 @@ class TestCaptionTapWorker:
 
         assert result.consumed_segments == 3
         assert runtime.max_active == 3
+
+    def test_cuda_default_keeps_three_channel_segment_cycle_in_flight(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """The Blackwell failure mode: three channels cannot queue behind one.
+
+        Each channel produces a segment on the same five-second cadence.  The
+        runtime measured one GPU transcription at 2.75 seconds, so serializing
+        all three necessarily takes about 8.25 seconds and grows backlog.  The
+        CUDA default must submit all three channel calls together; this probe
+        blocks briefly inside each call, so ``max_active == 3`` proves the
+        capacity choice reaches the executor rather than merely changing a
+        constant that the product never uses.
+        """
+
+        tap_root = tmp_path / "tap"
+        for channel in ("public", "education", "government"):
+            _write_wav(tap_root / channel / "chunk-000000.wav")
+            _write_wav(tap_root / channel / "chunk-000001.wav")
+        runtime = _CudaConcurrencyProbeRuntime()
+        worker = _worker(
+            tap_root,
+            runtime,
+            InMemoryCaptionReviewStore(),
+        )
+
+        result = worker.run_once()
+
+        assert result.consumed_segments == 3
+        assert result.overloaded_channels == ()
+        assert runtime.max_active == 3
+
+    def test_first_three_channel_scan_resolves_cuda_fallback_before_dispatch(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The first real scan never submits three calls onto fallback CPU."""
+
+        for name in (
+            "CIVICCAST_NATIVE_STATION",
+            "CIVICCAST_WHISPER_MODEL_PATH",
+            "CIVICCAST_WHISPER_DEVICE",
+            "CIVICCAST_WHISPER_COMPUTE_TYPE",
+            "CIVICCAST_WHISPER_NUM_WORKERS",
+            "CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS",
+        ):
+            monkeypatch.delenv(name, raising=False)
+
+        attempts: list[str] = []
+        active_cpu_calls = 0
+        max_active_cpu_calls = 0
+        active_lock = threading.Lock()
+        preparation_priority_lowered = False
+
+        def _record_lowered_priority() -> None:
+            nonlocal preparation_priority_lowered
+            preparation_priority_lowered = True
+
+        monkeypatch.setattr(
+            "civiccast.captions.tap_worker._lower_current_thread_priority",
+            _record_lowered_priority,
+        )
+
+        class _FallbackModel:
+            def __init__(self, _model: str, **kwargs: object) -> None:
+                assert preparation_priority_lowered is True
+                device = str(kwargs["device"])
+                attempts.append(device)
+                if device == "cuda":
+                    raise RuntimeError("simulated CUDA loader failure")
+
+            def transcribe(self, _path: str, **_kwargs: object) -> tuple[list[object], object]:
+                nonlocal active_cpu_calls, max_active_cpu_calls
+                with active_lock:
+                    active_cpu_calls += 1
+                    max_active_cpu_calls = max(max_active_cpu_calls, active_cpu_calls)
+                time.sleep(0.05)
+                with active_lock:
+                    active_cpu_calls -= 1
+                return [], object()
+
+        monkeypatch.setattr(
+            caption_runtime_module,
+            "_load_whisper_model_class",
+            lambda: _FallbackModel,
+        )
+        runtime = FasterWhisperRuntime(
+            model_size_or_path="tiny",
+            live=True,
+            device="cuda",
+            compute_type="float16",
+        )
+        tap_root = tmp_path / "tap"
+        for channel in ("public", "education", "government"):
+            _write_wav(tap_root / channel / "chunk-000000.wav")
+            _write_wav(tap_root / channel / "chunk-000001.wav")
+        worker = build_tap_worker(
+            CaptionTapWorkerSettings(mode="inline", tap_root=tap_root),
+            InMemoryCaptionReviewStore(),
+            runtime=runtime,
+            caption_work_dir=tmp_path / "egress",
+        )
+
+        assert worker._max_channel_workers == 3
+
+        result = worker.run_once()
+
+        assert attempts == ["cuda", "cpu"]
+        assert runtime.num_workers == 1
+        assert worker._max_channel_workers == 1
+        assert max_active_cpu_calls == 1
+        assert result.consumed_segments == 3
 
     def test_asr_concurrency_is_bounded_by_cpu_count(self, tmp_path: Path) -> None:
         """The whole point of the bound: three ON_AIR channels, one at a time.
@@ -373,11 +499,11 @@ class TestCaptionTapWorker:
         assert sorted(result.channels) == ["education", "government", "public"]
         assert runtime.max_active == 1
 
-    def test_default_concurrency_is_always_one_channel_station_wide(
+    def test_default_cpu_concurrency_is_always_one_channel_station_wide(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Item 79: the default is a flat 1, regardless of core count.
+        """Item 79: the CPU default is a flat 1, regardless of core count.
 
         Tightened from the previous "one channel per 8 CPUs, max 3" formula.
         Read this as knob hardening, not as a standalone fix for the original
@@ -397,6 +523,11 @@ class TestCaptionTapWorker:
         # `os.cpu_count()` is documented as possibly None; still 1.
         monkeypatch.setattr("civiccast.captions.tap_worker.os.cpu_count", lambda: None)
         assert default_max_channel_workers() == 1
+
+    def test_cuda_concurrency_is_capped_by_runtime_workers(self) -> None:
+        runtime = SimpleNamespace(on_cuda=lambda: True, num_workers=2)
+
+        assert default_max_channel_workers(runtime) == 2
 
     def test_default_concurrency_env_override_still_works(
         self,
@@ -435,6 +566,7 @@ class TestCaptionTapWorker:
 
         class _RuntimeWithCpuThreads(_ScriptedRuntime):
             cpu_threads = 1
+            num_workers = 1
 
         with caplog.at_level("INFO", logger="civiccast.captions.tap_worker"):
             _worker(
@@ -447,6 +579,7 @@ class TestCaptionTapWorker:
         assert "Caption tap starting" in caplog.text
         assert "cpu_count=8" in caplog.text
         assert "max_channel_workers=1" in caplog.text
+        assert "runtime_workers=1" in caplog.text
         assert "live_cpu_threads=1" in caplog.text
 
     def test_backlog_fails_closed_instead_of_publishing_stale_captions(
@@ -1101,31 +1234,17 @@ class TestCaptionTapWorkerSettings:
         assert settings.poll_seconds == 2.5
         assert settings.atomic_segments is True
 
-    def test_channel_concurrency_does_not_multiply_whisper_model_residency(
+    def test_channel_override_does_not_override_runtime_capacity(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        """max_channel_workers must NOT reach the runtime's num_workers.
+        """A channel-pool override must not rewrite CTranslate2 capacity.
 
-        This test previously asserted the opposite -- `{"num_workers": 3}` --
-        under the name "default runtime is configured for parallel channel
-        workers". That name states the belief that produced the defect: that
-        faster-whisper's num_workers is how many channels get processed at
-        once. It is not. It is CTranslate2's inter_threads, which keeps a
-        SEPARATE REPLICA OF THE MODEL per worker, so the default asked for
-        three copies of large-v3 resident simultaneously.
-
-        Channel concurrency is unaffected and comes from somewhere else
-        entirely: the ThreadPoolExecutor in CaptionTapWorker._scan_once, which
-        still runs max_channel_workers channels in parallel. They now share
-        one model.
-
-        Open, and deliberately not claimed here: whether this is THE cause of
-        the 16 GB field failure (fine for two segments, then a climb toward
-        12 GB producing nothing until it timed out, twice). The shape and
-        magnitude fit and TESTER2 is measuring it, but the conflation of two
-        unrelated quantities is worth fixing on its own terms either way.
+        The runtime now chooses its own hardware profile: one CTranslate2
+        worker on CPU and three on CUDA.  ``max_channel_workers`` controls the
+        tap executor separately.  This boundary keeps an explicit tap-pool
+        override from silently changing model capacity in either direction.
         """
 
         captured: dict[str, object] = {}
@@ -1151,10 +1270,10 @@ class TestCaptionTapWorkerSettings:
             caption_work_dir=tmp_path / "egress",
         )
 
-        # The runtime is constructed with NO worker override: it keeps its
-        # own default of 1. Asserting the whole dict (not just the absence of
-        # a key) is deliberate -- it also catches a future caller quietly
-        # reintroducing the multiplier under a different argument name.
+        # The runtime is constructed with NO worker override: it selects one
+        # or three from its actual device. Asserting the whole dict (not just
+        # the absence of a key) also catches a future caller quietly coupling
+        # these two controls again under a different argument name.
         #
         # What the live tap DOES pass is the CPU budget, and only that: one
         # CTranslate2 intra-thread and greedy decoding. The batch/VOD defaults

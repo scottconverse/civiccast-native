@@ -1,5 +1,46 @@
 # HANDOFF
 
+## 2026-09-15 current: beta.7 published captions-off; captions-on GPU throughput repair
+
+Current branch: `fix/captions-cuda-three-channel-throughput`.
+Base `main`: `cc02cf11bf00685eff1c9c4cae5809a46ca05ed2`.
+Implementation and local-proof anchor: `17878682128490a8cfc5d11ea5e483cb482c6b9b`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/229.
+Initial pushed branch head: `f9c2a30256ca34e77dcfe877cfc92409462817b8`.
+This status update follows that head; use PR #229 for the live head and matching
+CI run IDs.
+Current published tag: `v1.0.0-beta.7` at source `3e117ff1fa9e06873ecec5b5b07f1360bc8b228d`.
+
+The published beta.7 installer is the captions-OFF release. Its Blackwell
+captions-ON diagnostic exposed deterministic throughput overload: one GPU
+transcription took about 2.75 seconds, but beta.7 serialized three channel
+segments, producing about 8.25 seconds of work every five seconds. The next
+candidate repair gives a live CUDA faster-whisper runtime three workers and
+lets the caption tap submit up to three channels concurrently. CPU live
+captions remain at one worker.
+
+Before the first multi-channel scan, the tap lowers the supervisor thread
+priority and prepares the model. If CUDA initialization falls back to CPU,
+both runtime and tap capacity become one before the channel executor is
+created. Explicit operator tap-concurrency overrides remain authoritative.
+
+Local verification: 365 relevant tests passed with one expected external
+Postgres skip; Ruff, format, mypy, diff, and added-line ASCII checks passed.
+Independent hostile review is PASS after the first-scan fallback and priority
+ordering findings were fixed. Evidence is under
+`.agent-runs/native-windows/beta8-caption-gpu-throughput/evidence/`.
+
+This is source proof, not a captions-ON release verdict. Required sequence:
+push and open the PR, pass required CI, merge, build the next exact-merge
+candidate, run local Sandbox/Gate A as required, then run the real Blackwell
+captions-ON test before accepting captions ON.
+
+The corrected unchanged-beta.7 30-minute diagnostic prompt is on the USB at
+`D:\RUN-THIS-BLACKWELL-BETA7-30MIN-CAPTIONS-ON.md`, 27,040 bytes, SHA-256
+`04644F50BB03AB535DB5CE9C2E83B5A1EE2AEAC52AEAFB241937B5E4702F43A0`.
+It gives CivicCast one start attempt and then observes passively for all 1,800
+monotonic seconds; it does not restart, repair, clear, or otherwise help the
+product during measurement.
 ## 2026-09-13 current: rejected ad17971 candidate and selector handoff repair
 
 Current branch: `fix/beta7-quiescence-deadlock`.

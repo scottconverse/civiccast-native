@@ -13,6 +13,26 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+### Live-caption GPU throughput (candidate gates outstanding)
+
+- Size the live faster-whisper runtime for three concurrent workers on CUDA
+  while retaining one worker on CPU. The native caption tap follows that
+  hardware capacity unless an operator explicitly overrides it, and drops
+  back to one channel after a CUDA model-load fallback. This addresses the
+  measured three-channel backlog in which three roughly 2.75-second GPU
+  transcriptions were serialized against a five-second segment cadence.
+
+## [1.0.0-beta.7] - 2026-09-15
+
+**PUBLISHED.** `v1.0.0-beta.7` was published as a GitHub prerelease from
+source `3e117ff1fa9e06873ecec5b5b07f1360bc8b228d`, build run
+`34762831824`. The signed `setup.exe` SHA-256 is
+`07fc5259514a3e98164869efbbd9c5bdfb7d83dfe6a96c61d15795c6ace77a97`.
+All three Gate A installation journeys and the eight-hour captions-off R16
+physical-machine soak passed. Live captions remain off by default; see
+`docs/releases/v1.0.0-beta.7-verification.md` for the evidence and acceptance
+boundary.
+
 ### Release harness corrections
 
 - Authenticate Gate A's caption and egress schema-discovery requests with the
@@ -121,9 +141,8 @@ came across and what deliberately did not.
   second-cycle Windows tests and payload reproducibility passed at 2dd9287c;
   candidate verification remains outstanding.
 
-`v1.0.0-beta.7` is the next candidate and the current owner-held unpublished
-candidate; it does not change the `v1.0.0-beta.4` install story documented
-below.
+`v1.0.0-beta.7` is the current published beta. It supersedes the older
+candidate and installation history documented below.
 
 **Known issue in beta.5 (fixed for beta.5.1 below).** Upgrading a station
 installed from the August 2026 beta.1/beta.2 kits halts provisioning with

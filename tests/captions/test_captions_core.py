@@ -241,6 +241,20 @@ class TestRuntimeBoundary:
         assert runtime.device == "auto"
         assert runtime.compute_type == "int8"
 
+    def test_live_cuda_has_capacity_for_three_channel_segment_cadence(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("CIVICCAST_WHISPER_NUM_WORKERS", raising=False)
+
+        gpu = FasterWhisperRuntime(live=True, device="cuda", compute_type="float16")
+        cpu = FasterWhisperRuntime(live=True, device="cpu")
+        batch = FasterWhisperRuntime(live=False, device="cuda", compute_type="float16")
+
+        assert gpu.num_workers == runtime_module.LIVE_TAP_CUDA_NUM_WORKERS == 3
+        assert cpu.num_workers == 1
+        assert batch.num_workers == 1
+
     def test_batch_cpu_threads_raises_on_unparseable_env_value(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -380,13 +394,16 @@ class TestRuntimeBoundary:
         monkeypatch.delenv("CIVICCAST_WHISPER_DEVICE", raising=False)
         monkeypatch.delenv("CIVICCAST_WHISPER_COMPUTE_TYPE", raising=False)
         runtime = FasterWhisperRuntime(
-            model_size_or_path="tiny", device="cuda", compute_type="float16"
+            model_size_or_path="tiny", device="cuda", compute_type="float16", live=True
         )
 
         model = runtime._model_instance()
 
         assert model is not None
         assert [a.get("device") for a in attempts] == ["cuda", "cpu"]
+        assert attempts[0]["num_workers"] == 3
+        assert "num_workers" not in attempts[1]
+        assert runtime.num_workers == 1
         assert attempts[-1]["compute_type"] == "int8"
         assert runtime.device == "cpu"
         assert runtime.compute_type == "int8"

@@ -364,14 +364,13 @@ workflow is. Two things to know before relying on it for a real meeting:
 
 ### Live Captions, And When To Turn Them Off {#live-captions-switch}
 
-When live captions are on, CivicCast writes captions as the meeting happens —
-but it captions **one channel at a time**. On a station with more than one
-channel on air, the others are **paused, most of the time**, with no live
-captions showing and their audio discarded rather than saved up for later —
-this is not a brief wait, it is the normal state for every channel that
-isn't the one currently being captioned. It is useful, and it is hard work
-for the computer — hard enough that on a station without a suitable graphics
-card it can compete with the broadcast itself for the processor.
+When live captions are on, CivicCast writes captions as the meeting happens.
+On a supported CUDA graphics card it can transcribe up to three channels at
+the same time. On CPU-only stations it captions one channel at a time to keep
+playout responsive; additional channels may fall behind, pause captions, and
+discard stale audio rather than competing indefinitely with the broadcast.
+Live captioning is hard work for the computer, especially without a suitable
+graphics card.
 
 **The switch:** *Setup → Station Profile → **Show live captions on air***.
 It is **off** when the station is installed in this beta (see the known
@@ -933,10 +932,11 @@ station needs.
 - **`CIVICCAST_CAPTION_TAP_POLL_SECONDS`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`** — Live caption tap configuration.
 - **`CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`** — How many channels' ASR
-  calls may be in flight at the same time. Default: `1`, station-wide,
-  regardless of core count (item 79, 2026-09, tightened from a per-core-count
-  formula, max 3). A station with more channels ON_AIR than this bound will
-  have live captions paused on the others most of the time — see
+  calls may be in flight at the same time. Hardware-selected default: `1` on
+  CPU and up to `3` on CUDA, capped by the caption runtime's worker capacity.
+  The CPU default preserves playout priority; the CUDA default lets a
+  three-channel station process each five-second segment cycle concurrently.
+  An explicit value overrides this selection; see
   `docs/ops/background-workers.md`.
 - **`CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS`** — First pause after a
   channel falls behind (default 120, doubled from 60 as of item 79, 2026-09);
