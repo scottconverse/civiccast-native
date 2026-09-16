@@ -5,7 +5,10 @@
 Current branch: `fix/captions-cuda-three-channel-throughput`.
 Base `main`: `cc02cf11bf00685eff1c9c4cae5809a46ca05ed2`.
 Implementation and local-proof anchor: `17878682128490a8cfc5d11ea5e483cb482c6b9b`.
-Current PR: not opened yet.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/229.
+Initial pushed branch head: `f9c2a30256ca34e77dcfe877cfc92409462817b8`.
+This status update follows that head; use PR #229 for the live head and matching
+CI run IDs.
 Current published tag: `v1.0.0-beta.7` at source `3e117ff1fa9e06873ecec5b5b07f1360bc8b228d`.
 
 The published beta.7 installer is the captions-OFF release. Its Blackwell

@@ -14,6 +14,8 @@
 > executor is created, and lowers the preparation thread priority so playout
 > remains first. Implementation and local-proof anchor is
 > `17878682128490a8cfc5d11ea5e483cb482c6b9b`.
+> PR #229 is https://github.com/scottconverse/civiccast-native/pull/229; use
+> the PR for the live branch head and matching CI run IDs.
 >
 > Local verification: 365 relevant tests passed with one expected external
 > Postgres skip; Ruff, format, mypy, diff, and added-line ASCII checks passed.
