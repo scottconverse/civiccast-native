@@ -133,7 +133,7 @@ kill the scan.
 | `CIVICCAST_CAPTION_TAP_DIR` | unset | Tap root shared by the egress fork and the worker. Required when the mode is not `off`; setting it also enables the egress fork -- UNLESS the mode is explicitly `off`, which now suppresses the fork regardless of a configured (or stray leftover) dir. |
 | `CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS` | `5` | Segment length — the floor of the caption latency budget (tap → transcribe → stabilize → review queue). |
 | `CIVICCAST_CAPTION_TAP_POLL_SECONDS` | `2` | Worker scan interval. |
-| `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | `1`, station-wide | How many channels' ASR calls may be in flight **at the same time**. Item 79 (2026-09): tightened from a per-core-count formula (max 3) to a flat `1`, regardless of core count. See "Captions are best effort; playout wins" below for why this is knob hardening, not a standalone fix -- the tap already shares one model instance across channels. |
+| `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | hardware-selected: `1` CPU, up to `3` CUDA | How many channels' ASR calls may be in flight **at the same time**. CPU remains serialized so playout keeps the machine. CUDA follows the faster-whisper runtime's worker capacity (up to three) so the station's three five-second audio streams do not queue behind one another. An explicit value remains authoritative. |
 | `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` | `2` | Settled segments a channel may be behind before it counts as overloaded. |
 | `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS` | `120` | First pause after an overload; each consecutive overload doubles it. Item 79 (2026-09): doubled from `60` — a struggling station needs real recovery room before ASR is attempted again. |
 | `CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS` | `900` | Ceiling on that doubling. |
@@ -227,24 +227,16 @@ not.
 CivicCast therefore enforces an explicit ordering, and none of it is
 negotiable at runtime by the caption feature itself:
 
-- **ASR is bounded.** By default only **one** channel, station-wide, is
-  transcribed at a time — regardless of core count (item 79, 2026-09
-  tightened this from a per-core-count formula, max 3, to a flat 1) — with
-  1-2 CTranslate2 threads (core-count-aware, capped) and greedy decoding.
-  This is knob hardening on top of a design that already shares ONE speech
-  recognition model instance across every channel with CTranslate2's
-  `inter_threads=1`, so the old default of 3 never actually ran 3 concurrent
-  **inferences** — the model's own queue was already serializing the decode
-  step, even though VAD and feature extraction for different channels could
-  still overlap ahead of it.
-  Within a single scan, channels beyond the concurrency bound queue on the
-  worker pool rather than being dropped outright — but a station with more
-  channels ON_AIR than the bound will still spend most of a scan
-  transcribing one channel while the others' backlog grows, and once a
-  channel's settled backlog exceeds `..._MAX_BACKLOG_SEGMENTS` its audio IS
-  dropped by the overload path below, not queued indefinitely. In practice, a
-  3-channel station has live captions paused on most channels most of the
-  time.
+- **ASR is bounded.** CPU mode transcribes **one** channel at a time so caption
+  work cannot take the processor away from playout. CUDA mode allows up to
+  three channel transcriptions at once and configures the shared
+  faster-whisper/CTranslate2 runtime with the same worker capacity. This lets
+  a three-channel station process each five-second audio cycle concurrently
+  on a suitable GPU. Within a scan, channels beyond the selected concurrency
+  bound queue on the worker pool. If any channel's settled backlog exceeds
+  `..._MAX_BACKLOG_SEGMENTS`, its stale audio is dropped by the overload path
+  below rather than queued indefinitely. An explicit
+  `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` value remains authoritative.
 - **Overload backs off.** When a channel falls further behind than
   `..._MAX_BACKLOG_SEGMENTS`, its live captions are **paused** for an
   exponentially growing window (120s, 240s, 480s … capped at 15 minutes), its

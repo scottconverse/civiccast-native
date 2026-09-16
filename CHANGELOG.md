@@ -13,6 +13,15 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+### Live-caption GPU throughput (candidate gates outstanding)
+
+- Size the live faster-whisper runtime for three concurrent workers on CUDA
+  while retaining one worker on CPU. The native caption tap follows that
+  hardware capacity unless an operator explicitly overrides it, and drops
+  back to one channel after a CUDA model-load fallback. This addresses the
+  measured three-channel backlog in which three roughly 2.75-second GPU
+  transcriptions were serialized against a five-second segment cadence.
+
 ### Release harness corrections
 
 - Authenticate Gate A's caption and egress schema-discovery requests with the

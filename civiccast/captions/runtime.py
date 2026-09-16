@@ -127,10 +127,10 @@ LIVE_TAP_CPU_THREADS = 1
 #: Ceiling on :func:`default_live_tap_cpu_threads` -- item 79 (sandbox
 #: candidate 3b, MEASURED: 10 "Caption tap overload" events with a cluster of
 #: GStreamer worker stalls inside them, the same root cause as the tester's
-#: beta.4 soak). Paired with :func:`civiccast.captions.tap_worker.default_max_channel_workers`
-#: now being a flat 1 (one live-caption channel transcribes at a time,
-#: station-wide), the live tap's whole steady-state ASR budget stays at most
-#: this many CTranslate2 intra-op threads, on any box, however large.
+#: beta.4 soak). Paired with
+#: :func:`civiccast.captions.tap_worker.default_max_channel_workers` retaining
+#: a flat 1 on CPU, the CPU live tap's whole steady-state ASR budget stays at
+#: most this many CTranslate2 intra-op threads, on any box, however large.
 LIVE_TAP_CPU_THREADS_CEILING = 2
 
 #: How many CPUs one point of the live tap's ``cpu_threads`` ceiling is
@@ -151,6 +151,14 @@ _CPUS_PER_LIVE_TAP_CPU_THREAD = 8
 #: real live sizing, item 79) straight to the constructor, so this
 #: live-only variable never reaches it either way.
 CAPTION_TAP_CPU_THREADS_ENV_VAR = "CIVICCAST_CAPTION_TAP_CPU_THREADS"
+
+#: A three-channel station produces three new audio segments every segment
+#: interval.  A CUDA-backed live runtime therefore needs one CTranslate2
+#: worker per channel to keep those calls in flight together; serializing the
+#: three calls makes even a healthy 2.75-second GPU inference take about 8.25
+#: seconds of wall time against a 5-second segment cadence.  CPU live captions
+#: deliberately stay at one worker so playout keeps the machine.
+LIVE_TAP_CUDA_NUM_WORKERS = 3
 
 
 def default_live_tap_cpu_threads() -> int:
@@ -612,7 +620,7 @@ class FasterWhisperRuntime:
         device: str = "auto",
         compute_type: str = "int8",
         cpu_threads: int | None = None,
-        num_workers: int = 1,
+        num_workers: int | None = None,
         beam_size: int | None = None,
         language: str | None = None,
         task: str = "transcribe",
@@ -723,9 +731,10 @@ class FasterWhisperRuntime:
                 os.environ.get(CAPTION_TAP_CPU_THREADS_ENV_VAR, "<unset>"),
                 os.environ.get("CIVICCAST_WHISPER_CPU_THREADS", "<unset>"),
             )
+        default_num_workers = LIVE_TAP_CUDA_NUM_WORKERS if live and self.on_cuda() else 1
         self.num_workers = _env_int(
             "CIVICCAST_WHISPER_NUM_WORKERS",
-            num_workers,
+            default_num_workers if num_workers is None else num_workers,
             minimum=1,
         )
         # Beam search costs roughly its beam width in decoder passes. Beam 5
@@ -790,6 +799,18 @@ class FasterWhisperRuntime:
         for chunk in chunks:
             yield from self._transcribe_chunk(chunk, initial_prompt=initial_prompt)
 
+    def prepare(self) -> None:
+        """Resolve and load the model before a live multi-channel dispatch.
+
+        The live tap uses this once work is pending so a requested CUDA runtime
+        can complete its existing CUDA-to-CPU fallback before the tap chooses
+        an executor size. Without this seam, the first three-channel scan could
+        submit three calls and discover the fallback inside the first one,
+        leaving two already-submitted calls contending on the CPU.
+        """
+
+        self._model_instance()
+
     def _model_instance(self) -> Any:
         if self._model is None:
             with self._model_lock:
@@ -839,6 +860,14 @@ class FasterWhisperRuntime:
                         self.compute_type = "int8"
                         model_kwargs["device"] = "cpu"
                         model_kwargs["compute_type"] = "int8"
+                        if self._live:
+                            # CUDA live captions use three CTranslate2 workers
+                            # so the station's three channels can meet the
+                            # five-second segment cadence.  If CUDA loading
+                            # fails, do not carry that GPU concurrency onto the
+                            # CPU that is also running playout.
+                            self.num_workers = 1
+                            model_kwargs.pop("num_workers", None)
                         if self._live and "CIVICCAST_WHISPER_BEAM_SIZE" not in os.environ:
                             # A LIVE runtime that just landed on the CPU it was
                             # not sized for must also drop to the CPU beam
