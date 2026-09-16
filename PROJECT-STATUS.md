@@ -1,3 +1,33 @@
+> **2026-09-15 current: beta.7 is published for captions-OFF; the next
+> captions-ON repair is locally verified.** Published tag
+> `v1.0.0-beta.7` points to source
+> `3e117ff1fa9e06873ecec5b5b07f1360bc8b228d`; its installer SHA-256 is
+> `07fc5259514a3e98164869efbbd9c5bdfb7d83dfe6a96c61d15795c6ace77a97`.
+> Keep beta.7 live captions off. The Blackwell captions-ON run measured a
+> deterministic throughput overload: three approximately 2.75-second GPU
+> transcriptions were serialized against a five-second segment cadence.
+>
+> Branch `fix/captions-cuda-three-channel-throughput`, based on main
+> `cc02cf11bf00685eff1c9c4cae5809a46ca05ed2`, gives a live CUDA
+> faster-whisper runtime three workers while retaining one worker on CPU. It
+> resolves CUDA initialization or CPU fallback before the first multi-channel
+> executor is created, and lowers the preparation thread priority so playout
+> remains first. Implementation and local-proof anchor is
+> `17878682128490a8cfc5d11ea5e483cb482c6b9b`.
+>
+> Local verification: 365 relevant tests passed with one expected external
+> Postgres skip; Ruff, format, mypy, diff, and added-line ASCII checks passed.
+> Independent hostile review is PASS. This is source proof only. Required
+> sequence: PR CI and merge, exact-merge candidate build, candidate gates, and
+> a real Blackwell captions-ON run before accepting captions ON. Evidence is
+> under `.agent-runs/native-windows/beta8-caption-gpu-throughput/evidence/`.
+>
+> The unchanged-beta.7 30-minute diagnostic prompt is byte-verified on the USB
+> at `D:\RUN-THIS-BLACKWELL-BETA7-30MIN-CAPTIONS-ON.md`, SHA-256
+> `04644F50BB03AB535DB5CE9C2E83B5A1EE2AEAC52AEAFB241937B5E4702F43A0`.
+> It starts each channel once, then observes passively for all 1,800 monotonic
+> seconds. Older entries below are historical.
+>
 > **2026-09-13 current: `ad17971` beta.7 candidate rejected; two-phase
 > selector-handoff repair is locally verified.** Signed build run `34751773391`
 > produced installer SHA-256
