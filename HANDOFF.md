@@ -1,5 +1,19 @@
 # HANDOFF
 
+## 2026-09-15 current: beta.8 candidate identity after captions repair merge
+
+Current branch: `release/beta8-candidate-identity`.
+Base `main`: `b0f123957b414db19263138a5e8005992c14a954`.
+Merged repair: PR #229, three-channel CUDA live-caption throughput.
+Current published tag: `v1.0.0-beta.7` at source
+`3e117ff1fa9e06873ecec5b5b07f1360bc8b228d`.
+
+This branch advances the source, installer, API, operator display, and bundled
+manual identity to unpublished `v1.0.0-beta.8`. No beta.8 installer exists yet.
+After identity CI merges, build from the exact merge commit, run the required
+candidate gates, and use the Blackwell captions-ON test before accepting live
+captions.
+
 ## 2026-09-15 current: beta.7 published captions-off; captions-on GPU throughput repair
 
 Current branch: `fix/captions-cuda-three-channel-throughput`.

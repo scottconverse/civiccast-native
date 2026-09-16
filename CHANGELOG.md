@@ -13,6 +13,8 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+Candidate identity: `v1.0.0-beta.8` (unpublished).
+
 ### Live-caption GPU throughput (candidate gates outstanding)
 
 - Size the live faster-whisper runtime for three concurrent workers on CUDA

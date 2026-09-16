@@ -24,6 +24,10 @@ other repository. See
 the authored release-state record -- it is the single source of truth for
 which tag is current.
 
+`v1.0.0-beta.8` is the next candidate and the current owner-held unpublished
+candidate. It has no installer asset yet; install beta.7 from the release link
+above until beta.8 completes its candidate gates.
+
 `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first downloadable release) are
 now superseded.
 `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also superseded.
