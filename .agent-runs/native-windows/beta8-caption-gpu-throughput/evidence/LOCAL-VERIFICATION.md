@@ -72,6 +72,13 @@ check_release_identity: PASS - release identity is aligned for v1.0.0-beta.7.
 10 passed in 1.71s
 ```
 
+Tracked user-manual artifacts after the operator-guide update:
+
+```
+.\.venv\Scripts\python.exe scripts/render_user_manual.py --out-dir docs --check-current
+render_user_manual: PASS - tracked PDF and DOCX artifacts are current.
+```
+
 Independent hostile review: PASS after three concrete findings were corrected.
 The final review verified priority lowering before model preparation, CUDA-to-CPU
 fallback before executor creation, a tap-capacity drop from three to one, no more
@@ -92,6 +99,9 @@ captions-on run before captions-on release acceptance.
 - `docs/USER-MANUAL.md`: `61b34d54b8634fb28f58464a1cfcf57951062d43a63ac4c65bfdf92a62c2a9c6`
 - `docs/ops/background-workers.md`: `136060c20838c3c799b11cff5946513cf7d5fd21a30bde916dd94ecda97df533`
 - `CHANGELOG.md`: `6e69826f8717c14f92db05f44ad76adc2783a638dad3d4c72a9e3af654001ee9`
+- `docs/USER-MANUAL.pdf`: `dc577ccb007904ac782ee30f77f519a5c05d8396993c9bd757dfdc4fd3bc7ffa`
+- `docs/USER-MANUAL.docx`: `7fa13defe0adf5466295a22affd9dfabdb1046fce1dd98c7485f8ee39151d489`
+- `docs/USER-MANUAL.render.json`: `5b4e5a557a17ec547b8743d1ff86f65593822ed16cb3e6945ed6b7e68c088168`
 
 
 ## Pre-push 5-lens self-audit
