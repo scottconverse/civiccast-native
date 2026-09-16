@@ -428,6 +428,7 @@ class EgressDaemon:
         # construct a real ``SourcePreparer``) means GC alone reclaims stale
         # directories -- never a correctness issue, just slower cleanup.
         prepared_plan_release: Callable[[Path | None], None] | None = None,
+        channel_start_hook: Callable[[str], None] | None = None,
     ) -> None:
         self._store = store
         # Single injectable monotonic clock for all crash-relaunch timing (the
@@ -439,6 +440,7 @@ class EgressDaemon:
         self._ts_relay = ts_relay_supervisor
         self._hls_relay = hls_relay_supervisor
         self._command_failure_hook = command_failure_hook
+        self._channel_start_hook = channel_start_hook
         self._work_dir = work_dir
         self._source_plan_provider = source_plan_provider
         self._boundary_source_plan_provider = boundary_source_plan_provider
@@ -1112,6 +1114,8 @@ class EgressDaemon:
                 )
                 return
         if command.action == "start":
+            if self._channel_start_hook is not None:
+                self._channel_start_hook(command.channel_id)
             # An operator start is a fresh intent: the slate-EOS relaunch cap
             # (see _SLATE_EOS_RELAUNCH_MAX_CONSECUTIVE) starts over for it.
             self._slate_eos_relaunches.pop(command.channel_id, None)

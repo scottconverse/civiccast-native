@@ -192,6 +192,31 @@ def _command(action: str = "start") -> EgressCommand:
     )
 
 
+def test_start_command_runs_the_channel_session_hook_before_encoding(tmp_path: Path) -> None:
+    """A fresh channel start must reset session-scoped caption state."""
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    seen: list[str] = []
+    process = _FakeProcess()
+
+    def _on_start(channel_id: str) -> None:
+        seen.append(channel_id)
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: process,
+        channel_start_hook=_on_start,
+    )
+
+    assert daemon.process_once("gov") == 1
+
+    assert seen == ["gov"]
+
+
 def test_daemon_processes_start_command_and_records_success_health(tmp_path: Path) -> None:
     store = InMemoryEgressStore()
     store.upsert_config(_config())

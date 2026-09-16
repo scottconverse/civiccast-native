@@ -307,6 +307,41 @@ class TestCaptionTapWorker:
         assert second.consumed_segments == 0
         assert len(runtime.seen_chunks) == 1
 
+    def test_new_channel_session_starts_from_an_empty_sidecar(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A new live channel session must not inherit the prior session's cues.
+
+        The Blackwell short run started a fresh Public session while the
+        worker process stayed alive. The first thing the caption feed saw was
+        the 12 stale cues from the previous broadcast, and those cues stayed
+        visible until the overload path happened to clear them. A session
+        boundary is not a worker-construction boundary; the tap must blank the
+        active sidecar before it can publish anything for the new session.
+        """
+
+        tap_root = tmp_path / "tap"
+        stale = _active_vtt(tap_root, "government")
+        stale.parent.mkdir(parents=True)
+        stale.write_text(
+            "WEBVTT\n\nold\n00:00:00.000 --> 00:00:02.000\nstale caption\n",
+            encoding="utf-8",
+        )
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+        )
+        stale.write_text(
+            "WEBVTT\n\nold\n00:00:00.000 --> 00:00:01.000\nstale caption\n",
+            encoding="utf-8",
+        )
+
+        worker.begin_channel_session("government")
+
+        assert load_caption_cues_from_timed_text(stale, source_id="government") == []
+
     def test_multiple_channels_keep_separate_caption_streams(self, tmp_path: Path) -> None:
         tap_root = tmp_path / "tap"
         for channel in ("gov-ch12", "edu-ch20"):

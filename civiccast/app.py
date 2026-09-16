@@ -1286,7 +1286,13 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
 
     automation_settings = ChannelAutomationSettings.from_env()
     channel_automation = build_channel_automation(
-        session_factory, alert_evaluator_hook=_alert_evaluator_hook
+        session_factory,
+        alert_evaluator_hook=_alert_evaluator_hook,
+        channel_start_hook=lambda channel_id: (
+            getattr(app.state, "caption_tap_worker", None).begin_channel_session(channel_id)
+            if getattr(app.state, "caption_tap_worker", None) is not None
+            else None
+        ),
     )
     # RAT-004: the lifespan shutdown finally block drains this daemon (the
     # graceful drain-all owner) before background.stop() halts the poll loop.
