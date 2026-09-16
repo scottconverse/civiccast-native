@@ -61,6 +61,17 @@ git diff --check
 PASS (no output)
 ```
 
+Release identity policy after adding the missing dated beta.7 changelog
+section:
+
+```
+.\.venv\Scripts\python.exe scripts/policy/check_release_identity.py
+check_release_identity: PASS - release identity is aligned for v1.0.0-beta.7.
+
+.\.venv\Scripts\python.exe -m pytest tests/policy/test_release_identity.py -q
+10 passed in 1.71s
+```
+
 Independent hostile review: PASS after three concrete findings were corrected.
 The final review verified priority lowering before model preparation, CUDA-to-CPU
 fallback before executor creation, a tap-capacity drop from three to one, no more
@@ -80,7 +91,7 @@ captions-on run before captions-on release acceptance.
 - `tests/captions/test_caption_tap_worker.py`: `2da663e9c003b67e3e27d6345e464223d6a6a8e34c57ad588f2090a480b125a4`
 - `docs/USER-MANUAL.md`: `61b34d54b8634fb28f58464a1cfcf57951062d43a63ac4c65bfdf92a62c2a9c6`
 - `docs/ops/background-workers.md`: `136060c20838c3c799b11cff5946513cf7d5fd21a30bde916dd94ecda97df533`
-- `CHANGELOG.md`: `27167e72a0f2efa20992d3d7cc641d870e836b5d76b85f1d441adc84da1e8ba4`
+- `CHANGELOG.md`: `6e69826f8717c14f92db05f44ad76adc2783a638dad3d4c72a9e3af654001ee9`
 
 
 ## Pre-push 5-lens self-audit
