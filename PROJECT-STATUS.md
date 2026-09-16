@@ -1,5 +1,13 @@
-> **2026-09-15 current: beta.7 is published for captions-OFF; the next
-> captions-ON repair is locally verified.** Published tag
+> **2026-09-15 current: the captions-ON repair is merged; beta.8 candidate
+> identity and build are next.** Main is
+> `b0f123957b414db19263138a5e8005992c14a954`, which includes PR #229's
+> three-channel CUDA caption-throughput repair. Branch
+> `release/beta8-candidate-identity` advances the source and installer identity
+> to unpublished `v1.0.0-beta.8`; no beta.8 installer exists yet. Required
+> sequence: identity CI and merge, exact-merge signed build, candidate gates,
+> and the real Blackwell captions-ON run.
+>
+> beta.7 remains published for captions-OFF. Published tag
 > `v1.0.0-beta.7` points to source
 > `3e117ff1fa9e06873ecec5b5b07f1360bc8b228d`; its installer SHA-256 is
 > `07fc5259514a3e98164869efbbd9c5bdfb7d83dfe6a96c61d15795c6ace77a97`.

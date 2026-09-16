@@ -9,8 +9,8 @@
 > state a technical reviewer finds by checking out `main` today. See
 > [BRANCHES.md](BRANCHES.md) for release identity and status.
 >
-> `v1.0.0-beta.7` is the next candidate and the current owner-held
-> unpublished candidate; it does not change the beta.5 install story above.
+> `v1.0.0-beta.8` is the next candidate and the current owner-held
+> unpublished candidate; it does not change the beta.7 install story above.
 >
 > Treat the repository state as bounded source and local contract-lab proof,
 > not as approval of any withdrawn candidate or as broad validation across

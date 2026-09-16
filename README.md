@@ -39,6 +39,10 @@ for the authored release-state record,
 for the release's verification record (Gate A run, asset/hash/signature
 checks, the physical-machine soak, and the remaining acceptance boundary).
 
+`v1.0.0-beta.8` is the next candidate and the current owner-held unpublished candidate.
+It contains the merged three-channel CUDA caption-throughput repair;
+it has no published installer yet and does not change the beta.7 download above.
+
 The active local reliability repair addresses preparation blocking, reload
 acknowledgements, scheduled programme labels and caption-failure visibility.
 It also preserves reload-abort evidence, alerts on worker faults before recovery,
