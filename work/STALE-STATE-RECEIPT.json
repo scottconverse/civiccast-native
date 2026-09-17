@@ -1,0 +1,31 @@
+{
+  "purpose": "stale-state behaviour before/after the controlled recovery (handoff requirement)",
+  "mechanism_tested": "begin_channel_session discards the channel's leftover settled segments and blanks the sidecar at a genuine launch transition",
+  "before_recovery": {
+    "channel_state_at_start": "STOPPED (verified)",
+    "arrivals_before_enable": "ZERO datagrams from receiver start 06:11:44.835 until START 06:12:01.018",
+    "cue_count_at_start": "0",
+    "evidence": "work/accept8-20260917/run-timeline.jsonl + work/instrumented-harness/v2/accept8/arrival-index.jsonl"
+  },
+  "after_recovery": {
+    "cue_count_immediately_after": "0 at 06:16:15 (session reset -> sidecar blank)",
+    "first_post_recovery_cue": {
+      "at": "2026-09-17T06:16:27.835427",
+      "event": "FIRST-POST-RECOVERY-CUE-PRESERVED",
+      "cues": 1
+    },
+    "cue_growth": "0 -> 9 by 06:18:22, within-capacity throughout",
+    "evidence": "work/accept8-20260917/VTT-first-post-recovery.vtt + VTT-latest.vtt + run-timeline.jsonl"
+  },
+  "no_stale_carryover": "the post-recovery session began at 0 cues, and the preserved first cue is NEW program speech whose text MATCHES decoded post-recovery output (work/instrumented-harness/v2/accept8/first-cue-correspondence.json). No cue from the pre-recovery session persisted.",
+  "unit_level": {
+    "test": "test_stale_session_publish_cannot_restore_the_previous_broadcast",
+    "red": "fails at assertion with the generation guard removed",
+    "green": "passes with the generation-stamped publish"
+  },
+  "second_unit": {
+    "test": "test_new_session_discards_leftover_segments_instead_of_overloading",
+    "red": "leftover chunk survived and caused a start-up overload",
+    "green": "leftover segments discarded at session start"
+  }
+}

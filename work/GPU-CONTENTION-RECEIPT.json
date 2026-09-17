@@ -1,0 +1,19 @@
+{
+  "at": "2026-09-17T07:05:12.898433",
+  "purpose": "GPU contention observed during the captions-ON validation, reported as observed",
+  "host": "NVIDIA RTX 5070 Ti, 16303 MiB (from earlier runs)",
+  "observed_now": {
+    "utilization_gpu_percent": "1 %",
+    "memory_used_mib": "3892 MiB",
+    "memory_total_mib": "16303 MiB",
+    "temperature_c": "47"
+  },
+  "during_accept8": "accept8 ran with the weather program ON_AIR and captions producing continuously; NO overload occurred (see run-timeline.jsonl).",
+  "external_workloads": "Concurrent external GPU workloads (Fortnite/Epic) were present earlier in the task and were NOT terminated to make captions pass. The live runs succeeded with concurrent load present.",
+  "global_kill_of_gpu_workloads": false,
+  "per_process_attribution": "nvidia-smi could not attribute per-process GPU memory to python on this host (insufficient permissions); the loaded-model line is the ASR-execution evidence.",
+  "evidence_pointers": [
+    "work/accept-20260917/gpu-contention-observations.json (earlier run)",
+    "work/accept9-gpu/final-resolved-runtime-identity.json (loaded_model=cuda)"
+  ]
+}

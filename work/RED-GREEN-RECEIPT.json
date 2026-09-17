@@ -1,0 +1,30 @@
+{
+  "at": "2026-09-17T07:04:51.129041",
+  "purpose": "failing-before / passing-after for the ORIGINAL four fixes",
+  "true_candidate_baseline": "41ec3dda (verified to lack live mode, live stabilizer wiring, PTS rebase bound, begin_channel_session)",
+  "red": {
+    "tree": "isolated worktree cc-candidate-41e at 41ec3dda",
+    "method": "regression tests copied in; product source UNTOUCHED",
+    "result": "6 failed, 0 passed",
+    "failed_tests": [
+      "test_live_confirmation_commits_reworded_continuous_speech",
+      "test_live_confirmation_still_resets_on_a_correction",
+      "test_live_confirmation_never_commits_a_lone_uncorroborated_cue",
+      "test_varying_live_asr_text_still_reaches_the_active_sidecar",
+      "test_live_caption_pts_rebases_an_absolute_program_clock_cue_to_the_live_edge",
+      "test_start_command_runs_the_channel_session_hook_before_encoding"
+    ],
+    "example_error": "TypeError: CaptionStabilizer.__init__() got an unexpected keyword argument 'live' (daemon test: unexpected keyword 'channel_start_hook')"
+  },
+  "green": {
+    "tree": "isolated worktree cc-fix-6c668ff5 at 6c668ff5",
+    "result": "5 passed (the 6th, the daemon hook test, passes at 71096432/HEAD where the hook is wired)"
+  },
+  "later_defects": {
+    "note": "the FOUR post-review defects (retention path, fail-closed verdict, shutdown, tiny-overlap) have their own isolated RED/GREEN recorded in their commits; tiny-overlap RED/GREEN and the duplicate-START RED were re-verified in worktree cc-prefix-2a34d0e3 and by reverting the fix respectively"
+  },
+  "fix_commits": {
+    "original_four": "71096432 + 6c668ff5",
+    "note": "live mode + wiring + PTS rebase + session hook"
+  }
+}
