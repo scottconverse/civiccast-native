@@ -1,3 +1,7 @@
+> **SUPERSEDED 2026-09-17.** v7 was over-narrow: it reported BLOCKED because
+> accept3 lacked startup/recovery coverage. accept6 subsequently met the
+> acceptance path (see work/BLACKWELL-CAPTION-FIX-REPORT-v8.md). Retained for history.
+
 # Blackwell beta.8 caption-runtime fix - human report v7 (2026-09-17)
 
 Author: implementation coder (Codex), for Scott Converse.
