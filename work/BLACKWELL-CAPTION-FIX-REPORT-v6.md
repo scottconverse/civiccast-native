@@ -13,7 +13,8 @@ product defect.
 
 ## The decisive correction
 
-- work/accept3-20260917/decodeback-full.srt (817 bytes, written 21:01:08 MT) holds
+- The preserved tracked decode-back work/accept3-20260917/decodeback-full.srt
+  (CURRENT: 816 bytes, sha256 147dc290c0d1da236179830c1b70d67f3f9fe9766ce0cb94c77b000da2f8e12f) holds
   7 numbered SRT entries with real text, e.g. entry 1:
   "from I think 72% up to 75% for precipitation so a little uptick".
 - I re-ran the exact decode myself and reproduced all 7 entries.
@@ -30,7 +31,9 @@ product defect.
 - a fresh cue already existed at 20:58:44 (cue-003113, real weather text)
 - cue count grew 1 -> 5 between 20:58:52 and 20:59:38 - INSIDE the window
 - sidecar cleared at 20:59:51, AFTER those cues
-- decode-back written 21:01:08, after the capture ended
+- decode-back ORIGINALLY created 21:01:07 MT (file creation time), after the capture
+  ended; the tracked file was later normalized to strip one trailing blank line,
+  so its current mtime/bytes/hash are as stated above and its content is unchanged
 
 ## Capture identity (exact)
 
@@ -38,7 +41,8 @@ product defect.
 - bytes: 11269472
 - sha256: a13e130c37a8612d6351e137297b9f8b695f6048ac1f7399d692caa0d4e7be56
 - decode-back entries: 7
-- decode-back file: work/accept3-20260917/decodeback-full.srt (sha256 91cefb58d6b06e95c2f0ca2d479f8aee9aff32e18fe8374222dbeaec87f7a6ad)
+- decode-back file: work/accept3-20260917/decodeback-full.srt
+  (CURRENT: 816 bytes, sha256 147dc290c0d1da236179830c1b70d67f3f9fe9766ce0cb94c77b000da2f8e12f)
 
 ## Retracted root cause (BOM)
 
@@ -66,7 +70,8 @@ a selected subset and is retracted.
 
 - four fixed modules staged into the installed runtime BEFORE a supervisor
   restart (PID 34716 -> 6696); installed hashes equal branch source.
-- receipt: work/accept-20260917/loaded-process-identity.json
+- receipt: work/accept-20260917/loaded-process-identity.json (canonical; an identical
+  copy also exists at work/accept2-20260917/loaded-process-identity.json)
 - caption runtime resolved to CUDA / float16 on this host.
 
 ## Gate status
@@ -74,7 +79,7 @@ a selected subset and is retracted.
 - ruff check / ruff format --check: clean
 - git diff --check 41ec3dda..HEAD: clean
 - focused suite: 632 passed, 7 skipped
-- branch: 8 DCO-signed commits after 41ec3dda (v5 said 7 - corrected)
+- branch: 9 DCO-signed commits after 41ec3dda (git rev-list --count 41ec3dda..HEAD == 9; all 9 carry Signed-off-by). v5 said 7 and my earlier v6 said 8 - both corrected.
 - no PR / merge / tag / publish
 
 ## Proof boundary (do not overclaim)
@@ -92,5 +97,5 @@ wrong and are superseded here.
 - work/accept3-20260917/validation-result.json    run record; capture path/size/hash
 - work/accept3-20260917/cue-timeline.jsonl        cue count vs time (overlap proof)
 - work/accept3-20260917/active.vtt                sidecar snapshot
-- work/accept-20260917/loaded-process-identity.json  restart/hash receipt
+- work/accept-20260917/loaded-process-identity.json  restart/hash receipt (canonical path)
 - work/accept3-20260917/capture.ts                binary TS kept on local disk per CONTRIBUTING.md
