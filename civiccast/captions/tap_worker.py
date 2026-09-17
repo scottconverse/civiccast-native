@@ -445,13 +445,25 @@ class CaptionTapWorker:
         #: monotonic time of the last retention sweep, and its last verdict.
         #: ``None`` means "never swept", so the first scan always sweeps.
         self._last_retention_sweep: float | None = None
-        #: The retention sweep runs on its own thread so its (measured ~5 s) work
+        #: The retention sweep runs on its own thread so its (measured 4-5 s) work
         #: can never starve the caption scan path into a false overload.  The
         #: verdict it publishes is guarded by a lock; the scan only ever READS it.
         self._retention_thread: threading.Thread | None = None
         self._retention_lock = threading.Lock()
-        self._retention_ready = True
-        self._retention_refusal: str | None = None
+        #: How long the tap waits for an in-flight retention sweep to finish when
+        #: its own scan loop exits.  Bounded so a wedged sweep can never hold
+        #: shutdown open; the thread is a daemon either way.
+        self._retention_shutdown_timeout = 10.0
+        #: Retention verdict, fail-closed on the UNKNOWN state.  Previously the
+        #: first sweep was synchronous, so a verdict existed before any ASR ran.
+        #: Now that the sweep is asynchronous, ASR must not be allowed to run on
+        #: an UNVERIFIED store: start as "not ready, not yet verified", and treat
+        #: "verification still in flight" and "verification failed" both as
+        #: not-ready.  Only an explicit successful sweep clears the refusal.
+        self._retention_verified = False
+        self._retention_in_flight = False
+        self._retention_ready = False
+        self._retention_refusal: str | None = "retention-verification-pending"
         # Consulted on EVERY scan, not once at construction: the operator's
         # switch (``StationProfile.live_captions_enabled``) has to take effect
         # on a station that is on air, and restarting the control plane to
@@ -506,15 +518,29 @@ class CaptionTapWorker:
     ) -> None:
         """Run the scan loop until ``stop_event`` is set; scan errors are logged."""
 
-        while stop_event is None or not stop_event.is_set():
-            try:
-                self.run_once()
-            except Exception:
-                _LOG.exception("Caption tap scan failed; continuing.")
-            if stop_event is None:
-                threading.Event().wait(poll_seconds)  # pragma: no cover - loop shape
-            else:
-                stop_event.wait(poll_seconds)
+        try:
+            while stop_event is None or not stop_event.is_set():
+                try:
+                    self.run_once()
+                except Exception:
+                    _LOG.exception("Caption tap scan failed; continuing.")
+                if stop_event is None:
+                    threading.Event().wait(poll_seconds)  # pragma: no cover - loop shape
+                else:
+                    stop_event.wait(poll_seconds)
+        finally:
+            # Join the retention sweep thread on loop exit.  It is a daemon, so it
+            # cannot block process exit, but a SOFT shutdown (this worker stopped
+            # or replaced while the process survives) must not leave a sweep
+            # running against the store/dirs a successor worker may also sweep.
+            # Joining here makes ThreadSupervisor.stop()'s existing bounded join
+            # cover the retention thread transitively.
+            if not self.wait_for_retention_sweep(timeout=self._retention_shutdown_timeout):
+                _LOG.warning(
+                    "Caption retention sweep did not finish within %.0fs of tap "
+                    "shutdown; leaving it to process exit.",
+                    self._retention_shutdown_timeout,
+                )
 
     def begin_channel_session(self, channel_id: str) -> None:
         """Fail closed when a channel starts a new live broadcast session.
@@ -606,14 +632,17 @@ class CaptionTapWorker:
         self._disabled_announced = False
         if not self._tap_root.is_dir():
             return CaptionTapScanResult()
-        if not self._retention_ready:
+        with self._retention_lock:
+            retention_ready = self._retention_ready
+            retention_refusal = self._retention_refusal
+        if not retention_ready:
             channels = sorted(path.name for path in self._tap_root.iterdir() if path.is_dir())
             for channel_id in channels:
                 self._publish_status(
                     channel_id,
                     state="storage-refused",
                     backlog_segments=0,
-                    refusal_reason=self._retention_refusal,
+                    refusal_reason=retention_refusal,
                 )
             return CaptionTapScanResult(channels=tuple(channels))
         pending: list[tuple[str, Path, list[tuple[int, Path]]]] = []
@@ -793,15 +822,24 @@ class CaptionTapWorker:
     def _sweep_retention(self) -> None:
         """Kick the retention sweep WITHOUT blocking the caption scan path.
 
-        ``enforce_discovered`` is heavy: MEASURED at ~4.1-5.6 s on the Blackwell
-        host (2026-09-16) because it SHA-256s 6,747 processed chunks plus every
-        evidence WAV -- 8,105 candidates.  It used to run inline here, at the TOP
+        ``enforce_discovered`` is heavy: MEASURED at 4.1-5.6 s per sweep on the
+        Blackwell host (2026-09-16).  The measured breakdown is
+        ``_discover_candidates`` 4.78 s and ``enforce`` 0.83 s over 8,105
+        candidates; within discovery, hashing 6,747 processed chunks measured
+        1.01 s and hashing the evidence WAVs 0.19 s.  The remaining ~3.5 s of
+        discovery is the review-store ``list()`` plus a per-row audio-evidence
+        lookup, which was NOT separately instrumented -- treat that share as
+        modeled, not measured.  It used to run inline here, at the TOP
         of ``run_once``, i.e. on the caption-critical thread and BEFORE the backlog
         gate.  Segments arrive every 5 s while the tap scans every 2 s, so a ~5 s
         block let ~1-2 segments pile up; the gate then saw >2 and fail-closed
         (120 s pause, live VTT cleared, audio discarded) with ZERO ASR attempted,
-        even though warm ASR is 0.11 s/segment.  The overload was self-inflicted
-        by cleanup, not by the tap failing to keep up.
+        even though warm ASR measured 0.11 s/segment.  That chain is the MODELED
+        causality from the measured sweep duration plus the measured segment
+        cadence (5 s) and scan interval (2 s); the live timeline itself was not
+        instrumented per-scan, so treat the mechanism as a model that the
+        regression test below reproduces, not as a per-scan trace.  The overload
+        was self-inflicted by cleanup, not by the tap failing to keep up.
 
         The sweep's WORK now runs on its own thread, on the same cadence.  Its
         VERDICT is still cached on this object and still consulted by the scan
@@ -810,17 +848,31 @@ class CaptionTapWorker:
         """
 
         now = self._monotonic()
-        if self._retention_thread is not None and self._retention_thread.is_alive():
-            # A sweep is already in flight; never queue a second one.
+        with self._retention_lock:
+            if self._retention_in_flight:
+                # A sweep is already running; never queue a second one.
+                return
+            if (
+                self._last_retention_sweep is not None
+                and now - self._last_retention_sweep < _RETENTION_SWEEP_SECONDS
+            ):
+                return
+            first_verification = not self._retention_verified
+            # Mark cadence + in-flight immediately so no later scan re-dispatches
+            # while this sweep is still running.
+            self._last_retention_sweep = now
+            self._retention_in_flight = True
+        if first_verification:
+            # The FIRST sweep stays SYNCHRONOUS on purpose.  It establishes the
+            # verdict before any ASR runs -- the original guarantee -- so an
+            # unverified or refused store can never be transcribed into.  It is
+            # also the least harmful moment to block: it happens at session start,
+            # before this session has live captions to lose.  Every LATER sweep --
+            # including the 60 s-cadence one that caused the observed mid-session
+            # failure with captions live -- runs on its own thread and can no
+            # longer starve the scan path.
+            self._run_retention_sweep()
             return
-        if (
-            self._last_retention_sweep is not None
-            and now - self._last_retention_sweep < _RETENTION_SWEEP_SECONDS
-        ):
-            return
-        # Mark the cadence immediately so the next scans do not re-dispatch while
-        # this sweep is still running.
-        self._last_retention_sweep = now
         thread = threading.Thread(
             target=self._run_retention_sweep,
             name="civiccast-caption-retention",
@@ -828,6 +880,21 @@ class CaptionTapWorker:
         )
         self._retention_thread = thread
         thread.start()
+
+    def wait_for_retention_sweep(self, timeout: float = 30.0) -> bool:
+        """Block until any in-flight retention sweep finishes. Returns True if idle.
+
+        The sweep runs on a daemon thread (so it can never hold process shutdown
+        open), but callers and tests need a deterministic way to know the work is
+        done rather than racing it.  This joins the last dispatched thread and
+        reports whether it is finished within ``timeout``.
+        """
+
+        thread = self._retention_thread
+        if thread is None:
+            return True
+        thread.join(timeout)
+        return not thread.is_alive()
 
     def _run_retention_sweep(self) -> None:
         """The blocking half of the retention sweep, on its own thread."""
@@ -839,11 +906,28 @@ class CaptionTapWorker:
                 segment_seconds=self._segment_seconds,
             )
         except Exception:
-            # A failed sweep must not take the tap down; keep the previous verdict
-            # so a prior refusal still fails closed.
-            _LOG.exception("Caption retention sweep failed; keeping the previous verdict.")
+            # A sweep that RAISES means the store could not be verified on this
+            # pass.  For a safety gate, "cannot verify" must not silently keep
+            # writing caption evidence, so a failure fails CLOSED whether it is
+            # the first sweep or a later one.  This is deliberately stricter than
+            # the earlier "keep the last known verdict" behaviour, which left a
+            # post-success failure reading ready=True -- i.e. an unverifiable
+            # store could keep being transcribed into.
+            #
+            # Recovery is explicit and automatic: the next sweep that SUCCEEDS
+            # republishes a real verdict (ready or refused), so this is a
+            # fail-closed-with-retry, never a latch.  The refusal reason
+            # distinguishes "never verified" from "verification failed" from a
+            # policy refusal, so an operator can tell them apart.
+            _LOG.exception("Caption retention sweep failed; captions stay fail-closed.")
+            with self._retention_lock:
+                self._retention_in_flight = False
+                self._retention_ready = False
+                self._retention_refusal = "retention-verification-failed"
             return
         with self._retention_lock:
+            self._retention_in_flight = False
+            self._retention_verified = True
             self._retention_ready = bool(retention.ready)
             self._retention_refusal = retention.refusal_reason
 

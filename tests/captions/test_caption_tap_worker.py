@@ -173,12 +173,50 @@ class _SlowRetentionPolicy:
         self.calls = 0
         self.ready = True
         self.refusal_reason: str | None = None
+        #: Signals that a sweep has ENTERED the blocking section, so a test can
+        #: land the next segment deterministically instead of sleeping and hoping.
+        self.entered = threading.Event()
 
     def enforce_discovered(self, *, tap_root, review_store, segment_seconds):  # type: ignore[no-untyped-def]
         self.calls += 1
+        self.entered.set()
         if self.delay_seconds:
             threading.Event().wait(self.delay_seconds)
         return SimpleNamespace(ready=self.ready, refusal_reason=self.refusal_reason)
+
+
+class _ScriptedRetentionPolicy:
+    """Retention policy with scripted per-call outcomes for state testing.
+
+    Each entry is one of: "ok" (ready), "refused" (ready=False with a reason),
+    an Exception instance to raise, or ANOTHER policy OBJECT to delegate to.
+    Lets a test drive the initial-refusal, first-failure, later-failure and
+    recovery paths deterministically, and compose with a slow policy so an async
+    sweep can be observed while it is genuinely in flight.
+    """
+
+    def __init__(self, outcomes) -> None:  # type: ignore[no-untyped-def]
+        self.outcomes = list(outcomes)
+        self.calls = 0
+
+    def enforce_discovered(self, *, tap_root, review_store, segment_seconds):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        outcome = self.outcomes[min(self.calls - 1, len(self.outcomes) - 1)]
+        if isinstance(outcome, Exception):
+            raise outcome
+        if outcome == "refused":
+            return SimpleNamespace(ready=False, refusal_reason="scripted-refusal")
+        if outcome == "ok":
+            return SimpleNamespace(ready=True, refusal_reason=None)
+        # A nested policy object: delegate, so e.g. a SLOW policy actually blocks
+        # and the sweep can be observed mid-flight.  Returning an "ok" namespace
+        # here would silently swallow it (a real bug in an earlier version of this
+        # double, which made a shutdown test pass without exercising anything).
+        return outcome.enforce_discovered(
+            tap_root=tap_root,
+            review_store=review_store,
+            segment_seconds=segment_seconds,
+        )
 
 
 class _VaryingLiveRuntime:
@@ -486,21 +524,21 @@ class TestCaptionTapWorker:
     def test_retention_cleanup_latency_does_not_cause_a_false_overload(
         self, tmp_path: Path
     ) -> None:
-        """Cleanup latency must not manufacture the backlog that trips the gate.
+        """A MID-SESSION cleanup sweep must not manufacture a false overload.
 
-        Isolates the MEASURED field defect (Blackwell 2026-09-16) without touching
-        the max-2 contract:
+        Isolates the measured field defect (Blackwell 2026-09-16, 89 s after
+        ON_AIR) without touching the max-2 contract:
 
-          - the operator threshold stays max_backlog_segments=2, unchanged
-          - a backlog of 2 at gate time is perfectly legal and must NOT overload
-          - the defect is that cleanup ran ~5 s inline BEFORE the gate, so a third
-            segment arrived DURING cleanup and tipped a legal backlog over the line
-            -- fail-closing on a backlog cleanup itself created
+          - max_backlog_segments stays 2; a backlog of 2 at gate time is legal
+          - the FIRST sweep is synchronous by design (it establishes the retention
+            verdict before any ASR -- the original safety guarantee), so the
+            dangerous sweep is a LATER one, on the 60 s cadence, with captions
+            already live.  The defect was that a later sweep also ran inline and
+            blocked ~5 s, so a third segment arrived during cleanup and tipped a
+            legal backlog over the line.
 
-        So this test starts with a legal 2-segment backlog, makes cleanup slow, and
-        has a third segment LAND WHILE CLEANUP RUNS.  If cleanup is off the scan
-        path, the scan proceeds with what it can see and the legal pass is not
-        punished by maintenance work it had no control over.
+        Models that: sweep once (synchronous, establishing the verdict), then make
+        the NEXT sweep slow and land a third segment while it would be running.
         """
 
         tap_root = tmp_path / "tap"
@@ -508,6 +546,7 @@ class TestCaptionTapWorker:
         (tap_root / channel).mkdir(parents=True)
         store = InMemoryCaptionReviewStore()
         slow = _SlowRetentionPolicy(delay_seconds=5.0)  # > 2 scan intervals
+        clock = _FakeClock()
 
         worker = CaptionTapWorker(
             tap_root=tap_root,
@@ -517,9 +556,18 @@ class TestCaptionTapWorker:
             segment_seconds=5.0,
             atomic_segments=True,
             retention_policy=slow,
+            monotonic=clock,
         )
 
-        # A live cue is on air when cleanup begins.
+        # First scan: the verdict is established before any ASR (whatever the
+        # implementation, this must hold).  Assert the OBSERVABLE consequence --
+        # one sweep ran and the store was accepted -- not a new internal flag, so
+        # this regression stays behavioural and can run against older code.
+        _write_wav(tap_root / channel / "chunk-000000.wav", seconds=5.0)
+        worker.run_once()
+        assert slow.calls == 1, "the first scan must verify retention before ASR"
+
+        # A live cue is on air now.
         worker._publisher_for(channel).publish(
             [
                 CaptionCue(
@@ -534,29 +582,36 @@ class TestCaptionTapWorker:
         )
         sidecar = _active_vtt(tap_root, channel)
 
-        # A LEGAL backlog (== the threshold, not over it).
-        _write_wav(tap_root / channel / "chunk-000000.wav", seconds=5.0)
+        # Advance past the sweep cadence so the NEXT scan re-sweeps -- and that
+        # sweep is slow.  A legal 2-segment backlog exists when it starts.
+        clock.advance(61.0)
         _write_wav(tap_root / channel / "chunk-000001.wav", seconds=5.0)
+        _write_wav(tap_root / channel / "chunk-000002.wav", seconds=5.0)
 
-        # A third segment arrives WHILE the slow cleanup would be running.  With
-        # cleanup inline this tips the count to 3 and fails closed; with cleanup on
-        # its own thread it cannot punish the caption pass.
+        # A third segment lands WHILE the slow mid-session sweep is running.
+        # Synchronized on the sweep's own "entered" event, not a sleep, so this is
+        # deterministic on a slow CI box.
         def _land_third() -> None:
-            threading.Event().wait(0.2)
-            _write_wav(tap_root / channel / "chunk-000002.wav", seconds=5.0)
+            slow.entered.wait(timeout=10.0)
+            _write_wav(tap_root / channel / "chunk-000003.wav", seconds=5.0)
 
+        slow.entered.clear()
         lander = threading.Thread(target=_land_third, daemon=True)
         lander.start()
         result = worker.run_once()
-        lander.join(timeout=5.0)
+        lander.join(timeout=10.0)
+        # Do not leak the sweep thread past the test: join it deterministically.
+        assert worker.wait_for_retention_sweep(timeout=15.0), (
+            "retention sweep thread did not finish; it would leak into other tests"
+        )
 
         assert result.dropped_overload_segments == 0, (
-            "cleanup latency manufactured a fail-closed overload"
+            "a mid-session cleanup sweep manufactured a fail-closed overload"
         )
         assert "public" not in result.overloaded_channels
         assert "public" not in result.paused_channels
         text = sidecar.read_text(encoding="utf-8")
-        assert text.strip() != "WEBVTT", "cleanup latency cleared the live captions"
+        assert text.strip() != "WEBVTT", "a mid-session cleanup sweep cleared live captions"
 
     def test_real_overload_still_fails_closed_when_cleanup_is_off_path(
         self, tmp_path: Path
@@ -603,6 +658,160 @@ class TestCaptionTapWorker:
         status = json.loads(status_path.read_text(encoding="utf-8"))
         assert status["state"] == "paused"
         assert status["resume_in_seconds"] > 0
+
+    def _retention_worker(self, tap_root: Path, policy: object, clock: object):
+        return CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=5.0,
+            atomic_segments=True,
+            retention_policy=policy,  # type: ignore[arg-type]
+            monotonic=clock,  # type: ignore[arg-type]
+        )
+
+    def test_initial_retention_refusal_blocks_asr_before_any_verdict(self, tmp_path: Path) -> None:
+        """An UNVERIFIED/refusing store must not be transcribed into.
+
+        The sweep used to be synchronous, so a verdict existed before ASR.  Now
+        that later sweeps are async, the initial state must still fail closed: a
+        first sweep that refuses must stop ASR entirely and report
+        ``storage-refused``, never silently transcribe.
+        """
+
+        tap_root = tmp_path / "tap"
+        (tap_root / "public").mkdir(parents=True)
+        _write_wav(tap_root / "public" / "chunk-000000.wav", seconds=5.0)
+        worker = self._retention_worker(
+            tap_root, _ScriptedRetentionPolicy(["refused"]), _FakeClock()
+        )
+
+        result = worker.run_once()
+
+        assert result.consumed_segments == 0
+        assert worker._retention_ready is False
+        assert worker._retention_refusal == "scripted-refusal"
+
+    def test_failed_first_sweep_fails_closed_not_open(self, tmp_path: Path) -> None:
+        """A sweep that RAISES must leave the store unverified, not 'ready'.
+
+        The dangerous default would be to treat an exception as permission to
+        transcribe.  A store we could not verify is not a store we may write
+        caption evidence into.
+        """
+
+        tap_root = tmp_path / "tap"
+        (tap_root / "public").mkdir(parents=True)
+        _write_wav(tap_root / "public" / "chunk-000000.wav", seconds=5.0)
+        worker = self._retention_worker(
+            tap_root, _ScriptedRetentionPolicy([RuntimeError("sweep boom")]), _FakeClock()
+        )
+
+        result = worker.run_once()
+
+        assert result.consumed_segments == 0
+        assert worker._retention_ready is False
+        assert worker._retention_refusal == "retention-verification-failed"
+
+    def test_later_sweep_failure_also_fails_closed_then_recovers(self, tmp_path: Path) -> None:
+        """After a SUCCESSFUL sweep, a later failure must still fail closed.
+
+        Accuracy check on the exception policy: an earlier implementation only
+        failed closed when ``not _retention_verified``, so a post-success failure
+        left ready=True and an unverifiable store kept being transcribed into.
+        The intended policy is fail-closed on ANY sweep failure, with explicit
+        recovery on the next SUCCESSFUL sweep (a fail-closed-with-retry, not a
+        latch).
+        """
+
+        tap_root = tmp_path / "tap"
+        (tap_root / "public").mkdir(parents=True)
+        clock = _FakeClock()
+        policy = _ScriptedRetentionPolicy(["ok", RuntimeError("later boom"), "ok"])
+        worker = self._retention_worker(tap_root, policy, clock)
+
+        # Sweep 1 succeeds -> verified + ready.
+        _write_wav(tap_root / "public" / "chunk-000000.wav", seconds=5.0)
+        worker.run_once()
+        assert policy.calls == 1
+        assert worker._retention_ready is True
+
+        # Sweep 2 (later) fails -> must FAIL CLOSED even though it was verified.
+        clock.advance(61.0)
+        _write_wav(tap_root / "public" / "chunk-000001.wav", seconds=5.0)
+        worker.run_once()
+        assert policy.calls == 2
+        assert worker.wait_for_retention_sweep(timeout=10.0)
+        assert worker._retention_ready is False, (
+            "a later sweep failure kept ready=True; an unverifiable store would "
+            "keep being transcribed into"
+        )
+        assert worker._retention_refusal == "retention-verification-failed"
+
+        # Sweep 3 succeeds again -> recovery (not a latch).
+        clock.advance(61.0)
+        _write_wav(tap_root / "public" / "chunk-000002.wav", seconds=5.0)
+        worker.run_once()
+        assert worker.wait_for_retention_sweep(timeout=10.0)
+        assert worker._retention_ready is True, "a successful sweep must clear the failure"
+
+    def test_run_forever_waits_for_the_retention_sweep_before_returning(
+        self, tmp_path: Path
+    ) -> None:
+        """run_forever must itself wait for an in-flight sweep before returning.
+
+        A soft shutdown (worker stopped/replaced while the process survives) must
+        not return while a sweep is still running against dirs a successor worker
+        may also sweep.
+
+        The discriminator is measured AT LOOP RETURN with no further joining: the
+        sweep is deliberately long enough (2 s) that it cannot finish during the
+        loop's own poll wait, so it is only complete on return if run_forever
+        waited for it.  Joining it in the test afterwards would mask the bug --
+        that is exactly what an earlier version of this test did.
+        """
+
+        tap_root = tmp_path / "tap"
+        (tap_root / "public").mkdir(parents=True)
+        _write_wav(tap_root / "public" / "chunk-000000.wav", seconds=5.0)
+        clock = _FakeClock()
+        slow = _SlowRetentionPolicy(delay_seconds=2.0)
+        policy = _ScriptedRetentionPolicy(["ok", slow])
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=5.0,
+            atomic_segments=True,
+            retention_policy=policy,  # type: ignore[arg-type]
+            monotonic=clock,
+        )
+        worker.run_once()  # synchronous first verification
+
+        stop = threading.Event()
+        clock.advance(61.0)  # next scan re-sweeps
+        loop = threading.Thread(
+            target=worker.run_forever,
+            kwargs={"poll_seconds": 0.05, "stop_event": stop},
+            daemon=True,
+        )
+        loop.start()
+        # Wait until the slow async sweep has actually STARTED.
+        assert slow.entered.wait(timeout=10.0), "async sweep never started"
+        stop.set()
+        loop.join(timeout=20.0)
+        assert not loop.is_alive(), "run_forever did not exit on stop_event"
+
+        # THE assertion: at loop return, with no further joining by the test, the
+        # sweep must already be finished.
+        thread = worker._retention_thread
+        assert thread is not None
+        assert not thread.is_alive(), (
+            "run_forever returned while the retention sweep was still running; a "
+            "successor worker could overlap it"
+        )
 
     def test_multiple_channels_keep_separate_caption_streams(self, tmp_path: Path) -> None:
         tap_root = tmp_path / "tap"
