@@ -928,6 +928,56 @@ class TestCaptionTapWorker:
             "leftover segments from a finished session caused a start-up overload"
         )
 
+    def test_resolved_identity_prefers_backend_and_reports_unavailable(self) -> None:
+        """Loaded identity must come from the BACKEND, never from the request.
+
+        Two guards:
+          (a) an "auto" request whose backend loaded on CUDA must report the
+              backend's device as loaded_device (not "auto"), with
+              identity_source="backend-model";
+          (b) with NO backend evidence, loaded_device must be "unavailable" -
+              NEVER an echo of the requested value, which could otherwise print
+              loaded_device=cuda with no loaded evidence.
+        """
+
+        from civiccast.captions.tap_worker import _resolved_runtime_identity
+
+        class _Backend:
+            device = "cuda"
+            compute_type = "float16"
+
+        class _Model:
+            model = _Backend()
+
+        class _AutoRuntime:
+            device = "auto"
+            compute_type = "float16"
+            num_workers = 3
+            _model = _Model()
+
+            def on_cuda(self) -> bool:
+                return True
+
+        ident = _resolved_runtime_identity(_AutoRuntime())
+        assert ident[0] == "auto"  # requested stays as requested
+        assert ident[2] == "cuda"  # loaded comes from the backend
+        assert ident[3] == "float16"
+        assert ident[6] == "backend-model"
+
+        class _NoBackendRuntime:
+            device = "cuda"
+            compute_type = "float16"
+            num_workers = 3
+            _model = None
+
+            def on_cuda(self) -> bool:
+                return True
+
+        ident2 = _resolved_runtime_identity(_NoBackendRuntime())
+        assert ident2[2] == "unavailable", "loaded_device echoed the request"
+        assert ident2[3] == "unavailable"
+        assert ident2[6] == "unavailable"
+
     def test_multiple_channels_keep_separate_caption_streams(self, tmp_path: Path) -> None:
         tap_root = tmp_path / "tap"
         for channel in ("gov-ch12", "edu-ch20"):

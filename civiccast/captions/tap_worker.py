@@ -180,13 +180,21 @@ def _resolved_runtime_identity(runtime: object) -> tuple[object, ...]:
     req_device = getattr(runtime, "device", "unknown")
     req_compute = getattr(runtime, "compute_type", "unknown")
     on_cuda = getattr(runtime, "on_cuda", None)
-    loaded_device = req_device
-    loaded_compute = req_compute
     model = getattr(runtime, "_model", None)
     backend = getattr(model, "model", None) if model is not None else None
-    if backend is not None:
-        loaded_device = getattr(backend, "device", req_device)
-        loaded_compute = getattr(backend, "compute_type", req_compute)
+    if backend is not None and hasattr(backend, "device"):
+        # The backend model is authoritative about what it loaded.
+        loaded_device = backend.device
+        loaded_compute = getattr(backend, "compute_type", "unknown")
+        source = "backend-model"
+    else:
+        # No backend evidence available: report UNAVAILABLE rather than echoing
+        # the requested value under a "loaded_" label.  An earlier version
+        # substituted the request here, which could print loaded_device=cuda with
+        # no evidence that CUDA was ever loaded.
+        loaded_device = "unavailable"
+        loaded_compute = "unavailable"
+        source = "unavailable"
     return (
         req_device,
         req_compute,
@@ -194,6 +202,7 @@ def _resolved_runtime_identity(runtime: object) -> tuple[object, ...]:
         loaded_compute,
         (on_cuda() if callable(on_cuda) else None),
         getattr(runtime, "num_workers", "n/a"),
+        source,
     )
 
 
