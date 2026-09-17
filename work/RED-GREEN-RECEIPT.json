@@ -1,30 +1,28 @@
 {
-  "at": "2026-09-17T07:04:51.129041",
-  "purpose": "failing-before / passing-after for the ORIGINAL four fixes",
-  "true_candidate_baseline": "41ec3dda (verified to lack live mode, live stabilizer wiring, PTS rebase bound, begin_channel_session)",
+  "at": "2026-09-17T07:10:35.331475",
+  "purpose": "failing-before / passing-after for the ORIGINAL four fixes, SAME six tests both sides",
+  "true_candidate_baseline": "41ec3dda",
   "red": {
-    "tree": "isolated worktree cc-candidate-41e at 41ec3dda",
-    "method": "regression tests copied in; product source UNTOUCHED",
-    "result": "6 failed, 0 passed",
-    "failed_tests": [
-      "test_live_confirmation_commits_reworded_continuous_speech",
-      "test_live_confirmation_still_resets_on_a_correction",
-      "test_live_confirmation_never_commits_a_lone_uncorroborated_cue",
-      "test_varying_live_asr_text_still_reaches_the_active_sidecar",
-      "test_live_caption_pts_rebases_an_absolute_program_clock_cue_to_the_live_edge",
-      "test_start_command_runs_the_channel_session_hook_before_encoding"
-    ],
-    "example_error": "TypeError: CaptionStabilizer.__init__() got an unexpected keyword argument 'live' (daemon test: unexpected keyword 'channel_start_hook')"
+    "tree": "C:/Users/scott/Documents/Codex/2026-09-16/re/cc-candidate-41e (detached at 41ec3dda)",
+    "setup": "regression tests copied in; PRODUCT SOURCE UNTOUCHED",
+    "exact_command": "..\\civiccast-native\\.venv\\Scripts\\python.exe -m pytest \"tests/captions/test_captions_core.py::TestCaptionStabilizer::test_live_confirmation_commits_reworded_continuous_speech\" \"tests/captions/test_captions_core.py::TestCaptionStabilizer::test_live_confirmation_still_resets_on_a_correction\" \"tests/captions/test_captions_core.py::TestCaptionStabilizer::test_live_confirmation_never_commits_a_lone_uncorroborated_cue\" \"tests/captions/test_caption_tap_worker.py::TestCaptionTapWorker::test_varying_live_asr_text_still_reaches_the_active_sidecar\" \"tests/egress/test_gst_strategy.py::test_live_caption_pts_rebases_an_absolute_program_clock_cue_to_the_live_edge\" \"tests/egress/test_daemon.py::test_start_command_runs_the_channel_session_hook_before_encoding\" -q",
+    "exit_code": 1,
+    "result": "6 failed",
+    "failure_reasons": {
+      "test_live_confirmation_commits_reworded_continuous_speech": "TypeError: CaptionStabilizer.__init__() got an unexpected keyword argument 'live'  [MISSING API]",
+      "test_live_confirmation_still_resets_on_a_correction": "TypeError: same missing 'live' keyword  [MISSING API]",
+      "test_live_confirmation_never_commits_a_lone_uncorroborated_cue": "TypeError: same missing 'live' keyword  [MISSING API]",
+      "test_varying_live_asr_text_still_reaches_the_active_sidecar": "AssertionError: 'live windows produced no active cue'  [BEHAVIOURAL - no cue reached the sidecar]",
+      "test_live_caption_pts_rebases_an_absolute_program_clock_cue_to_the_live_edge": "AssertionError: assert 3132120 == 90250  [BEHAVIOURAL - no PTS rebase]",
+      "test_start_command_runs_the_channel_session_hook_before_encoding": "TypeError: EgressDaemon.__init__() got an unexpected keyword argument 'channel_start_hook'  [MISSING API]"
+    }
   },
   "green": {
-    "tree": "isolated worktree cc-fix-6c668ff5 at 6c668ff5",
-    "result": "5 passed (the 6th, the daemon hook test, passes at 71096432/HEAD where the hook is wired)"
+    "tree": "C:/Users/scott/Documents/Codex/2026-09-16/re/civiccast-native (HEAD d867e9e8238f)",
+    "exact_command": ".venv\\Scripts\\python.exe -m pytest \"tests/captions/test_captions_core.py::TestCaptionStabilizer::test_live_confirmation_commits_reworded_continuous_speech\" \"tests/captions/test_captions_core.py::TestCaptionStabilizer::test_live_confirmation_still_resets_on_a_correction\" \"tests/captions/test_captions_core.py::TestCaptionStabilizer::test_live_confirmation_never_commits_a_lone_uncorroborated_cue\" \"tests/captions/test_caption_tap_worker.py::TestCaptionTapWorker::test_varying_live_asr_text_still_reaches_the_active_sidecar\" \"tests/egress/test_gst_strategy.py::test_live_caption_pts_rebases_an_absolute_program_clock_cue_to_the_live_edge\" \"tests/egress/test_daemon.py::test_start_command_runs_the_channel_session_hook_before_encoding\" -q",
+    "exit_code": 0,
+    "result": "6 passed"
   },
-  "later_defects": {
-    "note": "the FOUR post-review defects (retention path, fail-closed verdict, shutdown, tiny-overlap) have their own isolated RED/GREEN recorded in their commits; tiny-overlap RED/GREEN and the duplicate-START RED were re-verified in worktree cc-prefix-2a34d0e3 and by reverting the fix respectively"
-  },
-  "fix_commits": {
-    "original_four": "71096432 + 6c668ff5",
-    "note": "live mode + wiring + PTS rebase + session hook"
-  }
+  "note": "an earlier draft said GREEN was measured at 6c668ff5 with only 5 tests; this receipt records the SAME SIX tests passing on the final candidate.",
+  "evidence_note": "outputs quoted above are the observed runs, not reconstructed."
 }

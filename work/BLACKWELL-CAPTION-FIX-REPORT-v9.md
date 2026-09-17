@@ -108,11 +108,19 @@ Independently corroborated.
 
 ## GPU contention (receipt: work/GPU-CONTENTION-RECEIPT.json)
 
-Host: RTX 5070 Ti, 16303 MiB. Concurrent external GPU workloads (Fortnite/Epic) were
-present earlier in the task and were NOT terminated to make captions pass; the live
-runs succeeded with concurrent load present. Sampled now: 1% util, 3892 MiB used.
+Host: RTX 5070 Ti, 16303 MiB. GPU state was sampled POST-RUN (07:05): 1% util,
+3892 MiB used, 47 C. This is explicitly NOT a during-validation measurement.
+
+External GPU workloads (Fortnite/Epic) were observed EARLIER in the task; their
+presence then cannot establish contention during accept8/accept9, and NO
+contemporaneous external-process or GPU-contention observation was recorded for
+those runs. That limitation is stated rather than glossed. No GPU workload was
+terminated at any point to make captions pass.
+
 Per-process GPU-memory attribution was NOT available (nvidia-smi insufficient
-permissions), so the loaded-model line is the ASR-execution evidence.
+permissions). GPU-EXECUTION evidence is therefore the loaded-model line
+(work/accept9-gpu/final-resolved-runtime-identity.json) supported by the live
+cue sidecar snapshot taken post-prepare (work/accept9-gpu/post-prepare-cue-support/).
 
 ## Stale-state before/after recovery (receipt: work/STALE-STATE-RECEIPT.json)
 
