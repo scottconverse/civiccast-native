@@ -891,6 +891,43 @@ class TestCaptionTapWorker:
         worker.run_once()
         assert policy.calls > calls_before, "sweeps did not resume after the orphan finished"
 
+    def test_new_session_discards_leftover_segments_instead_of_overloading(
+        self, tmp_path: Path
+    ) -> None:
+        """Leftover audio from a finished session must not cause a start-up overload.
+
+        Found in the accept5 run: PID 10588 started 04:21:47 and logged a caption
+        overload 28 s later at 04:22:15 while the public channel was on
+        FALLBACK_SLATE (not airing the program).  The tap had picked up 4 settled
+        segments left in the tap directory by the PREVIOUS broadcast, counted them
+        as backlog, and paused captions for 120 s before any new audio existed.
+
+        Those segments belong to a finished session and can never air, so a new
+        session must discard them rather than treat them as work.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "public"
+        (tap_root / channel).mkdir(parents=True)
+        worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
+
+        # Leftover settled audio from a previous broadcast.
+        for index in range(4):
+            _write_wav(tap_root / channel / f"chunk-{index:06d}.wav", seconds=5.0)
+
+        worker.begin_channel_session(channel)
+
+        remaining = sorted(p.name for p in (tap_root / channel).glob("chunk-*.wav"))
+        assert remaining == [], (
+            f"leftover segments from the previous session survived the reset: {remaining}"
+        )
+
+        result = worker.run_once()
+        assert result.dropped_overload_segments == 0
+        assert "public" not in result.overloaded_channels, (
+            "leftover segments from a finished session caused a start-up overload"
+        )
+
     def test_multiple_channels_keep_separate_caption_streams(self, tmp_path: Path) -> None:
         tap_root = tmp_path / "tap"
         for channel in ("gov-ch12", "edu-ch20"):

@@ -574,6 +574,16 @@ class CaptionTapWorker:
         self._previous_segments.pop(channel_id, None)
         self._backoff.forget(channel_id)
         LiveWebVttPublisher(active_caption_sidecar(self._caption_work_dir, channel_id)).reset()
+        # Discard the channel's SETTLED segments: they belong to a finished
+        # broadcast and can never air in the new one.  Leaving them made a fresh
+        # session inherit the previous session's backlog, and >2 settled segments
+        # then fail-closed into a 120 s pause BEFORE any new audio existed.
+        # Measured in the accept5 run: PID 10588 started 04:21:47 and overloaded
+        # at 04:22:15 while public was still on FALLBACK_SLATE, purely on 4
+        # leftover segments.  This is the session-scoped analogue of the sidecar
+        # reset above, and cannot lose airable audio: a settled segment from a
+        # session that has already ended is stale by definition.
+        self._discard_settled_segments(channel_id)
 
     def flush_channel(self, channel_id: str) -> CaptionTapScanResult:
         """Commit every cue still pending for one channel at stream end.
@@ -782,6 +792,49 @@ class CaptionTapWorker:
             committed_review_items=committed,
             expired_unconfirmed_cues=expired,
         )
+
+    def _discard_settled_segments(self, channel_id: str) -> int:
+        """Discard a channel's leftover settled segments at session start.
+
+        Segments left in ``<channel>/`` by a previous broadcast belong to a
+        session that has already ended, so they can never air.  Removing them
+        keeps a new session from inheriting the old one's backlog, which would
+        otherwise trip the max-backlog fail-closed before any new audio existed.
+        """
+
+        channel_dir = self._tap_root / channel_id
+        if not channel_dir.is_dir():
+            return 0
+        # NB: use the RAW numbered list, not ``_settled_segments``.  That helper
+        # deliberately omits the newest file so a live scan never reads a
+        # half-written segment -- but at SESSION START there is no live writer for
+        # this session yet, so every leftover chunk (including the newest) belongs
+        # to the finished broadcast and must go.
+        numbered: list[tuple[int, Path]] = []
+        for path in channel_dir.iterdir():
+            match = _SEGMENT_RE.match(path.name)
+            if match is not None and path.is_file():
+                numbered.append((int(match.group(1)), path))
+        numbered.sort()
+        removed = 0
+        for _index, path in numbered:
+            try:
+                path.unlink(missing_ok=True)
+                removed += 1
+            except OSError:
+                _LOG.exception(
+                    "Caption tap could not discard a leftover segment for channel %s: %s",
+                    channel_id,
+                    path,
+                )
+        if removed:
+            _LOG.info(
+                "Caption tap discarded %d leftover segment(s) for channel %s at "
+                "session start; they belonged to a finished broadcast",
+                removed,
+                channel_id,
+            )
+        return removed
 
     def _fail_closed_overload(
         self,
