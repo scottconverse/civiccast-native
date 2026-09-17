@@ -8,5 +8,19 @@
   "why": "the resolved-identity line proves the model LOADED on CUDA; a non-empty, growing cue sidecar proves caption ASR then EXECUTED, rather than the model merely being constructed.",
   "related": [
     "work/accept9-gpu/final-resolved-runtime-identity.json"
-  ]
+  ],
+  "snapshot_sha256_scope": "GIT BLOB / LF-normalized bytes (as committed)",
+  "snapshot_bytes_scope": "LF-normalized byte count",
+  "windows_checkout_note": "On a Windows checkout the same file may materialize with CRLF, giving a DIFFERENT byte count and SHA-256. That is line-ending normalization, NOT lost or altered evidence. Compare against the Git blob (LF) to verify this receipt.",
+  "observed_variants": {
+    "git_blob_lf": {
+      "bytes": 6477,
+      "sha256": "b0f1f3dee03b38d8d072c9a9d39bc19fbc97c57830304d3784099c14a751bcc5"
+    },
+    "working_tree_now": {
+      "bytes": 6698,
+      "sha256": "703436d30a2240b50c2b6f36e86674744592726f9f239ad1afa9caaf7abd6e0f",
+      "note": "may be CRLF on this Windows checkout"
+    }
+  }
 }
