@@ -1,0 +1,8 @@
+{
+  "captured_at": "2026-09-17T05:30:59.089189",
+  "device_field": "cuda",
+  "compute_type_field": "float16",
+  "on_cuda_resolved": true,
+  "ctranslate2_cuda_devices": 1,
+  "label": "POST-RUN check for the accept6 candidate; not contemporaneous with the accept6 window"
+}

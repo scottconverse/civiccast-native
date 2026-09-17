@@ -26,8 +26,10 @@ hash-match the commit.
 
   capture launched   05:10:40   channel STOPPED / on slate, no writer
   START issued       05:11:10   -> TS 28.6s  (capture preceded enable by 30s)
-  sustained          05:11:20..05:14:36  (197s)  cues 0 -> 16, within-capacity,
-                                    backlog 1, ZERO overloads
+  startup transient  05:11:20 STARTING/paused backlog=3 ; 05:11:27 paused backlog=3
+                     (NOT counted as stable operation)
+  stable window      05:11:34..05:14:36  (182s)  ON_AIR, within-capacity throughout,
+                                    cues 0 -> 16, backlog 1, ZERO overloads
   controlled STOP    05:14:57   -> TS 255.6s
   controlled START   05:15:12   -> TS 270.6s
   post-recovery      05:15:22..05:17:28  (126s)  cues 0 -> 13, within-capacity,
@@ -35,19 +37,35 @@ hash-match the commit.
   media ends         05:17:41   (ffprobe duration 419.958589s, size 81,564,364)
   live writer        GStreamer worker PID 14136 confirmed alive during the run
 
-Predeclared windows were satisfied: sustained 197s >= 180s; post-recovery
-126s >= 120s (measured from recorded samples, not cue-bearing time only).
+Predeclared windows were satisfied on the CLEAN stable window: 182s >= 180s
+(05:11:34..05:14:36, excluding the two paused start-up samples) and 126s >= 120s
+post-recovery.  Elapsed spans including the start-up transient are reported
+separately and are NOT presented as stable operation.
 
 ## Verification
 
 - 58 decoded entries from the outgoing TS; media timestamps span 00:00:14 to 06:48.
-- 18 of those entries START at or after the recovery offset (>= 270.6s), the first
-  one second after the controlled START - i.e. caption text reached the stream
-  AFTER recovery, not merely before it.
+- CLOCK MAPPING derived from TWO independent content boundaries (not from launch
+  +1.4s): egress STOPPED 05:14:58.276 -> media 257.3s, where the decoded entry
+  'winds here then west' ends and a 10.5s gap follows; new GStreamer worker
+  05:15:23.223 -> media 282.2s.  The alternative origin-at-program-start mapping is
+  FALSIFIED: it would place STOPPED at media 216.0s, where there are no decoded
+  entries at all.
+- 14 decoded entries START at or after the PROVEN resume offset (282.2s), so caption
+  text reached the stream AFTER recovery, not merely before it.
 - Preserved cue-bearing VTTs: first post-recovery cue (1 cue) and latest (13 cues).
-- All 13 preserved post-recovery cues MATCH decoded TS text under the predeclared
-  rule (six consecutive shared words, case-folded, punctuation collapsed).
-- CUDA/float16 was verified on the live caption runtime earlier in this task.
+- CORRECTED MATCHING: restricting the predeclared six-consecutive-word rule to the
+  PROVEN post-recovery interval (>=282.2s) yields 5 of 13 preserved cues matched.
+  An earlier 13/13 figure was computed across the WHOLE TS, so a cue could match a
+  PRE-recovery occurrence of the same looping passage; that figure was wrong for
+  the post-recovery claim and is withdrawn.  5/13 within the interval proves caption
+  TEXT reaches the output after recovery; it does NOT establish one-to-one
+  correspondence for every preserved cue.
+- GPU: NO contemporaneous device evidence exists for the accept6 window (the runtime
+  logs device identity at tap start, and this window has no such line).  A POST-RUN
+  check confirms device=cuda, compute_type=float16, on_cuda=True, ctranslate2 CUDA
+  devices=1 - labelled post-run in gpu-identity-postrun.json.  Binding GPU identity
+  INSIDE a run window remains outstanding for a definitive run.
 
 ## Start-up overload - disposition (engineering call, attribution provisional)
 
@@ -98,5 +116,6 @@ startup-window log and timeline are the diagnostic inputs if it recurs.
 - work/accept6-20260917/VTT-first-post-recovery.vtt first post-recovery cue
 - work/accept6-20260917/VTT-latest-post-recovery.vtt
 - work/accept6-20260917/loaded-process-identity.json staged-commit / PID receipt
+- work/accept6-20260917/gpu-identity-postrun.json  POST-RUN GPU identity (not contemporaneous)
 - work/accept6-20260917/capture.ts                  local only; 81,564,364 bytes;
     sha256 7b457d828a62311ed06017e9e57da338611a98d3af684ab66d94ce1b9e7990f8
