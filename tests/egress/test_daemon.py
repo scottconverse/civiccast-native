@@ -6314,6 +6314,7 @@ def _slate_then_program_daemon(
     restart_cooldown_seconds: float = 0.0,
     slate_plan: Callable[[Path], EgressSourcePlan] = _slate_plan,
     program_resolves: list[int] | None = None,
+    channel_start_hook: Callable[[str], None] | None = None,
 ) -> EgressDaemon:
     """A daemon whose program provider hands out ``program_plan[0]`` (mutable
     by the test) and whose fallback provider always yields the slate plan.
@@ -6335,6 +6336,7 @@ def _slate_then_program_daemon(
         prepared_plan_release=prepared_plan_release,
         monotonic=lambda: clock[0],
         restart_cooldown_seconds=restart_cooldown_seconds,
+        channel_start_hook=channel_start_hook,
     )
 
 
@@ -6730,7 +6732,11 @@ def test_a_program_that_holds_healthy_air_resets_the_slate_eos_relaunch_count(
     started: list[_FakeProcess] = []
     clock = [1000.0]
     daemon = _slate_then_program_daemon(
-        tmp_path, program_plan=program_plan, processes=processes, started=started, clock=clock
+        tmp_path,
+        program_plan=program_plan,
+        processes=processes,
+        started=started,
+        clock=clock,
     )
     store = daemon._store  # type: ignore[attr-defined]
     store.upsert_config(_config())
@@ -7026,7 +7032,11 @@ def test_stop_and_reset_restart_tracking_clear_the_slate_eos_relaunch_count(
     started: list[_FakeProcess] = []
     clock = [1000.0]
     daemon = _slate_then_program_daemon(
-        tmp_path, program_plan=program_plan, processes=processes, started=started, clock=clock
+        tmp_path,
+        program_plan=program_plan,
+        processes=processes,
+        started=started,
+        clock=clock,
     )
     store = daemon._store  # type: ignore[attr-defined]
     store.upsert_config(_config())
@@ -7060,8 +7070,14 @@ def test_operator_start_clears_the_slate_eos_relaunch_count(tmp_path: Path) -> N
     processes = [_FakeProcess(pid=pid) for pid in (111, 222, 333)]
     started: list[_FakeProcess] = []
     clock = [1000.0]
+    hook_calls: list[str] = []
     daemon = _slate_then_program_daemon(
-        tmp_path, program_plan=program_plan, processes=processes, started=started, clock=clock
+        tmp_path,
+        program_plan=program_plan,
+        processes=processes,
+        started=started,
+        clock=clock,
+        channel_start_hook=hook_calls.append,
     )
     store = daemon._store  # type: ignore[attr-defined]
     store.upsert_config(_config())
@@ -7072,6 +7088,15 @@ def test_operator_start_clears_the_slate_eos_relaunch_count(tmp_path: Path) -> N
     daemon.process_once("gov")  # relaunch #1 -> ON_AIR (222)
     assert daemon._slate_eos_relaunches.get("gov") == 1  # type: ignore[attr-defined]
 
+    # Hook calls so far are the two GENUINE launch transitions (slate PID111,
+    # then the program relaunch PID222).  That behaviour must be preserved; what
+    # must not happen is the duplicate start below adding another call, because a
+    # start on an already-live channel is a no-op that keeps the current writer
+    # running -- session-scoped cleanup there would discard LIVE audio.
+    assert hook_calls == ["gov", "gov"], (
+        f"expected one hook call per genuine launch transition, got {hook_calls}"
+    )
+    genuine_calls = len(hook_calls)
     store.enqueue_command(
         EgressCommand(
             channel_id="gov",
@@ -7084,6 +7109,10 @@ def test_operator_start_clears_the_slate_eos_relaunch_count(tmp_path: Path) -> N
     daemon.process_once("gov")  # the worker is alive: start is a no-op ON_AIR rewrite
     assert store.read_state("gov").pid == 222
     assert "gov" not in daemon._slate_eos_relaunches  # type: ignore[attr-defined]
+    assert len(hook_calls) == genuine_calls, (
+        "the duplicate START on a live channel fired the session-start hook, "
+        "which would run session-scoped cleanup against the live writer's audio"
+    )
 
 
 def test_peek_pending_commands_does_not_consume(tmp_path: Path) -> None:

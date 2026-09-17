@@ -1114,19 +1114,17 @@ class EgressDaemon:
                 )
                 return
         if command.action == "start":
-            if self._channel_start_hook is not None:
-                # Best-effort: the hook performs the session-scoped caption
-                # sidecar reset, which touches disk.  A caption-sidecar failure
-                # (locked/read-only file, permissions, full disk) must NEVER be
-                # able to block a channel from going to air -- captions are
-                # subordinate to broadcast.  Log and continue on any failure.
-                try:
-                    self._channel_start_hook(command.channel_id)
-                except Exception:
-                    _LOG.exception(
-                        "channel %s: caption session-start hook failed; continuing to start",
-                        command.channel_id,
-                    )
+            # NOTE on ordering: the caption session-start hook is NOT called here.
+            # It is invoked by ``_start_steps`` only on the branch where a NEW
+            # session actually begins.  Calling it here ran the hook for a
+            # DUPLICATE start on an already-live channel -- which is a no-op that
+            # keeps the current writer running -- so its session-scoped cleanup
+            # would have discarded the LIVE session's own audio (reproduced via
+            # the daemon command path: the hook fired twice for start -> stop?
+            # no: for an operator start followed by a duplicate start on a live
+            # channel).  Firing it at the real transition is both correct and
+            # sufficient, because at that point no writer for the new session
+            # exists yet.
             # An operator start is a fresh intent: the slate-EOS relaunch cap
             # (see _SLATE_EOS_RELAUNCH_MAX_CONSECUTIVE) starts over for it.
             self._slate_eos_relaunches.pop(command.channel_id, None)
@@ -1317,6 +1315,22 @@ class EgressDaemon:
             self._discard_pending_reload_settlement(channel_id, reason="channel restarting")
             self._discard_active_prepared_plan_dir(channel_id)
             self._reap_orphan(channel_id)
+            # A GENUINE new session begins here: this is past the "existing
+            # process still alive" short-circuit (which returned above) and past
+            # the dead-process reap, and before any new pipeline/writer is built.
+            # The caption session-start hook therefore runs exactly once per real
+            # transition -- so its session-scoped cleanup can never discard the
+            # audio of a LIVE session, and every chunk present at this instant
+            # belongs to a previous session rather than the one about to start.
+            # Best-effort: a caption-sidecar failure must never block broadcast.
+            if self._channel_start_hook is not None:
+                try:
+                    self._channel_start_hook(channel_id)
+                except Exception:
+                    _LOG.exception(
+                        "channel %s: caption session-start hook failed; continuing to start",
+                        channel_id,
+                    )
             # From here on a pipeline is being BUILT from ``stored_config``.
             self._built_configs[channel_id] = stored_config
             if not hls_relay_was_alive:
