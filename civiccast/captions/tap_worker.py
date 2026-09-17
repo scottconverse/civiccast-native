@@ -166,6 +166,37 @@ def default_max_channel_workers(runtime: CaptionRuntime | None = None) -> int:
     return min(3, max(1, int(getattr(runtime, "num_workers", 1))))
 
 
+def _resolved_runtime_identity(runtime: object) -> tuple[object, ...]:
+    """Caption runtime identity, preferring the LOADED backend over the request.
+
+    ``device``/``compute_type`` on the adapter are the REQUESTED values and are
+    NOT rewritten on a successful load (so "auto" stays "auto").  The underlying
+    CTranslate2 model knows what it actually loaded, so use that when present and
+    fall back to the requested fields otherwise.  Order: requested_device,
+    requested_compute_type, loaded_device, loaded_compute_type, on_cuda,
+    num_workers.
+    """
+
+    req_device = getattr(runtime, "device", "unknown")
+    req_compute = getattr(runtime, "compute_type", "unknown")
+    on_cuda = getattr(runtime, "on_cuda", None)
+    loaded_device = req_device
+    loaded_compute = req_compute
+    model = getattr(runtime, "_model", None)
+    backend = getattr(model, "model", None) if model is not None else None
+    if backend is not None:
+        loaded_device = getattr(backend, "device", req_device)
+        loaded_compute = getattr(backend, "compute_type", req_compute)
+    return (
+        req_device,
+        req_compute,
+        loaded_device,
+        loaded_compute,
+        (on_cuda() if callable(on_cuda) else None),
+        getattr(runtime, "num_workers", "n/a"),
+    )
+
+
 def _lower_current_thread_priority() -> None:
     """Best-effort ``BELOW_NORMAL`` for the calling ASR thread (Windows).
 
@@ -472,6 +503,9 @@ class CaptionTapWorker:
         # test or an external-mode process behaves as before.
         self._is_enabled = is_enabled or (lambda: True)
         self._disabled_announced = False
+        #: Last caption-runtime identity logged, so the resolved-identity line is
+        #: emitted once per distinct identity rather than on every pending scan.
+        self._logged_runtime_identity: tuple[object, ...] | None = None
         self._max_backlog_segments = max_backlog_segments
         self._reviewer_note = reviewer_note
         # S13 (T3/M4): the operator-selected translation model, injected at the same
@@ -709,24 +743,27 @@ class CaptionTapWorker:
                     # cannot preempt playout during first use.
                     _lower_current_thread_priority()
                     prepare_runtime()
-                    # Log the RESOLVED caption-runtime identity once the model is
-                    # loaded.  ``on_cuda()`` before prepare() only reports the
-                    # REQUESTED device; a CUDA load may fall back to CPU inside
-                    # prepare().  After prepare() these fields are the ACTUAL
-                    # loaded-model values, so this line is real execution
-                    # evidence for this worker process rather than a selection.
-                    _LOG.info(
-                        "Caption runtime resolved after prepare: device=%s "
-                        "compute_type=%s on_cuda=%s num_workers=%s",
-                        getattr(self._runtime, "device", "unknown"),
-                        getattr(self._runtime, "compute_type", "unknown"),
-                        (
-                            self._runtime.on_cuda()
-                            if callable(getattr(self._runtime, "on_cuda", None))
-                            else None
-                        ),
-                        getattr(self._runtime, "num_workers", "n/a"),
-                    )
+                    # Log the caption-runtime identity ONCE after the model is loaded.
+                    # Accuracy: on_cuda()/device BEFORE prepare is the REQUESTED device, and
+                    # prepare() may fall back CUDA->CPU.  On SUCCESS the runtime does NOT
+                    # rewrite device, so a request of "auto" can still read "auto" even when
+                    # the model loaded on CUDA.  The loaded-model answer is therefore read
+                    # from the backend model itself when available.
+                    # Change-only: emitted once per distinct identity, not per pending scan.
+                    identity = _resolved_runtime_identity(self._runtime)
+                    if identity != self._logged_runtime_identity:
+                        self._logged_runtime_identity = identity
+                        _LOG.info(
+                            "Caption runtime resolved after prepare: requested_device=%s "
+                            "requested_compute_type=%s loaded_device=%s loaded_compute_type=%s "
+                            "on_cuda=%s num_workers=%s",
+                            identity[0],
+                            identity[1],
+                            identity[2],
+                            identity[3],
+                            identity[4],
+                            identity[5],
+                        )
                 effective_workers = default_max_channel_workers(self._runtime)
                 if effective_workers != self._max_channel_workers:
                     _LOG.info(
