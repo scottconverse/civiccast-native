@@ -1,0 +1,80 @@
+{
+  "candidate": "41ec3dda7f5c5cf678e815ac103fd7e99d85294f",
+  "code_commit_that_binds_these_hashes": "9a97efa5e3c2128bb55740f948629c4077228122",
+  "note_head": "the evidence commit is a later docs/evidence commit; the code commit is the one whose file hashes are recorded here",
+  "branch": "fix/blackwell-caption-runtime",
+  "policy_note": "This repo forbids committing binary/media artifacts (ci-blob-size-guard, 5 MiB cap). Per CONTRIBUTING.md the text log is committed and the bytes are kept on local disk, referenced by path + SHA-256.",
+  "source_vs_installed": {
+    "civiccast/app.py": {
+      "source_sha256": "f988204c782a69778cd432d1aeb981a18e239a820281396fb46dc84fad794b2f",
+      "installed_sha256": "f988204c782a69778cd432d1aeb981a18e239a820281396fb46dc84fad794b2f",
+      "match": true
+    },
+    "civiccast/captions/stabilize.py": {
+      "source_sha256": "37136fea2240786044fe00a3f128d2b26465abf8abd1b47a28318659f6e428f8",
+      "installed_sha256": "37136fea2240786044fe00a3f128d2b26465abf8abd1b47a28318659f6e428f8",
+      "match": true
+    },
+    "civiccast/captions/tap_worker.py": {
+      "source_sha256": "79df1ce45e9ae30128496fc89f6c23f5fdffaa612750e15042d805ccb158fe95",
+      "installed_sha256": "79df1ce45e9ae30128496fc89f6c23f5fdffaa612750e15042d805ccb158fe95",
+      "match": true
+    },
+    "civiccast/egress/automation.py": {
+      "source_sha256": "5146a2bac4bc91e2f193c979e2ca2f79f37166997b7e7a042337ff02fa9fb10b",
+      "installed_sha256": "5146a2bac4bc91e2f193c979e2ca2f79f37166997b7e7a042337ff02fa9fb10b",
+      "match": true
+    },
+    "civiccast/egress/daemon.py": {
+      "source_sha256": "2881b6849cf8e94b2ac34dc27e7fd2a0c9b76b86f5518e4a0b4cbd819511a8da",
+      "installed_sha256": "2881b6849cf8e94b2ac34dc27e7fd2a0c9b76b86f5518e4a0b4cbd819511a8da",
+      "match": true
+    },
+    "civiccast/egress/gst/control.py": {
+      "source_sha256": "191e09c7256a13de09bf5a349c08cb4e897e88abc21a6596c862310bc9445c63",
+      "installed_sha256": "191e09c7256a13de09bf5a349c08cb4e897e88abc21a6596c862310bc9445c63",
+      "match": true
+    }
+  },
+  "tests": {
+    "tests/captions/test_caption_tap_worker.py": "16c599dfe1b437516543e5660cdae3a3ceb42d6cf0c6d22f7560458015a8de7b",
+    "tests/captions/test_captions_core.py": "3017217f7acbc219d1265e0476b8c5b5da8a237f84b0a9789336f61730f7d2bd",
+    "tests/egress/test_daemon.py": "6c9947d3e8c1d63d7d8831fae1ed65ed04d5ea2eaab7e71515e804044548e73c",
+    "tests/egress/test_gst_strategy.py": "ddce4145076398d323bb9df9101934a20c6733f9d30750580f035b19f3872e00"
+  },
+  "evidence_committed_text": {
+    "work/accept-20260917/active.vtt": {
+      "sha256": "73556826621efa36bed9c751594f7d00f56e7f83e6f78927a03241ce0cb63d95",
+      "bytes": 2721
+    },
+    "work/accept-20260917/decodeback-20s.srt": {
+      "sha256": "d88dd2a775e39438cb7e5892f061053436d025e9529d329c6e5a71364ec76147",
+      "bytes": 3659
+    },
+    "work/accept-20260917/decodeback.srt": {
+      "sha256": "3be2678d4106b49ddba9b1598cb50c15f4f29af8431893d6d0041ab17a552942",
+      "bytes": 2907
+    },
+    "work/accept-20260917/gpu-contention-observations.json": {
+      "sha256": "9c6c4609dfa608054652d18f1862395ba463cf68e6b1daaac11639a38c7ea788",
+      "bytes": 574
+    },
+    "work/accept-20260917/playout-graph.json": {
+      "sha256": "7d5eb0980fb066671c0608ab5f8cffe6c9bb905aa28b0fb6baa6d6b14b390d4a",
+      "bytes": 5843
+    },
+    "work/accept-20260917/runtime-health-observations.json": {
+      "sha256": "2a5822360d3703ebf239e06e4ac3c79af8546e3ac82e8a3098e03cdbeb2e4c77",
+      "bytes": 807
+    }
+  },
+  "evidence_local_only_bytes": {
+    "work/accept-20260917/capture.ts": {
+      "sha256": "38503738661e54420fac87746552d150fa7ded03c3cca1cd50a69592f53d1109",
+      "bytes": 19172052,
+      "role": "contemporaneous outgoing transport stream (150 s); decode-back source; kept on local disk per repo binary policy"
+    }
+  },
+  "human_report": "work/BLACKWELL-CAPTION-FIX-REPORT-v4.md",
+  "human_report_sha256": "ae735a142c535981860264f25048709c7914225cccefd2f0702de492f3f8c0c7"
+}

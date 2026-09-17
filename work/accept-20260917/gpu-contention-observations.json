@@ -1,0 +1,11 @@
+{
+  "gpu": "NVIDIA RTX 5070 Ti",
+  "query_now": {
+    "utilization_gpu_percent": "12",
+    "memory_used_mib": "7617",
+    "memory_total_mib": "16303",
+    "temperature_c": "40"
+  },
+  "note": "Live caption runtime resolved to CUDA (device=cuda, compute_type=float16, on_cuda=True) and produced 22 cues during the acceptance window with no overload/backlog/paused events. External GPU workloads (Fortnite/Epic) were left untouched and were not killed to make captions pass; the run succeeded with concurrent load present.",
+  "global_kill_of_gpu_workloads": false
+}
