@@ -454,9 +454,6 @@ class CaptionTapWorker:
         #: its own scan loop exits.  Bounded so a wedged sweep can never hold
         #: shutdown open; the thread is a daemon either way.
         self._retention_shutdown_timeout = 10.0
-        #: Set when a shutdown left a sweep running past the bounded wait.  Blocks
-        #: a successor loop from dispatching an overlapping sweep.
-        self._retention_orphaned = False
         #: Retention verdict, fail-closed on the UNKNOWN state.  Previously the
         #: first sweep was synchronous, so a verdict existed before any ASR ran.
         #: Now that the sweep is asynchronous, ASR must not be allowed to run on
@@ -539,21 +536,18 @@ class CaptionTapWorker:
             # Joining here makes ThreadSupervisor.stop()'s existing bounded join
             # cover the retention thread transitively.
             if not self.wait_for_retention_sweep(timeout=self._retention_shutdown_timeout):
-                # The sweep outlived the bounded wait.  MEASURED BEHAVIOUR: the
-                # successor is blocked from dispatching a second sweep anyway,
-                # because ``_retention_in_flight`` stays True until the running
-                # sweep finishes (verified: with this whole guard removed from the
-                # source, a successor still did not dispatch while the orphan was
-                # alive).  So this records the state for observability and makes
-                # the invariant explicit rather than load-bearing -- it is NOT the
-                # thing preventing overlap.  The sweep is a daemon and is left to
-                # process exit under the existing bounded-wait policy.
-                with self._retention_lock:
-                    self._retention_orphaned = True
+                # The sweep outlived the bounded wait and is left to process exit
+                # (it is a daemon).  No extra guard is needed to prevent a
+                # successor from overlapping it: ``_retention_in_flight`` stays
+                # True until the running sweep finishes, and the dispatch path
+                # returns early on that flag.  Verified by removing this whole
+                # branch and re-running the blocked-sweep scenario -- a successor
+                # still did not dispatch while the orphan was alive, and sweeps
+                # resumed once it completed.
                 _LOG.warning(
                     "Caption retention sweep did not finish within %.0fs of tap "
-                    "shutdown; recorded as orphaned (successor dispatch is already "
-                    "blocked by the in-flight flag until it completes).",
+                    "shutdown; left to process exit (successor dispatch is blocked "
+                    "by the in-flight flag until it completes).",
                     self._retention_shutdown_timeout,
                 )
 
@@ -867,15 +861,6 @@ class CaptionTapWorker:
             if self._retention_in_flight:
                 # A sweep is already running; never queue a second one.
                 return
-            if self._retention_orphaned:
-                # A previous loop exited with its sweep still running.  Wait for
-                # it rather than overlapping: two sweeps over the same store/dirs
-                # is exactly the case this guards.  Re-check liveness so a sweep
-                # that has since finished simply clears the flag.
-                orphan = self._retention_thread
-                if orphan is not None and orphan.is_alive():
-                    return
-                self._retention_orphaned = False
             if (
                 self._last_retention_sweep is not None
                 and now - self._last_retention_sweep < _RETENTION_SWEEP_SECONDS

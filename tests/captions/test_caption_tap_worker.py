@@ -821,18 +821,18 @@ class TestCaptionTapWorker:
         )
 
     def test_successor_cannot_overlap_an_orphaned_sweep(self, tmp_path: Path) -> None:
-        """A sweep outliving a bounded shutdown must not be overlapped by a successor.
+        """No overlapping sweep, and sweeps resume once an orphan completes.
 
         Reachable path (traced): ThreadSupervisor.start() can be called again after
         stop(), so the same worker can be re-entered while a sweep from the
-        previous loop is still running.  MEASURED OUTCOME: overlap does NOT occur,
-        because ``_retention_in_flight`` stays True until the running sweep
-        finishes and the dispatch path returns early on it.  Verified by removing
-        the whole guard branch from the source and re-running this scenario: the
-        successor still did not dispatch.
+        previous loop is still running.
 
-        This test therefore pins the INVARIANT (no overlapping sweep) rather than
-        a guard, and also proves sweeps resume once the orphan completes.
+        MEASURED OUTCOME: overlap does not occur.  ``_retention_in_flight`` stays
+        True until the running sweep finishes and the dispatch path returns early
+        on that flag, so the successor does not dispatch.  Verified by deleting the
+        shutdown branch entirely and re-running this scenario: the successor still
+        did not dispatch.  This test therefore pins the INVARIANT; it is not a RED
+        for any guard, and no extra production state exists for it.
         """
 
         tap_root = tmp_path / "tap"
@@ -854,8 +854,7 @@ class TestCaptionTapWorker:
             monotonic=clock,
         )
         worker.run_once()  # synchronous first verification
-        # Shorten the shutdown wait so the test does not take 10s.
-        worker._retention_shutdown_timeout = 0.2
+        worker._retention_shutdown_timeout = 0.2  # keep the test quick
 
         stop = threading.Event()
         clock.advance(61.0)
@@ -867,24 +866,24 @@ class TestCaptionTapWorker:
         loop.start()
         assert blocking.entered.wait(timeout=10.0), "async sweep never started"
 
-        # Shutdown must time out and mark the sweep orphaned.
+        # Shutdown times out; run_forever returns with the sweep still alive.
         stop.set()
         loop.join(timeout=10.0)
         assert not loop.is_alive(), "run_forever did not return on stop_event"
-        assert worker._retention_orphaned is True, (
-            "an outliving sweep was not recorded; a successor could overlap it"
-        )
+        sweep = worker._retention_thread
+        assert sweep is not None and sweep.is_alive(), "precondition: orphan is alive"
 
-        # A successor loop must NOT dispatch a second sweep while the orphan lives.
+        # INVARIANT: a successor must NOT dispatch a second, overlapping sweep.
         calls_before = policy.calls
         clock.advance(61.0)
         _write_wav(tap_root / "public" / "chunk-000001.wav", seconds=5.0)
         worker.run_once()
         assert policy.calls == calls_before, (
-            "a successor sweep was dispatched while an orphaned sweep was alive"
+            "a successor sweep was dispatched while the previous sweep was still "
+            "running; two sweeps would overlap on the same store and directories"
         )
 
-        # Release the blocker; the orphan finishes, and sweeps may resume.
+        # Release the blocker: the orphan finishes and sweeps resume.
         blocking.release.set()
         assert worker.wait_for_retention_sweep(timeout=15.0)
         clock.advance(61.0)
