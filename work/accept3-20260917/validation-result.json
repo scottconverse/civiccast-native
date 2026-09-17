@@ -1,21 +1,25 @@
 {
-  "run_local": "2026-09-16 20:58:49 - 21:00:17 America/Denver",
+  "run_local": "2026-09-16 20:58:49 - 21:00:17 America/Denver (capture); decode-back written 21:01:08",
   "windows_overlap": {
     "capture_start": "2026-09-16T20:58:49",
-    "first_fresh_cue_before_capture": "2026-09-16T20:58:44",
+    "fresh_cue_before_capture": "2026-09-16T20:58:44 (cue-003113)",
     "capture_end": "2026-09-16T21:00:17",
-    "cue_growth_inside_window": "cue count 1 -> 5 between 20:58:52 and 20:59:38 (see cue-timeline.jsonl)",
+    "cue_growth_inside_window": "cue count 1 -> 5 between 20:58:52 and 20:59:38",
     "sidecar_cleared_at": "2026-09-16T20:59:51 (after the cues)"
   },
-  "decodeback_entries": 0,
-  "GA94_markers": 2541,
-  "distinct_cca608_field1_pairs": 1,
-  "only_pair": "fd80 (0x7d 0x00), zero printable text bytes",
-  "caption_commands_in_worker_stdout": 0,
-  "root_cause": "C:\\Users\\scott\\AppData\\Local\\CivicCast\\station-state.json begins with a UTF-8 BOM (ef bb bf). _load_raw_state() therefore raises JSONDecodeError, swallows it, and returns {}. read_live_captions_enabled() -> None, so resolve_live_captions_enabled() falls back to LIVE_CAPTIONS_DEFAULT=False. The caption FEED is thus disabled while the caption TAP is separately enabled via CIVICCAST_CAPTION_TAP, so cues are committed to active.vtt and never fed to the mux.",
-  "verdict": "BLOCKED - proven at the feed->worker->mux hop by an overlapping run, with a specific, reproducible root cause",
+  "decodeback_entries": 7,
+  "decodeback_source": "work/accept3-20260917/decodeback-full.srt (real ffmpeg/product decoder output)",
+  "decodeback_sha256": "147dc290c0d1da236179830c1b70d67f3f9fe9766ce0cb94c77b000da2f8e12f",
+  "first_decoded_entry_text": "from I think 72% up to 75% for precipitation so a little uptick",
+  "caption_commands_in_worker_stdout": "0 (stdout is not a reliable indicator; the real decoder produced text)",
+  "correction_of_prior_claim": {
+    "v5_said": "ZERO decoded entries / zero printable text / BOM root cause",
+    "why_wrong_1": "my heuristic A/53 parser walked triplets from offset +6 instead of +7, so it read the ff fc marker and saw only fd80; the real decoder yields 7 text entries",
+    "why_wrong_2": "the LocalSystem service does not read Scott's user-level BOM file (no CIVICCAST_STATION_STATE_PATH; service state file has no BOM and live_captions_enabled=true)"
+  },
+  "verdict": "ACCEPTANCE PROVEN for this run: 7 decoded caption entries with real text from an overlapping captions-ON capture on the patched installed runtime",
   "capture_path": "work/accept3-20260917/capture.ts",
   "capture_bytes": 11269472,
   "capture_sha256": "a13e130c37a8612d6351e137297b9f8b695f6048ac1f7399d692caa0d4e7be56",
-  "note": "The 15 MB TS stays on local disk per CONTRIBUTING.md; path/size/hash recorded here."
+  "note": "The binary TS stays on local disk per CONTRIBUTING.md; path/size/hash recorded here."
 }

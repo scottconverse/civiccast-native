@@ -1,3 +1,10 @@
+> **SUPERSEDED / INCORRECT 2026-09-17.** This v5 report claimed BLOCKED with a
+> "zero printable text" result and a UTF-8 BOM root cause. Both are wrong: the
+> real ffmpeg decoder produced 7 text entries from the same capture (my custom
+> parser used the wrong A/53 offset), and the LocalSystem service does not read
+> Scott's user-level file (no CIVICCAST_STATION_STATE_PATH; the service state
+> file has no BOM and has live_captions_enabled=true). Retained for history only.
+> See work/BLACKWELL-CAPTION-FIX-REPORT-v6.md.
 # Blackwell beta.8 caption-runtime fix - human report v5 (2026-09-17)
 
 Author: implementation coder (Codex), for Scott Converse.
