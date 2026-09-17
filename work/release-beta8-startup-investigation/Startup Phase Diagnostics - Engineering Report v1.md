@@ -264,6 +264,45 @@ The retention-eligibility mechanism therefore wins over the leftover-segments
 hypothesis: the leftovers are real, but they are *consumed* leftovers in
 `processed/`, and their cause is the prune predicate, not session reset.
 
+### Reclassification of the 14:08 "4 tap starts" (receipts-based, 2026-09-17)
+
+The 14:08 run's doubled worker starts were **an artifact of how that run was
+initiated**, not an overlap or restart loop. `supervisor.log` shows two
+sequential service lifetimes:
+
+- `14:04:28` stop -> `14:05:02` supervisor PID 35888 starts -> `14:05:43`
+  `startup halted at child control_plane: readiness budget (30.0s) exhausted`
+  -> `14:06:20` `restart of child control_plane not ready` -> `14:07:06`
+  stop requested (child recovery aborted). This process was the incomplete
+  stage that raised `ImportError: cannot import name 'CaptionWord'`.
+- `14:07:38` supervisor PID 34544 starts -> `14:08:12.216` overload.
+
+So 2 + 2 tap starts across two lifetimes, plus the supervisor's own recovery
+retry. The two constructions were in DIFFERENT processes separated by a full
+stop, so "overlapping/duplicated tap starts collide on settled segments" is not
+supported and is retired as a hypothesis.
+
+What the receipts do leave visible: the one observed overload happened in the
+process that started immediately after a FAILED start, while the two clean
+starts (14:07:39 and 14:44:04) produced none. Candidate mechanisms for a future
+investigation, none established here:
+
+1. the failed PID 35888 died mid-work and the next start inherited unsettled
+   files as settled segments (channel directories currently contain only
+   `processed/`, so no leftovers were present at 14:43);
+2. cold model preparation immediately after a failed start.
+
+### Release classification (decided 2026-09-17)
+
+**Intermittent, mechanism unresolved; storage growth bounded by `75ac6754`;
+acceptance to be validated by the soak.** No further code change is warranted
+for the overload on the present evidence: two clean starts produced zero
+overloads against one overload that followed a failed-start sequence caused by
+this work session. A speculative change to a release candidate is not justified
+by a 1-in-3 rate with a confound. The soak must record whether any
+`Caption tap overload` appears, with timestamps, so the classification can be
+revisited on real data.
+
 ### Committed change
 
 `75ac6754` - `fix(captions): bound raw tap retention when evidence can never
