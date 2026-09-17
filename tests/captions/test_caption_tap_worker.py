@@ -389,11 +389,11 @@ class TestCaptionTapWorker:
         assert sidecar.is_file()
         cues = load_caption_cues_from_timed_text(sidecar, source_id=channel)
         assert cues, (
-            "live windows produced no active cue; the emitted stream would carry "
-            "no caption text"
+            "live windows produced no active cue; the emitted stream would carry no caption text"
         )
         # The corroborated (later, overlapping) window supplies the committed text.
         assert any("40s and 30s" in cue.text for cue in cues)
+
     def test_multiple_channels_keep_separate_caption_streams(self, tmp_path: Path) -> None:
         tap_root = tmp_path / "tap"
         for channel in ("gov-ch12", "edu-ch20"):

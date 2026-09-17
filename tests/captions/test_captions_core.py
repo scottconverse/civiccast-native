@@ -203,6 +203,7 @@ class TestCaptionStabilizer:
         stabilizer = CaptionStabilizer(live=True)
         assert stabilizer.observe(_hypothesis("single window speech", start=0.0, end=9.0)) == []
         assert stabilizer.committed() == []
+
     def test_low_confidence_flag_uses_threshold(self) -> None:
         stabilizer = CaptionStabilizer(low_confidence_threshold=0.8)
         stabilizer.observe(_hypothesis("uncertain name", confidence=0.62))

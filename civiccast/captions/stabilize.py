@@ -86,7 +86,11 @@ class CaptionStabilizer:
             # even when the wording changed.  A new reading at the SAME start is
             # a correction (checked first, below) and must keep resetting.
             for pending in self._pending:
-                if pending.hypothesis.start_seconds < hypothesis.start_seconds < pending.hypothesis.end_seconds:
+                if (
+                    pending.hypothesis.start_seconds
+                    < hypothesis.start_seconds
+                    < pending.hypothesis.end_seconds
+                ):
                     pending.stable_count += 1
                     pending.hypothesis = hypothesis
                     if pending.stable_count >= self.stable_windows:

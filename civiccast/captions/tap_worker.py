@@ -523,6 +523,7 @@ class CaptionTapWorker:
         self._previous_segments.pop(channel_id, None)
         self._backoff.forget(channel_id)
         LiveWebVttPublisher(active_caption_sidecar(self._caption_work_dir, channel_id)).reset()
+
     def flush_channel(self, channel_id: str) -> CaptionTapScanResult:
         """Commit every cue still pending for one channel at stream end.
 
