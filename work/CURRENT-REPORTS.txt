@@ -1,0 +1,31 @@
+CURRENT REPORTS AND INDEX - CivicCast beta.8 Blackwell captions-ON
+=============================================================== (2026-09-17)
+
+CURRENT VERDICT: work/BLACKWELL-CAPTION-FIX-REPORT-v9.md
+
+Candidate identity
+  accept6 + accept8 candidate (served the live runs) : e3a47841
+  final logging-only candidate                       : ea65dffe
+  evidence/receipt HEAD                              : 8061cdbf
+  equivalence: +64 lines / 0 deletions in tap_worker.py, logging only;
+               suites identical at both (494 vs 495 passed, extra = new test)
+
+Live runs
+  accept6  work/accept6-20260917/          TEXT OUTPUT ONLY (mapping retracted)
+  accept8  work/accept8-20260917/          ARRIVAL-ANCHORED RECOVERY (verified)
+  accept9  work/accept9-gpu/               LOADED-MODEL GPU IDENTITY (direct)
+
+Key artifacts
+  work/accept8-20260917/PREDECLARED-CRITERIA.json
+  work/accept8-20260917/VTT-first-post-recovery.vtt
+  work/instrumented-harness/v2/accept8/capture.ts        (75,403,980 bytes)
+  work/instrumented-harness/v2/accept8/arrival-index.jsonl
+  work/instrumented-harness/v2/accept8/first-cue-correspondence.json
+  work/accept9-gpu/final-resolved-runtime-identity.json
+
+Harness
+  work/instrumented-harness/v2/receiver.py   receive path: raw TS + per-datagram
+                                             arrival timestamps + byte offsets
+
+Superseded reports (bannered, retained)
+  v4 v5 v6 v7 v8

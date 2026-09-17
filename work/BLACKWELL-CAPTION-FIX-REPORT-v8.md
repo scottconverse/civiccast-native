@@ -1,3 +1,7 @@
+> **SUPERSEDED 2026-09-17.** v8 predates the accept8 arrival-anchored recovery
+> verification and the accept9 loaded-model GPU identity. See
+> work/BLACKWELL-CAPTION-FIX-REPORT-v9.md (current). Retained for history.
+
 # CivicCast beta.8 - Blackwell captions-ON - human report v8 (2026-09-17)
 
 Author: implementation coder (Codex), for Scott Converse.
