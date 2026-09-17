@@ -92,11 +92,18 @@ reinstalled or altered.
 
 ## Evidence durability and cleanup addendum (2026-09-17)
 
-- The text evidence above is committed to the dedicated branch (evidence commit
-  evidence commit f15b8ced (initial e74dbdff, amended: 4c39582e, then f15b8ced)). Per CONTRIBUTING.md this repo forbids
-  committing binary/media artifacts (ci-blob-size-guard, 5 MiB cap), so the
-  150 s transport stream itself (19,172,052 bytes) stays on local disk and is
-  referenced here and in evidence-manifest.json by path, size, and SHA-256.
+- The text evidence above is committed to the dedicated branch
+  `fix/blackwell-caption-runtime` in the commit titled
+  "docs(captions): record Blackwell beta.8 live caption acceptance evidence".
+  This report deliberately does not embed that commit's own hash: the commit
+  cannot contain a correct reference to itself, and amending the evidence
+  commit changes its hash. Resolve the commit by its title with
+  `git log --grep="record Blackwell beta.8 live caption acceptance evidence"`
+  and read the true HEAD with `git rev-parse HEAD`.
+  Per CONTRIBUTING.md this repo forbids committing binary/media artifacts
+  (ci-blob-size-guard, 5 MiB cap), so the 150 s transport stream itself
+  (19,172,052 bytes) stays on local disk and is referenced here and in
+  evidence-manifest.json by path, size, and SHA-256.
 - Every committed evidence file's SHA-256 is verified against the manifest.
 - A final scratch sweep found and deleted four leftover diagnostic files that
   contained a token string (check-me.py, hash-compare.py, retry-me.py) plus a
