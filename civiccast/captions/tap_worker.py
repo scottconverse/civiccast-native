@@ -574,15 +574,25 @@ class CaptionTapWorker:
         self._previous_segments.pop(channel_id, None)
         self._backoff.forget(channel_id)
         LiveWebVttPublisher(active_caption_sidecar(self._caption_work_dir, channel_id)).reset()
-        # Discard the channel's SETTLED segments: they belong to a finished
-        # broadcast and can never air in the new one.  Leaving them made a fresh
-        # session inherit the previous session's backlog, and >2 settled segments
-        # then fail-closed into a 120 s pause BEFORE any new audio existed.
-        # Measured in the accept5 run: PID 10588 started 04:21:47 and overloaded
-        # at 04:22:15 while public was still on FALLBACK_SLATE, purely on 4
-        # leftover segments.  This is the session-scoped analogue of the sidecar
-        # reset above, and cannot lose airable audio: a settled segment from a
-        # session that has already ended is stale by definition.
+        # Discard the channel's leftover segments: they belong to the PREVIOUS
+        # session and can never air in this one.  This is the session-scoped
+        # analogue of the sidecar reset above.
+        #
+        # WHY THIS IS SOUND HERE (and only here): the daemon fires
+        # channel_start_hook and only THEN calls _start() (see
+        # EgressDaemon._process_command), so no writer for the new session exists
+        # yet -- every chunk present belongs to the previous session or process.
+        # Leaving them makes a fresh session inherit the old backlog, and >2
+        # settled segments then fail-closed into a 120 s pause before any new
+        # audio existed.
+        #
+        # SCOPE LIMIT, deliberately not overclaimed: this runs ONLY on an explicit
+        # START command.  It therefore does NOT explain the 04:22:15 startup
+        # overload, where no START was issued and the hook never ran -- that
+        # event's attribution stays PROVISIONAL.  A first-scan/"restart without
+        # START" variant is NOT implemented, because the WAV writer is a separate
+        # per-channel GStreamer subprocess, so file mtime cannot establish which
+        # process produced a chunk.
         self._discard_settled_segments(channel_id)
 
     def flush_channel(self, channel_id: str) -> CaptionTapScanResult:
