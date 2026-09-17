@@ -1,0 +1,35 @@
+{
+  "created_before_run": true,
+  "created_at_local": "2026-09-17T05:10:25.694135",
+  "commit_under_test": "e3a47841ffd9cc25f95a70da43630c2fbe662dcb",
+  "objective": "Definitive captions-ON acceptance: startup, sustained output, controlled recovery, post-recovery correspondence.",
+  "source_passage": "Beta7 Sample 3 Weather 360p (station's on-hand speech-bearing program)",
+  "matching_rule": "Decoded text counts as MATCH for a cue when, after case-folding and collapsing punctuation/whitespace, the decoded text contains at least SIX CONSECUTIVE WORDS that also appear contiguously in the cue text. Prefix-only overlap does not count.",
+  "observation_duration": {
+    "total_capture_seconds": 420,
+    "startup_window_seconds": 60,
+    "sustained_window_seconds": 180,
+    "post_recovery_window_seconds": 120
+  },
+  "procedure": [
+    "1. channel STOPPED; start ONE capture that runs ~420s continuously",
+    "2. with capture already running, issue START (capture-before-enable)",
+    "3. observe startup + sustained cue growth",
+    "4. issue controlled STOP then START (the interruption)",
+    "5. keep the SAME capture running through the whole post-recovery window",
+    "6. preserve the FIRST cue committed after recovery, plus later snapshots",
+    "7. decode the TS; apply the 6-consecutive-word matching rule"
+  ],
+  "success_criteria": [
+    ">=1 decoded entry matching a preserved cue by the matching rule",
+    "caption runtime observed within-capacity with cue count INCREASING after the controlled interruption",
+    "post-recovery cue preserved and matched from the outgoing TS",
+    "no threshold change, no CPU substitution, no unrelated GPU workload termination"
+  ],
+  "failure_criteria": [
+    "no decoded text despite cues on air -> FAIL",
+    "captions do not resume after the controlled interruption -> FAIL",
+    "runtime not CUDA/float16 -> FAIL"
+  ],
+  "explicitly_not_claimed": "Does not establish long-run stability beyond this window."
+}

@@ -1,0 +1,54 @@
+{
+  "commit_under_test": "e3a47841ffd9cc25f95a70da43630c2fbe662dcb",
+  "supervisor_pid": "28132",
+  "process_created": "2026-09-17 05:09:17",
+  "run_local": {
+    "capture_start": "2026-09-17 05:10:40",
+    "start_issued": "2026-09-17 05:11:10",
+    "controlled_stop": "2026-09-17 05:14:57",
+    "controlled_start": "2026-09-17 05:15:12",
+    "capture_end": "2026-09-17 05:18:38"
+  },
+  "capture_before_enable_seconds": 30,
+  "sustained": {
+    "cues_0_to_16": "05:11:41 -> 05:14:36",
+    "caption_state": "within-capacity",
+    "backlog": 1,
+    "overloads": 0
+  },
+  "post_recovery": {
+    "cues_0_to_13": "05:15:43 -> 05:17:28",
+    "caption_state": "within-capacity",
+    "backlog": 1,
+    "overloads": 0
+  },
+  "verification": {
+    "live_gstreamer_writer_pid": "14136 (alive during the run)",
+    "decoded_entries": 58,
+    "preserved_first_post_recovery_cue_count": 1,
+    "preserved_latest_post_recovery_cue_count": 13,
+    "matches_by_predeclared_6_consecutive_word_rule": 13,
+    "cue_total_matched": "13 of 13"
+  },
+  "artifacts": {
+    "capture.ts": {
+      "bytes": 81564364,
+      "sha256": "7b457d828a62311ed06017e9e57da338611a98d3af684ab66d94ce1b9e7990f8",
+      "note": "binary TS kept on local disk per CONTRIBUTING.md"
+    },
+    "VTT-first-post-recovery.vtt": {
+      "bytes": 137,
+      "sha256": "846638823047c444c66e09870fd4e3106f5d262863dad03251386ce035b9ce8a"
+    },
+    "VTT-latest-post-recovery.vtt": {
+      "bytes": 1545,
+      "sha256": "8aaa6aa3b98b038d9ec8b31fdd93f23c981601902086bf94abbaa417023859f3"
+    },
+    "decodeback.srt": {
+      "bytes": 6525,
+      "sha256": "660faa10d28d365ffb48f3d7bbea6363e993b2f6674de757bb1053ecf26e2421"
+    }
+  },
+  "verdict": "ACCEPTANCE MET for this run: capture preceded START by 30s; 16 cues sustained with 0 overloads; controlled stop/start; 13 cues after recovery; 58 decoded entries; all 13 preserved post-recovery cues matched in the outgoing TS by the predeclared rule.",
+  "proof_boundary": "Proves the handoff acceptance path for this window (startup, sustained, controlled recovery, post-recovery correspondence) on the staged commit. Does not establish long-run stability beyond ~8 minutes, and does not explain the earlier recurring startup overloads (unresolved, attribution provisional)."
+}
