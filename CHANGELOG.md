@@ -24,6 +24,34 @@ Candidate identity: `v1.0.0-beta.8` (unpublished).
   measured three-channel backlog in which three roughly 2.75-second GPU
   transcriptions were serialized against a five-second segment cadence.
 
+### Blackwell live-caption runtime repairs (release validation pending)
+
+- Corroborate live speech across substantially overlapping audio windows so
+  changing ASR wording does not indefinitely suppress continuous-speech cues;
+  wire that live mode into the caption tap.
+- Bound caption timestamp rebasing near the current live edge after short
+  restarts, and reset sidecars at real channel-session boundaries. Per-channel
+  locking makes reset and generation-checked publication atomic. Old work
+  cannot move a newly reused chunk filename or restore old overlap state;
+  speech recognition remains outside the lock.
+- Move subsequent retention sweeps off the caption-processing thread, retain
+  the initial readiness check and fail-closed retention verdict, and guard
+  against overlapping sweeps during shutdown/restart.
+- Run session cleanup only for an actual channel launch, not a duplicate START
+  command on an already-running channel; discard the previous session's audio.
+- Log the resolved ASR backend device, compute type and worker capacity after
+  model preparation, rather than presenting requested CUDA settings as proof
+  that a CUDA model was loaded.
+- Preserve the existing backlog limit (two settled segments) and initial
+  overload pause (120 seconds). These repairs do not relax the overload gate.
+
+Local evidence includes an approximately 7.5-minute capture with preserved
+sidecar-to-stream correspondence after a controlled restart, plus a separate
+loaded CUDA/float16 identity run. It does not establish long-duration stability
+or validate the final public installer. Startup overload remains a monitored
+risk; see `work/BLACKWELL-CAPTION-FIX-REPORT-v9.md` for exact run identities and
+the investigation's corrected conclusions.
+
 ## [1.0.0-beta.7] - 2026-09-15
 
 **PUBLISHED.** `v1.0.0-beta.7` was published as a GitHub prerelease from

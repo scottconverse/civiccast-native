@@ -727,13 +727,22 @@ controls below the player. Residents can leave the default caption track on,
 turn captions off, or re-enable the posted language track with keyboard or
 pointer controls.
 
-Caption stabilization follows the v0.5 contract: text is committed only after
-it remains stable across two 4-second windows, and a committed live cue is not
-rewritten later. Low-confidence cues are flagged in the operator review queue
+Live caption stabilization requires corroboration across overlapping audio
+windows. In beta.8, a later window may corroborate substantially re-heard
+audio even when recognition changes the wording; a tiny overlap is not
+enough. This differs from requiring identical wording twice during continuous
+speech. A committed live cue is not rewritten later. Low-confidence cues are flagged in the operator review queue
 with a specific next step: compare the cue against the audio, then approve,
 edit, or reject it. The staff review API preserves the original machine cue
 text separately from approved or edited reviewer text so the UI keeps a clear
 audit trail.
+
+For live-tap concurrency, retained-audio sweep scheduling, overload pauses
+and the loaded CUDA/compute-type diagnostic, see
+[Live caption tap](ops/background-workers.md#live-caption-tap). Live captions
+remain off by default. The source fixes and short Blackwell recovery run do
+not establish long-duration or public-installer acceptance; consult the
+[beta.8 verification record](releases/v1.0.0-beta.8-verification.md).
 
 ## Run agenda import (vendor bridge + js_portal)
 

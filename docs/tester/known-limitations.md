@@ -2,8 +2,8 @@
 
 ## Release State
 
-`v1.0.0-beta.5` is the current release, a download-only upgrade for
-stations already on `v1.0.0-beta.4` (now superseded, as is `v1.0.0-beta.3`,
+`v1.0.0-beta.7` is the current release, a download-only upgrade proven for
+stations already on `v1.0.0-beta.5` (now superseded, as are beta.4 and `v1.0.0-beta.3`,
 the first downloadable release):
 `setup.exe` + `.ccpack` runtime packs + `SHA256SUMS.txt`, published as a
 prerelease at <https://github.com/scottconverse/civiccast-native/releases>.
@@ -14,6 +14,21 @@ See [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for
 the authored release-state record.
 
 These limits are intentional for the current early-adopter line.
+
+## Live Captions: Published Release And Next Candidate
+
+The published beta.7's eight-hour physical-machine soak ran with live captions
+off. It is not captions-ON endurance proof. Live captions remain off by default
+on new installations; an explicitly saved setting survives upgrades.
+
+Beta.8 is an unpublished candidate with caption stabilization, restart timing
+and retention-processing repairs. Local Blackwell evidence includes a roughly
+7.5-minute recovery capture with sidecar-to-stream text correspondence and a
+separate loaded CUDA/float16 model check. It does not prove long-run stability
+or the final public installer's behavior. Startup overload remains a risk to
+monitor. The existing two-segment backlog limit and initial 120-second pause
+remain unchanged. Preserve logs and report pauses or missing captions rather
+than changing thresholds to make a test pass.
 
 ## Installer Trust
 

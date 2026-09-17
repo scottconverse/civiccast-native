@@ -8,7 +8,7 @@
 
 ## Current Release
 
-`v1.0.0-beta.5` is the current published release (2026-09-09), recorded as
+`v1.0.0-beta.7` is the current published release (2026-09-15), recorded as
 `current` in the release-truth record. Do not describe any later candidate as
 a public download until the release owner publishes the exact candidate and
 updates that record. For a published GitHub release, use its `setup.exe`, runtime
@@ -16,7 +16,7 @@ updates that record. For a published GitHub release, use its `setup.exe`, runtim
 exact release page. For a USB/LAN field kit, use the complete kit's own hash-pinned
 delivery manifest and do not require a GitHub sidecar that is not present. The
 current published release is the
-[`v1.0.0-beta.5` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5)
+[`v1.0.0-beta.7` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7)
 as a **prerelease** -- watch
 <https://github.com/scottconverse/civiccast-native/releases>, not
 `scottconverse/civiccast` (the retired, separate WSL2-line repository) and
@@ -24,7 +24,7 @@ not any `v1.0.0-rcNN` tag, which belongs to that other repository. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
 authored release-state record.
 
-`v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable release) are
+`v1.0.0-beta.5`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable release) are
 now superseded.
 `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also superseded.
 `v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
@@ -34,7 +34,7 @@ upgrade-baseline kit, never a release a tester receives.
 available, check
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) first
 -- it is the single source of truth for which tag is current, and this page
-may not have been updated yet. A beta.5 candidate remains unpublished until
+may not have been updated yet. The beta.8 candidate remains unpublished until
 that record and the public release page say otherwise.**
 
 A first-time install on a station with no prior CivicCast install needs the
@@ -51,8 +51,9 @@ from a `beta.1` install; see
 for why. From `v1.0.0-beta.3` on, an upgrade of an already-installed station
 is download-only (`setup.exe` plus the runtime packs, no `station\` folder
 needed) and keeps the station's existing recordings, database, and AI
-models -- this is how a `beta.3` station upgraded to `beta.4` and how a
-`beta.4` station upgrades to `beta.5`.
+models. The published beta.7 release has download-only upgrade proof from
+beta.5; consult its exact verification record for that evidence. This is not
+advance acceptance of a beta.8 upgrade.
 
 ## Clean-Machine Test Rule
 

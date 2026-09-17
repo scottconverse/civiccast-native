@@ -12,6 +12,7 @@ runtime, ``run_once``/``run_forever`` survive-and-log loop.
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import threading
@@ -261,6 +262,149 @@ class _VaryingLiveRuntime:
                 text=text,
                 confidence=0.9,
             )
+
+
+@pytest.mark.parametrize("publish_method", ["_publish_cues", "publish_for_current_session"])
+def test_session_reset_serializes_with_an_already_validated_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, publish_method: str
+) -> None:
+    worker = _worker(tmp_path / "tap", _ScriptedRuntime(), InMemoryCaptionReviewStore())
+    worker.begin_channel_session("public")
+    generation = worker._session_generation["public"]
+    publisher = worker._publisher_for("public")
+    entered, release, resetting, reset_done = (threading.Event() for _ in range(4))
+    original_publish = publisher.publish
+
+    def held_publish(cues):  # type: ignore[no-untyped-def]
+        entered.set()
+        assert release.wait(5)
+        original_publish(cues)
+
+    monkeypatch.setattr(publisher, "publish", held_publish)
+    cue = CaptionCue(
+        cue_id="old",
+        start_seconds=0,
+        end_seconds=1,
+        text="STALE BROADCAST",
+        confidence=0.9,
+        low_confidence=False,
+    )
+
+    def reset() -> None:
+        resetting.set()
+        worker.begin_channel_session("public")
+        reset_done.set()
+
+    with concurrent.futures.ThreadPoolExecutor(2) as pool:
+        publication = pool.submit(getattr(worker, publish_method), "public", generation, [cue])
+        try:
+            assert entered.wait(5)
+            restart = pool.submit(reset)
+            assert resetting.wait(5)
+            # Allow the old implementation to finish its unprotected reset.
+            reset_done.wait(0.1)
+        finally:
+            release.set()
+        publication.result(5)
+        restart.result(5)
+    assert _active_vtt(tmp_path / "tap", "public").read_text().strip() == "WEBVTT"
+
+
+@pytest.mark.parametrize("pause_at", ["read", "asr"])
+def test_old_segment_cannot_enter_or_damage_a_restarted_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pause_at: str
+) -> None:
+    tap_root = tmp_path / "tap"
+    channel = tap_root / "public"
+    segment = channel / "chunk-000001.wav"
+    runtime = _ScriptedRuntime("STALE BROADCAST")
+    worker = _worker(tap_root, runtime, InMemoryCaptionReviewStore(), atomic_segments=True)
+    worker.begin_channel_session("public")
+    _write_wav(segment)
+    entered, release = threading.Event(), threading.Event()
+    original_read = worker._read_chunk
+    original_transcribe = runtime.transcribe
+
+    def held_read(*args):  # type: ignore[no-untyped-def]
+        chunk = original_read(*args)
+        entered.set()
+        assert release.wait(5)
+        return chunk
+
+    def held_transcribe(*args, **kwargs):  # type: ignore[no-untyped-def]
+        entered.set()
+        assert release.wait(5)
+        yield from original_transcribe(*args, **kwargs)
+
+    if pause_at == "read":
+        monkeypatch.setattr(worker, "_read_chunk", held_read)
+    else:
+        monkeypatch.setattr(runtime, "transcribe", held_transcribe)
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        scan = pool.submit(worker._process_channel, "public", channel, [(1, segment)])
+        try:
+            assert entered.wait(5)
+            # Restart must finish without waiting for slow read/ASR.
+            worker.begin_channel_session("public")
+            _write_wav(segment, seconds=2)
+            fresh_bytes = segment.read_bytes()
+        finally:
+            release.set()
+        scan.result(5)
+    assert segment.is_file(), "old scan moved the new session's same-numbered WAV"
+    assert segment.read_bytes() == fresh_bytes
+    assert "public" not in worker._previous_segments, "old overlap restored after reset"
+    assert _active_vtt(tap_root, "public").read_text().strip() == "WEBVTT"
+    if pause_at == "read":
+        assert not runtime.seen_chunks, "audio read before reset entered new session ASR"
+
+
+def test_queued_scan_keeps_its_session_across_runtime_preparation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tap_root = tmp_path / "tap"
+    segment = tap_root / "public" / "chunk-000001.wav"
+    runtime = _ScriptedRuntime()
+    worker = _worker(tap_root, runtime, InMemoryCaptionReviewStore(), atomic_segments=True)
+    worker.begin_channel_session("public")
+    _write_wav(segment)
+
+    def prepare() -> None:
+        worker.begin_channel_session("public")
+        _write_wav(segment, seconds=2)
+
+    monkeypatch.setattr(runtime, "prepare", prepare, raising=False)
+    result = worker.run_once()
+    assert result.consumed_segments == 0
+    assert not runtime.seen_chunks
+    assert segment.is_file()
+    assert "public" not in worker._channel_workers
+
+
+def test_flush_keeps_the_worker_session_when_restart_occurs_during_flush(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tap_root = tmp_path / "tap"
+    worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
+    worker.begin_channel_session("public")
+    live_worker = worker._worker_for("public")
+    cue = CaptionCue(
+        cue_id="old",
+        start_seconds=0,
+        end_seconds=1,
+        text="STALE FLUSH",
+        confidence=0.9,
+        low_confidence=False,
+    )
+
+    def flush():  # type: ignore[no-untyped-def]
+        worker.begin_channel_session("public")
+        return SimpleNamespace(committed_review_items=[], expired_unconfirmed_cues=[])
+
+    monkeypatch.setattr(live_worker, "flush", flush)
+    monkeypatch.setattr(live_worker, "committed_cues", lambda: [cue])
+    worker.flush_channel("public")
+    assert _active_vtt(tap_root, "public").read_text().strip() == "WEBVTT"
 
 
 class TestCaptionTapWorker:

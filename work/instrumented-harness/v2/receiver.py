@@ -7,16 +7,27 @@ Design (per review):
   - write an index so we can later associate any media PTS with an ARRIVAL time
   - does NOT throttle the producer and does NOT reinterpret mux PTS as wall time
 """
-import socket, time, json, datetime, pathlib, sys
+
+import datetime
+import json
+import pathlib
+import socket
+import sys
+import time
 
 OUT = None
 TS = None
 IDX = None
 META = None
 
+
 def main(port=23201, duration=None, bind_host="127.0.0.1", label="probe", outdir=None):
     global OUT, TS, IDX, META
-    OUT = pathlib.Path(outdir) if outdir else pathlib.Path(__file__).resolve().parent / f"run-{int(time.time())}"
+    OUT = (
+        pathlib.Path(outdir)
+        if outdir
+        else pathlib.Path(__file__).resolve().parent / f"run-{int(time.time())}"
+    )
     OUT.mkdir(parents=True, exist_ok=True)
     TS = OUT / "capture.ts"
     IDX = OUT / "arrival-index.jsonl"
@@ -36,21 +47,35 @@ def main(port=23201, duration=None, bind_host="127.0.0.1", label="probe", outdir
                 break
             try:
                 data, _addr = s.recvfrom(65536)
-            except socket.timeout:
+            except TimeoutError:
                 continue
             mono = time.monotonic_ns()
             wall = datetime.datetime.now().isoformat()
             fh.write(data)
-            ix.write(json.dumps({"mono_ns": mono, "wall": wall, "offset": offset, "len": len(data)}) + "\n")
+            ix.write(
+                json.dumps({"mono_ns": mono, "wall": wall, "offset": offset, "len": len(data)})
+                + "\n"
+            )
             offset += len(data)
             packets += 1
-    META.write_text(json.dumps({
-        "label": label, "port": port, "bind": bind_host,
-        "start_mono_ns": int(t_start_mono * 1e9), "start_wall": t_start_wall,
-        "end_wall": datetime.datetime.now().isoformat(),
-        "bytes": offset, "packets": packets,
-    }, indent=2), encoding="utf-8")
+    META.write_text(
+        json.dumps(
+            {
+                "label": label,
+                "port": port,
+                "bind": bind_host,
+                "start_mono_ns": int(t_start_mono * 1e9),
+                "start_wall": t_start_wall,
+                "end_wall": datetime.datetime.now().isoformat(),
+                "bytes": offset,
+                "packets": packets,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     print(f"captured {packets} datagrams, {offset} bytes")
+
 
 if __name__ == "__main__":
     dur = float(sys.argv[1]) if len(sys.argv) > 1 else None

@@ -537,6 +537,11 @@ class CaptionTapWorker:
         # back on air (reproduced: reset -> old worker publish -> old cue
         # visible again).
         self._session_generation: dict[str, int] = {}
+        # Serialize session reset with publication and short state/file updates,
+        # not with ASR or the retention sweep. Locks live for the worker lifetime:
+        # replacing a lock during reset would leave an old caller unprotected.
+        self._session_locks: dict[str, threading.RLock] = {}
+        self._session_locks_guard = threading.Lock()
         reset_existing_live_sidecars(self._caption_work_dir)
         # One line, logged once at tap start, so a field report or a sandbox
         # run records what box it ran on and what the tap actually sized
@@ -594,7 +599,21 @@ class CaptionTapWorker:
                     self._retention_shutdown_timeout,
                 )
 
+    def _session_lock(self, channel_id: str) -> threading.RLock:
+        with self._session_locks_guard:
+            lock = self._session_locks.get(channel_id)
+            if lock is None:
+                lock = threading.RLock()
+                self._session_locks[channel_id] = lock
+            return lock
+
     def begin_channel_session(self, channel_id: str) -> None:
+        """Reset a channel atomically with respect to its old caption results."""
+
+        with self._session_lock(channel_id):
+            self._begin_channel_session_locked(channel_id)
+
+    def _begin_channel_session_locked(self, channel_id: str) -> None:
         """Fail closed when a channel starts a new live broadcast session.
 
         ``reset_existing_live_sidecars`` is a PROCESS-start guard.  A worker
@@ -609,8 +628,8 @@ class CaptionTapWorker:
         Safe to call for an unknown channel and safe to call repeatedly.
         """
 
-        # Bump FIRST, before dropping state, so any publish still in flight for
-        # the previous session is already stale and cannot land after the reset.
+        # The same lock covers generation comparison + VTT publication. A publish
+        # already writing finishes BEFORE this reset; any later one is refused.
         self._session_generation[channel_id] = self._session_generation.get(channel_id, 0) + 1
         self._channel_workers.pop(channel_id, None)
         self._channel_publishers.pop(channel_id, None)
@@ -654,14 +673,14 @@ class CaptionTapWorker:
         # The channel's audio has ended, so its overload history is spent: a
         # channel that comes back on air starts from the base delay, not from
         # whatever escalation its previous broadcast left behind.
-        self._backoff.forget(channel_id)
-        worker = self._channel_workers.get(channel_id)
+        with self._session_lock(channel_id):
+            self._backoff.forget(channel_id)
+            worker = self._channel_workers.get(channel_id)
+            generation = self._session_generation.get(channel_id, 0)
         if worker is None:
             return CaptionTapScanResult(channels=(channel_id,))
         result = worker.flush()
-        self._publish_cues(
-            channel_id, self._session_generation.get(channel_id, 0), worker.committed_cues()
-        )
+        self._publish_cues(channel_id, generation, worker.committed_cues())
         return CaptionTapScanResult(
             committed_review_items=len(result.committed_review_items),
             expired_unconfirmed_cues=len(result.expired_unconfirmed_cues),
@@ -717,26 +736,27 @@ class CaptionTapWorker:
                     refusal_reason=retention_refusal,
                 )
             return CaptionTapScanResult(channels=tuple(channels))
-        pending: list[tuple[str, Path, list[tuple[int, Path]]]] = []
+        pending: list[tuple[str, Path, list[tuple[int, Path]], int]] = []
         for channel_dir in sorted(p for p in self._tap_root.iterdir() if p.is_dir()):
             channel_id = channel_dir.name
-            segments = self._settled_segments(channel_dir)
-            if not segments:
-                continue
-            channels.append(channel_id)
-            if self._backoff.is_paused(channel_id):
-                # Inside an earlier pause window: spend NOTHING on ASR, but
-                # still drain the settled audio so a paused channel cannot
-                # grow an unbounded tap directory while it waits.
-                dropped += self._drain_paused_channel(channel_id, channel_dir, segments)
-                paused_channels.append(channel_id)
-                continue
-            if len(segments) > self._max_backlog_segments:
-                dropped += self._fail_closed_overload(channel_id, channel_dir, segments)
-                overloaded_channels.append(channel_id)
-                paused_channels.append(channel_id)
-                continue
-            pending.append((channel_id, channel_dir, segments))
+            with self._session_lock(channel_id):
+                segments = self._settled_segments(channel_dir)
+                if not segments:
+                    continue
+                channels.append(channel_id)
+                if self._backoff.is_paused(channel_id):
+                    dropped += self._drain_paused_channel(channel_id, channel_dir, segments)
+                    paused_channels.append(channel_id)
+                    continue
+                if len(segments) > self._max_backlog_segments:
+                    dropped += self._fail_closed_overload(channel_id, channel_dir, segments)
+                    overloaded_channels.append(channel_id)
+                    paused_channels.append(channel_id)
+                    continue
+                # Bind the queued paths BEFORE runtime preparation/executor delay.
+                pending.append(
+                    (channel_id, channel_dir, segments, self._session_generation.get(channel_id, 0))
+                )
 
         if pending:
             if self._max_channel_workers_override is None:
@@ -812,6 +832,7 @@ class CaptionTapWorker:
         channel_id: str,
         channel_dir: Path,
         segments: list[tuple[int, Path]],
+        generation: int | None = None,
     ) -> _ChannelScanResult:
         # This thread is about to run ASR. Hint the scheduler that it must
         # yield to the playout workers when the box is saturated.
@@ -820,46 +841,61 @@ class CaptionTapWorker:
         quarantined = 0
         committed = 0
         expired = 0
+        with self._session_lock(channel_id):
+            if generation is None:
+                generation = self._session_generation.get(channel_id, 0)
         for index, segment in segments:
-            processed = channel_dir / "processed" / segment.name
-            if processed.exists():
-                collision_path = self._move_collision(segment, channel_dir / "collision")
-                self._retention_policy.record_event(
-                    outcome="quarantined",
-                    reason="restarted-chunk-index-collision",
-                    path=collision_path,
-                    sha256=_sha256(collision_path),
-                )
-                quarantined += 1
-                continue
+            with self._session_lock(channel_id):
+                if generation != self._session_generation.get(channel_id, 0):
+                    break
+                processed = channel_dir / "processed" / segment.name
+                if processed.exists():
+                    collision_path = self._move_collision(segment, channel_dir / "collision")
+                    self._retention_policy.record_event(
+                        outcome="quarantined",
+                        reason="restarted-chunk-index-collision",
+                        path=collision_path,
+                        sha256=_sha256(collision_path),
+                    )
+                    quarantined += 1
+                    continue
             raw_chunk = self._read_chunk(channel_id, index, segment)
-            if raw_chunk is None:
-                self._previous_segments.pop(channel_id, None)
-                self._move(segment, channel_dir / "quarantine")
-                quarantined += 1
-                continue
-            chunk = self._with_overlap(channel_id, index, raw_chunk)
-            generation = self._session_generation.get(channel_id, 0)
-            worker = self._worker_for(channel_id)
+            with self._session_lock(channel_id):
+                if generation != self._session_generation.get(channel_id, 0):
+                    break
+                if raw_chunk is None:
+                    self._previous_segments.pop(channel_id, None)
+                    self._move(segment, channel_dir / "quarantine")
+                    quarantined += 1
+                    continue
+                chunk = self._with_overlap(channel_id, index, raw_chunk)
+                worker = self._worker_for(channel_id)
             result = worker.process_batch(
                 [chunk],
                 audio_evidence_factory=self._audio_evidence_factory(channel_id, chunk),
             )
-            self._publish_cues(channel_id, generation, worker.committed_cues())
             committed += len(result.committed_review_items)
             expired += len(result.expired_unconfirmed_cues)
-            self._move(segment, channel_dir / "processed")
-            self._previous_segments[channel_id] = (index, raw_chunk)
-            consumed += 1
+            with self._session_lock(channel_id):
+                if generation != self._session_generation.get(channel_id, 0):
+                    # A new writer may already have reused this numbered path.
+                    # Do not move it or restore the old session's overlap.
+                    break
+                self._publish_cues(channel_id, generation, worker.committed_cues())
+                self._move(segment, channel_dir / "processed")
+                self._previous_segments[channel_id] = (index, raw_chunk)
+                consumed += 1
         # One healthy scan. The policy forgives the channel's escalation only
         # after several of these in a row, so a channel that flaps does not
         # reset itself to the base delay every other scan.
-        self._backoff.record_within_capacity(channel_id)
-        self._publish_status(
-            channel_id,
-            state="within-capacity",
-            backlog_segments=len(segments),
-        )
+        with self._session_lock(channel_id):
+            if generation == self._session_generation.get(channel_id, 0):
+                self._backoff.record_within_capacity(channel_id)
+                self._publish_status(
+                    channel_id,
+                    state="within-capacity",
+                    backlog_segments=len(segments),
+                )
         return _ChannelScanResult(
             consumed_segments=consumed,
             quarantined_segments=quarantined,
@@ -1107,16 +1143,15 @@ class CaptionTapWorker:
         for channel_dir in tap_dirs:
             channel_id = channel_dir.name
             channels.append(channel_id)
-            if not self._disabled_announced:
-                self._clear_channel_captions(channel_id)
-                self._backoff.forget(channel_id)
-            # Throttled: "disabled" is a steady state that can hold for weeks.
-            # Rewriting it every 2 seconds is a durable write per channel per
-            # scan carrying no new information.
-            self._publish_status(channel_id, state="disabled", backlog_segments=0)
-            for _index, segment in self._settled_segments(channel_dir):
-                segment.unlink(missing_ok=True)
-                discarded += 1
+            with self._session_lock(channel_id):
+                if not self._disabled_announced:
+                    self._clear_channel_captions(channel_id)
+                    self._backoff.forget(channel_id)
+                # Throttle unchanged status, as in the enabled scan path.
+                self._publish_status(channel_id, state="disabled", backlog_segments=0)
+                for _index, segment in self._settled_segments(channel_dir):
+                    segment.unlink(missing_ok=True)
+                    discarded += 1
         if not self._disabled_announced:
             _LOG.info(
                 "Live captions are switched off for this station "
@@ -1214,6 +1249,11 @@ class CaptionTapWorker:
     def _clear_channel_captions(self, channel_id: str) -> None:
         """Fail closed: drop the channel's ASR state and blank its live VTT."""
 
+        with self._session_lock(channel_id):
+            self._session_generation[channel_id] = self._session_generation.get(channel_id, 0) + 1
+            self._clear_channel_captions_locked(channel_id)
+
+    def _clear_channel_captions_locked(self, channel_id: str) -> None:
         self._channel_workers.pop(channel_id, None)
         publisher = self._channel_publishers.pop(channel_id, None)
         if publisher is None:
@@ -1351,16 +1391,17 @@ class CaptionTapWorker:
         a session that has already ended.
         """
 
-        if generation != self._session_generation.get(channel_id, 0):
-            _LOG.info(
-                "channel %s: dropping caption publish from a finished session (gen %d != %d)",
-                channel_id,
-                generation,
-                self._session_generation.get(channel_id, 0),
-            )
-            return False
-        self._publisher_for(channel_id).publish(cues)
-        return True
+        with self._session_lock(channel_id):
+            if generation != self._session_generation.get(channel_id, 0):
+                _LOG.info(
+                    "channel %s: dropping caption publish from a finished session (gen %d != %d)",
+                    channel_id,
+                    generation,
+                    self._session_generation.get(channel_id, 0),
+                )
+                return False
+            self._publisher_for(channel_id).publish(cues)
+            return True
 
     def _publish_cues(self, channel_id: str, generation: int, cues: list[CaptionCue]) -> None:
         """Publish committed cues unless their session has already ended.
@@ -1371,15 +1412,7 @@ class CaptionTapWorker:
         dropped rather than written over the new session's sidecar.
         """
 
-        if generation != self._session_generation.get(channel_id, 0):
-            _LOG.info(
-                "channel %s: dropping caption publish from a finished session (gen %d != %d)",
-                channel_id,
-                generation,
-                self._session_generation.get(channel_id, 0),
-            )
-            return
-        self._publisher_for(channel_id).publish(cues)
+        self.publish_for_current_session(channel_id, generation, cues)
 
     def _publisher_for(self, channel_id: str) -> LiveWebVttPublisher:
         publisher = self._channel_publishers.get(channel_id)

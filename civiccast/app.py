@@ -1289,8 +1289,8 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         session_factory,
         alert_evaluator_hook=_alert_evaluator_hook,
         channel_start_hook=lambda channel_id: (
-            getattr(app.state, "caption_tap_worker", None).begin_channel_session(channel_id)
-            if getattr(app.state, "caption_tap_worker", None) is not None
+            tap_worker.begin_channel_session(channel_id)
+            if (tap_worker := getattr(app.state, "caption_tap_worker", None)) is not None
             else None
         ),
     )

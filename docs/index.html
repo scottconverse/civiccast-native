@@ -2178,6 +2178,13 @@
               <code>v1.0.0-beta.8</code> is the next candidate and the
               current owner-held unpublished candidate. It has no published
               installer yet and does not change the beta.7 download above.
+              Its caption repairs address live speech stabilization, restart
+              timing, session cleanup and retention work that delayed captions.
+              Local Blackwell testing matched captions after a controlled restart
+              to the outgoing stream; a separate run verified the loaded CUDA
+              model. The roughly 7.5-minute recovery capture is not a long soak
+              or final-installer acceptance. Startup overload remains a risk to
+              monitor; the existing overload limit and pause are unchanged.
             </p>
             <p>
               <code>v1.0.0-beta.7</code> carries in-place schedule rollover enabled by default,

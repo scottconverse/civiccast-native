@@ -2,8 +2,8 @@
 
 ## Release State
 
-`v1.0.0-beta.5` is the current release, a download-only upgrade for
-stations already on `v1.0.0-beta.4` (now superseded, as is `v1.0.0-beta.3`,
+`v1.0.0-beta.7` is the current release, a download-only upgrade proven for
+stations already on `v1.0.0-beta.5` (now superseded, as are beta.4 and `v1.0.0-beta.3`,
 the first downloadable release): `setup.exe`, `.ccpack` runtime packs, and
 `SHA256SUMS.txt`,
 published as a **prerelease** at
@@ -13,6 +13,9 @@ published as a **prerelease** at
 only as an internal Gate A upgrade-baseline kit. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
 authored release-state record.
+
+Beta.8 remains an unpublished candidate. A familiar filename or a passing
+SmartScreen check is not evidence that its release checks have passed.
 
 When you open a CivicCast installer, Windows may show a blue SmartScreen page.
 That page alone does not prove the file is safe, signed, or approved. Verify the

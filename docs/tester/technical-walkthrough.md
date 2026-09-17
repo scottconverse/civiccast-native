@@ -2,10 +2,10 @@
 
 ## Release State
 
-`v1.0.0-beta.5` is the current published release (2026-09-09), recorded as
+`v1.0.0-beta.7` is the current published release (2026-09-15), recorded as
 `current` in `release-truth.yaml`; use only the exact release named in the
-handoff. The published beta.5 release is a download-only upgrade for
-stations already on `v1.0.0-beta.4` (now superseded, as is `v1.0.0-beta.3`,
+handoff. The published beta.7 release is a download-only upgrade proven for
+stations already on `v1.0.0-beta.5` (now superseded, as are beta.4 and `v1.0.0-beta.3`,
 the first downloadable release):
 `setup.exe` + `.ccpack` runtime packs + `SHA256SUMS.txt`, published as a
 prerelease at <https://github.com/scottconverse/civiccast-native/releases>.
@@ -14,6 +14,11 @@ prerelease at <https://github.com/scottconverse/civiccast-native/releases>.
 upgrade-baseline kit.
 See [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for
 the authored release-state record.
+
+Beta.8 is an unpublished candidate. Its local caption-recovery and loaded-GPU
+checks do not replace testing the exact final installer. See
+[Known Limitations](known-limitations.md#live-captions-published-release-and-next-candidate)
+for the current captions evidence boundary.
 
 Use this path if you are validating the installer package, runtime bootstrap,
 and provider setup proofs.

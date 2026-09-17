@@ -7,8 +7,8 @@
 
 ## Current Release State
 
-`v1.0.0-beta.5` is the current release, a download-only upgrade for
-stations already on `v1.0.0-beta.4`: `setup.exe`, per-pack runtime
+`v1.0.0-beta.7` is the current release, a download-only upgrade for
+stations already on `v1.0.0-beta.5`: `setup.exe`, per-pack runtime
 `.ccpack` assets, and a `SHA256SUMS.txt` checksum file, published as a
 **prerelease** at
 <https://github.com/scottconverse/civiccast-native/releases> -- watch that
@@ -16,7 +16,8 @@ page, not `scottconverse/civiccast` (the retired, separate WSL2-line
 repository) and not any `v1.0.0-rcNN` tag, which belongs to that other
 repository. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
-authored release-state record.
+authored release-state record. Beta.8 is being prepared; do not substitute
+its development-runtime evidence for verification of a published installer.
 
 `v1.0.0-beta.3`, the first downloadable release, is now superseded.
 `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also superseded.
