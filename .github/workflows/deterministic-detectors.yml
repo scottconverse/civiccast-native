@@ -172,6 +172,10 @@ jobs:
         run: |
           uv sync --all-extras --no-extra agenda-js-import --group dev
           uv pip install "mutmut==3.6.0"
+          # 3.6.0's generator trampoline drops StopIteration.value, corrupting
+          # the unmutated reload baseline (run 35253853480). Preserve return
+          # values without excluding tests or changing product behavior.
+          uv run --no-sync python scripts/policy/patch_mutmut_generator_return.py
 
       - name: Diff-scope changed non-test .py files vs base
         id: scope
@@ -294,7 +298,7 @@ jobs:
               # against pristine source (passes) and reproduced verbatim in a
               # faithful local mutants/ sandbox.
               #
-              # Fourth member of the same family (2026-09-04, PR #156): 
+              # Fourth member of the same family (2026-09-04, PR #156):
               # test_native_activation_selftest_layout_policy.py::
               # test_self_test_server_binary_paths_are_all_builder_declared parses
               # scripts/build_native_server_pack.py as text and asserts each *_PINS

@@ -4,20 +4,21 @@
 
 This section supersedes the historical status sections below.
 Current branch: `fix/blackwell-caption-runtime`.
+Current reviewed product HEAD: `d89e7e930c914f85f357024e5f2fef4bc7596801`.
 Initial pushed checkpoint: `005cd33595d2b72f5507c44e98e04c08d3c43563`.
 Resolve current HEAD with Git; the follow-up repair commit supersedes that
 checkpoint and requires its own CI and installed-runtime validation.
 Current PR: https://github.com/scottconverse/civiccast-native/pull/231.
 Current public tag: `v1.0.0-beta.7`; beta.8 is NOT published.
 
-PR follow-up: DO NOT MERGE this pushed checkpoint. Review confirmed additional
-restart-PTS, retention-permission, failed-reset/stale-caption and stabilization
-findings. Local targeted repairs are in progress, with independent review.
+PR follow-up: DO NOT MERGE until fresh CI and required validation pass.
+The restart-PTS, retention-permission, failed-reset/stale-caption and
+stabilization repairs were independently reviewed and pushed at d89e7e93.
 The first stricter lexical stabilizer produced only five cues from 120 seconds
 of preserved real speech (51 ASR hypotheses); that is insufficient functional
 acceptance. Grouped hypotheses improved that to 13 cues but retained a 17s
-speech gap. Actual recognizer word timestamps are now used in a draft repair;
-the latest replay yielded 23 cues/24 windows, still under independent review.
+speech gap. The reviewed repair uses actual recognizer word timestamps;
+both final replays yielded 23 cues/24 windows and were independently re-derived.
 No confirmation or overload policy is relaxed. Preserve this
 negative replay and the preceding silence-only replays; do not report only
 nonzero cues as success. Raw receipts are under the local Temp directory as
@@ -40,8 +41,8 @@ Timed-word flush/review fanout is repaired. Independent review re-derived both
 checks passed 660 tests, 8 skips; proportional feed timing then passed 11
 focused tests and independent boundary review. Ruff/scoped pre-commit/manual
 freshness pass; mypy passes all 11 changed product modules. Source is ready
-for a follow-up push, NOT release acceptance. Shared-model three-channel
-capacity measurement is underway; installed output and signed kit remain
+and pushed, NOT release acceptance. Shared-model three-channel capacity
+completed 72/72 tasks within 5s deadlines (max2.093s); installed output and signed kit remain
 unverified. Evidence/report: work/release-beta8-word-replay/.
 Re-run final combined checks against frozen source after all owners finish;
 intermediate 637passed8skipped is not an exact final candidate receipt.
@@ -59,7 +60,21 @@ Candidate docs/manuals updated, public beta7 status retained until publication.
 See docs/releases/v1.0.0-beta.8-verification.md and local human report
 `C:\Users\scott\Documents\Codex\2026-08-12\tes\CivicCast Beta 8 - Release Progress - v1.md`.
 
-CI run IDs for this exact head: ci-test35248836044, lint35248835876,
+Current d89e7e93 CI: ci-test35253853483, deterministic35253853480,
+lint35253853525, docs35253853508, a11y35253853488, reproducibility35253853530.
+At 11:48 a.m. MDT the mutation baseline failed before evaluating mutants:
+test_seamless_content_reload_records_a_transition expected2 rows, found1;
+2277 passed,24 skipped,8 deselected. Root cause: mutmut 3.6.0's generator
+wrapper discards StopIteration.value, changing successful reload into fallback.
+The exact failure reproduced under real generated instrumentation; preserving
+the return value passed all 15 as-run tests. The version/template-checked CI
+compatibility helper passed independent review; 27 focused tests passed locally
+in 1.45s. It changes no product code, assertions or test selections. Full Linux
+mutation execution still requires fresh CI. Unit/randomized remain running;
+Windows reproducibility passed. Both browser
+accessibility jobs, lint, docs, security and Windows dual-runtime probes passed.
+
+Historical 005cd335 run IDs: ci-test35248836044, lint35248835876,
 docs35248835948, detectors35248835819, security35248835834,
 reproducibility35248835895. Refresh before making any PASS/merge claim.
 The full pre-commit sweep has inherited historical-evidence hygiene failures;
