@@ -176,12 +176,19 @@ class _SlowRetentionPolicy:
         #: Signals that a sweep has ENTERED the blocking section, so a test can
         #: land the next segment deterministically instead of sleeping and hoping.
         self.entered = threading.Event()
+        #: Optional explicit release: when set, a "slow" sweep waits on this event
+        #: instead of a fixed delay, so a test can hold it blocked indefinitely and
+        #: then release it deterministically (no flaky wall-clock waits).
+        self.release: threading.Event | None = None
 
     def enforce_discovered(self, *, tap_root, review_store, segment_seconds):  # type: ignore[no-untyped-def]
         self.calls += 1
         self.entered.set()
         if self.delay_seconds:
-            threading.Event().wait(self.delay_seconds)
+            if self.release is not None:
+                self.release.wait(self.delay_seconds)
+            else:
+                threading.Event().wait(self.delay_seconds)
         return SimpleNamespace(ready=self.ready, refusal_reason=self.refusal_reason)
 
 
@@ -812,6 +819,78 @@ class TestCaptionTapWorker:
             "run_forever returned while the retention sweep was still running; a "
             "successor worker could overlap it"
         )
+
+    def test_successor_cannot_overlap_an_orphaned_sweep(self, tmp_path: Path) -> None:
+        """A sweep outliving a bounded shutdown must not be overlapped by a successor.
+
+        Reachable path (traced): ThreadSupervisor.start() can be called again after
+        stop(), so the same worker can be re-entered while a sweep from the
+        previous loop is still running.  MEASURED OUTCOME: overlap does NOT occur,
+        because ``_retention_in_flight`` stays True until the running sweep
+        finishes and the dispatch path returns early on it.  Verified by removing
+        the whole guard branch from the source and re-running this scenario: the
+        successor still did not dispatch.
+
+        This test therefore pins the INVARIANT (no overlapping sweep) rather than
+        a guard, and also proves sweeps resume once the orphan completes.
+        """
+
+        tap_root = tmp_path / "tap"
+        (tap_root / "public").mkdir(parents=True)
+        _write_wav(tap_root / "public" / "chunk-000000.wav", seconds=5.0)
+        clock = _FakeClock()
+
+        blocking = _SlowRetentionPolicy(delay_seconds=30.0)  # far beyond the wait
+        blocking.release = threading.Event()
+        policy = _ScriptedRetentionPolicy(["ok", blocking])
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=5.0,
+            atomic_segments=True,
+            retention_policy=policy,  # type: ignore[arg-type]
+            monotonic=clock,
+        )
+        worker.run_once()  # synchronous first verification
+        # Shorten the shutdown wait so the test does not take 10s.
+        worker._retention_shutdown_timeout = 0.2
+
+        stop = threading.Event()
+        clock.advance(61.0)
+        loop = threading.Thread(
+            target=worker.run_forever,
+            kwargs={"poll_seconds": 0.05, "stop_event": stop},
+            daemon=True,
+        )
+        loop.start()
+        assert blocking.entered.wait(timeout=10.0), "async sweep never started"
+
+        # Shutdown must time out and mark the sweep orphaned.
+        stop.set()
+        loop.join(timeout=10.0)
+        assert not loop.is_alive(), "run_forever did not return on stop_event"
+        assert worker._retention_orphaned is True, (
+            "an outliving sweep was not recorded; a successor could overlap it"
+        )
+
+        # A successor loop must NOT dispatch a second sweep while the orphan lives.
+        calls_before = policy.calls
+        clock.advance(61.0)
+        _write_wav(tap_root / "public" / "chunk-000001.wav", seconds=5.0)
+        worker.run_once()
+        assert policy.calls == calls_before, (
+            "a successor sweep was dispatched while an orphaned sweep was alive"
+        )
+
+        # Release the blocker; the orphan finishes, and sweeps may resume.
+        blocking.release.set()
+        assert worker.wait_for_retention_sweep(timeout=15.0)
+        clock.advance(61.0)
+        _write_wav(tap_root / "public" / "chunk-000002.wav", seconds=5.0)
+        worker.run_once()
+        assert policy.calls > calls_before, "sweeps did not resume after the orphan finished"
 
     def test_multiple_channels_keep_separate_caption_streams(self, tmp_path: Path) -> None:
         tap_root = tmp_path / "tap"
