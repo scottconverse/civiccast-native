@@ -79,7 +79,11 @@ a selected subset and is retracted.
 - ruff check / ruff format --check: clean
 - git diff --check 41ec3dda..HEAD: clean
 - focused suite: 632 passed, 7 skipped
-- branch: 9 DCO-signed commits after 41ec3dda (git rev-list --count 41ec3dda..HEAD == 9; all 9 carry Signed-off-by). v5 said 7 and my earlier v6 said 8 - both corrected.
+- branch: every commit after 41ec3dda is DCO-signed. The count is not hard-coded
+  here because each corrective commit changes it; resolve it with
+  `git rev-list --count 41ec3dda..HEAD` and check sign-off with
+  `git log --format=%(trailers:key=Signed-off-by,valueonly) 41ec3dda..HEAD`.
+  (Earlier reports hard-coded 7 and then 8 and went stale - both corrected.)
 - no PR / merge / tag / publish
 
 ## Proof boundary (do not overclaim)

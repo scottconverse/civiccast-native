@@ -27,5 +27,6 @@
     "canonical": "work/accept-20260917/loaded-process-identity.json",
     "duplicate_copy": "work/accept2-20260917/loaded-process-identity.json",
     "note": "identical content in both; the canonical path is under accept-20260917"
-  }
+  },
+  "dco_note": "All commits after 41ec3dda are DCO-signed; resolve the exact count with git rev-list --count 41ec3dda..HEAD (deliberately not hard-coded)."
 }
