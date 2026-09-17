@@ -93,7 +93,7 @@ startup-window log and timeline are the diagnostic inputs if it recurs.
 - work/accept6-20260917/validation-result.json      run record, media facts, windows, verdict
 - work/accept6-20260917/run-timeline.jsonl          per-phase samples (wall clock)
 - work/accept6-20260917/startup-window-log.txt      log covering startup
-- work/accept6-20260917/decodeback.srt              58 decoded entries
+- work/accept6-20260917/decodeback.srt              58 decoded entries (6524 bytes, sha256 df39834cff8b485b5989d037ab2cf16bc350a625abd370c61d627f2c90d58746)
 - work/accept6-20260917/matching-result.json        cue-vs-decode matching outcome
 - work/accept6-20260917/VTT-first-post-recovery.vtt first post-recovery cue
 - work/accept6-20260917/VTT-latest-post-recovery.vtt

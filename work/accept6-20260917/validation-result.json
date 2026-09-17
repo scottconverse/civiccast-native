@@ -45,8 +45,8 @@
       "sha256": "8aaa6aa3b98b038d9ec8b31fdd93f23c981601902086bf94abbaa417023859f3"
     },
     "decodeback.srt": {
-      "bytes": 6525,
-      "sha256": "660faa10d28d365ffb48f3d7bbea6363e993b2f6674de757bb1053ecf26e2421"
+      "bytes": 6524,
+      "sha256": "df39834cff8b485b5989d037ab2cf16bc350a625abd370c61d627f2c90d58746"
     }
   },
   "verdict": "ACCEPTANCE MET for this run: capture preceded START by 30s (TS 0 vs TS 28.6s); 197s sustained with 16 cues and zero overloads; controlled stop/start; 126s post-recovery with 13 cues and zero overloads; 58 decoded entries overall and 18 decoded entries at/after the recovery offset; all 13 preserved post-recovery cues matched by the predeclared rule.",
