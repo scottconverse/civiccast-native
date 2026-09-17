@@ -620,37 +620,6 @@ def test_corrupt_closure_self_repair_hook_that_raises_falls_back_to_ffmpeg(
     assert env["CIVICCAST_NATIVE_STATION"] == "1"
 
 
-def test_station_environment_accepts_the_runtime_selected_cuda_device(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A GPU station's cuda/float16 manifest must not be rejected as drift.
-
-    The installer writes the cpu/int8 baseline into station-set.json; the
-    runtime selects cuda/float16 live when a capable NVIDIA adapter and the
-    staged CUDA runtime libs are present.  The whole-block equality check
-    rejected exactly that pair, which pinned every Blackwell-class station to
-    CPU and produced the live-caption overload this cuda path exists to fix.
-    """
-
-    from civiccast.native import station_runtime
-
-    version_root, files = _write_station(
-        tmp_path,
-        runtime_updates={"caption_device": "cuda", "caption_compute_type": "float16"},
-    )
-    monkeypatch.setattr(station_runtime, "WHISPER_MODEL_FILES", files)
-    monkeypatch.setattr(station_runtime, "_probe_nvidia_vram_gb", lambda: 16.0)
-    monkeypatch.setattr(station_runtime, "cuda_runtime_libs_present", lambda *_a, **_k: True)
-    monkeypatch.delenv("CIVICCAST_WHISPER_DEVICE", raising=False)
-    monkeypatch.delenv("CIVICCAST_WHISPER_COMPUTE_TYPE", raising=False)
-    _write_real_install_gstreamer_closure(version_root)
-
-    env = station_runtime.load_native_station_environment(version_root)
-
-    assert env["CIVICCAST_WHISPER_DEVICE"] == "cuda"
-    assert env["CIVICCAST_WHISPER_COMPUTE_TYPE"] == "float16"
-
-
 def test_station_environment_rejects_an_unaccepted_runtime(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -153,6 +153,43 @@ def _active_vtt(tap_root: Path, channel_id: str) -> Path:
     return tap_root.parent / "egress" / channel_id / "captions" / "active.vtt"
 
 
+class _VaryingLiveRuntime:
+    """Live ASR shape: real speech, DIFFERENT words on every 9 s window.
+
+    Mirrors the measured Blackwell behaviour (2026-09-16, device=cuda/float16):
+    the tap feeds 5 s segments with 4 s of overlap, so each 9 s window advances
+    5 s and transcribes different words.  Exact-text re-confirmation is
+    unreachable for that geometry, so the tap confirms on window overlap instead.
+    """
+
+    _TEXTS = (
+        "Dewpoints in Arizona. We're in the 40s and 30s.",
+        "We're in the 40s and 30s, so very much shuts down.",
+        "Friday just really big drop in the amount of convection.",
+        "Sunday a little more activity in the mountains.",
+        "And back comes the moisture with thunderstorms.",
+    )
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def transcribe(
+        self,
+        chunks: Iterable[AudioChunk],
+        vocabulary: CustomVocabulary | None = None,
+    ) -> Iterable[CaptionHypothesis]:
+        for chunk in chunks:
+            text = self._TEXTS[self.calls % len(self._TEXTS)]
+            self.calls += 1
+            yield CaptionHypothesis(
+                source_id=f"{chunk.chunk_id}-live",
+                start_seconds=chunk.start_seconds,
+                end_seconds=chunk.end_seconds,
+                text=text,
+                confidence=0.9,
+            )
+
+
 class TestCaptionTapWorker:
     def test_run_once_idles_cleanly_when_the_tap_directory_does_not_exist(
         self,
@@ -307,41 +344,56 @@ class TestCaptionTapWorker:
         assert second.consumed_segments == 0
         assert len(runtime.seen_chunks) == 1
 
-    def test_new_channel_session_starts_from_an_empty_sidecar(
+    def test_varying_live_asr_text_still_reaches_the_active_sidecar(
         self,
         tmp_path: Path,
     ) -> None:
-        """A new live channel session must not inherit the prior session's cues.
+        """Real live speech must reach active.vtt even though every window differs.
 
-        The Blackwell short run started a fresh Public session while the
-        worker process stayed alive. The first thing the caption feed saw was
-        the 12 stale cues from the previous broadcast, and those cues stayed
-        visible until the overload path happened to clear them. A session
-        boundary is not a worker-construction boundary; the tap must blank the
-        active sidecar before it can publish anything for the new session.
+        Measured on the Blackwell GPU run (2026-09-16, device=cuda/float16): the
+        caption tap processed 960+ chunks and transcribed real speech correctly,
+        yet active.vtt stayed at 7 bytes (empty WebVTT) and the emitted stream
+        carried only A/53 null padding.  Cause: the tap feeds 5 s segments with
+        4 s overlap (9 s windows advancing 5 s) while the stabilizer required the
+        SAME normalized text twice, which continuous speech never produces.  The
+        live tap therefore corroborates cues by window overlap.
         """
 
         tap_root = tmp_path / "tap"
-        stale = _active_vtt(tap_root, "government")
-        stale.parent.mkdir(parents=True)
-        stale.write_text(
-            "WEBVTT\n\nold\n00:00:00.000 --> 00:00:02.000\nstale caption\n",
-            encoding="utf-8",
-        )
-        worker = _worker(
-            tap_root,
-            _ScriptedRuntime(),
-            InMemoryCaptionReviewStore(),
-        )
-        stale.write_text(
-            "WEBVTT\n\nold\n00:00:00.000 --> 00:00:01.000\nstale caption\n",
-            encoding="utf-8",
+        channel = "public"
+        # Two 5 s chunks in the first scan: within max_backlog=2, and enough for
+        # one window to be corroborated by the next overlapping window.
+        for index in range(2):
+            _write_wav(tap_root / channel / f"chunk-{index:06d}.wav", seconds=5.0)
+
+        runtime = _VaryingLiveRuntime()
+        store = InMemoryCaptionReviewStore()
+        # Production geometry: 5 s segments with 4 s of overlap -> 9 s windows
+        # advancing 5 s.  (The harness default of a 1 s segment with 4 s of
+        # overlap collapses both windows onto start 0.0, which is not the live
+        # shape this regression is about.)
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=runtime,
+            review_store=store,
+            segment_seconds=5.0,
+            overlap_seconds=4.0,
+            atomic_segments=True,
         )
 
-        worker.begin_channel_session("government")
+        result = worker.run_once()
 
-        assert load_caption_cues_from_timed_text(stale, source_id="government") == []
-
+        assert result.consumed_segments >= 2
+        sidecar = _active_vtt(tap_root, channel)
+        assert sidecar.is_file()
+        cues = load_caption_cues_from_timed_text(sidecar, source_id=channel)
+        assert cues, (
+            "live windows produced no active cue; the emitted stream would carry "
+            "no caption text"
+        )
+        # The corroborated (later, overlapping) window supplies the committed text.
+        assert any("40s and 30s" in cue.text for cue in cues)
     def test_multiple_channels_keep_separate_caption_streams(self, tmp_path: Path) -> None:
         tap_root = tmp_path / "tap"
         for channel in ("gov-ch12", "edu-ch20"):

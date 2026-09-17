@@ -29,6 +29,23 @@ class CaptionStabilizer:
     window_seconds: float = 4.0
     stable_windows: int = 2
     low_confidence_threshold: float = 0.75
+    #: LIVE confirmation mode.  The live caption tap feeds overlapping audio
+    #: windows (5 s segments with 4 s of overlap -- 9 s windows advancing 5 s),
+    #: so it re-hears the same audio rather than re-transcribing one region
+    #: twice.  In that flow two different windows over continuous speech rarely
+    #: produce IDENTICAL text, so exact-text re-confirmation is unreachable and
+    #: every cue expires unconfirmed (measured on Blackwell 2026-09-16 with
+    #: device=cuda/float16: good ASR text, yet active.vtt stayed empty and the
+    #: emitted stream carried only A/53 null padding).
+    #:
+    #: In live mode a later hypothesis that STARTS INSIDE the pending cue's own
+    #: span has re-heard that same audio, and confirms the cue even when the
+    #: wording changed.  The safety properties are preserved: a new reading at
+    #: the SAME start is a correction and still resets the count, and a lone
+    #: window is never committed without that corroboration.  Non-live callers
+    #: (offline/VOD and every existing test) keep exact-text re-confirmation
+    #: unchanged.
+    live: bool = False
     _pending: list[_PendingCue] = field(default_factory=list, init=False)
     _committed: list[CaptionCue] = field(default_factory=list, init=False)
     _expired_unconfirmed: list[CaptionCue] = field(default_factory=list, init=False)
@@ -62,6 +79,19 @@ class CaptionStabilizer:
             if pending.stable_count >= self.stable_windows:
                 return [self._commit(pending)]
             return []
+
+        if self.live:
+            # LIVE corroboration: a later window that begins inside a pending
+            # cue's own span re-heard that same audio, so it confirms the cue
+            # even when the wording changed.  A new reading at the SAME start is
+            # a correction (checked first, below) and must keep resetting.
+            for pending in self._pending:
+                if pending.hypothesis.start_seconds < hypothesis.start_seconds < pending.hypothesis.end_seconds:
+                    pending.stable_count += 1
+                    pending.hypothesis = hypothesis
+                    if pending.stable_count >= self.stable_windows:
+                        return [self._commit(pending)]
+                    return []
 
         revision = self._revision_candidate(hypothesis)
         if revision is not None:

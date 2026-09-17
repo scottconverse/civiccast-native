@@ -32,6 +32,22 @@ ControlCommand = (
 
 LIVE_CAPTION_LEAD_MS = 250
 
+#: Largest gap between a requested live-caption PTS and the pipeline's live edge
+#: that still counts as "a genuinely future cue" rather than a timestamp from an
+#: unrelated epoch.  The live caption tap numbers audio segments on an ABSOLUTE
+#: program clock (``chunk_index * segment_seconds``) that grows for the life of
+#: the station, while the caption appsrc's running time restarts with each
+#: worker.  Without this bound the two clocks diverge without limit and every
+#: cue is scheduled minutes-to-hours ahead of the video, so it never reaches the
+#: emitted stream (measured on Blackwell 2026-09-16: a good cue at program time
+#: 00:52:12 was pushed ~50.7 minutes ahead of a 90 s pipeline running time and
+#: the decode-back saw only A/53 null padding).
+#:
+#: 30 s is far above any real ASR/first-buffer latency (seconds) and far below
+#: the minutes-to-hours drift an absolute program clock produces, so a real cue
+#: keeps its PTS while an unrelated-epoch timestamp is rebased onto the live edge.
+MAX_LIVE_CAPTION_FUTURE_LEAD_MS = 30_000
+
 
 def install_unix_signal_handlers(
     glib: Any,
@@ -66,18 +82,40 @@ def align_live_caption_pts_ms(
     running_time_ms: int,
     stream_position_ms: int = 0,
     lead_ms: int = LIVE_CAPTION_LEAD_MS,
+    max_future_lead_ms: int = MAX_LIVE_CAPTION_FUTURE_LEAD_MS,
 ) -> int:
     """Keep a live cue in the future even when ASR completed after its source PTS.
 
     Caption sidecars retain the source-audio timestamps.  The live appsrc cannot
     attach a cue to video buffers that already left the mux, so transport PTS is
-    clamped to a small lead over the pipeline's current running time.  A cue
-    already scheduled farther in the future keeps its original PTS.
+    clamped to a small lead over the pipeline's current running time.
+
+    A cue modestly ahead of the live edge keeps its original PTS.  A cue FAR
+    ahead, however, is not genuinely "in the future" -- it is a timestamp from a
+    different epoch.  The live tap numbers its audio segments by an ABSOLUTE
+    program clock (``chunk_index * segment_seconds``), which keeps growing for
+    the life of the station, while this appsrc's running time restarts with each
+    worker.  Measured on Blackwell 2026-09-16: a real cue at 00:52:12 (3,132,120
+    ms of program clock) was pushed against a pipeline running time of ~90 s, so
+    the buffer was scheduled ~50.7 MINUTES ahead.  It could never reach the
+    emitted stream inside the 6 s decode-back window, which is why the stream
+    carried only A/53 null padding while the sidecar held a good cue.
+
+    Anything beyond ``max_future_lead_ms`` is therefore rebased onto the live
+    edge instead of preserved.  The bound is deliberately far larger than any
+    real ASR/first-buffer latency (which is seconds) yet far smaller than the
+    minutes-to-hours drift an absolute program clock produces.
     """
 
     if requested_pts_ms < 0 or running_time_ms < 0 or stream_position_ms < 0 or lead_ms < 0:
         raise ValueError("live caption timing values must be non-negative")
-    return max(requested_pts_ms, running_time_ms + lead_ms, stream_position_ms)
+    if max_future_lead_ms < lead_ms:
+        raise ValueError("max_future_lead_ms must be at least lead_ms")
+    live_edge_ms = running_time_ms + lead_ms
+    if requested_pts_ms > live_edge_ms + max_future_lead_ms:
+        # Unrelated epoch (absolute program clock): pin to the live edge.
+        return max(live_edge_ms, stream_position_ms)
+    return max(requested_pts_ms, live_edge_ms, stream_position_ms)
 
 
 def caption_gap_window_ms(

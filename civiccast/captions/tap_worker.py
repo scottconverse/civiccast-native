@@ -71,10 +71,12 @@ from civiccast.captions.live_sidecar import (
     reset_existing_live_sidecars,
 )
 from civiccast.captions.models import AudioChunk, CaptionCue
+from civiccast.captions.pipeline import CaptionPipeline
 from civiccast.captions.retention import CaptionEvidenceRetentionPolicy
 from civiccast.captions.review import CaptionReviewAudioEvidence, CaptionReviewStore
 from civiccast.captions.review_media import write_caption_review_audio_evidence
 from civiccast.captions.runtime import CaptionRuntime
+from civiccast.captions.stabilize import CaptionStabilizer
 from civiccast.captions.tap_backoff import (
     DEFAULT_BASE_BACKOFF_SECONDS,
     DEFAULT_MAX_BACKOFF_SECONDS,
@@ -505,14 +507,13 @@ class CaptionTapWorker:
         """Fail closed when a channel starts a new live broadcast session.
 
         ``reset_existing_live_sidecars`` is a PROCESS-start guard.  A worker
-        process can outlive multiple channel sessions -- a channel stops,
-        another starts, and the sidecar from the previous broadcast is still
-        sitting in ``active.vtt``.  Publication must be session-scoped: the
-        new session must start from an empty sidecar and empty stabilizer
-        state, or the feed will treat prior cues as current until something
-        else happens to clear them.  The Blackwell beta.8 short run hit that
-        exact state: a fresh Public session inherited 12 stale cues from an
-        earlier broadcast.
+        process can outlive multiple channel sessions -- a channel stops, another
+        starts, and the sidecar from the previous broadcast is still sitting in
+        ``active.vtt``.  Publication must be session-scoped: the new session must
+        start from an empty sidecar and empty stabilizer state, or the feed will
+        treat prior cues as current until something else happens to clear them.
+        The Blackwell beta.8 short run hit that exact state: a fresh Public
+        session inherited 12 stale cues from an earlier broadcast.
 
         Safe to call for an unknown channel and safe to call repeatedly.
         """
@@ -522,7 +523,6 @@ class CaptionTapWorker:
         self._previous_segments.pop(channel_id, None)
         self._backoff.forget(channel_id)
         LiveWebVttPublisher(active_caption_sidecar(self._caption_work_dir, channel_id)).reset()
-
     def flush_channel(self, channel_id: str) -> CaptionTapScanResult:
         """Commit every cue still pending for one channel at stream end.
 
@@ -999,6 +999,19 @@ class CaptionTapWorker:
                 asset_id=channel_id,
                 reviewer_note=self._reviewer_note,
                 translation_provider=self._translation_provider,
+                # LIVE stabilizer: this tap feeds OVERLAPPING audio windows (5 s
+                # segments with 4 s of overlap -- 9 s windows advancing 5 s), so
+                # the same audio is re-heard by the next window rather than
+                # re-transcribed identically.  Confirmation therefore keys on the
+                # window geometry (a later window starting inside the pending
+                # cue's span), not on exact text equality, which continuous
+                # speech never satisfies.  See CaptionStabilizer.live.  Every
+                # other caller -- offline/VOD and the whole existing test suite --
+                # keeps exact-text re-confirmation unchanged.
+                pipeline=CaptionPipeline(
+                    self._runtime,
+                    stabilizer=CaptionStabilizer(live=True),
+                ),
             )
             self._channel_workers[channel_id] = worker
         return worker

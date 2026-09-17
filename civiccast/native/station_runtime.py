@@ -430,37 +430,7 @@ def _validate_station_set(station: dict[str, object]) -> tuple[str, str]:
         or not station["signing_key_id"]
     ):
         raise NativeStationConfigurationError("Native station-set identity is invalid")
-    runtime_contract = station.get("runtime")
-    if not isinstance(runtime_contract, dict):
-        raise NativeStationConfigurationError(
-            "Native station runtime contract is not the accepted offline large-v3 contract"
-        )
-    # ``caption_device``/``caption_compute_type`` in the activation manifest are
-    # the INSTALLER's staging-time baseline (cpu/int8). The caption device is
-    # hardware-adaptive at every start -- :func:`resolve_whisper_device` reads
-    # the live machine and selects cuda/float16 when a capable NVIDIA adapter
-    # and the staged CUDA runtime libs are present. Comparing the whole runtime
-    # block for equality therefore rejected the accepted contract on exactly the
-    # GPU stations it exists to support, silently pinning every Blackwell-class
-    # box to the CPU path and reproducing the live-caption overload this
-    # takeover is fixing.
-    #
-    # Every OTHER contract field is untouched: a different caption runtime,
-    # model root, engine, tap mode, or offline posture still fails closed. Only
-    # the two device fields may differ from the baseline, and only to the exact
-    # pairs :func:`resolve_whisper_device` can emit.
-    device = runtime_contract.get("caption_device")
-    compute_type = runtime_contract.get("caption_compute_type")
-    if (device, compute_type) not in {("cpu", "int8"), ("cuda", "float16")}:
-        raise NativeStationConfigurationError(
-            "Native station runtime contract is not the accepted offline large-v3 contract"
-        )
-    accepted_contract = {
-        **EXPECTED_RUNTIME_CONTRACT,
-        "caption_device": device,
-        "caption_compute_type": compute_type,
-    }
-    if runtime_contract != accepted_contract:
+    if station.get("runtime") != EXPECTED_RUNTIME_CONTRACT:
         raise NativeStationConfigurationError(
             "Native station runtime contract is not the accepted offline large-v3 contract"
         )

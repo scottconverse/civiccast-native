@@ -256,6 +256,42 @@ def test_live_caption_pts_preserves_a_future_cue() -> None:
     )
 
 
+def test_live_caption_pts_rebases_an_absolute_program_clock_cue_to_the_live_edge() -> None:
+    """A cue stamped on the station's absolute program clock must not be
+    scheduled tens of minutes into the future.
+
+    Measured on the 2026-09-16 Blackwell captions-ON run: the live tap numbers
+    audio by an absolute program clock (chunk_index * segment_seconds), so a
+    genuine cue carried 00:52:12 -> 3,132,120 ms while the restarted caption
+    appsrc's running time was only ~90 s.  The cue was emitted ~50.7 minutes
+    ahead of the video and the decode-back saw only A/53 null padding.  The
+    unrelated-epoch timestamp must be pinned to the live edge so it can reach
+    the emitted stream.
+    """
+
+    assert (
+        align_live_caption_pts_ms(
+            requested_pts_ms=3_132_120,
+            running_time_ms=90_000,
+            stream_position_ms=90_000,
+        )
+        == 90_250
+    )
+
+
+def test_live_caption_pts_still_preserves_a_genuinely_near_future_cue() -> None:
+    """The rebase bound must not disturb a cue that is really just ahead."""
+
+    assert (
+        align_live_caption_pts_ms(
+            requested_pts_ms=100_000,
+            running_time_ms=90_000,
+            stream_position_ms=90_000,
+        )
+        == 100_000
+    )
+
+
 def test_live_caption_pts_never_overlaps_the_prior_caption_buffer() -> None:
     assert (
         align_live_caption_pts_ms(
