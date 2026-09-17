@@ -1,0 +1,30 @@
+{
+  "validated_supervisor_pid": "6696",
+  "process_creation_time": "Wednesday, September 16, 2026 8:42:26 PM",
+  "previous_pid_before_restart": "34716",
+  "restart_reason": "the pre-restart process started 19:05:09, before the fix bytes were installed, so it could not have loaded them; restart forces a fresh import",
+  "loaded_module_source": "the process imports these from the installed runtime on start",
+  "installed_files": {
+    "civiccast/captions/stabilize.py": {
+      "installed_sha256": "a5f0bc3d7788c66ec9eaa053b06907390c4526aecae1bc0276c8152abf22e074",
+      "source_sha256": "a5f0bc3d7788c66ec9eaa053b06907390c4526aecae1bc0276c8152abf22e074",
+      "match": true
+    },
+    "civiccast/captions/tap_worker.py": {
+      "installed_sha256": "2b9f9522f76d13db3609017b42ab94e3121ede8a80d116dad6ecd9cf47156726",
+      "source_sha256": "2b9f9522f76d13db3609017b42ab94e3121ede8a80d116dad6ecd9cf47156726",
+      "match": true
+    },
+    "civiccast/egress/daemon.py": {
+      "installed_sha256": "7b81311c302d361074200970c5b91988a83ef436c82197d500fa211e6d317f8c",
+      "source_sha256": "7b81311c302d361074200970c5b91988a83ef436c82197d500fa211e6d317f8c",
+      "match": true
+    },
+    "civiccast/egress/gst/control.py": {
+      "installed_sha256": "e2cefa556416538cb7a94bb4f5c43f9cbe4e77e6a511ed9716d96068ce00b53c",
+      "source_sha256": "e2cefa556416538cb7a94bb4f5c43f9cbe4e77e6a511ed9716d96068ce00b53c",
+      "match": true
+    }
+  },
+  "verdict": "process restarted AFTER the fixed bytes were installed; installed files hash-equal the branch source"
+}
