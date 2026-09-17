@@ -1115,7 +1115,18 @@ class EgressDaemon:
                 return
         if command.action == "start":
             if self._channel_start_hook is not None:
-                self._channel_start_hook(command.channel_id)
+                # Best-effort: the hook performs the session-scoped caption
+                # sidecar reset, which touches disk.  A caption-sidecar failure
+                # (locked/read-only file, permissions, full disk) must NEVER be
+                # able to block a channel from going to air -- captions are
+                # subordinate to broadcast.  Log and continue on any failure.
+                try:
+                    self._channel_start_hook(command.channel_id)
+                except Exception:
+                    _LOG.exception(
+                        "channel %s: caption session-start hook failed; continuing to start",
+                        command.channel_id,
+                    )
             # An operator start is a fresh intent: the slate-EOS relaunch cap
             # (see _SLATE_EOS_RELAUNCH_MAX_CONSECUTIVE) starts over for it.
             self._slate_eos_relaunches.pop(command.channel_id, None)

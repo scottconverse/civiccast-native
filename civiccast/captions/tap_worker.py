@@ -469,6 +469,14 @@ class CaptionTapWorker:
         self._channel_workers: dict[str, LiveCaptionWorker] = {}
         self._channel_publishers: dict[str, LiveWebVttPublisher] = {}
         self._previous_segments: dict[str, tuple[int, AudioChunk]] = {}
+        # Per-channel session generation.  begin_channel_session() bumps it, so a
+        # caption result produced by the PREVIOUS session's worker can be told
+        # apart from the current one and refused.  Without this, resetting the
+        # sidecar was a one-shot write: an in-flight ASR result from the old
+        # session could publish AFTER the reset and put the old broadcast's cue
+        # back on air (reproduced: reset -> old worker publish -> old cue
+        # visible again).
+        self._session_generation: dict[str, int] = {}
         reset_existing_live_sidecars(self._caption_work_dir)
         # One line, logged once at tap start, so a field report or a sandbox
         # run records what box it ran on and what the tap actually sized
@@ -518,6 +526,9 @@ class CaptionTapWorker:
         Safe to call for an unknown channel and safe to call repeatedly.
         """
 
+        # Bump FIRST, before dropping state, so any publish still in flight for
+        # the previous session is already stale and cannot land after the reset.
+        self._session_generation[channel_id] = self._session_generation.get(channel_id, 0) + 1
         self._channel_workers.pop(channel_id, None)
         self._channel_publishers.pop(channel_id, None)
         self._previous_segments.pop(channel_id, None)
@@ -545,7 +556,9 @@ class CaptionTapWorker:
         if worker is None:
             return CaptionTapScanResult(channels=(channel_id,))
         result = worker.flush()
-        self._publisher_for(channel_id).publish(worker.committed_cues())
+        self._publish_cues(
+            channel_id, self._session_generation.get(channel_id, 0), worker.committed_cues()
+        )
         return CaptionTapScanResult(
             committed_review_items=len(result.committed_review_items),
             expired_unconfirmed_cues=len(result.expired_unconfirmed_cues),
@@ -699,12 +712,13 @@ class CaptionTapWorker:
                 quarantined += 1
                 continue
             chunk = self._with_overlap(channel_id, index, raw_chunk)
+            generation = self._session_generation.get(channel_id, 0)
             worker = self._worker_for(channel_id)
             result = worker.process_batch(
                 [chunk],
                 audio_evidence_factory=self._audio_evidence_factory(channel_id, chunk),
             )
-            self._publisher_for(channel_id).publish(worker.committed_cues())
+            self._publish_cues(channel_id, generation, worker.committed_cues())
             committed += len(result.committed_review_items)
             expired += len(result.expired_unconfirmed_cues)
             self._move(segment, channel_dir / "processed")
@@ -1070,6 +1084,46 @@ class CaptionTapWorker:
             sample_rate_hz=current.sample_rate_hz,
             pcm_s16le=previous.pcm_s16le[-overlap_bytes:] + current.pcm_s16le,
         )
+
+    def publish_for_current_session(
+        self, channel_id: str, generation: int, cues: list[CaptionCue]
+    ) -> bool:
+        """Publish ``cues`` only if they belong to the channel's live session.
+
+        Public seam used by the tap's own scan path and by tests.  Returns True
+        when the cues were written, False when they were dropped as belonging to
+        a session that has already ended.
+        """
+
+        if generation != self._session_generation.get(channel_id, 0):
+            _LOG.info(
+                "channel %s: dropping caption publish from a finished session (gen %d != %d)",
+                channel_id,
+                generation,
+                self._session_generation.get(channel_id, 0),
+            )
+            return False
+        self._publisher_for(channel_id).publish(cues)
+        return True
+
+    def _publish_cues(self, channel_id: str, generation: int, cues: list[CaptionCue]) -> None:
+        """Publish committed cues unless their session has already ended.
+
+        ``generation`` is captured when the worker that produced these cues was
+        created.  If ``begin_channel_session`` has since bumped the channel's
+        generation, this result belongs to a finished broadcast and must be
+        dropped rather than written over the new session's sidecar.
+        """
+
+        if generation != self._session_generation.get(channel_id, 0):
+            _LOG.info(
+                "channel %s: dropping caption publish from a finished session (gen %d != %d)",
+                channel_id,
+                generation,
+                self._session_generation.get(channel_id, 0),
+            )
+            return
+        self._publisher_for(channel_id).publish(cues)
 
     def _publisher_for(self, channel_id: str) -> LiveWebVttPublisher:
         publisher = self._channel_publishers.get(channel_id)

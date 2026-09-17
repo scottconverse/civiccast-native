@@ -1,9 +1,12 @@
 {
   "candidate": "41ec3dda7f5c5cf678e815ac103fd7e99d85294f",
-  "code_commit_that_binds_these_hashes": "9a97efa5e3c2128bb55740f948629c4077228122",
-  "note_head": "the evidence commit is a later docs/evidence commit; the code commit is the one whose file hashes are recorded here",
   "branch": "fix/blackwell-caption-runtime",
-  "policy_note": "This repo forbids committing binary/media artifacts (ci-blob-size-guard, 5 MiB cap). Per CONTRIBUTING.md the text log is committed and the bytes are kept on local disk, referenced by path + SHA-256.",
+  "policy_note": "This repo forbids committing binary/media artifacts (ci-blob-size-guard, 5 MiB cap). Per CONTRIBUTING.md the text log is committed and the bytes stay on local disk, referenced by path + SHA-256.",
+  "candidate_vs_head_new_tests": {
+    "on_exact_candidate": "11 failed, 1 passed",
+    "at_head": "12 passed",
+    "note": "counts cover ALL new tests added by this branch, not a subset"
+  },
   "source_vs_installed": {
     "civiccast/app.py": {
       "source_sha256": "f988204c782a69778cd432d1aeb981a18e239a820281396fb46dc84fad794b2f",
@@ -11,14 +14,14 @@
       "match": true
     },
     "civiccast/captions/stabilize.py": {
-      "source_sha256": "37136fea2240786044fe00a3f128d2b26465abf8abd1b47a28318659f6e428f8",
+      "source_sha256": "a5f0bc3d7788c66ec9eaa053b06907390c4526aecae1bc0276c8152abf22e074",
       "installed_sha256": "37136fea2240786044fe00a3f128d2b26465abf8abd1b47a28318659f6e428f8",
-      "match": true
+      "match": false
     },
     "civiccast/captions/tap_worker.py": {
-      "source_sha256": "79df1ce45e9ae30128496fc89f6c23f5fdffaa612750e15042d805ccb158fe95",
+      "source_sha256": "2b9f9522f76d13db3609017b42ab94e3121ede8a80d116dad6ecd9cf47156726",
       "installed_sha256": "79df1ce45e9ae30128496fc89f6c23f5fdffaa612750e15042d805ccb158fe95",
-      "match": true
+      "match": false
     },
     "civiccast/egress/automation.py": {
       "source_sha256": "5146a2bac4bc91e2f193c979e2ca2f79f37166997b7e7a042337ff02fa9fb10b",
@@ -26,21 +29,26 @@
       "match": true
     },
     "civiccast/egress/daemon.py": {
-      "source_sha256": "2881b6849cf8e94b2ac34dc27e7fd2a0c9b76b86f5518e4a0b4cbd819511a8da",
+      "source_sha256": "7b81311c302d361074200970c5b91988a83ef436c82197d500fa211e6d317f8c",
       "installed_sha256": "2881b6849cf8e94b2ac34dc27e7fd2a0c9b76b86f5518e4a0b4cbd819511a8da",
-      "match": true
+      "match": false
     },
     "civiccast/egress/gst/control.py": {
-      "source_sha256": "191e09c7256a13de09bf5a349c08cb4e897e88abc21a6596c862310bc9445c63",
+      "source_sha256": "e2cefa556416538cb7a94bb4f5c43f9cbe4e77e6a511ed9716d96068ce00b53c",
       "installed_sha256": "191e09c7256a13de09bf5a349c08cb4e897e88abc21a6596c862310bc9445c63",
+      "match": false
+    },
+    "civiccast/native/station_runtime.py": {
+      "source_sha256": "b38c64d9425f58f9819cc8d37796ed33ecf288b3dae508eb8e48311b5aa3c814",
+      "installed_sha256": "b38c64d9425f58f9819cc8d37796ed33ecf288b3dae508eb8e48311b5aa3c814",
       "match": true
     }
   },
   "tests": {
-    "tests/captions/test_caption_tap_worker.py": "16c599dfe1b437516543e5660cdae3a3ceb42d6cf0c6d22f7560458015a8de7b",
-    "tests/captions/test_captions_core.py": "3017217f7acbc219d1265e0476b8c5b5da8a237f84b0a9789336f61730f7d2bd",
-    "tests/egress/test_daemon.py": "6c9947d3e8c1d63d7d8831fae1ed65ed04d5ea2eaab7e71515e804044548e73c",
-    "tests/egress/test_gst_strategy.py": "ddce4145076398d323bb9df9101934a20c6733f9d30750580f035b19f3872e00"
+    "tests/captions/test_caption_tap_worker.py": "abe7b9b5ac4398c4be31fd6b1f66c1bdf892f45108eabdcbfe69def4f29a9af2",
+    "tests/captions/test_captions_core.py": "3fd5aa249bb459ff38537652a5cea6e9a30c36e6c30bfa2cb5cb1d8db0c900d0",
+    "tests/egress/test_daemon.py": "fa3b47c7b73056a04e5baf750ab37c2cf2162d3d9f43f918beb6193621d3d844",
+    "tests/egress/test_gst_strategy.py": "16ee6e4199c14e1d2a4ee6af527420f9f24fb57c6fd1cbfbd871c95221fff81e"
   },
   "evidence_committed_text": {
     "work/accept-20260917/active.vtt": {
@@ -48,12 +56,8 @@
       "bytes": 2721
     },
     "work/accept-20260917/decodeback-20s.srt": {
-      "sha256": "d88dd2a775e39438cb7e5892f061053436d025e9529d329c6e5a71364ec76147",
-      "bytes": 3659
-    },
-    "work/accept-20260917/decodeback.srt": {
-      "sha256": "3be2678d4106b49ddba9b1598cb50c15f4f29af8431893d6d0041ab17a552942",
-      "bytes": 2907
+      "sha256": "9b3f0869f535d4e0486e78ee7ddd44f9bf2a60a4221f1e8c174b9f1354042882",
+      "bytes": 3658
     },
     "work/accept-20260917/gpu-contention-observations.json": {
       "sha256": "9c6c4609dfa608054652d18f1862395ba463cf68e6b1daaac11639a38c7ea788",

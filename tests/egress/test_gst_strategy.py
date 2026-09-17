@@ -279,6 +279,29 @@ def test_live_caption_pts_rebases_an_absolute_program_clock_cue_to_the_live_edge
     )
 
 
+def test_live_caption_pts_rebases_a_short_restart_lag_instead_of_airing_late() -> None:
+    """A short restart must not leave captions permanently ~20 s behind.
+
+    Regression for the restart-lag hole: the tap stamps cues by an absolute
+    segment index, so after a short restart the tap clock can sit ~20 s ahead of
+    the freshly restarted pipeline's running time.  That is BELOW the 30 s
+    unrelated-epoch bound, so the cue kept its PTS and aired ~20 s late --
+    forever, because the offset never self-corrects.  A lag that large relative
+    to a young pipeline is not a "genuinely near-future" cue; it is a stale
+    clock and must be pinned to the live edge.
+    """
+
+    # 20 s of lag against a young pipeline: must be rebased to the live edge.
+    assert (
+        align_live_caption_pts_ms(
+            requested_pts_ms=20_000,
+            running_time_ms=250,
+            stream_position_ms=250,
+        )
+        == 500
+    )
+
+
 def test_live_caption_pts_still_preserves_a_genuinely_near_future_cue() -> None:
     """The rebase bound must not disturb a cue that is really just ahead."""
 

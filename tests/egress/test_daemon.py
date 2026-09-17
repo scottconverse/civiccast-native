@@ -217,6 +217,45 @@ def test_start_command_runs_the_channel_session_hook_before_encoding(tmp_path: P
     assert seen == ["gov"]
 
 
+def test_start_command_still_starts_when_the_session_hook_raises(tmp_path: Path) -> None:
+    """A failing caption sidecar reset must never block a channel from airing.
+
+    Regression for the unguarded channel_start_hook: the hook performs the
+    session-scoped caption sidecar reset, which writes to disk.  If that write
+    raises (locked/read-only active.vtt, permissions, disk full), the exception
+    propagated out of start-command processing and the channel never reached
+    encoding -- a caption concern taking down broadcast.  The hook must be
+    best-effort: log the failure and continue with the start.
+    """
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    started: list[str] = []
+    process = _FakeProcess()
+
+    def _raising_hook(channel_id: str) -> None:
+        started.append(channel_id)
+        raise OSError("active.vtt is read-only")
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: process,
+        channel_start_hook=_raising_hook,
+    )
+
+    # Must not raise, and the channel must still be started.
+    assert daemon.process_once("gov") == 1
+
+    assert started == ["gov"]
+    assert process.terminated is False
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state in {"STARTING", "ON_AIR"}
+
+
 def test_daemon_processes_start_command_and_records_success_health(tmp_path: Path) -> None:
     store = InMemoryEgressStore()
     store.upsert_config(_config())

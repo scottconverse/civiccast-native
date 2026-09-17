@@ -148,4 +148,3 @@ Monday through Friday. So</font>
 00:02:27,610 --> 00:02:29,349
 <font face="Monospace">{\an7}definitely decreasing sunlight
 and</font>
-

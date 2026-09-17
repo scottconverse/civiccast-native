@@ -43,10 +43,15 @@ LIVE_CAPTION_LEAD_MS = 250
 #: 00:52:12 was pushed ~50.7 minutes ahead of a 90 s pipeline running time and
 #: the decode-back saw only A/53 null padding).
 #:
-#: 30 s is far above any real ASR/first-buffer latency (seconds) and far below
-#: the minutes-to-hours drift an absolute program clock produces, so a real cue
-#: keeps its PTS while an unrelated-epoch timestamp is rebased onto the live edge.
-MAX_LIVE_CAPTION_FUTURE_LEAD_MS = 30_000
+#: A cue is treated as a genuinely future live cue only while it leads the
+#: pipeline by no more than this.  It must be small enough to catch a SHORT
+#: restart, not just a long-running station: after a quick restart the tap's
+#: absolute segment index can sit ~20 s ahead of the freshly restarted
+#: pipeline, and a 30 s ceiling let that cue keep its PTS and air ~20 s late
+#: forever (the offset never self-corrects).  Real ASR/first-buffer latency is
+#: sub-second to low single-digit seconds, so 8 s clears every honest case while
+#: still catching a restart-scale lag.
+MAX_LIVE_CAPTION_FUTURE_LEAD_MS = 8_000
 
 
 def install_unix_signal_handlers(
@@ -112,8 +117,16 @@ def align_live_caption_pts_ms(
     if max_future_lead_ms < lead_ms:
         raise ValueError("max_future_lead_ms must be at least lead_ms")
     live_edge_ms = running_time_ms + lead_ms
-    if requested_pts_ms > live_edge_ms + max_future_lead_ms:
-        # Unrelated epoch (absolute program clock): pin to the live edge.
+    # Discriminate a genuine near-future cue from a stale absolute clock by the
+    # size of the lead RELATIVE to the pipeline's own running time.  A real cue
+    # is a few seconds ahead of a pipeline that has been running for at least
+    # that long; a restart lag or an unrelated epoch produces a lead that dwarfs
+    # the freshly restarted pipeline's age.  Rebasing requires the lead to beat
+    # BOTH a small fixed floor (so ordinary ASR latency keeps its PTS) and the
+    # pipeline's own uptime (so a short restart cannot smuggle a ~20 s offset
+    # through a constant-only ceiling).
+    lead_over_edge_ms = requested_pts_ms - live_edge_ms
+    if lead_over_edge_ms > max(max_future_lead_ms, running_time_ms):
         return max(live_edge_ms, stream_position_ms)
     return max(requested_pts_ms, live_edge_ms, stream_position_ms)
 

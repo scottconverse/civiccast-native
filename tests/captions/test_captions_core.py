@@ -204,6 +204,43 @@ class TestCaptionStabilizer:
         assert stabilizer.observe(_hypothesis("single window speech", start=0.0, end=9.0)) == []
         assert stabilizer.committed() == []
 
+    def test_live_confirmation_rejects_a_tiny_overlap(self) -> None:
+        """A sliver of overlap must NOT corroborate an unrelated long cue.
+
+        Regression for the live-confirmation boundary: the guard compared the
+        incoming start against ``pending.hypothesis.end_seconds`` -- the ASR
+        hypothesis's CLAIMED end, not the audio span actually re-heard.  A
+        pending 8 s window therefore "contained" a later start that overlapped
+        it by as little as one millisecond (or one microsecond), so an
+        otherwise uncorroborated 8 s caption could be confirmed by a completely
+        different reading.  Corroboration must require a SUBSTANTIVE overlap
+        with the pending window, not mere adjacency to its claim.
+        """
+
+        stabilizer = CaptionStabilizer(live=True)
+        assert (
+            stabilizer.observe(_hypothesis("the quick brown fox jumps", start=0.0, end=8.0)) == []
+        )
+        # Only 1 ms inside the pending claim -> must NOT confirm.
+        committed = stabilizer.observe(
+            _hypothesis("completely different words here", start=7.999, end=15.0)
+        )
+
+        assert committed == []
+        assert stabilizer.committed() == []
+
+    def test_live_confirmation_rejects_a_sub_millisecond_overlap(self) -> None:
+        """Even a 1 microsecond overlap must not corroborate an unrelated cue."""
+
+        stabilizer = CaptionStabilizer(live=True)
+        stabilizer.observe(_hypothesis("first unrelated long cue", start=0.0, end=8.0))
+        committed = stabilizer.observe(
+            _hypothesis("second unrelated different cue", start=7.999999, end=16.0)
+        )
+
+        assert committed == []
+        assert stabilizer.committed() == []
+
     def test_low_confidence_flag_uses_threshold(self) -> None:
         stabilizer = CaptionStabilizer(low_confidence_threshold=0.8)
         stabilizer.observe(_hypothesis("uncertain name", confidence=0.62))

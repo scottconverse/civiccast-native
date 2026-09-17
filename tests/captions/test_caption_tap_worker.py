@@ -25,7 +25,12 @@ from types import SimpleNamespace
 import pytest
 
 from civiccast.captions import runtime as caption_runtime_module
-from civiccast.captions.models import AudioChunk, CaptionHypothesis, CustomVocabulary
+from civiccast.captions.models import (
+    AudioChunk,
+    CaptionCue,
+    CaptionHypothesis,
+    CustomVocabulary,
+)
 from civiccast.captions.review import InMemoryCaptionReviewStore
 from civiccast.captions.runtime import FasterWhisperRuntime
 from civiccast.captions.tap import TAP_SAMPLE_RATE_HZ
@@ -393,6 +398,67 @@ class TestCaptionTapWorker:
         )
         # The corroborated (later, overlapping) window supplies the committed text.
         assert any("40s and 30s" in cue.text for cue in cues)
+
+    def test_stale_session_publish_cannot_restore_the_previous_broadcast(
+        self, tmp_path: Path
+    ) -> None:
+        """A cue published by the PREVIOUS session must not overwrite the reset.
+
+        Regression for the reset race: begin_channel_session() blanked the
+        sidecar, but a caption result still in flight from the old session's
+        worker could publish afterwards and put the old broadcast's cue back on
+        air (reproduced directly: reset -> old publish -> old caption visible).
+        The publish path is now generation-stamped, so a result carrying a
+        generation older than the channel's current one is dropped.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "public"
+        (tap_root / channel).mkdir(parents=True)
+        store = InMemoryCaptionReviewStore()
+        worker = _worker(tap_root, _ScriptedRuntime(), store)
+
+        # Seed the sidecar the way a previous broadcast left it.
+        publisher = worker._publisher_for(channel)
+        publisher.publish(
+            [
+                CaptionCue(
+                    cue_id="cue-OLD",
+                    start_seconds=10.0,
+                    end_seconds=18.0,
+                    text="OLD SESSION CAPTION",
+                    confidence=0.9,
+                    low_confidence=False,
+                )
+            ]
+        )
+        sidecar = _active_vtt(tap_root, channel)
+        assert "OLD SESSION CAPTION" in sidecar.read_text(encoding="utf-8")
+
+        # Capture the OLD generation, then start a new session.
+        stale_generation = worker._session_generation.get(channel, 0)
+        worker.begin_channel_session(channel)
+        assert "OLD SESSION CAPTION" not in sidecar.read_text(encoding="utf-8")
+
+        # A late publish from the old session must be refused.  Exercise the
+        # public publish path rather than a helper, so the assertion is
+        # behavioural and would fail on unfixed code for the right reason.
+        stale_cues = [
+            CaptionCue(
+                cue_id="cue-OLD",
+                start_seconds=10.0,
+                end_seconds=18.0,
+                text="OLD SESSION CAPTION",
+                confidence=0.9,
+                low_confidence=False,
+            )
+        ]
+        worker.publish_for_current_session(channel, stale_generation, stale_cues)
+
+        remaining = sidecar.read_text(encoding="utf-8")
+        assert "OLD SESSION CAPTION" not in remaining, (
+            "a finished session's caption reappeared after the reset"
+        )
 
     def test_multiple_channels_keep_separate_caption_streams(self, tmp_path: Path) -> None:
         tap_root = tmp_path / "tap"

@@ -46,6 +46,14 @@ class CaptionStabilizer:
     #: (offline/VOD and every existing test) keep exact-text re-confirmation
     #: unchanged.
     live: bool = False
+    #: Minimum fraction of the SHORTER window that must be shared for a later
+    #: live window to count as a re-hearing.  The measured tap geometry (9 s
+    #: windows advancing 5 s) shares 4/9 ~= 0.444, so the default sits just
+    #: below that: real re-hearings pass, while a millisecond sliver of overlap
+    #: (which previously confirmed an unrelated multi-second caption) does not.
+    #: This is deliberately looser than the 0.5 revision floor used for
+    #: offline/VOD text revisions; the two answer different questions.
+    live_overlap_fraction: float = 0.4
     _pending: list[_PendingCue] = field(default_factory=list, init=False)
     _committed: list[CaptionCue] = field(default_factory=list, init=False)
     _expired_unconfirmed: list[CaptionCue] = field(default_factory=list, init=False)
@@ -59,6 +67,8 @@ class CaptionStabilizer:
             raise ValueError("stable_windows must be at least 1")
         if not 0 <= self.low_confidence_threshold <= 1:
             raise ValueError("low_confidence_threshold must be between 0 and 1")
+        if not 0 < self.live_overlap_fraction <= 1:
+            raise ValueError("live_overlap_fraction must be greater than 0 and at most 1")
 
     def observe(self, hypothesis: CaptionHypothesis) -> list[CaptionCue]:
         """Observe one runtime hypothesis and return newly committed cues."""
@@ -86,11 +96,7 @@ class CaptionStabilizer:
             # even when the wording changed.  A new reading at the SAME start is
             # a correction (checked first, below) and must keep resetting.
             for pending in self._pending:
-                if (
-                    pending.hypothesis.start_seconds
-                    < hypothesis.start_seconds
-                    < pending.hypothesis.end_seconds
-                ):
+                if self._reheard_enough_of(pending, hypothesis):
                     pending.stable_count += 1
                     pending.hypothesis = hypothesis
                     if pending.stable_count >= self.stable_windows:
@@ -175,6 +181,42 @@ class CaptionStabilizer:
 
     def _bucket_for(self, start_seconds: float) -> int:
         return floor(start_seconds / self.window_seconds)
+
+    def _reheard_enough_of(self, pending: _PendingCue, hypothesis: CaptionHypothesis) -> bool:
+        """Has ``hypothesis`` genuinely re-heard enough of ``pending``'s audio?
+
+        The live tap re-hears overlapping audio, so a later window that shares a
+        SUBSTANTIAL part of the pending window is corroboration even when ASR
+        re-words it.  The earlier guard only checked that the incoming start fell
+        somewhere before ``pending.hypothesis.end_seconds`` -- the span ASR
+        CLAIMED -- so a window beginning one millisecond (or one microsecond)
+        inside an 8 s claim counted as corroboration and could air a completely
+        different, otherwise uncorroborated caption.  Require the shared rule
+        (at least half of the shorter window) instead of mere adjacency, and
+        also require the re-heard region to be a real interval.
+        """
+
+        if hypothesis.start_seconds <= pending.hypothesis.start_seconds:
+            # Same-or-earlier start is a correction / out of order, never a
+            # later re-hearing of this pending cue.
+            return False
+        # The live tap advances by a full segment per window, so a genuine
+        # re-hearing shares at least (window - advance) seconds of audio -- on
+        # the measured Blackwell geometry, 9 s windows advancing 5 s share 4 s
+        # (4/9 of the shorter window).  Require a fraction of the shorter window
+        # that the real geometry clears comfortably, but a millisecond sliver
+        # does not.  The shared _substantially_overlaps rule uses 0.5, which the
+        # genuine 4/9 case FAILS, so live re-hearing needs its own lower floor
+        # derived from that geometry rather than the stricter revision floor.
+        shorter = min(
+            pending.hypothesis.end_seconds - pending.hypothesis.start_seconds,
+            hypothesis.end_seconds - hypothesis.start_seconds,
+        )
+        if shorter <= 0:
+            return False
+        return (
+            _overlap_seconds(pending.hypothesis, hypothesis) / shorter >= self.live_overlap_fraction
+        )
 
     def _matching_pending(self, hypothesis: CaptionHypothesis) -> _PendingCue | None:
         normalized = _normalize(hypothesis.text)
