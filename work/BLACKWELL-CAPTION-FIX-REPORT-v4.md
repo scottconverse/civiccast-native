@@ -1,3 +1,8 @@
+> **SUPERSEDED 2026-09-17.** This v4 report claimed PASSED from a run whose
+> acceptance evidence was later shown to be non-overlapping (the capture ended
+> before the cues it was supposed to prove). It is retained only for history.
+> See work/BLACKWELL-CAPTION-FIX-REPORT-v5.md for the current, correct verdict.
+
 # Blackwell beta.8 caption-runtime fix - human report v4 (2026-09-17)
 
 Author: implementation coder (Codex), for Scott Converse.

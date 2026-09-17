@@ -1,0 +1,21 @@
+{
+  "run_local": "2026-09-16 20:58:49 - 21:00:17 America/Denver",
+  "windows_overlap": {
+    "capture_start": "2026-09-16T20:58:49",
+    "first_fresh_cue_before_capture": "2026-09-16T20:58:44",
+    "capture_end": "2026-09-16T21:00:17",
+    "cue_growth_inside_window": "cue count 1 -> 5 between 20:58:52 and 20:59:38 (see cue-timeline.jsonl)",
+    "sidecar_cleared_at": "2026-09-16T20:59:51 (after the cues)"
+  },
+  "decodeback_entries": 0,
+  "GA94_markers": 2541,
+  "distinct_cca608_field1_pairs": 1,
+  "only_pair": "fd80 (0x7d 0x00), zero printable text bytes",
+  "caption_commands_in_worker_stdout": 0,
+  "root_cause": "C:\\Users\\scott\\AppData\\Local\\CivicCast\\station-state.json begins with a UTF-8 BOM (ef bb bf). _load_raw_state() therefore raises JSONDecodeError, swallows it, and returns {}. read_live_captions_enabled() -> None, so resolve_live_captions_enabled() falls back to LIVE_CAPTIONS_DEFAULT=False. The caption FEED is thus disabled while the caption TAP is separately enabled via CIVICCAST_CAPTION_TAP, so cues are committed to active.vtt and never fed to the mux.",
+  "verdict": "BLOCKED - proven at the feed->worker->mux hop by an overlapping run, with a specific, reproducible root cause",
+  "capture_path": "work/accept3-20260917/capture.ts",
+  "capture_bytes": 11269472,
+  "capture_sha256": "a13e130c37a8612d6351e137297b9f8b695f6048ac1f7399d692caa0d4e7be56",
+  "note": "The 15 MB TS stays on local disk per CONTRIBUTING.md; path/size/hash recorded here."
+}
