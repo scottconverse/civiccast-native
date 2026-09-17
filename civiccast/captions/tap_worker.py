@@ -709,6 +709,24 @@ class CaptionTapWorker:
                     # cannot preempt playout during first use.
                     _lower_current_thread_priority()
                     prepare_runtime()
+                    # Log the RESOLVED caption-runtime identity once the model is
+                    # loaded.  ``on_cuda()`` before prepare() only reports the
+                    # REQUESTED device; a CUDA load may fall back to CPU inside
+                    # prepare().  After prepare() these fields are the ACTUAL
+                    # loaded-model values, so this line is real execution
+                    # evidence for this worker process rather than a selection.
+                    _LOG.info(
+                        "Caption runtime resolved after prepare: device=%s "
+                        "compute_type=%s on_cuda=%s num_workers=%s",
+                        getattr(self._runtime, "device", "unknown"),
+                        getattr(self._runtime, "compute_type", "unknown"),
+                        (
+                            self._runtime.on_cuda()
+                            if callable(getattr(self._runtime, "on_cuda", None))
+                            else None
+                        ),
+                        getattr(self._runtime, "num_workers", "n/a"),
+                    )
                 effective_workers = default_max_channel_workers(self._runtime)
                 if effective_workers != self._max_channel_workers:
                     _LOG.info(
