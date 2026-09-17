@@ -372,6 +372,12 @@ discard stale audio rather than competing indefinitely with the broadcast.
 Live captioning is hard work for the computer, especially without a suitable
 graphics card.
 
+The live recognizer checks speech across overlapping audio windows before
+putting confirmed words on air. A `...` inside a caption marks words it could
+not confirm; it is not a transcription of a spoken pause. Unconfirmed words
+can appear in the review queue without having appeared on air. Stopping a
+channel does not promote those unconfirmed live words into the broadcast.
+
 **The switch:** *Setup → Station Profile → **Show live captions on air***.
 It is **off** on a new installation of this beta; an explicitly saved setting
 survives an upgrade. Turn it on only after checking your station can keep up.
@@ -391,6 +397,13 @@ separate test verified that the speech-recognition model loaded on the GPU.
 These are bounded checks, not proof of uninterrupted all-day operation or
 proof that every caption is correct. Startup overload remains a risk to watch;
 the overload limit and two-minute initial pause have not been relaxed.
+
+If a channel reports **captions disabled: session reset failed**, its picture
+and sound can continue, but captions stay off for that session to avoid showing
+old text. Resolve the reported storage problem, then stop and start the channel
+at a suitable time. Reloading the program alone does not restore captions.
+During a background storage check, caption review text may be available without
+its audio clip; the review screen will say the audio is unavailable.
 
 **Turn it off if the picture is stuttering, or channels keep restarting
 themselves.** The picture and sound always come first. Nothing else about the

@@ -249,10 +249,10 @@ def test_live_caption_pts_rebases_a_late_asr_cue_to_the_live_edge() -> None:
 def test_live_caption_pts_preserves_a_future_cue() -> None:
     assert (
         align_live_caption_pts_ms(
-            requested_pts_ms=110_000,
+            requested_pts_ms=107_000,
             running_time_ms=100_000,
         )
-        == 110_000
+        == 107_000
     )
 
 
@@ -302,14 +302,63 @@ def test_live_caption_pts_rebases_a_short_restart_lag_instead_of_airing_late() -
     )
 
 
+@pytest.mark.parametrize("running_time_ms", [250, 20_000, 30_000, 90_000, 3_600_000])
+def test_live_caption_pts_bounds_restart_offset_at_every_pipeline_age(
+    running_time_ms: int,
+) -> None:
+    assert (
+        align_live_caption_pts_ms(
+            requested_pts_ms=running_time_ms + 20_000,
+            running_time_ms=running_time_ms,
+            stream_position_ms=running_time_ms,
+        )
+        == running_time_ms + 250
+    )
+
+
+def test_live_caption_pts_restart_offset_never_advances_the_stream_queue() -> None:
+    stream_position_ms = 250
+    for running_time_ms in range(250, 120_000, 5_000):
+        aligned = align_live_caption_pts_ms(
+            requested_pts_ms=running_time_ms + 20_000,
+            running_time_ms=running_time_ms,
+            stream_position_ms=stream_position_ms,
+        )
+        assert aligned == running_time_ms + 250
+        # The production engine retains the end of the last accepted buffer.
+        stream_position_ms = aligned + 4_000
+
+
+@pytest.mark.parametrize("running_time_ms", [250, 90_000, 3_600_000])
+def test_live_caption_pts_preserves_exact_configured_future_limit(
+    running_time_ms: int,
+) -> None:
+    edge = running_time_ms + 250
+    assert (
+        align_live_caption_pts_ms(
+            requested_pts_ms=edge + 8_000,
+            running_time_ms=running_time_ms,
+        )
+        == edge + 8_000
+    )
+    assert (
+        align_live_caption_pts_ms(
+            requested_pts_ms=edge + 8_001,
+            running_time_ms=running_time_ms,
+        )
+        == edge
+    )
+
+
 def test_live_caption_pts_still_preserves_a_genuinely_near_future_cue() -> None:
-    """The rebase bound must not disturb a cue that is really just ahead."""
+    """An explicitly permitted future cue retains its PTS within that limit."""
 
     assert (
         align_live_caption_pts_ms(
             requested_pts_ms=100_000,
             running_time_ms=90_000,
             stream_position_ms=90_000,
+            max_future_lead_ms=10_000,
         )
         == 100_000
     )
@@ -760,6 +809,51 @@ def test_strategy_embed_captions_on_inserts_cc_elements(
 
 
 _CAPTION_EMBED_FACTORIES = ("cccombiner", "h264ccinserter", "tttocea608", "ccconverter")
+
+
+def test_failed_reset_session_omits_caption_graph_on_start_and_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tmp_path / "caption-tap"))
+    monkeypatch.setattr(
+        "civiccast.installer.station_state.resolve_live_captions_enabled", lambda: True
+    )
+    strategy = GstPlayoutStrategy(
+        worker_launcher=lambda *_args: SimpleNamespace(pid=1, poll=lambda: None),
+        python_executable="python3",
+        embed_captions=True,
+        pipe_channel_factory=_fake_pipe_channel_factory,
+    )
+    commands: list[str] = []
+    monkeypatch.setattr(
+        strategy,
+        "send_command",
+        lambda _dir, _ch, command, **_kwargs: commands.append(command) or True,
+    )
+    request = dataclasses.replace(_start_request(tmp_path), captions_allowed=False)
+    graph = graph_from_json(strategy.start(request).concat_plan_path.read_text(encoding="utf-8"))
+    assert graph.captions is None
+    assert graph.audio_tap is None
+    assert not strategy.send_caption_cue(
+        "ch1", tmp_path, text="OLD SESSION", pts_seconds=1, duration_seconds=1
+    )
+    assert commands == []
+    # Even a caller forgetting the session flag cannot re-enable this run on reload.
+    assert strategy.reload_content("ch1", tmp_path, _reload_request(tmp_path))
+    graph_path = Path(commands[-1].removeprefix("reload "))
+    graph = graph_from_json(graph_path.read_text(encoding="utf-8"))
+    assert graph.captions is None
+    assert graph.audio_tap is None
+    # A genuine new successful start, not a content change, restores the preference.
+    strategy.close_channel("ch1")
+    graph = graph_from_json(
+        strategy.start(_start_request(tmp_path)).concat_plan_path.read_text(encoding="utf-8")
+    )
+    assert graph.captions is not None
+    assert graph.audio_tap is not None
+    assert strategy.send_caption_cue(
+        "ch1", tmp_path, text="NEW SESSION", pts_seconds=1, duration_seconds=1
+    )
 
 
 def test_strategy_builds_no_caption_embed_leg_when_live_captions_are_off(

@@ -256,6 +256,31 @@ def test_start_command_still_starts_when_the_session_hook_raises(tmp_path: Path)
     assert state.state in {"STARTING", "ON_AIR"}
 
 
+def test_failed_caption_reset_does_not_read_stale_sidecar(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    reads: list[str] = []
+
+    def reset(channel_id: str) -> None:
+        raise OSError("active.vtt is read-only")
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _: _FakeProcess(),
+        channel_start_hook=reset,
+        caption_plan_provider=lambda channel: reads.append(channel),
+        caption_status_provider=lambda _: "on",
+    )
+    daemon.process_once("gov")
+    assert reads == [], "failed reset must not consult the previous session's caption sidecar"
+    assert store.read_state("gov").state == "ON_AIR"
+    assert store.recent_health("gov", 1)[0].caption_status == "not-verified"
+    assert "captions disabled" in (store.read_state("gov").last_error or "")
+
+
 def test_daemon_processes_start_command_and_records_success_health(tmp_path: Path) -> None:
     store = InMemoryEgressStore()
     store.upsert_config(_config())
@@ -1137,6 +1162,70 @@ class _FakeNonReloadCapableStrategy(_FakeContentReloadStrategy):
     ever called, so ``reload_calls`` staying empty is the proof."""
 
     supports_content_reload = False
+
+
+def test_failed_caption_reset_gate_survives_reload_until_successful_start(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    started: list[_FakeProcess] = []
+    requests: list[EncoderStartRequest] = []
+    sends: list[str] = []
+    reset_fails = [True]
+
+    class Strategy(_FakeContentReloadStrategy):
+        def start(self, request: EncoderStartRequest) -> EncoderStartResult:
+            requests.append(request)
+            return super().start(request)
+
+        def reload_content(self, channel_id, work_dir, request, *, command_id=None):
+            requests.append(request)
+            return super().reload_content(channel_id, work_dir, request, command_id=command_id)
+
+        def send_caption_cue(self, channel_id, work_dir, **kwargs):
+            sends.append(kwargs["text"])
+            return True
+
+    def reset(channel_id: str) -> None:
+        if reset_fails[0]:
+            raise OSError("locked sidecar")
+
+    strategy = Strategy([_FakeProcess(pid=111), _FakeProcess(pid=222)], started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        encoder_strategy=strategy,
+        source_plan_provider=lambda _: _source_plan(tmp_path),
+        channel_start_hook=reset,
+    )
+    store.enqueue_command(_command())
+    daemon.process_once("gov")
+    assert not requests[-1].captions_allowed
+    assert requests[-1].caption_plan is None
+    assert requests[-1].audio_tap_plan is None
+    assert not daemon.send_caption_cue(
+        "gov", tmp_path, text="OLD", pts_seconds=0, duration_seconds=1, delivery_id="old"
+    )
+    assert sends == []
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+    assert len(requests) == 2
+    assert not requests[-1].captions_allowed
+    assert not started[0].terminated
+    reset_fails[0] = False
+    # A duplicate Start on a live worker is not a reset and cannot lift the gate.
+    store.enqueue_command(_command().model_copy(update={"command_id": "duplicate-start"}))
+    daemon.process_once("gov")
+    assert "gov" in daemon._caption_reset_failed
+    store.enqueue_command(_command("stop"))
+    daemon.process_once("gov")
+    store.enqueue_command(_command().model_copy(update={"command_id": "fresh-start"}))
+    daemon.process_once("gov")
+    assert requests[-1].captions_allowed
+    assert "gov" not in daemon._caption_reset_failed
+    assert daemon.send_caption_cue(
+        "gov", tmp_path, text="NEW", pts_seconds=0, duration_seconds=1, delivery_id="new"
+    )
+    assert sends == ["NEW"]
 
 
 def test_content_reload_swaps_program_in_place_without_restart(tmp_path: Path) -> None:

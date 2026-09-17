@@ -1,10 +1,8 @@
 # CivicCast Architecture
 
-> **Release state: `v1.0.0-beta.5` is the current release**, a download-only
-> upgrade for stations already on `v1.0.0-beta.4` (now superseded, as is
-> `v1.0.0-beta.3`, the first downloadable release) -- `setup.exe` and the
+> **Release state: `v1.0.0-beta.7` is the current release** -- `setup.exe` and the
 > runtime `.ccpack` packs are attached to its
-> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5).
+> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7).
 > It is still a beta, not a finished production release; it describes the
 > state a technical reviewer finds by checking out `main` today. See
 > [BRANCHES.md](BRANCHES.md) for release identity and status.

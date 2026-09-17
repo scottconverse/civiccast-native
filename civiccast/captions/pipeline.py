@@ -159,7 +159,11 @@ class CaptionPipeline:
         asset_id: str,
         reviewer_note: str | None = None,
     ) -> CaptionPipelineResult:
-        """Commit every cue still pending at end-of-stream/channel-stop.
+        """Finish pending captions at end-of-stream/channel-stop.
+
+        Timed live words without confirmation are persisted for review only;
+        they never enter the active track. Legacy/offline pending hypotheses
+        retain the low-confidence commit behavior described below.
 
         There is no second transcription pass once audio has ended, so any
         hypothesis that has not yet earned full re-confirmation must be
@@ -172,7 +176,9 @@ class CaptionPipeline:
         result.
         """
 
+        expired_before = self._stabilizer.expired_unconfirmed_count
         committed_cues = self._stabilizer.flush()
+        expired_unconfirmed_cues = self._stabilizer.expired_unconfirmed()[expired_before:]
         review_items = [
             CaptionReviewItemCreate(
                 review_item_id=_review_item_id(asset_id, cue),
@@ -180,13 +186,13 @@ class CaptionPipeline:
                 cue=cue,
                 reviewer_note=reviewer_note,
             )
-            for cue in committed_cues
+            for cue in (*committed_cues, *expired_unconfirmed_cues)
         ]
         return CaptionPipelineResult(
             hypotheses=[],
             committed_cues=committed_cues,
             review_items=review_items,
-            expired_unconfirmed_cues=[],
+            expired_unconfirmed_cues=expired_unconfirmed_cues,
         )
 
     def flush_and_publish_hls(

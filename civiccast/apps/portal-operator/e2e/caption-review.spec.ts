@@ -275,6 +275,8 @@ test.describe('caption review queue', () => {
     // language tab actually narrows the REQUEST.
     const backend = await mockReviewBackend(page)
     await openReview(page)
+    // The heading renders before the asynchronous list request can arrive.
+    await expect.poll(() => backend.listRequestUrls.length).toBeGreaterThan(0)
     expect(backend.listRequestUrls.at(-1)).not.toContain('language=')
 
     await languageTab(page, 'Spanish').click()

@@ -1,10 +1,9 @@
 # Support
 
-> **Current native release posture:** `v1.0.0-beta.5` is the current
-> release, a download-only upgrade for stations already on
-> `v1.0.0-beta.4` -- `setup.exe` and the runtime
+> **Current native release posture:** `v1.0.0-beta.7` is the current
+> release -- `setup.exe` and the runtime
 > `.ccpack` packs are attached to its
-> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5).
+> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7).
 > `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable release) are
 > now superseded.
 > `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also

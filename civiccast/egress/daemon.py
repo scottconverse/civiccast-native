@@ -441,6 +441,9 @@ class EgressDaemon:
         self._hls_relay = hls_relay_supervisor
         self._command_failure_hook = command_failure_hook
         self._channel_start_hook = channel_start_hook
+        # Cleared only by a successful real launch reset, never by an in-place
+        # content reload or duplicate Start against the current worker.
+        self._caption_reset_failed: set[str] = set()
         self._work_dir = work_dir
         self._source_plan_provider = source_plan_provider
         self._boundary_source_plan_provider = boundary_source_plan_provider
@@ -1074,6 +1077,8 @@ class EgressDaemon:
         through this daemon's existing strategy instance.
         """
 
+        if channel_id in self._caption_reset_failed:
+            return False
         sender = getattr(self._encoder_strategy, "send_caption_cue", None)
         if not callable(sender):
             return False
@@ -1327,10 +1332,14 @@ class EgressDaemon:
                 try:
                     self._channel_start_hook(channel_id)
                 except Exception:
+                    self._caption_reset_failed.add(channel_id)
                     _LOG.exception(
-                        "channel %s: caption session-start hook failed; continuing to start",
+                        "channel %s: caption session-start hook failed; captions disabled "
+                        "until a successful new session reset; continuing broadcast",
                         channel_id,
                     )
+                else:
+                    self._caption_reset_failed.discard(channel_id)
             # From here on a pipeline is being BUILT from ``stored_config``.
             self._built_configs[channel_id] = stored_config
             if not hls_relay_was_alive:
@@ -1542,6 +1551,7 @@ class EgressDaemon:
                 caption_plan = (
                     self._caption_plan_provider(channel_id)
                     if self._caption_plan_provider is not None
+                    and channel_id not in self._caption_reset_failed
                     else None
                 )
                 running_state: EgressState = "FALLBACK_SLATE" if using_fallback_slate else "ON_AIR"
@@ -1578,9 +1588,14 @@ class EgressDaemon:
                         resolve_secret=self._resolve_secret,
                         branding_plan=branding_plan,
                         caption_plan=caption_plan,
+                        captions_allowed=channel_id not in self._caption_reset_failed,
                         # Live caption tap (Beta B6, option A): env-configured
                         # audio fork rides the same encoder process.
-                        audio_tap_plan=build_audio_tap_plan(channel_id),
+                        audio_tap_plan=(
+                            build_audio_tap_plan(channel_id)
+                            if channel_id not in self._caption_reset_failed
+                            else None
+                        ),
                         ffmpeg_starter=self._ffmpeg_starter,
                         cg_overlay_image=(
                             self._cg_overlay_provider(channel_id, config)
@@ -1809,6 +1824,10 @@ class EgressDaemon:
         # reach ``EgressStore.write_state`` -- see
         # ``civiccast/egress/_text.py`` for why a non-UTF8 character here
         # aborts the whole automation pass if left unfolded.
+        if channel_id in self._caption_reset_failed and state != "STOPPED":
+            warning = "captions disabled: session reset failed; Stop and Start again to retry"
+            if not last_error or warning not in last_error:
+                last_error = f"{last_error}; {warning}" if last_error else warning
         current_source_label = db_safe_text_or_none(current_source_label)
         last_error = db_safe_text_or_none(last_error)
         _LOG.info(
@@ -1859,9 +1878,13 @@ class EgressDaemon:
                 seconds_on_air=seconds_on_air,
                 last_loudness_lufs=self._last_loudness_lufs.get(channel_id),
                 caption_status=(
-                    self._caption_status_provider(channel_id)
-                    if self._caption_status_provider is not None
-                    else "not-verified"
+                    "not-verified"
+                    if channel_id in self._caption_reset_failed
+                    else (
+                        self._caption_status_provider(channel_id)
+                        if self._caption_status_provider is not None
+                        else "not-verified"
+                    )
                 ),
                 schema_version=current_schema_version(),
                 proof_events_appended_since_last_sample=self._store.count_proof_events_since(
@@ -3267,6 +3290,7 @@ class EgressDaemon:
             caption_plan=(
                 self._caption_plan_provider(channel_id)
                 if self._caption_plan_provider is not None
+                and channel_id not in self._caption_reset_failed
                 else None
             ),
             cg_overlay_image=(
@@ -3274,7 +3298,12 @@ class EgressDaemon:
                 if self._cg_overlay_provider is not None
                 else None
             ),
-            audio_tap_plan=build_audio_tap_plan(channel_id),
+            captions_allowed=channel_id not in self._caption_reset_failed,
+            audio_tap_plan=(
+                build_audio_tap_plan(channel_id)
+                if channel_id not in self._caption_reset_failed
+                else None
+            ),
             ffmpeg_starter=self._ffmpeg_starter,
             # Only a horizon-bound automation rollover of an ON_AIR or finite
             # FALLBACK_SLATE plan may defer to the outgoing leg's EOS. A no-horizon

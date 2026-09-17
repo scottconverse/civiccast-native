@@ -1,5 +1,77 @@
 # HANDOFF
 
+## 2026-09-17 current: beta.8 release preparation and PR 231
+
+This section supersedes the historical status sections below.
+Current branch: `fix/blackwell-caption-runtime`.
+Initial pushed checkpoint: `005cd33595d2b72f5507c44e98e04c08d3c43563`.
+Resolve current HEAD with Git; the follow-up repair commit supersedes that
+checkpoint and requires its own CI and installed-runtime validation.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/231.
+Current public tag: `v1.0.0-beta.7`; beta.8 is NOT published.
+
+PR follow-up: DO NOT MERGE this pushed checkpoint. Review confirmed additional
+restart-PTS, retention-permission, failed-reset/stale-caption and stabilization
+findings. Local targeted repairs are in progress, with independent review.
+The first stricter lexical stabilizer produced only five cues from 120 seconds
+of preserved real speech (51 ASR hypotheses); that is insufficient functional
+acceptance. Grouped hypotheses improved that to 13 cues but retained a 17s
+speech gap. Actual recognizer word timestamps are now used in a draft repair;
+the latest replay yielded 23 cues/24 windows, still under independent review.
+No confirmation or overload policy is relaxed. Preserve this
+negative replay and the preceding silence-only replays; do not report only
+nonzero cues as success. Raw receipts are under the local Temp directory as
+blackwell-lexical-replay-*.json. No installed service has been changed.
+
+CI at 005cd335: browser request-arrival race failed operator a11y; two-line
+wait fix passes exact repeat20 and suite11. Mutation baseline failed an
+unsynchronized retention test before mutants were evaluated; deterministic
+ordering fix has a failing synchronous-sweep negative control. Reproducibility
+passed. Randomized seed 1764308419 failed 20 tests (10213 passed, 71 skipped):
+stale claims bindings/front-door documents/adoption tag plus retention race.
+Source-tripwire bindings were explicitly reviewed, not promoted as installed
+proof. Claims tests now pass; front-door/adoption tests pass after correcting
+Architecture, Support, install HTML and the hardcoded beta.5 policy link.
+Independent affected tap/daemon/strategy tests: 311 passed, 6 POSIX skips.
+The Python 3.14 exploratory caption tests hit SQLite finalizer warnings;
+the configured .venv Python 3.12 migration/CDN checks pass (10 tests).
+Timed-word flush/review fanout is repaired. Independent review re-derived both
+23-cue GPU replays exactly and found no remaining source blocker. Combined
+checks passed 660 tests, 8 skips; proportional feed timing then passed 11
+focused tests and independent boundary review. Ruff/scoped pre-commit/manual
+freshness pass; mypy passes all 11 changed product modules. Source is ready
+for a follow-up push, NOT release acceptance. Shared-model three-channel
+capacity measurement is underway; installed output and signed kit remain
+unverified. Evidence/report: work/release-beta8-word-replay/.
+Re-run final combined checks against frozen source after all owners finish;
+intermediate 637passed8skipped is not an exact final candidate receipt.
+
+Owner authorized push, merge, tag and public beta.8, then final-public-
+distributable GPU captions-ON soak. Do not reuse old development captures
+as installer/soak acceptance. HALO-gate-a is offline; asked Scott to bring it
+online while local work continues. Do not skip exact-source installer gates.
+
+Release review found and fixed atomic session-reset/publication and reused
+audio-file races. Six regressions; affected suite602passed8skipped, independent
+worker/native-pipe90passed1skipped, randomized worker57passed, app subset32passed.
+Mypy6changed modules pass. Full PR CI is running, not yet green.
+Candidate docs/manuals updated, public beta7 status retained until publication.
+See docs/releases/v1.0.0-beta.8-verification.md and local human report
+`C:\Users\scott\Documents\Codex\2026-08-12\tes\CivicCast Beta 8 - Release Progress - v1.md`.
+
+CI run IDs for this exact head: ci-test35248836044, lint35248835876,
+docs35248835948, detectors35248835819, security35248835834,
+reproducibility35248835895. Refresh before making any PASS/merge claim.
+The full pre-commit sweep has inherited historical-evidence hygiene failures;
+24changed-file hooks pass. No archive bytes were rewritten to hide those failures.
+
+Next: resolve CI/review findings; merge only green; build exact merged source
+with native-beta-candidate-artifacts self-hosted lane, then Gate A three lanes;
+publisher dry-run then publish; update release truth/public docs; download and
+verify public bytes and install for soak. Soak duration question outstanding
+(recommended24hours). Upgrade baseline currently beta5; check beta7 kit identity
+and repin before claiming beta7-to-beta8 upgrade proof. No forced tags/cleanups.
+
 ## 2026-09-15 current: beta.8 candidate identity after captions repair merge
 
 Current branch: `release/beta8-candidate-identity`.

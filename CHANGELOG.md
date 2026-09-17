@@ -26,17 +26,28 @@ Candidate identity: `v1.0.0-beta.8` (unpublished).
 
 ### Blackwell live-caption runtime repairs (release validation pending)
 
-- Corroborate live speech across substantially overlapping audio windows so
-  changing ASR wording does not indefinitely suppress continuous-speech cues;
-  wire that live mode into the caption tap.
+- Confirm live speech using matching recognizer words and overlapping word
+  timestamps from distinct audio windows, not audio overlap alone. Retain
+  five seconds of prior audio by default, with explicit overrides preserved.
+  Group confirmed words into phrase cues and mark interior omissions with
+  `...`. Unconfirmed timed words go to review only, including on stream stop;
+  legacy/offline flush behavior is unchanged.
 - Bound caption timestamp rebasing near the current live edge after short
   restarts, and reset sidecars at real channel-session boundaries. Per-channel
   locking makes reset and generation-checked publication atomic. Old work
   cannot move a newly reused chunk filename or restore old overlap state;
   speech recognition remains outside the lock.
+- Keep the future-caption lead bound independent of pipeline uptime, so a
+  constant clock offset cannot return later in a restarted session.
+- If session reset fails, continue broadcast with captions disabled and an
+  explicit warning. Reload cannot expose the previous session's caption file;
+  a successful new-session reset is required to re-enable captions.
 - Move subsequent retention sweeps off the caption-processing thread, retain
   the initial readiness check and fail-closed retention verdict, and guard
   against overlapping sweeps during shutdown/restart.
+- Recheck retention permission when writing audio evidence. While a periodic
+  storage check is pending, keep caption/review text moving without retaining
+  new audio clips; a definitive refusal stops caption publication.
 - Run session cleanup only for an actual channel launch, not a duplicate START
   command on an already-running channel; discard the previous session's audio.
 - Log the resolved ASR backend device, compute type and worker capacity after

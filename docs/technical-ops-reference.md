@@ -728,10 +728,17 @@ turn captions off, or re-enable the posted language track with keyboard or
 pointer controls.
 
 Live caption stabilization requires corroboration across overlapping audio
-windows. In beta.8, a later window may corroborate substantially re-heard
-audio even when recognition changes the wording; a tiny overlap is not
-enough. This differs from requiring identical wording twice during continuous
-speech. A committed live cue is not rewritten later. Low-confidence cues are flagged in the operator review queue
+windows. Beta.8's live GPU recognizer supplies actual word timestamps and
+input-window identity. Confirmation requires matching words with overlapping
+observed time spans in distinct audio windows, not just overlapping audio.
+The default five-second retained context covers the previous five-second
+segment; explicit overlap overrides are preserved. Confirmed words form
+bounded phrase cues; `...` marks withheld interior words, not recognized speech.
+Unconfirmed timed words are retained for review only when they expire or the
+stream ends; stopping is not a second recognition pass and does not put them
+on air. Legacy/offline hypotheses without word metadata retain their separate
+low-confidence flush behavior. A committed live cue is not
+rewritten later. Low-confidence cues are flagged in the operator review queue
 with a specific next step: compare the cue against the audio, then approve,
 edit, or reject it. The staff review API preserves the original machine cue
 text separately from approved or edited reviewer text so the UI keeps a clear

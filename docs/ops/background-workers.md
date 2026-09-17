@@ -124,8 +124,10 @@ rolling mono 16 kHz s16le WAV segments under
 worker consumes a segment only once a newer-numbered sibling exists (so a
 half-written file is never read), feeds it through the existing live caption
 seam (pipeline → two-window stabilization → **durable review queue**), then
-moves it to `processed/`; unreadable segments go to `quarantine/` and never
-kill the scan.
+moves it to `processed/` when retained-audio permission is current. While a
+periodic storage check is pending, processed and unreadable audio is discarded
+instead of retained; review text can still be created without an audio clip.
+With verified storage, unreadable segments go to `quarantine/`.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -219,7 +221,13 @@ The live tap makes its first retained-audio readiness check synchronously.
 Later retention sweeps run on a guarded background thread rather than
 blocking every transcription scan. Only one sweep may be in flight;
 transcription still refuses work when the latest retention result is not
-ready. Disabling live transcription does not disable retention of audio
+ready. During a periodic recheck, transcription and caption text can continue,
+but no new evidence, processed or quarantined WAV is retained. Review rows
+created in that interval have no retained audio clip; the review interface
+reports that the clip is unavailable. A definitive storage refusal stops new
+transcription and publication and discards settled input audio. Permission is
+checked again after transcription, at the point audio would be stored.
+Disabling live transcription does not disable retention of audio
 already collected. The separate offline-caption worker retains its own
 readiness check; do not confuse the two workers' scheduling.
 
@@ -233,6 +241,13 @@ than presenting the request as the result.
 Beta.8 development evidence and its limits are in the
 [verification record](../releases/v1.0.0-beta.8-verification.md). These
 changes do not raise the backlog threshold or shorten overload backoff.
+
+If a channel's caption-session reset fails (for example, a locked caption
+file), broadcast can continue but that session's caption embedding and audio
+tap stay disabled. The channel reports the reset failure and caption status
+is not verified. A content reload or duplicate Start cannot clear this guard.
+Resolve the storage problem, then Stop and Start the channel at an appropriate
+time; only a successful new-session reset re-enables its captions.
 
 ### Captions are best effort; playout wins
 

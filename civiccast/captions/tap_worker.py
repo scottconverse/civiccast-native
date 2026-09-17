@@ -58,7 +58,8 @@ import re
 import threading
 import time
 import wave
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -82,7 +83,7 @@ from civiccast.captions.tap_backoff import (
     DEFAULT_MAX_BACKOFF_SECONDS,
     CaptionBackoffPolicy,
 )
-from civiccast.captions.worker import AudioEvidenceFactory, LiveCaptionWorker
+from civiccast.captions.worker import AudioEvidenceFactory, LiveCaptionWorker, ReviewPersistenceMode
 
 if TYPE_CHECKING:
     from civiccast.translate.service import TranslationProvider
@@ -255,7 +256,7 @@ class CaptionTapWorkerSettings:
     tap_root: Path | None = None
     segment_seconds: float = 5.0
     atomic_segments: bool = False
-    overlap_seconds: float = 4.0
+    overlap_seconds: float = 5.0
     poll_seconds: float = 2.0
     # ``None`` means select from the constructed runtime: one channel on CPU,
     # up to three on CUDA.  An environment value remains an exact override.
@@ -447,7 +448,7 @@ class CaptionTapWorker:
         review_store: CaptionReviewStore,
         segment_seconds: float = 5.0,
         atomic_segments: bool = False,
-        overlap_seconds: float = 4.0,
+        overlap_seconds: float = 5.0,
         max_channel_workers: int | None = None,
         max_backlog_segments: int = 2,
         reviewer_note: str = "Auto-generated from the live broadcast audio tap.",
@@ -489,17 +490,15 @@ class CaptionTapWorker:
         #: can never starve the caption scan path into a false overload.  The
         #: verdict it publishes is guarded by a lock; the scan only ever READS it.
         self._retention_thread: threading.Thread | None = None
-        self._retention_lock = threading.Lock()
+        self._retention_lock = threading.RLock()
         #: How long the tap waits for an in-flight retention sweep to finish when
         #: its own scan loop exits.  Bounded so a wedged sweep can never hold
         #: shutdown open; the thread is a daemon either way.
         self._retention_shutdown_timeout = 10.0
-        #: Retention verdict, fail-closed on the UNKNOWN state.  Previously the
-        #: first sweep was synchronous, so a verdict existed before any ASR ran.
-        #: Now that the sweep is asynchronous, ASR must not be allowed to run on
-        #: an UNVERIFIED store: start as "not ready, not yet verified", and treat
-        #: "verification still in flight" and "verification failed" both as
-        #: not-ready.  Only an explicit successful sweep clears the refusal.
+        #: Initial verification and any explicit refusal gate ASR. During later
+        #: rechecks the previous successful verdict permits transient captions
+        #: and text-only review, NEVER audio persistence: the persistence guard
+        #: also checks in-flight state atomically at the write boundary.
         self._retention_verified = False
         self._retention_in_flight = False
         self._retention_ready = False
@@ -537,6 +536,7 @@ class CaptionTapWorker:
         # back on air (reproduced: reset -> old worker publish -> old cue
         # visible again).
         self._session_generation: dict[str, int] = {}
+        self._failed_sessions: set[str] = set()
         # Serialize session reset with publication and short state/file updates,
         # not with ASR or the retention sweep. Locks live for the worker lifetime:
         # replacing a lock during reset would leave an old caller unprotected.
@@ -611,7 +611,11 @@ class CaptionTapWorker:
         """Reset a channel atomically with respect to its old caption results."""
 
         with self._session_lock(channel_id):
+            # A failed disk reset is not repaired by starting a new publisher on
+            # the next scan. Only a successful explicit session reset can re-arm.
+            self._failed_sessions.add(channel_id)
             self._begin_channel_session_locked(channel_id)
+            self._failed_sessions.discard(channel_id)
 
     def _begin_channel_session_locked(self, channel_id: str) -> None:
         """Fail closed when a channel starts a new live broadcast session.
@@ -680,7 +684,9 @@ class CaptionTapWorker:
         if worker is None:
             return CaptionTapScanResult(channels=(channel_id,))
         result = worker.flush()
-        self._publish_cues(channel_id, generation, worker.committed_cues())
+        with self._session_lock(channel_id), self._retention_lock:
+            if self._retention_ready:
+                self._publish_cues(channel_id, generation, worker.committed_cues())
         return CaptionTapScanResult(
             committed_review_items=len(result.committed_review_items),
             expired_unconfirmed_cues=len(result.expired_unconfirmed_cues),
@@ -729,17 +735,32 @@ class CaptionTapWorker:
         if not retention_ready:
             channels = sorted(path.name for path in self._tap_root.iterdir() if path.is_dir())
             for channel_id in channels:
-                self._publish_status(
-                    channel_id,
-                    state="storage-refused",
-                    backlog_segments=0,
-                    refusal_reason=retention_refusal,
-                )
+                with self._session_lock(channel_id):
+                    for _index, segment in self._settled_segments(self._tap_root / channel_id):
+                        segment.unlink(missing_ok=True)
+                    try:
+                        self._clear_channel_captions(channel_id)
+                        self._publish_status(
+                            channel_id,
+                            state="storage-refused",
+                            backlog_segments=0,
+                            refusal_reason=retention_refusal,
+                        )
+                    except OSError:
+                        # One broken sidecar directory must not prevent draining
+                        # the other channels' newly arriving raw audio.
+                        _LOG.exception("Cannot clear refused captions for channel %s", channel_id)
             return CaptionTapScanResult(channels=tuple(channels))
         pending: list[tuple[str, Path, list[tuple[int, Path]], int]] = []
         for channel_dir in sorted(p for p in self._tap_root.iterdir() if p.is_dir()):
             channel_id = channel_dir.name
             with self._session_lock(channel_id):
+                if channel_id in self._failed_sessions:
+                    # The daemon inhibits this session's audio tap, but discard
+                    # any settled leftovers even if sidecar storage stays broken.
+                    for _index, segment in self._settled_segments(channel_dir):
+                        segment.unlink(missing_ok=True)
+                    continue
                 segments = self._settled_segments(channel_dir)
                 if not segments:
                     continue
@@ -846,17 +867,26 @@ class CaptionTapWorker:
                 generation = self._session_generation.get(channel_id, 0)
         for index, segment in segments:
             with self._session_lock(channel_id):
-                if generation != self._session_generation.get(channel_id, 0):
+                if (
+                    generation != self._session_generation.get(channel_id, 0)
+                    or channel_id in self._failed_sessions
+                ):
                     break
                 processed = channel_dir / "processed" / segment.name
                 if processed.exists():
-                    collision_path = self._move_collision(segment, channel_dir / "collision")
-                    self._retention_policy.record_event(
-                        outcome="quarantined",
-                        reason="restarted-chunk-index-collision",
-                        path=collision_path,
-                        sha256=_sha256(collision_path),
-                    )
+                    with self._retention_lock:
+                        if self._retention_ready and not self._retention_in_flight:
+                            collision_path = self._move_collision(
+                                segment, channel_dir / "collision"
+                            )
+                            self._retention_policy.record_event(
+                                outcome="quarantined",
+                                reason="restarted-chunk-index-collision",
+                                path=collision_path,
+                                sha256=_sha256(collision_path),
+                            )
+                        else:
+                            segment.unlink(missing_ok=True)
                     quarantined += 1
                     continue
             raw_chunk = self._read_chunk(channel_id, index, segment)
@@ -865,7 +895,11 @@ class CaptionTapWorker:
                     break
                 if raw_chunk is None:
                     self._previous_segments.pop(channel_id, None)
-                    self._move(segment, channel_dir / "quarantine")
+                    with self._retention_lock:
+                        if self._retention_ready and not self._retention_in_flight:
+                            self._move(segment, channel_dir / "quarantine")
+                        else:
+                            segment.unlink(missing_ok=True)
                     quarantined += 1
                     continue
                 chunk = self._with_overlap(channel_id, index, raw_chunk)
@@ -881,10 +915,28 @@ class CaptionTapWorker:
                     # A new writer may already have reused this numbered path.
                     # Do not move it or restore the old session's overlap.
                     break
-                self._publish_cues(channel_id, generation, worker.committed_cues())
-                self._move(segment, channel_dir / "processed")
-                self._previous_segments[channel_id] = (index, raw_chunk)
-                consumed += 1
+                with self._retention_lock:
+                    if not self._retention_ready:
+                        for _index, stale_segment in segments:
+                            stale_segment.unlink(missing_ok=True)
+                        self._clear_channel_captions(channel_id)
+                        self._publish_status(
+                            channel_id,
+                            state="storage-refused",
+                            backlog_segments=0,
+                            refusal_reason=self._retention_refusal,
+                        )
+                        break
+                    self._publish_cues(channel_id, generation, worker.committed_cues())
+                    if self._retention_in_flight:
+                        # Captions/review text continue while periodic audio
+                        # retention verification is pending. Never keep raw WAVs
+                        # under yesterday's verdict or defer them into a backlog.
+                        segment.unlink(missing_ok=True)
+                    else:
+                        self._move(segment, channel_dir / "processed")
+                    self._previous_segments[channel_id] = (index, raw_chunk)
+                    consumed += 1
         # One healthy scan. The policy forgives the channel's escalation only
         # after several of these in a row, so a channel that flaps does not
         # reset itself to the base delay every other scan.
@@ -1013,10 +1065,10 @@ class CaptionTapWorker:
         regression test below reproduces, not as a per-scan trace.  The overload
         was self-inflicted by cleanup, not by the tap failing to keep up.
 
-        The sweep's WORK now runs on its own thread, on the same cadence.  Its
-        VERDICT is still cached on this object and still consulted by the scan
-        (``_retention_ready``), so a storage refusal still fails closed -- the
-        safety property is unchanged; only the blocking moved off this thread.
+        Later sweep WORK runs on its own thread. Pending verification allows
+        transient captions and text-only review but no retained WAVs. The current
+        verdict and in-flight flag are checked atomically at each persistence
+        boundary; a refused verdict also blocks subsequent VTT publication.
         """
 
         now = self._monotonic()
@@ -1311,21 +1363,40 @@ class CaptionTapWorker:
                 reviewer_note=self._reviewer_note,
                 translation_provider=self._translation_provider,
                 # LIVE stabilizer: this tap feeds OVERLAPPING audio windows (5 s
-                # segments with 4 s of overlap -- 9 s windows advancing 5 s), so
+                # segments with 5 s of overlap -- 10 s windows advancing 5 s), so
                 # the same audio is re-heard by the next window rather than
-                # re-transcribed identically.  Confirmation therefore keys on the
-                # window geometry (a later window starting inside the pending
-                # cue's span), not on exact text equality, which continuous
-                # speech never satisfies.  See CaptionStabilizer.live.  Every
+                # re-transcribed identically. Confirmation requires substantive
+                # audio overlap AND matching words across those windows; only
+                # the shared phrase over their intersecting interval commits.
+                # Geometry alone cannot corroborate the incoming tail. Every
                 # other caller -- offline/VOD and the whole existing test suite --
                 # keeps exact-text re-confirmation unchanged.
                 pipeline=CaptionPipeline(
                     self._runtime,
                     stabilizer=CaptionStabilizer(live=True),
                 ),
+                persistence_guard=self._review_persistence_guard,
             )
             self._channel_workers[channel_id] = worker
         return worker
+
+    @contextmanager
+    def _review_persistence_guard(self) -> Iterator[ReviewPersistenceMode]:
+        """Never retain audio using a stale or concurrently revoked verdict.
+
+        The sweep does heavy work without this lock. Only its dispatch/verdict
+        transitions and short persistence transactions hold it. Pending periodic
+        verification permits text-only review (including low-confidence review),
+        with the existing unavailable-audio UI contract; no deferred audio queue.
+        """
+
+        with self._retention_lock:
+            if not self._retention_ready:
+                yield "refused"
+            elif self._retention_in_flight:
+                yield "text-only"
+            else:
+                yield "audio"
 
     def _audio_evidence_factory(
         self,
@@ -1391,13 +1462,20 @@ class CaptionTapWorker:
         a session that has already ended.
         """
 
-        with self._session_lock(channel_id):
-            if generation != self._session_generation.get(channel_id, 0):
+        with self._session_lock(channel_id), self._retention_lock:
+            if (
+                generation != self._session_generation.get(channel_id, 0)
+                or channel_id in self._failed_sessions
+                or not self._retention_ready
+            ):
                 _LOG.info(
-                    "channel %s: dropping caption publish from a finished session (gen %d != %d)",
+                    "channel %s: caption publish refused (generation %d, current %d, "
+                    "reset_failed=%s, retention_ready=%s)",
                     channel_id,
                     generation,
                     self._session_generation.get(channel_id, 0),
+                    channel_id in self._failed_sessions,
+                    self._retention_ready,
                 )
                 return False
             self._publisher_for(channel_id).publish(cues)

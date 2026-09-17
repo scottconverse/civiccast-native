@@ -51,3 +51,20 @@ def test_native_adoption_gate_rejects_overclaims(tmp_path: Path) -> None:
     violations = evaluate_v17_adoption_gate(tmp_path)
 
     assert any("overclaim pattern" in violation for violation in violations)
+
+
+def test_native_adoption_gate_rejects_stale_published_link(tmp_path: Path) -> None:
+    from scripts.policy.check_v17_adoption_gate import PUBLISHED_RELEASE_LINK
+
+    _write_required_docs(tmp_path)
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        readme.read_text(encoding="utf-8").replace(
+            PUBLISHED_RELEASE_LINK, "releases/tag/v0.0.0-obsolete"
+        ),
+        encoding="utf-8",
+    )
+
+    violations = evaluate_v17_adoption_gate(tmp_path)
+
+    assert any("README.md" in item and PUBLISHED_RELEASE_LINK in item for item in violations)

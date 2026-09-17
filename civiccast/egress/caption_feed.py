@@ -176,8 +176,25 @@ class CaptionFeedWorker:
                     continue
                 pages = cea_caption_pages(cue.text)
                 cue_duration = max(0.0, cue.end_seconds - cue.start_seconds)
-                page_duration = cue_duration / len(pages)
+                # Share the original cue envelope by displayed text length so
+                # a full page does not flash as briefly as a short final page.
+                # A row break counts as one space, not an extra visible glyph.
+                page_weights = [len(" ".join(page.split())) for page in pages]
+                total_weight = sum(page_weights)
+                elapsed_weight = 0
+                page_start = cue.start_seconds
                 for index, page in enumerate(pages):
+                    elapsed_weight += page_weights[index]
+                    page_end = (
+                        cue.end_seconds
+                        if index == len(pages) - 1
+                        else cue.start_seconds + cue_duration * elapsed_weight / total_weight
+                    )
+                    page_pts = page_start
+                    page_duration = page_end - page_start
+                    page_start = page_end
+                    # Advance timing even for already acknowledged pages; a
+                    # retried page keeps its original PTS and delivery identity.
                     page_key = (cue.cue_id, index)
                     if page_key in acknowledged_pages:
                         continue
@@ -185,7 +202,7 @@ class CaptionFeedWorker:
                         channel_id,
                         self._work_dir,
                         text=page,
-                        pts_seconds=cue.start_seconds + (index * page_duration),
+                        pts_seconds=page_pts,
                         duration_seconds=page_duration,
                         delivery_id=caption_page_delivery_id(
                             channel_id,

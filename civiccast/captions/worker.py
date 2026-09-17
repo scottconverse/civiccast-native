@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from civiccast.captions.models import AudioChunk, CaptionCue, CaptionHypothesis, CustomVocabulary
 from civiccast.captions.pipeline import (
@@ -25,6 +26,7 @@ from civiccast.stream.config import HLS_SEGMENT_DURATION
 from civiccast.stream.packager import SlateOnlyResult, VodPackageResult
 
 AudioEvidenceFactory = Callable[[CaptionCue], CaptionReviewAudioEvidence]
+ReviewPersistenceMode = Literal["audio", "text-only", "refused"]
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -72,6 +74,8 @@ class LiveCaptionWorker:
         translation_glossary: Mapping[str, str] | None = None,
         segment_duration: int = HLS_SEGMENT_DURATION,
         pipeline: CaptionPipeline | None = None,
+        persistence_guard: Callable[[], AbstractContextManager[ReviewPersistenceMode]]
+        | None = None,
     ) -> None:
         self._pipeline = pipeline or CaptionPipeline(runtime)
         self._review_store = review_store
@@ -85,6 +89,7 @@ class LiveCaptionWorker:
         self._translation_targets = translation_targets or []
         self._translation_glossary = translation_glossary
         self._segment_duration = segment_duration
+        self._persistence_guard = persistence_guard
 
     def process_batch(
         self,
@@ -132,7 +137,10 @@ class LiveCaptionWorker:
         )
 
     def flush(self) -> LiveCaptionWorkerResult:
-        """Commit every cue still pending at end-of-stream/channel-stop.
+        """Finish pending captions at end-of-stream/channel-stop.
+
+        Timed live words without confirmation persist for review only, never
+        on air. Legacy/offline hypotheses retain the behavior below.
 
         There is no second transcription pass once the caller knows a
         stream/channel has ended, so anything still pending must be
@@ -170,6 +178,7 @@ class LiveCaptionWorker:
             committed_review_items=committed_items,
             duplicate_review_item_ids=duplicates,
             hls_result=hls_result,
+            expired_unconfirmed_cues=caption_result.expired_unconfirmed_cues,
         )
 
     def _persist_review_items(
@@ -180,16 +189,24 @@ class LiveCaptionWorker:
     ) -> tuple[list[CaptionReviewItemResponse], list[str]]:
         committed_items: list[CaptionReviewItemResponse] = []
         duplicates: list[str] = []
-        for item in caption_result.review_items:
-            payload = (
-                item.model_copy(update={"audio_evidence": audio_evidence_factory(item.cue)})
-                if audio_evidence_factory is not None
-                else item
-            )
-            try:
-                committed_items.append(self._review_store.create(payload))
-            except CaptionReviewItemAlreadyExistsError:
-                duplicates.append(item.review_item_id)
+        # ASR has already completed. The live tap checks CURRENT storage policy
+        # here, atomically with evidence creation, rather than granting a lease
+        # before an arbitrarily long transcription call. Other callers keep the
+        # original persistence behavior through the default no-op guard.
+        guard = self._persistence_guard() if self._persistence_guard else nullcontext("audio")
+        with guard as mode:
+            if mode == "refused":
+                return committed_items, duplicates
+            for item in caption_result.review_items:
+                payload = (
+                    item.model_copy(update={"audio_evidence": audio_evidence_factory(item.cue)})
+                    if mode == "audio" and audio_evidence_factory is not None
+                    else item
+                )
+                try:
+                    committed_items.append(self._review_store.create(payload))
+                except CaptionReviewItemAlreadyExistsError:
+                    duplicates.append(item.review_item_id)
         return committed_items, duplicates
 
     def committed_cues(self) -> list[CaptionCue]:

@@ -117,16 +117,13 @@ def align_live_caption_pts_ms(
     if max_future_lead_ms < lead_ms:
         raise ValueError("max_future_lead_ms must be at least lead_ms")
     live_edge_ms = running_time_ms + lead_ms
-    # Discriminate a genuine near-future cue from a stale absolute clock by the
-    # size of the lead RELATIVE to the pipeline's own running time.  A real cue
-    # is a few seconds ahead of a pipeline that has been running for at least
-    # that long; a restart lag or an unrelated epoch produces a lead that dwarfs
-    # the freshly restarted pipeline's age.  Rebasing requires the lead to beat
-    # BOTH a small fixed floor (so ordinary ASR latency keeps its PTS) and the
-    # pipeline's own uptime (so a short restart cannot smuggle a ~20 s offset
-    # through a constant-only ceiling).
+    # An epoch offset stays constant as the pipeline ages. Comparing the lead
+    # with uptime would let that same stale offset back through later (a 20 s
+    # offset was rebased at startup but preserved after 20 s). Always apply the
+    # configured lead limit. Keep the prior accepted buffer's end as a floor:
+    # already-enqueued stream data cannot safely be moved backwards here.
     lead_over_edge_ms = requested_pts_ms - live_edge_ms
-    if lead_over_edge_ms > max(max_future_lead_ms, running_time_ms):
+    if lead_over_edge_ms > max_future_lead_ms:
         return max(live_edge_ms, stream_position_ms)
     return max(requested_pts_ms, live_edge_ms, stream_position_ms)
 

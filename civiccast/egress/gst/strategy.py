@@ -781,6 +781,7 @@ class GstPlayoutStrategy:
         # for as long as the switch stays on -- the sibling of
         # ``CaptionTapWorker._disabled_announced``. Cleared by ``start()``.
         self._hevc_caption_warning_announced: set[str] = set()
+        self._caption_disabled_sessions: set[str] = set()
 
     def _caption_embed(self, channel_id: str) -> CaptionEmbedRequest | None:
         """The caption-embed request for graph assembly (None = embedding off).
@@ -919,10 +920,16 @@ class GstPlayoutStrategy:
         return None
 
     def start(self, request: EncoderStartRequest) -> EncoderStartResult:
+        if request.captions_allowed:
+            self._caption_disabled_sessions.discard(request.channel_id)
+        else:
+            self._caption_disabled_sessions.add(request.channel_id)
         # A fresh run gets a fresh HEVC/captions warning if the conflict recurs.
         self._hevc_caption_warning_announced.discard(request.channel_id)
         encoder_override = self._resolve_encoder_override(request, warn=True)
-        caption_embed = self._caption_embed(request.channel_id)
+        caption_embed = (
+            self._caption_embed(request.channel_id) if request.captions_allowed else None
+        )
         # Refused on the START path only: a channel must not go to air on a
         # pipeline that cannot be built. The reload path below downgrades the
         # same conflict to a warning instead (round-2 review MEDIUM 4).
@@ -944,7 +951,8 @@ class GstPlayoutStrategy:
                 request.config, render_dir=channel_dir, sweep_stale=True
             ),
         )
-        graph = self._with_audio_tap(graph, request.channel_id)
+        if request.captions_allowed:
+            graph = self._with_audio_tap(graph, request.channel_id)
         graph_path = channel_dir / "playout-graph.json"
         _write_graph_file(graph_path, graph_to_json(graph))
 
@@ -1157,7 +1165,10 @@ class GstPlayoutStrategy:
         # after a software fallback (adversarial-review BLOCKER). warn=False: the
         # fallback was already announced at start(); don't re-log every content swap.
         encoder_override = self._resolve_encoder_override(request, warn=False)
-        caption_embed = self._caption_embed(channel_id)
+        captions_allowed = (
+            request.captions_allowed and channel_id not in self._caption_disabled_sessions
+        )
+        caption_embed = self._caption_embed(channel_id) if captions_allowed else None
         if self._hevc_caption_conflict(encoder_override, caption_embed):
             # The operator flipped live captions ON while this HEVC channel was
             # already running (it started with captions off, or the switch was
@@ -1193,7 +1204,8 @@ class GstPlayoutStrategy:
                 request.config, render_dir=channel_dir
             ),
         )
-        graph = self._with_audio_tap(graph, channel_id)
+        if captions_allowed:
+            graph = self._with_audio_tap(graph, channel_id)
         # ENG-005: a unique per-reload filename — the worker consumes (deletes) it after
         # reading, so concurrent reloads can't clobber a fixed path mid-read. B3 fix:
         # the filename also carries the switch-mode flag (see reload_policy.py's
@@ -1230,6 +1242,8 @@ class GstPlayoutStrategy:
         Returns the FIFO-write result (False if the worker control channel isn't ready).
         The daemon's caption feed (review queue / ASR tap) calls this; the live engine
         push is WSL/LPM-validated."""
+        if channel_id in self._caption_disabled_sessions:
+            return False
         payload = base64.b64encode(text.encode("utf-8")).decode("ascii")
         pts_ms = max(0, int(pts_seconds * 1000))
         dur_ms = max(0, int(duration_seconds * 1000))
