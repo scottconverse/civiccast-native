@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from typing import Any
 
@@ -3493,6 +3494,8 @@ def test_async_start_expiring_during_preparation_releases_once_then_prepares_fre
     started_labels: list[str] = []
     counter = {"n": 0}
     base_prepare = _prepare_with_tracked_plan_dirs(tmp_path, counter)
+    initial_prepare_entered = Event()
+    release_initial_prepare = Event()
 
     def source_provider(_channel_id: str) -> EgressSourcePlan:
         nonlocal provider_calls
@@ -3505,6 +3508,8 @@ def test_async_start_expiring_during_preparation_releases_once_then_prepares_fre
     def prepare(plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
         prepared_labels.append(plan.segments[0].label)
         if plan.segments[0].label == "Council meeting":
+            initial_prepare_entered.set()
+            assert release_initial_prepare.wait(timeout=10.0)
             clock[0] += 10.0
         return base_prepare(plan, config)
 
@@ -3529,6 +3534,10 @@ def test_async_start_expiring_during_preparation_releases_once_then_prepares_fre
     daemon.enable_async_preparation()
     try:
         daemon.process_once("gov")
+        # Hold the first preparation across this tick's end-of-pass poll. A
+        # fast worker may otherwise advance to fallback before this returns.
+        assert initial_prepare_entered.wait(timeout=10.0)
+        release_initial_prepare.set()
         daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
 
         daemon.process_once("gov")
@@ -3546,6 +3555,7 @@ def test_async_start_expiring_during_preparation_releases_once_then_prepares_fre
         assert daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-2"})
         assert store.read_state("gov").state == "FALLBACK_SLATE"  # type: ignore[union-attr]
     finally:
+        release_initial_prepare.set()
         daemon.shutdown_preparation()
 
 

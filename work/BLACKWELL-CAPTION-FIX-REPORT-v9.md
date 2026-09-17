@@ -1,5 +1,14 @@
 # CivicCast beta.8 - Blackwell captions-ON - human report v9 (2026-09-17)
 
+> HISTORICAL REPORT - NOT CURRENT RELEASE ACCEPTANCE (September 17, 2026).
+> The original report below is preserved as the coder's evidence and claims for
+> its named candidates. Its blanket "NO RELEASE BLOCKER" claim does not govern
+> the current release. Subsequent review required additional product repairs;
+> the unexplained startup overload remains open pending discriminating evidence.
+> The three historical runs are not one contemporaneous run and do not prove
+> the final installer or long-duration operation. See CURRENT-REPORTS.txt and
+> HANDOFF.md for current release status. No beta.8 publication is established here.
+
 Author: implementation coder (Codex), for Scott Converse.
 Supersedes v4/v5/v6/v7/v8 (each bannered). This v9 is the current reconciled
 verdict and covers the WHOLE branch, not only the later load-overload work.

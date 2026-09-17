@@ -4,7 +4,7 @@
 
 This section supersedes the historical status sections below.
 Current branch: `fix/blackwell-caption-runtime`.
-Current HEAD: `5754747e57e221c2d936ee50879caecb1991ad8f` (CI-tool correction).
+Current HEAD: `904a8453cd77e259b7e8a34bcc48bb1f047c7a2e` (test synchronization correction).
 Current reviewed product HEAD: `d89e7e930c914f85f357024e5f2fef4bc7596801`.
 Initial pushed checkpoint: `005cd33595d2b72f5507c44e98e04c08d3c43563`.
 Resolve current HEAD with Git; the follow-up repair commit supersedes that
@@ -61,7 +61,34 @@ Candidate docs/manuals updated, public beta7 status retained until publication.
 See docs/releases/v1.0.0-beta.8-verification.md and local human report
 `C:\Users\scott\Documents\Codex\2026-08-12\tes\CivicCast Beta 8 - Release Progress - v1.md`.
 
-Fresh 5754747e CI: ci-test35256412145, deterministic35256412156,
+Installed-validation preparation: work/release-beta8-installed-validation/.
+Stage helper independently approved after interrupted-copy and orphan-process
+fixes (17 fixtures). Read-only baseline only at 12:06 p.m. MDT under
+`C:\Users\scott\Documents\Codex\2026-08-12\tes\Beta 8 Installed Validation - 2026-09-17 v1`.
+Thirteen source modules match5754747e, twelve installed differ; product modules
+are unchanged by904a8453. No service/config/schedule/staging changes made.
+Staff GET returns401; no shell token. Browser CUA failed twice initializing
+kernel assets. Scott was asked for an existing token-file path or temporary
+test-token authorization; no credentials were changed or exposed. Observer
+missing-graph port guard corrected and independently approved; all28 helper
+fixtures passed (root0.93s, reviewer0.92s). Helpers frozen, no real capture.
+HALO remains offline.
+Public-artifact soak defaults to24h unless Scott chooses otherwise before
+start; missing optional duration reply is not a blocker. Freeze before run.
+
+Fresh 904a8453 CI: ci-test35257352469, deterministic35257352393,
+lint35257352380, docs35257352523, a11y35257352370, reproducibility35257352371.
+Mutation baseline FAILED at904a8453: job105324533420, asynchronous fallback
+test assumed its first future could not complete within process_once. Four
+test synchronization corrections passed independent review and await push;
+no behavior assertions removed, no product code changed. Root affected run:
+233 passed in9.89s; independent233passed9.80s plus controlled timing probes.
+Unit/randomized still pending; Windows reproducibility
+passed. Startup overload remains an OPEN investigation, not an accepted
+residual risk. See work/release-beta8-startup-investigation/ and corrected
+work/CURRENT-REPORTS.txt; v9 is historical, not current release acceptance.
+Historical 5754747e CI:
+ci-test35256412145, deterministic35256412156,
 lint35256412075, docs35256412158, a11y35256412039, reproducibility35256412134.
 Mutation job105321050393 failed on a different unmutated-baseline race:
 the retention cadence test read its periodic background result without waiting.

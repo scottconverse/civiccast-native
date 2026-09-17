@@ -1,9 +1,23 @@
 CURRENT REPORTS AND INDEX - CivicCast beta.8 Blackwell captions-ON
 =============================================================== (2026-09-17)
 
-CURRENT VERDICT: work/BLACKWELL-CAPTION-FIX-REPORT-v9.md
+CURRENT RELEASE STATUS: NOT READY TO MERGE OR PUBLISH
 
-Candidate identity
+Current engineering entry point: HANDOFF.md (top current section).
+Current release-progress report on Blackwell:
+  C:\Users\scott\Documents\Codex\2026-08-12\tes\CivicCast Beta 8 - Release Progress - v1.md
+Startup investigation:
+  work/release-beta8-startup-investigation/Startup Overload Investigation - Human Report v1.md
+
+The historical v9 verdict below is superseded for release decisions. Additional
+product repairs and CI corrections followed its candidate. Startup overload is
+not accepted as a closed residual risk. Exact-current-candidate installed proof,
+signed installer gates, and the final public-artifact soak are still required.
+The three old runs must not be presented as a single contemporaneous GPU run.
+
+HISTORICAL CODER REPORT: work/BLACKWELL-CAPTION-FIX-REPORT-v9.md
+
+Historical candidate identity (not current HEAD)
   accept6 + accept8 candidate (served the live runs) : e3a47841
   final logging-only candidate                       : ea65dffe
   evidence/receipt HEAD                              : 8061cdbf

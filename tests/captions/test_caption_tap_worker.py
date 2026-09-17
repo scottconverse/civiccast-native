@@ -525,7 +525,7 @@ class TestCaptionTapWorker:
             _write_wav(tap_root / "public" / f"chunk-{index:06d}.wav", seconds=5)
         try:
             result = worker.run_once()
-            assert slow.entered.is_set()
+            assert slow.entered.wait(timeout=10.0)
             assert worker._retention_in_flight
             assert result.consumed_segments == 2
             assert not list((tap_root / "public" / "processed").glob("*.wav"))
@@ -1119,8 +1119,8 @@ class TestCaptionTapWorker:
         clock.advance(61.0)
         _write_wav(tap_root / "public" / "chunk-000001.wav", seconds=5.0)
         worker.run_once()
-        assert policy.calls == 2
         assert worker.wait_for_retention_sweep(timeout=10.0)
+        assert policy.calls == 2
         assert worker._retention_ready is False, (
             "a later sweep failure kept ready=True; an unverifiable store would "
             "keep being transcribed into"
@@ -1260,6 +1260,7 @@ class TestCaptionTapWorker:
         clock.advance(61.0)
         _write_wav(tap_root / "public" / "chunk-000002.wav", seconds=5.0)
         worker.run_once()
+        assert worker.wait_for_retention_sweep(timeout=15.0)
         assert policy.calls > calls_before, "sweeps did not resume after the orphan finished"
 
     def test_new_session_discards_leftover_segments_instead_of_overloading(
