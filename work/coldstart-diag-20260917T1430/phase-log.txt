@@ -1,0 +1,6 @@
+2026-09-17 14:44:22,850 INFO civiccast.captions.runtime: Live caption tap ASR intra-op threads: cpu_threads=2 (cpu_count=16, CIVICCAST_CAPTION_TAP_CPU_THREADS=<unset>, CIVICCAST_WHISPER_CPU_THREADS=<unset>)
+2026-09-17 14:44:22,900 INFO civiccast.captions.tap_worker: Caption tap starting: cpu_count=16, max_channel_workers=3, runtime_workers=3, live_cpu_threads=2
+2026-09-17 14:44:26,582 INFO civiccast.captions.runtime: Live caption tap ASR intra-op threads: cpu_threads=2 (cpu_count=16, CIVICCAST_CAPTION_TAP_CPU_THREADS=<unset>, CIVICCAST_WHISPER_CPU_THREADS=<unset>)
+2026-09-17 14:44:26,606 INFO civiccast.captions.tap_worker: Caption tap starting: cpu_count=16, max_channel_workers=3, runtime_workers=3, live_cpu_threads=2
+2026-09-17 14:44:27,159 INFO civiccast.platform.worker_runtime: civiccast-retention-worker started (poll=3600.0s).
+2026-09-17 14:44:27,174 INFO civiccast.platform.worker_runtime: civiccast-caption-tap-worker started (poll=2.0s).

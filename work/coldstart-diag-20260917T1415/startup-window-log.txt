@@ -1,0 +1,23 @@
+2026-09-17 14:07:04,301 INFO civiccast.app: CIVICCAST_LAN_ONLY_STATION is set, so the interactive API doc UIs (/docs, /redoc) are NOT served: their assets load from cdn.jsdelivr.net / fastapi.tiangolo.com / fonts.googleapis.com, which a LAN-only station cannot reach. The OpenAPI schema itself is still served at /openapi.json, to callers holding a staff bearer token.
+2026-09-17 14:07:08,030 INFO civiccast.captions.runtime: Live caption tap ASR intra-op threads: cpu_threads=2 (cpu_count=16, CIVICCAST_CAPTION_TAP_CPU_THREADS=<unset>, CIVICCAST_WHISPER_CPU_THREADS=<unset>)
+2026-09-17 14:07:08,060 INFO civiccast.captions.tap_worker: Caption tap starting: cpu_count=16, max_channel_workers=3, runtime_workers=3, live_cpu_threads=2
+2026-09-17 14:07:08,275 INFO civiccast.app: CIVICCAST_LAN_ONLY_STATION is set, so the interactive API doc UIs (/docs, /redoc) are NOT served: their assets load from cdn.jsdelivr.net / fastapi.tiangolo.com / fonts.googleapis.com, which a LAN-only station cannot reach. The OpenAPI schema itself is still served at /openapi.json, to callers holding a staff bearer token.
+2026-09-17 14:07:11,753 INFO civiccast.captions.runtime: Live caption tap ASR intra-op threads: cpu_threads=2 (cpu_count=16, CIVICCAST_CAPTION_TAP_CPU_THREADS=<unset>, CIVICCAST_WHISPER_CPU_THREADS=<unset>)
+2026-09-17 14:07:11,781 INFO civiccast.captions.tap_worker: Caption tap starting: cpu_count=16, max_channel_workers=3, runtime_workers=3, live_cpu_threads=2
+2026-09-17 14:07:11,951 INFO civiccast.platform.worker_runtime: civiccast-retention-worker started (poll=3600.0s).
+2026-09-17 14:07:11,966 INFO civiccast.platform.worker_runtime: civiccast-caption-tap-worker started (poll=2.0s).
+2026-09-17 14:07:11,967 INFO civiccast.platform.worker_runtime: civiccast-offline-caption-worker started (poll=60.0s).
+2026-09-17 14:07:11,971 INFO civiccast.platform.worker_runtime: civiccast-caption-feed started (poll=2.0s).
+2026-09-17 14:07:11,972 INFO civiccast.platform.worker_runtime: civiccast-caption-proof started (poll=30.0s).
+2026-09-17 14:07:48,403 INFO civiccast.app: CIVICCAST_LAN_ONLY_STATION is set, so the interactive API doc UIs (/docs, /redoc) are NOT served: their assets load from cdn.jsdelivr.net / fastapi.tiangolo.com / fonts.googleapis.com, which a LAN-only station cannot reach. The OpenAPI schema itself is still served at /openapi.json, to callers holding a staff bearer token.
+2026-09-17 14:07:52,076 INFO civiccast.captions.runtime: Live caption tap ASR intra-op threads: cpu_threads=2 (cpu_count=16, CIVICCAST_CAPTION_TAP_CPU_THREADS=<unset>, CIVICCAST_WHISPER_CPU_THREADS=<unset>)
+2026-09-17 14:07:52,121 INFO civiccast.captions.tap_worker: Caption tap starting: cpu_count=16, max_channel_workers=3, runtime_workers=3, live_cpu_threads=2
+2026-09-17 14:07:52,155 INFO civiccast.app: CIVICCAST_LAN_ONLY_STATION is set, so the interactive API doc UIs (/docs, /redoc) are NOT served: their assets load from cdn.jsdelivr.net / fastapi.tiangolo.com / fonts.googleapis.com, which a LAN-only station cannot reach. The OpenAPI schema itself is still served at /openapi.json, to callers holding a staff bearer token.
+2026-09-17 14:07:55,615 INFO civiccast.captions.runtime: Live caption tap ASR intra-op threads: cpu_threads=2 (cpu_count=16, CIVICCAST_CAPTION_TAP_CPU_THREADS=<unset>, CIVICCAST_WHISPER_CPU_THREADS=<unset>)
+2026-09-17 14:07:55,639 INFO civiccast.captions.tap_worker: Caption tap starting: cpu_count=16, max_channel_workers=3, runtime_workers=3, live_cpu_threads=2
+2026-09-17 14:07:55,809 INFO civiccast.platform.worker_runtime: civiccast-retention-worker started (poll=3600.0s).
+2026-09-17 14:07:55,824 INFO civiccast.platform.worker_runtime: civiccast-caption-tap-worker started (poll=2.0s).
+2026-09-17 14:07:55,825 INFO civiccast.platform.worker_runtime: civiccast-offline-caption-worker started (poll=60.0s).
+2026-09-17 14:07:55,828 INFO civiccast.platform.worker_runtime: civiccast-caption-feed started (poll=2.0s).
+2026-09-17 14:07:55,831 INFO civiccast.platform.worker_runtime: civiccast-caption-proof started (poll=30.0s).
+2026-09-17 14:08:12,216 WARNING civiccast.captions.tap_worker: Caption tap overload for channel public: 4 settled segments exceeds the maximum 2. Live captions are PAUSED for 120s (overload #1) so playout keeps the CPU; active captions were cleared and the stale audio was discarded.
