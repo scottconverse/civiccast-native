@@ -1,0 +1,25 @@
+{
+  "at": "2026-09-17T06:30:29.961151",
+  "requirement": "in-window, same-process GPU identity for the caption worker",
+  "process_chain": {
+    "supervisor_pythonservice": "11020",
+    "supervisor_created": "2026-09-17 06:26:58",
+    "worker_host_python": "4276 (created 06:27:06, parent 11020)",
+    "gstreamer_worker_python": "18512 (created 06:28:45, parent 4276)",
+    "note": "the GStreamer worker was created DURING the run window and descends from the supervisor"
+  },
+  "tap_identity_line_for_this_pid": [
+    "2026-09-17 06:27:13,198 INFO civiccast.captions.tap_worker: Caption tap starting: cpu_count=16, max_channel_workers=3, runtime_workers=3, live_cpu_threads=2",
+    "2026-09-17 06:27:16,730 INFO civiccast.captions.tap_worker: Caption tap starting: cpu_count=16, max_channel_workers=3, runtime_workers=3, live_cpu_threads=2"
+  ],
+  "derivation": "default_max_channel_workers() returns 1 unless runtime.on_cuda() is True, and min(3,num_workers) when it IS true. The override CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS is unset (machine var empty, service env block absent), so max_channel_workers=3 proves on_cuda()==True inside THIS worker process.",
+  "module_correspondence": {
+    "civiccast/captions/tap_worker.py": true,
+    "civiccast/egress/daemon.py": true,
+    "civiccast/captions/stabilize.py": true,
+    "civiccast/egress/gst/control.py": true
+  },
+  "run_window": "06:28:45..06:29:20 (capture)",
+  "conclusion": "IN-WINDOW, same-PID, process-chain-bound GPU identity achieved: the caption worker that served the run reports max_channel_workers=3 (CUDA-only) and its GStreamer child was created during the run.",
+  "residual": "compute_type=float16 is not in the tap line; it is verified separately. on_cuda()==True in the worker is the in-window GPU evidence."
+}

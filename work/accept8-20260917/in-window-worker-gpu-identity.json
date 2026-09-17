@@ -1,0 +1,19 @@
+{
+  "at": "2026-09-17T06:26:07.722233",
+  "requirement": "in-window, same-process GPU identity for the caption worker",
+  "evidence_type": "the tap's OWN start-time log line, emitted by the running worker process",
+  "supervisor_pid": "28132",
+  "supervisor_created": "2026-09-17 05:09:17",
+  "accept8_window": "2026-09-17 06:11:44 .. 06:19:14 (inside PID 28132's lifetime)",
+  "tap_start_line_for_that_pid": "2026-09-17 05:09:36,149 INFO civiccast.captions.tap_worker: Caption tap starting: cpu_count=16, max_channel_workers=3, runtime_workers=3, live_cpu_threads=2",
+  "derivation": "default_max_channel_workers() returns 1 unless runtime.on_cuda() is True; it returns min(3, num_workers) when on_cuda() is True. CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS was NOT set (machine empty, service env block absent), so max_channel_workers=3 can ONLY come from on_cuda()==True with num_workers=3.",
+  "conclusion": "The caption worker running during accept8 was on CUDA with 3 workers. This is the worker's own logged identity bound to the same PID that served the run.",
+  "limitation": "the line is emitted at tap start (05:09:36) rather than during the capture window; it is the same long-lived PID that served accept8, so it is process-bound but not minute-by-minute. compute_type (float16) is NOT in this line.",
+  "post_run_probe": {
+    "device": "cuda",
+    "compute_type": "float16",
+    "on_cuda": true,
+    "ct2_cuda_devices": 1,
+    "label": "separate probe, not worker execution proof"
+  }
+}
