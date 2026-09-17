@@ -2071,6 +2071,9 @@ class TestCaptionTapPlayoutProtection:
 
         clock.advance(4.0)
         worker.run_once()
+        # Periodic verification is asynchronous; observe its completed result,
+        # not whether the new thread happened to win the scheduling race.
+        assert worker.wait_for_retention_sweep(timeout=10.0)
         assert sweeps == [0.0, 62.0]
 
     def test_a_storage_refusal_is_not_forgotten_between_retention_sweeps(

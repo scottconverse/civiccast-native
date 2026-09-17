@@ -4,6 +4,7 @@
 
 This section supersedes the historical status sections below.
 Current branch: `fix/blackwell-caption-runtime`.
+Current HEAD: `5754747e57e221c2d936ee50879caecb1991ad8f` (CI-tool correction).
 Current reviewed product HEAD: `d89e7e930c914f85f357024e5f2fef4bc7596801`.
 Initial pushed checkpoint: `005cd33595d2b72f5507c44e98e04c08d3c43563`.
 Resolve current HEAD with Git; the follow-up repair commit supersedes that
@@ -60,7 +61,16 @@ Candidate docs/manuals updated, public beta7 status retained until publication.
 See docs/releases/v1.0.0-beta.8-verification.md and local human report
 `C:\Users\scott\Documents\Codex\2026-08-12\tes\CivicCast Beta 8 - Release Progress - v1.md`.
 
-Current d89e7e93 CI: ci-test35253853483, deterministic35253853480,
+Fresh 5754747e CI: ci-test35256412145, deterministic35256412156,
+lint35256412075, docs35256412158, a11y35256412039, reproducibility35256412134.
+Mutation job105321050393 failed on a different unmutated-baseline race:
+the retention cadence test read its periodic background result without waiting.
+The generator patch ran successfully. Independent event-controlled reproduction
+confirmed the race; explicit completion wait preserves the original cadence
+assertion and passes the delayed case, while suppressed dispatch still fails.
+Tap module:68passed5.45s. Test-only follow-up prepared; no product change.
+Other results pending; no green-CI or installed-acceptance claim. Historical d89e7e93
+CI: ci-test35253853483, deterministic35253853480,
 lint35253853525, docs35253853508, a11y35253853488, reproducibility35253853530.
 At 11:48 a.m. MDT the mutation baseline failed before evaluating mutants:
 test_seamless_content_reload_records_a_transition expected2 rows, found1;
