@@ -158,6 +158,29 @@ def _active_vtt(tap_root: Path, channel_id: str) -> Path:
     return tap_root.parent / "egress" / channel_id / "captions" / "active.vtt"
 
 
+class _SlowRetentionPolicy:
+    """Retention cleanup that BLOCKS, like the real one on a loaded host.
+
+    Measured on the Blackwell box (2026-09-16): one enforce_discovered() took
+    ~4.1-5.6 s because it SHA-256s every processed chunk and every evidence WAV
+    (8,105 candidates).  That runs on the caption tap thread BEFORE the backlog
+    gate, so segments accumulate while it blocks and the gate then fails closed
+    on a backlog cleanup itself created.
+    """
+
+    def __init__(self, delay_seconds: float = 0.0) -> None:
+        self.delay_seconds = delay_seconds
+        self.calls = 0
+        self.ready = True
+        self.refusal_reason: str | None = None
+
+    def enforce_discovered(self, *, tap_root, review_store, segment_seconds):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        if self.delay_seconds:
+            threading.Event().wait(self.delay_seconds)
+        return SimpleNamespace(ready=self.ready, refusal_reason=self.refusal_reason)
+
+
 class _VaryingLiveRuntime:
     """Live ASR shape: real speech, DIFFERENT words on every 9 s window.
 
@@ -459,6 +482,127 @@ class TestCaptionTapWorker:
         assert "OLD SESSION CAPTION" not in remaining, (
             "a finished session's caption reappeared after the reset"
         )
+
+    def test_retention_cleanup_latency_does_not_cause_a_false_overload(
+        self, tmp_path: Path
+    ) -> None:
+        """Cleanup latency must not manufacture the backlog that trips the gate.
+
+        Isolates the MEASURED field defect (Blackwell 2026-09-16) without touching
+        the max-2 contract:
+
+          - the operator threshold stays max_backlog_segments=2, unchanged
+          - a backlog of 2 at gate time is perfectly legal and must NOT overload
+          - the defect is that cleanup ran ~5 s inline BEFORE the gate, so a third
+            segment arrived DURING cleanup and tipped a legal backlog over the line
+            -- fail-closing on a backlog cleanup itself created
+
+        So this test starts with a legal 2-segment backlog, makes cleanup slow, and
+        has a third segment LAND WHILE CLEANUP RUNS.  If cleanup is off the scan
+        path, the scan proceeds with what it can see and the legal pass is not
+        punished by maintenance work it had no control over.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "public"
+        (tap_root / channel).mkdir(parents=True)
+        store = InMemoryCaptionReviewStore()
+        slow = _SlowRetentionPolicy(delay_seconds=5.0)  # > 2 scan intervals
+
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=store,
+            segment_seconds=5.0,
+            atomic_segments=True,
+            retention_policy=slow,
+        )
+
+        # A live cue is on air when cleanup begins.
+        worker._publisher_for(channel).publish(
+            [
+                CaptionCue(
+                    cue_id="cue-LIVE",
+                    start_seconds=0.0,
+                    end_seconds=4.0,
+                    text="LIVE CAPTION ON AIR",
+                    confidence=0.9,
+                    low_confidence=False,
+                )
+            ]
+        )
+        sidecar = _active_vtt(tap_root, channel)
+
+        # A LEGAL backlog (== the threshold, not over it).
+        _write_wav(tap_root / channel / "chunk-000000.wav", seconds=5.0)
+        _write_wav(tap_root / channel / "chunk-000001.wav", seconds=5.0)
+
+        # A third segment arrives WHILE the slow cleanup would be running.  With
+        # cleanup inline this tips the count to 3 and fails closed; with cleanup on
+        # its own thread it cannot punish the caption pass.
+        def _land_third() -> None:
+            threading.Event().wait(0.2)
+            _write_wav(tap_root / channel / "chunk-000002.wav", seconds=5.0)
+
+        lander = threading.Thread(target=_land_third, daemon=True)
+        lander.start()
+        result = worker.run_once()
+        lander.join(timeout=5.0)
+
+        assert result.dropped_overload_segments == 0, (
+            "cleanup latency manufactured a fail-closed overload"
+        )
+        assert "public" not in result.overloaded_channels
+        assert "public" not in result.paused_channels
+        text = sidecar.read_text(encoding="utf-8")
+        assert text.strip() != "WEBVTT", "cleanup latency cleared the live captions"
+
+    def test_real_overload_still_fails_closed_when_cleanup_is_off_path(
+        self, tmp_path: Path
+    ) -> None:
+        """The 120s fail-closed must survive the cleanup fix, unchanged.
+
+        Companion to the cleanup-latency regression: moving retention off the
+        caption thread must NOT weaken the operator's protection.  A backlog that
+        genuinely exceeds ``max_backlog_segments`` at gate time still pauses,
+        clears, and discards -- exactly as before, with a fast (non-blocking)
+        retention policy.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "government"
+        (tap_root / channel).mkdir(parents=True)
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=5.0,
+            atomic_segments=True,
+            retention_policy=_SlowRetentionPolicy(delay_seconds=0.0),
+        )
+        active = _active_vtt(tap_root, channel)
+        active.parent.mkdir(parents=True, exist_ok=True)
+        active.write_text(
+            "WEBVTT\n\nold\n00:00:00.000 --> 00:00:01.000\nstale caption\n",
+            encoding="utf-8",
+        )
+        # A genuine overload: strictly over the threshold at gate time.
+        for index in range(4):
+            _write_wav(tap_root / channel / f"chunk-{index:06d}.wav", seconds=5.0)
+
+        result = worker.run_once()
+
+        assert result.consumed_segments == 0
+        assert "government" in result.overloaded_channels
+        assert "government" in result.paused_channels
+        assert result.dropped_overload_segments > 0
+        assert load_caption_cues_from_timed_text(active, source_id="government") == []
+        status_path = tap_root.parent / "egress" / "government" / "captions" / "runtime-status.json"
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        assert status["state"] == "paused"
+        assert status["resume_in_seconds"] > 0
 
     def test_multiple_channels_keep_separate_caption_streams(self, tmp_path: Path) -> None:
         tap_root = tmp_path / "tap"
