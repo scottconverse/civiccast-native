@@ -1,0 +1,22 @@
+{
+  "at": "2026-09-17T06:37:54.211043",
+  "requirement": "actual caption runtime resolved loaded-model device/compute_type after prepare, bound to worker PID + candidate",
+  "evidence_type": "the live worker's OWN post-prepare log line (additive instrumentation, commit 350d29c1)",
+  "resolved_line_last": "2026-09-17 06:37:27,856 INFO civiccast.captions.tap_worker: Caption runtime resolved after prepare: device=cuda compute_type=float16 on_cuda=True num_workers=3",
+  "resolved_line_count": 18,
+  "cpu_fallback_occurred": false,
+  "supervisor_pid": "19280",
+  "supervisor_created": "2026-09-17 06:34:35",
+  "worker_host_python": "32788 (parent 19280)",
+  "why_this_is_actual_not_selection": "on_cuda() BEFORE prepare reports the REQUESTED device; prepare() can fall back CUDA->cpu/int8 inside _model_instance(). This line is emitted AFTER prepare, so device/compute_type are the loaded-model values. No fallback line exists.",
+  "module_correspondence": {
+    "civiccast/captions/tap_worker.py": true,
+    "civiccast/captions/runtime.py": true,
+    "civiccast/egress/daemon.py": true,
+    "civiccast/captions/stabilize.py": true,
+    "civiccast/egress/gst/control.py": true
+  },
+  "gpu_snapshot": "nvidia-smi memory.used,total,util = 3900 MiB, 16303 MiB, 2 %",
+  "correction": "The earlier 06:27 startup lines are SAME-PROCESS STARTUP evidence, not in-window; this resolved line is the actual loaded-model evidence.",
+  "residual": "nvidia-smi does not attribute per-process GPU memory to python here (insufficient permissions on this host), so the loaded-model line is the primary GPU-execution evidence."
+}
