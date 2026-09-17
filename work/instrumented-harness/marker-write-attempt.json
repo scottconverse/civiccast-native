@@ -1,0 +1,12 @@
+{
+  "at": "2026-09-17T05:42:08.232537",
+  "attempted": "write a synthetic marker cue into active.vtt (harness-marker-<time>)",
+  "result": "PermissionError: file is owned/locked by the tap; the write was DENIED",
+  "bytes_changed": false,
+  "verification": {
+    "marker_text_occurrences_in_live_sidecar": 0,
+    "harness_marker_cue_ids_in_live_sidecar": 0,
+    "note": "the sidecar holds only real program cues; no contamination"
+  },
+  "decision": "ABANDONED. Synthetic text injection is NOT used for acceptance - it would bypass speech generation and risk contaminating the run. Real program speech will be used for cue correspondence; visual/transport instrumentation used only for timing."
+}

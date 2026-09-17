@@ -1,0 +1,19 @@
+{
+  "preserved_first_post_recovery_cue": "Shearing it so you have this whole circulation, but it is tropical storm force. We'll look at that at the end",
+  "post_recovery_slice_entries": 26,
+  "matches_within_post_recovery_slice": 2,
+  "matches": [
+    {
+      "ts": "00:00:20,790 --> 00:00:24,197",
+      "decoded": "<font face=\"Monospace\">{\\an7}Shearing it so you have this whole circulation, but it is</font>",
+      "gram": "shearing it so you have this"
+    },
+    {
+      "ts": "00:00:24,198 --> 00:00:26,634",
+      "decoded": "<font face=\"Monospace\">{\\an7}tropical storm force. We\u2018ll look at that at the end</font>",
+      "gram": "look at that at the end"
+    }
+  ],
+  "boundary_method": "byte offset of the first datagram after the >=20s arrival gap",
+  "verdict": "PROVEN"
+}

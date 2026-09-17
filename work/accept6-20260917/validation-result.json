@@ -49,7 +49,7 @@
       "sha256": "df39834cff8b485b5989d037ab2cf16bc350a625abd370c61d627f2c90d58746"
     }
   },
-  "verdict": "ACCEPTANCE MET for this run: capture preceded START by 30s (TS 0 vs TS 28.6s); 197s sustained with 16 cues and zero overloads; controlled stop/start; 126s post-recovery with 13 cues and zero overloads; 58 decoded entries overall and 18 decoded entries at/after the recovery offset; all 13 preserved post-recovery cues matched by the predeclared rule.",
+  "verdict": "TEXT-OUTPUT EVIDENCE ONLY (unproven temporal correspondence). Captions demonstrably reached the outgoing TS. The start/recovery timing claims are retracted; the post-recovery interval is not independently anchored.",
   "proof_boundary": "Proves the handoff acceptance path for this window (startup, sustained, controlled recovery, post-recovery correspondence) on the staged commit. Does not establish long-run stability beyond ~8 minutes, and does not explain the earlier recurring startup overloads (unresolved, attribution provisional).",
   "media_facts": {
     "probe": "ffprobe: start_time=1.400000 duration=419.958589 size=81564364",
@@ -86,21 +86,10 @@
     "note": "proves captions resumed AND reached the outgoing stream after the controlled interruption"
   },
   "clock_mapping": {
-    "method": "TWO independent content boundaries, not launch+1.4",
-    "anchor_1": {
-      "event": "egress STOPPED (worker killed)",
-      "wall": "2026-09-17 05:14:58.276",
-      "media_seconds": 257.3,
-      "content_support": "the decoded entry 'winds here then west' ENDS at media 257.3s, then a 10.5s gap"
-    },
-    "anchor_2": {
-      "event": "new GStreamer worker STARTING",
-      "wall": "2026-09-17 05:15:23.223",
-      "media_seconds": 282.2,
-      "content_support": "decoded entries resume at 267.8s and 'Thursday. That pushes away.' spans 280.6-283.0s"
-    },
-    "derived_k": "media_seconds = wall - 05:10:41 (consistent across both anchors)",
-    "falsified_alternative": "origin-at-program-start would put STOP at media 216.0s; there are NO decoded entries near 216s, so that mapping is rejected"
+    "status": "RETRACTED - temporal correspondence for accept6 is UNPROVEN",
+    "retraction": "My claim of a '10.5s gap' after media 257.3s is FALSE. Independently checked: entry37 ends 257.340s, entry38 starts 258.179s (0.839s gap), and entries 39-44 continue to 283.019s. Captions run straight through the stop/start with no gap.",
+    "why_the_whole_mapping_fails": "A stop/start is NOT visible as a content gap here, so no content boundary in this TS uniquely identifies the transition. Natural silence (e.g. the 22.4s gap at 283.0->305.4) is not a transition marker. The 'absence of entries at 216s' argument does not falsify a mapping either - absence of speech is not evidence.",
+    "consequence": "accept6 remains genuine TEXT-OUTPUT evidence (captions reached the stream), with TEMPORAL CORRESPONDENCE UNPROVEN and the post-recovery interval not independently anchored."
   },
   "post_recovery_matching": {
     "interval": "decoded entries with start >= the PROVEN resume offset 282.2s",
@@ -126,7 +115,8 @@
     ],
     "honest_correction": "An earlier claim of 13/13 matched cues was computed across the WHOLE TS, so a cue could match a PRE-recovery occurrence of the same looping passage. Restricted to the proven post-recovery interval (>=282.2s) the result is 5 of 13 cues matched. That is the correct figure. It still demonstrates post-recovery text in the outgoing stream, but it does NOT establish one-to-one correspondence for every preserved cue.",
     "what_this_proves": "Caption TEXT is present in the outgoing stream after recovery (5 matched cues within the interval), so the acceptance-path property 'text reaches the output after recovery' holds.",
-    "what_this_does_NOT_prove": "Full one-to-one cue correspondence for the preserved post-recovery VTT; timing alignment is approximate and the program loops, so only interval-restricted matches count."
+    "what_this_does_NOT_prove": "Full one-to-one cue correspondence for the preserved post-recovery VTT; timing alignment is approximate and the program loops, so only interval-restricted matches count.",
+    "status": "NOT PROVEN - depends on the retracted mapping"
   },
   "phase_accounting": {
     "startup_first_samples": "05:11:20 STARTING/paused backlog=3 ; 05:11:27 ON_AIR/paused backlog=3",
@@ -139,5 +129,6 @@
     "status": "NOT CONTEMPORANEOUS for accept6",
     "finding": "The caption runtime's device/compute_type is logged at TAP START, not per cue, and accept6's window contains no such line. GPU identity was established EARLIER in the task and in a separate check, so it does not bind to this run.",
     "remedy": "Capture device identity from the live runtime NOW and record it as post-run, clearly labelled; a definitive run should log device identity inside the run window."
-  }
+  },
+  "next_step": "Instrumented validation with an unmistakable in-band marker and in-window GPU identity."
 }

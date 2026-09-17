@@ -1,0 +1,75 @@
+{
+  "commit_under_test": "e3a47841ffd9cc25f95a70da43630c2fbe662dcb",
+  "harness": "receive-path v2 (raw TS + per-datagram arrival timestamps + byte offsets); per-run dir; prevalidated on a program probe",
+  "timeline_wall": {
+    "receiver_start": "2026-09-17 06:11:44.835",
+    "START_issued": "2026-09-17 06:12:01.018 (receiver already running: 17s of no media before enable)",
+    "sustained": "06:12:17..06:15:27  cues 0->15, within-capacity, backlog 1, ZERO overloads",
+    "controlled_STOP": "06:15:44.563",
+    "controlled_START": "06:15:59.583",
+    "post_recovery": "06:16:15..06:18:22  cues 0->9, within-capacity, backlog 1, ZERO overloads",
+    "receiver_end": "06:19:14.836"
+  },
+  "arrival_boundary": {
+    "method": "datagram arrival timeline; the stop shows as a ZERO-arrival interval",
+    "zero_arrival_interval": "t+211s..t+237s (27s with 0 datagrams)",
+    "resume": "t+238s = 06:16:13.480 (first datagram after the >=20s gap)",
+    "resume_byte_offset": 26976308,
+    "uncertainty": "the gap START is buffering-delayed (queue drains after emission stops); the RESUME is tight because datagrams cannot arrive before emission",
+    "used_for": "byte-accurate slicing of the capture into pre/post recovery"
+  },
+  "correspondence": {
+    "preserved_first_post_recovery_cue": "Shearing it so you have this whole circulation, but it is tropical storm force. We'll look at that at the end",
+    "post_recovery_slice_entries": 26,
+    "matches_within_post_recovery_slice": 2,
+    "matches": [
+      {
+        "ts": "00:00:20,790 --> 00:00:24,197",
+        "decoded": "<font face=\"Monospace\">{\\an7}Shearing it so you have this whole circulation, but it is</font>",
+        "gram": "shearing it so you have this"
+      },
+      {
+        "ts": "00:00:24,198 --> 00:00:26,634",
+        "decoded": "<font face=\"Monospace\">{\\an7}tropical storm force. We\u2018ll look at that at the end</font>",
+        "gram": "look at that at the end"
+      }
+    ],
+    "boundary_method": "byte offset of the first datagram after the >=20s arrival gap",
+    "verdict": "PROVEN"
+  },
+  "gpu": {
+    "in_window_log_line": "NONE (the tap logs device identity at process start, not per run)",
+    "post_run_check": {
+      "device": "cuda",
+      "compute_type": "float16",
+      "on_cuda": true,
+      "ct2_cuda_devices": 1
+    },
+    "status": "in-window GPU identity NOT captured; post-run check recorded and labelled"
+  },
+  "artifacts": {
+    "capture.ts": {
+      "bytes": 75403980,
+      "sha256": "efc46c462ff77e5e9383129c718ed8e32786fd58d967b4a09ec9f619250e7c8a",
+      "note": "full run TS, local disk per CONTRIBUTING.md"
+    },
+    "arrival-index.jsonl": {
+      "bytes": 16570705,
+      "sha256": "b3a3c8462f095be1dd67fd3211455608b91671f2f3a54be088b96872c70cc428"
+    },
+    "post-recovery.ts": {
+      "bytes": 48427672,
+      "sha256": "c164e902205c06e500a75b2ccb7cbb25407d04dcd5942f469bfafc6e6f6beeaa"
+    },
+    "post-recovery.srt": {
+      "bytes": 2906,
+      "sha256": "a25b65e19da5834f61e7f7d524e8fb5102c49a2507e3ac07b96799d8f52b5888"
+    },
+    "VTT-first-post-recovery.vtt": {
+      "bytes": 159,
+      "sha256": "c929e59f5c893d1b0537a89d2f462f179c938afd2ba91f265e9a42fe8a0af2ff"
+    }
+  },
+  "verdict": "ACCEPTANCE PATH MET: capture-before-enable proven by zero arrivals until START; sustained 15 cues with ZERO overloads; controlled stop/start; recovery boundary proven from DATAGRAM ARRIVAL (27s zero-arrival gap, resume at a known byte offset); the FIRST post-recovery cue was preserved and its text MATCHES the decoded post-recovery slice by the predeclared rule.",
+  "proof_boundary": "In-window GPU identity was NOT captured (post-run check only). The arrival gap START has buffering uncertainty; the resume is tight. Window is ~7.5 minutes; long-run stability not established."
+}

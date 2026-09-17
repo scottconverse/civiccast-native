@@ -1,0 +1,57 @@
+{
+  "at": "2026-09-17T06:10:23.906312",
+  "outdir": "work\\instrumented-harness\\v2\\probe-program",
+  "contemporaneous_source_state": {
+    "channel_id": "public",
+    "state": "ON_AIR",
+    "current_source_label": "Beta7 Sample 3 Weather 360p",
+    "current_proof_event_id": "egress-proof-57a3bad3-e580-41f7-afef-c3e136458d82",
+    "updated_at": "2026-09-17T12:09:32.862466Z",
+    "pid": 13008,
+    "last_error": null,
+    "captured_at": "2026-09-17T06:09:34.864070"
+  },
+  "capture": {
+    "datagrams": 5732,
+    "bytes": 2638768,
+    "wall_seconds": 20,
+    "video_packets": 600,
+    "duration": 19.659256,
+    "streams": [
+      "h264",
+      "aac"
+    ]
+  },
+  "index_integrity": {
+    "sum_len_equals_ts": true,
+    "offsets_contiguous": true
+  },
+  "decode": {
+    "frame_extract_ok": true,
+    "caption_decode": "'spotty and' at 00:00:01.713"
+  },
+  "vs_slate_period": {
+    "slate": {
+      "datagrams": 1201,
+      "bytes": 320916,
+      "video_packets": 16,
+      "duration": 1.73,
+      "streams": [
+        "aac"
+      ]
+    },
+    "program": {
+      "datagrams": 5732,
+      "bytes": 2638768,
+      "video_packets": 600,
+      "duration": 19.66,
+      "streams": [
+        "h264",
+        "aac"
+      ]
+    }
+  },
+  "conclusion": "HARNESS VALIDATED against a real program: ~30fps video, duration matches wall span, contiguous index, decodable frames and captions.",
+  "note": "Initial 'non-existing PPS 0' warnings are mid-stream join before the first keyframe; they resolve.",
+  "provisional": "The earlier 1.51x slope and its cause remain PROVISIONAL - the slate-period explanation is supported by the control reader but the historical probe's source state was not contemporaneously recorded."
+}
