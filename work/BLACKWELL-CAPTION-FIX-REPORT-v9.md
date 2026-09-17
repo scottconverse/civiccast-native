@@ -162,3 +162,28 @@ changed modules hash-match the installed runtime; operator-console tokens restor
 19; no token scratch; no dot-temp; supervisor Running; /api/health 200.
 No PR, merge, tag, publish, or CI change. No threshold relaxation, no CPU substitution,
 no unrelated GPU workload terminated, no synthetic cue injection.
+
+## Audit history - what was rejected, and by whom (record caveat)
+
+Stated plainly so the audit trail is not overstated:
+
+- The coder (Codex) issued several claims that the independent reviewer REJECTED and
+  that were subsequently RETRACTED or CORRECTED, including: accept6's wall<->media
+  mapping; a claimed 10.5 s content gap; a 13/13 cue-matching figure; the accept7
+  arrival anchor; and an initial 1.51x slope explanation. Earlier drafts also
+  asserted PASSED/ACCEPTANCE-ON-PROVEN on non-overlapping or over-broad evidence.
+- "Independently verified" in this report means specifically: the reviewer separately
+  re-ran or re-derived THAT item and it held (e.g. accept8's arrival offsets and
+  decode, the 06:49:11 loaded-CUDA line, the final scoped test counts, module-hash
+  correspondence, service health). It does NOT mean the reviewer reproduced every
+  claim on this task - many were challenged and corrected instead.
+- Verification of the token/DB/auth cleanup state cited here reflects the coder's own
+  queries on this host, not an independent database audit by the reviewer.
+
+## Scope of this acceptance (limits)
+
+- This does NOT certify long-run reliability. The validated window is ~7.5 minutes.
+- This does NOT certify a rebuilt installer. The candidate installer artifact was
+  reused; no installer was rebuilt.
+- The start-up overload remains a bounded, non-reproduced risk.
+- No contemporaneous per-run GPU-contention sample was captured for accept8/accept9.
