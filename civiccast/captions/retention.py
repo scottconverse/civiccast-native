@@ -52,6 +52,7 @@ class _Candidate:
     sha256: str
     bytes: int
     derived_evidence_verified: bool
+    evidence_pending: bool = True
 
 
 class CaptionEvidenceRetentionPolicy:
@@ -326,10 +327,13 @@ class CaptionEvidenceRetentionPolicy:
                     continue
                 start = index * segment_seconds
                 duration = _wav_duration(raw_path)
-                verified = any(
-                    evidence_start <= start and start + duration <= evidence_end
-                    for evidence_start, evidence_end in verified_windows.get(channel_dir.name, ())
+                windows = verified_windows.get(channel_dir.name, ())
+                covering = tuple(
+                    (evidence_start, evidence_end)
+                    for evidence_start, evidence_end in windows
+                    if evidence_start <= start and start + duration <= evidence_end
                 )
+                verified = bool(covering)
                 candidates.append(
                     {
                         "path": raw_path.resolve(),
@@ -341,6 +345,17 @@ class CaptionEvidenceRetentionPolicy:
                         "bytes": raw_path.stat().st_size,
                         "low_confidence": False,
                         "derived_evidence_verified": verified,
+                        # Evidence for this window is still expected whenever a
+                        # review row can still cover it.  A chunk with NO covering
+                        # evidence window at all can never become verified, so it
+                        # is retired on the age cap instead of being retained
+                        # forever.  MEASURED LIVE 2026-09-17 (Blackwell station):
+                        # public/processed reached 12,980 files / 1,980.8 MB
+                        # (indices 0..13,857) while the retention audit's last
+                        # prune was index 569 -- 12,737 permanently unprunable
+                        # chunks, which then trips the max-2 backlog gate and
+                        # pauses live captions for 120 s on every start.
+                        "evidence_pending": bool(windows),
                     }
                 )
         return candidates
@@ -410,15 +425,35 @@ def _normalize_candidate(candidate: Mapping[str, object]) -> _Candidate:
         sha256=str(candidate["sha256"]),
         bytes=int(str(candidate["bytes"])),
         derived_evidence_verified=bool(candidate.get("derived_evidence_verified", False)),
+        # Conservative default: callers that build candidates directly (the
+        # owner-approved unit contracts) keep the original protect-until-
+        # verified behavior.  Only ``_discover_candidates``, which can see the
+        # real evidence windows, ever sets this to False.
+        evidence_pending=bool(candidate.get("evidence_pending", True)),
     )
 
 
 def _is_eligible(candidate: _Candidate, now: datetime) -> bool:
     if candidate.kind == "raw-chunk":
-        return (
-            candidate.derived_evidence_verified
-            and now - _utc(candidate.created_at) >= _RAW_CHUNK_MAX_AGE
-        )
+        # Raw tap audio backs operator review of a live cue; it is not itself
+        # evidence, so it is retained only while it can still serve that review.
+        # It becomes eligible on the age cap once EITHER:
+        #   (a) the derived evidence covering it has been verified (normal path);
+        #   (b) no evidence window can ever cover it, so waiting is pointless.
+        # Case (b) is the live leak.  The tap parks a consumed chunk in
+        # processed/ even when the evidence factory did not run (retention
+        # verdict pending -> "text-only") or when the evidence path has stalled
+        # for that channel.  Such a chunk can never flip to verified, so the old
+        # ``verified and aged`` conjunction retained it FOREVER.  MEASURED LIVE
+        # 2026-09-17: public/processed hit 12,980 files / 1,980.8 MB over three
+        # days while pruning stopped at index 569.  The resulting backlog makes
+        # the max-2 gate fail closed and pause live captions for 120 s on every
+        # service start (reproduced 14:08:12 MT, 16.6 s after tap start).
+        # Chunks whose evidence is still pending stay protected at any age
+        # (pinned by test_keeps_raw_chunk_until_derived_evidence_is_verified).
+        if candidate.evidence_pending and not candidate.derived_evidence_verified:
+            return False
+        return now - _utc(candidate.created_at) >= _RAW_CHUNK_MAX_AGE
     return (
         candidate.kind == "review-evidence"
         and candidate.review_status != "pending"
