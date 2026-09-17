@@ -1,3 +1,11 @@
+> **SUPERSEDED 2026-09-17 (verdict overclaim).** v6 titled its verdict
+> "ACCEPTANCE PROVEN" and described the sidecar as merely "cleared after cues".
+> That overclaimed the handoff criteria: the committed VTT is a 7-byte bare
+> WEBVTT (no cue text preserved), and the run hit a 120s caption PAUSE on
+> overload at 20:59:51 (active captions cleared, stale audio discarded) with no
+> after-recovery evidence. The narrow output-path fact IS proven; overall
+> acceptance and release readiness are NOT. See
+> work/BLACKWELL-CAPTION-FIX-REPORT-v7.md.
 # Blackwell beta.8 caption-runtime fix - human report v6 (2026-09-17)
 
 Author: implementation coder (Codex), for Scott Converse.

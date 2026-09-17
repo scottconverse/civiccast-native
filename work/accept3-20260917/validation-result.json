@@ -17,7 +17,7 @@
     "why_wrong_1": "my heuristic A/53 parser walked triplets from offset +6 instead of +7, so it read the ff fc marker and saw only fd80; the real decoder yields 7 text entries",
     "why_wrong_2": "the LocalSystem service does not read Scott's user-level BOM file (no CIVICCAST_STATION_STATE_PATH; service state file has no BOM and live_captions_enabled=true)"
   },
-  "verdict": "ACCEPTANCE PROVEN for this run: 7 decoded caption entries with real text from an overlapping captions-ON capture on the patched installed runtime",
+  "verdict": "OUTPUT-PATH SUCCESS PROVEN (7 decoded caption entries with real text from the contemporaneous TS, re-derived independently). FULL HANDOFF ACCEPTANCE AND RELEASE READINESS NOT PROVEN: the committed active.vtt is only 7 bytes because the tap paused 120s on overload and cleared it, no after-recovery evidence was recorded, and the run-specific expected cue is preserved only via a monitor record.",
   "capture_path": "work/accept3-20260917/capture.ts",
   "capture_bytes": 11269472,
   "capture_sha256": "a13e130c37a8612d6351e137297b9f8b695f6048ac1f7399d692caa0d4e7be56",
@@ -28,5 +28,22 @@
     "duplicate_copy": "work/accept2-20260917/loaded-process-identity.json",
     "note": "identical content in both; the canonical path is under accept-20260917"
   },
-  "dco_note": "All commits after 41ec3dda are DCO-signed; resolve the exact count with git rev-list --count 41ec3dda..HEAD (deliberately not hard-coded)."
+  "dco_note": "All commits after 41ec3dda are DCO-signed; resolve the exact count with git rev-list --count 41ec3dda..HEAD (deliberately not hard-coded).",
+  "overload_during_run": {
+    "logged_at_local": "2026-09-16 20:59:51,229",
+    "verbatim": "Caption tap overload for channel public: 3 settled segments exceeds the maximum 2. Live captions are PAUSED for 120s (overload #1) so playout keeps the CPU; active captions were cleared and the stale audio was discarded.",
+    "seconds_after_on_air": 89,
+    "after_recovery_evidence_recorded": false,
+    "artifact": "work/accept3-20260917/overload-during-run.json"
+  },
+  "expected_cue": {
+    "artifact": "work/accept3-20260917/expected-cue.json",
+    "cue_id": "cue-003113",
+    "limitation": "preserved via monitor record only; the committed VTT was cleared and holds no cue text"
+  },
+  "preserved_vtt": {
+    "path": "work/accept3-20260917/active.vtt",
+    "bytes": 7,
+    "content": "bare WEBVTT; the run's cue text is NOT preserved in the VTT"
+  }
 }
