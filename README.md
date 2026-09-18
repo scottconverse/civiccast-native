@@ -39,7 +39,7 @@ for the authored release-state record,
 for the release's verification record (Gate A run, asset/hash/signature
 checks, the physical-machine soak, and the remaining acceptance boundary).
 
-`v1.0.0-beta.8` is the next candidate and the current owner-held unpublished candidate.
+`v1.0.0-beta.9` is the next candidate and the current owner-held unpublished candidate.
 It includes three-channel CUDA caption throughput and additional repairs to
 live speech stabilization, restart timing, session cleanup and retention work
 that could delay caption processing. It has no published installer yet and

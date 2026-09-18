@@ -3,7 +3,7 @@
 > `b0f123957b414db19263138a5e8005992c14a954`, which includes PR #229's
 > three-channel CUDA caption-throughput repair. Branch
 > `release/beta8-candidate-identity` advances the source and installer identity
-> to unpublished `v1.0.0-beta.8`; no beta.8 installer exists yet. Required
+> to unpublished `v1.0.0-beta.9`; no beta.8 installer exists yet. Required
 > sequence: identity CI and merge, exact-merge signed build, candidate gates,
 > and the real Blackwell captions-ON run.
 >

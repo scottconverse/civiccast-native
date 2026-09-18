@@ -11,9 +11,18 @@ from [`scottconverse/civiccast`](https://github.com/scottconverse/civiccast) at
 CHANGELOG; nothing was deleted there. See [`BRANCHES.md`](BRANCHES.md) for what
 came across and what deliberately did not.
 
+## [1.0.0-beta.9] - 2026-09-18
+
+### Changed
+
+- Product version bumped to `1.0.0-beta.9`; installer rebuilt from the merged
+  caption-runtime line.
+
 ## [Unreleased]
 
-Candidate identity: `v1.0.0-beta.8` (unpublished).
+- `v1.0.0-beta.9`: version bump; installer rebuilt from the merged caption-runtime line.
+
+Candidate identity: `v1.0.0-beta.9` (unpublished).
 
 ### Live-caption GPU throughput (candidate gates outstanding)
 

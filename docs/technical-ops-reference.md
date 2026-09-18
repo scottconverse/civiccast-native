@@ -1164,7 +1164,7 @@ questions, and monitoring setups should not confuse them.
 
 ```bash
 curl -s http://127.0.0.1:8000/health
-{"status":"degraded","version":"1.0.0-beta.8","schema":"not-configured"}
+{"status":"degraded","version":"1.0.0-beta.9","schema":"not-configured"}
 ```
 
 **The HTTP status code is liveness.** `/health` returns `200` whenever the

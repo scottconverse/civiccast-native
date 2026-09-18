@@ -18,7 +18,7 @@ Two asset-set families are supported:
     cannot drift.
 
 The default tag and expected version match this source tree's owner-held
-beta.8 candidate and become downloadable after it is published. Until then,
+v1.0.0-beta.9 candidate and become downloadable after it is published. Until then,
 fetch the current published beta.7 release explicitly with both
 `-Tag v1.0.0-beta.7 -Version 1.0.0-beta.7`.
 
@@ -31,8 +31,8 @@ fetch the current published beta.7 release explicitly with both
 [CmdletBinding()]
 param(
   [string]$Repository = "scottconverse/civiccast-native",
-  [string]$Tag = "v1.0.0-beta.8",
-  [string]$Version = "1.0.0-beta.8",
+  [string]$Tag = "v1.0.0-beta.9",
+  [string]$Version = "1.0.0-beta.9",
   [ValidateSet("", "NativeCandidate", "ProofKit", "TesterPackage", "All")]
   [string]$AssetSet = "",
   [switch]$IncludePacks,

@@ -24,7 +24,7 @@ other repository. See
 the authored release-state record -- it is the single source of truth for
 which tag is current.
 
-`v1.0.0-beta.8` is the next candidate and the current owner-held unpublished
+`v1.0.0-beta.9` is the next candidate and the current owner-held unpublished
 candidate. It has no installer asset yet; install beta.7 from the release link
 above until beta.8 completes its candidate gates.
 
