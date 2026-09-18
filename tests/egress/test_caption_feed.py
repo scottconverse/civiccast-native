@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from civiccast.captions.models import CaptionCue
 from civiccast.egress.caption_feed import (
     CaptionFeedWorker,
@@ -102,8 +104,40 @@ def test_feed_paginates_long_cue_across_cea_safe_buffers() -> None:
         ("A" * 32) + "\n" + ("A" * 32),
         "A" * 6,
     ]
-    assert [call["pts"] for call in sender.calls] == [10.0, 12.0]
-    assert [call["dur"] for call in sender.calls] == [2.0, 2.0]
+    # A wrapped row boundary counts as one display space, as it does in
+    # ordinary words. Allocate time to all displayed characters, not page count.
+    boundary = 10.0 + 4.0 * 65 / 71
+    assert [call["pts"] for call in sender.calls] == pytest.approx([10.0, boundary])
+    assert [call["dur"] for call in sender.calls] == pytest.approx(
+        [boundary - 10.0, 14.0 - boundary]
+    )
+
+
+def test_feed_weights_unequal_pages_within_exact_original_cue_envelope() -> None:
+    sender = _Sender()
+    cue = CaptionCue(
+        cue_id="measured-speech",
+        start_seconds=86.28,
+        end_seconds=89.82,
+        text="we're cool on Thursday in the low 80s with a really good chance of afternoon",
+        confidence=1.0,
+        low_confidence=False,
+    )
+    worker = _worker(sender, on_air=["gov"], cues=[cue])
+
+    assert worker.run_once().cues_sent == 1
+
+    weights = [len(" ".join(call["text"].split())) for call in sender.calls]
+    assert weights == [56, 19]
+    assert [call["dur"] for call in sender.calls] == pytest.approx([2.6432, 0.8968])
+    assert sender.calls[0]["pts"] == cue.start_seconds
+    for previous, following in zip(sender.calls, sender.calls[1:], strict=False):
+        assert previous["pts"] + previous["dur"] == following["pts"]
+    final = sender.calls[-1]
+    assert final["pts"] + final["dur"] == cue.end_seconds
+    assert sum(call["dur"] for call in sender.calls) == pytest.approx(
+        cue.end_seconds - cue.start_seconds
+    )
 
 
 def test_feed_only_pushes_for_on_air_channels() -> None:
@@ -132,6 +166,7 @@ def test_feed_retries_only_unacknowledged_page_with_the_same_delivery_id() -> No
     class _LostAckSender:
         def __init__(self) -> None:
             self.calls: list[tuple[str, str]] = []
+            self.timings: list[tuple[float, float]] = []
             self.applied: dict[str, str] = {}
             self._lose_ack_once = True
 
@@ -145,7 +180,7 @@ def test_feed_retries_only_unacknowledged_page_with_the_same_delivery_id() -> No
             duration_seconds,
             delivery_id,
         ) -> bool:
-            del pts_seconds, duration_seconds
+            self.timings.append((pts_seconds, duration_seconds))
             self.calls.append((delivery_id, text))
             self.applied.setdefault(delivery_id, text)
             if text == "A" * 6 and self._lose_ack_once:
@@ -176,6 +211,8 @@ def test_feed_retries_only_unacknowledged_page_with_the_same_delivery_id() -> No
         "A" * 6,
     ]
     assert sender.calls[1][0] == sender.calls[2][0]
+    assert sender.timings[1] == sender.timings[2]
+    assert sender.timings[1][0] == pytest.approx(10.0 + 4.0 * 65 / 71)
     assert list(sender.applied.values()) == [
         ("A" * 32) + "\n" + ("A" * 32),
         "A" * 6,

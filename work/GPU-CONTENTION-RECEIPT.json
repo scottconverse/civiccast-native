@@ -1,0 +1,21 @@
+{
+  "purpose": "Post-run GPU state on this host, for context. NOT a during-validation measurement.",
+  "host": "NVIDIA RTX 5070 Ti, 16303 MiB (from earlier runs)",
+  "observed_now": {
+    "utilization_gpu_percent": "1 %",
+    "memory_used_mib": "3892 MiB",
+    "memory_total_mib": "16303 MiB",
+    "temperature_c": "47"
+  },
+  "external_workloads": "External GPU workloads (Fortnite/Epic) were observed EARLIER in the task. Their presence at that time cannot establish contention during accept8/accept9, and no contemporaneous external-process or GPU-contention observation was recorded for those runs. No GPU workload was terminated at any point to make captions pass.",
+  "global_kill_of_gpu_workloads": false,
+  "per_process_attribution": "nvidia-smi could not attribute per-process GPU memory to python on this host (insufficient permissions); the loaded-model line is the ASR-execution evidence.",
+  "evidence_pointers": [
+    "work/accept-20260917/gpu-contention-observations.json (earlier run)",
+    "work/accept9-gpu/final-resolved-runtime-identity.json (loaded_model=cuda)"
+  ],
+  "label": "POST-RUN SAMPLE (not contemporaneous with accept8/accept9)",
+  "sampled_at": "2026-09-17T07:05:12.898433",
+  "contemporaneous_evidence": "NONE for accept8/accept9: no per-run GPU utilisation/memory sample was captured. This is a stated limitation.",
+  "what_is_evidence_for_gpu_execution": "work/accept9-gpu/final-resolved-runtime-identity.json - loaded_device=cuda/loaded_compute_type=float16 from the backend model after prepare, with 12 cues produced."
+}

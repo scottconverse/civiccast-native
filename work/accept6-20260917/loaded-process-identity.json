@@ -1,0 +1,36 @@
+{
+  "commit": "e3a47841ffd9cc25f95a70da43630c2fbe662dcb",
+  "supervisor_pid": "28132",
+  "process_creation": "Thursday, September 17, 2026 5:09:17 AM",
+  "staged_before_restart": true,
+  "installed_vs_source": {
+    "civiccast/captions/tap_worker.py": {
+      "match": true,
+      "sha256": "7944745d25aca121263d4a0e6e3aa91a28b623b9beb1075780f86ca30193e88f"
+    },
+    "civiccast/egress/daemon.py": {
+      "match": true,
+      "sha256": "fac27ccfec549eb59f1c973c57d783d840db0fe4d68dd9ff0f334b4504ed72be"
+    },
+    "civiccast/captions/stabilize.py": {
+      "match": true,
+      "sha256": "a5f0bc3d7788c66ec9eaa053b06907390c4526aecae1bc0276c8152abf22e074"
+    },
+    "civiccast/egress/gst/control.py": {
+      "match": true,
+      "sha256": "e2cefa556416538cb7a94bb4f5c43f9cbe4e77e6a511ed9716d96068ce00b53c"
+    },
+    "civiccast/app.py": {
+      "match": true,
+      "sha256": "f988204c782a69778cd432d1aeb981a18e239a820281396fb46dc84fad794b2f"
+    },
+    "civiccast/egress/automation.py": {
+      "match": true,
+      "sha256": "5146a2bac4bc91e2f193c979e2ca2f79f37166997b7e7a042337ff02fa9fb10b"
+    },
+    "civiccast/native/station_runtime.py": {
+      "match": true,
+      "sha256": "b38c64d9425f58f9819cc8d37796ed33ecf288b3dae508eb8e48311b5aa3c814"
+    }
+  }
+}

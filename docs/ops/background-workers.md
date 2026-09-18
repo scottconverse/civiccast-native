@@ -118,14 +118,16 @@ record with the station's retention files.
 ## Live caption tap
 
 Beta B6 (product decision #1, option A — egress audio fork). When configured,
-the egress encoder forks a low-bitrate audio-only output of the same ffmpeg
-process: rolling mono 16 kHz s16le WAV segments under
+the native GStreamer playout pipeline forks audio into
+rolling mono 16 kHz s16le WAV segments under
 `CIVICCAST_CAPTION_TAP_DIR/<channel_id>/chunk-NNNNNN.wav`. The caption tap
 worker consumes a segment only once a newer-numbered sibling exists (so a
 half-written file is never read), feeds it through the existing live caption
 seam (pipeline → two-window stabilization → **durable review queue**), then
-moves it to `processed/`; unreadable segments go to `quarantine/` and never
-kill the scan.
+moves it to `processed/` when retained-audio permission is current. While a
+periodic storage check is pending, processed and unreadable audio is discarded
+instead of retained; review text can still be created without an audio clip.
+With verified storage, unreadable segments go to `quarantine/`.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -144,11 +146,9 @@ kill the scan.
 ### Turning live captions off
 
 `PUT /api/staff/station/profile` with `{"live_captions_enabled": false}`
-(role: `setup_admin`), or `true` to turn them on. It is **off by default in
-beta.5** (temporary: with it on, the CEA-708 caption embed leg on the video
-path held video for 25-30 s and burst-released it every 1-2 minutes on every
-channel in the 2026-09-09 sandbox soak; `LIVE_CAPTIONS_DEFAULT` in
-`civiccast/installer/models.py`), persisted in station-state explicitly at
+(role: `setup_admin`), or `true` to turn them on. It remains **off by default
+in beta.8** (`LIVE_CAPTIONS_DEFAULT` in `civiccast/installer/models.py`),
+persisted in station-state explicitly at
 first-admin setup, returned by `GET /api/staff/station/profile`, and read on
 **every scan** — so turning it off stops the ASR within one poll interval on a
 station that is on air, with no control-plane restart (the audio-tap and
@@ -214,6 +214,40 @@ child's environment once, at station-runtime spawn time); the station-profile
 toggle does not require that restart, but still only reaches a channel that
 is starting fresh, same as the graphics-overlay lower-third's own "not a
 live, hot text update" limit documented in USER-MANUAL.md.
+
+### Beta.8 retention and runtime diagnostics
+
+The live tap makes its first retained-audio readiness check synchronously.
+Later retention sweeps run on a guarded background thread rather than
+blocking every transcription scan. Only one sweep may be in flight;
+transcription still refuses work when the latest retention result is not
+ready. During a periodic recheck, transcription and caption text can continue,
+but no new evidence, processed or quarantined WAV is retained. Review rows
+created in that interval have no retained audio clip; the review interface
+reports that the clip is unavailable. A definitive storage refusal stops new
+transcription and publication and discards settled input audio. Permission is
+checked again after transcription, at the point audio would be stored.
+Disabling live transcription does not disable retention of audio
+already collected. The separate offline-caption worker retains its own
+readiness check; do not confuse the two workers' scheduling.
+
+After model preparation the tap logs `Caption runtime resolved after
+prepare`, with requested and actually loaded device/compute type plus worker
+capacity. Check `loaded_device=cuda` and the loaded compute type when proving
+GPU use. An environment request for CUDA alone is not evidence that CUDA
+loaded. If backend identity is unavailable, the diagnostic says so rather
+than presenting the request as the result.
+
+Beta.8 development evidence and its limits are in the
+[verification record](../releases/v1.0.0-beta.8-verification.md). These
+changes do not raise the backlog threshold or shorten overload backoff.
+
+If a channel's caption-session reset fails (for example, a locked caption
+file), broadcast can continue but that session's caption embedding and audio
+tap stay disabled. The channel reports the reset failure and caption status
+is not verified. A content reload or duplicate Start cannot clear this guard.
+Resolve the storage problem, then Stop and Start the channel at an appropriate
+time; only a successful new-session reset re-enables its captions.
 
 ### Captions are best effort; playout wins
 

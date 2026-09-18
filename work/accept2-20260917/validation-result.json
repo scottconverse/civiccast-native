@@ -1,0 +1,33 @@
+{
+  "run_local": "2026-09-16 ~20:43-20:47 America/Denver",
+  "supervisor_pid": "6696",
+  "supervisor_restarted": true,
+  "process_creation": "2026-09-16 20:42:26",
+  "installed_files_staged_before_restart": true,
+  "channel": "public",
+  "state_during_run": "ON_AIR",
+  "program": "Beta7 Sample 3 Weather 360p",
+  "runtime_device": "cuda/float16 (live caption runtime), verified on this host",
+  "cues_committed_to_sidecar": 6,
+  "sidecar_cues_sample": "day and night 60 and 90 record high 104 is on august 1st 2008 record low 42",
+  "ts_captured_bytes": 15174232,
+  "decodeback_20s_entries": 0,
+  "decodeback_full_entries": 0,
+  "GA94_markers": 3361,
+  "distinct_payload_bodies": 2,
+  "payload_bodies": [
+    "0354fffc8080fd80 (null padding)",
+    "0354fffc942cfd80 (CEA-608 control pair, no text)"
+  ],
+  "caption_commands_received_by_gst_worker": 0,
+  "verdict": "BLOCKED - live accepted text did not reach the emitted stream in this run",
+  "boundary": [
+    "The code fixes are committed (7919a289) and the restarted process loaded the fixed installed files (hash-equal).",
+    "The tap produced real cues into active.vtt (6 cues), so captions generation works.",
+    "The gst worker stdout contains ZERO caption control commands, and the emitted A/53 payload carries only padding/control bytes - no text.",
+    "Therefore the break in THIS run is on the feed->worker->mux hop, downstream of the stabilizer fixes.",
+    "This run does not prove the stabilizer fixes produce on-air text; it exposes a further, separate defect."
+  ],
+  "not_claimed": "No PASS. The bounded decode-back recovered no text.",
+  "decodeback_artifacts": "removed: both decode-back extractions were empty, so there was no decoded text to preserve"
+}

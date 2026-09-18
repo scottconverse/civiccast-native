@@ -1,0 +1,41 @@
+{
+  "observed_window_local": "2026-09-17 14:07:00-14:10:00 MT",
+  "caption_tap_starts": [
+    {
+      "ts": "2026-09-17 14:07:08,060",
+      "line": "2026-09-17 14:07:08,060 INFO civiccast.captions.tap_worker: Caption tap starting: cpu_count=16, max_channel_workers=3, runtime_workers=3, live_cpu_threads=2"
+    },
+    {
+      "ts": "2026-09-17 14:07:11,781",
+      "line": "2026-09-17 14:07:11,781 INFO civiccast.captions.tap_worker: Caption tap starting: cpu_count=16, max_channel_workers=3, runtime_workers=3, live_cpu_threads=2"
+    },
+    {
+      "ts": "2026-09-17 14:07:52,121",
+      "line": "2026-09-17 14:07:52,121 INFO civiccast.captions.tap_worker: Caption tap starting: cpu_count=16, max_channel_workers=3, runtime_workers=3, live_cpu_threads=2"
+    },
+    {
+      "ts": "2026-09-17 14:07:55,639",
+      "line": "2026-09-17 14:07:55,639 INFO civiccast.captions.tap_worker: Caption tap starting: cpu_count=16, max_channel_workers=3, runtime_workers=3, live_cpu_threads=2"
+    }
+  ],
+  "retention_worker_starts": [
+    {
+      "ts": "2026-09-17 14:07:11,951",
+      "line": "2026-09-17 14:07:11,951 INFO civiccast.platform.worker_runtime: civiccast-retention-worker started (poll=3600.0s)."
+    },
+    {
+      "ts": "2026-09-17 14:07:55,809",
+      "line": "2026-09-17 14:07:55,809 INFO civiccast.platform.worker_runtime: civiccast-retention-worker started (poll=3600.0s)."
+    }
+  ],
+  "overloads": [
+    {
+      "ts": "2026-09-17 14:08:12,216",
+      "line": "2026-09-17 14:08:12,216 WARNING civiccast.captions.tap_worker: Caption tap overload for channel public: 4 settled segments exceeds the maximum 2. Live captions are PAUSED for 120s (overload #1) so playout keeps the CPU; active captions were cleared and the stale audio was discarded."
+    }
+  ],
+  "diagnostic_switch_was_enabled": false,
+  "diagnostic_switch_note": "CIVICCAST_CAPTION_STARTUP_DIAGNOSTICS cannot reach the live control-plane child: civiccast/native/supervisor/children.py builds the child env as dict(extra_env or {}) with only fixed vars, and CaptionTapWorkerSettings reads the switch at worker construction. So the 14:08 run has normal logging only, not phase receipts.",
+  "log_source": "C:\\ProgramData\\CivicCast\\logs\\control_plane-app.log",
+  "log_sha256": "36529ab9df5915d058c3154b1ee22f2c534d02e7363f52298ca6463742425a0c"
+}

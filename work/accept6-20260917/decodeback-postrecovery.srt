@@ -1,0 +1,267 @@
+1
+00:00:00,000 --> 00:00:02,081
+<font face="Monospace">{\an7}route conditions like we always
+do it‘s getting worse around the</font>
+
+2
+00:00:02,081 --> 00:00:04,993
+<font face="Monospace">{\an7}front range so</font>
+
+3
+00:00:05,580 --> 00:00:08,846
+<font face="Monospace">{\an7}I think the I-25 corridor has
+gone up another notch into</font>
+
+4
+00:00:08,846 --> 00:00:12,521
+<font face="Monospace">{\an7}extreme drought.</font>
+
+5
+00:00:22,233 --> 00:00:24,751
+<font face="Monospace">{\an7}Had to zoom out, use a different
+model. The HRRR model that I</font>
+
+6
+00:00:24,751 --> 00:00:27,051
+<font face="Monospace">{\an7}normally show here did not have</font>
+
+7
+00:00:36,363 --> 00:00:41,484
+<font face="Monospace">{\an7}And that does show pretty thick
+plumes up here and a light</font>
+
+8
+00:00:41,485 --> 00:00:47,022
+<font face="Monospace">{\an7}amount of smoke around Colorado.</font>
+
+9
+00:00:47,161 --> 00:00:49,133
+<font face="Monospace">{\an7}72% up to 75% for precipitation.</font>
+
+10
+00:01:03,912 --> 00:01:06,194
+<font face="Monospace">{\an7}and coverage statewide, which is
+what we were expecting.</font>
+
+11
+00:01:18,266 --> 00:01:22,235
+<font face="Monospace">{\an7}seven inches of rain with that
+storm a couple nights ago so but</font>
+
+12
+00:01:22,235 --> 00:01:25,183
+<font face="Monospace">{\an7}it was spotty</font>
+
+13
+00:01:46,578 --> 00:01:50,267
+<font face="Monospace">{\an7}Today‘s excessive moisture, it‘s
+really precipitation,</font>
+
+14
+00:01:53,765 --> 00:01:56,866
+<font face="Monospace">{\an7}So we do have a little chance of
+mainly wind</font>
+
+15
+00:01:59,778 --> 00:02:03,136
+<font face="Monospace">{\an7}eastern plains but nothing
+really close to Denver and</font>
+
+16
+00:02:03,136 --> 00:02:04,522
+<font face="Monospace">{\an7}Longmont like that.</font>
+
+17
+00:02:07,206 --> 00:02:07,808
+<font face="Monospace">{\an7}continue chance of convection
+for Saturday it‘s really in the</font>
+
+18
+00:02:07,808 --> 00:02:09,758
+<font face="Monospace">{\an7}mountains</font>
+
+19
+00:02:10,236 --> 00:02:14,221
+<font face="Monospace">{\an7}Maybe a strong or two just down
+to I-25 area</font>
+
+20
+00:02:21,009 --> 00:02:22,723
+<font face="Monospace">{\an7}stationary front draped along it
+is cooler out there low 80s so</font>
+
+21
+00:02:22,723 --> 00:02:25,203
+<font face="Monospace">{\an7}kind of nice</font>
+
+22
+00:02:25,542 --> 00:02:28,768
+<font face="Monospace">{\an7}with the potential for heavy
+flooding rains with</font>
+
+23
+00:02:28,768 --> 00:02:31,392
+<font face="Monospace">{\an7}thunderstorms.</font>
+
+24
+00:02:47,664 --> 00:02:49,663
+<font face="Monospace">{\an7}Temperature day and night 60 and
+90 record high 104 is on August</font>
+
+25
+00:02:49,663 --> 00:02:51,867
+<font face="Monospace">{\an7}1st, 2008</font>
+
+26
+00:02:54,947 --> 00:03:03,386
+<font face="Monospace">{\an7}2, that‘s the record low for all
+of July, on the 31st and 8th.</font>
+
+27
+00:03:03,387 --> 00:03:05,822
+<font face="Monospace">{\an7}the next day 1995 I‘ll go back
+take a look at the next week</font>
+
+28
+00:03:05,821 --> 00:03:09,527
+<font face="Monospace">{\an7}Monday through</font>
+
+29
+00:03:09,678 --> 00:03:10,663
+<font face="Monospace">{\an7}the moisture is back, so.</font>
+
+30
+00:03:33,372 --> 00:03:35,353
+<font face="Monospace">{\an7}But it is tropical storm force.
+We‘ll look at that at the end.</font>
+
+31
+00:03:35,353 --> 00:03:37,518
+<font face="Monospace">{\an7}Let‘s put this in motion</font>
+
+32
+00:03:41,756 --> 00:03:42,959
+<font face="Monospace">{\an7}ridge in the west and it‘s just
+going to move over the weekend</font>
+
+33
+00:03:42,960 --> 00:03:45,650
+<font face="Monospace">{\an7}over us</font>
+
+34
+00:03:46,488 --> 00:03:49,255
+<font face="Monospace">{\an7}pressing convection and moving
+the moisture a little further</font>
+
+35
+00:03:49,256 --> 00:03:51,309
+<font face="Monospace">{\an7}west and then by Monday it</font>
+
+36
+00:03:58,951 --> 00:04:00,902
+<font face="Monospace">{\an7}again into Colorado all week
+long so you can see the south</font>
+
+37
+00:04:00,902 --> 00:04:03,075
+<font face="Monospace">{\an7}winds here then west</font>
+
+38
+00:04:03,914 --> 00:04:07,115
+<font face="Monospace">{\an7}winds around the high and then
+get to the end of next week it</font>
+
+39
+00:04:07,115 --> 00:04:10,130
+<font face="Monospace">{\an7}jogs back to the four</font>
+
+40
+00:04:13,549 --> 00:04:17,580
+<font face="Monospace">{\an7}winds so moisture has to travel
+further to get to us and beyond</font>
+
+41
+00:04:17,580 --> 00:04:21,664
+<font face="Monospace">{\an7}the end of the third or fourth
+of august</font>
+
+42
+00:04:21,763 --> 00:04:24,639
+<font face="Monospace">{\an7}front actually coming down. So
+we‘ll see that in just a second.</font>
+
+43
+00:04:24,639 --> 00:04:26,355
+<font face="Monospace">{\an7}So we do have that front keeping
+it cool east of the Rockies on</font>
+
+44
+00:04:26,356 --> 00:04:28,754
+<font face="Monospace">{\an7}Thursday. That pushes away.</font>
+
+45
+00:04:51,179 --> 00:04:54,966
+<font face="Monospace">{\an7}here recovers quickly the next
+day but here we are up to</font>
+
+46
+00:04:54,967 --> 00:04:58,633
+<font face="Monospace">{\an7}Thursday and it is still every
+afternoon</font>
+
+47
+00:04:58,633 --> 00:04:59,648
+<font face="Monospace">{\an7}Some drifting off into the
+plains,</font>
+
+48
+00:05:04,384 --> 00:05:06,546
+<font face="Monospace">{\an7}Let‘s look at precipitable
+water. It is just very rich. We</font>
+
+49
+00:05:06,546 --> 00:05:08,347
+<font face="Monospace">{\an7}have a lot of moisture</font>
+
+50
+00:05:23,923 --> 00:05:25,822
+<font face="Monospace">{\an7}And then into next week, the
+moisture is there.</font>
+
+51
+00:05:47,510 --> 00:05:48,917
+<font face="Monospace">{\an7}Initially, I can kick off some
+good thunderstorms.</font>
+
+52
+00:05:57,081 --> 00:06:01,337
+<font face="Monospace">{\an7}Saturday, we drop to the 40s and
+30s.</font>
+
+53
+00:06:03,798 --> 00:06:05,523
+<font face="Monospace">{\an7}makes it hard to get good
+thunderstorms but by Monday good</font>
+
+54
+00:06:05,523 --> 00:06:07,830
+<font face="Monospace">{\an7}moisture starts</font>
+
+55
+00:06:08,633 --> 00:06:12,352
+<font face="Monospace">{\an7}in and there you got some
+yellows with the 50s and 62</font>
+
+56
+00:06:12,352 --> 00:06:15,943
+<font face="Monospace">{\an7}points by midweek so yeah lots
+of good</font>
+
+57
+00:06:28,162 --> 00:06:31,384
+<font face="Monospace">{\an7}in the West. So monsoon stuff
+just gets kind of cut off.</font>
+
+58
+00:06:31,383 --> 00:06:33,707
+<font face="Monospace">{\an7}Arizona‘s still going</font>

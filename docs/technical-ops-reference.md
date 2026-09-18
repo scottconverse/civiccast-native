@@ -727,13 +727,29 @@ controls below the player. Residents can leave the default caption track on,
 turn captions off, or re-enable the posted language track with keyboard or
 pointer controls.
 
-Caption stabilization follows the v0.5 contract: text is committed only after
-it remains stable across two 4-second windows, and a committed live cue is not
+Live caption stabilization requires corroboration across overlapping audio
+windows. Beta.8's live GPU recognizer supplies actual word timestamps and
+input-window identity. Confirmation requires matching words with overlapping
+observed time spans in distinct audio windows, not just overlapping audio.
+The default five-second retained context covers the previous five-second
+segment; explicit overlap overrides are preserved. Confirmed words form
+bounded phrase cues; `...` marks withheld interior words, not recognized speech.
+Unconfirmed timed words are retained for review only when they expire or the
+stream ends; stopping is not a second recognition pass and does not put them
+on air. Legacy/offline hypotheses without word metadata retain their separate
+low-confidence flush behavior. A committed live cue is not
 rewritten later. Low-confidence cues are flagged in the operator review queue
 with a specific next step: compare the cue against the audio, then approve,
 edit, or reject it. The staff review API preserves the original machine cue
 text separately from approved or edited reviewer text so the UI keeps a clear
 audit trail.
+
+For live-tap concurrency, retained-audio sweep scheduling, overload pauses
+and the loaded CUDA/compute-type diagnostic, see
+[Live caption tap](ops/background-workers.md#live-caption-tap). Live captions
+remain off by default. The source fixes and short Blackwell recovery run do
+not establish long-duration or public-installer acceptance; consult the
+[beta.8 verification record](releases/v1.0.0-beta.8-verification.md).
 
 ## Run agenda import (vendor bridge + js_portal)
 

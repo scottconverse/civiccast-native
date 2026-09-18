@@ -47,6 +47,9 @@ class EncoderStartRequest:
     # truncated. Ignored by ``start()`` (nothing is "outgoing" at a fresh start)
     # and by ``ConcatEncoderStrategy`` (ffmpeg reload is always terminate+restart).
     switch_at_end_of_current: bool = False
+    # A failed session reset must not expose old sidecars/audio. This is a
+    # session safety gate, independent of the operator's caption preference.
+    captions_allowed: bool = True
 
 
 @dataclass(frozen=True)
@@ -128,8 +131,8 @@ class ConcatEncoderStrategy:
             config=request.config,
             resolve_secret=request.resolve_secret,
             branding_plan=request.branding_plan,
-            caption_plan=request.caption_plan,
-            audio_tap_plan=request.audio_tap_plan,
+            caption_plan=request.caption_plan if request.captions_allowed else None,
+            audio_tap_plan=request.audio_tap_plan if request.captions_allowed else None,
         )
         log_dir = request.work_dir / request.channel_id / "logs"
         stdout_path = log_dir / "ffmpeg.stdout.log"

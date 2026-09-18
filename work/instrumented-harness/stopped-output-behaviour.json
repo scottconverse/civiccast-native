@@ -1,0 +1,9 @@
+{
+  "at": "2026-09-17T05:43:38.151270",
+  "question": "What does STOPPED actually emit? (slate, or nothing?)",
+  "test": "STOP the channel, then run an 8s ffmpeg capture on the caption loopback",
+  "result": "The probe TIMED OUT after 60s with NO stream and produced no file. Channel state: STOPPED, source=-, pid=-.",
+  "conclusion": "STOPPED emits NO MEDIA AT ALL. It does not generate slate on this output. Therefore a STOP cannot be used as a slate->program visual anchor.",
+  "implication": "The anchor must come from the ON_AIR transition itself: media APPEARS at the moment the channel starts. The capture must already be running so the first emitted media IS the transition.",
+  "design": "Start capture while STOPPED (receiving nothing), issue START at a logged wall time, and treat THE FIRST MEDIA SAMPLE in the capture as the program-onset anchor. That is an observable content onset, not an inferred offset."
+}

@@ -1,0 +1,30 @@
+{"at": "2026-09-17T06:12:00.962827", "event": "schedule-created", "id": "f11274f3-a5c3-4fd2-83e1-67ae7e953890"}
+{"at": "2026-09-17T06:12:01.017838", "event": "START-issued (receiver already running)"}
+{"at": "2026-09-17T06:12:10.838682", "phase": "sustained", "channel": "STOPPED", "caption_state": "within-capacity", "backlog": 1, "cues": 0, "datagrams": 0}
+{"at": "2026-09-17T06:12:17.865919", "phase": "sustained", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 0, "datagrams": 506}
+{"at": "2026-09-17T06:12:31.928444", "phase": "sustained", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 1, "datagrams": 4842}
+{"at": "2026-09-17T06:12:53.018295", "phase": "sustained", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 3, "datagrams": 10237}
+{"at": "2026-09-17T06:13:07.090492", "phase": "sustained", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 4, "datagrams": 13640}
+{"at": "2026-09-17T06:13:49.265166", "phase": "sustained", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 5, "datagrams": 28419}
+{"at": "2026-09-17T06:13:56.281684", "phase": "sustained", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 6, "datagrams": 29895}
+{"at": "2026-09-17T06:14:03.300488", "phase": "sustained", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 7, "datagrams": 32027}
+{"at": "2026-09-17T06:14:17.340340", "phase": "sustained", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 8, "datagrams": 35553}
+{"at": "2026-09-17T06:14:24.360905", "phase": "sustained", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 9, "datagrams": 37685}
+{"at": "2026-09-17T06:14:38.398098", "phase": "sustained", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 11, "datagrams": 41867}
+{"at": "2026-09-17T06:14:45.511519", "phase": "sustained", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 12, "datagrams": 44163}
+{"at": "2026-09-17T06:15:06.597884", "phase": "sustained", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 13, "datagrams": 50723}
+{"at": "2026-09-17T06:15:13.631356", "phase": "sustained", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 14, "datagrams": 51953}
+{"at": "2026-09-17T06:15:27.680043", "phase": "sustained", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 15, "datagrams": 54905}
+{"at": "2026-09-17T06:15:44.562661", "event": "CONTROLLED-STOP-issued (receiver still running)"}
+{"at": "2026-09-17T06:15:59.583151", "event": "CONTROLLED-START-issued"}
+{"at": "2026-09-17T06:16:09.789108", "phase": "post-recovery", "channel": "STARTING", "caption_state": "within-capacity", "backlog": 1, "cues": 0}
+{"at": "2026-09-17T06:16:15.807529", "phase": "post-recovery", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 0}
+{"at": "2026-09-17T06:16:27.833967", "phase": "post-recovery", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 1}
+{"at": "2026-09-17T06:16:27.835427", "event": "FIRST-POST-RECOVERY-CUE-PRESERVED", "cues": 1}
+{"at": "2026-09-17T06:16:39.861157", "phase": "post-recovery", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 2}
+{"at": "2026-09-17T06:16:45.876716", "phase": "post-recovery", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 3}
+{"at": "2026-09-17T06:17:21.979262", "phase": "post-recovery", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 4}
+{"at": "2026-09-17T06:17:27.983987", "phase": "post-recovery", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 5}
+{"at": "2026-09-17T06:17:58.105405", "phase": "post-recovery", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 6}
+{"at": "2026-09-17T06:18:10.133205", "phase": "post-recovery", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 7}
+{"at": "2026-09-17T06:18:22.172275", "phase": "post-recovery", "channel": "ON_AIR", "caption_state": "within-capacity", "backlog": 1, "cues": 9}

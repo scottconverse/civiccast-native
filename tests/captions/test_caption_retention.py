@@ -351,3 +351,68 @@ class TestSharedEvidenceCoalescing:
         shared_path = candidates[0]["path"]
         assert result.deleted_paths == ()
         assert Path(str(shared_path)).is_file()
+
+
+class TestUnverifiedRawChunkCannotLeakForever:
+    """Live defect (measured 2026-09-17 on the Blackwell station): raw tap
+
+    chunks whose audio evidence was never written are UNPRUNABLE FOREVER.
+
+    ``CaptionTapWorker._review_persistence_guard`` yields ``"text-only"``
+    whenever a retention sweep is in flight, and in ``"text-only"`` mode
+    ``LiveCaptionWorker.process_batch`` never calls ``audio_evidence_factory``.
+    A chunk consumed in that mode therefore has NO evidence window that can
+    ever cover it: ``_discover_candidates`` sets ``derived_evidence_verified``
+    from review-store rows only, so the chunk fails ``_is_eligible`` on every
+    future sweep.  The tap either unlinks it immediately (in-flight branch) or
+    parks it in ``processed/`` where it accumulates.
+
+    Measured live: 12,980 files / 1,980.8 MB in ``public/processed`` over three
+    days, indices 0..13,857, while only 1,487 evidence WAVs existed and the
+    audit log's prunes stopped at index ~569.  The runaway backlog is what makes
+    the max-2 backlog gate pause live captions for 120 s on every start.
+
+    The owner-approved lifecycle protects RAW chunks only while the evidence
+    that would make them reviewable could still arrive.  A chunk that reaches
+    the age cap without that evidence will never get it, so retaining it further
+    protects nothing and leaks disk.  Review-evidence files keep their own
+    protect-until-resolved rule, which is asserted by
+    ``test_keeps_raw_chunk_until_derived_evidence_is_verified`` (which passes
+    unchanged) and by the whole ``TestCaptionEvidenceRetentionPolicy`` suite.
+    """
+
+    def test_aged_raw_chunk_is_retired_even_when_evidence_was_never_written(
+        self, tmp_path: Path
+    ) -> None:
+        raw = _candidate(
+            tmp_path / "processed" / "chunk-000000.wav",
+            kind="raw-chunk",
+            status="pending",
+            aged=timedelta(hours=25),
+            sha256="a" * 64,
+        )
+        # Exactly the live state: discovery found NO evidence window that can
+        # ever cover this chunk, so it can never flip to verified.
+        raw["derived_evidence_verified"] = False
+        raw["evidence_pending"] = False
+
+        result = _policy().enforce(candidates=[raw], now=NOW)
+
+        assert result.deleted_paths == (Path(str(raw["path"])).resolve(),)
+        assert not Path(str(raw["path"])).is_file()
+
+    def test_young_unverified_raw_chunk_is_still_retained(self, tmp_path: Path) -> None:
+        raw = _candidate(
+            tmp_path / "processed" / "chunk-000001.wav",
+            kind="raw-chunk",
+            status="pending",
+            aged=timedelta(hours=1),
+            sha256="b" * 64,
+        )
+        raw["derived_evidence_verified"] = False
+        raw["evidence_pending"] = False
+
+        result = _policy().enforce(candidates=[raw], now=NOW)
+
+        assert result.deleted_paths == ()
+        assert Path(str(raw["path"])).is_file()

@@ -1,0 +1,20 @@
+{
+  "at": "2026-09-17T06:51:17.403146",
+  "commit": "ea65dffe13256a892e2c1b4ee41ee812666822c8",
+  "requirement": "actual caption runtime loaded-model device/compute_type after prepare, bound to worker PID + candidate",
+  "supervisor_pid": "30616",
+  "supervisor_created": "Thursday, September 17, 2026 6:46:50 AM",
+  "resolved_line": "2026-09-17 06:49:11,646 INFO civiccast.captions.tap_worker: Caption runtime resolved after prepare: requested_device=cuda requested_compute_type=float16 loaded_device=cuda loaded_compute_type=float16 on_cuda=True num_workers=3",
+  "loaded_evidence": "loaded_device=cuda loaded_compute_type=float16 read from the CTranslate2 backend model (source of truth after any fallback)",
+  "requested_vs_loaded": "requested cuda/float16 == loaded cuda/float16; no fallback line exists",
+  "change_only": "exactly 1 emission in this process (previous noisy build emitted 86)",
+  "post_prepare_transcription": "live active.vtt held 12 cues during this run, so ASR executed after prepare",
+  "module_correspondence": {
+    "civiccast/captions/tap_worker.py": true,
+    "civiccast/captions/runtime.py": true
+  },
+  "notes": [
+    "the tap_worker change is logging/observability only",
+    "earlier 'device=cuda' lines (06:43) are from the PREVIOUS process and the older format"
+  ]
+}

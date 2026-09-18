@@ -35,6 +35,7 @@ import os
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1760,6 +1761,7 @@ def build_channel_automation(
     *,
     work_dir: Path | None = None,
     alert_evaluator_hook: AlertEvaluatorHook | None = None,
+    channel_start_hook: Callable[[str], None] | None = None,
 ) -> ChannelAutomationService:
     """Construct the wired automation service (same shape as the egress CLI).
 
@@ -1917,6 +1919,7 @@ def build_channel_automation(
         # fix: routed through the shared as_run_outbox (journal-first, never
         # a bare direct store write) instead of a fresh unwired recorder.
         as_run_recorder=StoreAsRunRecorder(ReportingStore(session_factory), outbox=as_run_outbox),
+        channel_start_hook=channel_start_hook,
     )
     # Item 5 fix: only the daemon knows which per-plan directories are
     # currently LIVE (active on-air + armed-not-yet-settled) -- wire it back

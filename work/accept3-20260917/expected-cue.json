@@ -1,0 +1,8 @@
+{
+  "cue_id": "cue-003113",
+  "observed_at_local": "2026-09-16T20:58:44.700695",
+  "text": "It's kind of a big story. So uh in the wrap our ap model and that does show",
+  "source": "live monitor of C:\\ProgramData\\CivicCast\\data\\egress\\public\\captions\\active.vtt during the accept3 window",
+  "why_this_matters": "handoff asks for ONE run-specific expected cue rather than whole-VTT counts; this is the only cue whose text was captured verbatim in this run",
+  "limitation": "the committed active.vtt snapshot is 7 bytes (WEBVTT) because the tap CLEARED the sidecar at 20:59:51 on a 120s overload pause, so the cue text is preserved only via this monitor record, not via a preserved VTT"
+}

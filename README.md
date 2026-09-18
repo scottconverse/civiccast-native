@@ -40,8 +40,20 @@ for the release's verification record (Gate A run, asset/hash/signature
 checks, the physical-machine soak, and the remaining acceptance boundary).
 
 `v1.0.0-beta.8` is the next candidate and the current owner-held unpublished candidate.
-It contains the merged three-channel CUDA caption-throughput repair;
-it has no published installer yet and does not change the beta.7 download above.
+It includes three-channel CUDA caption throughput and additional repairs to
+live speech stabilization, restart timing, session cleanup and retention work
+that could delay caption processing. It has no published installer yet and
+does not change the beta.7 download above.
+
+**Beta.8 caption evidence is bounded:** a local Blackwell run captured caption
+text in the outgoing stream and matched a preserved first post-restart cue to
+decoded output. A separate run logged the loaded CUDA/float16 model identity.
+The recovery capture lasted about 7.5 minutes; it is not a long-duration soak
+or acceptance of a newly built public installer. Startup overload remains an
+operational risk to monitor, and the existing two-segment backlog limit and
+initial two-minute pause remain unchanged. See the
+[caption investigation report](work/BLACKWELL-CAPTION-FIX-REPORT-v9.md) for
+the separate source revisions, evidence and limitations.
 
 The active local reliability repair addresses preparation blocking, reload
 acknowledgements, scheduled programme labels and caption-failure visibility.

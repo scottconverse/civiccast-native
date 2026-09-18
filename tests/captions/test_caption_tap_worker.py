@@ -12,6 +12,7 @@ runtime, ``run_once``/``run_forever`` survive-and-log loop.
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import threading
@@ -25,7 +26,12 @@ from types import SimpleNamespace
 import pytest
 
 from civiccast.captions import runtime as caption_runtime_module
-from civiccast.captions.models import AudioChunk, CaptionHypothesis, CustomVocabulary
+from civiccast.captions.models import (
+    AudioChunk,
+    CaptionCue,
+    CaptionHypothesis,
+    CustomVocabulary,
+)
 from civiccast.captions.review import InMemoryCaptionReviewStore
 from civiccast.captions.runtime import FasterWhisperRuntime
 from civiccast.captions.tap import TAP_SAMPLE_RATE_HZ
@@ -153,7 +159,408 @@ def _active_vtt(tap_root: Path, channel_id: str) -> Path:
     return tap_root.parent / "egress" / channel_id / "captions" / "active.vtt"
 
 
+class _SlowRetentionPolicy:
+    """Retention cleanup that BLOCKS, like the real one on a loaded host.
+
+    Measured on the Blackwell box (2026-09-16): one enforce_discovered() took
+    ~4.1-5.6 s because it SHA-256s every processed chunk and every evidence WAV
+    (8,105 candidates).  That runs on the caption tap thread BEFORE the backlog
+    gate, so segments accumulate while it blocks and the gate then fails closed
+    on a backlog cleanup itself created.
+    """
+
+    def __init__(self, delay_seconds: float = 0.0) -> None:
+        self.delay_seconds = delay_seconds
+        self.calls = 0
+        self.ready = True
+        self.refusal_reason: str | None = None
+        #: Signals that a sweep has ENTERED the blocking section, so a test can
+        #: land the next segment deterministically instead of sleeping and hoping.
+        self.entered = threading.Event()
+        #: Optional explicit release: when set, a "slow" sweep waits on this event
+        #: instead of a fixed delay, so a test can hold it blocked indefinitely and
+        #: then release it deterministically (no flaky wall-clock waits).
+        self.release: threading.Event | None = None
+
+    def enforce_discovered(self, *, tap_root, review_store, segment_seconds):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        self.entered.set()
+        if self.delay_seconds:
+            if self.release is not None:
+                self.release.wait(self.delay_seconds)
+            else:
+                threading.Event().wait(self.delay_seconds)
+        return SimpleNamespace(ready=self.ready, refusal_reason=self.refusal_reason)
+
+
+class _ScriptedRetentionPolicy:
+    """Retention policy with scripted per-call outcomes for state testing.
+
+    Each entry is one of: "ok" (ready), "refused" (ready=False with a reason),
+    an Exception instance to raise, or ANOTHER policy OBJECT to delegate to.
+    Lets a test drive the initial-refusal, first-failure, later-failure and
+    recovery paths deterministically, and compose with a slow policy so an async
+    sweep can be observed while it is genuinely in flight.
+    """
+
+    def __init__(self, outcomes) -> None:  # type: ignore[no-untyped-def]
+        self.outcomes = list(outcomes)
+        self.calls = 0
+
+    def enforce_discovered(self, *, tap_root, review_store, segment_seconds):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        outcome = self.outcomes[min(self.calls - 1, len(self.outcomes) - 1)]
+        if isinstance(outcome, Exception):
+            raise outcome
+        if outcome == "refused":
+            return SimpleNamespace(ready=False, refusal_reason="scripted-refusal")
+        if outcome == "ok":
+            return SimpleNamespace(ready=True, refusal_reason=None)
+        # A nested policy object: delegate, so e.g. a SLOW policy actually blocks
+        # and the sweep can be observed mid-flight.  Returning an "ok" namespace
+        # here would silently swallow it (a real bug in an earlier version of this
+        # double, which made a shutdown test pass without exercising anything).
+        return outcome.enforce_discovered(
+            tap_root=tap_root,
+            review_store=review_store,
+            segment_seconds=segment_seconds,
+        )
+
+
+class _VaryingLiveRuntime:
+    """Live ASR shape: real speech, DIFFERENT words on every 9 s window.
+
+    Mirrors the measured Blackwell behaviour (2026-09-16, device=cuda/float16):
+    the historical tap fed 5 s segments with 4 s of overlap, so each 9 s window
+    advanced 5 s and transcribed different words. The explicit override below
+    retains that regression shape. Confirmation requires matching words in the
+    shared audio interval, not merely overlapping geometry.
+    """
+
+    _TEXTS = (
+        "Dewpoints in Arizona. We're in the 40s and 30s.",
+        "We're in the 40s and 30s, so very much shuts down.",
+        "Friday just really big drop in the amount of convection.",
+        "Sunday a little more activity in the mountains.",
+        "And back comes the moisture with thunderstorms.",
+    )
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def transcribe(
+        self,
+        chunks: Iterable[AudioChunk],
+        vocabulary: CustomVocabulary | None = None,
+    ) -> Iterable[CaptionHypothesis]:
+        for chunk in chunks:
+            text = self._TEXTS[self.calls % len(self._TEXTS)]
+            self.calls += 1
+            yield CaptionHypothesis(
+                source_id=f"{chunk.chunk_id}-live",
+                start_seconds=chunk.start_seconds,
+                end_seconds=chunk.end_seconds,
+                text=text,
+                confidence=0.9,
+            )
+
+
+@pytest.mark.parametrize("publish_method", ["_publish_cues", "publish_for_current_session"])
+def test_session_reset_serializes_with_an_already_validated_publish(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, publish_method: str
+) -> None:
+    worker = _worker(tmp_path / "tap", _ScriptedRuntime(), InMemoryCaptionReviewStore())
+    worker._sweep_retention()
+    worker.begin_channel_session("public")
+    generation = worker._session_generation["public"]
+    publisher = worker._publisher_for("public")
+    entered, release, resetting, reset_done = (threading.Event() for _ in range(4))
+    original_publish = publisher.publish
+
+    def held_publish(cues):  # type: ignore[no-untyped-def]
+        entered.set()
+        assert release.wait(5)
+        original_publish(cues)
+
+    monkeypatch.setattr(publisher, "publish", held_publish)
+    cue = CaptionCue(
+        cue_id="old",
+        start_seconds=0,
+        end_seconds=1,
+        text="STALE BROADCAST",
+        confidence=0.9,
+        low_confidence=False,
+    )
+
+    def reset() -> None:
+        resetting.set()
+        worker.begin_channel_session("public")
+        reset_done.set()
+
+    with concurrent.futures.ThreadPoolExecutor(2) as pool:
+        publication = pool.submit(getattr(worker, publish_method), "public", generation, [cue])
+        try:
+            assert entered.wait(5)
+            restart = pool.submit(reset)
+            assert resetting.wait(5)
+            # Allow the old implementation to finish its unprotected reset.
+            reset_done.wait(0.1)
+        finally:
+            release.set()
+        publication.result(5)
+        restart.result(5)
+    assert _active_vtt(tmp_path / "tap", "public").read_text().strip() == "WEBVTT"
+
+
+@pytest.mark.parametrize("pause_at", ["read", "asr"])
+def test_old_segment_cannot_enter_or_damage_a_restarted_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pause_at: str
+) -> None:
+    tap_root = tmp_path / "tap"
+    channel = tap_root / "public"
+    segment = channel / "chunk-000001.wav"
+    runtime = _ScriptedRuntime("STALE BROADCAST")
+    worker = _worker(tap_root, runtime, InMemoryCaptionReviewStore(), atomic_segments=True)
+    worker.begin_channel_session("public")
+    _write_wav(segment)
+    entered, release = threading.Event(), threading.Event()
+    original_read = worker._read_chunk
+    original_transcribe = runtime.transcribe
+
+    def held_read(*args):  # type: ignore[no-untyped-def]
+        chunk = original_read(*args)
+        entered.set()
+        assert release.wait(5)
+        return chunk
+
+    def held_transcribe(*args, **kwargs):  # type: ignore[no-untyped-def]
+        entered.set()
+        assert release.wait(5)
+        yield from original_transcribe(*args, **kwargs)
+
+    if pause_at == "read":
+        monkeypatch.setattr(worker, "_read_chunk", held_read)
+    else:
+        monkeypatch.setattr(runtime, "transcribe", held_transcribe)
+    with concurrent.futures.ThreadPoolExecutor(1) as pool:
+        scan = pool.submit(worker._process_channel, "public", channel, [(1, segment)])
+        try:
+            assert entered.wait(5)
+            # Restart must finish without waiting for slow read/ASR.
+            worker.begin_channel_session("public")
+            _write_wav(segment, seconds=2)
+            fresh_bytes = segment.read_bytes()
+        finally:
+            release.set()
+        scan.result(5)
+    assert segment.is_file(), "old scan moved the new session's same-numbered WAV"
+    assert segment.read_bytes() == fresh_bytes
+    assert "public" not in worker._previous_segments, "old overlap restored after reset"
+    assert _active_vtt(tap_root, "public").read_text().strip() == "WEBVTT"
+    if pause_at == "read":
+        assert not runtime.seen_chunks, "audio read before reset entered new session ASR"
+
+
+def test_queued_scan_keeps_its_session_across_runtime_preparation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tap_root = tmp_path / "tap"
+    segment = tap_root / "public" / "chunk-000001.wav"
+    runtime = _ScriptedRuntime()
+    worker = _worker(tap_root, runtime, InMemoryCaptionReviewStore(), atomic_segments=True)
+    worker.begin_channel_session("public")
+    _write_wav(segment)
+
+    def prepare() -> None:
+        worker.begin_channel_session("public")
+        _write_wav(segment, seconds=2)
+
+    monkeypatch.setattr(runtime, "prepare", prepare, raising=False)
+    result = worker.run_once()
+    assert result.consumed_segments == 0
+    assert not runtime.seen_chunks
+    assert segment.is_file()
+    assert "public" not in worker._channel_workers
+
+
+def test_flush_keeps_the_worker_session_when_restart_occurs_during_flush(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tap_root = tmp_path / "tap"
+    worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
+    worker._sweep_retention()
+    worker.begin_channel_session("public")
+    live_worker = worker._worker_for("public")
+    cue = CaptionCue(
+        cue_id="old",
+        start_seconds=0,
+        end_seconds=1,
+        text="STALE FLUSH",
+        confidence=0.9,
+        low_confidence=False,
+    )
+
+    def flush():  # type: ignore[no-untyped-def]
+        worker.begin_channel_session("public")
+        return SimpleNamespace(committed_review_items=[], expired_unconfirmed_cues=[])
+
+    monkeypatch.setattr(live_worker, "flush", flush)
+    monkeypatch.setattr(live_worker, "committed_cues", lambda: [cue])
+    worker.flush_channel("public")
+    assert _active_vtt(tap_root, "public").read_text().strip() == "WEBVTT"
+
+
 class TestCaptionTapWorker:
+    def test_refused_storage_drains_other_channels_when_sidecar_reset_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from civiccast.captions.live_sidecar import LiveWebVttPublisher
+
+        tap_root = tmp_path / "tap"
+        worker = self._retention_worker(
+            tap_root, _ScriptedRetentionPolicy(["refused"]), _FakeClock()
+        )
+        for channel in ("alpha", "zulu"):
+            _write_wav(tap_root / channel / "chunk-000001.wav")
+        original_reset = LiveWebVttPublisher.reset
+
+        def reset(publisher: LiveWebVttPublisher) -> None:
+            if "alpha" in publisher.active_path.parts:
+                raise OSError("sidecar directory unavailable")
+            original_reset(publisher)
+
+        monkeypatch.setattr(LiveWebVttPublisher, "reset", reset)
+        worker.run_once()
+        assert not list(tap_root.glob("*/*.wav"))
+        assert not worker._review_store.list()
+
+    @pytest.mark.parametrize("destination", ["collision", "quarantine"])
+    def test_pending_recheck_does_not_retain_rejected_raw_audio(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, destination: str
+    ) -> None:
+        tap_root = tmp_path / "tap"
+        clock = _FakeClock()
+        slow = _SlowRetentionPolicy(delay_seconds=10)
+        slow.release = threading.Event()
+        worker = self._retention_worker(tap_root, _ScriptedRetentionPolicy(["ok", slow]), clock)
+        monkeypatch.setattr(
+            worker._retention_policy, "record_event", lambda **_: None, raising=False
+        )
+        worker.run_once()
+        segment = tap_root / "public" / "chunk-000001.wav"
+        _write_wav(segment)
+        if destination == "collision":
+            _write_wav(segment.parent / "processed" / segment.name)
+        else:
+            segment.write_bytes(b"invalid wav")
+        clock.advance(61)
+        try:
+            worker.run_once()
+            assert worker._retention_in_flight
+            assert not segment.exists()
+            assert not list((segment.parent / destination).glob("*.wav"))
+        finally:
+            slow.release.set()
+            assert worker.wait_for_retention_sweep(10)
+
+    @pytest.mark.parametrize("publication", ["flush", "public-seam"])
+    def test_refused_retention_cannot_republish_already_committed_cues(
+        self, tmp_path: Path, publication: str
+    ) -> None:
+        tap_root = tmp_path / "tap"
+        worker = self._retention_worker(
+            tap_root, _ScriptedRetentionPolicy(["ok", "refused"]), _FakeClock()
+        )
+        for index in range(2):
+            _write_wav(tap_root / "public" / f"chunk-{index:06d}.wav", seconds=5)
+        worker.run_once()
+        cues = worker._worker_for("public").committed_cues()
+        assert cues
+        worker._run_retention_sweep()
+        worker._publisher_for("public").reset()
+        if publication == "flush":
+            worker.flush_channel("public")
+        else:
+            worker.publish_for_current_session(
+                "public", worker._session_generation.get("public", 0), cues
+            )
+        assert _active_vtt(tap_root, "public").read_text().strip() == "WEBVTT"
+
+    def test_failed_session_reset_stays_disabled_until_a_successful_reset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from civiccast.captions.live_sidecar import LiveWebVttPublisher
+
+        tap_root = tmp_path / "tap"
+        runtime = _ScriptedRuntime()
+        worker = _worker(tap_root, runtime, InMemoryCaptionReviewStore(), atomic_segments=True)
+        worker.begin_channel_session("public")
+        for index in range(2):
+            _write_wav(tap_root / "public" / f"chunk-{index:06d}.wav")
+
+        def failed_reset(_self: LiveWebVttPublisher) -> None:
+            raise OSError("disk reset denied")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(LiveWebVttPublisher, "reset", failed_reset)
+            with pytest.raises(OSError, match="disk reset denied"):
+                worker.begin_channel_session("public")
+        assert worker.run_once().consumed_segments == 0
+        assert not runtime.seen_chunks
+        worker.begin_channel_session("public")
+        for index in range(2):
+            _write_wav(tap_root / "public" / f"chunk-{index:06d}.wav")
+        assert worker.run_once().consumed_segments == 2
+
+    def test_pending_recheck_keeps_live_text_but_retains_no_audio(self, tmp_path: Path) -> None:
+        tap_root = tmp_path / "tap"
+        clock = _FakeClock()
+        slow = _SlowRetentionPolicy(delay_seconds=10)
+        slow.release = threading.Event()
+        policy = _ScriptedRetentionPolicy(["ok", slow])
+        worker = self._retention_worker(tap_root, policy, clock)
+        worker.run_once()
+        clock.advance(61)
+        for index in range(2):
+            _write_wav(tap_root / "public" / f"chunk-{index:06d}.wav", seconds=5)
+        try:
+            result = worker.run_once()
+            assert slow.entered.wait(timeout=10.0)
+            assert worker._retention_in_flight
+            assert result.consumed_segments == 2
+            assert not list((tap_root / "public" / "processed").glob("*.wav"))
+            assert not list((tap_root.parent / "egress").rglob("evidence/*.wav"))
+            items = worker._review_store.list()
+            assert items, "text review must remain available during audio verification"
+            assert all(not item.audio_evidence_available for item in items)
+            assert _active_vtt(tap_root, "public").read_text().strip() != "WEBVTT"
+        finally:
+            slow.release.set()
+            assert worker.wait_for_retention_sweep(10)
+
+    def test_refusal_during_asr_cannot_persist_audio_or_publish(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        tap_root = tmp_path / "tap"
+        policy = _ScriptedRetentionPolicy(["ok", "refused"])
+        worker = self._retention_worker(tap_root, policy, _FakeClock())
+        worker.run_once()
+        original = worker._runtime.transcribe
+
+        def refuse_during_transcription(*args, **kwargs):  # type: ignore[no-untyped-def]
+            worker._run_retention_sweep()
+            yield from original(*args, **kwargs)
+
+        monkeypatch.setattr(worker._runtime, "transcribe", refuse_during_transcription)
+        for index in range(2):
+            _write_wav(tap_root / "public" / f"chunk-{index:06d}.wav", seconds=5)
+        worker.run_once()
+        assert not worker._retention_ready
+        assert not worker._review_store.list()
+        assert not list((tap_root / "public" / "processed").glob("*.wav"))
+        assert not list((tap_root.parent / "egress").rglob("evidence/*.wav"))
+        assert _active_vtt(tap_root, "public").read_text().strip() == "WEBVTT"
+
     def test_run_once_idles_cleanly_when_the_tap_directory_does_not_exist(
         self,
         tmp_path: Path,
@@ -220,10 +627,59 @@ class TestCaptionTapWorker:
         assert result.consumed_segments == 2
         assert len(runtime.seen_chunks) == 2
         assert runtime.seen_chunks[0].start_seconds == 0.0
-        assert runtime.seen_chunks[1].start_seconds == 1.0
+        assert runtime.seen_chunks[1].start_seconds == 0.0
         assert runtime.seen_chunks[1].end_seconds == 10.0
         assert len(store.list()) == 1
         assert _active_vtt(tap_root, "gov-ch12").is_file()
+
+    @pytest.mark.parametrize("source", ["constructor", "settings", "environment-override"])
+    def test_overlap_replays_full_previous_default_segment_unless_overridden(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+    ) -> None:
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "off")
+        monkeypatch.delenv("CIVICCAST_CAPTION_TAP_OVERLAP_SECONDS", raising=False)
+        if source == "environment-override":
+            monkeypatch.setenv("CIVICCAST_CAPTION_TAP_OVERLAP_SECONDS", "4")
+        options = (
+            {}
+            if source == "constructor"
+            else {"overlap_seconds": CaptionTapWorkerSettings.from_env().overlap_seconds}
+        )
+        worker = CaptionTapWorker(
+            tap_root=tmp_path / "tap",
+            caption_work_dir=tmp_path / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=InMemoryCaptionReviewStore(),
+            **options,
+        )
+        # Distinct first-second samples expose loss of the old default's omitted
+        # second. Check actual PCM, not only the window's declared timestamps.
+        second = TAP_SAMPLE_RATE_HZ * 2
+        previous_pcm = b"\x01\x00" * TAP_SAMPLE_RATE_HZ + b"\x02\x00" * (TAP_SAMPLE_RATE_HZ * 4)
+        current_pcm = b"\x03\x00" * (TAP_SAMPLE_RATE_HZ * 5)
+        previous = AudioChunk(
+            chunk_id="previous",
+            start_seconds=0.0,
+            end_seconds=5.0,
+            sample_rate_hz=TAP_SAMPLE_RATE_HZ,
+            pcm_s16le=previous_pcm,
+        )
+        current = AudioChunk(
+            chunk_id="current",
+            start_seconds=5.0,
+            end_seconds=10.0,
+            sample_rate_hz=TAP_SAMPLE_RATE_HZ,
+            pcm_s16le=current_pcm,
+        )
+        worker._previous_segments["public"] = (0, previous)
+
+        window = worker._with_overlap("public", 1, current)
+
+        omitted_seconds = 1 if source == "environment-override" else 0
+        assert window.start_seconds == float(omitted_seconds)
+        assert window.end_seconds == 10.0
+        assert len(window.pcm_s16le) == second * (10 - omitted_seconds)
+        assert window.pcm_s16le == previous_pcm[second * omitted_seconds :] + current_pcm
 
     def test_settled_segments_become_durable_review_items(self, tmp_path: Path) -> None:
         tap_root = tmp_path / "tap"
@@ -252,7 +708,7 @@ class TestCaptionTapWorker:
         assert sidecar.is_file()
         cues = load_caption_cues_from_timed_text(sidecar, source_id="gov-ch12")
         assert [(cue.text, cue.start_seconds, cue.end_seconds) for cue in cues] == [
-            ("the council will come to order", 0.0, 2.0)
+            ("the council will come to order", 0.0, 1.0)
         ]
 
     def test_active_sidecar_is_the_caption_feed_input(self, tmp_path: Path) -> None:
@@ -288,7 +744,7 @@ class TestCaptionTapWorker:
                 "channel_id": "gov-ch12",
                 "text": "the council will come to order",
                 "pts_seconds": 0.0,
-                "duration_seconds": 2.0,
+                "duration_seconds": 1.0,
             }
         ]
 
@@ -306,6 +762,593 @@ class TestCaptionTapWorker:
         assert first.consumed_segments == 1
         assert second.consumed_segments == 0
         assert len(runtime.seen_chunks) == 1
+
+    def test_varying_live_asr_text_still_reaches_the_active_sidecar(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Real live speech must reach active.vtt even though every window differs.
+
+        Measured on the Blackwell GPU run (2026-09-16, device=cuda/float16): the
+        caption tap processed 960+ chunks and transcribed real speech correctly,
+        yet active.vtt stayed at 7 bytes (empty WebVTT) and the emitted stream
+        carried only A/53 null padding.  Cause: the tap feeds 5 s segments with
+        4 s overlap (9 s windows advancing 5 s) while the stabilizer required the
+        SAME normalized text twice, which continuous speech never produces.  The
+        live tap therefore corroborates only matching words in shared audio.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "public"
+        # Two 5 s chunks in the first scan: within max_backlog=2, and enough for
+        # one window to be corroborated by the next overlapping window.
+        for index in range(2):
+            _write_wav(tap_root / channel / f"chunk-{index:06d}.wav", seconds=5.0)
+
+        runtime = _VaryingLiveRuntime()
+        store = InMemoryCaptionReviewStore()
+        # Historical production geometry, kept as an explicit override: 5 s
+        # segments with 4 s overlap -> 9 s windows advancing 5 s. The current
+        # default overlaps the full previous 5 s segment. (The harness default
+        # of a 1 s segment collapses both windows onto start 0.0, not the live
+        # shape this regression is about.)
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=runtime,
+            review_store=store,
+            segment_seconds=5.0,
+            overlap_seconds=4.0,
+            atomic_segments=True,
+        )
+
+        result = worker.run_once()
+
+        assert result.consumed_segments >= 2
+        sidecar = _active_vtt(tap_root, channel)
+        assert sidecar.is_file()
+        cues = load_caption_cues_from_timed_text(sidecar, source_id=channel)
+        assert cues, (
+            "live windows produced no active cue; the emitted stream would carry no caption text"
+        )
+        # The corroborated (later, overlapping) window supplies the committed text.
+        assert any("40s and 30s" in cue.text for cue in cues)
+
+    def test_stale_session_publish_cannot_restore_the_previous_broadcast(
+        self, tmp_path: Path
+    ) -> None:
+        """A cue published by the PREVIOUS session must not overwrite the reset.
+
+        Regression for the reset race: begin_channel_session() blanked the
+        sidecar, but a caption result still in flight from the old session's
+        worker could publish afterwards and put the old broadcast's cue back on
+        air (reproduced directly: reset -> old publish -> old caption visible).
+        The publish path is now generation-stamped, so a result carrying a
+        generation older than the channel's current one is dropped.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "public"
+        (tap_root / channel).mkdir(parents=True)
+        store = InMemoryCaptionReviewStore()
+        worker = _worker(tap_root, _ScriptedRuntime(), store)
+
+        # Seed the sidecar the way a previous broadcast left it.
+        publisher = worker._publisher_for(channel)
+        publisher.publish(
+            [
+                CaptionCue(
+                    cue_id="cue-OLD",
+                    start_seconds=10.0,
+                    end_seconds=18.0,
+                    text="OLD SESSION CAPTION",
+                    confidence=0.9,
+                    low_confidence=False,
+                )
+            ]
+        )
+        sidecar = _active_vtt(tap_root, channel)
+        assert "OLD SESSION CAPTION" in sidecar.read_text(encoding="utf-8")
+
+        # Capture the OLD generation, then start a new session.
+        stale_generation = worker._session_generation.get(channel, 0)
+        worker.begin_channel_session(channel)
+        assert "OLD SESSION CAPTION" not in sidecar.read_text(encoding="utf-8")
+
+        # A late publish from the old session must be refused.  Exercise the
+        # public publish path rather than a helper, so the assertion is
+        # behavioural and would fail on unfixed code for the right reason.
+        stale_cues = [
+            CaptionCue(
+                cue_id="cue-OLD",
+                start_seconds=10.0,
+                end_seconds=18.0,
+                text="OLD SESSION CAPTION",
+                confidence=0.9,
+                low_confidence=False,
+            )
+        ]
+        worker.publish_for_current_session(channel, stale_generation, stale_cues)
+
+        remaining = sidecar.read_text(encoding="utf-8")
+        assert "OLD SESSION CAPTION" not in remaining, (
+            "a finished session's caption reappeared after the reset"
+        )
+
+    def test_retention_cleanup_latency_does_not_cause_a_false_overload(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A MID-SESSION cleanup sweep must not manufacture a false overload.
+
+        Isolates the measured field defect (Blackwell 2026-09-16, 89 s after
+        ON_AIR) without touching the max-2 contract:
+
+          - max_backlog_segments stays 2; a backlog of 2 at gate time is legal
+          - the FIRST sweep is synchronous by design (it establishes the retention
+            verdict before any ASR -- the original safety guarantee), so the
+            dangerous sweep is a LATER one, on the 60 s cadence, with captions
+            already live.  The defect was that a later sweep also ran inline and
+            blocked ~5 s, so a third segment arrived during cleanup and tipped a
+            legal backlog over the line.
+
+        Models that: sweep once (synchronous, establishing the verdict), then make
+        the NEXT sweep slow and land a third segment while it would be running.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "public"
+        (tap_root / channel).mkdir(parents=True)
+        store = InMemoryCaptionReviewStore()
+        slow = _SlowRetentionPolicy()
+        clock = _FakeClock()
+
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=store,
+            segment_seconds=5.0,
+            atomic_segments=True,
+            retention_policy=slow,
+            monotonic=clock,
+        )
+
+        # First scan: the verdict is established before any ASR (whatever the
+        # implementation, this must hold).  Assert the OBSERVABLE consequence --
+        # one sweep ran and the store was accepted -- not a new internal flag, so
+        # this regression stays behavioural and can run against older code.
+        _write_wav(tap_root / channel / "chunk-000000.wav", seconds=5.0)
+        worker.run_once()
+        assert slow.calls == 1, "the first scan must verify retention before ASR"
+
+        # A live cue is on air now.
+        worker._publisher_for(channel).publish(
+            [
+                CaptionCue(
+                    cue_id="cue-LIVE",
+                    start_seconds=0.0,
+                    end_seconds=4.0,
+                    text="LIVE CAPTION ON AIR",
+                    confidence=0.9,
+                    low_confidence=False,
+                )
+            ]
+        )
+        sidecar = _active_vtt(tap_root, channel)
+
+        # Advance past the sweep cadence so the NEXT scan re-sweeps -- and that
+        # sweep is slow.  A legal 2-segment backlog exists when it starts.
+        clock.advance(61.0)
+        _write_wav(tap_root / channel / "chunk-000001.wav", seconds=5.0)
+        _write_wav(tap_root / channel / "chunk-000002.wav", seconds=5.0)
+
+        # Pin the legal backlog snapshot BEFORE the third arrival. Waiting only
+        # for sweep-entered races the actual backlog gate: instrumented CI can
+        # legitimately see all three and correctly overload. That was a test
+        # scheduling bug, not permission to weaken the max-two gate.
+        gate_sampled, third_landed = threading.Event(), threading.Event()
+        original_settled = worker._settled_segments
+
+        def settled(channel_dir: Path) -> list[tuple[int, Path]]:
+            snapshot = original_settled(channel_dir)
+            gate_sampled.set()
+            assert third_landed.wait(10)
+            return snapshot
+
+        monkeypatch.setattr(worker, "_settled_segments", settled)
+
+        def _land_third() -> None:
+            if gate_sampled.wait(timeout=10.0):
+                _write_wav(tap_root / channel / "chunk-000003.wav", seconds=5.0)
+                third_landed.set()
+
+        slow.entered.clear()
+        slow.delay_seconds = 30
+        slow.release = threading.Event()
+        lander = threading.Thread(target=_land_third, daemon=True)
+        lander.start()
+        with concurrent.futures.ThreadPoolExecutor(1) as pool:
+            scan = pool.submit(worker.run_once)
+            try:
+                assert slow.entered.wait(10)
+                # Must complete while retention is STILL blocked. A synchronous
+                # sweep cannot pass by simply being faster on this machine.
+                result = scan.result(timeout=10)
+                assert worker._retention_in_flight
+                assert third_landed.is_set()
+            finally:
+                slow.release.set()
+                third_landed.set()
+                gate_sampled.set()
+                lander.join(timeout=10.0)
+                assert worker.wait_for_retention_sweep(timeout=15.0)
+
+        assert result.dropped_overload_segments == 0, (
+            "a mid-session cleanup sweep manufactured a fail-closed overload"
+        )
+        assert "public" not in result.overloaded_channels
+        assert "public" not in result.paused_channels
+        text = sidecar.read_text(encoding="utf-8")
+        assert text.strip() != "WEBVTT", "a mid-session cleanup sweep cleared live captions"
+
+    def test_real_overload_still_fails_closed_when_cleanup_is_off_path(
+        self, tmp_path: Path
+    ) -> None:
+        """The 120s fail-closed must survive the cleanup fix, unchanged.
+
+        Companion to the cleanup-latency regression: moving retention off the
+        caption thread must NOT weaken the operator's protection.  A backlog that
+        genuinely exceeds ``max_backlog_segments`` at gate time still pauses,
+        clears, and discards -- exactly as before, with a fast (non-blocking)
+        retention policy.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "government"
+        (tap_root / channel).mkdir(parents=True)
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=5.0,
+            atomic_segments=True,
+            retention_policy=_SlowRetentionPolicy(delay_seconds=0.0),
+        )
+        active = _active_vtt(tap_root, channel)
+        active.parent.mkdir(parents=True, exist_ok=True)
+        active.write_text(
+            "WEBVTT\n\nold\n00:00:00.000 --> 00:00:01.000\nstale caption\n",
+            encoding="utf-8",
+        )
+        # A genuine overload: strictly over the threshold at gate time.
+        for index in range(4):
+            _write_wav(tap_root / channel / f"chunk-{index:06d}.wav", seconds=5.0)
+
+        result = worker.run_once()
+
+        assert result.consumed_segments == 0
+        assert "government" in result.overloaded_channels
+        assert "government" in result.paused_channels
+        assert result.dropped_overload_segments > 0
+        assert load_caption_cues_from_timed_text(active, source_id="government") == []
+        status_path = tap_root.parent / "egress" / "government" / "captions" / "runtime-status.json"
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        assert status["state"] == "paused"
+        assert status["resume_in_seconds"] > 0
+
+    def _retention_worker(self, tap_root: Path, policy: object, clock: object):
+        return CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=5.0,
+            atomic_segments=True,
+            retention_policy=policy,  # type: ignore[arg-type]
+            monotonic=clock,  # type: ignore[arg-type]
+        )
+
+    def test_initial_retention_refusal_blocks_asr_before_any_verdict(self, tmp_path: Path) -> None:
+        """An UNVERIFIED/refusing store must not be transcribed into.
+
+        The sweep used to be synchronous, so a verdict existed before ASR.  Now
+        that later sweeps are async, the initial state must still fail closed: a
+        first sweep that refuses must stop ASR entirely and report
+        ``storage-refused``, never silently transcribe.
+        """
+
+        tap_root = tmp_path / "tap"
+        (tap_root / "public").mkdir(parents=True)
+        _write_wav(tap_root / "public" / "chunk-000000.wav", seconds=5.0)
+        worker = self._retention_worker(
+            tap_root, _ScriptedRetentionPolicy(["refused"]), _FakeClock()
+        )
+
+        result = worker.run_once()
+
+        assert result.consumed_segments == 0
+        assert worker._retention_ready is False
+        assert worker._retention_refusal == "scripted-refusal"
+
+    def test_failed_first_sweep_fails_closed_not_open(self, tmp_path: Path) -> None:
+        """A sweep that RAISES must leave the store unverified, not 'ready'.
+
+        The dangerous default would be to treat an exception as permission to
+        transcribe.  A store we could not verify is not a store we may write
+        caption evidence into.
+        """
+
+        tap_root = tmp_path / "tap"
+        (tap_root / "public").mkdir(parents=True)
+        _write_wav(tap_root / "public" / "chunk-000000.wav", seconds=5.0)
+        worker = self._retention_worker(
+            tap_root, _ScriptedRetentionPolicy([RuntimeError("sweep boom")]), _FakeClock()
+        )
+
+        result = worker.run_once()
+
+        assert result.consumed_segments == 0
+        assert worker._retention_ready is False
+        assert worker._retention_refusal == "retention-verification-failed"
+
+    def test_later_sweep_failure_also_fails_closed_then_recovers(self, tmp_path: Path) -> None:
+        """After a SUCCESSFUL sweep, a later failure must still fail closed.
+
+        Accuracy check on the exception policy: an earlier implementation only
+        failed closed when ``not _retention_verified``, so a post-success failure
+        left ready=True and an unverifiable store kept being transcribed into.
+        The intended policy is fail-closed on ANY sweep failure, with explicit
+        recovery on the next SUCCESSFUL sweep (a fail-closed-with-retry, not a
+        latch).
+        """
+
+        tap_root = tmp_path / "tap"
+        (tap_root / "public").mkdir(parents=True)
+        clock = _FakeClock()
+        policy = _ScriptedRetentionPolicy(["ok", RuntimeError("later boom"), "ok"])
+        worker = self._retention_worker(tap_root, policy, clock)
+
+        # Sweep 1 succeeds -> verified + ready.
+        _write_wav(tap_root / "public" / "chunk-000000.wav", seconds=5.0)
+        worker.run_once()
+        assert policy.calls == 1
+        assert worker._retention_ready is True
+
+        # Sweep 2 (later) fails -> must FAIL CLOSED even though it was verified.
+        clock.advance(61.0)
+        _write_wav(tap_root / "public" / "chunk-000001.wav", seconds=5.0)
+        worker.run_once()
+        assert worker.wait_for_retention_sweep(timeout=10.0)
+        assert policy.calls == 2
+        assert worker._retention_ready is False, (
+            "a later sweep failure kept ready=True; an unverifiable store would "
+            "keep being transcribed into"
+        )
+        assert worker._retention_refusal == "retention-verification-failed"
+
+        # Sweep 3 succeeds again -> recovery (not a latch).
+        clock.advance(61.0)
+        _write_wav(tap_root / "public" / "chunk-000002.wav", seconds=5.0)
+        worker.run_once()
+        assert worker.wait_for_retention_sweep(timeout=10.0)
+        assert worker._retention_ready is True, "a successful sweep must clear the failure"
+
+    def test_run_forever_waits_for_the_retention_sweep_before_returning(
+        self, tmp_path: Path
+    ) -> None:
+        """run_forever must itself wait for an in-flight sweep before returning.
+
+        A soft shutdown (worker stopped/replaced while the process survives) must
+        not return while a sweep is still running against dirs a successor worker
+        may also sweep.
+
+        The discriminator is measured AT LOOP RETURN with no further joining: the
+        sweep is deliberately long enough (2 s) that it cannot finish during the
+        loop's own poll wait, so it is only complete on return if run_forever
+        waited for it.  Joining it in the test afterwards would mask the bug --
+        that is exactly what an earlier version of this test did.
+        """
+
+        tap_root = tmp_path / "tap"
+        (tap_root / "public").mkdir(parents=True)
+        _write_wav(tap_root / "public" / "chunk-000000.wav", seconds=5.0)
+        clock = _FakeClock()
+        slow = _SlowRetentionPolicy(delay_seconds=2.0)
+        policy = _ScriptedRetentionPolicy(["ok", slow])
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=5.0,
+            atomic_segments=True,
+            retention_policy=policy,  # type: ignore[arg-type]
+            monotonic=clock,
+        )
+        worker.run_once()  # synchronous first verification
+
+        stop = threading.Event()
+        clock.advance(61.0)  # next scan re-sweeps
+        loop = threading.Thread(
+            target=worker.run_forever,
+            kwargs={"poll_seconds": 0.05, "stop_event": stop},
+            daemon=True,
+        )
+        loop.start()
+        # Wait until the slow async sweep has actually STARTED.
+        assert slow.entered.wait(timeout=10.0), "async sweep never started"
+        stop.set()
+        loop.join(timeout=20.0)
+        assert not loop.is_alive(), "run_forever did not exit on stop_event"
+
+        # THE assertion: at loop return, with no further joining by the test, the
+        # sweep must already be finished.
+        thread = worker._retention_thread
+        assert thread is not None
+        assert not thread.is_alive(), (
+            "run_forever returned while the retention sweep was still running; a "
+            "successor worker could overlap it"
+        )
+
+    def test_successor_cannot_overlap_an_orphaned_sweep(self, tmp_path: Path) -> None:
+        """No overlapping sweep, and sweeps resume once an orphan completes.
+
+        Reachable path (traced): ThreadSupervisor.start() can be called again after
+        stop(), so the same worker can be re-entered while a sweep from the
+        previous loop is still running.
+
+        MEASURED OUTCOME: overlap does not occur.  ``_retention_in_flight`` stays
+        True until the running sweep finishes and the dispatch path returns early
+        on that flag, so the successor does not dispatch.  Verified by deleting the
+        shutdown branch entirely and re-running this scenario: the successor still
+        did not dispatch.  This test therefore pins the INVARIANT; it is not a RED
+        for any guard, and no extra production state exists for it.
+        """
+
+        tap_root = tmp_path / "tap"
+        (tap_root / "public").mkdir(parents=True)
+        _write_wav(tap_root / "public" / "chunk-000000.wav", seconds=5.0)
+        clock = _FakeClock()
+
+        blocking = _SlowRetentionPolicy(delay_seconds=30.0)  # far beyond the wait
+        blocking.release = threading.Event()
+        policy = _ScriptedRetentionPolicy(["ok", blocking])
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=5.0,
+            atomic_segments=True,
+            retention_policy=policy,  # type: ignore[arg-type]
+            monotonic=clock,
+        )
+        worker.run_once()  # synchronous first verification
+        worker._retention_shutdown_timeout = 0.2  # keep the test quick
+
+        stop = threading.Event()
+        clock.advance(61.0)
+        loop = threading.Thread(
+            target=worker.run_forever,
+            kwargs={"poll_seconds": 0.05, "stop_event": stop},
+            daemon=True,
+        )
+        loop.start()
+        assert blocking.entered.wait(timeout=10.0), "async sweep never started"
+
+        # Shutdown times out; run_forever returns with the sweep still alive.
+        stop.set()
+        loop.join(timeout=10.0)
+        assert not loop.is_alive(), "run_forever did not return on stop_event"
+        sweep = worker._retention_thread
+        assert sweep is not None and sweep.is_alive(), "precondition: orphan is alive"
+
+        # INVARIANT: a successor must NOT dispatch a second, overlapping sweep.
+        calls_before = policy.calls
+        clock.advance(61.0)
+        _write_wav(tap_root / "public" / "chunk-000001.wav", seconds=5.0)
+        worker.run_once()
+        assert policy.calls == calls_before, (
+            "a successor sweep was dispatched while the previous sweep was still "
+            "running; two sweeps would overlap on the same store and directories"
+        )
+
+        # Release the blocker: the orphan finishes and sweeps resume.
+        blocking.release.set()
+        assert worker.wait_for_retention_sweep(timeout=15.0)
+        clock.advance(61.0)
+        _write_wav(tap_root / "public" / "chunk-000002.wav", seconds=5.0)
+        worker.run_once()
+        assert worker.wait_for_retention_sweep(timeout=15.0)
+        assert policy.calls > calls_before, "sweeps did not resume after the orphan finished"
+
+    def test_new_session_discards_leftover_segments_instead_of_overloading(
+        self, tmp_path: Path
+    ) -> None:
+        """Leftover audio from a finished session must not cause a start-up overload.
+
+        Found in the accept5 run: PID 10588 started 04:21:47 and logged a caption
+        overload 28 s later at 04:22:15 while the public channel was on
+        FALLBACK_SLATE (not airing the program).  The tap had picked up 4 settled
+        segments left in the tap directory by the PREVIOUS broadcast, counted them
+        as backlog, and paused captions for 120 s before any new audio existed.
+
+        Those segments belong to a finished session and can never air, so a new
+        session must discard them rather than treat them as work.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "public"
+        (tap_root / channel).mkdir(parents=True)
+        worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
+
+        # Leftover settled audio from a previous broadcast.
+        for index in range(4):
+            _write_wav(tap_root / channel / f"chunk-{index:06d}.wav", seconds=5.0)
+
+        worker.begin_channel_session(channel)
+
+        remaining = sorted(p.name for p in (tap_root / channel).glob("chunk-*.wav"))
+        assert remaining == [], (
+            f"leftover segments from the previous session survived the reset: {remaining}"
+        )
+
+        result = worker.run_once()
+        assert result.dropped_overload_segments == 0
+        assert "public" not in result.overloaded_channels, (
+            "leftover segments from a finished session caused a start-up overload"
+        )
+
+    def test_resolved_identity_prefers_backend_and_reports_unavailable(self) -> None:
+        """Loaded identity must come from the BACKEND, never from the request.
+
+        Two guards:
+          (a) an "auto" request whose backend loaded on CUDA must report the
+              backend's device as loaded_device (not "auto"), with
+              identity_source="backend-model";
+          (b) with NO backend evidence, loaded_device must be "unavailable" -
+              NEVER an echo of the requested value, which could otherwise print
+              loaded_device=cuda with no loaded evidence.
+        """
+
+        from civiccast.captions.tap_worker import _resolved_runtime_identity
+
+        class _Backend:
+            device = "cuda"
+            compute_type = "float16"
+
+        class _Model:
+            model = _Backend()
+
+        class _AutoRuntime:
+            device = "auto"
+            compute_type = "float16"
+            num_workers = 3
+            _model = _Model()
+
+            def on_cuda(self) -> bool:
+                return True
+
+        ident = _resolved_runtime_identity(_AutoRuntime())
+        assert ident[0] == "auto"  # requested stays as requested
+        assert ident[2] == "cuda"  # loaded comes from the backend
+        assert ident[3] == "float16"
+        assert ident[6] == "backend-model"
+
+        class _NoBackendRuntime:
+            device = "cuda"
+            compute_type = "float16"
+            num_workers = 3
+            _model = None
+
+            def on_cuda(self) -> bool:
+                return True
+
+        ident2 = _resolved_runtime_identity(_NoBackendRuntime())
+        assert ident2[2] == "unavailable", "loaded_device echoed the request"
+        assert ident2[3] == "unavailable"
+        assert ident2[6] == "unavailable"
 
     def test_multiple_channels_keep_separate_caption_streams(self, tmp_path: Path) -> None:
         tap_root = tmp_path / "tap"
@@ -1029,6 +2072,9 @@ class TestCaptionTapPlayoutProtection:
 
         clock.advance(4.0)
         worker.run_once()
+        # Periodic verification is asynchronous; observe its completed result,
+        # not whether the new thread happened to win the scheduling race.
+        assert worker.wait_for_retention_sweep(timeout=10.0)
         assert sweeps == [0.0, 62.0]
 
     def test_a_storage_refusal_is_not_forgotten_between_retention_sweeps(

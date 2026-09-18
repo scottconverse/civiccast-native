@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from typing import Any
 
@@ -190,6 +191,95 @@ def _command(action: str = "start") -> EgressCommand:
         issued_by="operator",
         command_id=f"cmd-{action}",
     )
+
+
+def test_start_command_runs_the_channel_session_hook_before_encoding(tmp_path: Path) -> None:
+    """A fresh channel start must reset session-scoped caption state."""
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    seen: list[str] = []
+    process = _FakeProcess()
+
+    def _on_start(channel_id: str) -> None:
+        seen.append(channel_id)
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: process,
+        channel_start_hook=_on_start,
+    )
+
+    assert daemon.process_once("gov") == 1
+
+    assert seen == ["gov"]
+
+
+def test_start_command_still_starts_when_the_session_hook_raises(tmp_path: Path) -> None:
+    """A failing caption sidecar reset must never block a channel from airing.
+
+    Regression for the unguarded channel_start_hook: the hook performs the
+    session-scoped caption sidecar reset, which writes to disk.  If that write
+    raises (locked/read-only active.vtt, permissions, disk full), the exception
+    propagated out of start-command processing and the channel never reached
+    encoding -- a caption concern taking down broadcast.  The hook must be
+    best-effort: log the failure and continue with the start.
+    """
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    started: list[str] = []
+    process = _FakeProcess()
+
+    def _raising_hook(channel_id: str) -> None:
+        started.append(channel_id)
+        raise OSError("active.vtt is read-only")
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: process,
+        channel_start_hook=_raising_hook,
+    )
+
+    # Must not raise, and the channel must still be started.
+    assert daemon.process_once("gov") == 1
+
+    assert started == ["gov"]
+    assert process.terminated is False
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state in {"STARTING", "ON_AIR"}
+
+
+def test_failed_caption_reset_does_not_read_stale_sidecar(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    reads: list[str] = []
+
+    def reset(channel_id: str) -> None:
+        raise OSError("active.vtt is read-only")
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _: _FakeProcess(),
+        channel_start_hook=reset,
+        caption_plan_provider=lambda channel: reads.append(channel),
+        caption_status_provider=lambda _: "on",
+    )
+    daemon.process_once("gov")
+    assert reads == [], "failed reset must not consult the previous session's caption sidecar"
+    assert store.read_state("gov").state == "ON_AIR"
+    assert store.recent_health("gov", 1)[0].caption_status == "not-verified"
+    assert "captions disabled" in (store.read_state("gov").last_error or "")
 
 
 def test_daemon_processes_start_command_and_records_success_health(tmp_path: Path) -> None:
@@ -1073,6 +1163,70 @@ class _FakeNonReloadCapableStrategy(_FakeContentReloadStrategy):
     ever called, so ``reload_calls`` staying empty is the proof."""
 
     supports_content_reload = False
+
+
+def test_failed_caption_reset_gate_survives_reload_until_successful_start(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    started: list[_FakeProcess] = []
+    requests: list[EncoderStartRequest] = []
+    sends: list[str] = []
+    reset_fails = [True]
+
+    class Strategy(_FakeContentReloadStrategy):
+        def start(self, request: EncoderStartRequest) -> EncoderStartResult:
+            requests.append(request)
+            return super().start(request)
+
+        def reload_content(self, channel_id, work_dir, request, *, command_id=None):
+            requests.append(request)
+            return super().reload_content(channel_id, work_dir, request, command_id=command_id)
+
+        def send_caption_cue(self, channel_id, work_dir, **kwargs):
+            sends.append(kwargs["text"])
+            return True
+
+    def reset(channel_id: str) -> None:
+        if reset_fails[0]:
+            raise OSError("locked sidecar")
+
+    strategy = Strategy([_FakeProcess(pid=111), _FakeProcess(pid=222)], started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        encoder_strategy=strategy,
+        source_plan_provider=lambda _: _source_plan(tmp_path),
+        channel_start_hook=reset,
+    )
+    store.enqueue_command(_command())
+    daemon.process_once("gov")
+    assert not requests[-1].captions_allowed
+    assert requests[-1].caption_plan is None
+    assert requests[-1].audio_tap_plan is None
+    assert not daemon.send_caption_cue(
+        "gov", tmp_path, text="OLD", pts_seconds=0, duration_seconds=1, delivery_id="old"
+    )
+    assert sends == []
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+    assert len(requests) == 2
+    assert not requests[-1].captions_allowed
+    assert not started[0].terminated
+    reset_fails[0] = False
+    # A duplicate Start on a live worker is not a reset and cannot lift the gate.
+    store.enqueue_command(_command().model_copy(update={"command_id": "duplicate-start"}))
+    daemon.process_once("gov")
+    assert "gov" in daemon._caption_reset_failed
+    store.enqueue_command(_command("stop"))
+    daemon.process_once("gov")
+    store.enqueue_command(_command().model_copy(update={"command_id": "fresh-start"}))
+    daemon.process_once("gov")
+    assert requests[-1].captions_allowed
+    assert "gov" not in daemon._caption_reset_failed
+    assert daemon.send_caption_cue(
+        "gov", tmp_path, text="NEW", pts_seconds=0, duration_seconds=1, delivery_id="new"
+    )
+    assert sends == ["NEW"]
 
 
 def test_content_reload_swaps_program_in_place_without_restart(tmp_path: Path) -> None:
@@ -3340,6 +3494,8 @@ def test_async_start_expiring_during_preparation_releases_once_then_prepares_fre
     started_labels: list[str] = []
     counter = {"n": 0}
     base_prepare = _prepare_with_tracked_plan_dirs(tmp_path, counter)
+    initial_prepare_entered = Event()
+    release_initial_prepare = Event()
 
     def source_provider(_channel_id: str) -> EgressSourcePlan:
         nonlocal provider_calls
@@ -3352,6 +3508,8 @@ def test_async_start_expiring_during_preparation_releases_once_then_prepares_fre
     def prepare(plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
         prepared_labels.append(plan.segments[0].label)
         if plan.segments[0].label == "Council meeting":
+            initial_prepare_entered.set()
+            assert release_initial_prepare.wait(timeout=10.0)
             clock[0] += 10.0
         return base_prepare(plan, config)
 
@@ -3376,6 +3534,10 @@ def test_async_start_expiring_during_preparation_releases_once_then_prepares_fre
     daemon.enable_async_preparation()
     try:
         daemon.process_once("gov")
+        # Hold the first preparation across this tick's end-of-pass poll. A
+        # fast worker may otherwise advance to fallback before this returns.
+        assert initial_prepare_entered.wait(timeout=10.0)
+        release_initial_prepare.set()
         daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
 
         daemon.process_once("gov")
@@ -3393,6 +3555,7 @@ def test_async_start_expiring_during_preparation_releases_once_then_prepares_fre
         assert daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-2"})
         assert store.read_state("gov").state == "FALLBACK_SLATE"  # type: ignore[union-attr]
     finally:
+        release_initial_prepare.set()
         daemon.shutdown_preparation()
 
 
@@ -6250,6 +6413,7 @@ def _slate_then_program_daemon(
     restart_cooldown_seconds: float = 0.0,
     slate_plan: Callable[[Path], EgressSourcePlan] = _slate_plan,
     program_resolves: list[int] | None = None,
+    channel_start_hook: Callable[[str], None] | None = None,
 ) -> EgressDaemon:
     """A daemon whose program provider hands out ``program_plan[0]`` (mutable
     by the test) and whose fallback provider always yields the slate plan.
@@ -6271,6 +6435,7 @@ def _slate_then_program_daemon(
         prepared_plan_release=prepared_plan_release,
         monotonic=lambda: clock[0],
         restart_cooldown_seconds=restart_cooldown_seconds,
+        channel_start_hook=channel_start_hook,
     )
 
 
@@ -6666,7 +6831,11 @@ def test_a_program_that_holds_healthy_air_resets_the_slate_eos_relaunch_count(
     started: list[_FakeProcess] = []
     clock = [1000.0]
     daemon = _slate_then_program_daemon(
-        tmp_path, program_plan=program_plan, processes=processes, started=started, clock=clock
+        tmp_path,
+        program_plan=program_plan,
+        processes=processes,
+        started=started,
+        clock=clock,
     )
     store = daemon._store  # type: ignore[attr-defined]
     store.upsert_config(_config())
@@ -6962,7 +7131,11 @@ def test_stop_and_reset_restart_tracking_clear_the_slate_eos_relaunch_count(
     started: list[_FakeProcess] = []
     clock = [1000.0]
     daemon = _slate_then_program_daemon(
-        tmp_path, program_plan=program_plan, processes=processes, started=started, clock=clock
+        tmp_path,
+        program_plan=program_plan,
+        processes=processes,
+        started=started,
+        clock=clock,
     )
     store = daemon._store  # type: ignore[attr-defined]
     store.upsert_config(_config())
@@ -6996,8 +7169,14 @@ def test_operator_start_clears_the_slate_eos_relaunch_count(tmp_path: Path) -> N
     processes = [_FakeProcess(pid=pid) for pid in (111, 222, 333)]
     started: list[_FakeProcess] = []
     clock = [1000.0]
+    hook_calls: list[str] = []
     daemon = _slate_then_program_daemon(
-        tmp_path, program_plan=program_plan, processes=processes, started=started, clock=clock
+        tmp_path,
+        program_plan=program_plan,
+        processes=processes,
+        started=started,
+        clock=clock,
+        channel_start_hook=hook_calls.append,
     )
     store = daemon._store  # type: ignore[attr-defined]
     store.upsert_config(_config())
@@ -7008,6 +7187,15 @@ def test_operator_start_clears_the_slate_eos_relaunch_count(tmp_path: Path) -> N
     daemon.process_once("gov")  # relaunch #1 -> ON_AIR (222)
     assert daemon._slate_eos_relaunches.get("gov") == 1  # type: ignore[attr-defined]
 
+    # Hook calls so far are the two GENUINE launch transitions (slate PID111,
+    # then the program relaunch PID222).  That behaviour must be preserved; what
+    # must not happen is the duplicate start below adding another call, because a
+    # start on an already-live channel is a no-op that keeps the current writer
+    # running -- session-scoped cleanup there would discard LIVE audio.
+    assert hook_calls == ["gov", "gov"], (
+        f"expected one hook call per genuine launch transition, got {hook_calls}"
+    )
+    genuine_calls = len(hook_calls)
     store.enqueue_command(
         EgressCommand(
             channel_id="gov",
@@ -7020,6 +7208,10 @@ def test_operator_start_clears_the_slate_eos_relaunch_count(tmp_path: Path) -> N
     daemon.process_once("gov")  # the worker is alive: start is a no-op ON_AIR rewrite
     assert store.read_state("gov").pid == 222
     assert "gov" not in daemon._slate_eos_relaunches  # type: ignore[attr-defined]
+    assert len(hook_calls) == genuine_calls, (
+        "the duplicate START on a live channel fired the session-start hook, "
+        "which would run session-scoped cleanup against the live writer's audio"
+    )
 
 
 def test_peek_pending_commands_does_not_consume(tmp_path: Path) -> None:

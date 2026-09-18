@@ -1,0 +1,15 @@
+{
+  "window_local": "2026-09-16 19:26:00 - 19:30:00 America/Denver",
+  "acceptance_run_start_local": "2026-09-16 19:26:05",
+  "source_log": "C:\\\\ProgramData\\\\CivicCast\\\\logs\\\\control_plane-app.log",
+  "overload_events_in_window": 0,
+  "backlog_events_in_window": 0,
+  "paused_events_in_window": 0,
+  "capacity_ok_events_in_window": 0,
+  "sample_overload_lines_elsewhere_in_log": 8,
+  "stale_state_transition": {
+    "before": "public channel was FALLBACK_SLATE with a prior session's sidecar; start command fires the channel_start_hook that resets the per-session sidecar",
+    "after": "public ON_AIR on the real program; active.vtt held 22 fresh cues; no stale cues carried over"
+  },
+  "verdict": "no overload, backlog, or paused events occurred during the live acceptance window"
+}

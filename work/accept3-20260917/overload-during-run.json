@@ -1,0 +1,10 @@
+{
+  "logged_at_local": "2026-09-16 20:59:51,229",
+  "channel": "public",
+  "verbatim": "Caption tap overload for channel public: 3 settled segments exceeds the maximum 2. Live captions are PAUSED for 120s (overload #1) so playout keeps the CPU; active captions were cleared and the stale audio was discarded.",
+  "seconds_after_on_air": 89,
+  "on_air_at": "2026-09-16 20:58:22 (approx; ON_AIR observed at 20:58:23 in run polling)",
+  "effect": "captions paused for 120s; the active VTT was cleared and stale audio discarded",
+  "after_recovery_evidence_recorded": false,
+  "source_log": "C:\\\\ProgramData\\\\CivicCast\\\\logs\\\\control_plane-app.log"
+}

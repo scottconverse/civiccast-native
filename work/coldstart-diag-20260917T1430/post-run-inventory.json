@@ -1,0 +1,26 @@
+{
+  "channels": {
+    "public": {
+      "first": "chunk-000000.wav",
+      "last": "chunk-013857.wav",
+      "count": 12980,
+      "newestMtime": "2026-09-17T14:04:36.5713301-06:00",
+      "sumMB": 1980.8
+    },
+    "education": {
+      "first": "chunk-000000.wav",
+      "last": "chunk-000547.wav",
+      "count": 295,
+      "newestMtime": "2026-09-16T01:34:26.7615015-06:00",
+      "sumMB": 45.0
+    },
+    "government": {
+      "first": "chunk-000000.wav",
+      "last": "chunk-000540.wav",
+      "count": 275,
+      "newestMtime": "2026-09-16T01:34:37.2073480-06:00",
+      "sumMB": 42.0
+    }
+  },
+  "ts": "2026-09-17T14:46:06.0691228-06:00"
+}

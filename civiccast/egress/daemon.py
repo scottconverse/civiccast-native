@@ -428,6 +428,7 @@ class EgressDaemon:
         # construct a real ``SourcePreparer``) means GC alone reclaims stale
         # directories -- never a correctness issue, just slower cleanup.
         prepared_plan_release: Callable[[Path | None], None] | None = None,
+        channel_start_hook: Callable[[str], None] | None = None,
     ) -> None:
         self._store = store
         # Single injectable monotonic clock for all crash-relaunch timing (the
@@ -439,6 +440,10 @@ class EgressDaemon:
         self._ts_relay = ts_relay_supervisor
         self._hls_relay = hls_relay_supervisor
         self._command_failure_hook = command_failure_hook
+        self._channel_start_hook = channel_start_hook
+        # Cleared only by a successful real launch reset, never by an in-place
+        # content reload or duplicate Start against the current worker.
+        self._caption_reset_failed: set[str] = set()
         self._work_dir = work_dir
         self._source_plan_provider = source_plan_provider
         self._boundary_source_plan_provider = boundary_source_plan_provider
@@ -1072,6 +1077,8 @@ class EgressDaemon:
         through this daemon's existing strategy instance.
         """
 
+        if channel_id in self._caption_reset_failed:
+            return False
         sender = getattr(self._encoder_strategy, "send_caption_cue", None)
         if not callable(sender):
             return False
@@ -1112,6 +1119,17 @@ class EgressDaemon:
                 )
                 return
         if command.action == "start":
+            # NOTE on ordering: the caption session-start hook is NOT called here.
+            # It is invoked by ``_start_steps`` only on the branch where a NEW
+            # session actually begins.  Calling it here ran the hook for a
+            # DUPLICATE start on an already-live channel -- which is a no-op that
+            # keeps the current writer running -- so its session-scoped cleanup
+            # would have discarded the LIVE session's own audio (reproduced via
+            # the daemon command path: the hook fired twice for start -> stop?
+            # no: for an operator start followed by a duplicate start on a live
+            # channel).  Firing it at the real transition is both correct and
+            # sufficient, because at that point no writer for the new session
+            # exists yet.
             # An operator start is a fresh intent: the slate-EOS relaunch cap
             # (see _SLATE_EOS_RELAUNCH_MAX_CONSECUTIVE) starts over for it.
             self._slate_eos_relaunches.pop(command.channel_id, None)
@@ -1302,6 +1320,26 @@ class EgressDaemon:
             self._discard_pending_reload_settlement(channel_id, reason="channel restarting")
             self._discard_active_prepared_plan_dir(channel_id)
             self._reap_orphan(channel_id)
+            # A GENUINE new session begins here: this is past the "existing
+            # process still alive" short-circuit (which returned above) and past
+            # the dead-process reap, and before any new pipeline/writer is built.
+            # The caption session-start hook therefore runs exactly once per real
+            # transition -- so its session-scoped cleanup can never discard the
+            # audio of a LIVE session, and every chunk present at this instant
+            # belongs to a previous session rather than the one about to start.
+            # Best-effort: a caption-sidecar failure must never block broadcast.
+            if self._channel_start_hook is not None:
+                try:
+                    self._channel_start_hook(channel_id)
+                except Exception:
+                    self._caption_reset_failed.add(channel_id)
+                    _LOG.exception(
+                        "channel %s: caption session-start hook failed; captions disabled "
+                        "until a successful new session reset; continuing broadcast",
+                        channel_id,
+                    )
+                else:
+                    self._caption_reset_failed.discard(channel_id)
             # From here on a pipeline is being BUILT from ``stored_config``.
             self._built_configs[channel_id] = stored_config
             if not hls_relay_was_alive:
@@ -1513,6 +1551,7 @@ class EgressDaemon:
                 caption_plan = (
                     self._caption_plan_provider(channel_id)
                     if self._caption_plan_provider is not None
+                    and channel_id not in self._caption_reset_failed
                     else None
                 )
                 running_state: EgressState = "FALLBACK_SLATE" if using_fallback_slate else "ON_AIR"
@@ -1549,9 +1588,14 @@ class EgressDaemon:
                         resolve_secret=self._resolve_secret,
                         branding_plan=branding_plan,
                         caption_plan=caption_plan,
+                        captions_allowed=channel_id not in self._caption_reset_failed,
                         # Live caption tap (Beta B6, option A): env-configured
                         # audio fork rides the same encoder process.
-                        audio_tap_plan=build_audio_tap_plan(channel_id),
+                        audio_tap_plan=(
+                            build_audio_tap_plan(channel_id)
+                            if channel_id not in self._caption_reset_failed
+                            else None
+                        ),
                         ffmpeg_starter=self._ffmpeg_starter,
                         cg_overlay_image=(
                             self._cg_overlay_provider(channel_id, config)
@@ -1780,6 +1824,10 @@ class EgressDaemon:
         # reach ``EgressStore.write_state`` -- see
         # ``civiccast/egress/_text.py`` for why a non-UTF8 character here
         # aborts the whole automation pass if left unfolded.
+        if channel_id in self._caption_reset_failed and state != "STOPPED":
+            warning = "captions disabled: session reset failed; Stop and Start again to retry"
+            if not last_error or warning not in last_error:
+                last_error = f"{last_error}; {warning}" if last_error else warning
         current_source_label = db_safe_text_or_none(current_source_label)
         last_error = db_safe_text_or_none(last_error)
         _LOG.info(
@@ -1830,9 +1878,13 @@ class EgressDaemon:
                 seconds_on_air=seconds_on_air,
                 last_loudness_lufs=self._last_loudness_lufs.get(channel_id),
                 caption_status=(
-                    self._caption_status_provider(channel_id)
-                    if self._caption_status_provider is not None
-                    else "not-verified"
+                    "not-verified"
+                    if channel_id in self._caption_reset_failed
+                    else (
+                        self._caption_status_provider(channel_id)
+                        if self._caption_status_provider is not None
+                        else "not-verified"
+                    )
                 ),
                 schema_version=current_schema_version(),
                 proof_events_appended_since_last_sample=self._store.count_proof_events_since(
@@ -3238,6 +3290,7 @@ class EgressDaemon:
             caption_plan=(
                 self._caption_plan_provider(channel_id)
                 if self._caption_plan_provider is not None
+                and channel_id not in self._caption_reset_failed
                 else None
             ),
             cg_overlay_image=(
@@ -3245,7 +3298,12 @@ class EgressDaemon:
                 if self._cg_overlay_provider is not None
                 else None
             ),
-            audio_tap_plan=build_audio_tap_plan(channel_id),
+            captions_allowed=channel_id not in self._caption_reset_failed,
+            audio_tap_plan=(
+                build_audio_tap_plan(channel_id)
+                if channel_id not in self._caption_reset_failed
+                else None
+            ),
             ffmpeg_starter=self._ffmpeg_starter,
             # Only a horizon-bound automation rollover of an ON_AIR or finite
             # FALLBACK_SLATE plan may defer to the outgoing leg's EOS. A no-horizon

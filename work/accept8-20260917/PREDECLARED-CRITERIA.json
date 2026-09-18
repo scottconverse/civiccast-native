@@ -1,0 +1,30 @@
+{
+  "created_before_run": true,
+  "created_at_local": "2026-09-17T06:10:33.868820",
+  "commit_under_test": "e3a47841ffd9cc25f95a70da43630c2fbe662dcb",
+  "harness": "receive-path v2: raw TS bytes + per-datagram arrival timestamps + byte offsets, per-run directory",
+  "harness_prevalidated": "yes - probe-program showed 600 video packets/19.66s, contiguous index, decodable frames+captions",
+  "procedure": [
+    "1. channel STOPPED; start receiver (capture begins before enable)",
+    "2. issue START at a logged wall time",
+    "3. sustained ON_AIR >= 180s, captions increasing",
+    "4. controlled STOP then START at logged times",
+    "5. keep SAME receiver running through >= 120s post-recovery",
+    "6. preserve FIRST post-recovery cue immediately",
+    "7. tie the recovery boundary to DATAGRAM ARRIVAL (stream gap/resume), not to PTS",
+    "8. decode; apply six-word rule ONLY within the arrival-proven post-recovery interval"
+  ],
+  "success_criteria": [
+    "receiver captures the whole run in ONE uninterrupted index",
+    "arrival timeline shows the stop gap and the resume",
+    ">=1 real program cue matches decoded text WITHIN the arrival-proven post-recovery interval",
+    "caption runtime within-capacity after recovery",
+    "in-window worker GPU identity captured"
+  ],
+  "failure_criteria": [
+    "no decoded text after recovery -> FAIL",
+    "captions do not resume -> FAIL",
+    "arrival boundary cannot be identified -> report unproven"
+  ],
+  "unchanged": "max_backlog_segments=2 and the 120s fail-closed are NOT modified. No synthetic cue injection."
+}

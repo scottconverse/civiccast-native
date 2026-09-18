@@ -9,10 +9,13 @@ with the release owner after the release gates and soak evidence are complete.
 
 ## Install
 
-> **The current published release is `v1.0.0-beta.5`** (2026-09-09),
+> **The current published release is `v1.0.0-beta.7`** (2026-09-15),
 > recorded as `current` in the release-truth record. Confirm the exact
 > filename, size, hash, and Authenticode publisher against the active
 > handoff before running it.
+
+Beta.8 remains an unpublished candidate while its release checks run. Do not
+substitute source code or an older installer for an assigned candidate test.
 
 1. **For a first install**, use the complete signed USB/LAN kit named in your
    handoff: installer, runtime packs, and `station\` model bundle. A GitHub

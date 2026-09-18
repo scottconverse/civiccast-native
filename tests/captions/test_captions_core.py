@@ -54,7 +54,34 @@ def _hypothesis(
     )
 
 
+def _word_window(start: float, words: list[tuple[str, float, float]]) -> CaptionHypothesis:
+    return CaptionHypothesis.model_validate(
+        {
+            "source_id": f"window-{start}",
+            "start_seconds": start,
+            "end_seconds": start + 10,
+            "text": " ".join(w[0] for w in words),
+            "audio_window_start_seconds": start,
+            "audio_window_end_seconds": start + 10,
+            "words": [
+                {"text": text, "start_seconds": a, "end_seconds": b, "confidence": 0.9}
+                for text, a, b in words
+            ],
+        }
+    )
+
+
 class TestModels:
+    def test_audio_window_metadata_requires_a_complete_forward_pair(self) -> None:
+        for metadata in (
+            {"audio_window_start_seconds": 0},
+            {"audio_window_start_seconds": 2, "audio_window_end_seconds": 1},
+        ):
+            with pytest.raises(ValidationError):
+                CaptionHypothesis(
+                    source_id="x", start_seconds=0, end_seconds=1, text="speech", **metadata
+                )
+
     def test_audio_chunk_requires_forward_time(self) -> None:
         with pytest.raises(ValidationError, match="end_seconds"):
             AudioChunk(
@@ -78,6 +105,104 @@ class TestModels:
 
 
 class TestCaptionStabilizer:
+    def test_timed_word_preserves_first_window_low_confidence(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        first = _word_window(0, [("motion", 6, 7), ("carries", 7, 8)]).model_copy(
+            update={"confidence": 0.1}
+        )
+        stabilizer.observe(first)
+        cues = stabilizer.observe(_word_window(5, [("motion", 6, 7), ("carries", 7, 8)]))
+        assert cues[0].confidence == 0.1
+        assert cues[0].low_confidence
+
+    def test_timed_word_flush_is_review_only_and_idempotent(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        stabilizer.observe(_word_window(0, [("once", 1, 2), ("heard", 2, 3)]))
+        assert stabilizer.flush() == []
+        assert stabilizer.committed() == []
+        assert [cue.text for cue in stabilizer.expired_unconfirmed()] == ["once heard"]
+        assert stabilizer.flush() == []
+        assert len(stabilizer.expired_unconfirmed()) == 1
+
+    def test_word_confirmation_allows_first_window_to_grow_without_new_start(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        first = _word_window(0, [("motion", 1, 2), ("carries", 2, 3)]).model_copy(
+            update={"audio_window_end_seconds": 5, "end_seconds": 5}
+        )
+        assert stabilizer.observe(first) == []
+        cues = stabilizer.observe(_word_window(0, [("motion", 1, 2), ("carries", 2, 3)]))
+        assert [cue.text for cue in cues] == ["motion carries"]
+
+    def test_live_missing_word_observations_are_visible_review_only(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        missing = _word_window(0, [("speech", 1, 2)]).model_copy(update={"words": []})
+        assert stabilizer.observe(missing) == []
+        assert [cue.text for cue in stabilizer.expired_unconfirmed()] == ["speech"]
+
+    def test_word_confirmation_requires_time_and_distinct_windows(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        first = _word_window(0, [("motion", 1, 2), ("carries", 2, 3)])
+        assert stabilizer.observe(first) == []
+        assert stabilizer.observe(first) == []
+        assert stabilizer.observe(_word_window(5, [("motion", 6, 7), ("carries", 7, 8)])) == []
+        assert stabilizer.committed() == []
+
+    def test_word_confirmation_counts_each_word_without_lending_to_new_tail(self) -> None:
+        stabilizer = CaptionStabilizer(live=True, stable_windows=3)
+        assert stabilizer.observe(_word_window(0, [("motion", 6, 7), ("carries", 7, 8)])) == []
+        assert (
+            stabilizer.observe(
+                _word_window(
+                    1, [("motion", 6, 7), ("carries", 7, 8), ("new", 8, 9), ("tail", 9, 10)]
+                )
+            )
+            == []
+        )
+        cues = stabilizer.observe(
+            _word_window(2, [("motion", 6, 7), ("carries", 7, 8), ("new", 8, 9), ("tail", 9, 10)])
+        )
+        assert [cue.text for cue in cues] == ["motion carries"]
+        cues = stabilizer.observe(_word_window(3, [("new", 8, 9), ("tail", 9, 10)]))
+        assert [cue.text for cue in cues] == ["new tail"]
+
+    def test_zero_duration_word_is_reviewed_not_given_invented_duration(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        assert stabilizer.observe(_word_window(0, [("zero", 6, 6), ("duration", 6, 6)])) == []
+        assert stabilizer.observe(_word_window(5, [("zero", 6, 6), ("duration", 6, 6)])) == []
+        assert stabilizer.observe(_word_window(10, [("other", 11, 12), ("speech", 12, 13)])) == []
+        assert stabilizer.committed() == []
+        assert any("zero" in cue.text for cue in stabilizer.expired_unconfirmed())
+
+    def test_live_word_alignment_confirms_interior_phrase_not_window_suffix(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+
+        def window(start: int, words: list[tuple[str, float, float]]) -> CaptionHypothesis:
+            return CaptionHypothesis.model_validate(
+                {
+                    "source_id": f"window-{start}",
+                    "start_seconds": start,
+                    "end_seconds": start + 10,
+                    "text": " ".join(w[0] for w in words),
+                    "audio_window_start_seconds": start,
+                    "audio_window_end_seconds": start + 10,
+                    "words": [
+                        {"text": text, "start_seconds": a, "end_seconds": b, "confidence": 0.9}
+                        for text, a, b in words
+                    ],
+                }
+            )
+
+        old = window(
+            0, [("opening", 1, 2), ("motion", 6, 7), ("carries", 7, 8), ("hallucinated", 8, 9)]
+        )
+        new = window(5, [("motion", 6.1, 7.1), ("carries", 7.1, 8.1), ("next", 11, 12)])
+        assert stabilizer.observe(old) == []
+        cues = stabilizer.observe(new)
+        assert [cue.text for cue in cues] == ["motion carries"]
+        assert stabilizer.observe(new) == []
+        assert cues[0].start_seconds == 6.1
+        assert cues[0].end_seconds == 8
+
     def test_commits_after_two_stable_observations(self) -> None:
         stabilizer = CaptionStabilizer()
         assert stabilizer.observe(_hypothesis("motion carries")) == []
@@ -155,6 +280,192 @@ class TestCaptionStabilizer:
             "Public comment.",
         ]
         assert len({cue.cue_id for cue in stabilizer.committed()}) == 2
+
+    def test_live_confirmation_commits_reworded_continuous_speech(self) -> None:
+        """Only the repeated phrase may air; new surrounding words wait.
+
+        The former assertion required the uncorroborated new suffix to air.
+        That encoded the defect, not the intended two-observation contract.
+        The 5-second advance/9-second window is real tap geometry, but its
+        overlap alone is not evidence that either whole transcript is correct.
+        """
+
+        stabilizer = CaptionStabilizer(live=True)
+        assert (
+            stabilizer.observe(
+                _hypothesis("Dewpoints in Arizona. We're in the 40s.", start=0.0, end=9.0)
+            )
+            == []
+        )
+        # The shared phrase is repeated; the new "and 30s" suffix is not.
+        committed = stabilizer.observe(
+            _hypothesis("We're in the 40s and 30s, so very much shuts down.", start=5.0, end=14.0)
+        )
+
+        assert len(committed) == 1
+        assert committed[0].text == "We're in the 40s."
+        assert (committed[0].start_seconds, committed[0].end_seconds) == (5.0, 9.0)
+
+    def test_live_overlap_does_not_confirm_unrelated_text(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        stabilizer.observe(_hypothesis("the motion carries unanimously", 0, 9))
+        assert stabilizer.observe(_hypothesis("aliens landed in Denver", 5, 14)) == []
+
+    def test_live_shared_phrase_does_not_air_one_off_suffix(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        stabilizer.observe(_hypothesis("opening words the motion carries", 0, 9))
+        cues = stabilizer.observe(_hypothesis("the motion carries aliens landed", 5, 14))
+        assert [cue.text for cue in cues] == ["the motion carries"]
+        assert stabilizer.observe(_hypothesis("entirely different later speech", 10, 19)) == []
+        assert "aliens" not in " ".join(c.text for c in stabilizer.committed())
+
+    def test_live_preserves_tail_until_next_phrase_confirmation(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        stabilizer.observe(_hypothesis("opening words the motion carries", 0, 9))
+        first = stabilizer.observe(_hypothesis("the motion carries next agenda item", 5, 14))
+        second = stabilizer.observe(_hypothesis("next agenda item public comment starts", 10, 19))
+        assert [c.text for c in first + second] == ["the motion carries", "next agenda item"]
+
+    def test_live_exact_text_requires_temporal_overlap(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        stabilizer.observe(_hypothesis("motion carries", 0, 1))
+        assert stabilizer.observe(_hypothesis("motion carries", 3, 4)) == []
+
+    def test_live_uses_audio_window_geometry_not_asr_segment_fraction(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        first = _hypothesis("next weekend when we get dry", 6, 13.28).model_copy(
+            update={"audio_window_start_seconds": 6, "audio_window_end_seconds": 15}
+        )
+        second = _hypothesis("when we get dry air from north", 11.53, 18.01).model_copy(
+            update={"audio_window_start_seconds": 11, "audio_window_end_seconds": 20}
+        )
+        stabilizer.observe(first)
+        cues = stabilizer.observe(second)
+        assert [cue.text for cue in cues] == ["when we get dry"]
+        assert (cues[0].start_seconds, cues[0].end_seconds) == (11.53, 13.28)
+
+    def test_live_same_audio_window_cannot_confirm_itself(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        hypothesis = _hypothesis("motion carries", 1, 4).model_copy(
+            update={"audio_window_start_seconds": 0, "audio_window_end_seconds": 5}
+        )
+        assert stabilizer.observe(hypothesis) == []
+        assert stabilizer.observe(hypothesis) == []
+
+    def test_live_cue_is_bounded_by_shared_audio_even_when_asr_overruns(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        first = _hypothesis("motion carries", 0, 12).model_copy(
+            update={"audio_window_start_seconds": 0, "audio_window_end_seconds": 9}
+        )
+        second = _hypothesis("motion carries", 4, 16).model_copy(
+            update={"audio_window_start_seconds": 5, "audio_window_end_seconds": 14}
+        )
+        stabilizer.observe(first)
+        cues = stabilizer.observe(second)
+        assert (cues[0].start_seconds, cues[0].end_seconds) == (5, 9)
+
+    def test_live_repeated_window_does_not_reintroduce_committed_prefix(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        stabilizer.observe(_hypothesis("alpha shared phrase", 0, 9))
+        cues = stabilizer.observe(_hypothesis("shared phrase beta", 5, 14))
+        cues += stabilizer.observe(_hypothesis("shared phrase beta", 5, 14))
+        cues += stabilizer.observe(_hypothesis("shared phrase beta", 5, 14))
+        assert [cue.text for cue in cues] == ["shared phrase", "beta"]
+
+    def test_live_single_shared_word_does_not_confirm_changed_phrase(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        stabilizer.observe(_hypothesis("the motion", 0, 9))
+        assert stabilizer.observe(_hypothesis("motion failed unanimously", 5, 14)) == []
+
+    def test_live_confirmation_honors_three_observation_requirement(self) -> None:
+        stabilizer = CaptionStabilizer(live=True, stable_windows=3)
+        assert stabilizer.observe(_hypothesis("motion carries", 0, 9)) == []
+        assert stabilizer.observe(_hypothesis("motion carries", 1, 10)) == []
+        cues = stabilizer.observe(_hypothesis("motion carries", 2, 11))
+        assert [cue.text for cue in cues] == ["motion carries"]
+        assert (cues[0].start_seconds, cues[0].end_seconds) == (2, 9)
+
+    def test_live_confirmation_preserves_lowest_confidence(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        stabilizer.observe(_hypothesis("motion carries", 0, 9, confidence=0.2))
+        cues = stabilizer.observe(_hypothesis("motion carries", 1, 10, confidence=0.99))
+        assert cues[0].confidence == 0.2
+        assert cues[0].low_confidence
+
+    def test_live_partial_confirmation_does_not_lend_its_count_to_new_tail(self) -> None:
+        stabilizer = CaptionStabilizer(live=True, stable_windows=3)
+        assert stabilizer.observe(_hypothesis("opening words motion carries", 0, 9)) == []
+        assert stabilizer.observe(_hypothesis("motion carries next agenda item", 1, 10)) == []
+        # The tail has appeared twice, not three times like the confirmed subset.
+        assert stabilizer.observe(_hypothesis("next agenda item public comment", 2, 11)) == []
+        cues = stabilizer.observe(_hypothesis("next agenda item", 3, 12))
+        assert [cue.text for cue in cues] == ["next agenda item"]
+        assert (cues[0].start_seconds, cues[0].end_seconds) == (3, 10)
+
+    def test_live_unshared_prefix_is_reviewable_not_aired(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        stabilizer.observe(_hypothesis("unconfirmed introduction motion carries", 0, 9))
+        stabilizer.observe(_hypothesis("motion carries next agenda item", 5, 14))
+        assert [cue.text for cue in stabilizer.expired_unconfirmed()] == [
+            "unconfirmed introduction"
+        ]
+        assert stabilizer.expired_unconfirmed()[0].low_confidence
+
+    def test_live_confirmation_still_resets_on_a_correction(self) -> None:
+        """A new reading at the SAME start is a correction, not a re-hearing."""
+
+        stabilizer = CaptionStabilizer(live=True)
+        assert stabilizer.observe(_hypothesis("motion carries", start=0.0, end=5.0)) == []
+        assert stabilizer.observe(_hypothesis("motion failed", start=0.0, end=5.0)) == []
+
+        committed = stabilizer.observe(_hypothesis("motion failed", start=0.0, end=5.0))
+
+        assert len(committed) == 1
+        assert committed[0].text == "motion failed"
+
+    def test_live_confirmation_never_commits_a_lone_uncorroborated_cue(self) -> None:
+        """One window alone must not air: live mode still needs corroboration."""
+
+        stabilizer = CaptionStabilizer(live=True)
+        assert stabilizer.observe(_hypothesis("single window speech", start=0.0, end=9.0)) == []
+        assert stabilizer.committed() == []
+
+    def test_live_confirmation_rejects_a_tiny_overlap(self) -> None:
+        """A sliver of overlap must NOT corroborate an unrelated long cue.
+
+        Regression for the live-confirmation boundary: the guard compared the
+        incoming start against ``pending.hypothesis.end_seconds`` -- the ASR
+        hypothesis's CLAIMED end, not the audio span actually re-heard.  A
+        pending 8 s window therefore "contained" a later start that overlapped
+        it by as little as one millisecond (or one microsecond), so an
+        otherwise uncorroborated 8 s caption could be confirmed by a completely
+        different reading.  Corroboration must require a SUBSTANTIVE overlap
+        with the pending window, not mere adjacency to its claim.
+        """
+
+        stabilizer = CaptionStabilizer(live=True)
+        assert (
+            stabilizer.observe(_hypothesis("the quick brown fox jumps", start=0.0, end=8.0)) == []
+        )
+        # Only 1 ms inside the pending claim -> must NOT confirm.
+        committed = stabilizer.observe(
+            _hypothesis("completely different words here", start=7.999, end=15.0)
+        )
+
+        assert committed == []
+        assert stabilizer.committed() == []
+
+    def test_live_confirmation_rejects_a_sub_millisecond_overlap(self) -> None:
+        """Even a 1 microsecond overlap must not corroborate an unrelated cue."""
+
+        stabilizer = CaptionStabilizer(live=True)
+        stabilizer.observe(_hypothesis("first unrelated long cue", start=0.0, end=8.0))
+        committed = stabilizer.observe(
+            _hypothesis("second unrelated different cue", start=7.999999, end=16.0)
+        )
+
+        assert committed == []
+        assert stabilizer.committed() == []
 
     def test_low_confidence_flag_uses_threshold(self) -> None:
         stabilizer = CaptionStabilizer(low_confidence_threshold=0.8)
@@ -656,6 +967,67 @@ class TestRuntimeBoundary:
             )
         ]
 
+    def test_live_runtime_groups_segments_as_one_audio_window(self) -> None:
+        runtime = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
+        runtime._model = SimpleNamespace(
+            transcribe=lambda *args, **kwargs: (
+                [
+                    SimpleNamespace(
+                        start=0.25,
+                        end=1.5,
+                        text="motion carries",
+                        avg_logprob=-0.1,
+                        no_speech_prob=0.2,
+                    ),
+                    SimpleNamespace(
+                        start=1.5,
+                        end=2.5,
+                        text="next agenda item",
+                        avg_logprob=-0.1,
+                        no_speech_prob=0.4,
+                    ),
+                ],
+                object(),
+            )
+        )
+        chunk = self._audio_chunk()
+        hypotheses = list(runtime.transcribe([chunk]))
+        assert len(hypotheses) == 1
+        hypothesis = hypotheses[0]
+        assert hypothesis.text == "motion carries next agenda item"
+        assert hypothesis.confidence == 0.5429
+        assert (hypothesis.start_seconds, hypothesis.end_seconds) == (10.25, 12.5)
+        assert (hypothesis.audio_window_start_seconds, hypothesis.audio_window_end_seconds) == (
+            chunk.start_seconds,
+            chunk.end_seconds,
+        )
+
+    def test_live_runtime_preserves_actual_word_times_offset_once(self) -> None:
+        runtime = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
+        calls = []
+
+        def transcribe(*args: Any, **kwargs: Any) -> tuple[list[Any], object]:
+            calls.append(kwargs)
+            return [
+                SimpleNamespace(
+                    start=0.25,
+                    end=2.5,
+                    text="motion carries",
+                    words=[
+                        SimpleNamespace(word=" motion", start=0.25, end=1.2, probability=0.8),
+                        SimpleNamespace(word=" carries", start=1.2, end=2.5, probability=0.7),
+                    ],
+                )
+            ], object()
+
+        runtime._model = SimpleNamespace(transcribe=transcribe)
+        hypothesis = next(iter(runtime.transcribe([self._audio_chunk()])))
+        assert calls[0]["word_timestamps"] is True
+        assert hypothesis.words is not None
+        assert [
+            (w.text, w.start_seconds, w.end_seconds, w.confidence) for w in hypothesis.words
+        ] == [(" motion", 10.25, 11.2, 0.8), (" carries", 11.2, 12.5, 0.7)]
+
     def test_whisper_cpp_runtime_fails_closed_when_pack_files_are_missing(
         self,
         tmp_path: Path,
@@ -1101,6 +1473,20 @@ class TestCaptionPipeline:
 
 
 class TestLiveCaptionWorker:
+    def test_timed_word_flush_persists_review_without_active_caption(self) -> None:
+        runtime = SimpleNamespace(
+            transcribe=lambda *args, **kwargs: [_word_window(0, [("once", 1, 2), ("heard", 2, 3)])]
+        )
+        store = InMemoryCaptionReviewStore()
+        pipeline = CaptionPipeline(runtime, stabilizer=CaptionStabilizer(live=True))
+        worker = LiveCaptionWorker(runtime, store, asset_id="timed", pipeline=pipeline)
+        worker.process_batch([])
+        result = worker.flush()
+        assert [item.cue.text for item in result.committed_review_items] == ["once heard"]
+        assert [cue.text for cue in result.expired_unconfirmed_cues] == ["once heard"]
+        assert worker.committed_cues() == []
+        assert worker.flush().committed_review_items == []
+
     def test_worker_persists_stable_live_cues_to_review_queue(self) -> None:
         class StableRuntime:
             def transcribe(

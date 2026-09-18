@@ -16,7 +16,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Protocol
 
-from civiccast.captions.models import AudioChunk, CaptionHypothesis, CustomVocabulary
+from civiccast.captions.models import AudioChunk, CaptionHypothesis, CaptionWord, CustomVocabulary
 from civiccast.native.caption_tiers import (
     CAPTION_TIER_REGISTRY,
     LARGE_V3_TIER_ID,
@@ -898,8 +898,11 @@ class FasterWhisperRuntime:
                 task=self.task,
                 vad_filter=self.vad_filter,
                 initial_prompt=initial_prompt,
+                **({"word_timestamps": True} if self._live else {}),
             )
 
+            live_segments: list[CaptionHypothesis] = []
+            live_words: list[CaptionWord] = []
             for index, segment in enumerate(segments):
                 text = str(getattr(segment, "text", "")).strip()
                 if not text:
@@ -910,12 +913,41 @@ class FasterWhisperRuntime:
                 if end_seconds <= start_seconds:
                     continue
 
-                yield CaptionHypothesis(
+                hypothesis = CaptionHypothesis(
                     source_id=_segment_source_id(chunk.chunk_id, index),
                     start_seconds=start_seconds,
                     end_seconds=end_seconds,
                     text=text,
                     confidence=_segment_confidence(segment),
+                )
+                if self._live:
+                    live_segments.append(hypothesis)
+                    for word in getattr(segment, "words", None) or []:
+                        live_words.append(
+                            CaptionWord(
+                                text=str(word.word),
+                                start_seconds=chunk.start_seconds + float(word.start),
+                                end_seconds=chunk.start_seconds + float(word.end),
+                                confidence=float(word.probability),
+                            )
+                        )
+                else:
+                    yield hypothesis
+            if live_segments:
+                # Segment boundaries vary between overlapping ASR windows.
+                # Confirm one window against another, not two fragments from
+                # the same pass. Keep the actual speech envelope separately.
+                # The model's text bound validates the combined result: an
+                # oversized result fails explicitly, never silently truncates.
+                yield CaptionHypothesis(
+                    source_id=_segment_source_id(chunk.chunk_id, 0),
+                    start_seconds=min(h.start_seconds for h in live_segments),
+                    end_seconds=max(h.end_seconds for h in live_segments),
+                    text=" ".join(h.text for h in live_segments),
+                    confidence=min(h.confidence for h in live_segments),
+                    audio_window_start_seconds=chunk.start_seconds,
+                    audio_window_end_seconds=chunk.end_seconds,
+                    words=live_words,
                 )
 
 

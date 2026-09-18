@@ -2,7 +2,7 @@
 title: CivicCast User Manual
 subtitle: For station operators, clerks, and IT staff - v1.0.0-beta.8 (native Windows line)
 author: The CivicCast Authors
-date: 2026-09-08
+date: 2026-09-17
 # Layout, fonts, and colours live in docs/assets/manual.pandoc.yaml so the
 # shell and Python renderers cannot drift. Keep this block to content
 # metadata only.
@@ -372,26 +372,38 @@ discard stale audio rather than competing indefinitely with the broadcast.
 Live captioning is hard work for the computer, especially without a suitable
 graphics card.
 
-**The switch:** *Setup → Station Profile → **Show live captions on air***.
-It is **off** when the station is installed in this beta (see the known
-issue below); turn it on there if your station can keep up. Only a setup
-admin can change it. Turning it *off* stops captions within a few seconds,
-but the part of the broadcast path that writes captions into the video is
-only removed the next time each channel goes on air (or the next time the
-station restarts) — so if you are turning it off because of the freeze
-described below, expect the freeze to stop after that, not immediately.
-Turning it *on* likewise takes effect at each channel's next start. You do
-not need to restart anything and you can do it during a live meeting. Until
-each channel next goes on air, those channels show red on *On air right now*
-because the station is looking for captions it cannot see yet. Restart each
-channel to clear it.
+The live recognizer checks speech across overlapping audio windows before
+putting confirmed words on air. A `...` inside a caption marks words it could
+not confirm; it is not a transcription of a spoken pause. Unconfirmed words
+can appear in the review queue without having appeared on air. Stopping a
+channel does not promote those unconfirmed live words into the broadcast.
 
-**Known issue in this beta (why it starts off):** with live captions on,
-the picture can freeze for 25–30 seconds and then catch up in a burst every
-minute or two; rarely, the station's 10-second stall watchdog restarts the
-channel (about a 30-second gap on air). The cause is under investigation
-and is somewhere in the live-caption path; the fix is planned for the next
-update.
+**The switch:** *Setup → Station Profile → **Show live captions on air***.
+It is **off** on a new installation of this beta; an explicitly saved setting
+survives an upgrade. Turn it on only after checking your station can keep up.
+Only a setup admin can change it. Turning it *off* stops caption transcription
+within a few seconds, but the broadcast component that embeds captions in
+the video is removed only at each channel's next start. Turning it *on*
+likewise requires each channel's next start to build that component. Saving
+the switch does not restart an on-air channel automatically. Schedule the
+channel stop/start at a suitable time: it interrupts output. Until then, the
+caption check can show red because captions are expected but not yet present.
+
+**What changed in beta.8:** earlier testing saw repeated picture freezes with
+live captions on. Beta.8 includes repairs to caption processing, restart
+timing and background cleanup. A short Blackwell test matched captions after
+a controlled restart to text decoded from the outgoing video stream. A
+separate test verified that the speech-recognition model loaded on the GPU.
+These are bounded checks, not proof of uninterrupted all-day operation or
+proof that every caption is correct. Startup overload remains a risk to watch;
+the overload limit and two-minute initial pause have not been relaxed.
+
+If a channel reports **captions disabled: session reset failed**, its picture
+and sound can continue, but captions stay off for that session to avoid showing
+old text. Resolve the reported storage problem, then stop and start the channel
+at a suitable time. Reloading the program alone does not restore captions.
+During a background storage check, caption review text may be available without
+its audio clip; the review screen will say the audio is unavailable.
 
 **Turn it off if the picture is stuttering, or channels keep restarting
 themselves.** The picture and sound always come first. Nothing else about the
@@ -407,8 +419,10 @@ simply grind: it stops captioning that channel for a while (two minutes, then
 four, then eight, up to fifteen), clears the captions that were on screen
 rather than showing stale ones, and tries again later. You will see one
 warning in the log each time that happens. Repeated warnings on the same
-channel mean that station cannot caption that channel live — turn the switch
-off, or ask about a lower-quality caption model or a supported graphics card.
+channel mean the live caption path is not keeping up under its current
+conditions. Turn the switch off if necessary to protect the broadcast, retain
+the logs, and have your technical admin investigate load, storage cleanup and
+the loaded caption model before assuming the graphics card is inadequate.
 
 ### Operator Graphics Control (Lower-Third Banner) {#operator-graphics-control}
 

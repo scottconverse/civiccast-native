@@ -1075,7 +1075,10 @@ entries:
         - path: civiccast/egress/gst/graph.py
           blob: 690774fcbab10b4da9e753f1431e62ba0f50b31b
         - path: civiccast/egress/gst/control.py
-          blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
+          # 2026-09-17: reviewed the fixed 8s live-caption lead bound and
+          # restart timeline floor; source tests cover long-running drift.
+          # This source-tripwire rebind is not installed or release proof.
+          blob: af3e7ca70bb32952c37fee1391730483a5469b43
         - path: civiccast/egress/gst/audio_tap.py
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
@@ -1985,7 +1988,10 @@ entries:
         - path: civiccast/egress/gst/graph.py
           blob: 690774fcbab10b4da9e753f1431e62ba0f50b31b
         - path: civiccast/egress/gst/control.py
-          blob: fd181d64f643414ba4bb4ca2ce3717fa3e6c076f
+          # 2026-09-17: reviewed the fixed 8s live-caption lead bound and
+          # restart timeline floor; source tests cover long-running drift.
+          # This source-tripwire rebind is not boot/pre-login acceptance.
+          blob: af3e7ca70bb32952c37fee1391730483a5469b43
         - path: civiccast/egress/gst/audio_tap.py
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:

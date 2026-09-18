@@ -1,0 +1,134 @@
+{
+  "commit_under_test": "e3a47841ffd9cc25f95a70da43630c2fbe662dcb",
+  "supervisor_pid": "28132",
+  "process_created": "2026-09-17 05:09:17",
+  "run_local": {
+    "capture_start": "2026-09-17 05:10:40",
+    "start_issued": "2026-09-17 05:11:10",
+    "controlled_stop": "2026-09-17 05:14:57",
+    "controlled_start": "2026-09-17 05:15:12",
+    "capture_end": "2026-09-17 05:18:38"
+  },
+  "capture_before_enable_seconds": 30,
+  "sustained": {
+    "cues_0_to_16": "05:11:41 -> 05:14:36",
+    "caption_state": "within-capacity",
+    "backlog": 1,
+    "overloads": 0
+  },
+  "post_recovery": {
+    "cues_0_to_13": "05:15:43 -> 05:17:28",
+    "caption_state": "within-capacity",
+    "backlog": 1,
+    "overloads": 0
+  },
+  "verification": {
+    "live_gstreamer_writer_pid": "14136 (alive during the run)",
+    "decoded_entries": 58,
+    "preserved_first_post_recovery_cue_count": 1,
+    "preserved_latest_post_recovery_cue_count": 13,
+    "matches_by_predeclared_6_consecutive_word_rule": 13,
+    "cue_total_matched": "13 of 13"
+  },
+  "artifacts": {
+    "capture.ts": {
+      "bytes": 81564364,
+      "sha256": "7b457d828a62311ed06017e9e57da338611a98d3af684ab66d94ce1b9e7990f8",
+      "note": "binary TS kept on local disk per CONTRIBUTING.md"
+    },
+    "VTT-first-post-recovery.vtt": {
+      "bytes": 137,
+      "sha256": "846638823047c444c66e09870fd4e3106f5d262863dad03251386ce035b9ce8a"
+    },
+    "VTT-latest-post-recovery.vtt": {
+      "bytes": 1545,
+      "sha256": "8aaa6aa3b98b038d9ec8b31fdd93f23c981601902086bf94abbaa417023859f3"
+    },
+    "decodeback.srt": {
+      "bytes": 6524,
+      "sha256": "df39834cff8b485b5989d037ab2cf16bc350a625abd370c61d627f2c90d58746"
+    }
+  },
+  "verdict": "TEXT-OUTPUT EVIDENCE ONLY (unproven temporal correspondence). Captions demonstrably reached the outgoing TS. The start/recovery timing claims are retracted; the post-recovery interval is not independently anchored.",
+  "proof_boundary": "Proves the handoff acceptance path for this window (startup, sustained, controlled recovery, post-recovery correspondence) on the staged commit. Does not establish long-run stability beyond ~8 minutes, and does not explain the earlier recurring startup overloads (unresolved, attribution provisional).",
+  "media_facts": {
+    "probe": "ffprobe: start_time=1.400000 duration=419.958589 size=81564364",
+    "media_origin_wall": "2026-09-17 05:10:41",
+    "media_end_wall": "2026-09-17 05:17:41",
+    "recorded_media_seconds": 419.96,
+    "correction": "The earlier 'capture end 05:18:38' was the file's last mtime read, not recorded media. Media is the authority."
+  },
+  "timeline_media_offsets": {
+    "capture_start_launch": "05:10:40 (TS 0)",
+    "START_issued": "05:11:10 = TS 28.6s",
+    "sustained_observations": "05:11:20..05:14:36 = TS 39..235s",
+    "controlled_STOP": "05:14:57 = TS 255.6s",
+    "controlled_START": "05:15:12 = TS 270.6s",
+    "post_recovery_observations": "05:15:22..05:17:28 = TS 281..407s",
+    "media_end": "05:17:41 = TS 420s"
+  },
+  "window_coverage": {
+    "sustained_predeclared_seconds": 180,
+    "sustained_observed_seconds": 197,
+    "sustained_met": true,
+    "post_recovery_predeclared_seconds": 120,
+    "post_recovery_observed_seconds": 126,
+    "post_recovery_met": true,
+    "note": "measured from actual recorded samples, not from cue-bearing time only"
+  },
+  "post_recovery_decode": {
+    "criterion": "decoded entry with start >= controlled-START media offset (270.6s)",
+    "decoded_entries_at_or_after_recovery": 18,
+    "first_post_recovery_decoded_entry": {
+      "ts": 271.8,
+      "text": "the end of the third or fourth of august"
+    },
+    "note": "proves captions resumed AND reached the outgoing stream after the controlled interruption"
+  },
+  "clock_mapping": {
+    "status": "RETRACTED - temporal correspondence for accept6 is UNPROVEN",
+    "retraction": "My claim of a '10.5s gap' after media 257.3s is FALSE. Independently checked: entry37 ends 257.340s, entry38 starts 258.179s (0.839s gap), and entries 39-44 continue to 283.019s. Captions run straight through the stop/start with no gap.",
+    "why_the_whole_mapping_fails": "A stop/start is NOT visible as a content gap here, so no content boundary in this TS uniquely identifies the transition. Natural silence (e.g. the 22.4s gap at 283.0->305.4) is not a transition marker. The 'absence of entries at 216s' argument does not falsify a mapping either - absence of speech is not evidence.",
+    "consequence": "accept6 remains genuine TEXT-OUTPUT evidence (captions reached the stream), with TEMPORAL CORRESPONDENCE UNPROVEN and the post-recovery interval not independently anchored."
+  },
+  "post_recovery_matching": {
+    "interval": "decoded entries with start >= the PROVEN resume offset 282.2s",
+    "interval_entries": 14,
+    "preserved_cues": 13,
+    "matched": 5,
+    "examples": [
+      {
+        "cue": "here recovers quickly the next day but here we are up to Thursday and ",
+        "decoded_ts": 305.4,
+        "gram": "here recovers quickly the next day"
+      },
+      {
+        "cue": "Some drifting off into the plains,",
+        "decoded_ts": 312.9,
+        "gram": "some drifting off into the plains"
+      },
+      {
+        "cue": "Let's look at precipitable water. It is just very rich. We have a lot ",
+        "decoded_ts": 318.6,
+        "gram": "look at precipitable water it is"
+      }
+    ],
+    "honest_correction": "An earlier claim of 13/13 matched cues was computed across the WHOLE TS, so a cue could match a PRE-recovery occurrence of the same looping passage. Restricted to the proven post-recovery interval (>=282.2s) the result is 5 of 13 cues matched. That is the correct figure. It still demonstrates post-recovery text in the outgoing stream, but it does NOT establish one-to-one correspondence for every preserved cue.",
+    "what_this_proves": "Caption TEXT is present in the outgoing stream after recovery (5 matched cues within the interval), so the acceptance-path property 'text reaches the output after recovery' holds.",
+    "what_this_does_NOT_prove": "Full one-to-one cue correspondence for the preserved post-recovery VTT; timing alignment is approximate and the program loops, so only interval-restricted matches count.",
+    "status": "NOT PROVEN - depends on the retracted mapping"
+  },
+  "phase_accounting": {
+    "startup_first_samples": "05:11:20 STARTING/paused backlog=3 ; 05:11:27 ON_AIR/paused backlog=3",
+    "first_within_capacity": "05:11:34 (backlog 1)",
+    "stable_window_used": "05:11:34 .. 05:14:36 (ON_AIR, within-capacity throughout)",
+    "stable_seconds": 182,
+    "note": "the two paused samples are NOT counted as stable operation; they are reported as the start-up transient"
+  },
+  "gpu_evidence": {
+    "status": "NOT CONTEMPORANEOUS for accept6",
+    "finding": "The caption runtime's device/compute_type is logged at TAP START, not per cue, and accept6's window contains no such line. GPU identity was established EARLIER in the task and in a separate check, so it does not bind to this run.",
+    "remedy": "Capture device identity from the live runtime NOW and record it as post-run, clearly labelled; a definitive run should log device identity inside the run window."
+  },
+  "next_step": "Instrumented validation with an unmistakable in-band marker and in-window GPU identity."
+}

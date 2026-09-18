@@ -1,0 +1,45 @@
+CURRENT REPORTS AND INDEX - CivicCast beta.8 Blackwell captions-ON
+=============================================================== (2026-09-17)
+
+CURRENT RELEASE STATUS: NOT READY TO MERGE OR PUBLISH
+
+Current engineering entry point: HANDOFF.md (top current section).
+Current release-progress report on Blackwell:
+  C:\Users\scott\Documents\Codex\2026-08-12\tes\CivicCast Beta 8 - Release Progress - v1.md
+Startup investigation:
+  work/release-beta8-startup-investigation/Startup Overload Investigation - Human Report v1.md
+
+The historical v9 verdict below is superseded for release decisions. Additional
+product repairs and CI corrections followed its candidate. Startup overload is
+not accepted as a closed residual risk. Exact-current-candidate installed proof,
+signed installer gates, and the final public-artifact soak are still required.
+The three old runs must not be presented as a single contemporaneous GPU run.
+
+HISTORICAL CODER REPORT: work/BLACKWELL-CAPTION-FIX-REPORT-v9.md
+
+Historical candidate identity (not current HEAD)
+  accept6 + accept8 candidate (served the live runs) : e3a47841
+  final logging-only candidate                       : ea65dffe
+  evidence/receipt HEAD                              : 8061cdbf
+  equivalence: +64 lines / 0 deletions in tap_worker.py, logging only;
+               suites identical at both (494 vs 495 passed, extra = new test)
+
+Live runs
+  accept6  work/accept6-20260917/          TEXT OUTPUT ONLY (mapping retracted)
+  accept8  work/accept8-20260917/          ARRIVAL-ANCHORED RECOVERY (verified)
+  accept9  work/accept9-gpu/               LOADED-MODEL GPU IDENTITY (direct)
+
+Key artifacts
+  work/accept8-20260917/PREDECLARED-CRITERIA.json
+  work/accept8-20260917/VTT-first-post-recovery.vtt
+  work/instrumented-harness/v2/accept8/capture.ts        (75,403,980 bytes)
+  work/instrumented-harness/v2/accept8/arrival-index.jsonl
+  work/instrumented-harness/v2/accept8/first-cue-correspondence.json
+  work/accept9-gpu/final-resolved-runtime-identity.json
+
+Harness
+  work/instrumented-harness/v2/receiver.py   receive path: raw TS + per-datagram
+                                             arrival timestamps + byte offsets
+
+Superseded reports (bannered, retained)
+  v4 v5 v6 v7 v8

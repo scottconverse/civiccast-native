@@ -13,6 +13,8 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 try:
     from policy_utils import find_repo_root
 except ModuleNotFoundError:  # pragma: no cover - package import in tests
@@ -29,39 +31,37 @@ CURRENT_RELEASE_TAG = (
     )
 )
 
-# v1.0.0-beta.5 published 2026-09-09, a download-only upgrade for
-# stations already on v1.0.0-beta.4 (see
-# docs/releases/2026-09-04-beta5-release-notes.md). Every
-# front door below must now claim publication, pinned to the exact release
-# tag, and must never fall back to a floating "releases/latest" link -- not
-# claim "owner-held unpublished" or "no installer," which would now be
-# false. This dict's phrase set was last updated for that release; the next
-# release cut must update it again in the same commit that publishes.
+# Candidate source version and published install target are distinct.
+# Bind the latter to the authored release-state manifest, not a stale tag.
+PUBLISHED_RELEASE_TAG = yaml.safe_load(
+    (REPO_ROOT / "docs/releases/release-truth.yaml").read_text(encoding="utf-8")
+)["current"]
+PUBLISHED_RELEASE_LINK = f"releases/tag/{PUBLISHED_RELEASE_TAG}"
 REQUIRED_DOCS: dict[Path, tuple[str, ...]] = {
     Path("README.md"): (
         CURRENT_RELEASE_TAG,
-        "releases/tag/v1.0.0-beta.5",
+        PUBLISHED_RELEASE_LINK,
     ),
     Path("INSTALL-WINDOWS.md"): (
         CURRENT_RELEASE_TAG,
-        "releases/tag/v1.0.0-beta.5",
+        PUBLISHED_RELEASE_LINK,
     ),
     Path("ARCHITECTURE.md"): (
         CURRENT_RELEASE_TAG,
-        "releases/tag/v1.0.0-beta.5",
+        PUBLISHED_RELEASE_LINK,
     ),
     Path("SUPPORT.md"): (
         CURRENT_RELEASE_TAG,
-        "releases/tag/v1.0.0-beta.5",
+        PUBLISHED_RELEASE_LINK,
     ),
     Path("docs/index.html"): (
         CURRENT_RELEASE_TAG,
-        "releases/tag/v1.0.0-beta.5",
+        PUBLISHED_RELEASE_LINK,
         "Physical DeckLink SDI capture and acceptance",
     ),
     Path("docs/install-windows.html"): (
         CURRENT_RELEASE_TAG,
-        "releases/tag/v1.0.0-beta.5",
+        PUBLISHED_RELEASE_LINK,
         "SHA-256",
         "Authenticode",
         "Physical DeckLink",
