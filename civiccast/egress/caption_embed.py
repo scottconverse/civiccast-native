@@ -219,21 +219,27 @@ def parse_caption_cues_from_timed_text(
             index += 1
         text = _clean_caption_text(" ".join(text_lines))
         if text:
-            cue_number = len(cues) + 1
-            cues.append(
-                CaptionCue(
-                    cue_id=_caption_cue_id(
-                        source_id=source_id,
-                        cue_label=cue_label,
-                        cue_number=cue_number,
-                    ),
-                    start_seconds=_parse_caption_timestamp(timing.group("start")),
-                    end_seconds=_parse_caption_timestamp(timing.group("end")),
-                    text=text,
-                    confidence=default_confidence,
-                    low_confidence=default_confidence < 0.8,
+            start_seconds = _parse_caption_timestamp(timing.group("start"))
+            end_seconds = _parse_caption_timestamp(timing.group("end"))
+            # Skip degenerate timings rather than letting CaptionCue raise: ffmpeg can emit
+            # instantaneous CEA-608/708 cues whose start equals their end, and one invalid
+            # cue here would otherwise abort the whole proof scan instead of skipping it.
+            if end_seconds > start_seconds:
+                cue_number = len(cues) + 1
+                cues.append(
+                    CaptionCue(
+                        cue_id=_caption_cue_id(
+                            source_id=source_id,
+                            cue_label=cue_label,
+                            cue_number=cue_number,
+                        ),
+                        start_seconds=start_seconds,
+                        end_seconds=end_seconds,
+                        text=text,
+                        confidence=default_confidence,
+                        low_confidence=default_confidence < 0.8,
+                    )
                 )
-            )
         cue_label = None
         index += 1
     return cues

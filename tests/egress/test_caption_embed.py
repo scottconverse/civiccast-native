@@ -152,3 +152,34 @@ def test_parse_caption_cues_strips_ass_position_tags_from_real_ffmpeg_srt() -> N
         source_id="ffmpeg-subcc",
     )
     assert [cue.text for cue in cues] == ["CIVICCAST CEA708 TEST."]
+
+
+def test_parse_caption_cues_skips_degenerate_timings_without_aborting_the_scan() -> None:
+    """ffmpeg's CEA-608/708 decoders can emit instantaneous caption events
+    (``00:00:02,000 --> 00:00:02,000``), which are legitimate output but are not
+    valid cues. The parser must skip them instead of feeding them to the
+    CaptionCue validator, where one ValidationError would abort the whole proof
+    scan rather than isolating the bad cue."""
+    cues = parse_caption_cues_from_timed_text(
+        """1
+00:00:01,000 --> 00:00:02,500
+First valid cue.
+
+2
+00:00:02,000 --> 00:00:02,000
+Instantaneous cue.
+
+3
+00:00:03,000 --> 00:00:02,000
+Reversed cue.
+
+4
+00:00:04,000 --> 00:00:05,500
+Second valid cue.
+""",
+        source_id="ffmpeg-subcc",
+    )
+
+    assert [cue.text for cue in cues] == ["First valid cue.", "Second valid cue."]
+    assert [cue.start_seconds for cue in cues] == [1.0, 4.0]
+    assert [cue.end_seconds for cue in cues] == [2.5, 5.5]
