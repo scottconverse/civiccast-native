@@ -96,29 +96,47 @@ class TestCaptionBackoffPolicy:
         # The next overload escalates from 1, not from zero.
         assert policy.record_overload("government").pause_seconds == 120.0
 
-    @pytest.mark.xfail(
-        reason=(
-            "PENDING COORDINATOR RECONCILIATION (beta.9 Candidate 1): this test "
-            "pins the OLD contract that 3 healthy scans FULLY forgive a channel "
-            "by deleting its state. That is the deliberate-once behaviour whose "
-            "3-scan threshold produces the field defect (110/111 trips logging "
-            "overload #1 on the N=3 ladder). The fix requires a longer bar for "
-            "retiring a rung. Rather than silently rewriting this contract, it "
-            "is marked xfail pending the decision; the replacement behaviour is "
-            "asserted by TestRecoveryMustNotEraseOverloadHistory."
-        ),
-        strict=True,
-    )
     def test_enough_healthy_scans_forgive_the_channel(self) -> None:
+        """A full sustained-health window steps the ladder down ONE rung.
+
+        The OLD contract (deliberate at the time) was that ``recovery_scans``
+        (3) healthy scans FULLY forgave a channel by deleting its state. That
+        proxy is unsatisfiable-as-intended on a real multi-channel station, and
+        it produced the beta.9 field defect: 110 of 111 trips logged
+        ``overload #1`` and the station sat in a perpetual 120 s on/off cycle
+        that neither escalated nor settled.
+
+        The contract was SUPERSEDED BY EVIDENCE, not by preference. On the
+        staged runtime the live log showed the sustained bar being reached and
+        the ladder stepping down, on two independent events:
+            2026-09-19 06:00:32  education + public: stepped-down (rung=0)
+            2026-09-19 06:01:22  government + education + public: released
+            2026-09-19 06:56:27  government: stepped-down (rung=0)
+            2026-09-19 06:57:11  government: released (rung=0)
+
+        So: a full recovery window (``recovery_scans * recovery_windows`` scans)
+        retires ONE rung; full release requires walking the ladder all the way
+        down. The behavioural guard for the flapping case remains
+        ``TestRecoveryMustNotEraseOverloadHistory``.
+        """
+
         clock = _FakeClock()
         policy = _policy(clock, base_seconds=60.0, recovery_scans=3)
-        policy.record_overload("government")
+        policy.record_overload("government")  # rung 1
         clock.advance(61.0)
 
-        for _ in range(3):
+        # A full sustained-health window (3 scans x 3 windows = 9) retires ONE
+        # rung. It does NOT delete the whole state.
+        for _ in range(9):
+            clock.advance(2.0)
             policy.record_within_capacity("government")
 
-        assert policy.state("government").consecutive_overloads == 0
+        assert policy.state("government").consecutive_overloads == 0, (
+            "one full sustained-health window must retire one rung, not delete "
+            "the whole escalation history"
+        )
+        # The state still exists (not dropped), so a new trip re-enters at base
+        # only after the channel has also earned the release window.
         assert policy.record_overload("government").pause_seconds == 60.0
 
     def test_draining_inside_a_pause_window_does_not_count_as_recovery(self) -> None:
