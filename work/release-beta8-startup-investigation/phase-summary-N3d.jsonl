@@ -1,0 +1,1 @@
+{"events": 15, "pid": 45776, "window_s": 600.0, "phases": {"retention_dispatch": {"count": 2, "total_ms": 16750.0, "max_ms": 16750.0}, "retention_sweep_work": {"count": 1, "total_ms": 16750.0, "max_ms": 16750.0}, "scan_settle_and_backlog_gate": {"count": 6, "total_ms": 0.0, "max_ms": 0.0}, "wait_session_lock": {"count": 6, "total_ms": 0.0, "max_ms": 0.0}}}
