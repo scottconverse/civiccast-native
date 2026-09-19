@@ -53,3 +53,42 @@ Use that evidence to choose the repair, not a guessed root cause.
 No service, installed code, credentials, schedule, or policy was changed by
 this investigation. Authenticated operator access is still needed for a safe
 live run. Release readiness and long-run reliability remain unproved.
+
+## Diagnostic preparation at 12:44 p.m. MDT
+
+The existing observer cannot time individual retention/model-loading phases.
+Its HTTP/GPU sampling loop may take longer than its nominal interval, so gaps
+between samples are not proof of the time spent in one internal operation.
+An independently reviewed implementation plan therefore calls for opt-in,
+bounded monotonic phase receipts in the tap process. That implementation is
+in progress, not installed or accepted yet. It must not change caption policy.
+
+New local utility `watch_tap_metadata.py` records complete polling inventories
+of selected channels' chunk filenames, sizes and modification times. It does
+not read audio or write to the tap root. Receipts go to a new, exclusive file
+outside that root. Missing directories are explicit errors, not empty success.
+Polling can miss short-lived files; these are observation times, NOT exact
+writer create/rename/delete timestamps. The internal backlog receipt remains
+the authority for what the caption worker actually counted.
+
+Command (actual tap root/channel IDs must first come from station inventory):
+`python watch_tap_metadata.py --tap-root ACTUAL_ROOT --channels ACTUAL_IDS --output NEW_RECEIPT.jsonl --seconds 240 --interval 0.25`
+
+Fixture check:
+`.venv\Scripts\python.exe -m pytest work/release-beta8-startup-investigation/test_watch_tap_metadata.py -q -p no:cacheprovider`
+returned `8 passed in 0.29s`. Initial collection failed because the standalone
+work-directory module was not on the import path; its test now loads the exact
+sibling module explicitly. That collection error is not a behavioral RED test.
+Independent review found a real directory-junction boundary issue: a selected
+channel could point outside the requested tap root. The watcher now checks the
+resolved boundary before every scan and after enumeration, discarding an
+escaped inventory. The expanded fixture check returned `10 passed in 0.30s`;
+independent recheck passed 10 fixtures in 0.31s and a real Windows junction
+negative test. This is not OS-level security isolation against
+an attacker changing junctions during the scan. No live watcher has started.
+
+Opt-in logging itself can perturb timing. Phase timestamps should be captured
+before logging, and event/time limits may truncate phase pairs. A missing end
+record alone is not evidence of a stalled operation. Reports must disclose
+those limits and compare against ordinary configuration, not manufacture a
+causal conclusion from the diagnostic run alone.

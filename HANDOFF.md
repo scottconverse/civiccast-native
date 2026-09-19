@@ -4,7 +4,7 @@
 
 This section supersedes the historical status sections below.
 Current branch: `fix/blackwell-caption-runtime`.
-Current HEAD: `904a8453cd77e259b7e8a34bcc48bb1f047c7a2e` (test synchronization correction).
+Current HEAD: `a1b377a2c73bbfd638fafed798d884ea48a0a4ae` (four test-boundary corrections and historical-report clarification).
 Current reviewed product HEAD: `d89e7e930c914f85f357024e5f2fef4bc7596801`.
 Initial pushed checkpoint: `005cd33595d2b72f5507c44e98e04c08d3c43563`.
 Resolve current HEAD with Git; the follow-up repair commit supersedes that
@@ -76,11 +76,14 @@ HALO remains offline.
 Public-artifact soak defaults to24h unless Scott chooses otherwise before
 start; missing optional duration reply is not a blocker. Freeze before run.
 
-Fresh 904a8453 CI: ci-test35257352469, deterministic35257352393,
+Fresh a1b377a2 CI: ci-test35259698510, deterministic35259698487,
+lint35259698442, docs35259698741, a11y35259698589, reproducibility35259698499.
+All pending/in progress at12:35 p.m. MDT. No full-CI PASS.
+Historical 904a8453 CI: ci-test35257352469, deterministic35257352393,
 lint35257352380, docs35257352523, a11y35257352370, reproducibility35257352371.
 Mutation baseline FAILED at904a8453: job105324533420, asynchronous fallback
 test assumed its first future could not complete within process_once. Four
-test synchronization corrections passed independent review and await push;
+test synchronization corrections passed independent review and were pushed as a1b377a2;
 no behavior assertions removed, no product code changed. Root affected run:
 233 passed in9.89s; independent233passed9.80s plus controlled timing probes.
 Unit/randomized still pending; Windows reproducibility

@@ -238,6 +238,20 @@ GPU use. An environment request for CUDA alone is not evidence that CUDA
 loaded. If backend identity is unavailable, the diagnostic says so rather
 than presenting the request as the result.
 
+For a controlled startup investigation, `CIVICCAST_CAPTION_STARTUP_DIAGNOSTICS=1`
+opts into `Caption startup diagnostic` log records. It is off by default.
+Records carry monotonic timestamps, process/thread identity, session generation,
+retention and model-preparation boundaries, backlog indices and batch boundaries.
+They contain no speech text or audio. Recording is capped at 300 seconds from
+worker construction and 512 events per worker, with at most 16 chunk indices
+per record. A cap may truncate a phase pair: a missing end record does not prove
+a stall. Logging can perturb timing even though timestamps are captured before
+formatting; use these receipts for diagnosis, not as unqualified throughput
+acceptance. This switch does not change the backlog threshold, backoff,
+retention policy, model selection or caption confirmation rules. Remove it
+after the controlled investigation. Compare monotonic values within the same
+host/boot, and preserve the loaded process/source identity beside the logs.
+
 Beta.8 development evidence and its limits are in the
 [verification record](../releases/v1.0.0-beta.8-verification.md). These
 changes do not raise the backlog threshold or shorten overload backoff.

@@ -52,6 +52,8 @@ import argparse
 import concurrent.futures
 import ctypes
 import hashlib
+import itertools
+import json
 import logging
 import os
 import re
@@ -264,6 +266,9 @@ class CaptionTapWorkerSettings:
     max_backlog_segments: int = 2
     overload_backoff_seconds: float = DEFAULT_BASE_BACKOFF_SECONDS
     max_overload_backoff_seconds: float = DEFAULT_MAX_BACKOFF_SECONDS
+    # Opt-in engineering receipts only; no caption policy changes. Bounded to
+    # 300 seconds / 512 events per worker, beginning at construction.
+    startup_diagnostics: bool = False
 
     @classmethod
     def from_env(cls) -> CaptionTapWorkerSettings:
@@ -286,6 +291,7 @@ class CaptionTapWorkerSettings:
                 "CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS", defaults.segment_seconds
             ),
             atomic_segments=_env_bool("CIVICCAST_CAPTION_TAP_ATOMIC", defaults.atomic_segments),
+            startup_diagnostics=_env_bool("CIVICCAST_CAPTION_STARTUP_DIAGNOSTICS", False),
             overlap_seconds=_env_float(
                 "CIVICCAST_CAPTION_TAP_OVERLAP_SECONDS", defaults.overlap_seconds
             ),
@@ -448,6 +454,7 @@ class CaptionTapWorker:
         review_store: CaptionReviewStore,
         segment_seconds: float = 5.0,
         atomic_segments: bool = False,
+        startup_diagnostics: bool = False,
         overlap_seconds: float = 5.0,
         max_channel_workers: int | None = None,
         max_backlog_segments: int = 2,
@@ -458,6 +465,12 @@ class CaptionTapWorker:
         is_enabled: Callable[[], bool] | None = None,
         monotonic: Callable[[], float] | None = None,
     ) -> None:
+        self._startup_deadline_ns = (
+            time.monotonic_ns() + 300_000_000_000 if startup_diagnostics else 0
+        )
+        # next(count) claims a unique budget slot across CPython worker threads
+        # without another lock. Receipts are best effort, never control inputs.
+        self._startup_sequence = itertools.count()
         self._tap_root = tap_root
         self._caption_work_dir = caption_work_dir.expanduser().resolve()
         self._runtime = runtime
@@ -599,6 +612,61 @@ class CaptionTapWorker:
                     self._retention_shutdown_timeout,
                 )
 
+    def _startup_event(
+        self, phase: str, *, segments: list[tuple[int, Path]] | None = None, **fields: object
+    ) -> None:
+        """Bounded metadata only; failed logging must never change operation.
+
+        Explicit switch: CIVICCAST_CAPTION_STARTUP_DIAGNOSTICS=1 (default off).
+        Ordering comes from mono_ns/sequence, not log-line order. Bounds may
+        truncate phase pairs; a missing end is not proof of a stuck operation.
+        """
+        if not self._startup_deadline_ns:
+            return
+        try:
+            now = time.monotonic_ns()  # capture before formatting/handler delay
+            if now >= self._startup_deadline_ns:
+                return
+            sequence = next(self._startup_sequence)
+            if sequence >= 512:
+                return
+            # Paths/audio/text never enter this record. Only indices, counts,
+            # fixed verdicts and error *classes* are supplied by call sites.
+            if segments is not None:
+                fields["indices"] = [index for index, _path in segments[:16]]
+                fields["indices_truncated"] = len(segments) > 16
+            _LOG.info(
+                "Caption startup diagnostic %s",
+                json.dumps(
+                    {
+                        "phase": phase,
+                        "mono_ns": now,
+                        "sequence": sequence,
+                        "pid": os.getpid(),
+                        "thread_id": threading.get_ident(),
+                        "channel": None,
+                        "generation": None,
+                        **fields,
+                    }
+                ),
+            )
+        except Exception:  # noqa: S110 -- recursively logging a broken handler is unsafe
+            # A diagnostic handler/serialization error cannot mask an ASR,
+            # retention or reset error; do not recursively log that failure.
+            pass
+
+    @contextmanager
+    def _startup_phase(self, phase: str, **fields: object) -> Iterator[None]:
+        self._startup_event(phase + "_begin", segments=None, **fields)
+        error_class = None
+        try:
+            yield
+        except BaseException as exc:
+            error_class = type(exc).__name__
+            raise
+        finally:
+            self._startup_event(phase + "_end", segments=None, error_class=error_class, **fields)
+
     def _session_lock(self, channel_id: str) -> threading.RLock:
         with self._session_locks_guard:
             lock = self._session_locks.get(channel_id)
@@ -614,7 +682,12 @@ class CaptionTapWorker:
             # A failed disk reset is not repaired by starting a new publisher on
             # the next scan. Only a successful explicit session reset can re-arm.
             self._failed_sessions.add(channel_id)
-            self._begin_channel_session_locked(channel_id)
+            with self._startup_phase(
+                "reset",
+                channel=channel_id,
+                generation_before=self._session_generation.get(channel_id, 0),
+            ):
+                self._begin_channel_session_locked(channel_id)
             self._failed_sessions.discard(channel_id)
 
     def _begin_channel_session_locked(self, channel_id: str) -> None:
@@ -659,7 +732,13 @@ class CaptionTapWorker:
         # START" variant is NOT implemented, because the WAV writer is a separate
         # per-channel GStreamer subprocess, so file mtime cannot establish which
         # process produced a chunk.
-        self._discard_settled_segments(channel_id)
+        discarded = self._discard_settled_segments(channel_id)
+        self._startup_event(
+            "reset_complete",
+            channel=channel_id,
+            generation=self._session_generation.get(channel_id, 0),
+            discarded=discarded,
+        )
 
     def flush_channel(self, channel_id: str) -> CaptionTapScanResult:
         """Commit every cue still pending for one channel at stream end.
@@ -762,6 +841,15 @@ class CaptionTapWorker:
                         segment.unlink(missing_ok=True)
                     continue
                 segments = self._settled_segments(channel_dir)
+                self._startup_event(
+                    "backlog_snapshot",
+                    channel=channel_id,
+                    generation=self._session_generation.get(channel_id, 0),
+                    segments=segments,
+                    count=len(segments),
+                    atomic_segments=self._atomic_segments,
+                    max_backlog_segments=self._max_backlog_segments,
+                )
                 if not segments:
                     continue
                 channels.append(channel_id)
@@ -792,7 +880,8 @@ class CaptionTapWorker:
                     # the same lowered priority as per-channel ASR work so it
                     # cannot preempt playout during first use.
                     _lower_current_thread_priority()
-                    prepare_runtime()
+                    with self._startup_phase("prepare"):
+                        prepare_runtime()
                     # Log the caption-runtime identity ONCE after the model is loaded.
                     # Accuracy: on_cuda()/device BEFORE prepare is the REQUESTED device, and
                     # prepare() may fall back CUDA->CPU.  On SUCCESS the runtime does NOT
@@ -904,10 +993,16 @@ class CaptionTapWorker:
                     continue
                 chunk = self._with_overlap(channel_id, index, raw_chunk)
                 worker = self._worker_for(channel_id)
-            result = worker.process_batch(
-                [chunk],
-                audio_evidence_factory=self._audio_evidence_factory(channel_id, chunk),
-            )
+            with self._startup_phase(
+                "batch",
+                channel=channel_id,
+                generation=generation,
+                index=index,
+            ):
+                result = worker.process_batch(
+                    [chunk],
+                    audio_evidence_factory=self._audio_evidence_factory(channel_id, chunk),
+                )
             committed += len(result.committed_review_items)
             expired += len(result.expired_unconfirmed_cues)
             with self._session_lock(channel_id):
@@ -1123,13 +1218,23 @@ class CaptionTapWorker:
     def _run_retention_sweep(self) -> None:
         """The blocking half of the retention sweep, on its own thread."""
 
+        initial = not self._retention_verified
+        if initial:
+            self._startup_event("retention_begin", initial=True)
         try:
             retention = self._retention_policy.enforce_discovered(
                 tap_root=self._tap_root,
                 review_store=self._review_store,
                 segment_seconds=self._segment_seconds,
             )
-        except Exception:
+        except Exception as exc:
+            if initial:
+                self._startup_event(
+                    "retention_end",
+                    initial=True,
+                    ready=False,
+                    error_class=type(exc).__name__,
+                )
             # A sweep that RAISES means the store could not be verified on this
             # pass.  For a safety gate, "cannot verify" must not silently keep
             # writing caption evidence, so a failure fails CLOSED whether it is
@@ -1149,6 +1254,10 @@ class CaptionTapWorker:
                 self._retention_ready = False
                 self._retention_refusal = "retention-verification-failed"
             return
+        if initial:
+            self._startup_event(
+                "retention_end", initial=True, ready=bool(retention.ready), error_class=None
+            )
         with self._retention_lock:
             self._retention_in_flight = False
             self._retention_verified = True
@@ -1639,6 +1748,7 @@ def build_tap_worker(
         review_store=review_store,
         segment_seconds=settings.segment_seconds,
         atomic_segments=settings.atomic_segments,
+        startup_diagnostics=settings.startup_diagnostics,
         overlap_seconds=settings.overlap_seconds,
         max_channel_workers=settings.max_channel_workers,
         max_backlog_segments=settings.max_backlog_segments,
