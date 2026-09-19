@@ -2461,3 +2461,82 @@ class TestFirstRetentionSweepIsBounded:
         assert worker.wait_for_retention_sweep(timeout=10.0)
         assert worker._retention_verified is True
         assert worker._retention_ready is True
+
+
+class TestPublishFailureDoesNotAbortThePass:
+    """Field defect (beta.9 three-channel ladder, 2026-09-19).
+
+    Live evidence: three `Caption tap scan failed` occurrences in the installed
+    service, all `PermissionError [WinError 5]` raised by
+    `live_sidecar._atomic_write_text` at `temporary.replace(destination)`.
+    ``run_once`` submits every channel through one ``pool.map``, so a single
+    channel's sidecar-publish failure unwound the WHOLE pass: the other two
+    channels lost their cue publication, backlog accounting, and gate
+    evaluation for that scan. One transient file error must cost, at most, the
+    one channel that hit it.
+    """
+
+    def test_one_channel_publish_failure_does_not_abort_the_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from civiccast.captions.live_sidecar import LiveWebVttPublisher
+
+        tap_root = tmp_path / "tap"
+        channels = ("public", "government", "education")
+        for channel in channels:
+            # Three numbered segments: the settle guard drops the highest WAV
+            # and the stabilizer needs consecutive passes to commit, matching
+            # the working single-channel publish test above.
+            for index in range(3):
+                _write_wav(tap_root / channel / f"chunk-{index:06d}.wav", seconds=1.0)
+
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(text="the council will come to order"),
+            InMemoryCaptionReviewStore(),
+            max_channel_workers=3,
+        )
+        # Establish the retention verdict first so the pass reaches the publish
+        # path instead of the fail-closed retention-pending branch. Without this
+        # the test would exercise the wrong seam entirely (found during RED
+        # review: the first version of this test was mis-aimed).
+        worker._sweep_retention()
+        assert worker._retention_ready is True
+
+        real_publish = LiveWebVttPublisher.publish
+
+        def publish(self: LiveWebVttPublisher, cues):  # type: ignore[no-untyped-def]
+            if "government" in self.active_path.parts:
+                raise PermissionError("[WinError 5] Access is denied: active.vtt replace refused")
+            real_publish(self, cues)
+
+        monkeypatch.setattr(LiveWebVttPublisher, "publish", publish)
+
+        result = worker.run_once()
+
+        # The pass must survive: the other two channels still consumed their
+        # segments and published real cues.
+        assert result.consumed_segments == 4, (
+            "a publish failure on one channel must not abort the other "
+            "channels' consumption for the pass"
+        )
+        committed = {"public", "education"}
+        assert committed.issubset(set(result.channels)), (
+            "the surviving channels must still be reported in the pass result"
+        )
+        for channel in ("public", "education"):
+            cues = load_caption_cues_from_timed_text(
+                _active_vtt(tap_root, channel), source_id=channel
+            )
+            assert [cue.text for cue in cues] == ["the council will come to order"], (
+                f"{channel} lost its cue publication because another channel's "
+                "sidecar publish failed"
+            )
+        # The failing channel did not publish this pass -- it is isolated, not
+        # silently counted as a success. Its sidecar was never created because
+        # its very first publish (the reset) was refused.
+        government_sidecar = _active_vtt(tap_root, "government")
+        assert (
+            not government_sidecar.exists()
+            or load_caption_cues_from_timed_text(government_sidecar, source_id="government") == []
+        )

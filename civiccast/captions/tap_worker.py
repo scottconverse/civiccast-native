@@ -59,7 +59,7 @@ import threading
 import time
 import wave
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -872,7 +872,18 @@ class CaptionTapWorker:
                 max_workers=min(self._max_channel_workers, len(pending)),
                 thread_name_prefix="civiccast-caption-channel",
             ) as pool:
-                results = list(pool.map(lambda args: self._process_channel(*args), pending))
+                # Per-channel isolation. A failure processing ONE channel (e.g.
+                # a transient WinError 5 publishing its active.vtt sidecar) must
+                # not unwind the whole pass and cost the other channels their
+                # cue publication, backlog accounting, or gate evaluation.
+                # ``_isolated_process_channel`` records the failure on that
+                # channel's runtime status and returns a degraded result.
+                results = list(
+                    pool.map(
+                        lambda args: self._isolated_process_channel(*args),
+                        pending,
+                    )
+                )
             consumed += sum(result.consumed_segments for result in results)
             quarantined += sum(result.quarantined_segments for result in results)
             committed += sum(result.committed_review_items for result in results)
@@ -890,6 +901,40 @@ class CaptionTapWorker:
             overloaded_channels=tuple(overloaded_channels),
             paused_channels=tuple(paused_channels),
         )
+
+    def _isolated_process_channel(
+        self,
+        channel_id: str,
+        channel_dir: Path,
+        segments: list[tuple[int, Path]],
+        generation: int | None = None,
+    ) -> _ChannelScanResult:
+        """Run one channel's scan pass without letting its failure abort the pass.
+
+        Field defect (beta.9 three-channel ladder, 2026-09-19): ``run_once``
+        submitted every channel through one ``pool.map``; a single channel's
+        sidecar-publish ``PermissionError`` unwound the whole pass. This wrapper
+        records the failure on that channel's runtime status (via the existing
+        surface) and returns a degraded, empty result so the sibling channels
+        still publish and the pass still completes. The failure is NOT
+        swallowed: it is logged and written to the channel's runtime status.
+        """
+
+        try:
+            return self._process_channel(channel_id, channel_dir, segments, generation)
+        except Exception:
+            _LOG.exception(
+                "Caption tap channel %s failed this scan; isolating so the pass "
+                "continues for the other channels.",
+                channel_id,
+            )
+            with suppress(Exception):
+                self._publish_status(
+                    channel_id,
+                    state="overloaded",
+                    backlog_segments=len(segments),
+                )
+            return _ChannelScanResult()
 
     def _process_channel(
         self,

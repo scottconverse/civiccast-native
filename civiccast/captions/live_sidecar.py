@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -110,6 +111,23 @@ def reset_existing_live_sidecars(work_dir: Path) -> None:
             LiveWebVttPublisher(path).reset()
 
 
+#: Bounded retry for the live-sidecar atomic replace.
+#:
+#: Field defect (beta.9 three-channel ladder, 2026-09-19): the installed
+#: service logged PermissionError [WinError 5] from
+#: temporary.replace(destination) three times in ~8 h. On Windows a rename can
+#: fail with ERROR_ACCESS_DENIED when another process (real-time virus scanning
+#: or the search indexer are the live candidates here) holds a transient handle
+#: on the freshly-fsynced temp file. A short bounded retry shrinks that window.
+#:
+#: This is a MITIGATION, not a fix for the trigger. It cannot recover a
+#: permanent ACL/lock problem and it does not remove the external handle; if
+#: every attempt is refused the original error is re-raised so the caller can
+#: record it. A failure must never be swallowed into a silent success.
+_ATOMIC_REPLACE_ATTEMPTS = 3
+_ATOMIC_REPLACE_BACKOFF_SECONDS = 0.075
+
+
 def _atomic_write_text(destination: Path, content: str) -> None:
     destination = destination.expanduser().resolve()
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -129,7 +147,20 @@ def _atomic_write_text(destination: Path, content: str) -> None:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        temporary.replace(destination)
+        last_error: OSError | None = None
+        for attempt in range(_ATOMIC_REPLACE_ATTEMPTS):
+            try:
+                temporary.replace(destination)
+                return
+            except OSError as error:
+                # Transient handle on the temp/active file (e.g. real-time
+                # scanner or indexer). Retry a bounded number of times, then
+                # surface the original failure to the caller.
+                last_error = error
+                if attempt + 1 < _ATOMIC_REPLACE_ATTEMPTS:
+                    time.sleep(_ATOMIC_REPLACE_BACKOFF_SECONDS)
+        assert last_error is not None
+        raise last_error
     except Exception:
         with suppress(OSError):
             os.close(descriptor)

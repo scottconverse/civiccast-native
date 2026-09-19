@@ -93,3 +93,68 @@ def test_storage_refusal_clears_stale_active_vtt_and_records_the_refusal(tmp_pat
     payload = __import__("json").loads(status.read_text(encoding="utf-8"))
     assert payload["state"] == "storage-refused"
     assert payload["refusal_reason"] == "free-space-reserve-unrestorable"
+
+
+def test_transient_replace_failure_is_retried_then_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient handle on the temp file must not lose the publish.
+
+    Field defect (beta.9 three-channel ladder, 2026-09-19): the installed
+    service logged ``PermissionError [WinError 5]`` from the atomic
+    temp->active replace. A short bounded retry recovers the case where the
+    refusing handle is released quickly (e.g. real-time scanner / indexer).
+    """
+
+    active = tmp_path / "gov" / "captions" / "active.vtt"
+    publisher = LiveWebVttPublisher(active)
+    calls = {"n": 0}
+    real_replace = sidecar_module.os.replace
+
+    def flaky_replace(source: Path, destination: Path) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise PermissionError("[WinError 5] Access is denied (transient)")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(sidecar_module.os, "replace", flaky_replace)
+    publisher.publish([_cue("recovered after a transient handle")])
+
+    assert calls["n"] == 2, "the replace must be retried after a transient failure"
+    cues = load_caption_cues_from_timed_text(active, source_id="gov")
+    assert [cue.text for cue in cues] == ["recovered after a transient handle"]
+    assert list(active.parent.glob("*.tmp")) == []
+
+
+def test_persistent_replace_failure_is_reraised_after_bounded_retries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A permanent failure must still surface -- never a silent success.
+
+    The retry is bounded (a mitigation, not a fix for the trigger): after the
+    attempts are exhausted the original error is re-raised so the caller can
+    record it.
+    """
+
+    active = tmp_path / "gov" / "captions" / "active.vtt"
+    publisher = LiveWebVttPublisher(active)
+    publisher.publish([_cue("old complete cue")])
+    before = active.read_bytes()
+    calls = {"n": 0}
+
+    def always_fail(_source: Path, _destination: Path) -> None:
+        calls["n"] += 1
+        raise PermissionError("[WinError 5] Access is denied (persistent)")
+
+    monkeypatch.setattr(sidecar_module.os, "replace", always_fail)
+
+    with pytest.raises(PermissionError):
+        publisher.publish([_cue("must not be lost")])
+
+    assert calls["n"] == sidecar_module._ATOMIC_REPLACE_ATTEMPTS, (
+        "the retry must be bounded, not unlimited"
+    )
+    assert active.read_bytes() == before
+    assert list(active.parent.glob("*.tmp")) == []
