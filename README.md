@@ -183,6 +183,56 @@ The following are **not** claimed as finished capabilities of this
 candidate. They are either partially built, lab-only, or dependent on
 things outside this repository's control:
 
+
+### Known limitations of this build (v1.0.0-beta.9) — read before operating a station
+
+These are known, measured limitations of `v1.0.0-beta.9`. A **beta.10** release
+is coming soon that addresses the caption interruptions on program changes, the
+escalation behaviour, and the end-of-schedule stop. **If you are running a
+station where captions must stay up unattended, wait for beta.10.**
+
+**Caption reliability — two channels are clean, three are not.**
+- Captions run on the GPU (`cuda`/`float16`), and caption text reaches the
+  emitted output.
+- **One and two channels are clean and measured.** Across 1-channel and
+  2-channel runs, per-segment latency stayed flat at ~5.3 s with **zero**
+  caption backlog trips.
+- **Three channels is the problem.** On the pre-fix code, three channels
+  produced 4 or more backlog trips in a measured window, with latency spiking
+  to 106 s. This is **not** a GPU limit: VRAM peaked at ~52% (about 7.6 GB
+  free) and GPU utilization averaged 19%.
+- With the retention fix in this build, a **30-minute three-channel run had
+  zero trips** (against 111 trips in 103 minutes on the pre-fix code).
+- **Not proven: sustained three-channel operation.** The 2-hour, 4-hour,
+  8-hour, 25-hour and 72-hour runs were **not** completed. Do not read the
+  30-minute result as a sustained-operation guarantee.
+
+**Caption interruptions on program changes.**
+- A scheduled program change can trigger a reload that times out, restart the
+  video worker, and clear captions. Measured caption blackouts on the three
+  captured occurrences were **2.3, 2.8 and 4.6 minutes**.
+- A worker can also exit cleanly (exit code 0) with no error and still clear
+  captions.
+- The pause/escalation ladder **never escalates** in practice: every trip is
+  treated as a first offence and the wait never grows beyond the base window.
+  A channel that trips repeatedly does not back off.
+- Caption blackout per backlog trip is about **210 seconds** — not the 120 s
+  the log message implies (120 s pause plus about 90 s to earn the recovery
+  bar).
+
+**End-of-schedule behaviour.**
+- When a channel's scheduled programming runs out, the channel can be
+  **STOPPED** and require a **manual start**, with an error telling the
+  operator to check the program's media. That message is **misleading in this
+  case** — the media is fine; the schedule is empty.
+
+**Health endpoint.**
+- `/api/health` can report **healthy while a channel is unable to air**.
+
+**Decode-back verification.**
+- There is **no working decode-back proof** in this build; the self-check
+  currently fails on certain decoded cue timings.
+
 - **No full cable/SDI broadcast headend acceptance.** DeckLink SDI output
   is contract-tested against the GStreamer element it wires to
   (`decklinkvideosink`); it has not been proven against physical SDI
