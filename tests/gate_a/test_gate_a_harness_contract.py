@@ -1747,6 +1747,415 @@ def test_hoststore_reset_states_its_post_condition() -> None:
     assert "-- verified empty" in code
 
 
+# --------------------------------------------------------------------------
+# <gate-a-engine-soak> T6: markers/verdict keys, and the time-bound arithmetic.
+# --------------------------------------------------------------------------
+
+
+def test_t6_markers_and_verdict_keys_exist() -> None:
+    """The evidence contract check_t6_engine_soak (scripts/gate_a_verdict.py)
+    reads must actually be written by the driver, and the judge must wire the
+    check into CHECKS."""
+    driver = _read(_DRIVER)
+    assert "$script:EngineSoakActive" in driver
+    assert "_ENGINE-SOAK-MODE.marker" in driver
+    assert re.search(r"'T6_RESULT=\$t6Result'|\"T6_RESULT=\$t6Result\"", driver), (
+        "the driver must write a T6_RESULT= line to T3T5-RESULT.txt"
+    )
+    assert "T6-SOAK.txt" in driver
+    assert "T6-ENGINE-NOTES.txt" in driver
+    assert re.search(r"Save-Summary -Step ['\"]t6-beat-\$beat['\"]", driver), (
+        "every T6 beat must call Save-Summary so the watchdog's stall detector keeps seeing "
+        "forward progress every 300s (well inside its 8-minute threshold)"
+    )
+    assert re.search(r"Save-Summary -Step ['\"]t6-soak-complete['\"]", driver)
+
+    judge = _read(_JUDGE)
+    assert "def check_t6_engine_soak" in judge
+    assert '"t6_engine_soak": check_t6_engine_soak' in judge
+
+
+def test_t6_only_runs_the_real_engine_and_touches_the_documented_egress_ports() -> None:
+    """T6 must configure/start three channels on ports it owns exclusively
+    (19011/19012/19013 -- distinct from the T4 fallback's fixed 9001-9003
+    and from T4's own single-channel 19003 proof), not the ffmpeg-synthetic
+    fallback path.
+
+    F1 fix (review finding, post-073f18a): T6 no longer reuses T4's
+    'public'/'education'/'government' channel ids. T4 PUTs a real
+    EgressConfig for 'government' (port 19003) and only ever POSTs 'stop' --
+    the config row itself is never deleted -- so if T6 reused that id,
+    automation.py's list_configs() scan could dispatch a live 'start' against
+    T4's config mid-scheduling-phase, well before T6 ever configures its own
+    channels, causing a reload storm (see the driver's own comment at the T6
+    channel-id definition). T6 now uses its own ids
+    ('soak-public'/'soak-education'/'soak-government') that T4 never
+    touches."""
+    code = _code_only(_driver_executable_text())
+    assert "id = 'soak-public';     port = 19011" in code or "id = 'soak-public'; port = 19011" in code
+    assert "id = 'soak-education';  port = 19012" in code or "id = 'soak-education'; port = 19012" in code
+    assert "id = 'soak-government'; port = 19013" in code
+    assert "Test-TsProof" in code
+    # T4's own single-channel proof channel/port must remain untouched by T6.
+    assert "$engineChannel = 'government'" in code
+    assert "$enginePort = 19003" in code
+
+
+def test_t6_channel_ids_never_collide_with_t4() -> None:
+    """F1 fix: T6's three channel ids and ports must be disjoint from T4's
+    single-channel proof (id='government', port=19003) and from the T4
+    ffmpeg-fallback's fixed ports (9001-9003), so a T4 config PUT/start can
+    never race a T6 config PUT/start against the same channel or socket."""
+    code = _code_only(_driver_executable_text())
+    t6_ids = {"soak-public", "soak-education", "soak-government"}
+    t6_ports = {19011, 19012, 19013}
+    assert "government" not in t6_ids
+    assert 19003 not in t6_ports
+    assert t6_ports.isdisjoint({9001, 9002, 9003})
+    for t6_id in t6_ids:
+        assert f"id = '{t6_id}'" in code
+    for t6_port in t6_ports:
+        assert f"port = {t6_port}" in code
+
+
+def test_t6_confirms_no_preexisting_config_before_scheduling() -> None:
+    """F1 fix: immediately before the scheduling+commit phase, T6 must GET
+    each of its own channel's config and log whether it was genuinely absent
+    (404, civiccast/egress/router.py get_config) -- proof on disk that T6's
+    ids were not already colliding with a leftover config (T4's or a prior
+    T6 run's), rather than assuming it from the id scheme alone."""
+    code = _code_only(_driver_executable_text())
+    assert "pre_scheduling_config_check" in code
+    assert "$preCheckNoConfig = ($preCheckR.status -eq 404)" in code
+    pre_check_at = code.index("pre_scheduling_config_check")
+    schedule_populated_at = code.index("Save-Summary -Step 't6-schedule-populated'")
+    assert pre_check_at < schedule_populated_at, (
+        "the pre-existing-config check must happen before the scheduling phase runs"
+    )
+
+
+def test_soak_minutes_raises_max_script_minutes_only_above_20() -> None:
+    """<gate-a-engine-soak> The in-sandbox bound must grow with the soak
+    window (SOAK_MINUTES + 150) whenever T6 is active, and must be an
+    explicit no-op (Gate A's own CI lanes, 10/20) otherwise -- mirroring the
+    dirty-lane's own ``if ($MaxScriptMinutes -lt 210)`` floor pattern."""
+    code = _code_only(_driver_executable_text())
+    assert "$script:EngineSoakActive = ($null -ne $script:SoakMinutesRaw) -and ($script:SoakMinutesRaw -gt 20)" in code
+    assert "$desiredMaxScriptMinutes = $script:SoakMinutesRaw + 150" in code
+    assert "if ($MaxScriptMinutes -lt $desiredMaxScriptMinutes) { $MaxScriptMinutes = $desiredMaxScriptMinutes }" in code
+    # The soak-lane raise must be resolved BEFORE the watchdog and shipper are
+    # spawned (both capture $MaxScriptMinutes by value at spawn time).
+    soak_block_at = code.index("$script:EngineSoakActive = ")
+    watchdog_spawn_at = code.index("'-OutDir', \"`\"$OutDir`\"\", '-Minutes', $MaxScriptMinutes, '-DriverPid', $PID")
+    shipper_spawn_at = code.index("'-IntervalSeconds', $ShipIntervalSeconds, '-MaxMinutes', $MaxScriptMinutes,")
+    assert soak_block_at < watchdog_spawn_at, "MaxScriptMinutes must be finalized before the watchdog captures it"
+    assert soak_block_at < shipper_spawn_at, "MaxScriptMinutes must be finalized before the shipper captures it"
+
+
+def test_run_gate_a_timeout_minutes_scales_with_soak_minutes_when_not_explicit() -> None:
+    """host bound = in-sandbox bound (SoakMinutes + 150) + 20 = SoakMinutes + 170,
+    computed only when the caller did not pass -TimeoutMinutes explicitly, and
+    only when -SoakMinutes > 20 -- Gate A's own CI lanes (10/20) must see
+    -TimeoutMinutes exactly as passed (unchanged 170 default)."""
+    code = _code_only(_read(_RUN_GATE_A))
+    assert "$PSBoundParameters.ContainsKey('TimeoutMinutes')" in code
+    assert "$SoakMinutes -gt 20" in code
+    assert "$desiredInSandboxMinutes = $SoakMinutes + 150" in code
+    assert "$desiredTimeoutMinutes = $desiredInSandboxMinutes + 20" in code
+    assert "if ($TimeoutMinutes -lt $desiredTimeoutMinutes) {" in code
+
+
+def test_soak_480_scales_both_bounds_in_the_documented_order() -> None:
+    """Arithmetic sanity for the operator's actual command
+    (``-SoakMinutes 480``): in-sandbox 630 < host 650, the same ordering
+    relationship the clean lane's untouched 150 < 170 default keeps."""
+    soak_minutes = 480
+    in_sandbox_bound = soak_minutes + 150
+    host_bound = in_sandbox_bound + 20
+    assert in_sandbox_bound == 630
+    assert host_bound == 650
+    assert in_sandbox_bound < host_bound
+
+
+# --------------------------------------------------------------------------
+# <gate-a-engine-soak> T6 hostile-review fixes (B1-B5).
+# --------------------------------------------------------------------------
+
+
+def test_t6_publishes_scheduled_items_via_commit_to_air() -> None:
+    """B1a: a bare POST /api/staff/schedule item is created 'scheduled', and
+    egress/source_plan.py only plans items whose state is
+    SCHEDULE_STATE_PUBLISHED (civiccast/schedule/models.py, civiccast/egress/
+    source_plan.py). T6 must publish every item it schedules via
+    POST /api/staff/playout/commit (civiccast/schedule/playout_router.py)
+    or the beat loop can only ever observe fill_policy='slate', never real
+    content -- the false-pass the hostile review found."""
+    code = _code_only(_driver_executable_text())
+    assert "/api/staff/playout/commit" in code
+    assert "occurrence_id" in code
+    assert "schedule_item_id" in code
+    assert "commitR.status -eq 201" in code
+
+
+def test_t6_beat_predicate_requires_real_content_not_just_slate() -> None:
+    """B1b: ON_AIR + packets>0 alone is satisfied by slate fill -- the beat
+    predicate must also require TSDuck's own pass verdict (Test-TsProof,
+    the same judgement T4 already uses) AND that the engine's
+    current_source_label (civiccast/egress/daemon.py _write_state /
+    EgressStateRow) is populated and is not the slate generator's literal
+    label (civiccast/egress/source_plan.py SlateSourceGenerator)."""
+    code = _code_only(_driver_executable_text())
+    assert "current_source_label" in code
+    assert "'CivicCast slate'" in code or '"CivicCast slate"' in code
+    assert "tspPass = ($chBeat.tsp_verdict -eq 'pass')" in code
+    assert "source_is_asset" in code
+    assert re.search(
+        r"-not \$isLive -or -not \$hasPackets -or -not \$tspPass -or -not \$chBeat\.source_is_asset",
+        code,
+    ), "the beat predicate must AND together liveness, packets, tsp_verdict, and source-is-asset"
+
+
+def test_t6_never_falls_back_to_a_synthetic_clip() -> None:
+    """B4: real LPM sample clips ARE present for our soak kits (Run-GateA.ps1
+    junctions the whole kit dir, samples\\*.mp4 included, at
+    C:\\CivicCastPayload via the .wsb). Per the owner's standing rule, real
+    LPM videos are mandatory for content tests -- T6 must FAIL_EARLY when no
+    usable real clip is found rather than generating a synthetic clip."""
+    driver = _read(_DRIVER)
+    t6_start = driver.index("$t6 = Join-Path $OutDir 'T6-SOAK.txt'")
+    t6_end = driver.index("Save-Summary -Step 't6-soak-complete'")
+    t6_block = _code_only(driver[t6_start:t6_end])
+    assert "reason=no-real-clips" in t6_block
+    assert "testsrc=size=1280x720" not in t6_block, "T6 must not generate a synthetic clip"
+    assert "t6-synthetic-asset.mp4" not in t6_block
+
+
+def test_t6_asset_staging_calls_save_summary_every_step() -> None:
+    """B2: asset staging (upload/package/ready-poll/approve, per clip) and the
+    schedule POST loop can each run long enough to exceed the watchdog's
+    8-minute stall threshold -- every step must call Save-Summary so the
+    watchdog keeps seeing forward progress."""
+    code = _code_only(_driver_executable_text())
+    assert re.search(r"Save-Summary -Step \"t6-clip-uploaded-\$aId\"", code)
+    assert re.search(r"Save-Summary -Step \"t6-clip-packaged-\$aId\"", code)
+    assert re.search(r"Save-Summary -Step \"t6-clip-ready-poll-\$aId-\$pollN\"", code)
+    assert re.search(r"Save-Summary -Step \"t6-clip-approved-\$aId\"", code)
+    assert re.search(r"if \(\(\$postCount % 50\) -eq 0\) \{ Save-Summary", code)
+
+
+def test_t6_staging_stays_under_the_200mb_upload_ceiling() -> None:
+    """B3: Invoke-CivicCastApi's default TimeoutSec=30 and the multipart
+    upload's full in-memory [IO.File]::ReadAllBytes copy cannot safely
+    handle the ~858MB 1080p sample in a 16GB sandbox. Only clips <=200MB may
+    be staged, package/approve/upload get a 900s timeout, and skipped clips
+    must be logged, not silently dropped."""
+    code = _code_only(_driver_executable_text())
+    assert "$maxClipBytes = 200MB" in code
+    assert "clip_skipped_too_large" in code
+    assert "-TimeoutSec 900" in code
+    assert "'validated' -or $aState -eq 'recorded'" in code
+
+
+def test_t6_schedule_window_anchored_at_start_command_and_no_silent_cap() -> None:
+    """B5: the schedule window must be anchored at the start of the
+    scheduling+commit phase (not staging time, which can itself run long),
+    begin 60s before that anchor so the first item is already CURRENT when
+    build_source_plan_from_schedule resolves it, run through soak_end+15min,
+    use 0s back-to-back gaps, and FAIL_EARLY rather than silently truncate
+    when a channel would need more than 2000 items to reach the deadline.
+
+    Delta-review fix B-B moved config+start to AFTER scheduling+commit (so a
+    commit's dispatch never fires a "reload" storm against a live channel),
+    so the anchor is now $schedulingPhaseStart (captured immediately before
+    the scheduling loop) rather than a Get-Date taken right after start."""
+    code = _code_only(_driver_executable_text())
+    assert "$schedulingPhaseStart = Get-Date" in code
+    assert "$scheduleStart = $schedulingPhaseStart" in code
+    assert "$scheduleStart.AddSeconds(-60)" in code
+    assert "$scheduleEnd = $scheduleStart.AddMinutes($soakMin + 15)" in code
+    assert "$scheduleCapPerChannel = 2000" in code
+    assert "reason=schedule-too-long" in code
+    assert "$cursor.AddSeconds([int]$asset.duration_seconds)" in code
+    assert "+ 2)" not in code, "no back-to-back gap padding should remain in the T6 schedule loop"
+
+
+def test_t6_auto_start_true_so_plan_end_restarts_the_channel() -> None:
+    """B-A: each T6 channel's schedule source plan is capped at
+    max_segments=8 (civiccast/egress/source_plan.py:94,124, ~29min with our
+    clips); at plan end the worker EOSes and daemon.py writes STOPPED.
+    ChannelAutomation only re-issues a start for a dark channel when
+    config.auto_start is true (civiccast/egress/automation.py:410-419) -- so
+    the three T6 channel configs must set auto_start=true. T4's own
+    single-channel proof config must stay untouched (auto_start=false)."""
+    code = _code_only(_driver_executable_text())
+    assert re.search(
+        r"channel_id\s*=\s*\$ch\.id[\s\S]{0,200}auto_start\s*=\s*\$true",
+        code,
+    ), "the T6 per-channel config body must set auto_start=$true"
+    t4_idx = code.index("$engineChannel = 'government'")
+    t4_cfg_end = code.index("Invoke-CivicCastApi -Method 'Put' -Url $configUrl", t4_idx)
+    t4_cfg_block = code[t4_idx:t4_cfg_end]
+    assert "auto_start              = $false" in t4_cfg_block, (
+        "T4's own single-channel proof config must remain auto_start=$false"
+    )
+
+
+def test_t6_configures_and_starts_channels_only_after_scheduling_completes() -> None:
+    """B-B: schedule + Commit-to-Air ALL items for all three channels while
+    every channel is still STOPPED, and only THEN PUT config + POST start --
+    so a commit's PlayoutDispatcher nudge (civiccast/egress/dispatcher.py)
+    never has to fire a reload storm against a channel that is already
+    live. The scheduling loop's closing brace must appear before the
+    config PUT / start POST calls in the driver source."""
+    code = _code_only(_driver_executable_text())
+    schedule_populated_at = code.index("Save-Summary -Step 't6-schedule-populated'")
+    config_put_at = code.index(
+        "$chCfgR = Invoke-CivicCastApi -Method 'Put' -Url $t6ChanState[$ch.id].config_url"
+    )
+    start_post_at = code.index(
+        "$chStartR = Invoke-CivicCastApi -Method 'Post' -Url $t6ChanState[$ch.id].commands_url"
+    )
+    assert schedule_populated_at < config_put_at < start_post_at, (
+        "config PUT and start POST for the T6 channels must come after scheduling completes"
+    )
+
+
+def test_t6_scheduling_too_slow_threshold_is_derived_not_hardcoded() -> None:
+    """F4 fix (review finding): commits for ~330 items per channel must
+    finish inside the first scheduled item's own window (anchored 60s before
+    the phase start, using the longest staged clip as the first item). The
+    guard threshold is now DERIVED from that clip's real duration --
+    [Math]::Max(120, $t6Assets[0].duration_seconds - 180) -- instead of a
+    hardcoded 500s that had no relationship to the actual clip playing."""
+    code = _code_only(_driver_executable_text())
+    assert "$schedulingPhaseSeconds = [Math]::Round((New-TimeSpan -Start $schedulingPhaseStart -End (Get-Date)).TotalSeconds, 1)" in code
+    assert "$schedulingTooSlowSeconds = [Math]::Max(120, [int]$t6Assets[0].duration_seconds - 180)" in code
+    assert "$schedulingTooSlow = ($schedulingPhaseSeconds -gt $schedulingTooSlowSeconds)" in code
+    assert "$schedulingTooSlowSeconds = 500" not in code, (
+        "the old hardcoded 500s guard must be gone"
+    )
+
+
+def test_t6_scheduling_too_slow_is_a_logged_measurement_not_a_recommit() -> None:
+    """F5 fix (review finding): migration 0071 EXCLUDEs overlapping
+    scheduled/published premieres on the same channel, so the old F4
+    "recommit a fresh anchor" path always got 409 on its own commit and was
+    inert dead code. $schedulingTooSlow must never FAIL_EARLY the soak and
+    must never trigger a recommit -- it is only ever logged, alongside the
+    derived threshold and the measured phase duration, as a single
+    scheduling_commit_phase_seconds=... threshold_seconds=... slow=...
+    line. The beats 1-2 liveness abort remains the only real guard against a
+    stale first item."""
+    code = _code_only(_driver_executable_text())
+    assert "reason=scheduling-too-slow" not in code, (
+        "scheduling-too-slow must never produce a FAIL_EARLY t6Result"
+    )
+    assert (
+        "\"scheduling_commit_phase_seconds=$schedulingPhaseSeconds threshold_seconds=$schedulingTooSlowSeconds slow=$schedulingTooSlow\" | Add-Content"
+        in code
+    ), "the derived threshold must be logged as a plain measurement line"
+    # No trace of the removed always-409 recommit path may remain.
+    assert "anchor_recommitted" not in code
+    assert "anchorRecommitted" not in code
+    assert "} elseif ($schedulingTooSlow) {" not in code
+    assert "recommitting a fresh anchor item per channel" not in code
+
+
+def test_t6_config_and_beat_loop_no_longer_gated_on_scheduling_too_slow() -> None:
+    """F4 fix: only $scheduleTooLong (a channel needing more than 2000
+    items -- genuinely uncoverable) may still skip channel configure/start
+    and the beat loop. $schedulingTooSlow alone must never skip either
+    block anymore -- it recommits an anchor and proceeds instead."""
+    code = _code_only(_driver_executable_text())
+    assert "-not $scheduleTooLong -and -not $schedulingTooSlow" not in code, (
+        "no gate should still short-circuit on schedulingTooSlow"
+    )
+    assert code.count("if (-not $scheduleTooLong) {") >= 2, (
+        "both the configure+start block and the beat loop must gate on scheduleTooLong alone"
+    )
+
+
+def test_t6_first_scheduled_item_per_channel_is_the_longest_clip() -> None:
+    """B-B: the first item scheduled+committed for every channel must be the
+    longest staged clip (most run room before the channel is actually
+    started, minutes later, once all scheduling completes)."""
+    code = _code_only(_driver_executable_text())
+    assert "if ($t6Assets.Count -gt 1) {" in code
+    assert "$longestIdx = 0" in code
+    assert "first_item_asset_id=$($t6Assets[0].id)" in code
+
+
+def test_t6_beat_retries_an_unconfirmed_first_sample_once() -> None:
+    """B-A residual: with auto_start=true, each channel restarts (STOPPED ->
+    STARTING -> ON_AIR) roughly every ~29 minutes when its 8-segment plan
+    ends. A beat sampled inside that transient must not count as a hard
+    failure -- if the first sample is not ON_AIR, or has zero tsp packets, or
+    the tsp verdict itself failed, the driver must wait 20s and take a
+    second sample, and the verdict/JSON must be computed from the second
+    (final) sample while recording both first_state and final_state."""
+    code = _code_only(_driver_executable_text())
+    assert "function Get-T6ChannelSample" in code
+    assert "$needsRetry = ($sample1.engine_state -ne 'ON_AIR') -or (-not $sample1HasPackets) -or ($sample1.tsp_verdict -ne 'pass')" in code
+    assert "Start-Sleep -Seconds 20" in code
+    assert "$chBeat.first_state = $sample1.engine_state" in code
+    assert "$chBeat.retried = $true" in code
+    assert "$chBeat.final_state = $finalSample.engine_state" in code
+
+
+def test_t6_warmup_sleep_after_start_before_beat_loop() -> None:
+    """F2 fix (review finding): after the three channel-start POSTs, T6 must
+    sleep 120s (with a Save-Summary immediately before and after, so the
+    watchdog sees forward progress across it) before beat 1 samples any
+    channel -- in addition to, not instead of, the existing 20s
+    unconfirmed-sample retry inside the beat loop."""
+    code = _code_only(_driver_executable_text())
+    assert "Save-Summary -Step 't6-warmup-begin'" in code
+    assert "Start-Sleep -Seconds 120" in code
+    assert "Save-Summary -Step 't6-warmup-end'" in code
+    channels_configured_at = code.index("Save-Summary -Step 't6-channels-configured'")
+    warmup_begin_at = code.index("Save-Summary -Step 't6-warmup-begin'")
+    sleep_120_at = code.index("Start-Sleep -Seconds 120")
+    warmup_end_at = code.index("Save-Summary -Step 't6-warmup-end'")
+    beat_loop_do_at = code.index("do {\n                            $beat++")
+    assert channels_configured_at < warmup_begin_at < sleep_120_at < warmup_end_at < beat_loop_do_at, (
+        "the 120s warm-up must run after channel start and before the beat loop begins"
+    )
+    # The existing 20s retry inside the beat loop must still be present.
+    assert "Start-Sleep -Seconds 20" in code
+
+
+def test_t6_beat_loop_calls_save_summary_per_channel_sample() -> None:
+    """F3 fix (review finding): each beat can sample three channels, and each
+    channel's sample (state+health+8s Test-TsProof, plus a possible 20s
+    retry) can itself take a while -- worst case across all three channels
+    is roughly 530s, over the watchdog's 480s (8-minute) stall threshold. A
+    Save-Summary only once per whole beat is not enough; the driver must
+    also call it after EACH channel's sample inside the beat loop."""
+    code = _code_only(_driver_executable_text())
+    assert re.search(r"Save-Summary -Step \"t6-beat-\$beat-\$\(\$ch\.id\)\"", code), (
+        "the beat loop must call Save-Summary per channel, not just once per beat"
+    )
+    # The per-channel call must be inside the `foreach ($ch in $t6Channels)`
+    # beat body, after that channel's own log line -- not merely present
+    # somewhere in the file.
+    beat_log_line_at = code.index(
+        '"T6 beat=$beat channel=$($ch.id) engine_state=$($chBeat.engine_state)'
+    )
+    per_channel_save_at = code.index('Save-Summary -Step "t6-beat-$beat-$($ch.id)"')
+    beat_json_write_at = code.index('Set-Content -Path (Join-Path $OutDir "T6-beat-$beat.json")')
+    assert beat_log_line_at < per_channel_save_at < beat_json_write_at
+
+
+def test_t6_beat_records_public_now_current_source_label() -> None:
+    """Residual: alongside the staff-side current_source_label, each beat
+    must also record what the PUBLIC now-airing endpoint
+    (/api/public/egress/channels/{id}/now, civiccast/egress/router.py:159
+    PublicEgressNowResponse.current_source_label) reports as the current
+    asset, so the evidence shows which asset was airing from the viewer's
+    own vantage point too."""
+    code = _code_only(_driver_executable_text())
+    assert "/api/public/egress/channels/$($ch.id)/now" in code
+    assert "$chBeat.public_now_current_source_label = $pubNowR.body_json.current_source_label" in code
 def test_tsproof_caches_the_process_handle_before_waiting() -> None:
     """<gate-a-tsp-exit-code> Windows PowerShell 5.1 returns $null for
     $proc.ExitCode unless the handle was cached before the process exited.
