@@ -1039,7 +1039,19 @@ class CaptionTapWorker:
         # reset itself to the base delay every other scan.
         with self._session_lock(channel_id):
             if generation == self._session_generation.get(channel_id, 0):
-                self._backoff.record_within_capacity(channel_id)
+                transition = self._backoff.record_within_capacity(channel_id)
+                if transition:
+                    # Field instrumentation (beta.9 ladder, 2026-09-19): the
+                    # shipped log only recorded the overload OPEN, so a live
+                    # second trip could not show whether the sustained recovery
+                    # bar was ever reached. INFO on transition only (bounded by
+                    # the rare recovery events, not per scan), metadata only.
+                    _LOG.info(
+                        "Caption tap backoff for channel %s: %s (rung=%d).",
+                        channel_id,
+                        transition,
+                        self._backoff.state(channel_id).consecutive_overloads,
+                    )
                 self._publish_status(
                     channel_id,
                     state="within-capacity",

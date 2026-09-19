@@ -189,7 +189,17 @@ class CaptionBackoffPolicy:
             state.paused_until = self._monotonic() + delay
             return replace(state)
 
-    def record_within_capacity(self, channel_id: str) -> None:
+    def record_within_capacity(self, channel_id: str) -> str:
+        """Record one healthy scan and report any ladder transition.
+
+        Returns a token the caller can log WITHOUT re-reading private state:
+        ``"stepped-down"`` when a full recovery window retired one rung,
+        ``"released"`` when the channel returned to rung 0 and its state was
+        dropped, or ``""`` when nothing changed yet. Field instrumentation
+        (beta.9 ladder, 2026-09-19): the shipped log only recorded the overload
+        line, so a live second trip could not tell us whether the sustained
+        recovery bar was ever reached. This return value is that evidence.
+        """
         """Count one healthy scan; step the channel back down once it has enough.
 
         Forgiveness is deliberately NOT immediate. A channel that alternates
@@ -222,11 +232,11 @@ class CaptionBackoffPolicy:
         with self._lock:
             state = self._states.get(channel_id)
             if state is None:
-                return
+                return ""
             if self._monotonic() < state.paused_until:
                 # Still inside a pause window; a caller draining the backlog
                 # does not count as the channel having recovered.
-                return
+                return ""
             state.healthy_scans += 1
             # The bar for STEPPING DOWN is deliberately higher than the bar for
             # one short spell of coping: ``recovery_windows`` consecutive
@@ -237,7 +247,7 @@ class CaptionBackoffPolicy:
             # version treated as full recovery.
             step_scans = self._recovery_scans * self._recovery_windows
             if state.healthy_scans < step_scans:
-                return
+                return ""
             state.healthy_scans = 0
             if state.consecutive_overloads > 0:
                 # Descend ONE rung, keeping the remaining history, so a channel
@@ -247,9 +257,10 @@ class CaptionBackoffPolicy:
                     self._base_seconds * (2 ** (state.consecutive_overloads - 1)),
                     self._max_seconds,
                 )
-                return
+                return "stepped-down"
             # Rung 0 and a full sustained-health period earned: release.
             del self._states[channel_id]
+            return "released"
 
     def forget(self, channel_id: str) -> None:
         """Drop all state for a channel (it went off air / was removed)."""

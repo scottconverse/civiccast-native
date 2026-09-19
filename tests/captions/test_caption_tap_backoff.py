@@ -331,3 +331,52 @@ class TestRecoveryMustNotEraseOverloadHistory:
             "a genuinely recovered channel must still be released"
         )
         assert policy.record_overload("public").pause_seconds == 120.0
+
+
+class TestLadderTransitionTokens:
+    """Field instrumentation (beta.9 ladder, 2026-09-19).
+
+    The shipped log only recorded the overload OPEN, so a live second trip
+    could not show whether the sustained recovery bar was ever reached.
+    ``record_within_capacity`` now returns a token the caller logs: "" while
+    nothing changes, "stepped-down" when a full recovery window retires a rung,
+    "released" when the channel returns to rung 0 and its state is dropped.
+    """
+
+    def test_noop_recovery_returns_empty_token(self) -> None:
+        clock = _FakeClock()
+        policy = _policy(clock, base_seconds=120.0, recovery_scans=3)
+        policy.record_overload("public")
+        clock.advance(121.0)
+
+        # A single healthy scan is not a full recovery window yet.
+        assert policy.record_within_capacity("public") == ""
+
+    def test_full_recovery_window_reports_stepped_down(self) -> None:
+        clock = _FakeClock()
+        policy = _policy(clock, base_seconds=120.0, recovery_scans=3)
+        policy.record_overload("public")  # rung 1
+        policy.record_overload("public")  # rung 2
+        clock.advance(241.0)
+
+        tokens = [policy.record_within_capacity("public") for _ in range(9)]
+        # 8 no-ops then a stepped-down on the 9th.
+        assert tokens[:-1] == [""] * 8
+        assert tokens[-1] == "stepped-down"
+        assert policy.state("public").consecutive_overloads == 1
+
+    def test_dropping_from_rung_zero_reports_released(self) -> None:
+        clock = _FakeClock()
+        policy = _policy(clock, base_seconds=120.0, recovery_scans=3)
+        policy.record_overload("public")  # rung 1
+        clock.advance(121.0)
+
+        # First full window retires rung 1 -> 0 (stepped-down, state kept).
+        first = [policy.record_within_capacity("public") for _ in range(9)]
+        assert first[-1] == "stepped-down"
+        assert policy.state("public").consecutive_overloads == 0
+
+        # A second full window at rung 0 releases the channel entirely.
+        second = [policy.record_within_capacity("public") for _ in range(9)]
+        assert second[-1] == "released"
+        assert policy.state("public").consecutive_overloads == 0
