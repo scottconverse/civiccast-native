@@ -70,7 +70,7 @@ def test_records_per_phase_count_total_and_max():
             pass
     with collector.wait("wait_session_lock"):
         pass
-    summary = collector.summarise()
+    summary = collector.summarise(force=True)
     assert summary["asr_process_batch"]["count"] == 3
     assert summary["wait_session_lock"]["count"] == 1
     assert summary["asr_process_batch"]["total_ms"] >= 0.0
@@ -83,20 +83,31 @@ def test_lock_wait_is_a_separate_phase_from_work():
         pass
     with collector.phase("retention_sweep_work"):
         pass
-    summary = collector.summarise()
+    summary = collector.summarise(force=True)
     assert "wait_retention_lock" in summary
     assert "retention_sweep_work" in summary
 
 
-def test_summary_is_emitted_once(caplog):
+def test_summary_is_periodic_not_one_shot(caplog):
+    """The collector re-emits, throttled by its interval; force bypasses it.
+
+    A one-shot summary was too coarse for the beta.9 stall hunt -- a 30-minute
+    run produced ONE data point, so a stall landing between emissions would be
+    invisible.  Emission is now periodic (default 30s) while the event cap and
+    wall-clock window still bound the whole recording.
+    """
+
     caplog.set_level(logging.INFO)
-    collector = PhaseTimingCollector()
+    collector = PhaseTimingCollector()  # default 30s interval
     with collector.phase("file_move_to_processed"):
         pass
-    first = collector.summarise()
-    second = collector.summarise()
+
+    # Inside the interval, an unforced read emits nothing.
+    assert collector.summarise() == {}
+
+    # Forced read (explicit/shutdown) emits the summary.
+    first = collector.summarise(force=True)
     assert first
-    assert second == {}
     lines = [
         r.message
         for r in caplog.records
@@ -107,13 +118,20 @@ def test_summary_is_emitted_once(caplog):
     assert payload["events"] >= 1
     assert "phases" in payload
 
+    # A LATER forced read emits AGAIN -- this is the periodic change.
+    with collector.phase("asr_process_batch"):
+        pass
+    second = collector.summarise(force=True)
+    assert second
+    assert "asr_process_batch" in second
+
 
 def test_event_cap_bounds_recording():
     collector = PhaseTimingCollector(max_events=2)
     for _ in range(10):
         with collector.phase("asr_process_batch"):
             pass
-    summary = collector.summarise()
+    summary = collector.summarise(force=True)
     assert summary["asr_process_batch"]["count"] == 2
 
 
@@ -134,7 +152,8 @@ def test_window_bound_stops_recording(monkeypatch):
     clock["t"] = 2_000_000_000  # 2s later, past the 1s window
     with collector.phase("asr_process_batch"):
         pass
-    assert collector.summarise() == {}
+    # Even FORCED, the WINDOW cap means nothing was recorded.
+    assert collector.summarise(force=True) == {}
 
 
 def test_within_window_does_record(monkeypatch):
@@ -148,7 +167,7 @@ def test_within_window_does_record(monkeypatch):
     clock["t"] = 500_000_000  # 0.5s later, inside the window
     with collector.phase("asr_process_batch"):
         pass
-    assert "asr_process_batch" in collector.summarise()
+    assert "asr_process_batch" in collector.summarise(force=True)
 
 
 def test_broken_logging_cannot_raise(caplog, monkeypatch):
@@ -160,7 +179,7 @@ def test_broken_logging_cannot_raise(caplog, monkeypatch):
         raise OSError("handler failed")
 
     monkeypatch.setattr(pt._LOG, "info", broken)
-    assert collector.summarise()  # must not raise
+    assert collector.summarise(force=True)  # must not raise
 
 
 def test_switch_off_leaves_scan_behaviour_unchanged(tmp_path, monkeypatch):

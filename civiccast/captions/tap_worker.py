@@ -127,6 +127,13 @@ _STATUS_REFRESH_SECONDS = 30.0
 #: startup always sweeps.
 _RETENTION_SWEEP_SECONDS = 60.0
 
+#: How long the SCAN thread will wait for the FIRST retention verdict before
+#: proceeding fail-closed.  Deliberately far below the 5 s segment cadence so a
+#: slow verification can never let settled segments accumulate past the max-2
+#: backlog gate -- the measured beta.9 N=3 defect was a 16.75 s synchronous
+#: first sweep against a 13,550-candidate archive, i.e. >3x the cadence.
+_RETENTION_FIRST_VERDICT_WAIT_SECONDS = 1.0
+
 
 def default_max_channel_workers(runtime: CaptionRuntime | None = None) -> int:
     """How many channels' ASR calls may be IN FLIGHT at once by default.
@@ -620,7 +627,7 @@ class CaptionTapWorker:
             lock.release()
 
     @contextmanager
-    def _timed_retention_lock(self) -> Iterator[threading.Lock]:
+    def _timed_retention_lock(self) -> Iterator[threading.RLock]:
         """Retention lock with ACQUISITION time recorded separately from work."""
 
         with self._phase_timing.wait("wait_retention_lock"):
@@ -1131,25 +1138,47 @@ class CaptionTapWorker:
             # while this sweep is still running.
             self._last_retention_sweep = now
             self._retention_in_flight = True
-        if first_verification:
-            # The FIRST sweep stays SYNCHRONOUS on purpose.  It establishes the
-            # verdict before any ASR runs -- the original guarantee -- so an
-            # unverified or refused store can never be transcribed into.  It is
-            # also the least harmful moment to block: it happens at session start,
-            # before this session has live captions to lose.  Every LATER sweep --
-            # including the 60 s-cadence one that caused the observed mid-session
-            # failure with captions live -- runs on its own thread and can no
-            # longer starve the scan path.
-            with self._phase_timing.phase("retention_sweep_work"):
-                self._run_retention_sweep()
-            return
+        # The sweep ALWAYS runs on its own daemon thread, first verification
+        # included.  It used to run inline for the first verification, on the
+        # rationale that "it happens at session start, before this session has
+        # live captions to lose".  MEASURED beta.9 N=3 (Blackwell, 2026-09-18):
+        # that assumption is false on a running station -- the first
+        # verification happens at WORKER CONSTRUCTION against an existing
+        # 13,550-candidate archive and took 16.75 s, more than three times the
+        # 5 s segment cadence, so 3+ settled segments accumulated before the
+        # first scan reached the max-2 backlog gate and the gate tripped at
+        # construction.  The cost is an N+1 database pattern in discovery
+        # (review_store.list() then a fresh session + row lookup PER ROW).
+        #
+        # SAFETY IS PRESERVED BY THE WAIT, NOT BY THE THREAD: the scan thread
+        # waits up to _RETENTION_FIRST_VERDICT_WAIT_SECONDS (1 s, well under the
+        # 5 s cadence) for the verdict.  If it arrives, behaviour is exactly as
+        # before -- verdict published before any ASR.  If it does NOT, the scan
+        # proceeds with the existing PENDING state, which already fails closed:
+        # ``_retention_ready`` stays False and ``_retention_refusal`` stays
+        # "retention-verification-pending", so no ASR is transcribed into an
+        # unverified store and no WAV is retained.  The thread publishes the real
+        # verdict when it finishes, exactly as later sweeps already do.
         thread = threading.Thread(
             target=self._run_retention_sweep,
             name="civiccast-caption-retention",
             daemon=True,
         )
         self._retention_thread = thread
-        thread.start()
+        with self._phase_timing.phase("retention_sweep_work"):
+            thread.start()
+            if first_verification:
+                # Bounded wait only for the FIRST verdict; later sweeps are
+                # fire-and-forget as before.
+                thread.join(timeout=_RETENTION_FIRST_VERDICT_WAIT_SECONDS)
+                if thread.is_alive():
+                    _LOG.info(
+                        "Caption retention first verification is still running "
+                        "after %.1fs; the scan proceeds FAIL-CLOSED (no ASR into "
+                        "an unverified store) and the verdict is applied when the "
+                        "sweep publishes it.",
+                        _RETENTION_FIRST_VERDICT_WAIT_SECONDS,
+                    )
 
     def wait_for_retention_sweep(self, timeout: float = 30.0) -> bool:
         """Block until any in-flight retention sweep finishes. Returns True if idle.

@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from typing import Final
 
 __all__ = [
+    "DEFAULT_SUMMARY_INTERVAL_SECONDS",
     "PHASE_TIMING_ENV_VAR",
     "NullPhaseTimingCollector",
     "PhaseTimingCollector",
@@ -62,6 +63,12 @@ PHASE_TIMING_ENV_VAR: Final[str] = "CIVICCAST_CAPTION_TAP_PHASE_TIMING"
 _MAX_EVENTS: Final[int] = 4000
 #: Hard bound on the recording window, measured from collector construction.
 _MAX_SECONDS: Final[float] = 600.0
+#: How often a running collector re-emits its cumulative summary.  A one-shot
+#: summary was too coarse for the beta.9 stall investigation: a 30-minute run
+#: produced a single data point, so a stall landing between emissions would be
+#: invisible.  Emitting every 30 s keeps the samples dense enough to catch one
+#: while staying bounded by the same event cap and window.
+DEFAULT_SUMMARY_INTERVAL_SECONDS: Final[float] = 30.0
 
 _TRUE_VALUES: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
 
@@ -85,11 +92,13 @@ class PhaseTimingCollector:
 
     window_seconds: float = _MAX_SECONDS
     max_events: int = _MAX_EVENTS
+    summary_interval_seconds: float = DEFAULT_SUMMARY_INTERVAL_SECONDS
     _start_ns: int = field(default=0, init=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
     _events: int = field(default=0, init=False)
     _aggregates: dict[str, _PhaseAggregate] = field(default_factory=dict, init=False)
     _summarised: bool = field(default=False, init=False)
+    _last_summary_ns: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:
         # Resolve the clock through the module attribute at CONSTRUCTION time
@@ -97,6 +106,7 @@ class PhaseTimingCollector:
         # collector reads exactly the clock the rest of its methods read, and
         # so a test can install a fake clock before building it.
         self._start_ns = time.monotonic_ns()
+        self._last_summary_ns = self._start_ns
 
     def _exhausted_locked(self) -> bool:
         return self._events >= self.max_events or (
@@ -110,7 +120,7 @@ class PhaseTimingCollector:
             if duration_ns < 0:
                 return
             with self._lock:
-                if self._summarised or self._exhausted_locked():
+                if self._exhausted_locked():
                     return
                 self._events += 1
                 agg = self._aggregates.get(phase)
@@ -149,16 +159,27 @@ class PhaseTimingCollector:
         finally:
             self._record(phase, time.monotonic_ns() - started)
 
-    def summarise(self) -> dict[str, dict[str, float]]:
-        """Return (and log once) the per-phase cumulative summary.
+    def summarise(self, *, force: bool = False) -> dict[str, dict[str, float]]:
+        """Return (and log) the per-phase cumulative summary.
+
+        PERIODIC, not one-shot: at most one emission per
+        ``summary_interval_seconds`` so a long run yields a dense-enough series
+        to catch a stall, while the event cap and wall-clock window still bound
+        the whole recording. ``force=True`` (used at shutdown) emits regardless
+        of the interval.
 
         Durations are reported in milliseconds: count, total_ms, max_ms.
         """
 
+        now_ns = time.monotonic_ns()
         with self._lock:
-            if self._summarised:
+            if not force and now_ns - self._last_summary_ns < int(
+                self.summary_interval_seconds * 1_000_000_000
+            ):
                 return {}
-            self._summarised = True
+            if self._summarised and not self._aggregates:
+                return {}
+            self._last_summary_ns = now_ns
             snapshot = {
                 name: {
                     "count": agg.count,

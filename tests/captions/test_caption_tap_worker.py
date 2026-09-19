@@ -2380,3 +2380,84 @@ class TestCaptionTapWorkerSettings:
                 InMemoryCaptionReviewStore(),
                 caption_work_dir=tmp_path / "egress",
             )
+
+
+class TestFirstRetentionSweepIsBounded:
+    """beta.9 N=3 field defect (Blackwell 2026-09-18, three channels ON_AIR).
+
+    The FIRST retention verification ran SYNCHRONOUSLY on the scan thread "by
+    design", on the rationale that it happens at session start before there are
+    live captions to lose.  Measured live: it runs at WORKER CONSTRUCTION
+    against a 13,550-candidate archive and took 16.75 s -- >3x the 5 s segment
+    cadence -- so 3+ settled segments accumulated before the first scan reached
+    the max-2 backlog gate and the gate tripped at construction.  That is the
+    startup overload, measured.
+
+    The fix keeps the safety invariant (no ASR into an unverified store) but
+    stops the scan thread from being blocked for the whole sweep: the first
+    sweep runs on the same daemon thread later sweeps already use, and the scan
+    waits only a bound far below the segment cadence.
+    """
+
+    def test_first_sweep_does_not_block_the_scan_thread(self, tmp_path: Path) -> None:
+        """RED on the pre-fix code: dispatch returned only after the sweep."""
+
+        tap_root = tmp_path / "tap"
+        (tap_root / "public").mkdir(parents=True)
+        _write_wav(tap_root / "public" / "chunk-000000.wav", seconds=5.0)
+        slow = _SlowRetentionPolicy(delay_seconds=3.0)
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=5.0,
+            atomic_segments=True,
+            retention_policy=slow,  # type: ignore[arg-type]
+            monotonic=_FakeClock(),  # type: ignore[arg-type]
+        )
+
+        started = time.monotonic()
+        with worker._phase_timing.phase("retention_dispatch"):
+            worker._sweep_retention()
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 2.0, (
+            "the first retention dispatch must not block the scan thread for the "
+            f"whole sweep; it blocked {elapsed:.2f}s against a {slow.delay}s sweep"
+        )
+        # The sweep really is slow and really did run -- so the bound, not a
+        # fast sweep, is what kept the dispatch short.
+        worker.wait_for_retention_sweep(timeout=10.0)
+        assert slow.calls == 1
+
+    def test_slow_first_sweep_still_fails_closed_until_the_verdict_lands(
+        self, tmp_path: Path
+    ) -> None:
+        """The safety invariant: no ASR into an UNVERIFIED store."""
+
+        tap_root = tmp_path / "tap"
+        (tap_root / "public").mkdir(parents=True)
+        _write_wav(tap_root / "public" / "chunk-000000.wav", seconds=5.0)
+        slow = _SlowRetentionPolicy(delay_seconds=3.0)
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=_ScriptedRuntime(),
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=5.0,
+            atomic_segments=True,
+            retention_policy=slow,  # type: ignore[arg-type]
+            monotonic=_FakeClock(),  # type: ignore[arg-type]
+        )
+
+        worker.run_once()
+
+        # Verdict not in yet -> fail closed, nothing transcribed.
+        assert worker._retention_ready is False
+        assert worker._retention_verified is False
+        assert worker._retention_refusal == "retention-verification-pending"
+        # And once the sweep publishes, the verdict is applied.
+        assert worker.wait_for_retention_sweep(timeout=10.0)
+        assert worker._retention_verified is True
+        assert worker._retention_ready is True
