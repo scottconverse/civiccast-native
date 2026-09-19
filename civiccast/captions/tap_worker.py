@@ -72,6 +72,7 @@ from civiccast.captions.live_sidecar import (
     reset_existing_live_sidecars,
 )
 from civiccast.captions.models import AudioChunk, CaptionCue
+from civiccast.captions.phase_timing import phase_timing_from_env
 from civiccast.captions.pipeline import CaptionPipeline
 from civiccast.captions.retention import CaptionEvidenceRetentionPolicy
 from civiccast.captions.review import CaptionReviewAudioEvidence, CaptionReviewStore
@@ -520,6 +521,9 @@ class CaptionTapWorker:
         # DI seam summary/captions use. Threaded into each per-channel LiveCaptionWorker
         # so the running translator consults the operator's selection.
         self._translation_provider = translation_provider
+        # Opt-in, default-off phase timing (CIVICCAST_CAPTION_TAP_PHASE_TIMING=1).
+        # Inert -- no clock read, no counters -- unless explicitly enabled.
+        self._phase_timing = phase_timing_from_env()
         self._retention_policy = retention_policy or CaptionEvidenceRetentionPolicy.from_system(
             storage_root=self._caption_work_dir
         )
@@ -598,6 +602,33 @@ class CaptionTapWorker:
                     "by the in-flight flag until it completes).",
                     self._retention_shutdown_timeout,
                 )
+
+    @contextmanager
+    def _timed_session_lock(self, channel_id: str) -> Iterator[threading.RLock]:
+        """Session lock with ACQUISITION time recorded separately from work.
+
+        Waiting for a lock and working while holding it demand different fixes,
+        so the wait is its own phase.
+        """
+
+        with self._phase_timing.wait("wait_session_lock", channel=channel_id):
+            lock = self._session_lock(channel_id)
+            lock.acquire()
+        try:
+            yield lock
+        finally:
+            lock.release()
+
+    @contextmanager
+    def _timed_retention_lock(self) -> Iterator[threading.Lock]:
+        """Retention lock with ACQUISITION time recorded separately from work."""
+
+        with self._phase_timing.wait("wait_retention_lock"):
+            self._retention_lock.acquire()
+        try:
+            yield self._retention_lock
+        finally:
+            self._retention_lock.release()
 
     def _session_lock(self, channel_id: str) -> threading.RLock:
         with self._session_locks_guard:
@@ -714,7 +745,8 @@ class CaptionTapWorker:
         # which is the exact opposite of what an operator turning captions off
         # is asking for. (``enforce_discovered`` tolerates a tap root that does
         # not exist yet, so this needs no directory guard.)
-        self._sweep_retention()
+        with self._phase_timing.phase("retention_dispatch"):
+            self._sweep_retention()
         # The enabled check runs BEFORE the tap-directory check (round-2 review
         # MAJOR 3). With live captions off on a station whose tap root was
         # never created -- or was swept by an operator cleaning up -- the old
@@ -761,7 +793,8 @@ class CaptionTapWorker:
                     for _index, segment in self._settled_segments(channel_dir):
                         segment.unlink(missing_ok=True)
                     continue
-                segments = self._settled_segments(channel_dir)
+                with self._phase_timing.phase("scan_settle_and_backlog_gate", channel=channel_id):
+                    segments = self._settled_segments(channel_dir)
                 if not segments:
                     continue
                 channels.append(channel_id)
@@ -837,6 +870,9 @@ class CaptionTapWorker:
             quarantined += sum(result.quarantined_segments for result in results)
             committed += sum(result.committed_review_items for result in results)
             expired += sum(result.expired_unconfirmed_cues for result in results)
+        # Bounded, one-shot per-phase summary for this scan pass. The collector
+        # gates this on its own event/window caps and emits at most once.
+        self._phase_timing.summarise()
         return CaptionTapScanResult(
             consumed_segments=consumed,
             quarantined_segments=quarantined,
@@ -862,11 +898,11 @@ class CaptionTapWorker:
         quarantined = 0
         committed = 0
         expired = 0
-        with self._session_lock(channel_id):
+        with self._timed_session_lock(channel_id):
             if generation is None:
                 generation = self._session_generation.get(channel_id, 0)
         for index, segment in segments:
-            with self._session_lock(channel_id):
+            with self._timed_session_lock(channel_id):
                 if (
                     generation != self._session_generation.get(channel_id, 0)
                     or channel_id in self._failed_sessions
@@ -874,7 +910,7 @@ class CaptionTapWorker:
                     break
                 processed = channel_dir / "processed" / segment.name
                 if processed.exists():
-                    with self._retention_lock:
+                    with self._timed_retention_lock():
                         if self._retention_ready and not self._retention_in_flight:
                             collision_path = self._move_collision(
                                 segment, channel_dir / "collision"
@@ -904,10 +940,16 @@ class CaptionTapWorker:
                     continue
                 chunk = self._with_overlap(channel_id, index, raw_chunk)
                 worker = self._worker_for(channel_id)
-            result = worker.process_batch(
-                [chunk],
-                audio_evidence_factory=self._audio_evidence_factory(channel_id, chunk),
-            )
+            with self._phase_timing.phase(
+                "asr_process_batch",
+                channel=channel_id,
+                generation=generation,
+                index=index,
+            ):
+                result = worker.process_batch(
+                    [chunk],
+                    audio_evidence_factory=self._audio_evidence_factory(channel_id, chunk),
+                )
             committed += len(result.committed_review_items)
             expired += len(result.expired_unconfirmed_cues)
             with self._session_lock(channel_id):
@@ -934,7 +976,10 @@ class CaptionTapWorker:
                         # under yesterday's verdict or defer them into a backlog.
                         segment.unlink(missing_ok=True)
                     else:
-                        self._move(segment, channel_dir / "processed")
+                        with self._phase_timing.phase(
+                            "file_move_to_processed", channel=channel_id, index=index
+                        ):
+                            self._move(segment, channel_dir / "processed")
                     self._previous_segments[channel_id] = (index, raw_chunk)
                     consumed += 1
         # One healthy scan. The policy forgives the channel's escalation only
@@ -1095,7 +1140,8 @@ class CaptionTapWorker:
             # including the 60 s-cadence one that caused the observed mid-session
             # failure with captions live -- runs on its own thread and can no
             # longer starve the scan path.
-            self._run_retention_sweep()
+            with self._phase_timing.phase("retention_sweep_work"):
+                self._run_retention_sweep()
             return
         thread = threading.Thread(
             target=self._run_retention_sweep,
