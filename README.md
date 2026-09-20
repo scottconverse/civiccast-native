@@ -188,8 +188,8 @@ things outside this repository's control:
 
 These are known, measured limitations of `v1.0.0-beta.9`. A **beta.10** release
 is coming soon that addresses the caption interruptions on program changes, the
-escalation behaviour, and the end-of-schedule stop. **If you are running a
-station where captions must stay up unattended, wait for beta.10.**
+escalation behaviour, the end-of-schedule stop, and the playout worker stalls.
+**If you are running a station where captions must stay up unattended, wait for beta.10.**
 
 **Caption reliability — two channels are clean, three are not.**
 - Captions run on the GPU (`cuda`/`float16`), and caption text reaches the
@@ -219,6 +219,19 @@ station where captions must stay up unattended, wait for beta.10.**
 - Caption blackout per backlog trip is about **210 seconds** — not the 120 s
   the log message implies (120 s pause plus about 90 s to earn the recovery
   bar).
+
+**Playout worker stalls (GStreamer).**
+- A playout worker can stall with "no output for 10s" and be relaunched by the
+  watchdog. The channel oscillates between STARTING, fallback slate and ON_AIR
+  instead of holding air, and captions do not accumulate while it does.
+- **This is frequent and long-standing, not rare.** In the retained five-day log
+  window it fired **68 times** (1 on 09-14, 7 on 09-15, 20 on 09-16, 28 on 09-17,
+  12 on 09-18).
+- **It is unevenly distributed across channels:** 55 of the 68 stalls were on the
+  public channel, 9 on government and 4 on education. A single channel can carry
+  the large majority of the failures.
+- A clean STOP then START does **not** clear it; the stall recurs on a fresh launch.
+  The channel with the heaviest source is the one most likely to be stuck.
 
 **End-of-schedule behaviour.**
 - When a channel's scheduled programming runs out, the channel can be
