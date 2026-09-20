@@ -19,6 +19,7 @@ from __future__ import annotations
 import builtins
 import logging
 import os
+import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
@@ -154,6 +155,7 @@ from civiccast.egress.audio_router import staff_router as audio_tracks_staff_rou
 from civiccast.egress.audio_tracks import AudioTrackStore
 from civiccast.egress.automation import ChannelAutomationSettings, build_channel_automation
 from civiccast.egress.caption_feed import build_caption_feed_worker
+from civiccast.egress.caption_proof_process import CaptionProofProcessSupervisor
 from civiccast.egress.caption_proof_worker import build_caption_proof_worker
 from civiccast.egress.dispatcher import PlayoutDispatcher
 from civiccast.egress.router import get_egress_store, get_takeover_service
@@ -559,6 +561,13 @@ _MAINTENANCE_GUARD_MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE
 # RAT-004: default per-shutdown drain-all deadline, matching D5's per-child
 # graceful-stop budget (15s then TerminateProcess).
 _DEFAULT_EGRESS_DRAIN_DEADLINE_SECONDS = 15.0
+# Startup hooks are housekeeping (alert reconciliation, orphan recording
+# cleanup), not the air path.  A broken database or a stalled query must not
+# hold the control plane in a half-started state while /health keeps serving.
+# Hooks still get a short grace period so the normal, fast path preserves its
+# existing startup semantics; slow hooks finish in their daemon thread and are
+# retried by the next normal reconciliation cadence/restart.
+_DEFAULT_STARTUP_HOOK_TIMEOUT_SECONDS = 1.0
 
 
 def _egress_drain_deadline_seconds() -> float:
@@ -574,6 +583,17 @@ def _egress_drain_deadline_seconds() -> float:
             _DEFAULT_EGRESS_DRAIN_DEADLINE_SECONDS,
         )
         return _DEFAULT_EGRESS_DRAIN_DEADLINE_SECONDS
+
+
+def _startup_hook_timeout_seconds() -> float:
+    raw = os.environ.get("CIVICCAST_STARTUP_HOOK_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return _DEFAULT_STARTUP_HOOK_TIMEOUT_SECONDS
+    try:
+        parsed = float(raw)
+    except ValueError:
+        return _DEFAULT_STARTUP_HOOK_TIMEOUT_SECONDS
+    return parsed if parsed > 0 else _DEFAULT_STARTUP_HOOK_TIMEOUT_SECONDS
 
 
 # Peer of the egress drain deadline: the per-shutdown budget for gracefully
@@ -769,11 +789,44 @@ def _maybe_start_background_supervisors(app: FastAPI) -> None:
     # One-shot startup-condition hooks (e.g. the caption-tier degrade alert):
     # drained so a hook runs exactly once whether durable storage was wired at
     # boot (lifespan reaches here first) or mid-flight ("Prepare storage" ->
-    # _wire_stage_f_workers -> here with the lifespan already started). Each
-    # hook owns its own failure handling and never raises.
+    # _wire_stage_f_workers -> here with the lifespan already started). These
+    # hooks are housekeeping, not the air path. Run each in its own daemon
+    # thread and wait only a short grace period: a database query or other
+    # startup repair that stalls must not leave the control plane serving
+    # /health while never completing the rest of startup. The fast path still
+    # completes before this function returns, preserving the old behavior for
+    # ordinary local databases.
     hooks = getattr(app.state, "startup_condition_hooks", [])
     while hooks:
-        hooks.pop(0)()
+        hook = hooks.pop(0)
+        finished = threading.Event()
+
+        def _run_startup_hook(
+            startup_hook: Callable[[], None] = hook,
+            done: threading.Event = finished,
+        ) -> None:
+            try:
+                startup_hook()
+            except Exception:
+                # Hook implementations already fail closed, but the wrapper
+                # must keep that invariant if a future hook does not.
+                _LOG.exception("Startup condition hook failed; continuing startup.")
+            finally:
+                done.set()
+
+        thread = threading.Thread(
+            target=_run_startup_hook,
+            name="civiccast-startup-condition",
+            daemon=True,
+        )
+        thread.start()
+        thread.join(timeout=_startup_hook_timeout_seconds())
+        if not finished.is_set():
+            _LOG.warning(
+                "Startup condition hook exceeded %.1fs; leaving it in its daemon "
+                "thread so the control plane can finish startup.",
+                _startup_hook_timeout_seconds(),
+            )
 
 
 def _build_program_log_materializer(session_factory: Any) -> ProgramLogMaterializer:
@@ -1505,18 +1558,56 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
             )
         )
         # The PROOF: sample the emitted stream + flip caption_status on a fresh PASS.
-        caption_proof_worker = build_caption_proof_worker(
-            session_factory,
-            is_enabled=resolve_live_captions_enabled_or_default,
+        # In the native supervised service this runs in a separate Python child;
+        # the control-plane thread only supervises that child.  Unsupervised
+        # unit/dev apps retain the in-process seam so tests do not spawn a child.
+        proof_poll_seconds = float(os.environ.get("CIVICAST_CAPTION_PROOF_POLL_SECONDS", "30"))
+        proof_timeout_seconds = float(
+            os.environ.get("CIVICAST_CAPTION_PROOF_TIMEOUT_SECONDS", "15")
         )
-        app.state.background_supervisors.append(
-            ThreadSupervisor(
-                name="civiccast-caption-proof",
-                run_forever=caption_proof_worker.run_forever,
-                poll_seconds=float(os.environ.get("CIVICCAST_CAPTION_PROOF_POLL_SECONDS", "30")),
-                enabled=True,
+        proof_process_mode = os.environ.get("CIVICCAST_CAPTION_PROOF_PROCESS", "").strip().lower()
+        if not proof_process_mode:
+            proof_process_mode = (
+                "process" if os.environ.get("CIVICCAST_SUPERVISED") == "1" else "inline"
             )
-        )
+        if proof_process_mode == "off":
+            _LOG.warning(
+                "Caption proof worker disabled by CIVICCAST_CAPTION_PROOF_PROCESS=off; "
+                "emitted-caption proof is not being collected."
+            )
+        elif proof_process_mode == "process":
+            proof_process = CaptionProofProcessSupervisor(
+                poll_seconds=proof_poll_seconds,
+                timeout_seconds=proof_timeout_seconds,
+            )
+            app.state.caption_proof_process_supervisor = proof_process
+            app.state.background_supervisors.append(
+                ThreadSupervisor(
+                    name="civiccast-caption-proof",
+                    run_forever=proof_process.run_forever,
+                    poll_seconds=proof_poll_seconds,
+                    enabled=True,
+                )
+            )
+        elif proof_process_mode == "inline":
+            caption_proof_worker = build_caption_proof_worker(
+                session_factory,
+                is_enabled=resolve_live_captions_enabled_or_default,
+                ffmpeg_timeout_seconds=proof_timeout_seconds,
+            )
+            app.state.background_supervisors.append(
+                ThreadSupervisor(
+                    name="civiccast-caption-proof",
+                    run_forever=caption_proof_worker.run_forever,
+                    poll_seconds=proof_poll_seconds,
+                    enabled=True,
+                )
+            )
+        else:
+            raise ValueError(
+                "CIVICCAST_CAPTION_PROOF_PROCESS must be 'off', 'inline', or 'process'; "
+                f"got {proof_process_mode!r}."
+            )
     # S11c EAS poll worker — polls enabled CAP/IPAWS/NWS/AMBER sources, ingests
     # filtered alerts, expires stale ones. Off by default (CIVICCAST_EAS=inline to
     # enable); fail-closed (a feed failure surfaces source-health, never fabricates).

@@ -1777,7 +1777,10 @@ def build_channel_automation(
     from civiccast.egress.caption_proof import build_caption_status_provider
     from civiccast.egress.hls_relay import HlsRelaySupervisor
     from civiccast.egress.preparer import SourcePreparer
-    from civiccast.egress.source_plan import ScheduleSourcePlanProvider
+    from civiccast.egress.source_plan import (
+        ScheduleSourcePlanProvider,
+        schedule_loop_enabled_from_env,
+    )
     from civiccast.egress.store import PostgresEgressStore
     from civiccast.egress.supervisor import PlayoutSupervisor
     from civiccast.egress.takeover_store import PostgresTakeoverAuditStore
@@ -1834,6 +1837,7 @@ def build_channel_automation(
         ),
         asset_resolver=asset_store.get_staff_row,
         max_segments=1 if gstreamer_engine_selected() else 8,
+        loop_schedule=schedule_loop_enabled_from_env(),
     )
     # #156: the persistent conform cache emits playout-time trims when the
     # engine honors them — the legacy ffmpeg-concat engine does (ffconcat

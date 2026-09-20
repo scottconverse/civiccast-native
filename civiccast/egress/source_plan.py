@@ -7,6 +7,8 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import logging
+import math
+import os
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
@@ -61,6 +63,23 @@ _PLAYABLE_ASSET_STATES = {ASSET_STATE_VALIDATED, ASSET_STATE_RECORDED}
 #: gets rolled over comfortably inside its own lifetime.
 PLAN_MIN_SECONDS = 0.0
 SLATE_RENDER_VERSION = 1
+
+
+def schedule_loop_enabled_from_env() -> bool:
+    """Return whether the finite published schedule should repeat cyclically.
+
+    The default remains the existing finite schedule semantics.  A station or
+    controlled soak opts in explicitly with ``CIVICCAST_SCHEDULE_LOOP=1`` (or
+    ``true``, ``yes``, or ``on``); this avoids silently changing a real
+    operator's end-of-schedule policy.
+    """
+
+    return os.environ.get("CIVICCAST_SCHEDULE_LOOP", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 class SlateSourceGenerator:
@@ -159,6 +178,7 @@ class ScheduleSourcePlanProvider:
         min_plan_seconds: float = PLAN_MIN_SECONDS,
         segment_cap: int = MAX_PLAYLIST_SUBCHAINS,
         gap_tolerance_seconds: float = 1.0,
+        loop_schedule: bool = False,
     ) -> None:
         if max_segments <= 0:
             raise ValueError("max_segments must be greater than zero.")
@@ -171,6 +191,7 @@ class ScheduleSourcePlanProvider:
         self._min_plan_seconds = min_plan_seconds
         self._segment_cap = segment_cap
         self._gap_tolerance = timedelta(seconds=gap_tolerance_seconds)
+        self._loop_schedule = loop_schedule
 
     def __call__(self, channel_id: str) -> EgressSourcePlan | None:
         return self.plan_at(channel_id, self._now_provider())
@@ -192,6 +213,7 @@ class ScheduleSourcePlanProvider:
             min_plan_seconds=self._min_plan_seconds,
             segment_cap=self._segment_cap,
             gap_tolerance=self._gap_tolerance,
+            loop_schedule=self._loop_schedule,
         )
 
 
@@ -205,6 +227,7 @@ def build_source_plan_from_schedule(
     min_plan_seconds: float = PLAN_MIN_SECONDS,
     segment_cap: int = MAX_PLAYLIST_SUBCHAINS,
     gap_tolerance: timedelta = timedelta(seconds=1),
+    loop_schedule: bool = False,
 ) -> EgressSourcePlan | None:
     """Return the currently playable egress source plan, or None for slate fallback.
 
@@ -298,6 +321,8 @@ def build_source_plan_from_schedule(
         and item.duration_seconds is not None
     ]
     playable_items.sort(key=lambda item: (item.scheduled_at, str(item.id)))
+    if loop_schedule and playable_items:
+        playable_items = _repeat_schedule_cycle(playable_items, current_time)
     current_index = _current_item_index(playable_items, current_time)
     if current_index is None:
         return None
@@ -350,6 +375,33 @@ def build_source_plan_from_schedule(
     if not segments:
         return None
     return EgressSourcePlan(channel_id=channel_id, segments=segments)
+
+
+def _repeat_schedule_cycle(
+    items: Sequence[ScheduleItemResponse], current_time: datetime
+) -> list[ScheduleItemResponse]:
+    """Shift a finite schedule into the cycle containing ``current_time``.
+
+    The first published item's start is the cycle anchor and the end of the
+    last published slot is the cycle boundary.  Gaps between items remain
+    gaps (the normal filler/slate policy owns them); after the final slot the
+    same published sequence starts again.  Item IDs/assets are unchanged so
+    the loop is a playout policy, not a second set of schedule records.
+    """
+
+    anchor = _as_utc(items[0].scheduled_at)
+    cycle_end = max(
+        _as_utc(item.scheduled_at) + timedelta(seconds=item.duration_seconds or 0) for item in items
+    )
+    period_seconds = (cycle_end - anchor).total_seconds()
+    if period_seconds <= 0 or current_time < anchor:
+        return list(items)
+    cycle_index = math.floor((current_time - anchor).total_seconds() / period_seconds)
+    offset = timedelta(seconds=cycle_index * period_seconds)
+    return [
+        item.model_copy(update={"scheduled_at": _as_utc(item.scheduled_at) + offset})
+        for item in items
+    ]
 
 
 def build_slate_source_args(

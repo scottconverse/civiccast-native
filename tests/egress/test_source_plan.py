@@ -515,6 +515,60 @@ def test_one_item_provider_future_gap_returns_none(tmp_path: Path) -> None:
     assert provider.plan_at("gov", start + timedelta(minutes=5, seconds=1)) is None
 
 
+def test_looping_provider_repeats_the_published_sequence_after_the_last_item(
+    tmp_path: Path,
+) -> None:
+    media = tmp_path / "program.ts"
+    media.write_text("fake", encoding="utf-8")
+    start = datetime(2026, 6, 5, 23, 20, tzinfo=UTC)
+    items = [
+        _schedule_item(asset_id="first", scheduled_at=start, duration_seconds=30),
+        _schedule_item(
+            asset_id="second", scheduled_at=start + timedelta(seconds=30), duration_seconds=30
+        ),
+    ]
+    assets = {
+        item.asset_id: _asset(media, asset_id=item.asset_id).model_copy(
+            update={
+                "title": item.asset_id,
+                "duration_seconds": 30,
+                "trim_in_seconds": 0,
+                "trim_out_seconds": 30,
+            }
+        )
+        for item in items
+    }
+    provider = ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _channel_id: items,
+        asset_resolver=assets.get,
+        max_segments=1,
+        loop_schedule=True,
+    )
+
+    assert provider.plan_at("gov", start + timedelta(seconds=30)).segments[0].label == "second"  # type: ignore[union-attr]
+    assert provider.plan_at("gov", start + timedelta(seconds=60)).segments[0].label == "first"  # type: ignore[union-attr]
+
+
+def test_looping_provider_preserves_gaps_between_published_items(tmp_path: Path) -> None:
+    media = tmp_path / "program.ts"
+    media.write_text("fake", encoding="utf-8")
+    start = datetime(2026, 6, 5, 23, 20, tzinfo=UTC)
+    items = [
+        _schedule_item(asset_id="first", scheduled_at=start, duration_seconds=30),
+        _schedule_item(
+            asset_id="second", scheduled_at=start + timedelta(seconds=60), duration_seconds=30
+        ),
+    ]
+    provider = ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _channel_id: items,
+        asset_resolver=lambda asset_id: _asset(media, asset_id=asset_id),
+        max_segments=1,
+        loop_schedule=True,
+    )
+
+    assert provider.plan_at("gov", start + timedelta(seconds=45)) is None
+
+
 def test_resolver_module_exports_source_plan_contracts() -> None:
     assert resolver.ScheduleSourcePlanProvider is ScheduleSourcePlanProvider
     assert resolver.SlateSourceGenerator is SlateSourceGenerator

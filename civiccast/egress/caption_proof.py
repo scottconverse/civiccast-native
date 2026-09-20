@@ -16,6 +16,9 @@ so the operator chip never claims captions it cannot prove).
 
 from __future__ import annotations
 
+import inspect
+import logging
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -33,6 +36,12 @@ from civiccast.stream._ffmpeg import FfmpegResult, run_ffmpeg
 
 DECODE_BACK_DECODER = "ffmpeg-subcc"
 DEFAULT_CAPTION_FRESHNESS_SECONDS = 120.0
+# A six-second proof capture is a health check, not a media transcode.  Keep
+# both the capture and decode bounded so a wedged ffmpeg child cannot monopolize
+# a worker for the stream wrapper's six-hour general-purpose default.
+DEFAULT_CAPTION_PROOF_TIMEOUT_SECONDS = 15.0
+
+_LOG = logging.getLogger(__name__)
 
 FfmpegRunner = Callable[[list[str]], FfmpegResult]
 Clock = Callable[[], datetime]
@@ -77,11 +86,44 @@ def _escape_movie_path(path: Path) -> str:
     return path.as_posix().replace("\\", "\\\\\\\\").replace(":", "\\\\:")
 
 
+def _runner_accepts_timeout(runner: FfmpegRunner) -> bool:
+    """Return whether an injected runner can receive the timeout keyword.
+
+    The production runner accepts it; the small one-argument fakes used by the
+    unit tests intentionally do not.  Inspecting the callable keeps the public
+    test seam backwards compatible without swallowing a TypeError raised from
+    inside a runner implementation.
+    """
+
+    if runner is run_ffmpeg:
+        return True
+    try:
+        parameters = inspect.signature(runner).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD or parameter.name == "timeout"
+        for parameter in parameters
+    )
+
+
+def _run_bounded_ffmpeg(
+    runner: FfmpegRunner,
+    args: list[str],
+    *,
+    timeout_seconds: float | None,
+) -> FfmpegResult:
+    if timeout_seconds is None or not _runner_accepts_timeout(runner):
+        return runner(args)
+    return runner(args, timeout=timeout_seconds)  # type: ignore[call-arg]
+
+
 def decode_embedded_captions(
     emitted_stream_path: Path,
     *,
     runner: FfmpegRunner = run_ffmpeg,
     source_id: str = "decode-back",
+    timeout_seconds: float | None = DEFAULT_CAPTION_PROOF_TIMEOUT_SECONDS,
 ) -> list[CaptionCue]:
     """Extract embedded CEA-608/708 captions from an emitted TS as cues.
 
@@ -92,21 +134,31 @@ def decode_embedded_captions(
     rather than a false PASS.
     """
 
-    result = runner(
-        [
-            "-hide_banner",
-            "-nostats",
-            "-f",
-            "lavfi",
-            "-i",
-            f"movie={_escape_movie_path(emitted_stream_path)}[out0+subcc]",
-            "-map",
-            "0:1",
-            "-f",
-            "srt",
-            "-",
-        ]
-    )
+    try:
+        result = _run_bounded_ffmpeg(
+            runner,
+            [
+                "-hide_banner",
+                "-nostats",
+                "-f",
+                "lavfi",
+                "-i",
+                f"movie={_escape_movie_path(emitted_stream_path)}[out0+subcc]",
+                "-map",
+                "0:1",
+                "-f",
+                "srt",
+                "-",
+            ],
+            timeout_seconds=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        _LOG.warning(
+            "Caption proof decode timed out after %ss for %s; recording no proof.",
+            timeout_seconds,
+            source_id,
+        )
+        return []
     if result.returncode != 0 or not result.stdout.strip():
         return []
     return parse_caption_cues_from_timed_text(result.stdout, source_id=source_id)
@@ -120,10 +172,15 @@ def sample_caption_decode_back(
     mode: CaptionMode,
     runner: FfmpegRunner = run_ffmpeg,
     clock: Clock = lambda: datetime.now(UTC),
+    timeout_seconds: float | None = DEFAULT_CAPTION_PROOF_TIMEOUT_SECONDS,
 ) -> EgressCaptionProofSample:
     """Decode the emitted stream, compare to expected cues, build a proof sample."""
 
-    decoded = decode_embedded_captions(emitted_stream_path, runner=runner)
+    decoded = decode_embedded_captions(
+        emitted_stream_path,
+        runner=runner,
+        timeout_seconds=timeout_seconds,
+    )
     proof = evaluate_caption_decode_back(
         channel_id=channel_id,
         emitted_stream_path=emitted_stream_path,

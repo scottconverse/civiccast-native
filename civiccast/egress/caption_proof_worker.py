@@ -18,7 +18,9 @@ caption source). Follows the ``ThreadSupervisor`` ``run_forever``/``run_once`` s
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import subprocess
 import threading
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -32,9 +34,11 @@ from sqlalchemy.orm import Session
 from civiccast.captions.models import CaptionCue
 from civiccast.egress.caption_embed import load_caption_cues_from_timed_text
 from civiccast.egress.caption_proof import (
+    DEFAULT_CAPTION_PROOF_TIMEOUT_SECONDS,
     CaptionMode,
     Clock,
     FfmpegRunner,
+    _run_bounded_ffmpeg,
     sample_caption_decode_back,
 )
 from civiccast.egress.store import EgressStore
@@ -92,6 +96,7 @@ class CaptionProofWorker:
         runner: FfmpegRunner = run_ffmpeg,
         clock: Clock = lambda: datetime.now(UTC),
         is_enabled: Callable[[], bool] | None = None,
+        ffmpeg_timeout_seconds: float | None = DEFAULT_CAPTION_PROOF_TIMEOUT_SECONDS,
     ) -> None:
         self._store = store
         self._on_air_channels = on_air_channels
@@ -101,6 +106,7 @@ class CaptionProofWorker:
         self._runner = runner
         self._clock = clock
         self._is_enabled = is_enabled or (lambda: True)
+        self._ffmpeg_timeout_seconds = ffmpeg_timeout_seconds
         self._disabled_announced = False
 
     def run_forever(
@@ -151,6 +157,7 @@ class CaptionProofWorker:
                 mode=self._mode,
                 runner=self._runner,
                 clock=self._clock,
+                timeout_seconds=self._ffmpeg_timeout_seconds,
             )
             self._store.append_caption_proof_sample(sample)
             sampled.append(channel_id)
@@ -198,6 +205,7 @@ def capture_emitted_segment(
     work_dir: Path,
     capture_seconds: float = 6.0,
     runner: FfmpegRunner = run_ffmpeg,
+    timeout_seconds: float | None = DEFAULT_CAPTION_PROOF_TIMEOUT_SECONDS,
 ) -> Path | None:
     """Capture a short, bounded segment of the channel's emitted stream (WSL/LPM edge).
 
@@ -219,7 +227,22 @@ def capture_emitted_segment(
     else:
         args = ["-y", "-hide_banner", "-nostats", "-i", uri]
     args += ["-t", seconds, "-c", "copy", "-f", "mpegts", str(out)]
-    result = runner(args)
+    with contextlib.suppress(OSError):
+        # Never let a failed/partial proof capture be mistaken for the prior
+        # successful segment at this fixed path.
+        out.unlink(missing_ok=True)
+    try:
+        result = _run_bounded_ffmpeg(runner, args, timeout_seconds=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        _LOG.warning(
+            "Caption proof capture timed out after %ss for channel %s; "
+            "failing closed with no segment.",
+            timeout_seconds,
+            channel_id,
+        )
+        with contextlib.suppress(OSError):
+            out.unlink(missing_ok=True)
+        return None
     if result.returncode != 0 or not out.exists() or out.stat().st_size == 0:
         return None
     return out
@@ -237,6 +260,7 @@ def build_caption_proof_worker(
     caption_sidecar_for: Callable[[str], Path] | None = None,
     runner: FfmpegRunner = run_ffmpeg,
     is_enabled: Callable[[], bool] | None = None,
+    ffmpeg_timeout_seconds: float | None = DEFAULT_CAPTION_PROOF_TIMEOUT_SECONDS,
 ) -> CaptionProofWorker:
     """Wire the production caption proof worker (Postgres store + live providers).
 
@@ -269,6 +293,7 @@ def build_caption_proof_worker(
             work_dir=resolved_work_dir,
             capture_seconds=capture_seconds,
             runner=runner,
+            timeout_seconds=ffmpeg_timeout_seconds,
         )
 
     def _expected(channel_id: str) -> list[CaptionCue]:
@@ -289,4 +314,5 @@ def build_caption_proof_worker(
         mode=mode,
         runner=runner,
         is_enabled=is_enabled,
+        ffmpeg_timeout_seconds=ffmpeg_timeout_seconds,
     )

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -80,6 +81,17 @@ def test_decode_embedded_captions_escapes_windows_drive_colon_through_both_parse
 
 def test_decode_embedded_captions_empty_when_no_captions_or_error() -> None:
     assert decode_embedded_captions(Path("out.ts"), runner=lambda _a: _result(stdout="")) == []
+
+
+def test_decode_embedded_captions_times_out_fail_closed() -> None:
+    seen: dict[str, object] = {}
+
+    def timed_out_runner(args: list[str], *, timeout: float) -> Any:
+        seen["timeout"] = timeout
+        raise subprocess.TimeoutExpired(args, timeout)
+
+    assert decode_embedded_captions(Path("out.ts"), runner=timed_out_runner) == []
+    assert seen["timeout"] == 15.0
     assert (
         decode_embedded_captions(
             Path("out.ts"), runner=lambda _a: _result(returncode=1, stdout=_SRT)

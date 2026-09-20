@@ -1135,6 +1135,7 @@ def _build_egress_source_plan_provider() -> ScheduleSourcePlanProvider:
     """Build the schedule-to-source adapter for a CLI-owned egress worker."""
 
     from civiccast.egress import ScheduleSourcePlanProvider
+    from civiccast.egress.source_plan import schedule_loop_enabled_from_env
     from civiccast.schedule.models import SCHEDULE_STATE_PUBLISHED
     from civiccast.schedule.store import PostgresAssetStore, PostgresScheduleStore
 
@@ -1147,6 +1148,7 @@ def _build_egress_source_plan_provider() -> ScheduleSourcePlanProvider:
             states=(SCHEDULE_STATE_PUBLISHED,),
         ),
         asset_resolver=asset_store.get_staff_row,
+        loop_schedule=schedule_loop_enabled_from_env(),
     )
 
 

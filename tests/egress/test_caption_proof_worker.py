@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -147,6 +148,30 @@ def test_capture_returns_none_when_runner_produces_no_bytes(tmp_path) -> None:
     # runner "succeeds" but writes nothing → None (so the channel is skipped, not a false PASS)
     captured = capture_emitted_segment(store, "gov", work_dir=tmp_path, runner=_runner(""))
     assert captured is None
+
+
+def test_capture_passes_a_bounded_timeout_and_fails_closed_on_timeout(tmp_path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(
+        _config(EgressSinkSpec(kind="udp-ts", label="head", uri="udp://239.0.0.9:5000"))
+    )
+    seen: dict[str, object] = {}
+
+    def timed_out_runner(args: list[str], *, timeout: float) -> Any:
+        seen["args"] = args
+        seen["timeout"] = timeout
+        raise subprocess.TimeoutExpired(args, timeout)
+
+    captured = capture_emitted_segment(
+        store,
+        "gov",
+        work_dir=tmp_path,
+        runner=timed_out_runner,
+    )
+
+    assert captured is None
+    assert seen["timeout"] == 15.0
+    assert not (tmp_path / "gov" / "caption-proof" / "segment.ts").exists()
 
 
 def test_on_air_filter_via_store_state() -> None:
