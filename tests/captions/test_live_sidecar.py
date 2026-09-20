@@ -86,13 +86,13 @@ def test_storage_refusal_clears_stale_active_vtt_and_records_the_refusal(tmp_pat
         state="storage-refused",  # type: ignore[arg-type]
         backlog_segments=0,
         max_backlog_segments=2,
-        refusal_reason="free-space-reserve-unrestorable",
+        refusal_reason="caption-storage-volumes-diverge",
     )
 
     assert load_caption_cues_from_timed_text(active, source_id="gov") == []
     payload = __import__("json").loads(status.read_text(encoding="utf-8"))
     assert payload["state"] == "storage-refused"
-    assert payload["refusal_reason"] == "free-space-reserve-unrestorable"
+    assert payload["refusal_reason"] == "caption-storage-volumes-diverge"
 
 
 def test_transient_replace_failure_is_retried_then_succeeds(

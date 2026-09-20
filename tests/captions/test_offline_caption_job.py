@@ -880,18 +880,22 @@ class TestOfflineCaptionJobRetentionSweep:
         discarded and ``run_once`` transcribed every due job regardless of
         what the sweep found. Mirrors
         ``CaptionTapWorker.run_once``'s own predicate: a clean not-ready
-        result (free-space reserve breached, or the storage cap still
-        exceeded after pruning) must gate processing so this worker stops
-        creating new evidence WAVs under storage pressure -- both stage one
+        result (here the cross-volume misconfiguration refusal, which is
+        still producible) must gate processing so this worker stops creating
+        new evidence WAVs while the policy refuses -- both stage one
         (transcription, which writes evidence) and stage two (publish, so a
         job never half-advances on a tick the policy refused).
+
+        2026-09-20: the volume-relative storage caps were removed, so the
+        refusal fixture was re-pointed at ``caption-storage-volumes-diverge``
+        (a real misconfiguration check that remains).
         """
 
         source = _write_wav(tmp_path / "meeting.wav", seconds=2.0)
         package_dir = _package(tmp_path / "packages")
         job_store = InMemoryOfflineCaptionJobStore()
         review_store = InMemoryCaptionReviewStore()
-        spy = _RetentionSweepSpy(ready=False, refusal_reason="storage-cap-unrestorable")
+        spy = _RetentionSweepSpy(ready=False, refusal_reason="caption-storage-volumes-diverge")
         worker = OfflineCaptionJobWorker(
             job_store,
             review_store,

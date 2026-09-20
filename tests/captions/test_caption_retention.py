@@ -57,25 +57,66 @@ def _policy(*, volume_bytes: int = 500 * GIB, free_bytes: int = 100 * GIB) -> ob
 
 
 class TestCaptionEvidenceRetentionPolicy:
-    @pytest.mark.parametrize(
-        ("volume_bytes", "expected_cap_bytes", "expected_reserve_bytes"),
-        (
-            (50 * GIB, 10 * GIB, 20 * GIB),
-            (500 * GIB, 100 * GIB, 50 * GIB),
-        ),
-    )
-    def test_owner_defaults_enforce_age_cap_and_reserve(
-        self,
-        volume_bytes: int,
-        expected_cap_bytes: int,
-        expected_reserve_bytes: int,
-    ) -> None:
-        policy = _policy(volume_bytes=volume_bytes, free_bytes=expected_reserve_bytes)
+    @pytest.mark.parametrize("volume_bytes", (50 * GIB, 500 * GIB))
+    def test_owner_defaults_keep_age_caps_only(self, volume_bytes: int) -> None:
+        # 2026-09-20 owner decision: the volume-relative max-storage ceiling and
+        # the free-space reserve were removed. Only the age caps remain, and the
+        # policy no longer exposes max_storage_bytes / minimum_free_bytes.
+        policy = _policy(volume_bytes=volume_bytes, free_bytes=0)
 
         assert policy.raw_chunk_max_age == timedelta(hours=24)
         assert policy.resolved_evidence_max_age == timedelta(days=90)
-        assert policy.max_storage_bytes == expected_cap_bytes
-        assert policy.minimum_free_bytes == expected_reserve_bytes
+        assert not hasattr(policy, "max_storage_bytes")
+        assert not hasattr(policy, "minimum_free_bytes")
+
+    def test_nearly_full_volume_no_longer_refuses_readiness(self, tmp_path: Path) -> None:
+        # RED before 2026-09-20: free_bytes far below the old reserve
+        # (max(20 GiB, volume/10)) made enforce() return ready=False with
+        # refusal_reason="free-space-reserve-unrestorable" and
+        # requires_fallback_slate=True -- so the channel went to fallback slate
+        # and the tap deleted arriving audio. After the cap removal, a nearly
+        # full volume must not refuse readiness.
+        protected = _candidate(
+            tmp_path / "evidence" / "legal-hold.wav",
+            kind="review-evidence",
+            status="pending",
+            aged=timedelta(days=365),
+            sha256="d" * 64,
+        )
+
+        result = _policy(volume_bytes=100 * GIB, free_bytes=1 * GIB).enforce(
+            candidates=[protected],
+            now=NOW,
+        )
+
+        assert result.ready is True
+        assert result.requires_fallback_slate is False
+        assert result.refusal_reason is None
+        assert protected["path"] in result.protected_paths
+        assert Path(str(protected["path"])).is_file()
+
+    def test_large_caption_store_beyond_old_ceiling_no_longer_refuses(self, tmp_path: Path) -> None:
+        # RED before 2026-09-20: remaining_bytes above min(100 GiB, volume/5)
+        # refused with "storage-cap-unrestorable". After removal, a store larger
+        # than the old ceiling is not a refusal condition.
+        old_ceiling = 100 * GIB
+        big = _candidate(
+            tmp_path / "evidence" / "big.wav",
+            kind="review-evidence",
+            status="approved",
+            aged=timedelta(days=1),
+            sha256="e" * 64,
+        )
+        big["bytes"] = old_ceiling + 1
+
+        result = _policy(volume_bytes=500 * GIB, free_bytes=100 * GIB).enforce(
+            candidates=[big],
+            now=NOW,
+        )
+
+        assert result.ready is True
+        assert result.requires_fallback_slate is False
+        assert result.refusal_reason is None
 
     def test_prunes_oldest_resolved_evidence_before_newer_resolved_evidence(
         self,
@@ -118,28 +159,6 @@ class TestCaptionEvidenceRetentionPolicy:
         assert protected["path"] not in result.deleted_paths
         assert result.protected_paths == (protected["path"],)
         assert Path(str(protected["path"])).is_file()
-
-    def test_refuses_caption_readiness_and_requests_slate_when_protected_evidence_blocks_reserve(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        protected = _candidate(
-            tmp_path / "evidence" / "legal-hold.wav",
-            kind="review-evidence",
-            status="pending",
-            aged=timedelta(days=365),
-            sha256="d" * 64,
-        )
-
-        result = _policy(volume_bytes=100 * GIB, free_bytes=1 * GIB).enforce(
-            candidates=[protected],
-            now=NOW,
-        )
-
-        assert result.ready is False
-        assert result.refusal_reason == "free-space-reserve-unrestorable"
-        assert result.requires_fallback_slate is True
-        assert protected["path"] in result.protected_paths
 
     def test_audit_receipt_records_outcome_reason_and_content_hash(self, tmp_path: Path) -> None:
         expired = _candidate(

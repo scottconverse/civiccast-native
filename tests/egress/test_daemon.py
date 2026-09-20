@@ -329,7 +329,7 @@ def test_daemon_routes_storage_refusal_to_configured_fallback_slate_before_encod
         fallback_source_provider=lambda _config: _slate_plan(tmp_path),
         caption_readiness_provider=lambda _channel_id: SimpleNamespace(
             ready=False,
-            refusal_reason="free-space-reserve-unrestorable",
+            refusal_reason="caption-storage-volumes-diverge",
             requires_fallback_slate=True,
         ),
         ffmpeg_starter=lambda args: started.append(args) or _FakeProcess(),
@@ -340,7 +340,7 @@ def test_daemon_routes_storage_refusal_to_configured_fallback_slate_before_encod
     state = store.read_state("gov")
     assert state is not None
     assert state.state == "FALLBACK_SLATE"
-    assert state.last_error == "caption storage refused: free-space-reserve-unrestorable"
+    assert state.last_error == "caption storage refused: caption-storage-volumes-diverge"
     concat_path = Path(next(arg for arg in started[0] if arg.endswith(".ffconcat")))
     assert concat_path.is_file()
     assert (tmp_path / "slate.ts").as_posix() in concat_path.read_text(encoding="utf-8")
@@ -5612,7 +5612,7 @@ def test_start_tracks_not_releases_the_prepared_plan_for_a_caption_readiness_ref
         fallback_source_provider=lambda _config: _slate_plan(tmp_path),
         caption_readiness_provider=lambda _channel_id: SimpleNamespace(
             ready=False,
-            refusal_reason="free-space-reserve-unrestorable",
+            refusal_reason="caption-storage-volumes-diverge",
             requires_fallback_slate=True,
         ),
         ffmpeg_starter=lambda _args: _start_fake_process(processes, started),

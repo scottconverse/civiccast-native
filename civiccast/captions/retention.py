@@ -22,7 +22,6 @@ from civiccast.captions.review_media import (
     verify_caption_review_audio_evidence,
 )
 
-_GIB = 1024**3
 _RAW_CHUNK_MAX_AGE = timedelta(hours=24)
 _RESOLVED_EVIDENCE_MAX_AGE = timedelta(days=90)
 _AUDIT_LOCKS: dict[Path, threading.RLock] = {}
@@ -71,8 +70,6 @@ class CaptionEvidenceRetentionPolicy:
     ) -> None:
         self.volume_bytes = volume_bytes
         self.free_bytes = free_bytes
-        self.max_storage_bytes = min(100 * _GIB, volume_bytes // 5)
-        self.minimum_free_bytes = max(20 * _GIB, volume_bytes // 10)
         self._audit_path = audit_path.expanduser().resolve() if audit_path is not None else None
         self._storage_root = (
             storage_root.expanduser().resolve()
@@ -104,7 +101,7 @@ class CaptionEvidenceRetentionPolicy:
         candidates: Iterable[Mapping[str, object]],
         now: datetime | None = None,
     ) -> CaptionRetentionResult:
-        """Prune only verified/expired evidence and refuse unsafe storage states."""
+        """Prune verified/expired evidence by age; no volume-relative space refusal."""
 
         observed_at = _utc(now or datetime.now(UTC))
         normalized = tuple(_normalize_candidate(candidate) for candidate in candidates)
@@ -142,31 +139,19 @@ class CaptionEvidenceRetentionPolicy:
                 }
             )
 
-        remaining_bytes = sum(
-            candidate.bytes for candidate in normalized if candidate.path not in set(deleted)
-        )
-        free_after_prune = self.free_bytes + sum(
-            candidate.bytes for candidate in normalized if candidate.path in set(deleted)
-        )
-        refusal_reason: str | None = None
-        if free_after_prune < self.minimum_free_bytes:
-            refusal_reason = "free-space-reserve-unrestorable"
-        elif remaining_bytes > self.max_storage_bytes:
-            refusal_reason = "storage-cap-unrestorable"
-        if refusal_reason is not None:
-            records.append(
-                {
-                    "outcome": "storage-refused",
-                    "reason": refusal_reason,
-                    "path": "",
-                    "sha256": "",
-                }
-            )
         self._append_audit_records(records)
+        # The volume-relative storage caps (the max-storage ceiling and the
+        # free-space reserve) were removed by owner decision 2026-09-20: caption
+        # evidence is small text/audio, and a station must not stop captioning
+        # because the drive is full. Pruning is now purely age-based; a full or
+        # near-full volume is no longer a refusal condition here. The
+        # cross-volume misconfiguration check (``caption-storage-volumes-diverge``
+        # in ``enforce_discovered``) still refuses readiness -- that is a real
+        # routing hazard, not a space panic.
         return CaptionRetentionResult(
-            ready=refusal_reason is None,
-            refusal_reason=refusal_reason,
-            requires_fallback_slate=refusal_reason is not None,
+            ready=True,
+            refusal_reason=None,
+            requires_fallback_slate=False,
             deleted_paths=tuple(deleted),
             protected_paths=protected,
             audit_records=tuple(records),
@@ -219,8 +204,6 @@ class CaptionEvidenceRetentionPolicy:
         usage = shutil.disk_usage(self._storage_root)
         self.volume_bytes = usage.total
         self.free_bytes = usage.free
-        self.max_storage_bytes = min(100 * _GIB, usage.total // 5)
-        self.minimum_free_bytes = max(20 * _GIB, usage.total // 10)
 
     def record_event(self, *, outcome: str, reason: str, path: Path, sha256: str) -> None:
         """Record non-destructive retention decisions such as segment collisions."""
