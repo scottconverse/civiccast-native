@@ -117,9 +117,11 @@ escalation behaviour, the end-of-schedule stop, and the playout worker stalls.
   captured occurrences were **2.3, 2.8 and 4.6 minutes**.
 - A worker can also exit cleanly (exit code 0) with no error and still clear
   captions.
-- The pause and escalation ladder **never escalates** in practice: every trip is
-  treated as a first offence and the wait never grows beyond the base window. A
-  channel that trips repeatedly does not back off.
+- The escalation behaviour is **not fully characterised**. The wait **can** grow
+  beyond the base window (observed), but the rate at which it grows under a
+  chronic channel has **not been measured**. Earlier observations were
+  confounded by storage refusals that prevent the healthy-scan counter from
+  advancing at all, so a zero escalation count in those windows proves nothing.
 - A caption blackout per backlog trip is about **210 seconds** - not the 120
   seconds the log message implies (120 seconds of pause plus about 90 seconds to
   earn the recovery bar).
