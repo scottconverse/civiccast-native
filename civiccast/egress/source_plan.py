@@ -63,6 +63,46 @@ _PLAYABLE_ASSET_STATES = {ASSET_STATE_VALIDATED, ASSET_STATE_RECORDED}
 #: gets rolled over comfortably inside its own lifetime.
 PLAN_MIN_SECONDS = 0.0
 SLATE_RENDER_VERSION = 1
+# A single GStreamer decoder chain can safely carry a long bounded slice. Keep
+# the slice at 30 minutes so ordinary long-form programming does not force a
+# reload every minute; the caller still uses ``max_segments=1`` so this does
+# not create a large multi-chain pipeline.
+DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS = 1800.0
+
+
+def gstreamer_source_segment_seconds_from_env() -> float:
+    """Return the bounded GStreamer preparation horizon.
+
+    The GStreamer path pre-conforms schedule-derived media when the source
+    cannot be trimmed at playout. A multi-hour schedule item must not become
+    one multi-hour conform job before a channel can air, so the default plan
+    horizon is bounded at 30 minutes. The caller's one-segment pipeline shape
+    keeps this from multiplying decoder chains, while the longer slice avoids
+    turning normal operation into a minute-by-minute reload stress test.
+    Operators may tune the horizon for their encoder hardware, but non-positive
+    or malformed values fall back to the safe default rather than disabling the
+    bound.
+    """
+
+    raw = os.environ.get("CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS", "").strip()
+    if not raw:
+        return DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        _LOG.warning(
+            "Invalid CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS=%r; using %.1fs.",
+            raw,
+            DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS,
+        )
+        return DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS
+    if value <= 0:
+        _LOG.warning(
+            "CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS must be positive; using %.1fs.",
+            DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS,
+        )
+        return DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS
+    return value
 
 
 def schedule_loop_enabled_from_env() -> bool:
@@ -179,11 +219,14 @@ class ScheduleSourcePlanProvider:
         segment_cap: int = MAX_PLAYLIST_SUBCHAINS,
         gap_tolerance_seconds: float = 1.0,
         loop_schedule: bool = False,
+        max_segment_seconds: float | None = None,
     ) -> None:
         if max_segments <= 0:
             raise ValueError("max_segments must be greater than zero.")
         if gap_tolerance_seconds < 0:
             raise ValueError("gap_tolerance_seconds must be zero or greater.")
+        if max_segment_seconds is not None and max_segment_seconds <= 0:
+            raise ValueError("max_segment_seconds must be greater than zero when set.")
         self._schedule_items_provider = schedule_items_provider
         self._asset_resolver = asset_resolver
         self._now_provider = now_provider or (lambda: datetime.now(UTC))
@@ -192,6 +235,7 @@ class ScheduleSourcePlanProvider:
         self._segment_cap = segment_cap
         self._gap_tolerance = timedelta(seconds=gap_tolerance_seconds)
         self._loop_schedule = loop_schedule
+        self._max_segment_seconds = max_segment_seconds
 
     def __call__(self, channel_id: str) -> EgressSourcePlan | None:
         return self.plan_at(channel_id, self._now_provider())
@@ -214,6 +258,7 @@ class ScheduleSourcePlanProvider:
             segment_cap=self._segment_cap,
             gap_tolerance=self._gap_tolerance,
             loop_schedule=self._loop_schedule,
+            max_segment_seconds=self._max_segment_seconds,
         )
 
 
@@ -228,6 +273,7 @@ def build_source_plan_from_schedule(
     segment_cap: int = MAX_PLAYLIST_SUBCHAINS,
     gap_tolerance: timedelta = timedelta(seconds=1),
     loop_schedule: bool = False,
+    max_segment_seconds: float | None = None,
 ) -> EgressSourcePlan | None:
     """Return the currently playable egress source plan, or None for slate fallback.
 
@@ -251,6 +297,13 @@ def build_source_plan_from_schedule(
     gap-replan path, exactly as an already-aired current item does below.
     Nothing here loops or stretches media to cover a slot, and no following
     item is ever started early.
+
+    ``max_segment_seconds`` is an optional preparation horizon.  The
+    GStreamer path uses it because that engine must pre-conform a source that
+    cannot be trimmed in place; bounding the current segment lets a channel
+    reach air quickly and lets the existing rollover machinery prepare the
+    next join-in-progress slice while the current slice is playing.  It does
+    not change the schedule's wall-clock position or the media trim window.
     """
 
     if max_segments <= 0:
@@ -259,6 +312,8 @@ def build_source_plan_from_schedule(
         raise ValueError("min_plan_seconds must be zero or greater.")
     if gap_tolerance < timedelta(0):
         raise ValueError("gap_tolerance must be zero or greater.")
+    if max_segment_seconds is not None and max_segment_seconds <= 0:
+        raise ValueError("max_segment_seconds must be greater than zero when set.")
     # Hostile-review fix (2026-09-05): validate the CALLER's raw pair first,
     # before either is touched by the pipeline-shape clamp below. A caller
     # that explicitly asks for an inconsistent pair (e.g. max_segments=20,
@@ -344,7 +399,12 @@ def build_source_plan_from_schedule(
             break
         is_current = item is current_item
         item_elapsed = elapsed_seconds if is_current else 0.0
-        segment = _segment_from_item(item, asset_resolver, elapsed_seconds=item_elapsed)
+        segment = _segment_from_item(
+            item,
+            asset_resolver,
+            elapsed_seconds=item_elapsed,
+            max_duration_seconds=max_segment_seconds,
+        )
         if segment is None:
             # The current item's media has fully aired (media shorter than
             # its slot, or a late rejoin past the end). Honest behavior is
@@ -377,30 +437,73 @@ def build_source_plan_from_schedule(
     return EgressSourcePlan(channel_id=channel_id, segments=segments)
 
 
+def _contiguous_schedule_run(
+    items: Sequence[ScheduleItemResponse], gap_tolerance: timedelta
+) -> list[ScheduleItemResponse]:
+    """Return the LAST contiguous run of ``items`` (sorted by start).
+
+    A real station's published schedule accumulates in separate contiguous
+    passes: a pass, then a multi-day gap, then another pass.  The loop must
+    repeat ONE pass, not the whole history - otherwise the cycle boundary
+    swallows the inter-pass gaps and a wrapped ``current_time`` lands in a gap
+    (no plan, channel to slate).
+
+    "Contiguous" means the next item starts no later than the previous item's
+    end plus ``gap_tolerance``; the first break ends the scan and the run after
+    the final break is returned.  A schedule with a single pass returns it
+    unchanged, so this is a no-op for the simple case.
+    """
+
+    ordered = sorted(items, key=lambda item: (_as_utc(item.scheduled_at), str(item.id)))
+    start = 0
+    for index in range(1, len(ordered)):
+        previous = ordered[index - 1]
+        previous_end = _as_utc(previous.scheduled_at) + timedelta(
+            seconds=previous.duration_seconds or 0
+        )
+        if _as_utc(ordered[index].scheduled_at) > previous_end + gap_tolerance:
+            start = index
+    return ordered[start:]
+
+
 def _repeat_schedule_cycle(
-    items: Sequence[ScheduleItemResponse], current_time: datetime
+    items: Sequence[ScheduleItemResponse],
+    current_time: datetime,
+    *,
+    gap_tolerance: timedelta = timedelta(seconds=1),
 ) -> list[ScheduleItemResponse]:
     """Shift a finite schedule into the cycle containing ``current_time``.
 
-    The first published item's start is the cycle anchor and the end of the
-    last published slot is the cycle boundary.  Gaps between items remain
-    gaps (the normal filler/slate policy owns them); after the final slot the
-    same published sequence starts again.  Item IDs/assets are unchanged so
+    The cycle is ONE contiguous pass of the published schedule -- the LAST such
+    pass -- not the entire published history.  Repeated passes of the same
+    sequence are joined by multi-day gaps, and anchoring the period on the
+    whole history would fold those gaps into the "cycle", dropping a wrapped
+    ``current_time`` into dead air.
+
+    Within the chosen pass the first item's start is the cycle anchor and the
+    end of the last slot is the cycle boundary; gaps between items inside the
+    pass remain gaps (the normal filler/slate policy owns them).  After the
+    final slot the same pass starts again.  Item IDs/assets are unchanged so
     the loop is a playout policy, not a second set of schedule records.
     """
 
-    anchor = _as_utc(items[0].scheduled_at)
+    ordered = sorted(items, key=lambda item: (_as_utc(item.scheduled_at), str(item.id)))
+    if not ordered:
+        return []
+    cycle_items = _contiguous_schedule_run(ordered, gap_tolerance)
+    anchor = _as_utc(cycle_items[0].scheduled_at)
     cycle_end = max(
-        _as_utc(item.scheduled_at) + timedelta(seconds=item.duration_seconds or 0) for item in items
+        _as_utc(item.scheduled_at) + timedelta(seconds=item.duration_seconds or 0)
+        for item in cycle_items
     )
     period_seconds = (cycle_end - anchor).total_seconds()
     if period_seconds <= 0 or current_time < anchor:
-        return list(items)
+        return list(cycle_items)
     cycle_index = math.floor((current_time - anchor).total_seconds() / period_seconds)
     offset = timedelta(seconds=cycle_index * period_seconds)
     return [
         item.model_copy(update={"scheduled_at": _as_utc(item.scheduled_at) + offset})
-        for item in items
+        for item in cycle_items
     ]
 
 
@@ -503,6 +606,7 @@ def _segment_from_item(
     asset_resolver: AssetResolver,
     *,
     elapsed_seconds: float = 0.0,
+    max_duration_seconds: float | None = None,
 ) -> EgressSourceSegment | None:
     """Build the segment for one scheduled item.
 
@@ -542,6 +646,8 @@ def _segment_from_item(
             return None
         inpoint = (inpoint or 0.0) + elapsed_seconds
         duration = duration - elapsed_seconds
+    if max_duration_seconds is not None:
+        duration = min(duration, max_duration_seconds)
     if outpoint is not None:
         # D42: ``duration`` may now be the SLOT rather than the whole trim
         # window, so the out-point has to follow it — a stale outpoint would

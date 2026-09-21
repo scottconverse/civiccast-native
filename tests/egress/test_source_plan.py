@@ -18,12 +18,14 @@ from civiccast.egress.models import (
     EgressSinkSpec,
 )
 from civiccast.egress.source_plan import (
+    DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS,
     PLAN_MIN_SECONDS,
     ScheduleSourcePlanProvider,
     SlateSourceGenerator,
     _escape_drawtext,
     build_slate_source_args,
     build_source_plan_from_schedule,
+    gstreamer_source_segment_seconds_from_env,
 )
 from civiccast.schedule.models import ScheduleItemResponse, StaffAssetRow
 from civiccast.stream._ffmpeg import FfmpegResult
@@ -215,6 +217,78 @@ def test_build_source_plan_from_schedule_uses_current_local_media_with_trim(
     # daemon's FALLBACK_SLATE gap-replan. Before this fix the next item was
     # appended anyway and therefore started 110s in instead of 30 minutes in.
     assert [segment.label for segment in plan.segments] == ["Council Meeting"]
+
+
+def test_gstreamer_preparation_horizon_clips_a_long_current_item(tmp_path: Path) -> None:
+    """A multi-hour item must not become one multi-hour cold conform at start."""
+
+    media = tmp_path / "council.ts"
+    media.write_text("fake", encoding="utf-8")
+    now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+
+    plan = build_source_plan_from_schedule(
+        channel_id="gov",
+        schedule_items=[_schedule_item(scheduled_at=now, duration_seconds=14_400)],
+        asset_resolver=lambda asset_id: _asset_of(
+            media, duration_seconds=14_400, asset_id=asset_id
+        ),
+        now=now,
+        max_segments=1,
+        max_segment_seconds=60.0,
+    )
+
+    assert plan is not None
+    assert len(plan.segments) == 1
+    assert plan.segments[0].duration_seconds == 60.0
+    assert plan.segments[0].inpoint_seconds is None
+    assert plan.segments[0].outpoint_seconds is None
+
+
+def test_gstreamer_preparation_horizon_preserves_join_in_progress(tmp_path: Path) -> None:
+    media = tmp_path / "council.ts"
+    media.write_text("fake", encoding="utf-8")
+    start = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+    now = start + timedelta(seconds=20)
+
+    plan = build_source_plan_from_schedule(
+        channel_id="gov",
+        schedule_items=[_schedule_item(scheduled_at=start, duration_seconds=300)],
+        asset_resolver=lambda asset_id: _asset_of(media, duration_seconds=300, asset_id=asset_id),
+        now=now,
+        max_segments=1,
+        max_segment_seconds=60.0,
+    )
+
+    assert plan is not None
+    segment = plan.segments[0]
+    assert segment.inpoint_seconds == 20.0
+    assert segment.duration_seconds == 60.0
+    assert segment.outpoint_seconds is None
+
+
+def test_gstreamer_preparation_horizon_rejects_non_positive_values(tmp_path: Path) -> None:
+    media = tmp_path / "council.ts"
+    media.write_text("fake", encoding="utf-8")
+    now = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+
+    with pytest.raises(ValueError, match="max_segment_seconds"):
+        build_source_plan_from_schedule(
+            channel_id="gov",
+            schedule_items=[_schedule_item(scheduled_at=now)],
+            asset_resolver=lambda asset_id: _asset(media, asset_id=asset_id),
+            now=now,
+            max_segment_seconds=0,
+        )
+
+
+def test_gstreamer_preparation_horizon_env_uses_safe_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS == 1800.0
+    monkeypatch.delenv("CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS", raising=False)
+    assert gstreamer_source_segment_seconds_from_env() == DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS
+    monkeypatch.setenv("CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS", "bad")
+    assert gstreamer_source_segment_seconds_from_env() == DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS
 
 
 def test_scheduled_uncommitted_item_is_excluded_from_the_plan(tmp_path: Path) -> None:
@@ -567,6 +641,68 @@ def test_looping_provider_preserves_gaps_between_published_items(tmp_path: Path)
     )
 
     assert provider.plan_at("gov", start + timedelta(seconds=45)) is None
+
+
+def test_looping_provider_covers_now_when_history_has_multiple_passes(tmp_path: Path) -> None:
+    """RED (2026-09-21): the cycle boundary must be ONE contiguous playable pass.
+
+    A real station's published schedule accumulates in separate contiguous
+    passes (a pass, a multi-day gap, another pass). ``_repeat_schedule_cycle``
+    currently derives its period from ``items[0]`` through ``max(end)`` over the
+    WHOLE history, so the repeated "cycle" includes the multi-day inter-pass
+    gaps. A ``current_time`` inside the repeated window then lands in one of
+    those gaps, ``_current_item_index`` returns None, the plan is None, and the
+    channel falls to slate instead of airing.
+
+    This test builds two contiguous passes separated by a large gap and asks for
+    a plan at a time that is inside the SECOND pass's repetition. It must
+    produce a segment (an item covers that instant), not None.
+    """
+    media = tmp_path / "program.ts"
+    media.write_text("fake", encoding="utf-8")
+
+    # Pass 1: 10:00-10:02. Gap: ~3 days. Pass 2: two 60 s items at 00:00 and 00:01.
+    pass_one_start = datetime(2026, 6, 1, 10, 0, tzinfo=UTC)
+    pass_two_start = datetime(2026, 6, 4, 0, 0, tzinfo=UTC)
+    items = [
+        _schedule_item(asset_id="p1-a", scheduled_at=pass_one_start, duration_seconds=60),
+        _schedule_item(
+            asset_id="p1-b",
+            scheduled_at=pass_one_start + timedelta(seconds=60),
+            duration_seconds=60,
+        ),
+        _schedule_item(asset_id="p2-a", scheduled_at=pass_two_start, duration_seconds=60),
+        _schedule_item(
+            asset_id="p2-b",
+            scheduled_at=pass_two_start + timedelta(seconds=60),
+            duration_seconds=60,
+        ),
+    ]
+    assets = {
+        item.asset_id: _asset(media, asset_id=item.asset_id).model_copy(
+            update={
+                "title": item.asset_id,
+                "duration_seconds": 60,
+                "trim_in_seconds": 0,
+                "trim_out_seconds": 60,
+            }
+        )
+        for item in items
+    }
+    provider = ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _channel_id: items,
+        asset_resolver=assets.get,
+        max_segments=1,
+        loop_schedule=True,
+    )
+
+    # Pass 2 spans 00:00-00:02 on 2026-06-04; its period is 120 s, so 00:00:30
+    # on BOTH the next and following cycles must still air p2-a, not go to slate.
+    for offset_days in (0, 1, 2):
+        probe = pass_two_start + timedelta(days=offset_days, seconds=30)
+        plan = provider.plan_at("gov", probe)
+        assert plan is not None, f"no plan at {probe}: the loop's cycle includes the inter-pass gap"
+        assert plan.segments[0].label == "p2-a"
 
 
 def test_resolver_module_exports_source_plan_contracts() -> None:
