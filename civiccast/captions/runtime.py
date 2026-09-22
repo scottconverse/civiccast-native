@@ -738,15 +738,18 @@ class FasterWhisperRuntime:
             minimum=1,
         )
         # Beam search costs roughly its beam width in decoder passes. Beam 5
-        # stays the batch default and the GPU default; a live tap on CPU has a
-        # hard real-time budget a VOD pass does not, so it decodes greedily.
+        # stays the batch/VOD default; a LIVE tap has a hard real-time budget a
+        # VOD pass does not, so it decodes greedily on every device.
         #
-        # Resolved from the RESOLVED COMPUTE DEVICE, not from
-        # ``CIVICCAST_WHISPER_DEVICE``: the default device is ``"auto"``, which
-        # that variable never spells, so an env-only test would have silently
-        # given every default-configured station the GPU beam width.
+        # The device is deliberately NOT part of this decision any more. The
+        # live tap's budget is set by the 5 s segment cadence, not by which
+        # chip runs the decoder: on CUDA, beam 5 measured 0.589 s per chunk
+        # against beam 1's 0.433 s, and a batch slower than the cadence lets a
+        # second and third segment settle, trips the max-2 backlog gate, and
+        # clears live captions. Greedy decoding on CUDA too is what keeps the
+        # tap real-time. Batch/VOD still gets beam 5.
         if beam_size is None:
-            beam_size = LIVE_TAP_CPU_BEAM_SIZE if (live and not self.on_cuda()) else 5
+            beam_size = LIVE_TAP_CPU_BEAM_SIZE if live else 5
         # Scoped to the live tap deliberately: a batch/VOD pass and the native
         # capacity proof must not have their beam width changed out from under
         # them by a variable set to protect playout.
@@ -869,11 +872,12 @@ class FasterWhisperRuntime:
                             self.num_workers = 1
                             model_kwargs.pop("num_workers", None)
                         if self._live and "CIVICCAST_WHISPER_BEAM_SIZE" not in os.environ:
-                            # A LIVE runtime that just landed on the CPU it was
-                            # not sized for must also drop to the CPU beam
-                            # width, or the fallback hands playout exactly the
-                            # GPU-sized decode this change exists to prevent.
-                            # An explicit operator override is left alone.
+                            # A LIVE runtime already decodes greedily on every
+                            # device, so the CPU fallback needs no beam change;
+                            # this re-asserts the live-tap width in case a
+                            # caller-supplied beam_size arrived from a
+                            # GPU-sized capacity proof. An explicit operator
+                            # override is left alone.
                             self.beam_size = LIVE_TAP_CPU_BEAM_SIZE
                         self._model = _load_whisper_model_class()(
                             self.model_size_or_path,

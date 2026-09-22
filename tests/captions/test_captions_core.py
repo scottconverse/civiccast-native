@@ -566,6 +566,43 @@ class TestRuntimeBoundary:
         assert cpu.num_workers == 1
         assert batch.num_workers == 1
 
+    def test_live_cuda_tap_decodes_greedily_to_hold_segment_cadence(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The live tap's real-time budget is device-independent.
+
+        Beam search costs roughly its width in decoder passes. On CPU the live
+        tap already decodes greedily (beam 1); on CUDA it stayed at the batch
+        default (beam 5), so a slow batch could exceed the 5 s segment cadence
+        and let a second and third segment settle, tripping the max-2 backlog
+        gate and clearing live captions. Measured on Blackwell: beam 1 mean
+        0.433 s vs beam 5 mean 0.589 s on one chunk. The live tap must decode
+        greedily on CUDA too; batch/VOD keeps beam 5.
+        """
+
+        monkeypatch.delenv("CIVICCAST_WHISPER_BEAM_SIZE", raising=False)
+
+        gpu = FasterWhisperRuntime(live=True, device="cuda", compute_type="float16")
+        cpu = FasterWhisperRuntime(live=True, device="cpu")
+        batch_gpu = FasterWhisperRuntime(live=False, device="cuda", compute_type="float16")
+
+        assert runtime_module.LIVE_TAP_CPU_BEAM_SIZE == 1
+        assert gpu.beam_size == 1, "live CUDA tap must decode greedily to stay real-time"
+        assert cpu.beam_size == 1
+        assert batch_gpu.beam_size == 5, "batch/VOD decode width must not change"
+
+    def test_live_tap_beam_size_env_override_still_wins(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An explicit operator override outranks the new live-tap default."""
+
+        monkeypatch.setenv("CIVICCAST_WHISPER_BEAM_SIZE", "5")
+
+        gpu = FasterWhisperRuntime(live=True, device="cuda", compute_type="float16")
+
+        assert gpu.beam_size == 5
     def test_batch_cpu_threads_raises_on_unparseable_env_value(
         self,
         monkeypatch: pytest.MonkeyPatch,
