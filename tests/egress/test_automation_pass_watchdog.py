@@ -21,6 +21,7 @@ a constant.
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from collections.abc import Callable
@@ -234,6 +235,12 @@ def test_pass_under_the_threshold_logs_nothing(
         try:
             # Five ~0.15s passes put the clock past the 0.5s and 0.6s ticks.
             assert _wait_for(lambda: daemon.passes >= 5, 2.0), "the loop did not run passes"
+            # U04 review: without this the silences below are equally true of a
+            # watchdog that never started. With it, the watcher is provably
+            # alive while the passes run.
+            assert _wait_for(lambda: len(_watchdog_threads()) == 1, 1.0), (
+                "no watcher was running, so the silences below prove nothing"
+            )
         finally:
             stop_event.set()
             runner.join(1.0)
@@ -499,7 +506,10 @@ def test_a_pass_whose_thread_is_gone_still_reports_its_overrun(
 
     assert _wait_for(lambda: not _watchdog_threads(), 1.0)
     assert _records(caplog, "still running") == []
-    assert len(_records(caplog, "exceeded watchdog")) == 1
+    # Guarded, like it is in the failing-dump test above: the 0.05s tick has to
+    # land inside the 0.2s hold, so on a loaded box this is the assertion in
+    # this file most likely to need a moment more.
+    assert _wait_for(lambda: len(_records(caplog, "exceeded watchdog")) == 1, 1.0)
 
 
 def test_a_failing_clock_never_raises_into_the_pass(
@@ -515,3 +525,195 @@ def test_a_failing_clock_never_raises_into_the_pass(
         watchdog.pass_finished("public")
 
     assert caplog.records == []
+
+
+class _RaisingLogHandler(logging.Handler):
+    """A handler that fails with ``RecursionError`` -- the one exception
+    ``logging`` deliberately re-raises out of ``emit`` instead of swallowing,
+    so it escapes the ``except Exception`` around the reporting path."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        raise RecursionError("maximum recursion depth exceeded")
+
+
+def test_a_failing_log_handler_never_replaces_a_pass_exception(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """U04 review (R3): the guard's own fallback is a log call, and a handler
+    can raise -- ``logging`` re-raises ``RecursionError`` out of ``emit`` by
+    design rather than swallowing it.
+
+    The precondition is measured, not assumed: the escape needs the fallback
+    ``DEBUG`` record to actually be EMITTED, so this pins the logger at DEBUG,
+    the level an operator troubleshooting a stalled station would switch on. At
+    the shipped WARNING level the fallback is filtered before any handler sees
+    it. Reproduced before the fix, at DEBUG: ``pass_finished`` raised
+    ``RecursionError`` out of the pass's ``finally`` and REPLACED the pass's own
+    exception -- exactly the blame-the-watchdog outcome the docstring promises
+    cannot happen."""
+
+    logger = logging.getLogger(_AUTOMATION_LOGGER)
+    handler = _RaisingLogHandler()
+    logger.addHandler(handler)
+    watchdog = _PassWatchdog(threshold_seconds=60.0, repeat_seconds=60.0)
+    try:
+        with caplog.at_level(logging.DEBUG, logger=_AUTOMATION_LOGGER):
+            watchdog.pass_started("public")
+            # Make the pass look reported, so ``pass_finished`` takes the
+            # logging branch rather than returning early.
+            watchdog._reported = True  # the branch under test
+            with pytest.raises(_PassBoom, match="the pass's own exception"):
+                try:
+                    raise _PassBoom("the pass's own exception")
+                finally:
+                    watchdog.pass_finished("public")
+    finally:
+        logger.removeHandler(handler)
+
+
+class _PassBoom(RuntimeError):
+    """The exception a channel pass raised; it must reach the caller intact."""
+
+
+def test_run_forever_survives_a_watcher_thread_that_cannot_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U04 review (R4): ``start()`` sat outside ``run_forever``'s ``try``, so a
+    failed ``Thread.start`` (``RuntimeError: can't start new thread``) turned a
+    non-essential diagnostic into a dead automation loop -- ``ThreadSupervisor``
+    does not restart a worker that exits. Reproduced before the fix."""
+
+    real_start = threading.Thread.start
+    attempted: list[str] = []
+
+    def _start(self: threading.Thread) -> None:
+        if self.name == _WATCHDOG_THREAD:
+            attempted.append(self.name)
+            raise RuntimeError("can't start new thread")
+        real_start(self)
+
+    monkeypatch.setattr(threading.Thread, "start", _start)
+    store = InMemoryEgressStore()
+    store.upsert_config(_config("public"))
+    service = _service(store, _IdleDaemon())
+    stop_event = threading.Event()
+    stop_event.set()
+
+    service.run_forever(poll_seconds=_POLL_SECONDS, stop_event=stop_event)
+
+    assert attempted, "the spawn was never attempted, so nothing was proven"
+    assert service._pass_watchdog._thread is None, (  # the state under test
+        "a watcher that could not start left a thread object behind, so a later "
+        "run_forever would refuse to start one"
+    )
+    assert _watchdog_threads() == []
+
+
+def test_repeat_beyond_the_event_wait_ceiling_warns_and_uses_the_default(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """U04 review (R1): 100000000 is finite, positive and unparsable to nothing
+    -- and ``Event.wait`` cannot wait it. Reproduced before the fix: the reader
+    accepted it in silence and the watcher died with ``OverflowError`` inside
+    its own loop condition, which is the silent-disable failure this reader
+    exists to prevent."""
+
+    monkeypatch.setenv(_REPEAT_ENV, "100000000")
+    with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+        value = pass_watchdog_repeat_seconds_from_env()
+
+    assert value == 60.0
+    warnings = _records(caplog, _REPEAT_ENV)
+    assert len(warnings) == 1, f"expected exactly one warning naming the variable: {warnings}"
+    assert "100000000" in warnings[0].getMessage()
+    assert "using 60.0s" in warnings[0].getMessage()
+
+
+def test_a_directly_built_watcher_survives_an_interval_the_event_cannot_wait() -> None:
+    """U04 review (R1), second half: the reader is not the only way in -- a
+    directly constructed ``_PassWatchdog`` (as this suite builds one) must not
+    die either. Before the fix the thread was gone within one tick; after it,
+    the watcher is alive, ticked once, and still stops on command."""
+
+    watchdog = _PassWatchdog(threshold_seconds=0.2, repeat_seconds=1e8)
+    watchdog.start()
+    try:
+        assert _wait_for(lambda: len(_watchdog_threads()) == 1, 1.0), "the watcher never started"
+        watchdog.pass_started("public")
+        time.sleep(0.4)
+        assert _watchdog_threads(), (
+            "the watcher died on an interval Event.wait cannot take (OverflowError)"
+        )
+    finally:
+        watchdog.pass_finished("public")
+        watchdog.stop()
+
+    assert _wait_for(lambda: not _watchdog_threads(), 6.0), (
+        "stop() could not interrupt a wait near the platform ceiling"
+    )
+
+
+def test_negative_zero_is_zero_not_a_negative_threshold(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """U04 review (R2): ``-0.0 < 0`` is False, so ``-0`` slipped past the
+    validity check and came back as ``-0.0``. The watchdog still ends up off --
+    which is the documented off switch -- but the returned value was not the
+    documented ``0.0``."""
+
+    monkeypatch.setenv(_THRESHOLD_ENV, "-0")
+    with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+        value = pass_watchdog_threshold_seconds_from_env()
+
+    assert value == 0.0
+    assert math.copysign(1.0, value) == 1.0, "the threshold came back as negative zero"
+    assert caplog.records == []
+    assert not _PassWatchdog(threshold_seconds=value, repeat_seconds=60.0).enabled
+
+
+def test_under_threshold_silence_is_the_comparison_not_a_dead_watcher(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """U04 review, test-confidence gap: the under-threshold test above asserts
+    only that no lines were logged, which is equally true of a watcher that
+    never ran at all.
+
+    This one counts ticks and, for each, whether a pass record was LIVE when it
+    fired -- so the silence is attributable to the comparison rather than to
+    the watcher's absence. It has to run against a SEQUENCE of short passes:
+    with the first tick landing one threshold after the watcher starts, a
+    single under-threshold pass ends before any tick can land, which is why the
+    single-pass version of this experiment measures zero ticks either way."""
+
+    live_ticks: list[bool] = []
+    real_check = _PassWatchdog._check  # the tick under test
+
+    def _counting_check(self: _PassWatchdog) -> None:
+        live_ticks.append(self._channel_id is not None)  # the record under test
+        real_check(self)
+
+    monkeypatch.setattr(_PassWatchdog, "_check", _counting_check)
+    monkeypatch.setenv(_THRESHOLD_ENV, "0.5")
+    monkeypatch.setenv(_REPEAT_ENV, "0.1")
+    store = InMemoryEgressStore()
+    store.upsert_config(_config("public"))
+    daemon = _StallingDaemon(hold_seconds=0.15)
+    service = _service(store, daemon)
+    stop_event = threading.Event()
+    runner = _runner(service, stop_event)
+
+    with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+        runner.start()
+        try:
+            assert _wait_for(lambda: daemon.passes >= 5, 2.0), "the loop did not run passes"
+        finally:
+            stop_event.set()
+            runner.join(1.0)
+
+    observed = [tick for tick in live_ticks if tick]
+    assert len(observed) >= 2, (
+        f"{len(live_ticks)} ticks fired, {len(observed)} of them with a live pass record "
+        "-- without at least one the silences below prove nothing"
+    )
+    assert _records(caplog, "still running") == []
+    assert _records(caplog, "exceeded watchdog") == []

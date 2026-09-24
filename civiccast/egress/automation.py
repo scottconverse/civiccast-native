@@ -36,6 +36,7 @@ command queue each tick is a cheap poll; no encoder ever spawns uncommanded).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import os
@@ -264,6 +265,16 @@ _DEFAULT_PASS_WATCHDOG_REPEAT_SECONDS = 60.0
 #: thread dump shows the watcher directly beside its subject.
 WATCHDOG_THREAD_NAME = "civiccast-channel-automation-pass-watchdog"
 
+#: The longest sleep ``threading.Event.wait`` can time on this platform
+#: (CPython's ``TIMEOUT_MAX``: 4294967s here). U04 review (R1): a FINITE
+#: interval above it raises ``OverflowError`` -- reproduced at U04 review time
+#: as ``OverflowError: timeout value is too large`` from the watcher's own loop
+#: condition, which killed the thread and silently ended the diagnostics. The
+#: non-finite case was guarded from the start; this is the same failure reached
+#: by an ordinary large number, so both the reader (rejects) and ``_watch``
+#: (clamps, for a directly constructed watchdog) have to know about it.
+_MAX_WATCHDOG_SECONDS = threading.TIMEOUT_MAX
+
 
 def default_egress_work_dir() -> Path:
     """Default directory for egress plans, prepared segments, and slates."""
@@ -324,7 +335,16 @@ def _watchdog_seconds_from_env(name: str, default: float, *, zero_allowed: bool)
     diagnostic aid should cost. Non-finite values are invalid for both -- a
     ``nan`` threshold compares false against every elapsed time (so every
     tick would report) and a ``nan``/``inf`` repeat raises out of
-    ``Event.wait``, which would kill the watcher thread silently."""
+    ``Event.wait``, which would kill the watcher thread silently. U04 review
+    (R1) added the ceiling: a finite value above ``_MAX_WATCHDOG_SECONDS``
+    raises the same way, so it is rejected the same way. (A directly
+    constructed ``_PassWatchdog`` never goes through here, so ``_watch``
+    clamps as well.)
+
+    ``-0`` is normalised to ``0.0``. It is arithmetically zero -- the
+    documented off switch -- but it returns as ``-0.0``, whose sign then leaks
+    into ``_PassWatchdog.enabled``'s comparison and into anything that echoes
+    the value back. U04 review (R2)."""
 
     raw = os.environ.get(name, "").strip()
     if not raw:
@@ -343,7 +363,16 @@ def _watchdog_seconds_from_env(name: str, default: float, *, zero_allowed: bool)
             default,
         )
         return default
-    return value
+    if value > _MAX_WATCHDOG_SECONDS:
+        _LOG.warning(
+            "%s=%r must be at most %.0fs (the longest wait this platform can time); using %.1fs.",
+            name,
+            raw,
+            _MAX_WATCHDOG_SECONDS,
+            default,
+        )
+        return default
+    return 0.0 if value == 0 else value
 
 
 def pass_watchdog_threshold_seconds_from_env() -> float:
@@ -364,12 +393,41 @@ def pass_watchdog_threshold_seconds_from_env() -> float:
 
 def pass_watchdog_repeat_seconds_from_env() -> float:
     """How often a pass that is STILL over the threshold is re-dumped
-    (``WATCHDOG_REPEAT_ENV``, default 60s). Must be positive -- see
-    ``_watchdog_seconds_from_env``."""
+    (``WATCHDOG_REPEAT_ENV``, default 60s). Must be positive, finite and no
+    more than ``_MAX_WATCHDOG_SECONDS`` -- see ``_watchdog_seconds_from_env``.
+
+    This value sets the log volume for a long stall, exactly and predictably:
+    a stall lasting ``D`` seconds emits about ``D / repeat`` stack dumps, each
+    a handful of lines. At the 60s default a 15-minute stall is ~15 dumps; at
+    a DEBUG-minded 0.1s it would be ~9000. Nothing here floors the value --
+    short repeats are what the tests use and an operator measuring a suspected
+    stall may want them -- but the off switch (threshold ``0``) is always
+    available, and the arithmetic is stated so a value can be chosen knowing
+    what it costs the log."""
 
     return _watchdog_seconds_from_env(
         WATCHDOG_REPEAT_ENV, _DEFAULT_PASS_WATCHDOG_REPEAT_SECONDS, zero_allowed=False
     )
+
+
+def _log_watchdog_failure(message: str) -> None:
+    """Log a watchdog-internal failure without ever raising out of it.
+
+    Every guard in ``_PassWatchdog`` falls back to a log call, and a log call
+    is not itself safe: ``logging`` re-raises ``RecursionError`` out of a
+    handler's ``emit`` rather than swallowing it, so the fallback can raise the
+    very exception the guard exists to contain. Reproduced at U04 review (R3),
+    at DEBUG level: ``pass_finished`` raised ``RecursionError`` out of a pass's
+    ``finally`` and replaced the pass's own exception. The nested guard here is
+    what makes "the watchdog can never raise into a channel pass" true rather
+    than merely intended.
+
+    ``BaseException`` -- ``KeyboardInterrupt``, ``SystemExit`` -- still
+    propagates, as it does from any Python code; that is not the watchdog's to
+    swallow."""
+
+    with contextlib.suppress(Exception):
+        _LOG.debug(message, exc_info=True)
 
 
 class _PassWatchdog:
@@ -441,19 +499,34 @@ class _PassWatchdog:
 
         Called by ``run_forever`` -- never by ``run_once``, which is why the
         direct ``run_once`` this suite uses everywhere has no watcher thread
-        and stays byte-for-byte the loop it was."""
+        and stays byte-for-byte the loop it was.
+
+        Best-effort, deliberately. U04 review (R4): this runs on the automation
+        thread, and a ``RuntimeError: can't start new thread`` here used to
+        propagate out of ``run_forever`` before its ``try`` -- turning a
+        non-essential diagnostic into a dead automation loop, since
+        ``ThreadSupervisor`` does not restart a worker that has exited. A
+        watcher that cannot start costs the diagnostics, not the station, so a
+        failed spawn is logged and swallowed, and ``_thread`` is cleared so a
+        later ``run_forever`` can try again."""
 
         if not self.enabled:
             return
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop_event.clear()
-        self._thread = threading.Thread(
+        thread = threading.Thread(
             target=self._watch,
             name=WATCHDOG_THREAD_NAME,
             daemon=True,
         )
-        self._thread.start()
+        try:
+            thread.start()
+        except Exception:
+            self._thread = None
+            _log_watchdog_failure("Stuck-pass watchdog could not start its watcher thread.")
+            return
+        self._thread = thread
 
     def stop(self, *, timeout: float = 5.0) -> None:
         """Stop the watcher thread and wait, bounded, for it to end.
@@ -488,7 +561,7 @@ class _PassWatchdog:
                 self._thread_ident = threading.get_ident()
                 self._reported = False
         except Exception:
-            _LOG.debug("Stuck-pass watchdog could not record a pass start.", exc_info=True)
+            _log_watchdog_failure("Stuck-pass watchdog could not record a pass start.")
 
     def pass_finished(self, channel_id: str) -> None:
         """Clear the pass record; report its total duration if it tripped the
@@ -497,7 +570,9 @@ class _PassWatchdog:
         Runs in a ``finally`` in ``_run_channel_pass``, so it must never raise:
         an exception here would REPLACE whatever the pass itself raised and
         blame the watchdog for it. The log call is inside the same guard for
-        that reason -- a broken log handler is not the pass's problem."""
+        that reason -- a broken log handler is not the pass's problem -- and
+        the guard's own fallback goes through ``_log_watchdog_failure``, whose
+        nested guard is what closes that last path (U04 review, R3)."""
 
         try:
             with self._lock:
@@ -520,29 +595,54 @@ class _PassWatchdog:
                 threshold,
             )
         except Exception:
-            _LOG.debug("Stuck-pass watchdog could not report a pass end.", exc_info=True)
+            _log_watchdog_failure("Stuck-pass watchdog could not report a pass end.")
 
     def _watch(self) -> None:
         """The watcher thread's loop: check, report, sleep, repeat.
 
-        The FIRST check lands one threshold after the thread starts and every
-        later one ``repeat_seconds`` after the previous, so a stall is reported
-        the moment it becomes reportable -- not up to a whole repeat interval
-        late -- and re-reported at exactly the operator's repeat interval.
-        Sleeping ``repeat`` from the start instead would miss a stall longer
-        than the threshold but shorter than the repeat entirely, which is the
-        band a real stall is most likely to land in."""
+        The FIRST check lands one threshold after the thread starts, and every
+        later one ``repeat_seconds`` after the previous. Sleeping ``repeat``
+        from the start instead would miss a stall longer than the threshold but
+        shorter than the repeat entirely, which is the band a real stall is
+        most likely to land in.
 
-        interval = self._threshold_seconds
-        while not self._stop_event.wait(interval):
-            interval = self._repeat_seconds
+        The cost of that first-tick-at-the-threshold choice, measured at U04
+        review (R5) rather than assumed: because the period is the REPEAT
+        interval from the second tick on, a pass that begins mid-cycle crosses
+        the threshold somewhere between two ticks and is first reported up to
+        one whole ``repeat`` after it crossed -- up to ~90s elapsed at the
+        shipped 30s/60s, not 30s. Only a pass that happens to start just as the
+        watcher does is reported at the threshold. Re-reporting every ``repeat``
+        is what the operator's setting asks for; this is the first-report
+        latency, and it is bounded by the repeat interval, never unbounded.
+
+        The whole iteration -- the wait included -- is guarded. U04 review (R1):
+        the wait itself can raise (``OverflowError`` above
+        ``_MAX_WATCHDOG_SECONDS``), and it sits in the loop CONDITION, so
+        guarding only ``_check`` left a path that killed the thread. Any raise
+        now costs one tick, and the next iteration re-checks the stop event."""
+
+        interval = self._wait_interval(self._threshold_seconds)
+        while True:
             try:
+                if self._stop_event.wait(interval):
+                    return
                 self._check()
             except Exception:
                 # This thread has no supervisor: a reporting failure must cost
-                # one tick, never the rest of the stall. Guarded per tick (not
-                # around the loop) so the next tick still reports the same pass.
-                _LOG.debug("Stuck-pass watchdog tick failed.", exc_info=True)
+                # one tick, never the rest of the stall.
+                _log_watchdog_failure("Stuck-pass watchdog tick failed.")
+            interval = self._wait_interval(self._repeat_seconds)
+
+    def _wait_interval(self, seconds: float) -> float:
+        """``seconds`` clamped to what ``Event.wait`` can actually time.
+
+        Only reachable by a directly constructed watchdog (the env reader
+        rejects anything above the ceiling), and cheap insurance against the
+        failure mode R1 found: a wait that raises out of the loop condition
+        takes the watcher with it."""
+
+        return min(seconds, _MAX_WATCHDOG_SECONDS)
 
     def _check(self) -> None:
         """Dump the automation thread's stack if the current pass is over
