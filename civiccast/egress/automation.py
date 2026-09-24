@@ -15,7 +15,13 @@ self-driving:
   the operator's original start command was consumed long ago;
 * a channel sitting on FALLBACK_SLATE gets a ``reload`` the moment the
   schedule yields a real source plan again, so a due program takes over the
-  gap without operator action.
+  gap without operator action;
+* a channel pass that runs longer than
+  ``CIVICAST_AUTOMATION_PASS_WATCHDOG_SECONDS`` (30s by default) has the
+  automation thread's live Python stack dumped into the log, repeatedly until
+  the pass ends, and the pass's total duration reported when it does
+  (``_PassWatchdog``) -- so the next stall says which call it is stuck in
+  (U01, 2026-09-24: ~446s in one pass, and nothing in the log named the call).
 
 Combined with join-in-progress source plans (a rejoin resumes the current
 program at the wall-clock offset), an app restart puts every automated
@@ -31,9 +37,12 @@ command queue each tick is a cheap poll; no encoder ever spawns uncommanded).
 from __future__ import annotations
 
 import logging
+import math
 import os
+import sys
 import threading
 import time
+import traceback
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -225,6 +234,8 @@ __all__ = [
     "ChannelAutomationSettings",
     "build_channel_automation",
     "default_egress_work_dir",
+    "pass_watchdog_repeat_seconds_from_env",
+    "pass_watchdog_threshold_seconds_from_env",
     "rollover_lead_seconds_from_env",
 ]
 
@@ -234,6 +245,24 @@ __all__ = [
 #: and ignored, exactly as ``preparer.preparation_timeout_seconds_from_env``
 #: treats its own variable, so a typo can never disable the rollover.
 ROLLOVER_LEAD_ENV = "CIVICCAST_EGRESS_ROLLOVER_LEAD_SECONDS"
+
+#: BETA.10 U04: the stuck-pass watchdog. U01 established that the single
+#: automation thread spent ~446s inside one channel pass on 2026-09-24
+#: (13:30:44,903 -> 13:38:10,887) and that nothing in the log said which call
+#: it was in, because a pass logs nothing until it returns. These two tunables
+#: are that missing answer: how long one pass may run before its stack is
+#: dumped (30s), and how often a pass that is STILL stalled is re-dumped (60s).
+#: Both are read once per service, by
+#: ``pass_watchdog_threshold_seconds_from_env`` /
+#: ``pass_watchdog_repeat_seconds_from_env``.
+WATCHDOG_THRESHOLD_ENV = "CIVICAST_AUTOMATION_PASS_WATCHDOG_SECONDS"
+WATCHDOG_REPEAT_ENV = "CIVICAST_AUTOMATION_PASS_WATCHDOG_REPEAT_SECONDS"
+_DEFAULT_PASS_WATCHDOG_SECONDS = 30.0
+_DEFAULT_PASS_WATCHDOG_REPEAT_SECONDS = 60.0
+#: The watcher thread's name. Named for the thread it watches -- the production
+#: loop runs as ``civiccast-channel-automation`` (``app.py``), so an operator's
+#: thread dump shows the watcher directly beside its subject.
+WATCHDOG_THREAD_NAME = "civiccast-channel-automation-pass-watchdog"
 
 
 def default_egress_work_dir() -> Path:
@@ -276,6 +305,292 @@ def rollover_lead_seconds_from_env() -> float | None:
         )
         return None
     return value
+
+
+def _watchdog_seconds_from_env(name: str, default: float, *, zero_allowed: bool) -> float:
+    """Read one stuck-pass-watchdog tuning from ``name``, or ``default``.
+
+    Mirrors ``rollover_lead_seconds_from_env``'s treatment of bad input -- a
+    warning naming the offending value, then the safe default -- because a
+    typo must never silently disable a stall detector. (U03's lesson, and this
+    module's own: a setting that is quietly inert reads exactly like a setting
+    that is working until the day it matters.)
+
+    ``zero_allowed`` is the single asymmetry between the two tunables. ``0`` is
+    the documented OFF switch for the THRESHOLD, so it is valid there and
+    returned unchanged. It is invalid for the REPEAT interval: a 0s repeat
+    would make the watcher thread spin on ``Event.wait(0)``, burning a core to
+    re-check a pass it has just reported, which is the opposite of what a
+    diagnostic aid should cost. Non-finite values are invalid for both -- a
+    ``nan`` threshold compares false against every elapsed time (so every
+    tick would report) and a ``nan``/``inf`` repeat raises out of
+    ``Event.wait``, which would kill the watcher thread silently."""
+
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        _LOG.warning("Invalid %s=%r; using %.1fs.", name, raw, default)
+        return default
+    if not math.isfinite(value) or value < 0 or (value == 0 and not zero_allowed):
+        _LOG.warning(
+            "%s=%r must be %s; using %.1fs.",
+            name,
+            raw,
+            "0 (disables the watchdog) or a positive number" if zero_allowed else "positive",
+            default,
+        )
+        return default
+    return value
+
+
+def pass_watchdog_threshold_seconds_from_env() -> float:
+    """How long one channel pass may run before the watchdog dumps the
+    automation thread's stack (``WATCHDOG_THRESHOLD_ENV``, default 30s).
+
+    ``0`` disables the watchdog completely: ``_PassWatchdog.start`` spawns no
+    thread, so there is no dump, no pass-end report and no thread to find in a
+    dump. The default is deliberately shorter than a channel's own rollover
+    lead (690s at the shipped 300s preparation timeout): the point is to catch
+    a pass that is stuck EARLY enough for its stack to still describe the
+    thing that is stuck."""
+
+    return _watchdog_seconds_from_env(
+        WATCHDOG_THRESHOLD_ENV, _DEFAULT_PASS_WATCHDOG_SECONDS, zero_allowed=True
+    )
+
+
+def pass_watchdog_repeat_seconds_from_env() -> float:
+    """How often a pass that is STILL over the threshold is re-dumped
+    (``WATCHDOG_REPEAT_ENV``, default 60s). Must be positive -- see
+    ``_watchdog_seconds_from_env``."""
+
+    return _watchdog_seconds_from_env(
+        WATCHDOG_REPEAT_ENV, _DEFAULT_PASS_WATCHDOG_REPEAT_SECONDS, zero_allowed=False
+    )
+
+
+class _PassWatchdog:
+    """BETA.10 U04: name the call a stalled channel pass is stuck in.
+
+    2026-09-24 (U01): the single automation thread spent ~446s inside public's
+    pass and the log could not say which call it was in, because
+    ``_run_channel_pass`` logs nothing until it returns. This object is the
+    answer for the NEXT stall: while one pass has been running longer than
+    ``threshold_seconds``, a watcher thread dumps the automation thread's live
+    Python stack every ``repeat_seconds`` until the pass ends, and the pass's
+    own total duration is reported the moment it does.
+
+    Three properties are load-bearing, because the thread being watched is the
+    one this build cannot afford to disturb:
+
+    * the automation thread only ever records or clears three fields under
+      ``_lock`` -- it never formats a stack, never logs and never waits;
+    * all logging happens on the WATCHER thread, and deliberately after the
+      lock is released, so a slow log handler can never block the automation
+      thread behind the watchdog;
+    * nothing here touches the store, the daemon, or any daemon lock. The only
+      inputs are ``sys._current_frames()`` and this object's own state.
+
+    With ``threshold_seconds == 0`` the watchdog is disabled: ``start`` spawns
+    no thread at all and every method here becomes a state update that logs
+    nothing."""
+
+    def __init__(
+        self,
+        *,
+        threshold_seconds: float,
+        repeat_seconds: float,
+        monotonic: Callable[[], float] | None = None,
+        current_frames: Callable[[], dict[int, Any]] | None = None,
+    ) -> None:
+        self._threshold_seconds = threshold_seconds
+        self._repeat_seconds = repeat_seconds
+        # The same clock the service uses, for the same reason: a test that
+        # injects a clock gets one consistent notion of elapsed time.
+        self._monotonic = monotonic or time.monotonic
+        # ``sys._current_frames`` is a private CPython API (there is no public
+        # one), injected rather than called directly so the failure path is
+        # testable: a dump that raises must not take the watcher with it.
+        self._current_frames = current_frames or sys._current_frames
+        #: Guards ONLY the three fields below. Held for assignments and reads,
+        #: never across a log call -- see the class docstring.
+        self._lock = threading.Lock()
+        self._channel_id: str | None = None
+        self._started_at = 0.0
+        self._thread_ident: int | None = None
+        #: Whether this pass has already been reported as over the threshold.
+        #: Set by the watcher thread under ``_lock``; read and cleared by the
+        #: pass's own end so it can report its total duration exactly once.
+        self._reported = False
+        self._stop_event = threading.Event()
+        #: Touched only by ``start``/``stop``, both called from the automation
+        #: thread (``run_forever``), so it needs no lock of its own.
+        self._thread: threading.Thread | None = None
+
+    @property
+    def enabled(self) -> bool:
+        """False when the threshold is 0: the documented off switch."""
+
+        return self._threshold_seconds > 0 and self._repeat_seconds > 0
+
+    def start(self) -> None:
+        """Start the watcher thread. No-op when disabled or already running.
+
+        Called by ``run_forever`` -- never by ``run_once``, which is why the
+        direct ``run_once`` this suite uses everywhere has no watcher thread
+        and stays byte-for-byte the loop it was."""
+
+        if not self.enabled:
+            return
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(
+            target=self._watch,
+            name=WATCHDOG_THREAD_NAME,
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self, *, timeout: float = 5.0) -> None:
+        """Stop the watcher thread and wait, bounded, for it to end.
+
+        Bounded because this runs in ``run_forever``'s ``finally``: a watcher
+        wedged in a log handler must not hold up an operator's shutdown. It is
+        a daemon thread either way, so a timeout here cannot keep the process
+        alive. ``self._thread`` is left set if the join times out, so a later
+        ``start`` refuses to spawn a second watcher rather than double-reporting
+        every stall."""
+
+        self._stop_event.set()
+        thread = self._thread
+        if thread is None:
+            return
+        thread.join(timeout)
+        if not thread.is_alive():
+            self._thread = None
+
+    def pass_started(self, channel_id: str) -> None:
+        """Record the pass now starting on the calling (automation) thread.
+
+        Called from ``_run_channel_pass``. Guarded because a bookkeeping bug
+        here must never fail a channel pass: this runs on the thread whose
+        work is the thing being protected, and the alternative -- an exception
+        from the watchdog -- would be charged to the pass."""
+
+        try:
+            with self._lock:
+                self._channel_id = channel_id
+                self._started_at = self._monotonic()
+                self._thread_ident = threading.get_ident()
+                self._reported = False
+        except Exception:
+            _LOG.debug("Stuck-pass watchdog could not record a pass start.", exc_info=True)
+
+    def pass_finished(self, channel_id: str) -> None:
+        """Clear the pass record; report its total duration if it tripped the
+        watchdog, exactly once.
+
+        Runs in a ``finally`` in ``_run_channel_pass``, so it must never raise:
+        an exception here would REPLACE whatever the pass itself raised and
+        blame the watchdog for it. The log call is inside the same guard for
+        that reason -- a broken log handler is not the pass's problem."""
+
+        try:
+            with self._lock:
+                if self._channel_id != channel_id:
+                    # Not this pass (already cleared, or a different channel
+                    # owns the record): nothing to clear, nothing to report.
+                    return
+                elapsed = self._monotonic() - self._started_at
+                reported = self._reported
+                threshold = self._threshold_seconds
+                self._channel_id = None
+                self._thread_ident = None
+                self._reported = False
+            if not reported:
+                return
+            _LOG.warning(
+                "Channel automation pass for %s finished after %.1fs (exceeded watchdog %.1fs).",
+                channel_id,
+                elapsed,
+                threshold,
+            )
+        except Exception:
+            _LOG.debug("Stuck-pass watchdog could not report a pass end.", exc_info=True)
+
+    def _watch(self) -> None:
+        """The watcher thread's loop: check, report, sleep, repeat.
+
+        The FIRST check lands one threshold after the thread starts and every
+        later one ``repeat_seconds`` after the previous, so a stall is reported
+        the moment it becomes reportable -- not up to a whole repeat interval
+        late -- and re-reported at exactly the operator's repeat interval.
+        Sleeping ``repeat`` from the start instead would miss a stall longer
+        than the threshold but shorter than the repeat entirely, which is the
+        band a real stall is most likely to land in."""
+
+        interval = self._threshold_seconds
+        while not self._stop_event.wait(interval):
+            interval = self._repeat_seconds
+            try:
+                self._check()
+            except Exception:
+                # This thread has no supervisor: a reporting failure must cost
+                # one tick, never the rest of the stall. Guarded per tick (not
+                # around the loop) so the next tick still reports the same pass.
+                _LOG.debug("Stuck-pass watchdog tick failed.", exc_info=True)
+
+    def _check(self) -> None:
+        """Dump the automation thread's stack if the current pass is over
+        the threshold."""
+
+        snapshot = self._snapshot_stalled_pass()
+        if snapshot is None:
+            return
+        channel_id, elapsed, stack = snapshot
+        # One decimal: U01's postmortem had to line the ~446s stall up against
+        # sub-second log timestamps, so the watchdog's own numbers carry the
+        # precision that made that reconstruction possible.
+        _LOG.warning(
+            "Channel automation pass for %s has run %.1fs (still running); "
+            "automation thread stack:\n%s",
+            channel_id,
+            elapsed,
+            stack,
+        )
+
+    def _snapshot_stalled_pass(self) -> tuple[str, float, str] | None:
+        """``(channel_id, elapsed_seconds, formatted_stack)`` for a pass that
+        has outlived the threshold, else ``None``.
+
+        The pass is marked reported under the lock, BEFORE its stack is read,
+        for two reasons: a pass that ends in the same instant still reports its
+        own total duration, and a pass whose thread has already gone is still
+        reported as having exceeded the threshold -- which its elapsed time
+        genuinely did."""
+
+        with self._lock:
+            channel_id = self._channel_id
+            if channel_id is None:
+                return None
+            ident = self._thread_ident
+            elapsed = self._monotonic() - self._started_at
+            if elapsed < self._threshold_seconds:
+                return None
+            self._reported = True
+
+        if ident is None:  # defensive: pass_started always records an ident
+            return None
+        frame = self._current_frames().get(ident)
+        if frame is None:
+            # The automation thread has exited -- there is no stack left to
+            # name. Its pass-end line still reports the overrun.
+            return None
+        return channel_id, elapsed, "".join(traceback.format_stack(frame))
 
 
 @dataclass(frozen=True)
@@ -446,6 +761,16 @@ class ChannelAutomationService:
         # configuration, identical for every channel, and _check_plan_rollover
         # calls _rollover_lead_seconds on every ~2s poll tick.
         self._rollover_lead_ceiling_warned = False
+        # BETA.10 U04: the stuck-pass watchdog's state, built here (once per
+        # service, like every other setting this class reads from the
+        # environment) but THREADED only by ``run_forever`` -- so ``run_once``
+        # called directly keeps running exactly the loop it always did, with
+        # no watcher thread. See ``_PassWatchdog``.
+        self._pass_watchdog = _PassWatchdog(
+            threshold_seconds=pass_watchdog_threshold_seconds_from_env(),
+            repeat_seconds=pass_watchdog_repeat_seconds_from_env(),
+            monotonic=self._monotonic,
+        )
 
     _START_RETRY_COOLDOWN_SECONDS = 30.0
     _RELOAD_RETRY_COOLDOWN_SECONDS = 30.0
@@ -660,6 +985,13 @@ class ChannelAutomationService:
                     "Startup stale-state reconciliation failed; automation continues "
                     "(channels will be supervised on the normal poll path)."
                 )
+        # BETA.10 U04: the stuck-pass watchdog rides THIS loop's lifetime. It
+        # is started here, after the one-shot startup work above, so a failure
+        # there cannot leave a watcher thread running with no loop to watch;
+        # and it is stopped in the ``finally`` below, before the (possibly
+        # slow) drain, so ``run_forever`` returning always means the watcher
+        # is gone. Disabled (threshold 0) -> ``start`` spawns nothing.
+        self._pass_watchdog.start()
         try:
             while stop_event is None or not stop_event.is_set():
                 try:
@@ -673,6 +1005,7 @@ class ChannelAutomationService:
                 else:
                     time.sleep(poll_seconds)
         finally:
+            self._pass_watchdog.stop()
             if shutdown is not None:
                 shutdown()
 
@@ -740,6 +1073,24 @@ class ChannelAutomationService:
             _LOG.exception("As-run outbox drain tick failed unexpectedly; retrying next poll.")
 
     def _run_channel_pass(self, config: Any, channel_id: str, now: datetime | None) -> None:
+        """BETA.10 U04: the pass's own watchdog boundary.
+
+        Records the pass (channel, start monotonic, automation thread ident)
+        before dispatching to ``_run_channel_pass_body`` and clears it in a
+        ``finally``, so the record survives every exit path -- including an
+        exception, which ``run_once``'s per-channel guard then charges to this
+        channel and not to the watchdog. With no watcher thread running (every
+        direct ``run_once`` in this suite) both calls are state updates that
+        log nothing and start nothing.
+        """
+
+        self._pass_watchdog.pass_started(channel_id)
+        try:
+            self._run_channel_pass_body(config, channel_id, now)
+        finally:
+            self._pass_watchdog.pass_finished(channel_id)
+
+    def _run_channel_pass_body(self, config: Any, channel_id: str, now: datetime | None) -> None:
         if self._daemon.has_live_process(channel_id):
             self._start_retry_at.pop(channel_id, None)
         elif config.auto_start:

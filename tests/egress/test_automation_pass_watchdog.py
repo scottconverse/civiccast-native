@@ -1,0 +1,517 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+"""BETA.10 U04: the stuck-pass watchdog names where a stalled pass is stuck.
+
+U01 (2026-09-24) established that the single automation thread spent ~446s
+inside public's pass (13:30:44,903 -> 13:38:10,887) and that nothing said which
+call it was in, because a pass logs nothing until it returns. These tests drive
+the REAL loop -- ``run_forever`` on a thread -- against a fake daemon whose
+``process_once`` blocks on a real ``threading.Event``, which is the shape of the
+station stall (a synchronous ``SourcePreparer.prepare`` inside the pass). Real,
+short thresholds are used rather than a stubbed clock, so what is exercised is
+the production code path: a pass that outlives its threshold while a daemon
+watcher thread dumps the automation thread's live stack.
+
+The env names and the watcher's thread name are pinned here as literals: they
+are the operator-facing and thread-dump-facing surface of this feature, so a
+rename has to be a deliberate edit in two places rather than silently following
+a constant.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any
+
+import pytest
+
+from civiccast.egress.automation import (
+    ChannelAutomationService,
+    ChannelAutomationSettings,
+    _PassWatchdog,
+    pass_watchdog_repeat_seconds_from_env,
+    pass_watchdog_threshold_seconds_from_env,
+)
+from civiccast.egress.models import CanonicalProfile, EgressConfig, EgressSinkSpec
+from civiccast.egress.store import InMemoryEgressStore
+
+_THRESHOLD_ENV = "CIVICAST_AUTOMATION_PASS_WATCHDOG_SECONDS"
+_REPEAT_ENV = "CIVICAST_AUTOMATION_PASS_WATCHDOG_REPEAT_SECONDS"
+_WATCHDOG_THREAD = "civiccast-channel-automation-pass-watchdog"
+_AUTOMATION_LOGGER = "civiccast.egress.automation"
+_POLL_SECONDS = 0.01
+
+
+def _config(channel_id: str) -> EgressConfig:
+    return EgressConfig(
+        channel_id=channel_id,
+        enabled=True,
+        auto_start=False,
+        slate_message="Stand by.",
+        canonical_profile=CanonicalProfile(),
+        sinks=[EgressSinkSpec(kind="file", label="Proof", uri=f"build/{channel_id}.ts")],
+    )
+
+
+def _service(store: InMemoryEgressStore, daemon: object) -> ChannelAutomationService:
+    """The service under test with the daemon double wired in as the daemon."""
+
+    return ChannelAutomationService(
+        store,
+        daemon,  # type: ignore[arg-type]
+        lambda channel_id: None,
+        settings=ChannelAutomationSettings(poll_seconds=_POLL_SECONDS),
+    )
+
+
+def _watchdog_threads() -> list[threading.Thread]:
+    """By NAME, so a stray thread cannot hide behind ``enumerate()`` noise."""
+
+    return [thread for thread in threading.enumerate() if thread.name == _WATCHDOG_THREAD]
+
+
+def _wait_for(predicate: Callable[[], bool], timeout: float) -> bool:
+    """Poll ``predicate`` for up to ``timeout`` seconds.
+
+    The loop runs on its own thread, so every claim about what it logged (or
+    about a thread it started) has to wait for that thread to get there rather
+    than assume it already has.
+    """
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
+def _records(caplog: pytest.LogCaptureFixture, needle: str) -> list[logging.LogRecord]:
+    return [record for record in caplog.records if needle in record.getMessage()]
+
+
+def _runner(service: ChannelAutomationService, stop_event: threading.Event) -> threading.Thread:
+    """The loop's thread, as ``ThreadSupervisor`` starts it in production: a
+    daemon. A test that fails mid-way can then never leave a live loop thread
+    holding the interpreter open."""
+
+    return threading.Thread(
+        target=service.run_forever,
+        kwargs={"poll_seconds": _POLL_SECONDS, "stop_event": stop_event},
+        name="u04-pass-watchdog-runner",
+        daemon=True,
+    )
+
+
+class _IdleDaemon:
+    """The minimum a channel pass needs: no live process, no operator override."""
+
+    def __init__(self) -> None:
+        self.processed: list[str] = []
+        self.passes = 0
+
+    def has_live_process(self, channel_id: str) -> bool:
+        return False
+
+    def has_manual_override(self, channel_id: str) -> bool:
+        return False
+
+    def process_once(self, channel_id: str) -> int:
+        self.processed.append(channel_id)
+        self.passes += 1
+        return 0
+
+
+class _StallingDaemon(_IdleDaemon):
+    """A pass that blocks where the real one blocks: inside ``process_once``.
+
+    ``hold_seconds=None`` blocks until ``release`` is set (the stall that has
+    to be reported); a number blocks for exactly that long (a pass that stays
+    under a longer threshold and must therefore be silent).
+    """
+
+    def __init__(self, *, hold_seconds: float | None = None) -> None:
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self._hold_seconds = hold_seconds
+
+    def process_once(self, channel_id: str) -> int:
+        self.processed.append(channel_id)
+        self.passes += 1
+        self.entered.set()
+        return self._block_until_released(channel_id)
+
+    def _block_until_released(self, channel_id: str) -> int:
+        """The blocked call a stack dump has to be able to name."""
+
+        if self._hold_seconds is None:
+            self.release.wait(2.0)
+        else:
+            time.sleep(self._hold_seconds)
+        return 0
+
+
+def test_stalled_pass_reports_the_stack_repeatedly_then_its_total_duration(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The U01 shape: one pass runs for minutes on the automation thread.
+
+    Threshold 0.2s / repeat 0.2s: the stack is dumped once the pass passes the
+    threshold, dumped AGAIN while it stays stalled, and the pass's own total
+    duration is reported the moment it ends.
+    """
+
+    monkeypatch.setenv(_THRESHOLD_ENV, "0.2")
+    monkeypatch.setenv(_REPEAT_ENV, "0.2")
+    store = InMemoryEgressStore()
+    store.upsert_config(_config("public"))
+    daemon = _StallingDaemon()
+    service = _service(store, daemon)
+    stop_event = threading.Event()
+    runner = _runner(service, stop_event)
+
+    with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+        runner.start()
+        try:
+            assert daemon.entered.wait(1.0), "the blocked pass never started"
+            assert _wait_for(lambda: len(_records(caplog, "still running")) >= 2, 2.0), (
+                "the watchdog did not re-report a pass that stayed stalled past the threshold"
+            )
+            first = _records(caplog, "still running")[0].getMessage()
+            assert "Channel automation pass for public has run" in first
+            assert "automation thread stack:" in first
+            assert "_block_until_released" in first, (
+                "the dumped stack does not name the call the pass is stuck in"
+            )
+        finally:
+            # Always, however the assertions above went: release the pass and
+            # stop the loop, so a red run cannot leave a loop thread behind.
+            daemon.release.set()
+            stop_event.set()
+            runner.join(2.0)
+
+    assert not runner.is_alive(), "run_forever did not stop on its stop_event"
+    assert _wait_for(lambda: not _watchdog_threads(), 1.0), (
+        "the watchdog thread outlived the loop it watches"
+    )
+    assert _wait_for(lambda: bool(_records(caplog, "exceeded watchdog")), 1.0), (
+        "the finished pass's total duration was never reported"
+    )
+    finished = _records(caplog, "exceeded watchdog")[0].getMessage()
+    assert finished.startswith("Channel automation pass for public finished after ")
+    assert len(_records(caplog, "exceeded watchdog")) == 1, (
+        "the pass end must be reported exactly once, not per stalled poll"
+    )
+
+
+def test_pass_under_the_threshold_logs_nothing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A pass that stays under the threshold is nobody's business.
+
+    Threshold 0.5s against passes of ~0.15s: the watchdog's ticks land at 0.5s
+    and 0.6s, i.e. while a pass is genuinely RUNNING, and every one of those
+    passes is still under the threshold -- so the silence asserted here is the
+    comparison working, not the watchdog failing to run.
+    """
+
+    monkeypatch.setenv(_THRESHOLD_ENV, "0.5")
+    monkeypatch.setenv(_REPEAT_ENV, "0.1")
+    store = InMemoryEgressStore()
+    store.upsert_config(_config("public"))
+    daemon = _StallingDaemon(hold_seconds=0.15)
+    service = _service(store, daemon)
+    stop_event = threading.Event()
+    runner = _runner(service, stop_event)
+
+    with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+        runner.start()
+        try:
+            # Five ~0.15s passes put the clock past the 0.5s and 0.6s ticks.
+            assert _wait_for(lambda: daemon.passes >= 5, 2.0), "the loop did not run passes"
+        finally:
+            stop_event.set()
+            runner.join(1.0)
+
+    assert _records(caplog, "still running") == []
+    assert _records(caplog, "exceeded watchdog") == []
+
+
+def test_run_once_without_run_forever_has_no_watchdog_thread_and_logs_nothing(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Requirement: the testable unit keeps working, watchless.
+
+    ``run_once`` is called directly by most of this suite. Its pass here runs
+    0.3s against a 0.1s threshold, so a watchdog thread would certainly have
+    reported it -- the silence is the absence of the thread, which is asserted
+    by name as well.
+    """
+
+    monkeypatch.setenv(_THRESHOLD_ENV, "0.1")
+    monkeypatch.setenv(_REPEAT_ENV, "0.1")
+    store = InMemoryEgressStore()
+    store.upsert_config(_config("public"))
+    daemon = _StallingDaemon(hold_seconds=0.3)
+    service = _service(store, daemon)
+
+    with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+        seen = service.run_once(now=datetime.now(UTC))
+
+    assert seen == ["public"]
+    assert daemon.processed == ["public"]
+    assert _watchdog_threads() == []
+    assert _records(caplog, "still running") == []
+    assert _records(caplog, "exceeded watchdog") == []
+
+
+def test_threshold_zero_disables_the_watchdog(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """0 is the documented off switch: no thread, no dump, however long the stall."""
+
+    monkeypatch.setenv(_THRESHOLD_ENV, "0")
+    monkeypatch.setenv(_REPEAT_ENV, "0.1")
+    store = InMemoryEgressStore()
+    store.upsert_config(_config("public"))
+    daemon = _StallingDaemon()
+    service = _service(store, daemon)
+    stop_event = threading.Event()
+    runner = _runner(service, stop_event)
+
+    with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+        runner.start()
+        try:
+            assert daemon.entered.wait(1.0), "the blocked pass never started"
+            # Well past the 0.1s repeat a still-running pass would have been
+            # re-reported at, had the threshold been anything but 0.
+            time.sleep(0.3)
+            assert _watchdog_threads() == [], "a disabled watchdog still spawned a thread"
+            assert _records(caplog, "still running") == []
+        finally:
+            daemon.release.set()
+            stop_event.set()
+            runner.join(1.0)
+
+    assert _records(caplog, "exceeded watchdog") == []
+    assert not runner.is_alive()
+
+
+def test_watchdog_is_one_named_daemon_thread_that_stops_with_run_forever(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Asserted by name: exactly one watcher, a daemon, gone when the loop ends."""
+
+    monkeypatch.setenv(_THRESHOLD_ENV, "0.5")
+    monkeypatch.setenv(_REPEAT_ENV, "0.5")
+    store = InMemoryEgressStore()
+    store.upsert_config(_config("public"))
+    daemon = _StallingDaemon()
+    service = _service(store, daemon)
+    stop_event = threading.Event()
+    runner = _runner(service, stop_event)
+
+    runner.start()
+    try:
+        assert daemon.entered.wait(1.0), "the blocked pass never started"
+        assert _wait_for(lambda: len(_watchdog_threads()) == 1, 1.0), (
+            "run_forever did not start exactly one watchdog thread"
+        )
+        assert _watchdog_threads()[0].daemon is True, "the watchdog thread is not a daemon"
+    finally:
+        daemon.release.set()
+        stop_event.set()
+        runner.join(1.0)
+
+    assert not runner.is_alive()
+    assert _wait_for(lambda: not _watchdog_threads(), 1.0), (
+        "the watchdog thread survived the loop's stop_event"
+    )
+
+
+@pytest.mark.parametrize("bad_value", ["not-a-number", "-5", "nan", "inf", "0.0.0"])
+def test_invalid_threshold_env_warns_and_falls_back_to_the_default(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, bad_value: str
+) -> None:
+    """A typo must never silently disable a stall detector.
+
+    Same contract as this module's other env readers (see
+    ``rollover_lead_seconds_from_env``): the offending value is named at
+    WARNING and the safe default -- 30s -- is what ends up in force.
+    """
+
+    monkeypatch.setenv(_THRESHOLD_ENV, bad_value)
+    with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+        service = _service(InMemoryEgressStore(), _IdleDaemon())
+
+    warnings = _records(caplog, _THRESHOLD_ENV)
+    assert len(warnings) == 1, f"expected exactly one warning naming the variable: {warnings}"
+    assert bad_value in warnings[0].getMessage()
+    assert "using 30.0s" in warnings[0].getMessage()
+    assert service is not None
+
+
+def test_invalid_repeat_env_warns_and_falls_back_to_the_default(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """0 is INVALID here, unlike the threshold: a 0s repeat would spin the
+    watcher thread re-checking a pass it has just reported."""
+
+    monkeypatch.setenv(_REPEAT_ENV, "0")
+    with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+        _service(InMemoryEgressStore(), _IdleDaemon())
+
+    warnings = _records(caplog, _REPEAT_ENV)
+    assert len(warnings) == 1, f"expected exactly one warning naming the variable: {warnings}"
+    assert "using 60.0s" in warnings[0].getMessage()
+
+
+def test_readers_default_to_30s_and_60s_and_pass_real_values_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert pass_watchdog_threshold_seconds_from_env() == 30.0
+    assert pass_watchdog_repeat_seconds_from_env() == 60.0
+
+    monkeypatch.setenv(_THRESHOLD_ENV, "12.5")
+    monkeypatch.setenv(_REPEAT_ENV, "5")
+    assert pass_watchdog_threshold_seconds_from_env() == 12.5
+    assert pass_watchdog_repeat_seconds_from_env() == 5.0
+
+
+def test_zero_threshold_is_the_off_switch_and_is_not_a_warning(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """0 is a deliberate setting, not a typo: returned as-is, in silence.
+    Nagging an operator for turning a diagnostic off is its own bug."""
+
+    monkeypatch.setenv(_THRESHOLD_ENV, "0")
+    with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+        assert pass_watchdog_threshold_seconds_from_env() == 0.0
+
+    assert caplog.records == []
+
+
+def test_first_dump_lands_at_the_threshold_not_a_whole_repeat_later(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Threshold 0.2s, repeat 2.0s: the stall is reported well inside 2s.
+
+    A watcher that slept the repeat interval from the start would miss every
+    stall longer than the threshold but shorter than the repeat -- the band a
+    real stall is most likely to land in -- so the first check is pinned to
+    the threshold here, where the repeat is far longer than this test.
+    """
+
+    monkeypatch.setenv(_THRESHOLD_ENV, "0.2")
+    monkeypatch.setenv(_REPEAT_ENV, "2.0")
+    store = InMemoryEgressStore()
+    store.upsert_config(_config("public"))
+    daemon = _StallingDaemon()
+    service = _service(store, daemon)
+    stop_event = threading.Event()
+    runner = _runner(service, stop_event)
+
+    with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+        runner.start()
+        try:
+            assert daemon.entered.wait(1.0), "the blocked pass never started"
+            assert _wait_for(lambda: bool(_records(caplog, "still running")), 1.5), (
+                "the first dump waited for the repeat interval instead of the threshold"
+            )
+        finally:
+            daemon.release.set()
+            stop_event.set()
+            runner.join(2.0)
+
+    assert not runner.is_alive()
+
+
+class _RaisingFrames:
+    """A ``sys._current_frames`` stand-in that fails, as the real private API
+    could; the watcher must survive a dump it cannot take."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self) -> dict[int, Any]:
+        self.calls += 1
+        raise RuntimeError("frames unavailable")
+
+
+class _RaisingClock:
+    """A monotonic clock stand-in that fails, so the pass-side guard is
+    exercised rather than argued."""
+
+    def __call__(self) -> float:
+        raise RuntimeError("clock unavailable")
+
+
+def test_a_failing_stack_dump_costs_one_tick_not_the_watcher(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``sys._current_frames`` is private CPython API; a dump that raises must
+    cost one tick, never the watcher thread and never the pass-end report."""
+
+    frames = _RaisingFrames()
+    watchdog = _PassWatchdog(threshold_seconds=0.1, repeat_seconds=0.1, current_frames=frames)
+    watchdog.start()
+    try:
+        with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+            watchdog.pass_started("public")
+            assert _wait_for(lambda: frames.calls >= 2, 1.5), (
+                "the watcher thread died on the first failed dump"
+            )
+            watchdog.pass_finished("public")
+    finally:
+        watchdog.stop()
+
+    assert _wait_for(lambda: not _watchdog_threads(), 1.0)
+    assert _records(caplog, "still running") == []
+    assert len(_records(caplog, "exceeded watchdog")) == 1, (
+        "a pass whose dump could not be taken still has to report its overrun"
+    )
+
+
+def test_a_pass_whose_thread_is_gone_still_reports_its_overrun(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The dump needs a live frame; the finished line does not. An empty frames
+    map is exactly the ident-already-gone case: the watcher trips over the
+    overrun, finds no stack to print, and the pass still reports its duration.
+
+    The pass is held past several 0.05s ticks and then finished, so the only
+    thing missing from the log is the dump itself."""
+
+    watchdog = _PassWatchdog(threshold_seconds=0.05, repeat_seconds=0.05, current_frames=dict)
+    watchdog.start()
+    try:
+        with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+            watchdog.pass_started("public")
+            time.sleep(0.2)
+            watchdog.pass_finished("public")
+    finally:
+        watchdog.stop()
+
+    assert _wait_for(lambda: not _watchdog_threads(), 1.0)
+    assert _records(caplog, "still running") == []
+    assert len(_records(caplog, "exceeded watchdog")) == 1
+
+
+def test_a_failing_clock_never_raises_into_the_pass(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``pass_started``/``pass_finished`` run on the automation thread and in a
+    ``finally``: a watchdog bookkeeping failure must never fail, and never
+    relabel, a channel pass."""
+
+    watchdog = _PassWatchdog(threshold_seconds=1.0, repeat_seconds=1.0, monotonic=_RaisingClock())
+    with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+        watchdog.pass_started("public")
+        watchdog.pass_finished("public")
+
+    assert caplog.records == []
