@@ -12,12 +12,15 @@ state rows.
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
+from pathlib import Path
 
 import pytest
 
+import civiccast.egress.automation as automation_module
 from civiccast.egress.automation import ChannelAutomationService, ChannelAutomationSettings
 from civiccast.egress.models import (
     CanonicalProfile,
@@ -150,8 +153,13 @@ def _plan_with_segments(
     )
 
 
-@pytest.mark.parametrize("duration", [600.0, 3600.0])
-def test_single_item_rollover_prepares_next_boundary_with_bounded_lead(duration: float) -> None:
+def _single_item_rollover_service(
+    duration: float,
+) -> tuple[ChannelAutomationService, InMemoryEgressStore, list[datetime]]:
+    """One ON_AIR channel airing a single ``duration``-second segment, with a
+    boundary-aware plan provider (the gst path's shape -- see
+    ``build_channel_automation``'s ``plan_at`` branch)."""
+
     store = InMemoryEgressStore()
     store.upsert_config(_config("public"))
     store.write_state(
@@ -179,16 +187,49 @@ def test_single_item_rollover_prepares_next_boundary_with_bounded_lead(duration:
         settings=ChannelAutomationSettings(),
         boundary_source_plan_provider=next_plan,
     )
-    end = _NOW + timedelta(seconds=duration)
+    return service, store, sampled
+
+
+def test_single_item_rollover_prepares_next_boundary_with_bounded_lead() -> None:
+    """BETA.10 U02, retimed by U03. The gst path's lead is no longer a flat
+    120s: it now covers BOTH bounded preparation passes of a normalized
+    segment plus the reload settle budget and margin -- 2*300 + 30 + 60 = 690s
+    at the shipped 300s timeout, against a 3600s plan that is longer than the
+    lead. So the trigger is ``end - 690``: nothing one second before it, the
+    reload at it. (U02's numbers here were 391/390 for its single-timeout
+    390s lead.)"""
+
+    service, store, sampled = _single_item_rollover_service(3600.0)
+    end = _NOW + timedelta(seconds=3600)
     service.run_once(now=_NOW)
-    # BETA.10 U02: the gst path's lead is no longer a flat 120s -- it must
-    # cover a preparation allowed to run to the configured timeout (300s
-    # default) plus the reload settle budget and margin. See the class of
-    # tests in TestGstRolloverLeadCoversPreparationTimeout below.
-    service.run_once(now=end - timedelta(seconds=391))
+    service.run_once(now=end - timedelta(seconds=691))
     assert _pending_actions(store, "public") == []
     assert sampled == []
-    service.run_once(now=end - timedelta(seconds=390))
+    service.run_once(now=end - timedelta(seconds=690))
+    assert sampled == [end]
+    assert _pending_actions(store, "public") == ["reload"]
+
+
+def test_a_plan_shorter_than_the_lead_arms_at_its_own_start() -> None:
+    """BETA.10 U03: a direct consequence of the longer lead, pinned so it is a
+    decision and not a surprise. ``_check_plan_rollover`` arms the trigger at
+    ``max(last_segment_start_at, plan_end_at - lead)``, so on a plan SHORTER
+    than the lead (600s here) ``plan_end_at - 690`` is already in the past by
+    the time the horizon is established and the clamp wins: the rollover arms
+    at the plan's own start, on the first tick after the establishing one.
+    Still bounded -- the ``_rollover_min_interval_seconds`` cadence floor
+    (min(300, 600/2) = 300s here) governs how often a channel can dispatch."""
+
+    service, store, sampled = _single_item_rollover_service(600.0)
+    end = _NOW + timedelta(seconds=600)
+
+    # The establishing tick only records the horizon; it never dispatches.
+    service.run_once(now=_NOW)
+    assert _pending_actions(store, "public") == []
+    assert sampled == []
+
+    # The next tick is already past ``max(_NOW, end - 690) == _NOW``.
+    service.run_once(now=_NOW + timedelta(seconds=1))
     assert sampled == [end]
     assert _pending_actions(store, "public") == ["reload"]
 
@@ -240,9 +281,12 @@ class TestGstRolloverLeadCoversPreparationTimeout:
     channel's rollover was issued with 119s left, its preparation did not
     finish, and the channel went dark at 13:30:30.
 
-    The lead is now ``preparation_timeout + reload settle budget + margin``
-    (390s at the shipped 300s timeout), still clamped by
-    ``last_segment_start_at`` and still overridable -- see
+    The lead is now ``preparation_passes * preparation_timeout + reload settle
+    budget + margin`` -- BETA.10 U03 multiplied the timeout by the number of
+    bounded ffmpeg passes one preparation can run (two for a normalized gst
+    segment: the loudnorm measurement, then the conform), so it is 2*300 + 30
+    + 60 = 690s at the shipped 300s timeout rather than U02's 390s. Still
+    clamped by ``last_segment_start_at`` and still overridable -- see
     ``ChannelAutomationService._rollover_lead_seconds``.
     """
 
@@ -286,7 +330,11 @@ class TestGstRolloverLeadCoversPreparationTimeout:
     ) -> None:
         """The station's own incident shape: a 10-minute plan, 200s still to
         run. Under the old flat 120s lead nothing was issued until 120s were
-        left; now the reload is already armed."""
+        left; now the reload is already armed. U03: this 600s plan is also
+        shorter than the new 690s lead, so the trigger is satisfied the moment
+        the horizon is established -- the establishing tick itself never
+        dispatches (``_check_plan_rollover`` returns after recording the
+        horizon), which is what this test's first ``run_once`` sees."""
 
         monkeypatch.delenv(self._LEAD_ENV, raising=False)
         monkeypatch.setenv(self._PREP_ENV, "300")
@@ -301,10 +349,34 @@ class TestGstRolloverLeadCoversPreparationTimeout:
         assert boundaries == [end]
         assert _pending_actions(store, "public") == ["reload"]
 
+    def test_a_two_pass_preparation_is_not_covered_by_a_one_pass_lead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """BETA.10 U03, RED-first for the two-pass fix. A normalized segment's
+        preparation runs TWO bounded ffmpeg passes, not one -- the loudnorm
+        MEASUREMENT pass (``preparer.py:1881``) and then the conform itself
+        (``preparer.py:1911``) -- and ``_run_ffmpeg`` applies
+        ``self._preparation_timeout_seconds`` to EACH (``preparer.py:1406``).
+        At the station's 300s that is 600s of ffmpeg, so the U02 lead of
+        300 + 30 + 60 = 390s did not cover it. With EOS 500s away nothing was
+        armed under the old lead; the lead must now be past that point."""
+
+        monkeypatch.delenv(self._LEAD_ENV, raising=False)
+        monkeypatch.setenv(self._PREP_ENV, "300")
+        service, store, boundaries = self._service((1800.0,))
+        end = _NOW + timedelta(seconds=1800)
+
+        service.run_once(now=_NOW)  # establish the horizon (EOS = _NOW+1800)
+        service.run_once(now=end - timedelta(seconds=500))
+
+        assert boundaries == [end]
+        assert _pending_actions(store, "public") == ["reload"]
+
     def test_the_lead_is_the_preparation_timeout_plus_settle_and_margin(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """390s = 300s preparation timeout + 30s reload settle budget + 60s
+        """690s = 2 x 300s preparation timeout (one loudnorm measurement pass
+        plus the conform -- BETA.10 U03) + 30s reload settle budget + 60s
         margin, pinned at the trigger boundary either side of it."""
 
         monkeypatch.delenv(self._LEAD_ENV, raising=False)
@@ -312,14 +384,14 @@ class TestGstRolloverLeadCoversPreparationTimeout:
         service, store, boundaries = self._service((1800.0,))
         end = _NOW + timedelta(seconds=1800)
 
-        assert service._rollover_lead_seconds() == 390.0
+        assert service._rollover_lead_seconds() == 690.0
 
         service.run_once(now=_NOW)
-        service.run_once(now=end - timedelta(seconds=391))
+        service.run_once(now=end - timedelta(seconds=691))
         assert boundaries == []
         assert _pending_actions(store, "public") == []
 
-        service.run_once(now=end - timedelta(seconds=390))
+        service.run_once(now=end - timedelta(seconds=690))
         assert boundaries == [end]
         assert _pending_actions(store, "public") == ["reload"]
 
@@ -353,11 +425,11 @@ class TestGstRolloverLeadCoversPreparationTimeout:
 
         with caplog.at_level(logging.WARNING, logger="civiccast.egress.automation"):
             service.run_once(now=_NOW)
-            service.run_once(now=end - timedelta(seconds=391))
+            service.run_once(now=end - timedelta(seconds=691))
             assert boundaries == []
             assert _pending_actions(store, "public") == []
 
-            service.run_once(now=end - timedelta(seconds=390))
+            service.run_once(now=end - timedelta(seconds=690))
 
         assert boundaries == [end]
         assert _pending_actions(store, "public") == ["reload"]
@@ -369,9 +441,11 @@ class TestGstRolloverLeadCoversPreparationTimeout:
         """A dispatched plan whose LAST segment begins later than the lead
         (a 1700s penultimate segment, then a 100s one) must still trigger at
         that segment's start -- never once the wall clock passes
-        ``plan_end - lead``. Checked at both the new lead's boundary and the
-        old flat 120s one: the latter is what the clamp protects against now
-        that the lead runs past the last segment's start."""
+        ``plan_end - lead``. Checked at both the lead's boundary and the old
+        flat 120s one: the latter is what the clamp protects against now that
+        the lead runs past the last segment's start. U03: the lead boundary
+        here is ``end - 690`` (``_NOW+1110``), still well before the last
+        segment begins at ``_NOW+1700``."""
 
         monkeypatch.delenv(self._LEAD_ENV, raising=False)
         monkeypatch.setenv(self._PREP_ENV, "300")
@@ -380,8 +454,8 @@ class TestGstRolloverLeadCoversPreparationTimeout:
         last_segment_start = _NOW + timedelta(seconds=1700)
 
         service.run_once(now=_NOW)  # establish: last segment begins at +1700
-        # Past the lead (_NOW+1410) but before the last segment begins.
-        service.run_once(now=end - timedelta(seconds=390))
+        # Past the lead (_NOW+1110) but before the last segment begins.
+        service.run_once(now=end - timedelta(seconds=690))
         assert boundaries == []
         assert _pending_actions(store, "public") == []
         # Past the OLD flat lead too (_NOW+1680); still before +1700.
@@ -391,6 +465,155 @@ class TestGstRolloverLeadCoversPreparationTimeout:
 
         service.run_once(now=last_segment_start)
         assert boundaries == [end]
+        assert _pending_actions(store, "public") == ["reload"]
+
+
+class TestRolloverLeadDeferWatchdogCeiling:
+    """BETA.10 U03: the rollover lead is bounded above by something the
+    automation service does not own -- the engine's own deferred-switch
+    watchdog, ``GstPlayoutEngine.defer_switch_timeout_s`` (900s default). Past
+    it the watchdog FORCES the switch to the armed leg instead of waiting for
+    the outgoing plan's EOS, so a lead that long stops buying what it was
+    sized for. The service warns ONCE per lifetime and uses the value anyway:
+    clamping an operator's explicit override would reinstate the exact failure
+    the lead exists to prevent, and clamping the computed default would make
+    the lead lie about the worst-case preparation it covers."""
+
+    _PREP_ENV = "CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS"
+    # Read off the module rather than retyped: U03 exists because two settings
+    # were silently ignored by a one-character spelling difference, and this
+    # test class had exactly that typo in it while being written.
+    _LEAD_ENV = automation_module.ROLLOVER_LEAD_ENV
+
+    def _service(self) -> tuple[ChannelAutomationService, InMemoryEgressStore]:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        store.write_state(
+            EgressStateRow(
+                channel_id="public",
+                state="ON_AIR",
+                current_source_label="Council Meeting",
+                current_proof_event_id="ev-1",
+                updated_at=_NOW,
+                pid=123,
+            )
+        )
+        daemon = _HorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", (1800.0,), False)
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda channel: _plan_with_duration(channel, 1800.0),
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=lambda channel, boundary: _plan_with_duration(
+                channel, 1800.0
+            ),
+        )
+        return service, store
+
+    def test_the_watchdog_constant_matches_the_engine_default(self) -> None:
+        """``civiccast.egress.gst.engine`` cannot be imported here -- it imports
+        ``gi`` at module scope (verified: ``ModuleNotFoundError: No module named
+        'gi'`` on this host), which is why ``automation.py`` carries
+        ``_ROLLOVER_DEFER_SWITCH_TIMEOUT_SECONDS`` as a named constant instead
+        of importing the real one. This pins the two equal by reading the
+        engine's own source text, so the copy cannot drift silently."""
+
+        source = (
+            Path(automation_module.__file__).resolve().parent / "gst" / "engine.py"
+        ).read_text(encoding="utf-8")
+        match = re.search(r"defer_switch_timeout_s:\s*float\s*=\s*([0-9.]+)", source)
+        assert match is not None, "engine.py no longer declares defer_switch_timeout_s"
+        assert float(match.group(1)) == (
+            ChannelAutomationService._ROLLOVER_DEFER_SWITCH_TIMEOUT_SECONDS
+        )
+        assert ChannelAutomationService._ROLLOVER_DEFER_SWITCH_TIMEOUT_SECONDS == 900.0
+        assert (
+            ChannelAutomationService._ROLLOVER_DEFER_SWITCH_TIMEOUT_SECONDS
+            - ChannelAutomationService._ROLLOVER_LEAD_CEILING_HEADROOM_SECONDS
+        ) == 840.0
+
+    def test_the_shipped_lead_stays_under_the_ceiling(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The default configuration must not warn: 690s of lead at the shipped
+        300s timeout is 150s clear of the 840s ceiling. Pinned at the ceiling
+        too (prep timeout 375s gives exactly 2*375 + 90 = 840s)."""
+
+        monkeypatch.delenv(self._LEAD_ENV, raising=False)
+        with caplog.at_level(logging.WARNING, logger="civiccast.egress.automation"):
+            monkeypatch.setenv(self._PREP_ENV, "300")
+            assert self._service()[0]._rollover_lead_seconds() == 690.0
+
+            monkeypatch.setenv(self._PREP_ENV, "375")
+            assert self._service()[0]._rollover_lead_seconds() == 840.0
+
+        assert caplog.records == []
+
+    def test_a_computed_lead_past_the_ceiling_warns_once_per_lifetime(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Prep timeout 500s -> 2*500 + 30 + 60 = 1090s of lead, past the
+        ceiling. The value is USED, not clamped, and the warning fires exactly
+        once however many ticks ask for the lead (``_check_plan_rollover`` asks
+        on every ~2s poll tick in production)."""
+
+        monkeypatch.delenv(self._LEAD_ENV, raising=False)
+        monkeypatch.setenv(self._PREP_ENV, "500")
+        service, _store = self._service()
+
+        with caplog.at_level(logging.WARNING, logger="civiccast.egress.automation"):
+            assert service._rollover_lead_seconds() == 1090.0
+            end = _NOW + timedelta(seconds=1800)
+            for tick in range(5):
+                service.run_once(now=end - timedelta(seconds=1000 + tick))
+
+        warnings = [
+            record for record in caplog.records if "defer-switch watchdog" in record.getMessage()
+        ]
+        assert len(warnings) == 1, [record.getMessage() for record in warnings]
+        assert "computed default" in warnings[0].getMessage()
+        assert "1090.0" in warnings[0].getMessage()
+
+    def test_an_override_past_the_ceiling_warns_once_and_is_used(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An operator's EXPLICIT override is never silently shortened -- it is
+        used as given and named in the warning, so the report says which value
+        is over the watchdog."""
+
+        monkeypatch.setenv(self._PREP_ENV, "300")
+        monkeypatch.setenv(self._LEAD_ENV, "900")
+        service, _store = self._service()
+
+        with caplog.at_level(logging.WARNING, logger="civiccast.egress.automation"):
+            assert service._rollover_lead_seconds() == 900.0
+            assert service._rollover_lead_seconds() == 900.0
+            service.run_once(now=_NOW)
+
+        warnings = [
+            record for record in caplog.records if "defer-switch watchdog" in record.getMessage()
+        ]
+        assert len(warnings) == 1, [record.getMessage() for record in warnings]
+        assert self._LEAD_ENV in warnings[0].getMessage()
+
+    def test_an_override_past_the_ceiling_still_arms_the_rollover(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Warning, not veto: the over-long override still drives the trigger,
+        so an operator who has measured their own watchdog does not lose the
+        lead they asked for."""
+
+        monkeypatch.setenv(self._PREP_ENV, "300")
+        monkeypatch.setenv(self._LEAD_ENV, "900")
+        service, store = self._service()
+        end = _NOW + timedelta(seconds=1800)
+
+        service.run_once(now=_NOW)
+        service.run_once(now=end - timedelta(seconds=901))
+        assert _pending_actions(store, "public") == []
+
+        service.run_once(now=end - timedelta(seconds=900))
         assert _pending_actions(store, "public") == ["reload"]
 
 

@@ -439,6 +439,13 @@ class ChannelAutomationService:
         # Issue #117: one supervised BYO-SDI relay per configured channel.
         self._sdi_supervisor_factory = sdi_supervisor_factory or _default_sdi_factory
         self._sdi_relays: dict[str, Any] = {}
+        # BETA.10 U03: one-shot latch for the "the rollover lead is closing on
+        # the engine's defer-switch watchdog" WARNING -- see
+        # _warn_if_rollover_lead_nears_the_defer_watchdog. Per SERVICE lifetime,
+        # not per channel: the lead is a property of the deployment's
+        # configuration, identical for every channel, and _check_plan_rollover
+        # calls _rollover_lead_seconds on every ~2s poll tick.
+        self._rollover_lead_ceiling_warned = False
 
     _START_RETRY_COOLDOWN_SECONDS = 30.0
     _RELOAD_RETRY_COOLDOWN_SECONDS = 30.0
@@ -467,13 +474,17 @@ class ChannelAutomationService:
     # dispatch at or after the plan's own end. See
     # _rollover_min_lead_seconds.
     _ROLLOVER_MIN_LEAD_SECONDS = 120.0
-    # BETA.10 U02: the GStreamer path's rollover lead is no longer the fixed
+    # BETA.10 U02/U03: the GStreamer path's rollover lead is no longer the fixed
     # 120s above -- it has to cover a preparation that is allowed to run to
-    # ``CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS`` (300s at the station,
+    # ``CIVICCAST_EGRESS_PREPARATION_TIMEOUT_SECONDS`` (300s at the station,
     # 300s by default) plus the reload's own post-preparation round trip.
     # 2026-09-24 13:28:25: public's rollover was issued with 119s left, its
     # cold conform (measured 270s, capped at 300s) did not finish, and the
     # channel went dark at 13:30:30. See ``_rollover_lead_seconds``.
+    # U03: the timeout is covered PER PASS -- a normalized segment runs a
+    # loudnorm measurement pass and then the conform, each within that same
+    # bound, so the U02 lead of one timeout covered half the worst case.
+    # See ``_ROLLOVER_PREPARATION_PASSES``.
     #
     # The reload's settle budget after preparation completes: the worker
     # pipe's reload ack is bounded at ``strategy._WORKER_PIPE_ACK_TIMEOUT_S``
@@ -484,6 +495,43 @@ class ChannelAutomationService:
     # far ahead of EOS the reload is built.
     _ROLLOVER_RELOAD_SETTLE_BUDGET_SECONDS = 30.0
     _ROLLOVER_LEAD_MARGIN_SECONDS = 60.0
+    # BETA.10 U03: how many ``_run_ffmpeg`` calls ONE reload preparation of ONE
+    # segment can make on the GStreamer path. ``_run_ffmpeg`` applies
+    # ``self._preparation_timeout_seconds`` to EACH call (``preparer.py:1406``),
+    # so one pass is not the bound -- the count is. On this path
+    # (``playout_trim_supported=False``, wired at ``build_channel_automation``)
+    # there are two, in ``_prepare_segment``:
+    #   1. ``preparer.py:1881`` -- the two-pass loudnorm MEASUREMENT pass
+    #      (``build_loudnorm_probe_args``), which runs only when the segment
+    #      needs normalizing AND a ``loudness_target_lufs`` is configured
+    #      (the guard at ``preparer.py:1873``).
+    #   2. ``preparer.py:1911`` -- the conform encode that writes the segment.
+    # A segment that needs no normalization makes only pass 2; the cache-HIT
+    # path makes one (the stream-copy at ``preparer.py:982``). So this is the
+    # WORST case, which is what the lead has to cover.
+    # ``_conform_full_asset_into_cache`` -- itself a probe plus an encode
+    # (``preparer.py:555``/``583``) -- is deliberately NOT counted: its only
+    # synchronous call site is guarded by ``_playout_trim_supported``
+    # (``preparer.py:1812``), which is False for the gst engine, so on this path
+    # it runs only on the background warm worker (``_schedule_warm``), never
+    # inside a reload's preparation.
+    _ROLLOVER_PREPARATION_PASSES = 2.0
+    #: BETA.10 U03: the engine's own deferred/boundary-aligned switch watchdog,
+    #: ``GstPlayoutEngine.defer_switch_timeout_s`` (``engine.py:614``, default
+    #: 900.0s). If it fires first it FORCES the switch to the armed leg
+    #: (``engine.py:2793``'s ``_on_defer_switch_timeout``), the opposite of what
+    #: a long rollover lead is buying, so a lead approaching it is worth one
+    #: warning. Read as a named constant rather than imported:
+    #: ``civiccast.egress.gst.engine`` imports ``gi`` (GStreamer) at module
+    #: scope and does not import at all without the packaged runtime, so
+    #: importing it here would break ``automation.py`` on every plain host.
+    #: ``test_automation`` pins this constant and ``engine.py``'s own default
+    #: equal by reading that source text.
+    _ROLLOVER_DEFER_SWITCH_TIMEOUT_SECONDS = 900.0
+    #: BETA.10 U03: how far short of the watchdog above a lead may sit before it
+    #: is reported -- the ceiling is ``_ROLLOVER_DEFER_SWITCH_TIMEOUT_SECONDS``
+    #: minus this (840s at the shipped default).
+    _ROLLOVER_LEAD_CEILING_HEADROOM_SECONDS = 60.0
     # Hostile-review B2 fix: if a dispatched rollover reload has not landed
     # (no fresh current_proof_event_id) within this long, treat it as dropped
     # and retry once more before the plan's projected end, rather than waiting
@@ -899,20 +947,86 @@ class ChannelAutomationService:
         below it. ``ROLLOVER_LEAD_ENV`` overrides the whole computation for an
         operator who has measured their own preparation and settle times.
 
+        BETA.10 U03: the timeout is multiplied by
+        ``_ROLLOVER_PREPARATION_PASSES`` -- a normalized segment's preparation
+        runs a loudnorm MEASUREMENT pass and then the conform itself, each
+        bounded by that timeout, so the U02 single-timeout lead (390s at the
+        station's 300s) covered only half of the worst case this build can run.
+        At the shipped 300s the lead is now 2*300 + 30 + 60 = 690s.
+
         This is deliberately a LEAD, not a cadence: the dispatch it permits is
         still gated by ``_rollover_min_interval_seconds``, the issued latch,
         and ``has_pending_reload_settlement``, and it is still clamped by
         ``last_segment_start_at`` at the call site (never triggers before the
-        last segment of the live plan begins)."""
+        last segment of the live plan begins).
+
+        A lead longer than the live plan itself therefore arms at that last
+        segment's START, not before it -- see the call site's ``max``. The
+        ``_rollover_min_interval_seconds`` cadence floor still bounds how often
+        that can happen for a channel."""
 
         override = rollover_lead_seconds_from_env()
         if override is not None:
+            self._warn_if_rollover_lead_nears_the_defer_watchdog(
+                override, source=f"{ROLLOVER_LEAD_ENV} override"
+            )
             return override
-        return max(
+        computed = max(
             self._ROLLOVER_MIN_LEAD_SECONDS,
-            preparation_timeout_seconds_from_env()
+            self._ROLLOVER_PREPARATION_PASSES * preparation_timeout_seconds_from_env()
             + self._ROLLOVER_RELOAD_SETTLE_BUDGET_SECONDS
             + self._ROLLOVER_LEAD_MARGIN_SECONDS,
+        )
+        self._warn_if_rollover_lead_nears_the_defer_watchdog(computed, source="computed default")
+        return computed
+
+    def _warn_if_rollover_lead_nears_the_defer_watchdog(
+        self, lead_seconds: float, *, source: str
+    ) -> None:
+        """BETA.10 U03: report ONCE per service lifetime when the rollover lead
+        reaches within ``_ROLLOVER_LEAD_CEILING_HEADROOM_SECONDS`` of the
+        engine's defer-switch watchdog (``_ROLLOVER_DEFER_SWITCH_TIMEOUT_SECONDS``,
+        840s of lead at the shipped 900s).
+
+        Past that point the watchdog (``engine.py:2793``) can force the switch
+        to whatever leg is armed before the outgoing plan reaches its own end
+        -- the deferral the whole rollover is built around stops being honoured,
+        so the lead stops buying what it was sized for. The value is still USED
+        as given: this warns, it does not clamp. Silently shortening an
+        operator's explicit ``ROLLOVER_LEAD_ENV`` would reinstate exactly the
+        failure the lead exists to prevent, and clamping the computed default
+        would make the lead lie about the worst-case preparation it is meant to
+        cover.
+
+        Once per service lifetime rather than once per tick: this is a property
+        of the deployment's configuration, not of the plan on air, and the
+        caller runs on every ~2s poll tick (the same reason
+        ``_ROLLOVER_RETRY_WARN_INTERVAL_SECONDS`` exists). The latch is a plain
+        per-instance flag -- the value it reports can change under a running
+        service only by an env change, which no live deployment performs."""
+
+        if self._rollover_lead_ceiling_warned:
+            return
+        ceiling = (
+            self._ROLLOVER_DEFER_SWITCH_TIMEOUT_SECONDS
+            - self._ROLLOVER_LEAD_CEILING_HEADROOM_SECONDS
+        )
+        if lead_seconds <= ceiling:
+            return
+        self._rollover_lead_ceiling_warned = True
+        _LOG.warning(
+            "Rollover lead is %.1fs (%s), past the %.1fs ceiling -- the "
+            "%.0fs headroom below the engine's %.0fs defer-switch watchdog. A "
+            "switch deferred longer than that watchdog is FORCED to the armed "
+            "leg, so this lead may be armed long enough for the watchdog to "
+            "cut before the outgoing plan reaches its own end. Using the "
+            "configured value as-is (raise the watchdog to match, or lower the "
+            "lead).",
+            lead_seconds,
+            source,
+            ceiling,
+            self._ROLLOVER_LEAD_CEILING_HEADROOM_SECONDS,
+            self._ROLLOVER_DEFER_SWITCH_TIMEOUT_SECONDS,
         )
 
     def _rollover_min_lead_seconds(self, planned_seconds: float) -> float:
