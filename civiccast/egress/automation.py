@@ -497,22 +497,22 @@ class ChannelAutomationService:
     _ROLLOVER_LEAD_MARGIN_SECONDS = 60.0
     # BETA.10 U03: how many ``_run_ffmpeg`` calls ONE reload preparation of ONE
     # segment can make on the GStreamer path. ``_run_ffmpeg`` applies
-    # ``self._preparation_timeout_seconds`` to EACH call (``preparer.py:1406``),
+    # ``self._preparation_timeout_seconds`` to EACH call (``preparer.py:1432``),
     # so one pass is not the bound -- the count is. On this path
     # (``playout_trim_supported=False``, wired at ``build_channel_automation``)
     # there are two, in ``_prepare_segment``:
-    #   1. ``preparer.py:1881`` -- the two-pass loudnorm MEASUREMENT pass
+    #   1. ``preparer.py:1907`` -- the two-pass loudnorm MEASUREMENT pass
     #      (``build_loudnorm_probe_args``), which runs only when the segment
     #      needs normalizing AND a ``loudness_target_lufs`` is configured
-    #      (the guard at ``preparer.py:1873``).
-    #   2. ``preparer.py:1911`` -- the conform encode that writes the segment.
+    #      (the guard at ``preparer.py:1899``).
+    #   2. ``preparer.py:1937`` -- the conform encode that writes the segment.
     # A segment that needs no normalization makes only pass 2; the cache-HIT
-    # path makes one (the stream-copy at ``preparer.py:982``). So this is the
+    # path makes one (the stream-copy at ``preparer.py:1008``). So this is the
     # WORST case, which is what the lead has to cover.
     # ``_conform_full_asset_into_cache`` -- itself a probe plus an encode
-    # (``preparer.py:555``/``583``) -- is deliberately NOT counted: its only
+    # (``preparer.py:581``/``609``) -- is deliberately NOT counted: its only
     # synchronous call site is guarded by ``_playout_trim_supported``
-    # (``preparer.py:1812``), which is False for the gst engine, so on this path
+    # (``preparer.py:1838``), which is False for the gst engine, so on this path
     # it runs only on the background warm worker (``_schedule_warm``), never
     # inside a reload's preparation.
     _ROLLOVER_PREPARATION_PASSES = 2.0

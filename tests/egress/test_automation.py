@@ -355,9 +355,9 @@ class TestGstRolloverLeadCoversPreparationTimeout:
     ) -> None:
         """BETA.10 U03, RED-first for the two-pass fix. A normalized segment's
         preparation runs TWO bounded ffmpeg passes, not one -- the loudnorm
-        MEASUREMENT pass (``preparer.py:1881``) and then the conform itself
-        (``preparer.py:1911``) -- and ``_run_ffmpeg`` applies
-        ``self._preparation_timeout_seconds`` to EACH (``preparer.py:1406``).
+        MEASUREMENT pass (``preparer.py:1907``) and then the conform itself
+        (``preparer.py:1937``) -- and ``_run_ffmpeg`` applies
+        ``self._preparation_timeout_seconds`` to EACH (``preparer.py:1432``).
         At the station's 300s that is 600s of ffmpeg, so the U02 lead of
         300 + 30 + 60 = 390s did not cover it. With EOS 500s away nothing was
         armed under the old lead; the lead must now be past that point."""
