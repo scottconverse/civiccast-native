@@ -926,6 +926,38 @@ def test_operator_stopped_channel_is_never_recovered(tmp_path: Path) -> None:
     assert row is not None and row.state == "STOPPED"
 
 
+def test_preexisting_auto_start_still_starts_a_stopped_channel(tmp_path: Path) -> None:
+    """OBSERVED (U06 gap 4): on a later pass, an auto_start channel that was
+    STOPPED is started again -- by the PRE-EXISTING auto_start policy, not by
+    reconciliation.
+
+    ``_run_channel_pass_body`` gates only on ``has_live_process`` +
+    ``config.auto_start`` + the retry cooldown + the pending-start guard; it
+    never reads ``egress_states``. So a STOPPED row does not keep an auto_start
+    channel off air across a restart, whether that STOPPED came from the
+    operator's own ``stop`` command (daemon.py:1345), from the worker's clean
+    exit / a completed drain (daemon.py:2640), or from a drain with nothing to
+    drain (daemon.py:4092) -- all three write the same row shape. Raised with
+    the coordinator as a product question (``questions/U06.md``) rather than
+    changed here; this test is the evidence for it.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=True))
+    store.write_state(_row("STOPPED", pid=None, age_seconds=5))
+    daemon = _RecordingDaemon(store, work_dir=tmp_path)
+    service = _automation(store, daemon)
+
+    assert daemon.reconcile_stale_state() == [], "reconciliation never recovers STOPPED"
+
+    service.run_once(now=datetime.now(UTC))
+
+    assert daemon.starts == ["gov"], (
+        "the pre-existing auto_start policy starts a STOPPED auto_start channel "
+        f"on the next pass; starts={daemon.starts}"
+    )
+    assert daemon.starts.count("gov") == 1, "exactly once, no duplicate"
+
+
 def test_operator_stopped_channel_with_a_dead_pid_is_never_recovered(tmp_path: Path) -> None:
     """Same for a STOPPED row that still carries the pid of the stopped worker."""
     store = InMemoryEgressStore()
