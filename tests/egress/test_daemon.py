@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -400,6 +401,74 @@ def test_daemon_routes_storage_refusal_to_configured_fallback_slate_before_encod
     assert proof_events[0].source_label == "Fallback slate"
     assert proof_events[0].source_ref == "civiccast-slate"
     assert proof_events[0].proof_boundary == "civiccast-egress-handoff-boundary"
+
+
+def test_start_does_not_hold_the_pass_on_caption_retention_discovery(tmp_path: Path) -> None:
+    """U07: the readiness verdict is CONSULTED, never computed on the start path.
+
+    MEASURED LIVE 2026-09-24 17:19:23 MDT: this same call ran the whole
+    retention discovery inline on the automation thread (60.5 s for 15,045
+    public chunks) under ``_preparation_guard``, so every other channel's
+    command waited behind it and the 30 s automation watchdog fired. With
+    discovery blocked here, the pass must still finish and start the program.
+    """
+    from civiccast.captions.retention import (
+        CaptionEvidenceRetentionPolicy,
+        CaptionRetentionVerdictSource,
+    )
+    from civiccast.captions.review import InMemoryCaptionReviewStore
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    started: list[list[str]] = []
+    release = Event()
+    entered = Event()
+    discovered: list[int] = []
+
+    def blocked_discovery(**_kwargs: object) -> list[dict[str, object]]:
+        discovered.append(1)
+        entered.set()
+        release.wait(30.0)
+        return []
+
+    storage_root = tmp_path / "egress"
+    storage_root.mkdir(parents=True, exist_ok=True)
+    policy = CaptionEvidenceRetentionPolicy.from_system(storage_root=storage_root)
+    policy._discover_candidates = blocked_discovery  # type: ignore[method-assign]
+    provider = CaptionRetentionVerdictSource(
+        policy=policy,
+        tap_root=None,
+        review_store=InMemoryCaptionReviewStore(),
+        segment_seconds=5.0,
+        storage_root=storage_root,
+    )
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        caption_readiness_provider=provider,
+        ffmpeg_starter=lambda args: started.append(args) or _FakeProcess(),
+    )
+
+    try:
+        began = time.monotonic()
+        assert daemon.process_once("gov") == 1
+        elapsed = time.monotonic() - began
+    finally:
+        release.set()
+        provider.wait_for_sweep(10.0)
+
+    assert elapsed < 1.0, f"the automation pass waited {elapsed:.2f}s on retention discovery"
+    assert started, "the program never started"
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+    # The real program, not the fallback slate: a verdict that is merely
+    # MISSING is not a refusal.
+    assert store.recent_proof_events("gov", 1)[0].source_label == "Council meeting"
+    assert discovered == [1], "exactly one background sweep for one start"
+    assert entered.wait(5.0), "no background sweep was dispatched"
 
 
 def test_daemon_caption_sender_uses_its_running_encoder_strategy(tmp_path: Path) -> None:
