@@ -462,8 +462,10 @@ class _PassWatchdog:
     Three properties are load-bearing, because the thread being watched is the
     one this build cannot afford to disturb:
 
-    * the automation thread only ever records or clears four fields under
-      ``_lock`` -- it never formats a stack, never logs and never waits;
+    * the automation thread only ever records or clears its own fields under
+      ``_lock`` -- the channel, the start time, the next-report time, the
+      watched thread's ident and the reported flag. It never formats a stack,
+      never logs and never waits;
     * all logging happens on the WATCHER thread, and deliberately after the
       lock is released, so a slow log handler can never block the automation
       thread behind the watchdog;
