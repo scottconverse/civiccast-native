@@ -16,6 +16,8 @@ binds to, so doctor cannot report OK for a model the worker cannot load.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from civiccast.ai_models.models import AiModelAvailability, FeatureModelAvailability
@@ -42,6 +44,41 @@ def _availability(
             )
         }
     )
+
+
+@pytest.fixture(autouse=True)
+def stub_hardware_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the hardware-probe seam so the report test touches no real device.
+
+    ``_doctor_translation_lines`` calls ``civiccast.platform.hardware.probe()``
+    BEFORE it builds ``AiModelService``. On a restricted host that probe reads
+    the filesystem's free space for ``Path.home()`` (``shutil.disk_usage`` ->
+    ``nt._getdiskusage``), which can raise ``PermissionError`` and short-circuit
+    the report into an UNKNOWN line before the availability stub is ever
+    consulted. This fixture substitutes a realistic synthetic ``HardwareProbe``
+    at the exact seam the CLI imports, so the report-content assertions exercise
+    the real report logic -- not the host's disk/NVML access. Product behavior
+    is unchanged; nothing is skipped or weakened.
+    """
+
+    from civiccast.platform import hardware as hardware_module
+
+    synthetic = hardware_module.HardwareProbe(
+        cpu=hardware_module.CPUInfo(cores_physical=8, cores_logical=16, brand="Synthetic test CPU"),
+        ram=hardware_module.RAMInfo(total_gb=32.0, available_gb=16.0),
+        disk=hardware_module.DiskInfo(path=str(Path.home()), total_gb=1000, free_gb=500),
+        gpu=None,
+        os=hardware_module.OSContext(
+            kind="windows",
+            system="Windows",
+            release="test",
+            machine="AMD64",
+            hostname="test-host",
+        ),
+        recommended_tier="tier-0",
+        civiccast_version="0.0.0-test",
+    )
+    monkeypatch.setattr(hardware_module, "probe", lambda *a, **k: synthetic, raising=True)
 
 
 @pytest.fixture()

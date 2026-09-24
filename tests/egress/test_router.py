@@ -40,6 +40,8 @@ from civiccast.egress.router import get_egress_store
 from civiccast.egress.store import PostgresEgressStore
 from civiccast.live.router import get_live_session_store
 
+pytestmark = pytest.mark.usefixtures("deterministic_staff_token")
+
 
 @pytest.fixture
 def engine() -> Iterator[Engine]:

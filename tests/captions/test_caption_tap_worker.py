@@ -103,6 +103,24 @@ class _CudaConcurrencyProbeRuntime(_ConcurrencyProbeRuntime):
         return True
 
 
+class _BlockingRuntime(_ScriptedRuntime):
+    """Hold ASR open so the scan/gate relationship can be tested directly."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def transcribe(
+        self,
+        chunks: Iterable[AudioChunk],
+        vocabulary: CustomVocabulary | None = None,
+    ) -> Iterable[CaptionHypothesis]:
+        self.started.set()
+        assert self.release.wait(timeout=10.0), "test runtime was not released"
+        yield from super().transcribe(chunks, vocabulary=vocabulary)
+
+
 class _FakeClock:
     """A ``time.monotonic``-shaped clock the test drives explicitly.
 
@@ -2431,15 +2449,20 @@ class TestFirstRetentionSweepIsBounded:
         worker.wait_for_retention_sweep(timeout=10.0)
         assert slow.calls == 1
 
-    def test_slow_first_sweep_still_fails_closed_until_the_verdict_lands(
-        self, tmp_path: Path
-    ) -> None:
-        """The safety invariant: no ASR into an UNVERIFIED store."""
+    def test_slow_first_sweep_allows_text_only_captions_without_audio(self, tmp_path: Path) -> None:
+        """Pending verification keeps captions live without retaining audio.
+
+        A slow first sweep is not a storage refusal.  The worker may emit
+        caption text while the verdict is in flight, but it must not retain
+        raw segments or audio evidence until the store is verified.
+        """
 
         tap_root = tmp_path / "tap"
         (tap_root / "public").mkdir(parents=True)
-        _write_wav(tap_root / "public" / "chunk-000000.wav", seconds=5.0)
+        for index in range(2):
+            _write_wav(tap_root / "public" / f"chunk-{index:06d}.wav", seconds=5.0)
         slow = _SlowRetentionPolicy(delay_seconds=3.0)
+        slow.release = threading.Event()
         worker = CaptionTapWorker(
             tap_root=tap_root,
             caption_work_dir=tap_root.parent / "egress",
@@ -2451,16 +2474,76 @@ class TestFirstRetentionSweepIsBounded:
             monotonic=_FakeClock(),  # type: ignore[arg-type]
         )
 
-        worker.run_once()
+        try:
+            result = worker.run_once()
 
-        # Verdict not in yet -> fail closed, nothing transcribed.
-        assert worker._retention_ready is False
-        assert worker._retention_verified is False
-        assert worker._retention_refusal == "retention-verification-pending"
-        # And once the sweep publishes, the verdict is applied.
-        assert worker.wait_for_retention_sweep(timeout=10.0)
+            # The first verdict is deliberately still in flight, so text is
+            # allowed but audio evidence and processed WAVs are not.
+            assert slow.entered.wait(timeout=2.0)
+            assert result.consumed_segments == 2
+            assert worker._retention_in_flight
+            assert not list((tap_root / "public" / "processed").glob("*.wav"))
+            assert not list((tap_root.parent / "egress").rglob("evidence/*.wav"))
+            items = worker._review_store.list()
+            assert items
+            assert all(not item.audio_evidence_available for item in items)
+            assert _active_vtt(tap_root, "public").read_text().strip() != "WEBVTT"
+            assert worker._retention_ready is False
+            assert worker._retention_verified is False
+            assert worker._retention_refusal == "retention-verification-pending"
+        finally:
+            slow.release.set()
+            assert worker.wait_for_retention_sweep(timeout=10.0)
         assert worker._retention_verified is True
         assert worker._retention_ready is True
+
+
+class TestAsyncCaptionQueue:
+    """The live scan must continue while bounded per-channel ASR is running."""
+
+    def test_inflight_segments_are_not_counted_as_queued_overload(self, tmp_path: Path) -> None:
+        tap_root = tmp_path / "tap"
+        channel = "public"
+        channel_dir = tap_root / channel
+        channel_dir.mkdir(parents=True)
+        runtime = _BlockingRuntime()
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tmp_path / "egress",
+            runtime=runtime,
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=5.0,
+            atomic_segments=True,
+            max_channel_workers=1,
+            retention_policy=_SlowRetentionPolicy(delay_seconds=0.0),
+        )
+        # Establish the retention verdict before the held ASR call.  This keeps
+        # the test focused on queue accounting, not the storage gate.
+        worker._sweep_retention()
+        assert worker.wait_for_retention_sweep(timeout=2.0)
+
+        for index in range(2):
+            _write_wav(channel_dir / f"chunk-{index:06d}.wav", seconds=5.0)
+
+        first = worker.run_once(wait_for_results=False)
+        assert first.overloaded_channels == ()
+        assert runtime.started.wait(timeout=2.0)
+
+        # Both settled files belong to the in-flight batch.  A new settled file
+        # must therefore be a one-file queued backlog, not a three-file overload.
+        _write_wav(channel_dir / "chunk-000002.wav", seconds=5.0)
+        second = worker.run_once(wait_for_results=False)
+        assert second.overloaded_channels == ()
+        assert second.paused_channels == ()
+
+        runtime.release.set()
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if not worker._channel_futures:
+                break
+            time.sleep(0.02)
+        assert not worker._channel_futures
+        assert list((channel_dir / "processed").glob("*.wav"))
 
 
 class TestPublishFailureDoesNotAbortThePass:

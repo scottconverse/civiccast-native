@@ -1,0 +1,689 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright (c) The CivicCast Authors
+"""Restart-recovery: a persisted ON_AIR row whose encoder PID is dead must be
+reconciled on fresh daemon startup, not trusted forever.
+
+Live defect (2026-09-24): after a guarded four-file stage restarted
+CivicCastSupervisor, all three live-HLS playlists froze (VTT 7B) while
+``egress_states`` still read ON_AIR with PIDs that no longer existed; the
+command ledger was empty (no manual controls). Recovery is driven by
+``ChannelAutomationService`` re-issuing ``start`` for channels with no live
+encoder -- but a persisted-ON_AIR row whose PID is dead has no *tracked*
+process on a fresh daemon, so it must be reconciled rather than trusted.
+
+These tests pin the startup reconciliation contract:
+* persisted ON_AIR + dead PID -> reported recoverable and the stale claim cleared;
+* persisted ON_AIR + LIVE PID -> untouched, no duplicate start;
+* explicit STOPPED -> untouched;
+* reconciliation is idempotent (bounded, no restart loop).
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+from civiccast.egress.automation import ChannelAutomationService, ChannelAutomationSettings
+from civiccast.egress.daemon import EgressDaemon
+from civiccast.egress.models import EgressCommand, EgressConfig, EgressSinkSpec, EgressStateRow
+from civiccast.egress.store import InMemoryEgressStore
+
+_ON_AIR_STATES = {"ON_AIR", "STARTING", "TRANSITIONING", "FALLBACK_SLATE", "DRAINING"}
+
+
+def _config(*, auto_start: bool) -> EgressConfig:
+    return EgressConfig(
+        channel_id="gov",
+        enabled=True,
+        auto_start=auto_start,
+        slate_message="Off air",
+        sinks=[EgressSinkSpec(kind="file", label="Proof", uri="build/out.ts")],
+    )
+
+
+def _on_air(pid: int | None) -> EgressStateRow:
+    return EgressStateRow(
+        channel_id="gov",
+        state="ON_AIR",
+        updated_at=datetime.now(UTC) - timedelta(minutes=60),
+        pid=pid,
+    )
+
+
+def _automation(store: InMemoryEgressStore, daemon: EgressDaemon) -> ChannelAutomationService:
+    """A ChannelAutomationService over this store+daemon (test seam)."""
+    return ChannelAutomationService(
+        store,
+        daemon,
+        lambda _ch: None,
+        settings=ChannelAutomationSettings(),
+    )
+
+class _RecordingDaemon(EgressDaemon):
+    """Daemon that records start intents instead of spawning encoders.
+
+    Offline test boundary: ``_start`` never launches a real encoder, so the
+    recovery decision is asserted without any process/CPU work.
+    """
+
+    def __init__(
+        self,
+        store: InMemoryEgressStore,
+        *,
+        work_dir: Path,
+        live_pids: set[int] | None = None,
+        pid_is_dead: object | None = None,
+    ) -> None:
+        super().__init__(
+            store,
+            work_dir=work_dir,
+            source_plan_provider=lambda _ch: None,
+            # Deterministic tri-state liveness for tests: a pid in live_pids is
+            # alive (False), anything else is definitively dead (True); tests
+            # that need UNKNOWN inject ``pid_is_dead=lambda _p: None``.
+            pid_is_dead=pid_is_dead if pid_is_dead is not None else (lambda p: p not in (live_pids or set())),
+        )
+        self._live_pids = live_pids or set()
+        self.starts: list[str] = []
+
+    def has_live_process(self, channel_id: str) -> bool:
+        # Fresh daemon: nothing is tracked in memory. A "live" channel in these
+        # tests is one whose persisted pid the host still reports alive.
+        row = self._store.read_state(channel_id)
+        return row is not None and row.pid is not None and row.pid in self._live_pids
+
+    def _start(self, channel_id: str, **kwargs: object) -> None:
+        self.starts.append(channel_id)
+
+
+def test_persisted_on_air_with_dead_pid_is_reconciled_on_fresh_start(tmp_path: Path) -> None:
+    """RED: stale ON_AIR + dead PID must be recoverable, not trusted forever."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    store.write_state(_on_air(pid=999999))
+
+    daemon = _RecordingDaemon(store, work_dir=tmp_path)
+
+    recovered = daemon.reconcile_stale_state()
+
+    assert recovered == ["gov"], (
+        "a persisted on-air row whose PID is dead must be reported recoverable "
+        f"on fresh startup; got {recovered!r}"
+    )
+    row = store.read_state("gov")
+    assert row is not None and row.state not in _ON_AIR_STATES, (
+        f"stale on-air claim was left standing: {row.state if row else None}"
+    )
+
+
+def test_live_pid_is_not_reconciled_or_restarted(tmp_path: Path) -> None:
+    """A persisted ON_AIR whose PID is genuinely alive must be left alone.
+
+    This exercises the ``_orphan_probe`` liveness guard directly (not the
+    in-memory ``has_live_process`` short-circuit): the daemon tracks no process
+    for the channel, so reconciliation reaches the probe, which reports the pid
+    still alive -> the row must be untouched.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    store.write_state(_on_air(pid=4242))
+    # The definitive tri-state check reports the pid ALIVE (False).
+    daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: False)
+
+    recovered = daemon.reconcile_stale_state()
+
+    assert recovered == [], f"a genuinely live PID must not be reconciled; got {recovered!r}"
+    assert daemon.starts == [], "no start may be issued for a genuinely live channel"
+    row = store.read_state("gov")
+    assert row is not None and row.state == "ON_AIR"
+
+
+def test_dead_pid_probe_clears_claim(tmp_path: Path) -> None:
+    """Direct probe-based check: probe None (no such process) => reconcile."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    store.write_state(_on_air(pid=777777))
+    daemon = _RecordingDaemon(store, work_dir=tmp_path)
+    daemon._orphan_probe = lambda pid: None  # dead/reaped: no such process
+
+    assert daemon.reconcile_stale_state() == ["gov"]
+
+
+def test_explicit_stopped_is_never_reconciled(tmp_path: Path) -> None:
+    """STOPPED is explicit operator intent: reconciliation must not touch it."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=True))
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="STOPPED",
+            updated_at=datetime.now(UTC) - timedelta(minutes=60),
+            pid=None,
+        )
+    )
+    daemon = _RecordingDaemon(store, work_dir=tmp_path)
+
+    assert daemon.reconcile_stale_state() == []
+    row = store.read_state("gov")
+    assert row is not None and row.state == "STOPPED"
+
+
+def test_reconciliation_is_idempotent(tmp_path: Path) -> None:
+    """A second pass must not re-report or loop on the same channel."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    store.write_state(_on_air(pid=999999))
+    daemon = _RecordingDaemon(store, work_dir=tmp_path)
+
+    first = daemon.reconcile_stale_state()
+    second = daemon.reconcile_stale_state()
+
+    assert first == ["gov"]
+    assert second == [], (
+        "reconciliation must be idempotent -- a second pass must not re-report "
+        f"the same channel; got {second!r}"
+    )
+
+
+# --- repeat-restart + atomicity (coordinator audit) --------------------------
+#
+# Two real hazards the first cut missed:
+#  1. A CONSTANT command_id ("restart-recovery-start-<channel>") is skipped
+#     forever by the SQL store (store.enqueue_commands skips an existing id),
+#     so a SECOND stale recovery would write STOPPED then queue nothing ->
+#     permanently dark.
+#  2. _write_state(STOPPED) and enqueue_command were TWO commits; a crash
+#     between them leaves STOPPED with no queued start, and STOPPED is not
+#     reconciled, so the next startup never retries.
+#
+# The fix: one atomic store operation that enqueues the start AND clears the
+# stale claim in a single commit, with a UNIQUE, bounded command id per
+# recovery attempt (so a later restart queues a fresh start, while an immediate
+# replay of the same attempt is idempotent).
+
+
+def test_repeat_restart_queues_a_fresh_start_each_time(tmp_path: Path) -> None:
+    """RED: two successive stale recoveries must both queue a start.
+
+    A constant command_id would be skipped the second time (SQL store skips an
+    existing id), leaving the channel STOPPED and dark.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    daemon = _RecordingDaemon(store, work_dir=tmp_path)
+
+    # First restart: stale ON_AIR + dead pid.
+    store.write_state(_on_air(pid=111111))
+    assert daemon.reconcile_stale_state() == ["gov"]
+
+    # Second restart later: the channel went stale again with a new dead pid.
+    store.write_state(_on_air(pid=222222))
+    assert daemon.reconcile_stale_state() == ["gov"], (
+        "a SECOND restart-recovery must also queue a start; a constant "
+        "command_id makes the SQL store skip it and the channel stays dark"
+    )
+
+    starts = store.peek_pending_commands("gov")
+    assert len(starts) == 2, f"expected two queued starts, got {len(starts)}"
+    ids = {cmd.command_id for cmd in starts}
+    assert len(ids) == 2, f"recovery starts must have distinct ids, got {ids}"
+    assert all(len(cid) <= 120 for cid in ids), f"command id must be <=120 chars: {ids}"
+
+
+def test_recovery_is_atomic_state_and_command_together(tmp_path: Path) -> None:
+    """RED: clearing the stale claim and queueing the start must not be
+    separable -- no crash window where STOPPED exists with no start queued."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    store.write_state(_on_air(pid=333333))
+    daemon = _RecordingDaemon(store, work_dir=tmp_path)
+
+    daemon.reconcile_stale_state()
+
+    row = store.read_state("gov")
+    starts = store.peek_pending_commands("gov")
+    # Either BOTH happened (recovered) or the state is still ON_AIR (not yet
+    # recovered) -- never STOPPED with an empty queue.
+    if row is not None and row.state not in _ON_AIR_STATES:
+        assert starts, (
+            "state was cleared to non-on-air but no start was queued: a crash "
+            "between the two commits would strand the channel dark"
+        )
+
+
+def test_reconcile_idempotent_within_one_attempt(tmp_path: Path) -> None:
+    """Re-running reconciliation without a NEW stale write must not re-queue."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    store.write_state(_on_air(pid=444444))
+    daemon = _RecordingDaemon(store, work_dir=tmp_path)
+
+    assert daemon.reconcile_stale_state() == ["gov"]
+    assert daemon.reconcile_stale_state() == []
+    assert len(store.peek_pending_commands("gov")) == 1
+
+
+def test_unknown_liveness_fails_closed(tmp_path: Path) -> None:
+    """AccessDenied/unknown MUST NOT be reconciled (fail closed, never dark)."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    store.write_state(_on_air(pid=555555))
+    daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: None)
+
+    assert daemon.reconcile_stale_state() == [], (
+        "unknown liveness (e.g. AccessDenied) must fail CLOSED -- never clear "
+        "the claim, because the pid might still be alive"
+    )
+    row = store.read_state("gov")
+    assert row is not None and row.state == "ON_AIR"
+    assert store.peek_pending_commands("gov") == []
+
+
+def test_alive_pid_not_reconciled_via_tristate(tmp_path: Path) -> None:
+    """A liveness=False (alive) result must be left untouched."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    store.write_state(_on_air(pid=666666))
+    daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: False)
+
+    assert daemon.reconcile_stale_state() == []
+    row = store.read_state("gov")
+    assert row is not None and row.state == "ON_AIR"
+
+
+def test_definitively_dead_pid_uses_atomic_store_op(tmp_path: Path) -> None:
+    """The recovery must go through the single atomic store operation."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    store.write_state(_on_air(pid=777777))
+    daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: True)
+
+    calls = {"n": 0}
+    real = store.recover_stale_state
+
+    def _spy(row, command):
+        calls["n"] += 1
+        return real(row, command)
+
+    store.recover_stale_state = _spy  # type: ignore[method-assign]
+    assert daemon.reconcile_stale_state() == ["gov"]
+    assert calls["n"] == 1, "recovery must use the atomic store op exactly once"
+
+
+# --- SQL fail-closed IntegrityError + InMemory thread-safety (audit rev2) ----
+
+def _fake_pg_store(fail_commit: bool):
+    """A PostgresEgressStore over a fake session factory.
+
+    ``fail_commit=True`` makes the single combined commit raise IntegrityError,
+    so the test can assert NOTHING was committed (no state-only retry).
+    Records any state write that actually commits in ``committed_states``.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from civiccast.egress.store import PostgresEgressStore
+
+    committed_states: list[str] = []
+
+    class _Res:
+        def __init__(self, value):
+            self._value = value
+
+        def scalar_one_or_none(self):
+            return self._value
+
+    class _FakeSession:
+        def __init__(self) -> None:
+            self._has_state = False
+
+        def execute(self, stmt):
+            return _Res(None)
+
+        def add(self, obj):
+            if type(obj).__name__ == "EgressStateDb":
+                self._has_state = True
+
+        def commit(self):
+            if fail_commit:
+                raise IntegrityError("stmt", {}, Exception("integrity failure"))
+            if self._has_state:
+                committed_states.append("state-committed")
+
+        def rollback(self):
+            self._has_state = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class _Factory:
+        def __call__(self):
+            return _FakeSession()
+
+    store = PostgresEgressStore(_Factory())  # type: ignore[arg-type]
+    return store, committed_states
+
+
+def test_sql_recover_raises_and_writes_nothing_on_integrity_error() -> None:
+    """ANY IntegrityError => fail closed: roll back, re-raise, NO state write.
+
+    Covers a consumed id, a wrong-channel/action collision, and an unrelated
+    constraint failure alike: none may leave STOPPED without a pending start.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    store, committed_states = _fake_pg_store(fail_commit=True)
+    row = EgressStateRow(channel_id="gov", state="STOPPED", updated_at=datetime.now(UTC), pid=None)
+    cmd = EgressCommand(
+        channel_id="gov",
+        action="start",
+        issued_at=datetime.now(UTC),
+        issued_by="restart-recovery",
+        command_id="restart-recovery-dup",
+    )
+
+    with pytest.raises(IntegrityError):
+        store.recover_stale_state(row, cmd)
+
+    assert committed_states == [], (
+        "no state-only commit may occur on any IntegrityError; "
+        f"committed {committed_states}"
+    )
+
+
+def test_inmemory_duplicate_command_id_fails_closed(tmp_path: Path) -> None:
+    """A duplicate/consumed command id must NOT publish a STOPPED state.
+
+    The caller uses fresh uuid4 ids, so a duplicate means something is wrong;
+    the safe action is to change nothing and raise.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    store.write_state(_on_air(pid=101010))
+    cmd = EgressCommand(
+        channel_id="gov",
+        action="start",
+        issued_at=datetime.now(UTC),
+        issued_by="restart-recovery",
+        command_id="restart-recovery-fixed-id",
+    )
+    # Simulate the id already existing (pending) from a prior attempt.
+    store.enqueue_command(cmd)
+
+    row = EgressStateRow(channel_id="gov", state="STOPPED", updated_at=datetime.now(UTC), pid=None)
+    with pytest.raises(ValueError, match="already exists"):
+        store.recover_stale_state(row, cmd)
+
+    # The stale ON_AIR row must survive untouched (no STOPPED published).
+    assert store.read_state("gov") is not None
+    assert store.read_state("gov").state == "ON_AIR"
+
+
+def test_inmemory_wrong_channel_duplicate_fails_closed(tmp_path: Path) -> None:
+    """A same-id command for a DIFFERENT channel must also fail closed."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    store.write_state(_on_air(pid=202020))
+    other = EgressCommand(
+        channel_id="other",
+        action="start",
+        issued_at=datetime.now(UTC),
+        issued_by="restart-recovery",
+        command_id="restart-recovery-collide",
+    )
+    store.enqueue_command(other)
+
+    row = EgressStateRow(channel_id="gov", state="STOPPED", updated_at=datetime.now(UTC), pid=None)
+    colliding = EgressCommand(
+        channel_id="gov",
+        action="start",
+        issued_at=datetime.now(UTC),
+        issued_by="restart-recovery",
+        command_id="restart-recovery-collide",
+    )
+    with pytest.raises(ValueError, match="already exists"):
+        store.recover_stale_state(row, colliding)
+    assert store.read_state("gov").state == "ON_AIR"
+
+
+def test_inmemory_recover_publishes_command_before_state(tmp_path: Path) -> None:
+    """A reader must never see STOPPED without the start command present.
+
+    Spawn a reader thread hammering the store while recovery runs; every
+    observation of the STOPPED row must coincide with the queued command.
+    """
+    import threading
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    store.write_state(_on_air(pid=888888))
+
+    stop = threading.Event()
+    violations: list[tuple] = []
+
+    def _reader() -> None:
+        while not stop.is_set():
+            row = store.read_state("gov")
+            if row is not None and row.state == "STOPPED" and not store.peek_pending_commands("gov"):
+                violations.append((row.state, tuple(store.peek_pending_commands("gov"))))
+
+    reader = threading.Thread(target=_reader, daemon=True)
+    reader.start()
+    try:
+        daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: True)
+        for _ in range(50):
+            store.write_state(_on_air(pid=888888))
+            daemon.reconcile_stale_state()
+    finally:
+        stop.set()
+        reader.join(timeout=5)
+
+    assert violations == [], f"observed STOPPED with no queued start {len(violations)}x"
+
+
+# --- coordinator rev5: DRAINING terminal intent + auto_start duplicate -------
+
+def test_persisted_draining_with_dead_pid_is_never_restarted(tmp_path: Path) -> None:
+    """RED: DRAINING is explicit off-air intent -- restart must NOT auto-start it.
+
+    _drain sets DRAINING for operator/supervisor off-air intent; a restart that
+    found a dead pid mid-drain must leave it off air (STOPPED), never queue a
+    start.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=True))
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="DRAINING",
+            updated_at=datetime.now(UTC) - timedelta(minutes=5),
+            pid=909090,
+        )
+    )
+    daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: True)
+
+    recovered = daemon.reconcile_stale_state()
+
+    assert recovered == [], (
+        "DRAINING is terminal off-air intent; restart recovery must not "
+        f"auto-start it; got {recovered!r}"
+    )
+    assert store.peek_pending_commands("gov") == [], "no start may be queued for a drained channel"
+
+
+def test_auto_start_does_not_double_enqueue_after_recovery(tmp_path: Path) -> None:
+    """RED: a stale ON_AIR auto_start channel must get ONE start, not two.
+
+    run_forever reconciles (queues a recovery start), then the first
+    _run_channel_pass sees no live process + auto_start and would queue a
+    SECOND start. One operator intent => one start.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=True))
+    store.write_state(_on_air(pid=808080))
+    daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: True)
+
+    # Startup reconciliation queues the recovery start (and clears the stale row
+    # to STOPPED).
+    assert daemon.reconcile_stale_state() == ["gov"]
+
+    # Now simulate the first automation pass: no live process + auto_start.
+    # _run_channel_pass may enqueue an auto_start AND then process_once drains
+    # the queue, so count every start the daemon actually PROCESSED (recorded
+    # by _RecordingDaemon._start) plus anything left pending.
+    automation = _automation(store, daemon)
+    automation._run_channel_pass(store.get_config("gov"), "gov", datetime.now(UTC))
+
+    processed = len(daemon.starts)
+    pending = [c for c in store.peek_pending_commands("gov") if c.action == "start"]
+    total = processed + len(pending)
+    assert total == 1, (
+        "a stale ON_AIR auto_start channel must receive exactly ONE start; "
+        f"processed={processed} pending={len(pending)} "
+        f"pending_by={[c.issued_by for c in pending]}"
+    )
+
+
+# --- REV5 precision: distinguish MY fix from pre-existing auto_start policy ---
+
+def test_reconcile_does_not_recover_draining_even_when_auto_start(tmp_path: Path) -> None:
+    """MY fix's own guarantee: reconciliation alone never recovers DRAINING.
+
+    This is deliberately narrower than "the channel stays off air": the
+    separate, PRE-EXISTING auto_start policy (`_run_channel_pass` enqueues a
+    start for any enabled auto_start channel with no live process, without
+    consulting the persisted state) can still bring it back. That policy is
+    captured by the companion test below, NOT by reconciliation.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=True))
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov", state="DRAINING", updated_at=datetime.now(UTC), pid=909090
+        )
+    )
+    daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: True)
+
+    assert daemon.reconcile_stale_state() == []
+    assert store.peek_pending_commands("gov") == []
+    row = store.read_state("gov")
+    assert row is not None and row.state == "DRAINING", (
+        "reconciliation must not rewrite the DRAINING row"
+    )
+
+
+def test_preexisting_auto_start_still_starts_draining_channel(tmp_path: Path) -> None:
+    """Documents PRE-EXISTING policy: auto_start starts a DRAINING channel.
+
+    `_run_channel_pass` gates only on has_live_process + config.auto_start; it
+    never consults persisted state. So an auto_start channel drained just before
+    a restart IS brought back on air -- by that policy, independent of restart
+    reconciliation. Pinned here so the behavior is explicit and cannot be
+    mistaken for a reconciliation guarantee.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=True))
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov", state="DRAINING", updated_at=datetime.now(UTC), pid=909090
+        )
+    )
+    daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: True)
+    daemon.reconcile_stale_state()  # no-op for DRAINING
+
+    automation = _automation(store, daemon)
+    automation._run_channel_pass(store.get_config("gov"), "gov", datetime.now(UTC))
+
+    processed = len(daemon.starts)
+    pending = [c for c in store.peek_pending_commands("gov") if c.action == "start"]
+    assert processed + len(pending) == 1, (
+        "pre-existing auto_start policy starts a DRAINING auto_start channel; "
+        f"processed={processed} pending={len(pending)}"
+    )
+
+
+def test_draining_non_auto_start_stays_off_air_after_restart(tmp_path: Path) -> None:
+    """The safe, common case: DRAINING + auto_start=False => nothing starts it."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov", state="DRAINING", updated_at=datetime.now(UTC), pid=909090
+        )
+    )
+    daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: True)
+    assert daemon.reconcile_stale_state() == []
+
+    automation = _automation(store, daemon)
+    automation._run_channel_pass(store.get_config("gov"), "gov", datetime.now(UTC))
+
+    assert daemon.starts == [], "a non-auto_start DRAINING channel must not start"
+    assert store.peek_pending_commands("gov") == []
+
+
+def test_auto_start_retry_still_fires_when_nothing_pending(tmp_path: Path) -> None:
+    """No retry regression: with no pending start, auto_start still enqueues and
+    the retry cooldown re-arms so a dark auto_start channel is retried."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=True))
+    # Dark, no persisted state at all (fresh boot before any start).
+    daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: True)
+    auto = _automation(store, daemon)
+
+    auto._run_channel_pass(store.get_config("gov"), "gov", datetime.now(UTC))
+    assert "gov" in auto._start_retry_at, "retry cooldown must be armed"
+    first = len(daemon.starts) + len(
+        [c for c in store.peek_pending_commands("gov") if c.action == "start"]
+    )
+    assert first == 1, f"auto_start must still enqueue when nothing pending; got {first}"
+
+
+def test_auto_start_retry_cooldown_reissues_after_window(tmp_path: Path) -> None:
+    """After the cooldown elapses with nothing pending, auto_start re-issues."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=True))
+    daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: True)
+    # Simulate a large future monotonic so the retry window has elapsed.
+    daemon._monotonic = lambda: 10_000.0
+    auto = _automation(store, daemon)
+    auto._monotonic = lambda: 10_000.0
+    auto._start_retry_at["gov"] = 1.0  # armed long ago
+    auto._run_channel_pass(store.get_config("gov"), "gov", datetime.now(UTC))
+    assert "gov" in auto._start_retry_at, "retry cooldown re-armed after reissue"
+    total = len(daemon.starts) + len(
+        [c for c in store.peek_pending_commands("gov") if c.action == "start"]
+    )
+    assert total == 1, f"auto_start must reissue after the cooldown; got {total}"
+
+
+def test_pending_start_guard_would_also_apply_to_sql_pending_start(tmp_path: Path) -> None:
+    """Store parity: the guard reads ``peek_pending_commands``, the SAME contract
+    both InMemory and Postgres implement. A pending start returned by the store
+    (as Postgres returns consumed_at IS NULL rows) suppresses the auto_start
+    duplicate; here we assert it through the store seam used by production."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=True))
+    daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: True)
+    auto = _automation(store, daemon)
+    # A recovery-style start is already pending (what reconcile queues).
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="start",
+            issued_at=datetime.now(UTC),
+            issued_by="restart-recovery",
+            command_id="restart-recovery-parity",
+        )
+    )
+    auto._run_channel_pass(store.get_config("gov"), "gov", datetime.now(UTC))
+    total = len(daemon.starts) + len(
+        [c for c in store.peek_pending_commands("gov") if c.action == "start"]
+    )
+    assert total == 1, (
+        "the guard must not add a second start on top of an already-pending "
+        f"start from the store; got {total}"
+    )

@@ -24,6 +24,8 @@ from civiccast.captions.router import (
 )
 from civiccast.schedule.models import StaffAssetRow
 
+pytestmark = pytest.mark.usefixtures("deterministic_staff_token")
+
 
 def _cue(text: str = "motion carries", *, low_confidence: bool = False) -> dict[str, object]:
     return {

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
@@ -76,8 +76,16 @@ class LiveCaptionWorker:
         pipeline: CaptionPipeline | None = None,
         persistence_guard: Callable[[], AbstractContextManager[ReviewPersistenceMode]]
         | None = None,
+        phase_timing: object | None = None,
+        phase_timing_channel: str | None = None,
     ) -> None:
-        self._pipeline = pipeline or CaptionPipeline(runtime)
+        self._phase_timing = phase_timing
+        self._phase_timing_channel = phase_timing_channel
+        self._pipeline = pipeline or CaptionPipeline(
+            runtime,
+            phase_timing=phase_timing,
+            phase_timing_channel=phase_timing_channel,
+        )
         self._review_store = review_store
         self._asset_id = asset_id
         self._vocabulary = vocabulary
@@ -99,34 +107,36 @@ class LiveCaptionWorker:
     ) -> LiveCaptionWorkerResult:
         """Process one live-audio batch and persist any newly stable cues."""
 
-        if self._package is None:
-            caption_result = self._pipeline.process(
-                chunks,
-                asset_id=self._asset_id,
-                vocabulary=self._vocabulary,
-                reviewer_note=self._reviewer_note,
-            )
-            hls_result = None
-        else:
-            hls_result = self._pipeline.process_and_publish_hls(
-                chunks,
-                asset_id=self._asset_id,
-                package=self._package,
-                vocabulary=self._vocabulary,
-                reviewer_note=self._reviewer_note,
-                language=self._language,
-                name=self._language_name,
-                translation_provider=self._translation_provider,
-                translation_targets=self._translation_targets,
-                translation_glossary=self._translation_glossary,
-                segment_duration=self._segment_duration,
-            )
-            caption_result = hls_result.caption_result
+        with self._phase("pipeline_process"):
+            if self._package is None:
+                caption_result = self._pipeline.process(
+                    chunks,
+                    asset_id=self._asset_id,
+                    vocabulary=self._vocabulary,
+                    reviewer_note=self._reviewer_note,
+                )
+                hls_result = None
+            else:
+                hls_result = self._pipeline.process_and_publish_hls(
+                    chunks,
+                    asset_id=self._asset_id,
+                    package=self._package,
+                    vocabulary=self._vocabulary,
+                    reviewer_note=self._reviewer_note,
+                    language=self._language,
+                    name=self._language_name,
+                    translation_provider=self._translation_provider,
+                    translation_targets=self._translation_targets,
+                    translation_glossary=self._translation_glossary,
+                    segment_duration=self._segment_duration,
+                )
+                caption_result = hls_result.caption_result
 
-        committed_items, duplicates = self._persist_review_items(
-            caption_result,
-            audio_evidence_factory=audio_evidence_factory,
-        )
+        with self._phase("review_persist"):
+            committed_items, duplicates = self._persist_review_items(
+                caption_result,
+                audio_evidence_factory=audio_evidence_factory,
+            )
 
         return LiveCaptionWorkerResult(
             hypotheses=caption_result.hypotheses,
@@ -198,16 +208,29 @@ class LiveCaptionWorker:
             if mode == "refused":
                 return committed_items, duplicates
             for item in caption_result.review_items:
-                payload = (
-                    item.model_copy(update={"audio_evidence": audio_evidence_factory(item.cue)})
-                    if mode == "audio" and audio_evidence_factory is not None
-                    else item
-                )
+                if mode == "audio" and audio_evidence_factory is not None:
+                    with self._phase("audio_evidence"):
+                        payload = item.model_copy(
+                            update={"audio_evidence": audio_evidence_factory(item.cue)}
+                        )
+                else:
+                    payload = item
                 try:
-                    committed_items.append(self._review_store.create(payload))
+                    with self._phase("review_store_create"):
+                        committed_items.append(self._review_store.create(payload))
                 except CaptionReviewItemAlreadyExistsError:
                     duplicates.append(item.review_item_id)
         return committed_items, duplicates
+
+    def _phase(self, name: str):
+        """Return an opt-in timing context without changing worker behavior."""
+
+        timing = self._phase_timing
+        if timing is None:
+            return nullcontext()
+        with suppress(Exception):
+            return timing.phase(name, channel=self._phase_timing_channel)
+        return nullcontext()
 
     def committed_cues(self) -> list[CaptionCue]:
         """Return the complete immutable cue set known to this live worker."""

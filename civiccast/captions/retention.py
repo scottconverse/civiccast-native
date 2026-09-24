@@ -228,8 +228,18 @@ class CaptionEvidenceRetentionPolicy:
     ) -> list[dict[str, object]]:
         evidence_by_path: dict[Path, dict[str, object]] = {}
         verified_windows: dict[str, list[tuple[float, float]]] = {}
-        for item in review_store.list():
-            evidence = review_store.get_audio_evidence(item.review_item_id)
+        bulk_reader = getattr(review_store, "list_with_audio_evidence", None)
+        if callable(bulk_reader):
+            review_items = bulk_reader()
+        else:
+            # Compatibility for small third-party/test stores that implement
+            # only the original protocol. The durable production store has the
+            # bulk reader above, so its startup path is one DB query, not N+1.
+            review_items = [
+                (item, review_store.get_audio_evidence(item.review_item_id))
+                for item in review_store.list()
+            ]
+        for item, evidence in review_items:
             if evidence is None:
                 continue
             try:

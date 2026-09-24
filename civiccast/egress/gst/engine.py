@@ -341,6 +341,16 @@ _DEFAULT_FIRST_OUTPUT_TIMEOUT_S = 45.0
 _MIN_FIRST_OUTPUT_TIMEOUT_S = 10.0
 _MAX_FIRST_OUTPUT_TIMEOUT_S = 120.0
 _FIRST_OUTPUT_TIMEOUT_ENV_VAR = "CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S"
+# beta.10 diagnostic (opt-in, default OFF): when truthy, _check_stall prints a
+# one-line, ASCII-only "CTRL stall-diag:" summary at the moment it decides to quit
+# on the post-first-buffer budget, naming exactly which precondition of the
+# deferred-boundary escape (_force_deferred_boundary) was NOT satisfied. The
+# 2026-09-21 live capture showed THAT a worker stalls at a rollover (buffer
+# cadence jump to ~4.5x, then a flatline) but not WHICH precondition blocked the
+# escape: pending is None, new_leg_ready False, or old_leg_eos True. This converts
+# that inference into a fact and changes no behaviour -- it prints and then returns
+# exactly as before.
+_STALL_DIAG_ENV_VAR = "CIVICAST_GST_STALL_DIAG"
 
 # Item 84c (measured in sandbox run 17, soak-a6d7871-20260906-213332Z, Opus
 # diagnosis): the ``CTRL first-output: first buffer after 0.0s`` marker was a
@@ -399,6 +409,21 @@ def _drop_everything_probe(_pad: object, _info: object) -> object:
 # of the item 88 stall was TSDuck's after-the-fact silence and the eventual
 # watchdog kill 10s later).
 _OUTPUT_PROGRESS_INTERVAL_S = 5.0
+
+
+def _stall_diag_enabled() -> bool:
+    """beta.10 diagnostic switch: truthy ``CIVICAST_GST_STALL_DIAG`` enables the
+    ``CTRL stall-diag:`` line in ``_check_stall``. Read on each check so an operator
+    can toggle it without a rebuild; default OFF keeps the normal log identical.
+    Mirrors this file's existing env-var conventions: the value is compared
+    case-insensitively and anything unrecognised is treated as OFF rather than
+    raising, so a typo can never disable a watchdog."""
+    return os.environ.get(_STALL_DIAG_ENV_VAR, "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _resolve_first_output_timeout_s(explicit: float | None) -> float:
@@ -1882,6 +1907,33 @@ class GstPlayoutEngine:
             # worker's stderr tail into ``last_error`` when the child exits non-zero,
             # so the reason a channel bounced is on the operator's state row instead
             # of only in an uncollected stdout log.
+            # beta.10 diagnostic (opt-in, default OFF): name the exact precondition that
+            # stopped _force_deferred_boundary from rescuing THIS stall, turning the
+            # 2026-09-21 rollover-stall inference into a fact. Print-only: nothing below
+            # branches on it, and with the env var unset this emits nothing at all.
+            if _stall_diag_enabled():
+                if pending is None:
+                    _why = "no_pending_reload"
+                elif pending.get("commit_in_progress", False):
+                    _why = "commit_in_progress"
+                elif not pending.get("switch_at_end_of_current", False):
+                    _why = "not_switch_at_end_of_current"
+                elif not pending.get("new_leg_ready", False):
+                    _why = "new_leg_not_ready"
+                elif pending.get("old_leg_eos", False):
+                    _why = "old_leg_already_eos"
+                else:
+                    _why = "conds_met_force_failed"
+                print(
+                    f"CTRL stall-diag: budget={int(self.stall_timeout_s)}s "
+                    f"first_output_seen={self._first_output_seen} "
+                    f"buffers={self._output_buffers} at_arm={self._output_buffers_at_arm} "
+                    f"escape_blocked_by={_why} "
+                    f"pending_keys={sorted(pending.keys()) if pending is not None else []} "
+                    f"pid={os.getpid()}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             print(
                 # ASCII only: the daemon folds this line into the state row's
                 # last_error, which is written to Postgres. A non-ASCII byte here

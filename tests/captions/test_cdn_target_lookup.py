@@ -48,7 +48,15 @@ def session_factory():
         finally:
             session.close()
 
-    return factory
+    try:
+        yield factory
+    finally:
+        # Dispose the engine so its pooled sqlite3 connection is closed before
+        # the fixture tears down. Without this, the connection is finalized
+        # later by the GC and CPython emits "ResourceWarning: unclosed database",
+        # which pytest promotes to PytestUnraisableExceptionWarning and then
+        # attributes to whatever unrelated test happens to be running.
+        engine.dispose()
 
 
 def _job(

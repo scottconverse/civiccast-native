@@ -282,6 +282,13 @@ class InMemoryCaptionReviewStore:
         evidence = self._audio_evidence.get(review_item_id)
         return evidence.model_copy(deep=True) if evidence is not None else None
 
+    def list_with_audio_evidence(
+        self,
+    ) -> list[tuple[CaptionReviewItemResponse, CaptionReviewAudioEvidence | None]]:
+        """Return review rows and private evidence without changing the public API."""
+
+        return [(item, self.get_audio_evidence(item.review_item_id)) for item in self.list()]
+
     def list(
         self,
         *,

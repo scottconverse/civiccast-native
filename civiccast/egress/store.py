@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
@@ -84,6 +85,24 @@ class EgressStore(Protocol):
 
     def read_state(self, channel_id: str) -> EgressStateRow | None: ...
 
+    def recover_stale_state(self, row: EgressStateRow, command: EgressCommand) -> None:
+        """Atomically clear a stale state row AND enqueue a recovery command.
+
+        Restart reconciliation must not be able to leave the channel dark: if
+        the state were cleared to STOPPED and the process died before the start
+        was enqueued, the next startup would not retry (STOPPED is not
+        reconciled). Implementations MUST persist BOTH in ONE transaction --
+        all or nothing.
+
+        STRICT FAIL-CLOSED on duplicate/failed command insert. The caller mints
+        a fresh uuid4 command id, so a duplicate id is never a legitimate
+        expected case (it implies a consumed command, a wrong-channel/action
+        collision, or an unrelated constraint failure). Implementations MUST
+        NOT tolerate it by committing the state alone: ANY failure rolls back
+        and raises so the original stale row survives for the next startup.
+        """
+        ...
+
     def append_health(self, sample: EgressHealthSample) -> None: ...
 
     def recent_health(self, channel_id: str, limit: int) -> list[EgressHealthSample]: ...
@@ -109,6 +128,9 @@ class InMemoryEgressStore:
     """In-memory egress store for tests and local development."""
 
     def __init__(self) -> None:
+        # Guards the compound read-modify-write in recover_stale_state so a
+        # concurrent reader can never observe STOPPED with no queued start.
+        self._recover_lock = threading.RLock()
         self._configs: dict[str, EgressConfig] = {}
         self._commands: list[EgressCommand] = []
         self._consumed_command_ids: set[str] = set()
@@ -156,6 +178,23 @@ class InMemoryEgressStore:
 
     def write_state(self, row: EgressStateRow) -> None:
         self._states[row.channel_id] = row
+
+    def recover_stale_state(self, row: EgressStateRow, command: EgressCommand) -> None:
+        # STRICT FAIL-CLOSED CONTRACT (mirrors the SQL store): the caller mints
+        # a fresh uuid4 id, so a duplicate/consumed id is never legitimate. If
+        # this id is already known, raise and change NOTHING -- do not publish
+        # a STOPPED state with no real pending start. The lock serializes the
+        # check-then-write; the command is published BEFORE the state so a
+        # concurrent reader never sees STOPPED without its queued start.
+        with self._recover_lock:
+            if command.command_id in self._consumed_command_ids or any(
+                existing.command_id == command.command_id for existing in self._commands
+            ):
+                raise ValueError(
+                    f"recovery command id already exists: {command.command_id!r}"
+                )
+            self._commands = [*self._commands, command]
+            self._states[row.channel_id] = row
 
     def read_state(self, channel_id: str) -> EgressStateRow | None:
         return self._states.get(channel_id)
@@ -444,6 +483,53 @@ class PostgresEgressStore:
                 for key, value in values.items():
                     setattr(existing, key, value)
             session.commit()
+
+    def recover_stale_state(self, row: EgressStateRow, command: EgressCommand) -> None:
+        """One transaction: upsert the STOPPED row AND insert the start command.
+
+        STRICT FAIL-CLOSED CONTRACT. The caller mints a fresh uuid4 command id,
+        so a duplicate id is never a legitimate expected case -- it means
+        either a consumed command, a wrong-channel/action collision, or an
+        unrelated constraint failure. In ALL of those cases writing STOPPED
+        without a genuinely-pending start would strand the channel dark, which
+        is the exact hazard this method exists to prevent. Therefore:
+
+        * the state upsert and the command insert are committed together, and
+        * ANY failure (IntegrityError or otherwise) rolls back and re-raises,
+          leaving the ORIGINAL stale row fully intact for the next startup
+          reconciliation to retry. There is NO state-only commit path and NO
+          duplicate-id tolerance.
+
+        A crash before the commit has the same effect: the old stale row
+        survives.
+        """
+        with self._session_factory() as session:
+            existing = session.execute(
+                select(EgressStateDb).where(EgressStateDb.channel_id == row.channel_id)
+            ).scalar_one_or_none()
+            values = row.model_dump()
+            if existing is None:
+                session.add(EgressStateDb(**values))
+            else:
+                for key, value in values.items():
+                    setattr(existing, key, value)
+            session.add(
+                EgressCommandDb(
+                    command_id=command.command_id,
+                    channel_id=command.channel_id,
+                    action=command.action,
+                    issued_at=command.issued_at,
+                    issued_by=command.issued_by,
+                )
+            )
+            try:
+                session.commit()
+            except IntegrityError:
+                # Fail closed: no state-only commit, no retry. The stale row is
+                # preserved because the whole transaction (state + command) is
+                # rolled back together.
+                session.rollback()
+                raise
 
     def read_state(self, channel_id: str) -> EgressStateRow | None:
         with self._session_factory() as session:

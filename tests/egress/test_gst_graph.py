@@ -40,6 +40,13 @@ def test_encode_chain_specs_default_openh264_has_h264parse() -> None:
     ]
     assert specs[-1].props["config-interval"] == -1
     assert specs[4].props["bitrate"] == 4000
+    # The live-HLS sink stream-copies this encoder's output (so A/53 caption
+    # SEI survives), which means the sink can no longer force keyframes. The
+    # ~2s HLS segment contract therefore depends on openh264enc emitting an
+    # intra frame every segment_seconds worth of frames: gop-size is in
+    # FRAMES, and the 30fps default is 60 -> 2s. Without this the copy path
+    # silently cuts on whatever GOP the encoder happens to use.
+    assert specs[4].props["gop-size"] == 60
 
 
 def test_encode_chain_specs_explicit_x264_has_x264_controls() -> None:
@@ -54,6 +61,29 @@ def test_encode_chain_specs_explicit_x264_has_x264_controls() -> None:
         "h264parse",
     ]
     assert specs[4].props["key-int-max"] == 60
+
+
+def test_encode_chain_specs_openh264_gop_follows_profile_gop() -> None:
+    """gop-size must carry the profile's GOP into the openh264 encoder.
+
+    gop-size is in FRAMES-between-intra-frames. Production passes
+    ``profile.gop_size`` (30 frames = 1s at 30fps), so the HLS sink's
+    stream-copy cadence is bounded by whatever the profile requests -- the
+    point is that openh264enc now RECEIVES the value instead of silently
+    defaulting to 90 frames.
+    """
+    specs = encode_chain_specs(fps=30, gop=30)
+    encoder = next(s for s in specs if s.factory == "openh264enc")
+    assert encoder.props["gop-size"] == 30
+
+
+def test_encode_chain_specs_unknown_encoder_unchanged() -> None:
+    """An encoder we have not verified keeps the prior bitrate-only props."""
+    specs = encode_chain_specs(encoder="nvh264enc")
+    encoder = next(s for s in specs if s.factory == "nvh264enc")
+    assert "gop-size" not in encoder.props
+    assert "key-int-max" not in encoder.props
+    assert encoder.props["bitrate"] == 4000
 
 
 def test_encode_chain_specs_hevc_uses_h265parse() -> None:

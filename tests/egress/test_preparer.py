@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import threading
 import time
 from collections.abc import Callable
@@ -27,6 +28,8 @@ from civiccast.egress.preparer import (
     SourcePreparationCancelledError,
     SourcePreparer,
     build_conform_source_args,
+    build_loudnorm_probe_args,
+    preparation_timeout_seconds_from_env,
 )
 from civiccast.stream._ffmpeg import FfmpegResult
 from civiccast.stream.loudness import LoudnessGateResult
@@ -96,6 +99,20 @@ def test_build_conform_source_args_uses_canonical_profile_and_trim(tmp_path: Pat
     assert "1200k" in args
     assert "-af" not in args
     assert args[-3:] == ["-f", "mpegts", str(output)]
+
+
+def _loudnorm_probe_stderr(**over: object) -> str:
+    """A realistic single-pass loudnorm JSON block for probe stubs."""
+
+    base = {
+        "input_i": "-23.01",
+        "input_tp": "-0.05",
+        "input_lra": "22.90",
+        "input_thresh": "-35.18",
+        "target_offset": "0.83",
+    }
+    base.update(over)
+    return json.dumps(base, indent=4)
 
 
 def _write_fake_output(args: list[str]) -> None:
@@ -218,9 +235,11 @@ def test_source_preparer_normalizes_when_loudness_is_out_of_tolerance(tmp_path: 
     captured: dict[str, list[str]] = {}
     preparer = SourcePreparer(
         work_dir=tmp_path / "work",
-        ffmpeg_runner=lambda args: (
-            (captured.setdefault("args", args) and _write_fake_output(args))
-            or FfmpegResult(returncode=0, stdout="", stderr="")
+        ffmpeg_runner=_loudnorm_probe_aware(
+            lambda args: (
+                (captured.setdefault("args", args) and _write_fake_output(args))
+                or FfmpegResult(returncode=0, stdout="", stderr="")
+            )
         ),
         loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
         warm_scheduler=lambda job: None,  # keep the at-air behavior deterministic
@@ -252,6 +271,36 @@ def test_source_preparer_fails_when_conform_ffmpeg_fails(tmp_path: Path) -> None
 
     with pytest.raises(SourcePrepareError, match="could not be conformed"):
         preparer.prepare(_source_plan(tmp_path), _config())
+
+
+def test_source_preparer_conform_timeout_fails_closed_and_cleans_partial_output(
+    tmp_path: Path,
+) -> None:
+    def timed_out_runner(_args: list[str]) -> FfmpegResult:
+        raise subprocess.TimeoutExpired(["ffmpeg"], timeout=3)
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=timed_out_runner,
+        loudness_checker=lambda **_kwargs: _loudness(),
+        preparation_timeout_seconds=3.0,
+    )
+
+    with pytest.raises(SourcePrepareError, match="timed out after 3s"):
+        preparer.prepare(_source_plan(tmp_path), _config())
+
+    prepared_root = tmp_path / "work" / "gov" / "prepared"
+    leftovers = [path for path in prepared_root.rglob("*") if path.is_file()]
+    assert leftovers == []
+
+
+def test_source_preparation_timeout_env_has_a_positive_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS", raising=False)
+    assert preparation_timeout_seconds_from_env() > 0
+    monkeypatch.setenv("CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS", "bad")
+    assert preparation_timeout_seconds_from_env() > 0
 
 
 def test_source_preparer_rejects_missing_source(tmp_path: Path) -> None:
@@ -523,6 +572,263 @@ def test_release_reclaims_one_specific_plan_dir_immediately(tmp_path: Path) -> N
     assert not plan_dir.exists()
 
 
+def test_release_preserves_plan_dir_referenced_by_playout_graph(tmp_path: Path) -> None:
+    """`release()` is a direct deletion path, so it must consult the same
+    graph-ref protection as GC: a current graph reference keeps the exact dir."""
+
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    prepared_root = tmp_path / "work" / "gov" / "prepared"
+    referenced = prepared_root / "c053a439006f"
+    referenced.mkdir(parents=True)
+    segment = referenced / "segment-0001.ts"
+    segment.write_text("live", encoding="utf-8")
+    graph_path = tmp_path / "work" / "gov" / "playout-graph.json"
+    graph_path.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "type": "playlist",
+                        "subchains": [
+                            [
+                                {
+                                    "factory": "filesrc",
+                                    "props": {"location": str(segment)},
+                                }
+                            ]
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    preparer.release(referenced)
+
+    assert referenced.exists()
+    assert segment.exists()
+
+
+def test_release_deletes_unreferenced_plan_dir(tmp_path: Path) -> None:
+    """An unreferenced dir must keep the original immediate-release behavior."""
+
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    prepared_root = tmp_path / "work" / "gov" / "prepared"
+    retired = prepared_root / "cccccccccccc"
+    retired.mkdir(parents=True)
+    (retired / "segment-0001.ts").write_text("retired", encoding="utf-8")
+    graph_path = tmp_path / "work" / "gov" / "playout-graph.json"
+    graph_path.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "type": "playlist",
+                        "subchains": [
+                            [
+                                {
+                                    "factory": "filesrc",
+                                    "props": {
+                                        "location": str(
+                                            prepared_root
+                                            / "dddddddddddd"
+                                            / "segment-0001.ts"
+                                        )
+                                    },
+                                }
+                            ]
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    preparer.release(retired)
+
+    assert not retired.exists()
+
+
+def test_release_ignores_malformed_graph_and_deletes(tmp_path: Path) -> None:
+    """Malformed graph data must not make direct release fail closed."""
+
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    prepared_root = tmp_path / "work" / "gov" / "prepared"
+    retired = prepared_root / "eeeeeeeeeeee"
+    retired.mkdir(parents=True)
+    (retired / "segment-0001.ts").write_text("retired", encoding="utf-8")
+    graph_path = tmp_path / "work" / "gov" / "playout-graph.json"
+    graph_path.write_text("{not-json", encoding="utf-8")
+
+    preparer.release(retired)
+
+    assert not retired.exists()
+
+
+def test_release_ignores_graph_path_outside_channel_prepared_root(
+    tmp_path: Path,
+) -> None:
+    """A graph cannot make release preserve a sibling outside prepared/."""
+
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    prepared_root = tmp_path / "work" / "gov" / "prepared"
+    outside = tmp_path / "work" / "gov" / "outside"
+    outside.mkdir(parents=True)
+    (outside / "segment-0001.ts").write_text("outside", encoding="utf-8")
+    retired = prepared_root / "ffffffffffff"
+    retired.mkdir(parents=True)
+    (retired / "segment-0001.ts").write_text("retired", encoding="utf-8")
+    graph_path = tmp_path / "work" / "gov" / "playout-graph.json"
+    graph_path.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "type": "playlist",
+                        "subchains": [
+                            [
+                                {
+                                    "factory": "filesrc",
+                                    "props": {
+                                        "location": str(
+                                            outside / "segment-0001.ts"
+                                        )
+                                    },
+                                }
+                            ]
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    preparer.release(retired)
+
+    assert not retired.exists()
+
+
+def test_gc_keeps_plan_dir_referenced_by_playout_graph(tmp_path: Path) -> None:
+    """A plan dir named by the live playout graph must survive GC even when it
+    is old, large, and outside keep-N -- the graph is the worker's actual
+    source of truth, not the daemon's in-memory active-dir bookkeeping."""
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    prepared_root = tmp_path / "work" / "gov" / "prepared"
+    referenced = prepared_root / "c053a439006f"
+    referenced.mkdir(parents=True)
+    (referenced / "segment-0001.ts").write_bytes(b"x" * 1024)
+    ancient = time.time() - (48 * 3600)
+    os.utime(referenced, (ancient, ancient))
+
+    # Push it outside keep-N so only the graph reference can save it.
+    for i in range(preparer_module._PREPARED_PLAN_DIR_KEEP_N + 2):
+        other = prepared_root / f"other{i:04d}"
+        other.mkdir()
+        (other / "segment-0001.ts").write_text("other", encoding="utf-8")
+
+    graph_path = tmp_path / "work" / "gov" / "playout-graph.json"
+    graph_path.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "type": "playlist",
+                        "subchains": [
+                            [
+                                {
+                                    "factory": "filesrc",
+                                    "props": {
+                                        "location": str(
+                                            referenced / "segment-0001.ts"
+                                        )
+                                    },
+                                }
+                            ]
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    preparer._gc_prepared_plan_dirs(prepared_root)
+
+    assert referenced.exists()
+    assert (referenced / "segment-0001.ts").exists()
+
+
+def test_gc_evicts_unreferenced_old_dir_and_ignores_malformed_graph(tmp_path: Path) -> None:
+    """The graph backstop must stay narrow: malformed graph JSON cannot protect
+    arbitrary dirs, and an unreferenced old dir is still reclaimed."""
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    prepared_root = tmp_path / "work" / "gov" / "prepared"
+    stale = prepared_root / "aaaaaaaaaaaa"
+    stale.mkdir(parents=True)
+    (stale / "segment-0001.ts").write_text("stale", encoding="utf-8")
+    ancient = time.time() - (48 * 3600)
+    os.utime(stale, (ancient, ancient))
+    for i in range(preparer_module._PREPARED_PLAN_DIR_KEEP_N + 2):
+        other = prepared_root / f"newer{i:04d}"
+        other.mkdir()
+        (other / "segment-0001.ts").write_text("newer", encoding="utf-8")
+    graph_path = tmp_path / "work" / "gov" / "playout-graph.json"
+    graph_path.write_text("{not-json", encoding="utf-8")
+
+    preparer._gc_prepared_plan_dirs(prepared_root)
+
+    assert not stale.exists()
+
+
+def test_gc_ignores_graph_paths_outside_channel_prepared_root(tmp_path: Path) -> None:
+    """A graph cannot nominate an arbitrary sibling path for protection."""
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    prepared_root = tmp_path / "work" / "gov" / "prepared"
+    outside = tmp_path / "work" / "gov" / "outside"
+    outside.mkdir(parents=True)
+    (outside / "segment-0001.ts").write_text("outside", encoding="utf-8")
+    stale = prepared_root / "bbbbbbbbbbbb"
+    stale.mkdir(parents=True)
+    (stale / "segment-0001.ts").write_text("stale", encoding="utf-8")
+    ancient = time.time() - (48 * 3600)
+    os.utime(stale, (ancient, ancient))
+    for i in range(preparer_module._PREPARED_PLAN_DIR_KEEP_N + 2):
+        other = prepared_root / f"newer{i:04d}"
+        other.mkdir()
+        (other / "segment-0001.ts").write_text("newer", encoding="utf-8")
+    graph_path = tmp_path / "work" / "gov" / "playout-graph.json"
+    graph_path.write_text(
+        json.dumps(
+            {
+                "sources": [
+                    {
+                        "type": "playlist",
+                        "subchains": [
+                            [
+                                {
+                                    "factory": "filesrc",
+                                    "props": {
+                                        "location": str(
+                                            outside / "segment-0001.ts"
+                                        )
+                                    },
+                                }
+                            ]
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    preparer._gc_prepared_plan_dirs(prepared_root)
+
+    assert not stale.exists()
+
 def test_release_of_none_is_a_no_op(tmp_path: Path) -> None:
     """A plan whose prepare() never created a discrete directory (F7: a
     live-only plan, or every segment a playout_trim_supported cache hit)
@@ -652,9 +958,22 @@ def _untrimmed_plan(tmp_path: Path, label: str = "Council meeting") -> EgressSou
     )
 
 
+def _loudnorm_probe_aware(runner):
+    """Answer the two-pass loudnorm probe, then delegate to the wrapped runner."""
+
+    def wrapped(args: list[str]) -> FfmpegResult:
+        if "print_format=json" in " ".join(args):
+            return FfmpegResult(returncode=0, stdout="", stderr=_loudnorm_probe_stderr())
+        return runner(args)
+
+    return wrapped
+
+
 def _counting_runner(calls: list[list[str]]):
     def runner(args: list[str]) -> FfmpegResult:
         calls.append(args)
+        if "print_format=json" in " ".join(args):
+            return FfmpegResult(returncode=0, stdout="", stderr=_loudnorm_probe_stderr())
         Path(args[-1]).parent.mkdir(parents=True, exist_ok=True)
         Path(args[-1]).write_text("prepared", encoding="utf-8")
         return FfmpegResult(returncode=0, stdout="", stderr="")
@@ -760,6 +1079,37 @@ def test_full_asset_warm_conform_has_no_trim_and_is_single_threaded(tmp_path: Pa
         "-threads",
         "1",
     ]
+
+
+def test_timed_out_full_asset_warm_removes_partial_tmp_output(tmp_path: Path) -> None:
+    """A failed full-asset warm must not leave a multi-gigabyte partial cache file."""
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+
+    def timed_out_runner(args: list[str]) -> FfmpegResult:
+        Path(args[-1]).write_bytes(b"partial conform output")
+        raise subprocess.TimeoutExpired(args, timeout=300.0)
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=timed_out_runner,
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    config = _config()
+    key = preparer._cache_key(source, config)
+    assert key is not None
+
+    with pytest.raises(SourcePrepareError, match="timed out"):
+        preparer._conform_full_asset_into_cache(
+            key,
+            source,
+            config,
+            _loudness(),
+            False,
+        )
+
+    assert not list((tmp_path / "work" / "conform-cache").glob("*.ts.tmp"))
 
 
 def test_duplicate_warms_are_deduped(tmp_path: Path) -> None:
@@ -2573,3 +2923,249 @@ def test_default_warm_scheduler_survives_a_job_that_raises(tmp_path: Path) -> No
     while len(completed) < 2 and time.monotonic() < deadline:
         time.sleep(0.02)
     assert completed == [-1, 1]  # job 2 still ran despite job 1's exception
+
+
+# --- Candidate A: two-pass loudnorm conform ---------------------------------
+
+
+def test_build_conform_source_args_without_probe_stays_single_pass(tmp_path: Path) -> None:
+    """No measured metadata -> unchanged single-pass args (no behaviour drift)."""
+
+    args = build_conform_source_args(
+        source_path=tmp_path / "s.mp4",
+        output_path=tmp_path / "o.ts",
+        segment=None,
+        profile=_config().canonical_profile,
+        loudness_target_lufs=-16.0,
+    )
+
+    af = args[args.index("-af") + 1]
+    assert af == "loudnorm=I=-16:LRA=11:TP=-1.5"
+
+
+def test_build_conform_source_args_with_measured_metadata_is_two_pass(tmp_path: Path) -> None:
+    """Measured metadata -> second-pass args carry measured_* + linear=true."""
+
+    args = build_conform_source_args(
+        source_path=tmp_path / "s.mp4",
+        output_path=tmp_path / "o.ts",
+        segment=None,
+        profile=_config().canonical_profile,
+        loudness_target_lufs=-16.0,
+        measured_loudness=_loudnorm_probe_stderr_as_dict(),
+    )
+
+    af = args[args.index("-af") + 1]
+    assert "measured_I=-23.01" in af
+    assert "measured_LRA=22.90" in af
+    assert "measured_TP=-0.05" in af
+    assert "measured_thresh=-35.18" in af
+    assert "offset=0.83" in af
+    assert "linear=true" in af
+    assert "I=-16" in af and "LRA=11" in af and "TP=-1.5" in af
+
+
+def test_two_pass_args_reject_bad_measured_metadata(tmp_path: Path) -> None:
+    """Malformed/incomplete measured metadata must fail loud."""
+
+    for bad in (
+        {"input_i": "-23.0"},
+        {
+            "input_i": "NaN",
+            "input_tp": "-1",
+            "input_lra": "5",
+            "input_thresh": "-30",
+            "target_offset": "0",
+        },
+        {
+            "input_i": "-23",
+            "input_tp": "inf",
+            "input_lra": "5",
+            "input_thresh": "-30",
+            "target_offset": "0",
+        },
+        {},
+    ):
+        with pytest.raises(SourcePrepareError):
+            build_conform_source_args(
+                source_path=tmp_path / "s.mp4",
+                output_path=tmp_path / "o.ts",
+                segment=None,
+                profile=_config().canonical_profile,
+                loudness_target_lufs=-16.0,
+                measured_loudness=bad,  # type: ignore[arg-type]
+            )
+
+
+def test_two_pass_does_not_mutate_source_and_keeps_output_path(tmp_path: Path) -> None:
+    source = tmp_path / "s.mp4"
+    source.write_bytes(b"original-bytes")
+    before = source.read_bytes()
+
+    args = build_conform_source_args(
+        source_path=source,
+        output_path=tmp_path / "o.ts",
+        segment=None,
+        profile=_config().canonical_profile,
+        loudness_target_lufs=-16.0,
+        measured_loudness=_loudnorm_probe_stderr_as_dict(),
+    )
+
+    assert source.read_bytes() == before
+    assert args[-3:] == ["-f", "mpegts", str(tmp_path / "o.ts")]
+
+
+def test_two_pass_probe_uses_same_window_as_encode(tmp_path: Path) -> None:
+    captured: list[list[str]] = []
+
+    def fake_run(args, cancel_event=None):
+        captured.append(list(args))
+        if "print_format=json" in " ".join(args):
+            return FfmpegResult(returncode=0, stdout="", stderr=_loudnorm_probe_stderr())
+        _write_fake_output(args)
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=fake_run,
+        loudness_checker=lambda **_k: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda job: None,
+    )
+    (tmp_path / "s.mp4").write_bytes(b"x")
+    preparer.prepare(
+        EgressSourcePlan(
+            channel_id="gov",
+            segments=[
+                EgressSourceSegment(
+                    label="S",
+                    path=str(tmp_path / "s.mp4"),
+                    duration_seconds=30,
+                    inpoint_seconds=5,
+                    outpoint_seconds=35,
+                )
+            ],
+        ),
+        _config(),
+    )
+    probe = next(a for a in captured if "print_format=json" in " ".join(a))
+    encode = next(a for a in captured if "print_format=json" not in " ".join(a))
+    assert probe[probe.index("-ss") + 1] == encode[encode.index("-ss") + 1]
+    assert probe[probe.index("-t") + 1] == encode[encode.index("-t") + 1]
+
+
+def test_two_pass_probe_failure_fails_closed(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(args, cancel_event=None):
+        calls.append(list(args))
+        if "print_format=json" in " ".join(args):
+            return FfmpegResult(returncode=1, stdout="", stderr="probe failed")
+        _write_fake_output(args)
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=fake_run,
+        loudness_checker=lambda **_k: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda job: None,
+    )
+    (tmp_path / "s.mp4").write_bytes(b"x")
+    plan = EgressSourcePlan(
+        channel_id="gov",
+        segments=[
+            EgressSourceSegment(label="S", path=str(tmp_path / "s.mp4"), duration_seconds=30)
+        ],
+    )
+    with pytest.raises(SourcePrepareError):
+        preparer.prepare(plan, _config())
+    assert not any("print_format=json" not in " ".join(a) for a in calls)
+
+
+def test_two_pass_cache_key_includes_method(tmp_path: Path) -> None:
+    preparer = SourcePreparer(work_dir=tmp_path / "work")
+    src = tmp_path / "asset.mp4"
+    src.write_bytes(b"x")
+    key = preparer._cache_key(src, _config())
+    assert isinstance(key, str) and len(key) == 32
+
+
+def test_probe_args_carry_foreground_thread_cap(tmp_path: Path) -> None:
+    cap = preparer_module._foreground_thread_cap()
+    args = build_loudnorm_probe_args(
+        source_path=tmp_path / "s.mp4",
+        segment=None,
+        loudness_target_lufs=-16.0,
+        threads=cap,
+    )
+    assert args[args.index("-threads") + 1] == str(cap)
+    assert args.index("-threads") < args.index("-i")
+
+
+def test_probe_threads_default_is_none(tmp_path: Path) -> None:
+    args = build_loudnorm_probe_args(
+        source_path=tmp_path / "s.mp4",
+        segment=None,
+        loudness_target_lufs=-16.0,
+    )
+    assert "-threads" not in args
+
+
+def test_synchronous_probe_passes_foreground_cap(tmp_path: Path) -> None:
+    captured: list[list[str]] = []
+
+    def fake_run(args, cancel_event=None):
+        captured.append(list(args))
+        if "print_format=json" in " ".join(args):
+            return FfmpegResult(returncode=0, stdout="", stderr=_loudnorm_probe_stderr())
+        _write_fake_output(args)
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=fake_run,
+        loudness_checker=lambda **_k: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda job: None,
+    )
+    (tmp_path / "s.mp4").write_bytes(b"x")
+    preparer.prepare(
+        EgressSourcePlan(
+            channel_id="gov",
+            segments=[
+                EgressSourceSegment(label="S", path=str(tmp_path / "s.mp4"), duration_seconds=30)
+            ],
+        ),
+        _config(),
+    )
+    probe = next(a for a in captured if "print_format=json" in " ".join(a))
+    assert probe[probe.index("-threads") + 1] == str(preparer_module._foreground_thread_cap())
+
+
+def test_warm_full_asset_probe_uses_threads_1(tmp_path: Path) -> None:
+    captured: list[list[str]] = []
+
+    def fake_run(args, cancel_event=None):
+        captured.append(list(args))
+        if "print_format=json" in " ".join(args):
+            return FfmpegResult(returncode=0, stdout="", stderr=_loudnorm_probe_stderr())
+        Path(args[-1]).write_text("x", encoding="utf-8")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    preparer = SourcePreparer(work_dir=tmp_path / "work", ffmpeg_runner=fake_run)
+    (tmp_path / "s.mp4").write_bytes(b"x")
+    loudness = _loudness(status="failed", measured_lufs=-18.0)
+    prepared = preparer._conform_full_asset_into_cache(
+        "k" * 32, tmp_path / "s.mp4", _config(), loudness, True, threads=1
+    )
+    assert prepared is not None
+    probe = next(a for a in captured if "print_format=json" in " ".join(a))
+    assert probe[probe.index("-threads") + 1] == "1"
+
+
+def _loudnorm_probe_stderr_as_dict() -> dict[str, str]:
+    return {
+        "input_i": "-23.01",
+        "input_tp": "-0.05",
+        "input_lra": "22.90",
+        "input_thresh": "-35.18",
+        "target_offset": "0.83",
+    }

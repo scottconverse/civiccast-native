@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import TYPE_CHECKING
@@ -52,9 +53,23 @@ class CaptionPipeline:
         runtime: CaptionRuntime,
         *,
         stabilizer: CaptionStabilizer | None = None,
+        phase_timing: object | None = None,
+        phase_timing_channel: str | None = None,
     ) -> None:
         self._runtime = runtime
         self._stabilizer = stabilizer or CaptionStabilizer()
+        self._phase_timing = phase_timing
+        self._phase_timing_channel = phase_timing_channel
+
+    def _phase(self, name: str):
+        """Return an opt-in timing context without affecting pipeline work."""
+
+        timing = self._phase_timing
+        if timing is None:
+            return nullcontext()
+        with suppress(Exception):
+            return timing.phase(name, channel=self._phase_timing_channel)
+        return nullcontext()
 
     def process(
         self,
@@ -70,12 +85,14 @@ class CaptionPipeline:
         live worker can pass one small batch at a time while the two-window
         stability contract still holds.
         """
-        hypotheses = list(self._runtime.transcribe(chunks, vocabulary=vocabulary))
-        committed_cues: list[CaptionCue] = []
-        expired_before = self._stabilizer.expired_unconfirmed_count
-        for hypothesis in hypotheses:
-            committed_cues.extend(self._stabilizer.observe(hypothesis))
-        expired_unconfirmed_cues = self._stabilizer.expired_unconfirmed()[expired_before:]
+        with self._phase("runtime_transcribe"):
+            hypotheses = list(self._runtime.transcribe(chunks, vocabulary=vocabulary))
+        with self._phase("caption_stabilize"):
+            committed_cues: list[CaptionCue] = []
+            expired_before = self._stabilizer.expired_unconfirmed_count
+            for hypothesis in hypotheses:
+                committed_cues.extend(self._stabilizer.observe(hypothesis))
+            expired_unconfirmed_cues = self._stabilizer.expired_unconfirmed()[expired_before:]
 
         # Expired-unconfirmed cues never air (never enter committed_cues /
         # the active track) but still land in the same review queue as any
@@ -146,11 +163,12 @@ class CaptionPipeline:
                 )
                 tracks.append(translated_hls_track(result))
 
-        hls_outputs = attach_caption_tracks_to_package(
-            package,
-            tracks,
-            segment_duration=segment_duration,
-        )
+        with self._phase("hls_publish"):
+            hls_outputs = attach_caption_tracks_to_package(
+                package,
+                tracks,
+                segment_duration=segment_duration,
+            )
         return CaptionHlsPipelineResult(caption_result=caption_result, hls_outputs=hls_outputs)
 
     def flush(

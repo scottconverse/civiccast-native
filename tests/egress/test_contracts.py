@@ -209,15 +209,18 @@ def test_hls_sink_builds_rolling_live_manifest_output_args(tmp_path: Path) -> No
     assert "append_list" in flags
     assert args[-1] == str(out_dir / "playlist.m3u8")
 
-    # BLOCKING fix: the hls muxer only cuts a segment on a keyframe it
-    # receives, so -hls_time is meaningless unless this sink also forces
-    # keyframe cadence itself (it cannot rely on upstream GOP -- most sinks
-    # reach this via -c:v copy, see egress.runtime). Assert the muxer-driven
-    # cadence is actually configured, not just requested.
-    assert "-force_key_frames" in args
-    force_kf_expr = args[args.index("-force_key_frames") + 1]
-    assert "n_forced*2" in force_kf_expr
-    assert "-c:v" in args and args[args.index("-c:v") + 1] != "copy"
+    # Caption-preservation contract (see test_hls_sink_captions.py): the sink
+    # must stream-copy the encoded video. Re-encoding through the bundled H.264
+    # encoders (libopenh264/h264_mf) strips the A/53 closed-caption SEI, which
+    # the live decode-back verifier then reports as zero captions.
+    assert "-c:v" in args and args[args.index("-c:v") + 1] == "copy"
+    # Copy makes encoder-side keyframe control impossible, so the sink must NOT
+    # carry -g/-force_key_frames (dead args that imply cadence control the sink
+    # no longer has). The ~2s cadence is now contractual upstream: gst/graph.py
+    # pins openh264enc's gop-size to segment_seconds worth of frames.
+    assert "-force_key_frames" not in args
+    assert "-g" not in args
+    assert "-b:v" not in args
     # Writing output_args() must create the directory so ffmpeg's hls muxer
     # (which does not mkdir -p) can write the manifest + segments into it.
     assert out_dir.is_dir()
