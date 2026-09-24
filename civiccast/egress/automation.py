@@ -281,6 +281,17 @@ WATCHDOG_THREAD_NAME = "civiccast-channel-automation-pass-watchdog"
 #: (clamps, for a directly constructed watchdog) have to know about it.
 _MAX_WATCHDOG_SECONDS = threading.TIMEOUT_MAX
 
+#: The longest the watcher may sleep between look-ups of the pass it is
+#: watching, whatever the operator's threshold and repeat are (they may both be
+#: minutes). The wake period is ``min(threshold, repeat, this)``: the threshold
+#: bounds how long a crossed threshold can go unnoticed, the repeat bounds a
+#: tiny threshold from waking rarely, and this cap keeps the operator's own
+#: numbers out of the wake-up period entirely at the shipped 30s/60s. U04
+#: coordinator fix 2: the period used to BE the repeat after the first tick, so
+#: the first report of a fresh stall could land a whole repeat after the
+#: threshold -- ~90s at the defaults, and the whole of a short stall.
+_MAX_WATCHDOG_TICK_SECONDS = 5.0
+
 
 def default_egress_work_dir() -> Path:
     """Default directory for egress plans, prepared segments, and slates."""
@@ -444,13 +455,14 @@ class _PassWatchdog:
     ``_run_channel_pass`` logs nothing until it returns. This object is the
     answer for the NEXT stall: while one pass has been running longer than
     ``threshold_seconds``, a watcher thread dumps the automation thread's live
-    Python stack every ``repeat_seconds`` until the pass ends, and the pass's
-    own total duration is reported the moment it does.
+    Python stack -- the first one within a tick of the threshold, then one
+    ``repeat_seconds`` after each report while the pass stays stalled -- and the
+    pass's own total duration is reported the moment it ends.
 
     Three properties are load-bearing, because the thread being watched is the
     one this build cannot afford to disturb:
 
-    * the automation thread only ever records or clears three fields under
+    * the automation thread only ever records or clears four fields under
       ``_lock`` -- it never formats a stack, never logs and never waits;
     * all logging happens on the WATCHER thread, and deliberately after the
       lock is released, so a slow log handler can never block the automation
@@ -484,6 +496,14 @@ class _PassWatchdog:
         self._lock = threading.Lock()
         self._channel_id: str | None = None
         self._started_at = 0.0
+        #: Monotonic time at which the current pass may next be reported:
+        #: ``started_at + threshold`` when it begins, ``now + repeat`` after each
+        #: report. Held in the pass record rather than derived from a tick
+        #: count, so the schedule does not depend on WHEN the watcher happens to
+        #: wake -- a late tick reports late, never early or twice. U04
+        #: coordinator fix 2: with the period alone, a pass that crossed the
+        #: threshold between two ticks was first reported a whole repeat later.
+        self._next_report_at = 0.0
         self._thread_ident: int | None = None
         #: Whether this pass has already been reported as over the threshold.
         #: Set by the watcher thread under ``_lock``; read and cleared by the
@@ -499,6 +519,19 @@ class _PassWatchdog:
         """False when the threshold is 0: the documented off switch."""
 
         return self._threshold_seconds > 0 and self._repeat_seconds > 0
+
+    @property
+    def tick_seconds(self) -> float:
+        """How long the watcher sleeps between look-ups of the pass.
+
+        ``min(threshold, repeat, 5.0)``. Nothing is REPORTED on a tick that is
+        not due -- the watcher only checks whether a report is due -- so a small
+        operator value here costs wake-ups (one lock acquisition each, no stack
+        formatting, no log call), never extra log lines. A ``repeat`` below a
+        millisecond would make the watcher busy: the brief's formula, and a
+        documented cost rather than a silent floor."""
+
+        return min(self._threshold_seconds, self._repeat_seconds, _MAX_WATCHDOG_TICK_SECONDS)
 
     def start(self) -> None:
         """Start the watcher thread. No-op when disabled or already running.
@@ -563,9 +596,11 @@ class _PassWatchdog:
         try:
             with self._lock:
                 self._channel_id = channel_id
-                self._started_at = self._monotonic()
+                started_at = self._monotonic()
+                self._started_at = started_at
                 self._thread_ident = threading.get_ident()
                 self._reported = False
+                self._next_report_at = started_at + self._threshold_seconds
         except Exception:
             _log_watchdog_failure("Stuck-pass watchdog could not record a pass start.")
 
@@ -592,6 +627,7 @@ class _PassWatchdog:
                 self._channel_id = None
                 self._thread_ident = None
                 self._reported = False
+                self._next_report_at = 0.0
             if not reported:
                 return
             _LOG.warning(
@@ -604,23 +640,23 @@ class _PassWatchdog:
             _log_watchdog_failure("Stuck-pass watchdog could not report a pass end.")
 
     def _watch(self) -> None:
-        """The watcher thread's loop: check, report, sleep, repeat.
+        """The watcher thread's loop: sleep one tick, check, repeat.
 
-        The FIRST check lands one threshold after the thread starts, and every
-        later one ``repeat_seconds`` after the previous. Sleeping ``repeat``
-        from the start instead would miss a stall longer than the threshold but
-        shorter than the repeat entirely, which is the band a real stall is
-        most likely to land in.
+        The period is a constant ``tick_seconds`` -- ``min(threshold, repeat,
+        5.0)`` -- and it decides only how promptly a DUE report is noticed, not
+        how often one is emitted. Whether a report is due is the pass's own
+        ``_next_report_at``, so the schedule is independent of when the watcher
+        wakes: a slow machine reports late rather than early or twice.
 
-        The cost of that first-tick-at-the-threshold choice, measured at U04
-        review (R5) rather than assumed: because the period is the REPEAT
-        interval from the second tick on, a pass that begins mid-cycle crosses
-        the threshold somewhere between two ticks and is first reported up to
-        one whole ``repeat`` after it crossed -- up to ~90s elapsed at the
-        shipped 30s/60s, not 30s. Only a pass that happens to start just as the
-        watcher does is reported at the threshold. Re-reporting every ``repeat``
-        is what the operator's setting asks for; this is the first-report
-        latency, and it is bounded by the repeat interval, never unbounded.
+        U04 coordinator fix 2 replaced the two-phase period this used to have
+        (first tick at the threshold, every later one at the repeat). That
+        period was itself the report cadence, so a pass that crossed the
+        threshold between two ticks waited up to a whole repeat to be named --
+        measured at U04 review (R5) as up to ~90s at the shipped 30s/60s, and
+        the whole of any stall shorter than the repeat. The tick is now the
+        shortest interval that can make the threshold meaningful, and the
+        repeat is what it was always documented to be: the interval between
+        reports of a pass that is STILL stalled.
 
         The whole iteration -- the wait included -- is guarded. U04 review (R1):
         the wait itself can raise (``OverflowError`` above
@@ -628,7 +664,7 @@ class _PassWatchdog:
         guarding only ``_check`` left a path that killed the thread. Any raise
         now costs one tick, and the next iteration re-checks the stop event."""
 
-        interval = self._wait_interval(self._threshold_seconds)
+        interval = self._wait_interval(self.tick_seconds)
         while True:
             try:
                 if self._stop_event.wait(interval):
@@ -638,7 +674,6 @@ class _PassWatchdog:
                 # This thread has no supervisor: a reporting failure must cost
                 # one tick, never the rest of the stall.
                 _log_watchdog_failure("Stuck-pass watchdog tick failed.")
-            interval = self._wait_interval(self._repeat_seconds)
 
     def _wait_interval(self, seconds: float) -> float:
         """``seconds`` clamped to what ``Event.wait`` can actually time.
@@ -651,8 +686,8 @@ class _PassWatchdog:
         return min(seconds, _MAX_WATCHDOG_SECONDS)
 
     def _check(self) -> None:
-        """Dump the automation thread's stack if the current pass is over
-        the threshold."""
+        """Dump the automation thread's stack if a report of the current pass
+        is due."""
 
         snapshot = self._snapshot_stalled_pass()
         if snapshot is None:
@@ -670,8 +705,13 @@ class _PassWatchdog:
         )
 
     def _snapshot_stalled_pass(self) -> tuple[str, float, str] | None:
-        """``(channel_id, elapsed_seconds, formatted_stack)`` for a pass that
-        has outlived the threshold, else ``None``.
+        """``(channel_id, elapsed_seconds, formatted_stack)`` for a pass whose
+        report is DUE, else ``None``.
+
+        Due means ``now >= _next_report_at``: one threshold after the pass
+        started, then one ``repeat`` after each report. The due time is
+        advanced under the lock before the stack is read, so the cadence is
+        settled by the pass record rather than by the watcher's wake-ups.
 
         The pass is marked reported under the lock, BEFORE its stack is read,
         for two reasons: a pass that ends in the same instant still reports its
@@ -684,10 +724,14 @@ class _PassWatchdog:
             if channel_id is None:
                 return None
             ident = self._thread_ident
-            elapsed = self._monotonic() - self._started_at
-            if elapsed < self._threshold_seconds:
+            now = self._monotonic()
+            elapsed = now - self._started_at
+            if now < self._next_report_at:
+                # Not due -- either under the threshold, or reported less than
+                # a repeat ago. A tick that finds nothing due logs nothing.
                 return None
             self._reported = True
+            self._next_report_at = now + self._repeat_seconds
 
         if ident is None:  # defensive: pass_started always records an ident
             return None

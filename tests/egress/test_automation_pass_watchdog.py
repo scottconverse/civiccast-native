@@ -144,6 +144,10 @@ class _StallingDaemon(_IdleDaemon):
         super().__init__()
         self.entered = threading.Event()
         self.release = threading.Event()
+        #: Set when the blocked call has RETURNED -- the pass's end, as the
+        #: automation thread experiences it. Lets a test assert that a report
+        #: arrived while the pass was still running rather than after it ended.
+        self.left = threading.Event()
         self._hold_seconds = hold_seconds
 
     def process_once(self, channel_id: str) -> int:
@@ -155,10 +159,13 @@ class _StallingDaemon(_IdleDaemon):
     def _block_until_released(self, channel_id: str) -> int:
         """The blocked call a stack dump has to be able to name."""
 
-        if self._hold_seconds is None:
-            self.release.wait(2.0)
-        else:
-            time.sleep(self._hold_seconds)
+        try:
+            if self._hold_seconds is None:
+                self.release.wait(2.0)
+            else:
+                time.sleep(self._hold_seconds)
+        finally:
+            self.left.set()
         return 0
 
 
@@ -220,10 +227,11 @@ def test_pass_under_the_threshold_logs_nothing(
 ) -> None:
     """A pass that stays under the threshold is nobody's business.
 
-    Threshold 0.5s against passes of ~0.15s: the watchdog's ticks land at 0.5s
-    and 0.6s, i.e. while a pass is genuinely RUNNING, and every one of those
-    passes is still under the threshold -- so the silence asserted here is the
-    comparison working, not the watchdog failing to run.
+    Threshold 0.5s against passes of ~0.15s: the watcher ticks every 0.1s
+    (``min(threshold, repeat, 5.0)``), so roughly fifteen of its ticks land
+    while these passes are genuinely RUNNING -- and every one of those passes is
+    still under the threshold, so the silence asserted here is the comparison
+    working, not the watchdog failing to run.
     """
 
     monkeypatch.setenv(_THRESHOLD_ENV, "0.5")
@@ -480,6 +488,156 @@ def test_first_dump_lands_at_the_threshold_not_a_whole_repeat_later(
     assert not runner.is_alive()
 
 
+def test_a_one_second_stall_is_reported_before_it_ends_and_only_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Coordinator fix 2, stated as the brief's own numbers: threshold 0.3s,
+    repeat 5.0s, a pass that blocks ~1s.
+
+    Before the fix the watcher's period became the REPEAT interval after its
+    first tick, so a pass that started between two ticks crossed the threshold
+    in the dead zone and was first reported up to a whole repeat later -- 5.3s
+    here, long after this pass had ended. The fix is a short fixed tick
+    (``min(threshold, repeat, 5.0)`` = 0.3s) plus a per-pass next-report time,
+    so the first dump lands one tick after the threshold and the next is a
+    whole repeat after that first dump.
+
+    The pass is started AFTER the watcher's first tick has already fired (the
+    store is empty for the first 0.5s), which is what makes this a
+    deterministic red rather than a race: the old watcher's next tick is then a
+    clear 5.0s away from the pass's start, and cannot have reported it. The
+    daemon's ``left`` event is checked while the dump is being read, so
+    "reported before the pass ended" is measured, not assumed, and the count is
+    read after the loop has stopped so "only once" cannot be an artefact of
+    looking too early.
+    """
+
+    monkeypatch.setenv(_THRESHOLD_ENV, "0.3")
+    monkeypatch.setenv(_REPEAT_ENV, "5.0")
+    store = InMemoryEgressStore()  # empty: the loop ticks with no pass live
+    daemon = _StallingDaemon(hold_seconds=1.0)
+    service = _service(store, daemon)
+    stop_event = threading.Event()
+    runner = _runner(service, stop_event)
+
+    with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+        runner.start()
+        try:
+            # One tick (0.3s) with no pass to watch, so the old period has
+            # already moved on to its 5s repeat before the pass exists.
+            time.sleep(0.5)
+            store.upsert_config(_config("public"))
+            assert daemon.entered.wait(1.0), "the loop never started a pass"
+            assert _wait_for(lambda: bool(_records(caplog, "still running")), 0.9), (
+                "the first dump did not land within a tick of the threshold"
+            )
+            assert not daemon.left.is_set(), (
+                "the dump arrived only after the pass had already ended"
+            )
+        finally:
+            stop_event.set()
+            runner.join(2.0)
+
+    assert not runner.is_alive()
+    assert len(_records(caplog, "still running")) == 1, (
+        "one report inside the second, not one per tick"
+    )
+
+
+@pytest.mark.parametrize(
+    ("threshold", "repeat", "expected"),
+    [
+        (30.0, 60.0, 5.0),  # the shipped defaults: tick capped at 5s
+        (0.3, 5.0, 0.3),  # the coordinator's case: tick is the threshold
+        (0.2, 0.1, 0.1),  # a tiny repeat is the tick, as specified
+        (10.0, 600.0, 5.0),
+    ],
+)
+def test_the_tick_is_the_smallest_of_the_threshold_the_repeat_and_five_seconds(
+    threshold: float, repeat: float, expected: float
+) -> None:
+    """The watcher's wake period, pinned where it is decided.
+
+    A tick that is the threshold alone is what made the first report late; a
+    tick that is the repeat alone would delay the first report by a repeat. The
+    specified period is the smaller of the two, capped at 5s so the watcher
+    cannot sit on a freshly-crossed threshold for a minute.
+    """
+
+    watchdog = _PassWatchdog(threshold_seconds=threshold, repeat_seconds=repeat)
+
+    assert watchdog.tick_seconds == pytest.approx(expected)
+
+
+class _FakeClock:
+    """A monotonic clock the test drives by hand.
+
+    The report SCHEDULE is arithmetic, so it is pinned as arithmetic -- no
+    sleeps, no threads, no flakes -- and only the wake-up behaviour of the
+    watcher is measured off a live thread (the end-to-end test above).
+    """
+
+    def __init__(self, now: float = 1_000.0) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def test_the_report_schedule_is_the_threshold_then_a_repeat_after_each_report(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The exact schedule the coordinator specified, at the shipped 30s/60s.
+
+    First report when the pass crosses the threshold; each later report only
+    once a whole ``repeat`` has passed since that pass's LAST report -- not
+    since the pass began, and not since the threshold was crossed. Driven by an
+    injected clock and direct ``_check`` calls on the calling (automation)
+    thread, which is also the thread whose live frame the dump names.
+    """
+
+    clock = _FakeClock()
+    watchdog = _PassWatchdog(threshold_seconds=30.0, repeat_seconds=60.0, monotonic=clock)
+
+    def dumps() -> int:
+        return len(_records(caplog, "still running"))
+
+    with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
+        watchdog.pass_started("public")
+
+        clock.advance(29.0)
+        watchdog._check()
+        assert dumps() == 0, "reported before the pass reached the threshold"
+
+        clock.advance(1.0)  # t+30: at the threshold
+        watchdog._check()
+        assert dumps() == 1, "the first report did not land at the threshold"
+        assert "test_the_report_schedule" in _records(caplog, "still running")[0].getMessage(), (
+            "the dump did not name the frame it was called from"
+        )
+
+        clock.advance(59.0)
+        watchdog._check()
+        assert dumps() == 1, "re-reported before a whole repeat had passed"
+
+        clock.advance(1.0)  # t+90: one repeat after the LAST report
+        watchdog._check()
+        assert dumps() == 2, "the repeat was not measured from the last report"
+
+        clock.advance(60.0)
+        watchdog._check()
+        assert dumps() == 3
+
+        watchdog.pass_finished("public")
+
+    assert len(_records(caplog, "exceeded watchdog")) == 1, (
+        "the pass end must still be reported exactly once"
+    )
+
+
 class _RaisingFrames:
     """A ``sys._current_frames`` stand-in that fails, as the real private API
     could; the watcher must survive a dump it cannot take."""
@@ -674,10 +832,26 @@ def test_repeat_beyond_the_event_wait_ceiling_warns_and_uses_the_default(
 def test_a_directly_built_watcher_survives_an_interval_the_event_cannot_wait() -> None:
     """U04 review (R1), second half: the reader is not the only way in -- a
     directly constructed ``_PassWatchdog`` (as this suite builds one) must not
-    die either. Before the fix the thread was gone within one tick; after it,
-    the watcher is alive, ticked once, and still stops on command."""
+    die either. Before R1's fix the thread was gone within one tick.
+
+    U04 coordinator fix 2 moved the R1 failure mode further out of reach: the
+    wait interval is now ``min(threshold, repeat, 5.0)``, so an operator's
+    ``repeat`` of 1e8 -- the value R1 reproduced with -- never reaches
+    ``Event.wait`` at all and the watcher survives on its own tick. What keeps
+    the clamp covered is the direct assertion below, because after the cap the
+    watcher loop can no longer reach it: it is defence in depth for a
+    construction that no longer exists in this file's production path, and it
+    is labelled as such rather than left to look load-bearing.
+    """
 
     watchdog = _PassWatchdog(threshold_seconds=0.2, repeat_seconds=1e8)
+    assert watchdog.tick_seconds == pytest.approx(0.2), (
+        "a huge repeat must not become the wait interval"
+    )
+    assert watchdog._wait_interval(1e8) == threading.TIMEOUT_MAX, (
+        "the clamp no longer bounds the watcher's own interval; it must still "
+        "bound a value it is handed directly"
+    )
     watchdog.start()
     try:
         assert _wait_for(lambda: len(_watchdog_threads()) == 1, 1.0), "the watcher never started"
@@ -691,7 +865,7 @@ def test_a_directly_built_watcher_survives_an_interval_the_event_cannot_wait() -
         watchdog.stop()
 
     assert _wait_for(lambda: not _watchdog_threads(), 6.0), (
-        "stop() could not interrupt a wait near the platform ceiling"
+        "stop() could not interrupt the watcher's wait"
     )
 
 
