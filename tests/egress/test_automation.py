@@ -150,7 +150,7 @@ def _plan_with_segments(
     )
 
 
-@pytest.mark.parametrize("duration", [300.0, 3600.0])
+@pytest.mark.parametrize("duration", [600.0, 3600.0])
 def test_single_item_rollover_prepares_next_boundary_with_bounded_lead(duration: float) -> None:
     store = InMemoryEgressStore()
     store.upsert_config(_config("public"))
@@ -181,10 +181,14 @@ def test_single_item_rollover_prepares_next_boundary_with_bounded_lead(duration:
     )
     end = _NOW + timedelta(seconds=duration)
     service.run_once(now=_NOW)
-    service.run_once(now=end - timedelta(seconds=121))
+    # BETA.10 U02: the gst path's lead is no longer a flat 120s -- it must
+    # cover a preparation allowed to run to the configured timeout (300s
+    # default) plus the reload settle budget and margin. See the class of
+    # tests in TestGstRolloverLeadCoversPreparationTimeout below.
+    service.run_once(now=end - timedelta(seconds=391))
     assert _pending_actions(store, "public") == []
     assert sampled == []
-    service.run_once(now=end - timedelta(seconds=120))
+    service.run_once(now=end - timedelta(seconds=390))
     assert sampled == [end]
     assert _pending_actions(store, "public") == ["reload"]
 
@@ -223,6 +227,171 @@ def test_short_single_item_rollover_uses_the_whole_item_as_preparation_lead() ->
 
     assert sampled == [end]
     assert _pending_actions(store, "public") == ["reload"]
+
+
+class TestGstRolloverLeadCoversPreparationTimeout:
+    """BETA.10 U02. On the GStreamer path (``boundary_source_plan_provider``
+    wired -- ``build_channel_automation`` wires it only when the gst engine is
+    selected, automation.py's ``plan_at`` branch) the rollover lead was a flat
+    120s. A cold conform of one 30-minute segment measured ~270s on the
+    station and is bounded by ``CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS``
+    (300 at the station), so a rollover issued 120s before the plan's end
+    could not finish preparing before EOS: 2026-09-24 13:28:25, the public
+    channel's rollover was issued with 119s left, its preparation did not
+    finish, and the channel went dark at 13:30:30.
+
+    The lead is now ``preparation_timeout + reload settle budget + margin``
+    (390s at the shipped 300s timeout), still clamped by
+    ``last_segment_start_at`` and still overridable -- see
+    ``ChannelAutomationService._rollover_lead_seconds``.
+    """
+
+    _PREP_ENV = "CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS"
+    _LEAD_ENV = "CIVICCAST_EGRESS_ROLLOVER_LEAD_SECONDS"
+
+    def _service(
+        self, durations: tuple[float, ...]
+    ) -> tuple[ChannelAutomationService, InMemoryEgressStore, list[datetime]]:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        store.write_state(
+            EgressStateRow(
+                channel_id="public",
+                state="ON_AIR",
+                current_source_label="Council Meeting",
+                current_proof_event_id="ev-1",
+                updated_at=_NOW,
+                pid=123,
+            )
+        )
+        daemon = _HorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", durations, False)
+        boundaries: list[datetime] = []
+
+        def next_plan(channel_id: str, boundary: datetime) -> EgressSourcePlan:
+            boundaries.append(boundary)
+            return _plan_with_duration(channel_id, durations[0], source_ref="next-programme")
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda channel: _plan_with_duration(channel, durations[0]),
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=next_plan,
+        )
+        return service, store, boundaries
+
+    def test_a_300s_preparation_timeout_arms_with_200s_of_plan_left(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The station's own incident shape: a 10-minute plan, 200s still to
+        run. Under the old flat 120s lead nothing was issued until 120s were
+        left; now the reload is already armed."""
+
+        monkeypatch.delenv(self._LEAD_ENV, raising=False)
+        monkeypatch.setenv(self._PREP_ENV, "300")
+        service, store, boundaries = self._service((600.0,))
+        end = _NOW + timedelta(seconds=600)
+
+        service.run_once(now=_NOW)  # establish the horizon (EOS = _NOW+600)
+        assert boundaries == []
+
+        service.run_once(now=end - timedelta(seconds=200))
+
+        assert boundaries == [end]
+        assert _pending_actions(store, "public") == ["reload"]
+
+    def test_the_lead_is_the_preparation_timeout_plus_settle_and_margin(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """390s = 300s preparation timeout + 30s reload settle budget + 60s
+        margin, pinned at the trigger boundary either side of it."""
+
+        monkeypatch.delenv(self._LEAD_ENV, raising=False)
+        monkeypatch.setenv(self._PREP_ENV, "300")
+        service, store, boundaries = self._service((1800.0,))
+        end = _NOW + timedelta(seconds=1800)
+
+        assert service._rollover_lead_seconds() == 390.0
+
+        service.run_once(now=_NOW)
+        service.run_once(now=end - timedelta(seconds=391))
+        assert boundaries == []
+        assert _pending_actions(store, "public") == []
+
+        service.run_once(now=end - timedelta(seconds=390))
+        assert boundaries == [end]
+        assert _pending_actions(store, "public") == ["reload"]
+
+    def test_the_env_override_restores_a_shorter_lead(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(self._PREP_ENV, "300")
+        monkeypatch.setenv(self._LEAD_ENV, "90")
+        service, store, boundaries = self._service((1800.0,))
+        end = _NOW + timedelta(seconds=1800)
+
+        assert service._rollover_lead_seconds() == 90.0
+
+        service.run_once(now=_NOW)
+        service.run_once(now=end - timedelta(seconds=91))
+        assert boundaries == []
+        assert _pending_actions(store, "public") == []
+
+        service.run_once(now=end - timedelta(seconds=90))
+        assert boundaries == [end]
+        assert _pending_actions(store, "public") == ["reload"]
+
+    @pytest.mark.parametrize("bad", ["abc", "-5", "0"])
+    def test_an_invalid_override_warns_and_falls_back_to_the_computed_lead(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, bad: str
+    ) -> None:
+        monkeypatch.setenv(self._PREP_ENV, "300")
+        monkeypatch.setenv(self._LEAD_ENV, bad)
+        service, store, boundaries = self._service((1800.0,))
+        end = _NOW + timedelta(seconds=1800)
+
+        with caplog.at_level(logging.WARNING, logger="civiccast.egress.automation"):
+            service.run_once(now=_NOW)
+            service.run_once(now=end - timedelta(seconds=391))
+            assert boundaries == []
+            assert _pending_actions(store, "public") == []
+
+            service.run_once(now=end - timedelta(seconds=390))
+
+        assert boundaries == [end]
+        assert _pending_actions(store, "public") == ["reload"]
+        assert any(self._LEAD_ENV in record.getMessage() for record in caplog.records)
+
+    def test_the_last_segment_start_clamp_still_holds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A dispatched plan whose LAST segment begins later than the lead
+        (a 1700s penultimate segment, then a 100s one) must still trigger at
+        that segment's start -- never once the wall clock passes
+        ``plan_end - lead``. Checked at both the new lead's boundary and the
+        old flat 120s one: the latter is what the clamp protects against now
+        that the lead runs past the last segment's start."""
+
+        monkeypatch.delenv(self._LEAD_ENV, raising=False)
+        monkeypatch.setenv(self._PREP_ENV, "300")
+        service, store, boundaries = self._service((1700.0, 100.0))
+        end = _NOW + timedelta(seconds=1800)
+        last_segment_start = _NOW + timedelta(seconds=1700)
+
+        service.run_once(now=_NOW)  # establish: last segment begins at +1700
+        # Past the lead (_NOW+1410) but before the last segment begins.
+        service.run_once(now=end - timedelta(seconds=390))
+        assert boundaries == []
+        assert _pending_actions(store, "public") == []
+        # Past the OLD flat lead too (_NOW+1680); still before +1700.
+        service.run_once(now=end - timedelta(seconds=120))
+        assert boundaries == []
+        assert _pending_actions(store, "public") == []
+
+        service.run_once(now=last_segment_start)
+        assert boundaries == [end]
+        assert _pending_actions(store, "public") == ["reload"]
 
 
 class TestRelayIdentifierValidation:

@@ -46,6 +46,7 @@ from civiccast.egress.engine_select import build_encoder_strategy, gstreamer_eng
 from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.gst.reload_policy import rollover_trigger_at
 from civiccast.egress.models import ChannelAutomationRollup, EgressCommand, EgressProofEvent
+from civiccast.egress.preparer import preparation_timeout_seconds_from_env
 from civiccast.egress.store import EgressStore
 from civiccast.native.station_runtime import EGRESS_DEGRADED_REASON_ENV
 
@@ -224,7 +225,15 @@ __all__ = [
     "ChannelAutomationSettings",
     "build_channel_automation",
     "default_egress_work_dir",
+    "rollover_lead_seconds_from_env",
 ]
+
+#: BETA.10 U02: operator override for the GStreamer path's rollover lead (see
+#: ``ChannelAutomationService._rollover_lead_seconds``). Its value is a
+#: positive float of seconds; every invalid or non-positive value is logged
+#: and ignored, exactly as ``preparer.preparation_timeout_seconds_from_env``
+#: treats its own variable, so a typo can never disable the rollover.
+ROLLOVER_LEAD_ENV = "CIVICCAST_EGRESS_ROLLOVER_LEAD_SECONDS"
 
 
 def default_egress_work_dir() -> Path:
@@ -236,6 +245,37 @@ def default_egress_work_dir() -> Path:
     if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
         return Path(os.environ["LOCALAPPDATA"]) / "CivicCast" / "egress"
     return Path.home() / ".local" / "share" / "civiccast" / "egress"
+
+
+def rollover_lead_seconds_from_env() -> float | None:
+    """The operator's rollover-lead override (``ROLLOVER_LEAD_ENV``), or
+    ``None`` when unset/invalid/non-positive -- the caller then uses the
+    computed default (``ChannelAutomationService._rollover_lead_seconds``).
+
+    Mirrors ``preparer.preparation_timeout_seconds_from_env``'s treatment of
+    bad input: a warning naming the offending value, then the safe default.
+    ``None`` rather than a sentinel value keeps "the operator said nothing"
+    distinct from any legitimate lead the override could carry."""
+
+    raw = os.environ.get(ROLLOVER_LEAD_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        _LOG.warning(
+            "Invalid %s=%r; using the computed rollover lead instead.",
+            ROLLOVER_LEAD_ENV,
+            raw,
+        )
+        return None
+    if value <= 0:
+        _LOG.warning(
+            "%s must be positive; using the computed rollover lead instead.",
+            ROLLOVER_LEAD_ENV,
+        )
+        return None
+    return value
 
 
 @dataclass(frozen=True)
@@ -427,6 +467,23 @@ class ChannelAutomationService:
     # dispatch at or after the plan's own end. See
     # _rollover_min_lead_seconds.
     _ROLLOVER_MIN_LEAD_SECONDS = 120.0
+    # BETA.10 U02: the GStreamer path's rollover lead is no longer the fixed
+    # 120s above -- it has to cover a preparation that is allowed to run to
+    # ``CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS`` (300s at the station,
+    # 300s by default) plus the reload's own post-preparation round trip.
+    # 2026-09-24 13:28:25: public's rollover was issued with 119s left, its
+    # cold conform (measured 270s, capped at 300s) did not finish, and the
+    # channel went dark at 13:30:30. See ``_rollover_lead_seconds``.
+    #
+    # The reload's settle budget after preparation completes: the worker
+    # pipe's reload ack is bounded at ``strategy._WORKER_PIPE_ACK_TIMEOUT_S``
+    # (5s), the daemon observes settlement on its ~2s poll tick, and building
+    # + prerolling the new leg is seconds of work. 30s covers that several
+    # times over; the 60s margin below absorbs the rest (command drain to the
+    # daemon's next tick, clock granularity) without materially extending how
+    # far ahead of EOS the reload is built.
+    _ROLLOVER_RELOAD_SETTLE_BUDGET_SECONDS = 30.0
+    _ROLLOVER_LEAD_MARGIN_SECONDS = 60.0
     # Hostile-review B2 fix: if a dispatched rollover reload has not landed
     # (no fresh current_proof_event_id) within this long, treat it as dropped
     # and retry once more before the plan's projected end, rather than waiting
@@ -820,6 +877,42 @@ class ChannelAutomationService:
         _LOG.info(
             "Channel automation issued reload for %s: a scheduled program is due.",
             channel_id,
+        )
+
+    def _rollover_lead_seconds(self) -> float:
+        """BETA.10 U02: how far ahead of the live plan's projected end the
+        GStreamer path's rollover must be issued for a preparation that runs
+        to its configured bound to still settle before EOS.
+
+        The GStreamer path is the one that pre-conforms its source (the engine
+        reads only ``segment.path``), and ``_try_content_reload`` drives that
+        conform through ``SourcePreparer``, whose every ffmpeg call is bounded
+        by ``CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS``
+        (``preparer.preparation_timeout_seconds_from_env``; 300s at the
+        station and by default). The lead therefore has to be at least that
+        bound -- measured 2026-09-24: a rollover issued 120s before EOS with a
+        cold conform still in flight left the channel with nothing armed at
+        EOS, and it went dark.
+
+        ``max`` against ``_ROLLOVER_MIN_LEAD_SECONDS`` keeps the historic 120s
+        floor for a deployment that has shortened the preparation timeout
+        below it. ``ROLLOVER_LEAD_ENV`` overrides the whole computation for an
+        operator who has measured their own preparation and settle times.
+
+        This is deliberately a LEAD, not a cadence: the dispatch it permits is
+        still gated by ``_rollover_min_interval_seconds``, the issued latch,
+        and ``has_pending_reload_settlement``, and it is still clamped by
+        ``last_segment_start_at`` at the call site (never triggers before the
+        last segment of the live plan begins)."""
+
+        override = rollover_lead_seconds_from_env()
+        if override is not None:
+            return override
+        return max(
+            self._ROLLOVER_MIN_LEAD_SECONDS,
+            preparation_timeout_seconds_from_env()
+            + self._ROLLOVER_RELOAD_SETTLE_BUDGET_SECONDS
+            + self._ROLLOVER_LEAD_MARGIN_SECONDS,
         )
 
     def _rollover_min_lead_seconds(self, planned_seconds: float) -> float:
@@ -1228,12 +1321,16 @@ class ChannelAutomationService:
         )
         if self._boundary_source_plan_provider is not None:
             # One scheduled item per plan: give short items their whole life
-            # for preparation, while keeping the historic 120s cap for long
-            # programmes. This ensures the incoming leg can be prerolled before
-            # the outgoing finite pipeline reaches EOS.
+            # for preparation (the ``last_segment_start_at`` clamp below), for
+            # long programmes a lead that covers the WORST-CASE preparation
+            # this deployment allows -- BETA.10 U02: a preparation bounded by
+            # ``CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS`` must still be
+            # able to finish and settle before the outgoing pipeline reaches
+            # EOS, or the channel reaches EOS with nothing armed (2026-09-24
+            # 13:28:25, public). See ``_rollover_lead_seconds``.
             trigger_at = max(
                 last_segment_start_at,
-                plan_end_at - timedelta(seconds=self._ROLLOVER_MIN_LEAD_SECONDS),
+                plan_end_at - timedelta(seconds=self._rollover_lead_seconds()),
             )
         if now < trigger_at:
             return  # not yet at the boundary-aligned trigger point
