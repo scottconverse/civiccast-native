@@ -3,15 +3,18 @@
 """Resolve an environment variable that has been renamed, keeping the spelling
 a live station already sets working.
 
-BETA.10 U03. Two station settings were read here under ``CIVICAST_`` (one C)
-while the station's own service registry -- the ``Environment`` REG_MULTI_SZ
-under ``HKLM\\SYSTEM\\CurrentControlSet\\Services\\CivicCastSupervisor``,
-which the native installer writes -- sets them under ``CIVICAST`` (two C's):
+BETA.10 U03. Two station settings were read here under the legacy one-C
+``CIVICAST_`` spellings while the station's own service registry -- the
+``Environment`` REG_MULTI_SZ under
+``HKLM\\SYSTEM\\CurrentControlSet\\Services\\CivicCastSupervisor``,
+which the native installer writes -- sets them under ``CIVICCAST_`` (two C's):
 
-- ``CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS=300``
-  (``preparer.preparation_timeout_seconds_from_env``)
-- ``CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS=1800``
-  (``source_plan.gstreamer_source_segment_seconds_from_env``)
+- ``CIVICCAST_EGRESS_PREPARATION_TIMEOUT_SECONDS=300``
+  (``preparer.preparation_timeout_seconds_from_env``; legacy spelling
+  ``CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS``)
+- ``CIVICCAST_GSTREAMER_SOURCE_SEGMENT_SECONDS=1800``
+  (``source_plan.gstreamer_source_segment_seconds_from_env``; legacy spelling
+  ``CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS``)
 
 Both readings fell through to their code defaults, so the station settings
 were silently ignored -- invisible only because both registry values happen
