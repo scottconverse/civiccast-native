@@ -1017,6 +1017,38 @@ def test_encoder_alive_at_startup_that_dies_later_is_recovered_on_a_later_tick(
     assert daemon.starts == ["gov"], f"recovery is once: {daemon.starts}"
 
 
+def test_per_pass_recovery_does_not_double_start_an_auto_start_channel(
+    tmp_path: Path,
+) -> None:
+    """The one ordering the per-pass sweep could get wrong: it runs INSIDE the
+    same pass as the auto_start policy, so both could fire for one stale row.
+
+    The startup sweep has no such risk (it runs before the first pass and the
+    pre-existing pending-start guard covers it, pinned by
+    ``test_auto_start_does_not_double_enqueue_after_recovery``). Here the sweep
+    queues the recovery start first, and the auto_start policy must find it
+    pending and stay quiet -- one operator-visible start, not two.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=True))
+    store.write_state(_row("ON_AIR", pid=4321, age_seconds=3600))
+    pid_is_dead, orphan_probe = _table_seams({})  # the encoder is gone
+    daemon = _RecordingDaemon(
+        store, work_dir=tmp_path, pid_is_dead=pid_is_dead, orphan_probe=orphan_probe
+    )
+    service = _automation(store, daemon)
+
+    service.run_once(now=datetime.now(UTC))
+
+    assert daemon.starts == ["gov"], (
+        "the per-pass sweep and the auto_start policy must produce ONE start for "
+        f"one stale claim; got {daemon.starts}"
+    )
+    assert store.peek_pending_commands("gov") == []
+    service.run_once(now=datetime.now(UTC))
+    assert daemon.starts == ["gov"], f"no duplicate on a later pass: {daemon.starts}"
+
+
 def test_two_service_restarts_each_queue_exactly_one_start(tmp_path: Path) -> None:
     """RED (U06): two consecutive restarts, each recovering once."""
     store = InMemoryEgressStore()
