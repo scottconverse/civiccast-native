@@ -17,7 +17,7 @@ self-driving:
   schedule yields a real source plan again, so a due program takes over the
   gap without operator action;
 * a channel pass that runs longer than
-  ``CIVICAST_AUTOMATION_PASS_WATCHDOG_SECONDS`` (30s by default) has the
+  ``CIVICCAST_AUTOMATION_PASS_WATCHDOG_SECONDS`` (30s by default) has the
   automation thread's live Python stack dumped into the log, repeatedly until
   the pass ends, and the pass's total duration reported when it does
   (``_PassWatchdog``) -- so the next stall says which call it is stuck in
@@ -256,8 +256,14 @@ ROLLOVER_LEAD_ENV = "CIVICCAST_EGRESS_ROLLOVER_LEAD_SECONDS"
 #: Both are read once per service, by
 #: ``pass_watchdog_threshold_seconds_from_env`` /
 #: ``pass_watchdog_repeat_seconds_from_env``.
-WATCHDOG_THRESHOLD_ENV = "CIVICAST_AUTOMATION_PASS_WATCHDOG_SECONDS"
-WATCHDOG_REPEAT_ENV = "CIVICAST_AUTOMATION_PASS_WATCHDOG_REPEAT_SECONDS"
+#: The registry's spelling is ``CIVICCAST_`` (two C's, 9 characters), as it is
+#: for every other variable this module reads. The one-C ``CIVICAST_`` form is
+#: one character short and renders identically in most fonts -- the drift U03
+#: fixed in ``env_vars.py`` and that this unit introduced here twice (the two
+#: constants, and the module docstring). These names are new in U04, so there
+#: is no legacy spelling to keep and no alias to honour.
+WATCHDOG_THRESHOLD_ENV = "CIVICCAST_AUTOMATION_PASS_WATCHDOG_SECONDS"
+WATCHDOG_REPEAT_ENV = "CIVICCAST_AUTOMATION_PASS_WATCHDOG_REPEAT_SECONDS"
 _DEFAULT_PASS_WATCHDOG_SECONDS = 30.0
 _DEFAULT_PASS_WATCHDOG_REPEAT_SECONDS = 60.0
 #: The watcher thread's name. Named for the thread it watches -- the production

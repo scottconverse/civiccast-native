@@ -31,6 +31,8 @@ from typing import Any
 import pytest
 
 from civiccast.egress.automation import (
+    WATCHDOG_REPEAT_ENV,
+    WATCHDOG_THRESHOLD_ENV,
     ChannelAutomationService,
     ChannelAutomationSettings,
     _PassWatchdog,
@@ -40,8 +42,11 @@ from civiccast.egress.automation import (
 from civiccast.egress.models import CanonicalProfile, EgressConfig, EgressSinkSpec
 from civiccast.egress.store import InMemoryEgressStore
 
-_THRESHOLD_ENV = "CIVICAST_AUTOMATION_PASS_WATCHDOG_SECONDS"
-_REPEAT_ENV = "CIVICAST_AUTOMATION_PASS_WATCHDOG_REPEAT_SECONDS"
+# Two C's, like every other variable in the station's registry -- the one-C form
+# is one character shorter and visually identical (see
+# ``test_the_registry_spelling_is_the_two_c_one_and_has_no_legacy_alias``).
+_THRESHOLD_ENV = "CIVICCAST_AUTOMATION_PASS_WATCHDOG_SECONDS"
+_REPEAT_ENV = "CIVICCAST_AUTOMATION_PASS_WATCHDOG_REPEAT_SECONDS"
 _WATCHDOG_THREAD = "civiccast-channel-automation-pass-watchdog"
 _AUTOMATION_LOGGER = "civiccast.egress.automation"
 _POLL_SECONDS = 0.01
@@ -388,6 +393,43 @@ def test_readers_default_to_30s_and_60s_and_pass_real_values_through(
     monkeypatch.setenv(_REPEAT_ENV, "5")
     assert pass_watchdog_threshold_seconds_from_env() == 12.5
     assert pass_watchdog_repeat_seconds_from_env() == 5.0
+
+
+def test_the_registry_spelling_is_the_two_c_one_and_has_no_legacy_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """U04 coordinator fix 1: the brief says ``CIVICCAST_`` (two C's) -- the
+    spelling the station's registry sets -- and this unit first shipped
+    ``CIVICAST_`` (one C), one character short.
+
+    That is the same defect class U03 fixed one unit earlier, and it survived a
+    byte-level spelling check during planning because the check was run against
+    the BRIEF: the brief's name was measured, then the constants were typed
+    from eye-memory. ``CIVICAST`` and ``CIVICCAST`` render identically in most
+    fonts, so no amount of re-reading catches this -- only measurement does.
+    Hence the prefix-length assertion below: it is machine-checkable where the
+    glyphs are not, and it fails if anyone ever types 8 characters again.
+
+    These variables are brand new, so there is no legacy spelling to keep: a
+    one-C alias must NOT be honoured, or an operator who sets the wrong name
+    would silently get a 30s detector while believing they changed it.
+    """
+
+    # 1. The literal, spelled out -- the operator-facing surface.
+    assert WATCHDOG_THRESHOLD_ENV == "CIVICCAST_AUTOMATION_PASS_WATCHDOG_SECONDS"
+    assert WATCHDOG_REPEAT_ENV == "CIVICCAST_AUTOMATION_PASS_WATCHDOG_REPEAT_SECONDS"
+    # 2. "CIVICCAST" is 9 characters; "CIVICAST" is 8 and looks the same.
+    assert {
+        len(name.split("_", 1)[0]) for name in (WATCHDOG_THRESHOLD_ENV, WATCHDOG_REPEAT_ENV)
+    } == {9}
+
+    # 3. The two-C name is the one that is read...
+    monkeypatch.setenv("CIVICCAST_AUTOMATION_PASS_WATCHDOG_SECONDS", "12.5")
+    assert pass_watchdog_threshold_seconds_from_env() == 12.5
+    monkeypatch.delenv(WATCHDOG_THRESHOLD_ENV)
+    # ...and the one-C name is inert, because it was never this variable's name.
+    monkeypatch.setenv("CIVICAST_AUTOMATION_PASS_WATCHDOG_SECONDS", "99")
+    assert pass_watchdog_threshold_seconds_from_env() == 30.0
 
 
 def test_zero_threshold_is_the_off_switch_and_is_not_a_warning(
