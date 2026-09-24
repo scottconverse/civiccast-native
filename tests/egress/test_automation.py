@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 import civiccast.egress.automation as automation_module
+import civiccast.egress.preparer as preparer_module
 from civiccast.egress.automation import ChannelAutomationService, ChannelAutomationSettings
 from civiccast.egress.models import (
     CanonicalProfile,
@@ -290,7 +291,7 @@ class TestGstRolloverLeadCoversPreparationTimeout:
     ``ChannelAutomationService._rollover_lead_seconds``.
     """
 
-    _PREP_ENV = "CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS"
+    _PREP_ENV = preparer_module.PREPARATION_TIMEOUT_ENV
     _LEAD_ENV = "CIVICCAST_EGRESS_ROLLOVER_LEAD_SECONDS"
 
     def _service(
@@ -479,7 +480,7 @@ class TestRolloverLeadDeferWatchdogCeiling:
     the lead exists to prevent, and clamping the computed default would make
     the lead lie about the worst-case preparation it covers."""
 
-    _PREP_ENV = "CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS"
+    _PREP_ENV = preparer_module.PREPARATION_TIMEOUT_ENV
     # Read off the module rather than retyped: U03 exists because two settings
     # were silently ignored by a one-character spelling difference, and this
     # test class had exactly that typo in it while being written.

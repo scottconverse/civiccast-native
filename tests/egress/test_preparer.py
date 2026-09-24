@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -294,13 +295,113 @@ def test_source_preparer_conform_timeout_fails_closed_and_cleans_partial_output(
     assert leftovers == []
 
 
-def test_source_preparation_timeout_env_has_a_positive_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS", raising=False)
-    assert preparation_timeout_seconds_from_env() > 0
-    monkeypatch.setenv("CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS", "bad")
-    assert preparation_timeout_seconds_from_env() > 0
+class TestPreparationTimeoutEnvSpelling:
+    """BETA.10 U03. ``preparation_timeout_seconds_from_env`` read only the
+    one-C ``CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS`` while the station's
+    service registry (``HKLM\\SYSTEM\\CurrentControlSet\\Services\\
+    CivicCastSupervisor``'s ``Environment``) sets the two-C
+    ``CIVICCAST_EGRESS_PREPARATION_TIMEOUT_SECONDS`` -- so the station's 300
+    was never read. These cover both spellings, the precedence between them,
+    and that the invalid-value guard still holds for whichever one supplied
+    the value.
+    """
+
+    _PRIMARY = "CIVICCAST_EGRESS_PREPARATION_TIMEOUT_SECONDS"
+    _LEGACY = "CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS"
+    _LOGGER = "civiccast.egress.preparer"
+
+    @pytest.fixture(autouse=True)
+    def _fresh_one_time_latch(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The deprecation/conflict warnings are one-time per service lifetime,
+        # so the latch has to start clean for each test that asserts on them.
+        # raising=False so the same fixture also runs against the
+        # pre-U03 module in the red-first demonstration, where this
+        # latch does not exist yet.
+        monkeypatch.setattr(preparer_module, "_RENAMED_ENV_WARNED", set(), raising=False)
+
+    def test_the_default_is_positive(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(self._PRIMARY, raising=False)
+        monkeypatch.delenv(self._LEGACY, raising=False)
+        assert preparation_timeout_seconds_from_env() > 0
+
+    def test_the_registry_spelling_is_honoured(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """RED before this change: with only the two-C name set the reader
+        returned the 300s default and never saw the 120 here."""
+
+        monkeypatch.delenv(self._LEGACY, raising=False)
+        monkeypatch.setenv(self._PRIMARY, "120")
+
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            assert preparation_timeout_seconds_from_env() == 120.0
+
+        assert caplog.records == []
+
+    def test_the_legacy_spelling_still_works_and_warns_once(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.delenv(self._PRIMARY, raising=False)
+        monkeypatch.setenv(self._LEGACY, "450")
+
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            assert preparation_timeout_seconds_from_env() == 450.0
+            assert preparation_timeout_seconds_from_env() == 450.0
+
+        deprecations = [record for record in caplog.records if self._LEGACY in record.getMessage()]
+        assert len(deprecations) == 1, [record.getMessage() for record in caplog.records]
+        assert self._PRIMARY in deprecations[0].getMessage()
+
+    def test_the_registry_spelling_wins_and_both_values_are_named(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setenv(self._LEGACY, "450")
+        monkeypatch.setenv(self._PRIMARY, "120")
+
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            assert preparation_timeout_seconds_from_env() == 120.0
+            assert preparation_timeout_seconds_from_env() == 120.0
+
+        conflicts = [record for record in caplog.records if "both set" in record.getMessage()]
+        assert len(conflicts) == 1, [record.getMessage() for record in caplog.records]
+        message = conflicts[0].getMessage()
+        assert "120" in message and "450" in message
+        assert self._PRIMARY in message and self._LEGACY in message
+
+    def test_both_spellings_agreeing_is_not_reported(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setenv(self._LEGACY, "450")
+        monkeypatch.setenv(self._PRIMARY, "450")
+
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            assert preparation_timeout_seconds_from_env() == 450.0
+
+        assert caplog.records == []
+
+    def test_a_blank_registry_value_falls_through_to_the_legacy_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A whitespace-only two-C value counts as unset, so an empty line in
+        an env file cannot mask a real value at the other spelling."""
+
+        monkeypatch.setenv(self._PRIMARY, "   ")
+        monkeypatch.setenv(self._LEGACY, "450")
+        assert preparation_timeout_seconds_from_env() == 450.0
+
+    @pytest.mark.parametrize("bad", ["bad", "-5", "0"])
+    def test_an_invalid_value_falls_back_and_names_the_spelling_used(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, bad: str
+    ) -> None:
+        monkeypatch.delenv(self._LEGACY, raising=False)
+        monkeypatch.setenv(self._PRIMARY, bad)
+
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            assert preparation_timeout_seconds_from_env() == 300.0
+
+        assert any(self._PRIMARY in record.getMessage() for record in caplog.records), [
+            record.getMessage() for record in caplog.records
+        ]
 
 
 def test_source_preparer_rejects_missing_source(tmp_path: Path) -> None:

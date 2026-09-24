@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
+import civiccast.egress.source_plan as source_plan_module
 from civiccast.egress import resolver
 from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.models import (
@@ -281,14 +283,92 @@ def test_gstreamer_preparation_horizon_rejects_non_positive_values(tmp_path: Pat
         )
 
 
-def test_gstreamer_preparation_horizon_env_uses_safe_default(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    assert DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS == 1800.0
-    monkeypatch.delenv("CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS", raising=False)
-    assert gstreamer_source_segment_seconds_from_env() == DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS
-    monkeypatch.setenv("CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS", "bad")
-    assert gstreamer_source_segment_seconds_from_env() == DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS
+class TestGstreamerSourceSegmentSecondsEnvSpelling:
+    """BETA.10 U03. ``gstreamer_source_segment_seconds_from_env`` read only the
+    one-C ``CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS`` while the station's
+    service registry (``HKLM\\SYSTEM\\CurrentControlSet\\Services\\
+    CivicCastSupervisor``'s ``Environment``) sets the two-C
+    ``CIVICCAST_GSTREAMER_SOURCE_SEGMENT_SECONDS=1800`` -- so the station
+    setting was ignored.
+    """
+
+    _PRIMARY = "CIVICCAST_GSTREAMER_SOURCE_SEGMENT_SECONDS"
+    _LEGACY = "CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS"
+    _LOGGER = "civiccast.egress.source_plan"
+
+    @pytest.fixture(autouse=True)
+    def _fresh_one_time_latch(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # raising=False so the same fixture also runs against the
+        # pre-U03 module in the red-first demonstration, where this
+        # latch does not exist yet.
+        monkeypatch.setattr(source_plan_module, "_RENAMED_ENV_WARNED", set(), raising=False)
+
+    def test_the_default_is_the_bounded_horizon(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        assert DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS == 1800.0
+        monkeypatch.delenv(self._PRIMARY, raising=False)
+        monkeypatch.delenv(self._LEGACY, raising=False)
+        assert (
+            gstreamer_source_segment_seconds_from_env() == DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS
+        )
+
+    def test_the_registry_spelling_is_honoured(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """RED before this change: with only the two-C name set the reader
+        returned the 1800s default rather than the 600 here."""
+
+        monkeypatch.delenv(self._LEGACY, raising=False)
+        monkeypatch.setenv(self._PRIMARY, "600")
+
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            assert gstreamer_source_segment_seconds_from_env() == 600.0
+
+        assert caplog.records == []
+
+    def test_the_legacy_spelling_still_works_and_warns_once(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.delenv(self._PRIMARY, raising=False)
+        monkeypatch.setenv(self._LEGACY, "600")
+
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            assert gstreamer_source_segment_seconds_from_env() == 600.0
+            assert gstreamer_source_segment_seconds_from_env() == 600.0
+
+        deprecations = [record for record in caplog.records if self._LEGACY in record.getMessage()]
+        assert len(deprecations) == 1, [record.getMessage() for record in caplog.records]
+        assert self._PRIMARY in deprecations[0].getMessage()
+
+    def test_the_registry_spelling_wins_and_both_values_are_named(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setenv(self._LEGACY, "600")
+        monkeypatch.setenv(self._PRIMARY, "900")
+
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            assert gstreamer_source_segment_seconds_from_env() == 900.0
+
+        conflicts = [record for record in caplog.records if "both set" in record.getMessage()]
+        assert len(conflicts) == 1, [record.getMessage() for record in caplog.records]
+        message = conflicts[0].getMessage()
+        assert "900" in message and "600" in message
+
+    @pytest.mark.parametrize("bad", ["bad", "-5", "0"])
+    def test_an_invalid_value_falls_back_and_names_the_spelling_used(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, bad: str
+    ) -> None:
+        monkeypatch.delenv(self._LEGACY, raising=False)
+        monkeypatch.setenv(self._PRIMARY, bad)
+
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            assert (
+                gstreamer_source_segment_seconds_from_env()
+                == DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS
+            )
+
+        assert any(self._PRIMARY in record.getMessage() for record in caplog.records), [
+            record.getMessage() for record in caplog.records
+        ]
 
 
 def test_scheduled_uncommitted_item_is_excluded_from_the_plan(tmp_path: Path) -> None:

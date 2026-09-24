@@ -14,6 +14,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from civiccast.egress.env_vars import resolve_renamed_env
 from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.models import (
     MAX_PLAYLIST_SUBCHAINS,
@@ -69,6 +70,19 @@ SLATE_RENDER_VERSION = 1
 # not create a large multi-chain pipeline.
 DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS = 1800.0
 
+#: BETA.10 U03: the spelling the station's service registry actually sets (the
+#: ``Environment`` REG_MULTI_SZ under
+#: ``HKLM\SYSTEM\CurrentControlSet\Services\CivicCastSupervisor``, written by
+#: the native installer). This reader used one C, so the registry's ``=1800``
+#: never reached it. The one-C name below stays readable as a legacy fallback
+#: -- see ``civiccast.egress.env_vars.resolve_renamed_env``.
+GSTREAMER_SOURCE_SEGMENT_SECONDS_ENV = "CIVICCAST_GSTREAMER_SOURCE_SEGMENT_SECONDS"
+LEGACY_GSTREAMER_SOURCE_SEGMENT_SECONDS_ENV = "CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS"
+
+#: One-time-warning latch for the legacy/conflict messages -- see
+#: ``env_vars.resolve_renamed_env``'s ``warned`` parameter.
+_RENAMED_ENV_WARNED: set[str] = set()
+
 
 def gstreamer_source_segment_seconds_from_env() -> float:
     """Return the bounded GStreamer preparation horizon.
@@ -82,23 +96,36 @@ def gstreamer_source_segment_seconds_from_env() -> float:
     Operators may tune the horizon for their encoder hardware, but non-positive
     or malformed values fall back to the safe default rather than disabling the
     bound.
+
+    BETA.10 U03: reads ``GSTREAMER_SOURCE_SEGMENT_SECONDS_ENV``, falling back
+    to the legacy ``LEGACY_GSTREAMER_SOURCE_SEGMENT_SECONDS_ENV`` spelling --
+    see ``env_vars``. The station's service registry sets the two-C name, which
+    this reader used to miss entirely.
     """
 
-    raw = os.environ.get("CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS", "").strip()
-    if not raw:
+    resolved = resolve_renamed_env(
+        name=GSTREAMER_SOURCE_SEGMENT_SECONDS_ENV,
+        legacy_name=LEGACY_GSTREAMER_SOURCE_SEGMENT_SECONDS_ENV,
+        logger=_LOG,
+        warned=_RENAMED_ENV_WARNED,
+    )
+    if resolved is None:
         return DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS
+    env_name, raw = resolved
     try:
         value = float(raw)
     except ValueError:
         _LOG.warning(
-            "Invalid CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS=%r; using %.1fs.",
+            "Invalid %s=%r; using %.1fs.",
+            env_name,
             raw,
             DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS,
         )
         return DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS
     if value <= 0:
         _LOG.warning(
-            "CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS must be positive; using %.1fs.",
+            "%s must be positive; using %.1fs.",
+            env_name,
             DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS,
         )
         return DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS

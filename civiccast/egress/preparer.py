@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from civiccast.egress.env_vars import resolve_renamed_env
 from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.models import (
     CanonicalProfile,
@@ -226,6 +227,18 @@ def _cache_budget_bytes() -> float:
     return gb * 1e9
 
 
+#: BETA.10 U03: the spelling the station's service registry actually sets.
+#: The station's ``Environment`` REG_MULTI_SZ (see ``env_vars``) uses two C's;
+#: this reader used one, so ``=300`` was silently inert. The one-C name below
+#: is still read as a legacy fallback -- see ``env_vars.resolve_renamed_env``.
+PREPARATION_TIMEOUT_ENV = "CIVICCAST_EGRESS_PREPARATION_TIMEOUT_SECONDS"
+LEGACY_PREPARATION_TIMEOUT_ENV = "CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS"
+
+#: One-time-warning latch for the legacy/conflict messages above -- see
+#: ``env_vars.resolve_renamed_env``'s ``warned`` parameter.
+_RENAMED_ENV_WARNED: set[str] = set()
+
+
 def preparation_timeout_seconds_from_env() -> float:
     """Return the fail-closed timeout for one source-preparation ffmpeg call.
 
@@ -234,23 +247,36 @@ def preparation_timeout_seconds_from_env() -> float:
     channel in ``STARTING`` forever.  The default is generous for a bounded
     GStreamer segment and can be tuned for slower hardware without disabling
     the bound.
+
+    BETA.10 U03: reads ``PREPARATION_TIMEOUT_ENV``, falling back to the legacy
+    ``LEGACY_PREPARATION_TIMEOUT_ENV`` spelling -- see ``env_vars``. Every
+    invalid or non-positive value is still logged and replaced by the default,
+    whichever spelling supplied it, so a typo can never disable the bound.
     """
 
-    raw = os.environ.get("CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS", "").strip()
-    if not raw:
+    resolved = resolve_renamed_env(
+        name=PREPARATION_TIMEOUT_ENV,
+        legacy_name=LEGACY_PREPARATION_TIMEOUT_ENV,
+        logger=_LOG,
+        warned=_RENAMED_ENV_WARNED,
+    )
+    if resolved is None:
         return _DEFAULT_PREPARATION_TIMEOUT_SECONDS
+    env_name, raw = resolved
     try:
         value = float(raw)
     except ValueError:
         _LOG.warning(
-            "Invalid CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS=%r; using %.1fs.",
+            "Invalid %s=%r; using %.1fs.",
+            env_name,
             raw,
             _DEFAULT_PREPARATION_TIMEOUT_SECONDS,
         )
         return _DEFAULT_PREPARATION_TIMEOUT_SECONDS
     if value <= 0:
         _LOG.warning(
-            "CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS must be positive; using %.1fs.",
+            "%s must be positive; using %.1fs.",
+            env_name,
             _DEFAULT_PREPARATION_TIMEOUT_SECONDS,
         )
         return _DEFAULT_PREPARATION_TIMEOUT_SECONDS
