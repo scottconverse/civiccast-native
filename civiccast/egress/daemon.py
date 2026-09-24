@@ -1022,7 +1022,7 @@ class EgressDaemon:
     )
 
     def reconcile_stale_state(self) -> list[str]:
-        """Startup reconciliation: clear persisted on-air claims with DEAD PIDs.
+        """STARTUP sweep: clear persisted on-air claims with a DEAD encoder.
 
         Live defect (2026-09-24): after a supervisor restart, ``egress_states``
         kept reading ON_AIR for three channels whose encoder PIDs no longer
@@ -1034,9 +1034,8 @@ class EgressDaemon:
         auto_start was never reconciled and its stale row was trusted forever.
 
         For each enabled channel whose persisted row claims an on-air state AND
-        whose recorded PID is *definitively dead* (see ``_pid_is_dead``: a
-        tri-state predicate that fails CLOSED on AccessDenied/unknown, unlike
-        the orphan probe's ``None``), it atomically:
+        whose encoder is *definitively gone* (see ``_encoder_is_gone``), it
+        atomically:
 
         * clears the stale claim by writing STOPPED, and
         * enqueues a ``start`` command issued by ``restart-recovery``,
@@ -1046,36 +1045,81 @@ class EgressDaemon:
         hazard that would otherwise strand the channel dark because STOPPED is
         not itself reconciled.
 
+        This is the STARTUP arm, so it also clears a claim that carries NO pid
+        at all: a crash before the pid was recorded leaves STARTING/ON_AIR with
+        ``pid=None``, and a just-started daemon provably owns no encoder for any
+        channel. The per-pass arm (:meth:`reconcile_dead_encoders`) deliberately
+        does not, because on a running daemon that shape can be its own work.
+
         Safety properties:
 
-        * a LIVE pid is never touched (``_pid_is_dead`` returns False);
-        * an UNKNOWN liveness result (AccessDenied, psutil error) is never
-          treated as dead -- fail closed, leave the row;
-        * STOPPED / FALLBACK_SLATE rows are never touched;
+        * a LIVE pid is never touched, and neither is a pid whose identity
+          cannot be read -- fail closed, leave the row;
+        * a channel this daemon tracks is never touched, even if its worker has
+          already exited (``_poll_process`` owns that transition);
+        * STOPPED / FALLBACK_SLATE / DRAINING rows are never touched;
         * the recovery command id is UNIQUE per attempt (and <=120 chars), so a
           LATER restart queues a fresh start (a constant id would be skipped
           forever by the SQL store's duplicate-id guard);
         * idempotent within one attempt: after recovery the row is STOPPED, so
           a re-run reports nothing and queues nothing.
         """
+        return self._reconcile_stale_claims(reconcile_pidless_claims=True)
+
+    def reconcile_dead_encoders(self) -> list[str]:
+        """PER-PASS sweep: clear persisted on-air claims whose encoder is GONE.
+
+        The startup arm above runs once. A row whose encoder was still alive at
+        that instant and died afterwards is invisible to it: ``_poll_process``
+        returns immediately for a channel with no *tracked* process, and a
+        channel that is not ``auto_start`` has no other supervisor -- so the
+        frozen-HLS-with-a-stale-ON_AIR-row state returns with no restart at all.
+        This arm runs on every automation pass and reconciles those rows with
+        the same atomic store operation.
+
+        It reconciles only pid-BEARING claims: a pid-less claim on a running
+        daemon can be this daemon's own in-flight work (see
+        ``_reconcile_stale_claims``). Returns the channel ids recovered.
+        """
+        return self._reconcile_stale_claims(reconcile_pidless_claims=False)
+
+    def _reconcile_stale_claims(self, *, reconcile_pidless_claims: bool) -> list[str]:
+        """Shared body of the two sweeps; see their docstrings for the contract."""
+
         recovered: list[str] = []
         for config in self._store.list_configs():
             if not config.enabled:
                 continue
             channel_id = config.channel_id
-            if self.has_live_process(channel_id):
+            if channel_id in self._processes:
+                # This daemon OWNS a worker for the channel -- and a worker that
+                # has ALREADY exited stays owned: ``_poll_process`` is what sees
+                # that exit and owns the crash relaunch, its back-off latch and
+                # its fallback escalation, all of which key off the persisted row
+                # still reading ON_AIR. Reconciling the row here would race that
+                # path and replace its pacing with a bare start on the same tick.
+                # (This subsumes the ``has_live_process`` short-circuit the first
+                # cut used, which let a just-exited worker through: it reported
+                # no live process, so the sweep cleared a row it did not own.)
                 continue
             state = self._store.read_state(channel_id)
             if state is None or state.state not in self._STALE_RECONCILE_STATES:
                 continue
             if state.pid is None:
-                # Cannot confirm death of an unknown pid: leave it to the
-                # normal automation/poll path rather than guessing.
-                continue
-            if self._pid_is_dead(state.pid) is not True:
-                # definitively-dead is REQUIRED; False (alive) and None
-                # (unknown/AccessDenied) both mean "do not touch".
-                continue
+                if not reconcile_pidless_claims:
+                    # On a RUNNING daemon a pid-less claim can be this daemon's
+                    # own in-flight work: ``_relaunch_after_crash``'s deferred
+                    # (back-off) branch persists exactly this shape -- STARTING,
+                    # no pid, no tracked process -- for the whole crash-loop
+                    # cooldown, and ``_service_backoff_relaunch`` is what services
+                    # it. Only the startup sweep, where a fresh instance provably
+                    # owns no encoder, may clear it.
+                    continue
+                detail = "carried no encoder pid"
+            else:
+                if not self._encoder_is_gone(state):
+                    continue
+                detail = f"referenced dead encoder pid {state.pid}"
             command = EgressCommand(
                 channel_id=channel_id,
                 action="start",
@@ -1095,23 +1139,64 @@ class EgressDaemon:
                     updated_at=datetime.now(UTC),
                     pid=None,
                     last_error=(
-                        "restart recovery: persisted "
-                        f"{state.state} referenced dead encoder pid {state.pid}; "
+                        f"restart recovery: persisted {state.state} claim {detail}; "
                         "cleared stale claim and queued a start"
                     ),
                 ),
                 command,
             )
             _LOG.warning(
-                "channel %s: cleared stale persisted %s claim (dead encoder pid %s) "
-                "and atomically queued restart-recovery start %s.",
+                "channel %s: cleared stale persisted %s claim (%s) and "
+                "atomically queued restart-recovery start %s.",
                 channel_id,
                 state.state,
-                state.pid,
+                detail,
                 command.command_id,
             )
             recovered.append(channel_id)
         return recovered
+
+    def _encoder_is_gone(self, state: EgressStateRow) -> bool:
+        """True when the encoder the persisted row describes is definitively GONE.
+
+        ``_pid_is_dead`` answers only "does SOME process hold this pid?". After a
+        reboot Windows hands a dead encoder's pid to an unrelated process, so the
+        stale row's pid reads as ALIVE and the channel is never recovered -- the
+        exact 2026-09-24 shape. The question is "is this OUR encoder?", and the
+        identity evidence available is AGE: ``_write_state`` stamps
+        ``updated_at`` while ``_poll_process`` is polling a LIVE encoder, so a
+        process holding the pid that was CREATED AFTER that instant cannot be the
+        encoder the row describes.
+
+        The image name is NOT usable evidence here: the encoder worker runs as
+        ``<interpreter> <worker-script> <graph> <control-channel>``
+        (``gst/strategy.py``), so its image name is shared with the control plane
+        and with every other job (unlike the ffmpeg-only orphan probe in
+        ``_reap_orphan``, which can and does check the name).
+
+        Fails CLOSED on every uncertainty:
+
+        * liveness ``None`` (AccessDenied, psutil error) -> not gone;
+        * the pid is held by a process whose identity cannot be read (it exited
+          between the two probes, or access is denied) -> not gone;
+        * a process created BEFORE the row's own last write -> that is ours, and
+          is never touched.
+        """
+
+        pid = state.pid
+        if pid is None:  # pragma: no cover - callers gate on this
+            return False
+        dead = self._pid_is_dead(pid)
+        if dead is None:
+            # Unknown (AccessDenied / psutil error): fail closed.
+            return False
+        if dead:
+            return True
+        info = self._orphan_probe(pid)
+        if info is None:
+            # The pid exists but who holds it is unknowable: fail closed.
+            return False
+        return info.created_at > _epoch_seconds(state.updated_at)
 
     def has_manual_override(self, channel_id: str) -> bool:
         """True while an operator override (live takeover / forced fallback slate)
@@ -4366,6 +4451,22 @@ def _default_pid_is_dead(pid: int) -> bool | None:
     except Exception:
         return None
     return True
+
+
+def _epoch_seconds(when: datetime) -> float:
+    """``when`` as an epoch float, treating a NAIVE datetime as UTC.
+
+    ``EgressStateRow.updated_at`` is aware in production (the Postgres column is
+    ``DateTime(timezone=True)``), but the SQLite backend hands it back naive, and
+    the daemon writes UTC (``datetime.now(UTC)``) on every path. A naive value is
+    therefore a UTC value whose offset was dropped, not a local-time one; calling
+    ``.timestamp()`` on it directly would silently shift it by the host's offset
+    and could make a live encoder look like a reincarnated pid.
+    """
+
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return when.timestamp()
 
 
 def _default_orphan_probe(pid: int) -> OrphanInfo | None:
