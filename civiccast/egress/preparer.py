@@ -1084,66 +1084,6 @@ class SourcePreparer:
                 self._warming.discard(key)
             _LOG.exception("Failed to queue conform-cache warm; next airing re-warms.")
 
-    @staticmethod
-    def _graph_referenced_plan_dirs(
-        channel_prepared_root: Path,
-    ) -> frozenset[Path]:
-        """Return per-plan dirs the channel's current graph still references.
-
-        The graph is the worker's durable read list and can outlive in-memory
-        daemon bookkeeping across a reload/start transition. It is only a
-        conservative backstop: absent, unreadable, or malformed graph data
-        protects nothing; a referenced path outside this channel's prepared
-        root is ignored so a graph cannot nominate an arbitrary sibling for
-        preservation. Graph staleness or incompleteness remains possible, so
-        this is not a substitute for daemon lifecycle correctness.
-        """
-
-        try:
-            graph_path = channel_prepared_root.parent / "playout-graph.json"
-            graph = json.loads(graph_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return frozenset()
-        if not isinstance(graph, dict):
-            return frozenset()
-        try:
-            resolved_root = channel_prepared_root.resolve()
-        except OSError:
-            return frozenset()
-        graph_paths: set[Path] = set()
-        sources = graph.get("sources")
-        if not isinstance(sources, list):
-            return frozenset()
-        for source in sources:
-            if not isinstance(source, dict):
-                continue
-            subchains = source.get("subchains")
-            if not isinstance(subchains, list):
-                continue
-            for subchain in subchains:
-                if not isinstance(subchain, list):
-                    continue
-                for element in subchain:
-                    if not isinstance(element, dict):
-                        continue
-                    props = element.get("props")
-                    if not isinstance(props, dict):
-                        continue
-                    location = props.get("location")
-                    if not isinstance(location, str):
-                        continue
-                    try:
-                        candidate = Path(location).resolve()
-                    except OSError:
-                        continue
-                    try:
-                        candidate.relative_to(resolved_root)
-                    except ValueError:
-                        continue
-                    if candidate.parent.parent == resolved_root:
-                        graph_paths.add(candidate.parent)
-        return frozenset(graph_paths)
-
     def release(self, plan_dir: Path | None) -> None:
         """F3 fix: immediately reclaim ONE specific per-plan directory the caller
         independently knows is safe to remove -- e.g. the daemon calls this for
@@ -1169,12 +1109,6 @@ class SourcePreparer:
         next real airing of that asset re-populates the cache normally.
         """
         if plan_dir is None:
-            return
-        # This is a direct deletion path, not GC: preserve an exact directory
-        # the current graph still names, then let the graph be replaced or the
-        # directory released by a later transition. A missing/unreadable graph
-        # protects nothing and preserves the prior release semantics.
-        if plan_dir in self._graph_referenced_plan_dirs(plan_dir.parent):
             return
         with contextlib.suppress(OSError):
             shutil.rmtree(plan_dir)
@@ -1226,12 +1160,6 @@ class SourcePreparer:
                 with contextlib.suppress(OSError):
                     entry.unlink()
         plan_dirs = [entry for entry in entries if entry.is_dir()]
-        # A graph can outlive in-memory daemon bookkeeping during a reload/start
-        # transition. Treat its filesrc locations as a final source of truth:
-        # never reclaim a prepared dir the worker may still open. The shared
-        # helper fails closed on absent/malformed/out-of-root graph data and
-        # leaves graph staleness/incompleteness as a documented limitation.
-        keep = keep | self._graph_referenced_plan_dirs(channel_prepared_root)
 
         def _mtime(path: Path) -> float:
             try:
