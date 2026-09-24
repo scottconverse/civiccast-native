@@ -1165,6 +1165,15 @@ class ChannelAutomationService:
         """One pass over every enabled channel; returns the channel ids seen."""
 
         self._drain_as_run_outbox()
+        # BETA.10 U06: the startup sweep runs ONCE, so a persisted on-air row
+        # whose encoder was still alive at that instant and died afterwards was
+        # never reconciled -- `_poll_process` returns immediately for a channel
+        # with no tracked process, and a channel that is not auto_start has no
+        # other supervisor, so the frozen-HLS/stale-ON_AIR state simply came
+        # back. Sweep again on every pass, before the per-channel work, so a
+        # recovery start queued here is drained by that channel's own
+        # `process_once` below.
+        self._reconcile_dead_encoders_this_pass()
         seen: list[str] = []
         for config in self._store.list_configs():
             if not config.enabled:
@@ -1223,6 +1232,36 @@ class ChannelAutomationService:
             self._as_run_outbox.ensure_started()
         except Exception:
             _LOG.exception("As-run outbox drain tick failed unexpectedly; retrying next poll.")
+
+    def _reconcile_dead_encoders_this_pass(self) -> None:
+        """BETA.10 U06: per-pass sweep for persisted claims whose encoder died.
+
+        The startup sweep (``reconcile_stale_state``, called once from
+        ``run_forever``) cannot see a row whose encoder was still alive at that
+        instant and died afterwards, and nothing else supervises a channel that
+        is not ``auto_start``: the daemon's ``_poll_process`` returns immediately
+        for a channel with no *tracked* process. Same best-effort contract as the
+        startup call -- a sweep hiccup must never stop the pass -- and the same
+        ``getattr`` guard, so a daemon double in a test that does not implement
+        the sweep is simply skipped.
+        """
+
+        reconcile = getattr(self._daemon, "reconcile_dead_encoders", None)
+        if reconcile is None:
+            return
+        try:
+            recovered = reconcile()
+            if recovered:
+                _LOG.warning(
+                    "Channel automation pass reconciliation cleared stale on-air "
+                    "state and queued recovery starts for: %s",
+                    ", ".join(recovered),
+                )
+        except Exception:
+            _LOG.exception(
+                "Per-pass stale-state reconciliation failed; this pass continues "
+                "(the channel is still supervised on the normal poll path)."
+            )
 
     def _run_channel_pass(self, config: Any, channel_id: str, now: datetime | None) -> None:
         """BETA.10 U04: the pass's own watchdog boundary.

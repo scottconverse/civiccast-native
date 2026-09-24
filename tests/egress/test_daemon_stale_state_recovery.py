@@ -93,6 +93,7 @@ def _automation(store: InMemoryEgressStore, daemon: EgressDaemon) -> ChannelAuto
         settings=ChannelAutomationSettings(),
     )
 
+
 class _RecordingDaemon(EgressDaemon):
     """Daemon that records start intents instead of spawning encoders.
 
@@ -116,7 +117,9 @@ class _RecordingDaemon(EgressDaemon):
             # Deterministic tri-state liveness for tests: a pid in live_pids is
             # alive (False), anything else is definitively dead (True); tests
             # that need UNKNOWN inject ``pid_is_dead=lambda _p: None``.
-            pid_is_dead=pid_is_dead if pid_is_dead is not None else (lambda p: p not in (live_pids or set())),
+            pid_is_dead=pid_is_dead
+            if pid_is_dead is not None
+            else (lambda p: p not in (live_pids or set())),
             # U06: the identity probe is a separate seam (create-time), so a
             # test can model pid REUSE -- a pid that exists but belongs to a
             # process other than the encoder the row describes.
@@ -365,6 +368,7 @@ def test_definitively_dead_pid_uses_atomic_store_op(tmp_path: Path) -> None:
 
 # --- SQL fail-closed IntegrityError + InMemory thread-safety (audit rev2) ----
 
+
 def _fake_pg_store(fail_commit: bool):
     """A PostgresEgressStore over a fake session factory.
 
@@ -441,8 +445,7 @@ def test_sql_recover_raises_and_writes_nothing_on_integrity_error() -> None:
         store.recover_stale_state(row, cmd)
 
     assert committed_states == [], (
-        "no state-only commit may occur on any IntegrityError; "
-        f"committed {committed_states}"
+        f"no state-only commit may occur on any IntegrityError; committed {committed_states}"
     )
 
 
@@ -519,7 +522,11 @@ def test_inmemory_recover_publishes_command_before_state(tmp_path: Path) -> None
     def _reader() -> None:
         while not stop.is_set():
             row = store.read_state("gov")
-            if row is not None and row.state == "STOPPED" and not store.peek_pending_commands("gov"):
+            if (
+                row is not None
+                and row.state == "STOPPED"
+                and not store.peek_pending_commands("gov")
+            ):
                 violations.append((row.state, tuple(store.peek_pending_commands("gov"))))
 
     reader = threading.Thread(target=_reader, daemon=True)
@@ -537,6 +544,7 @@ def test_inmemory_recover_publishes_command_before_state(tmp_path: Path) -> None
 
 
 # --- coordinator rev5: DRAINING terminal intent + auto_start duplicate -------
+
 
 def test_persisted_draining_with_dead_pid_is_never_restarted(tmp_path: Path) -> None:
     """RED: DRAINING is explicit off-air intent -- restart must NOT auto-start it.
@@ -601,6 +609,7 @@ def test_auto_start_does_not_double_enqueue_after_recovery(tmp_path: Path) -> No
 
 # --- REV5 precision: distinguish MY fix from pre-existing auto_start policy ---
 
+
 def test_reconcile_does_not_recover_draining_even_when_auto_start(tmp_path: Path) -> None:
     """MY fix's own guarantee: reconciliation alone never recovers DRAINING.
 
@@ -613,9 +622,7 @@ def test_reconcile_does_not_recover_draining_even_when_auto_start(tmp_path: Path
     store = InMemoryEgressStore()
     store.upsert_config(_config(auto_start=True))
     store.write_state(
-        EgressStateRow(
-            channel_id="gov", state="DRAINING", updated_at=datetime.now(UTC), pid=909090
-        )
+        EgressStateRow(channel_id="gov", state="DRAINING", updated_at=datetime.now(UTC), pid=909090)
     )
     daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: True)
 
@@ -639,9 +646,7 @@ def test_preexisting_auto_start_still_starts_draining_channel(tmp_path: Path) ->
     store = InMemoryEgressStore()
     store.upsert_config(_config(auto_start=True))
     store.write_state(
-        EgressStateRow(
-            channel_id="gov", state="DRAINING", updated_at=datetime.now(UTC), pid=909090
-        )
+        EgressStateRow(channel_id="gov", state="DRAINING", updated_at=datetime.now(UTC), pid=909090)
     )
     daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: True)
     daemon.reconcile_stale_state()  # no-op for DRAINING
@@ -662,9 +667,7 @@ def test_draining_non_auto_start_stays_off_air_after_restart(tmp_path: Path) -> 
     store = InMemoryEgressStore()
     store.upsert_config(_config(auto_start=False))
     store.write_state(
-        EgressStateRow(
-            channel_id="gov", state="DRAINING", updated_at=datetime.now(UTC), pid=909090
-        )
+        EgressStateRow(channel_id="gov", state="DRAINING", updated_at=datetime.now(UTC), pid=909090)
     )
     daemon = _RecordingDaemon(store, work_dir=tmp_path, pid_is_dead=lambda _p: True)
     assert daemon.reconcile_stale_state() == []
@@ -974,7 +977,10 @@ def test_encoder_alive_at_startup_that_dies_later_is_recovered_on_a_later_tick(
         "a row whose encoder died AFTER the startup sweep must still be "
         "reconciled -- otherwise a non-auto_start channel stays dark forever"
     )
-    assert [c.action for c in store.peek_pending_commands("gov")] == ["start"]
+    # The recovery start is queued BEFORE the per-channel loop and drained by
+    # that channel's own ``process_once`` in the same pass, so it is processed
+    # rather than left pending -- and exactly once.
+    assert store.peek_pending_commands("gov") == [], "the recovery start was drained"
     service.run_once(now=now)
     assert daemon.starts == ["gov"], f"recovery is once: {daemon.starts}"
 
