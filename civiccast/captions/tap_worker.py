@@ -74,7 +74,10 @@ from civiccast.captions.live_sidecar import (
 from civiccast.captions.models import AudioChunk, CaptionCue
 from civiccast.captions.phase_timing import phase_timing_from_env
 from civiccast.captions.pipeline import CaptionPipeline
-from civiccast.captions.retention import CaptionEvidenceRetentionPolicy
+from civiccast.captions.retention import (
+    RETENTION_SWEEP_SECONDS,
+    CaptionEvidenceRetentionPolicy,
+)
 from civiccast.captions.review import CaptionReviewAudioEvidence, CaptionReviewStore
 from civiccast.captions.review_media import write_caption_review_audio_evidence
 from civiccast.captions.runtime import CaptionRuntime
@@ -123,14 +126,10 @@ _THREAD_PRIORITY_BELOW_NORMAL = -1
 _STATUS_REFRESH_SECONDS = 30.0
 
 #: How often the retention sweep may run, independent of the scan interval.
-#: ``enforce_discovered`` lists review rows from the database and SHA-256s
-#: every chunk it considers; at the 2-second scan cadence that is a database
-#: query and a pass over the recorded audio 30 times a minute, forever, to
-#: enforce a schedule measured in days. Retention correctness does not depend
-#: on the interval -- only on running often enough that the schedule is
-#: honoured -- so it gets its own, much slower clock. The first scan after
-#: startup always sweeps.
-_RETENTION_SWEEP_SECONDS = 60.0
+#: The number itself is owned by the retention policy module, which explains
+#: it: ONE cadence for every sweep in the process, this one and the egress
+#: readiness sweep (``CaptionRetentionVerdictSource``).
+_RETENTION_SWEEP_SECONDS = RETENTION_SWEEP_SECONDS
 
 #: How long the SCAN thread will wait for the FIRST retention verdict before
 #: proceeding fail-closed.  Deliberately far below the 5 s segment cadence so a

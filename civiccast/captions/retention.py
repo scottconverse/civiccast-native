@@ -1,20 +1,34 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""Fail-closed retention policy for local caption evidence."""
+"""Fail-closed retention policy for local caption evidence.
+
+Discovery here is EXPENSIVE and therefore never runs on a channel-start path:
+MEASURED LIVE 2026-09-24 (installed station) one ``enforce_discovered`` over
+15,045 processed public chunks took 60.5 s -- a ``resolve()``, a ``stat()``, a
+``_wav_duration()`` and a full-read ``_sha256()`` per chunk -- and the egress
+readiness gate ran it synchronously on the automation thread, holding every
+other channel's start behind it (the automation watchdog fires at 30 s).  The
+verdict is now produced by :class:`CaptionRetentionVerdictSource` on a
+background thread and the start path only READS it; see that class for the
+freshness/pending contract, and ``check_storage_divergence`` for the one
+refusal that stays synchronous (it costs three syscalls, not a scan).
+"""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import threading
+import time
 import wave
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 from civiccast.captions.review import CaptionReviewStore
 from civiccast.captions.review_media import (
@@ -22,10 +36,36 @@ from civiccast.captions.review_media import (
     verify_caption_review_audio_evidence,
 )
 
+_LOG = logging.getLogger(__name__)
+
 _RAW_CHUNK_MAX_AGE = timedelta(hours=24)
 _RESOLVED_EVIDENCE_MAX_AGE = timedelta(days=90)
 _AUDIT_LOCKS: dict[Path, threading.RLock] = {}
 _AUDIT_LOCKS_GUARD = threading.Lock()
+
+#: How often a retention sweep may run, independent of the scan interval.
+#: ``enforce_discovered`` lists review rows from the database and SHA-256s
+#: every chunk it considers; at the 2-second scan cadence that is a database
+#: query and a pass over the recorded audio 30 times a minute, forever, to
+#: enforce a schedule measured in days. Retention correctness does not depend
+#: on the interval -- only on running often enough that the schedule is
+#: honoured -- so it gets its own, much slower clock. The first scan after
+#: startup always sweeps. ONE number for both sweeps in a process: the caption
+#: tap's own sweep and the egress readiness sweep below.
+RETENTION_SWEEP_SECONDS = 60.0
+
+#: How old the shared readiness verdict may be before a channel start stops
+#: trusting it: three sweep intervals, so a start after two consecutive
+#: cadences still gets a real verdict rather than the pending answer.
+RETENTION_VERDICT_FRESHNESS_SECONDS = 3 * RETENTION_SWEEP_SECONDS
+
+#: One full discovery at a time, PROCESS-wide. Two sweeps of this archive can
+#: otherwise overlap and SHA-256 the same bytes concurrently -- the caption
+#: tap's own sweep (``CaptionTapWorker._run_retention_sweep``) and
+#: :class:`CaptionRetentionVerdictSource`'s -- which would double the disk load
+#: on a station whose whole defect is disk contention. Held around the heavy
+#: half only: a divergence refusal never queues behind a running scan.
+_DISCOVERY_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True)
@@ -38,6 +78,26 @@ class CaptionRetentionResult:
     deleted_paths: tuple[Path, ...] = ()
     protected_paths: tuple[Path, ...] = ()
     audit_records: tuple[dict[str, object], ...] = ()
+
+
+#: What a channel start sees when no fresh verdict exists. NOT a refusal --
+#: the program starts, and WAV retention stays off through the caption tap's
+#: own pending rule (``ReviewPersistenceMode`` ``"text-only"``,
+#: ``civiccast/captions/tap_worker.py::_review_persistence_guard``), which
+#: reads the tap's state and never this value. Shared: the dataclass is frozen.
+_PENDING_VERDICT = CaptionRetentionResult(
+    ready=True,
+    refusal_reason=None,
+    requires_fallback_slate=False,
+)
+
+
+@dataclass(frozen=True)
+class _Verdict:
+    """One published verdict and the monotonic instant it was published."""
+
+    result: CaptionRetentionResult
+    published_at: float
 
 
 @dataclass(frozen=True)
@@ -157,16 +217,17 @@ class CaptionEvidenceRetentionPolicy:
             audit_records=tuple(records),
         )
 
-    def enforce_discovered(
-        self,
-        *,
-        tap_root: Path | None,
-        review_store: CaptionReviewStore,
-        segment_seconds: float,
-    ) -> CaptionRetentionResult:
-        """Classify real persisted review/evidence state on the local volume."""
+    def check_storage_divergence(self, *, tap_root: Path | None) -> CaptionRetentionResult | None:
+        """The one refusal this policy still makes, and it is CHEAP.
 
-        self._refresh_system_capacity()
+        A tap directory and an evidence root on different volumes is a real
+        routing hazard, so it refuses readiness -- but it is three syscalls
+        (``resolve``, ``stat``, ``stat``), not a scan. It is deliberately
+        separate from the heavy half: the egress start path runs this
+        synchronously and must never have to wait for a running discovery.
+        Returns ``None`` when the two are on the same volume.
+        """
+
         if (
             tap_root is not None
             and tap_root.is_dir()
@@ -191,12 +252,30 @@ class CaptionEvidenceRetentionPolicy:
                 requires_fallback_slate=True,
                 audit_records=(record,),
             )
-        candidates = self._discover_candidates(
-            tap_root=tap_root,
-            review_store=review_store,
-            segment_seconds=segment_seconds,
-        )
-        return self.enforce(candidates=candidates)
+        return None
+
+    def enforce_discovered(
+        self,
+        *,
+        tap_root: Path | None,
+        review_store: CaptionReviewStore,
+        segment_seconds: float,
+    ) -> CaptionRetentionResult:
+        """Classify real persisted review/evidence state on the local volume."""
+
+        self._refresh_system_capacity()
+        divergence = self.check_storage_divergence(tap_root=tap_root)
+        if divergence is not None:
+            return divergence
+        # Serialized across the whole process: see _DISCOVERY_LOCK. Everything
+        # below here walks and hashes the archive.
+        with _DISCOVERY_LOCK:
+            candidates = self._discover_candidates(
+                tap_root=tap_root,
+                review_store=review_store,
+                segment_seconds=segment_seconds,
+            )
+            return self.enforce(candidates=candidates)
 
     def _refresh_system_capacity(self) -> None:
         if self._storage_root is None:
@@ -370,40 +449,230 @@ class CaptionEvidenceRetentionPolicy:
                 os.close(descriptor)
 
 
+class CaptionRetentionVerdictSource:
+    """The one retention verdict per process, produced OFF the start path.
+
+    The egress daemon calls this (``(channel_id) -> CaptionRetentionResult``)
+    before selecting a program source. What it must NOT do is the work: MEASURED
+    LIVE 2026-09-24, that call ran a 60.5 s discovery over 15,045 public chunks
+    inline on the automation thread under the daemon-wide ``_preparation_guard``,
+    so every other channel's start waited behind one channel's scan and missed
+    its own handover. So the answer is:
+
+    * a FRESH verdict -- one published by the background sweep within
+      ``freshness_seconds`` -- is returned as-is, refusals included, and a
+      refusal still publishes the ``storage-refused`` sidecar exactly as the
+      synchronous path always did;
+    * with NO verdict, or a STALE one, the sweep is dispatched (at most one in
+      flight, never more often than the shared cadence) and the caller gets
+      :data:`_PENDING_VERDICT` immediately. Pending is not a refusal: the
+      program starts, and WAV retention stays off because the caption tap
+      applies its own pending rule (:class:`ReviewPersistenceMode`
+      ``"text-only"``). Nothing here reads or sets the tap's state.
+
+    Thread safety: the verdict slot, the in-flight flag and the cadence stamp
+    live behind one lock; the sweep runs on a daemon thread and NEVER takes a
+    daemon lock, so a start can be blocked by neither a slow scan nor a wedged
+    one. The heavy discovery is serialized process-wide by
+    :data:`_DISCOVERY_LOCK`, so this sweep and the caption tap's own sweep can
+    never hash the archive at the same time.
+    """
+
+    def __init__(
+        self,
+        *,
+        policy: CaptionEvidenceRetentionPolicy,
+        tap_root: Path | None,
+        review_store: CaptionReviewStore,
+        segment_seconds: float,
+        storage_root: Path,
+        monotonic: Callable[[], float] = time.monotonic,
+        freshness_seconds: float = RETENTION_VERDICT_FRESHNESS_SECONDS,
+        sweep_interval_seconds: float = RETENTION_SWEEP_SECONDS,
+    ) -> None:
+        self.policy = policy
+        self._tap_root = tap_root
+        self._review_store = review_store
+        self._segment_seconds = segment_seconds
+        self._storage_root = storage_root
+        self._monotonic = monotonic
+        self._freshness_seconds = freshness_seconds
+        self._sweep_interval_seconds = sweep_interval_seconds
+        self._lock = threading.RLock()
+        self._verdict: _Verdict | None = None
+        self._in_flight = False
+        self._last_sweep_started_at: float | None = None
+        self._thread: threading.Thread | None = None
+        #: Sweeps dispatched, for tests and for the report's sweeps-per-minute.
+        self._sweeps_started = 0
+
+    def __call__(self, channel_id: str) -> CaptionRetentionResult:
+        # 1. Cheap, synchronous, unchanged: the divergence refusal. Everything
+        #    below this line is a read of a value somebody else computed.
+        divergence = self.policy.check_storage_divergence(tap_root=self._tap_root)
+        if divergence is not None:
+            self._publish_refusal(channel_id, divergence)
+            return divergence
+        # 2. A fresh verdict is the real answer.
+        verdict = self._fresh_verdict()
+        if verdict is not None:
+            if not verdict.ready:
+                self._publish_refusal(channel_id, verdict)
+            return verdict
+        # 3. No fresh verdict: dispatch the sweep and start anyway. ONE line
+        #    per start, so a station that is permanently pending is visible.
+        self._dispatch_sweep()
+        with self._lock:
+            in_flight = self._in_flight
+            age = None if self._verdict is None else self._monotonic() - self._verdict.published_at
+        _LOG.info(
+            "channel %s: caption retention verdict pending (%s); start proceeds, "
+            "divergence check passed; background sweep in flight=%s",
+            channel_id,
+            "none yet" if age is None else f"stale {age:.0f}s",
+            in_flight,
+        )
+        return _PENDING_VERDICT
+
+    def wait_for_sweep(self, timeout: float = 30.0) -> bool:
+        """Block until any in-flight background sweep finishes. Returns True if idle.
+
+        Production never calls this -- a start must not wait for a sweep. It
+        exists so tests can observe the sweep deterministically instead of
+        racing it, exactly like ``CaptionTapWorker.wait_for_retention_sweep``.
+        """
+
+        with self._lock:
+            thread = self._thread
+        if thread is None:
+            return True
+        thread.join(timeout)
+        return not thread.is_alive()
+
+    def _fresh_verdict(self) -> CaptionRetentionResult | None:
+        with self._lock:
+            verdict = self._verdict
+            if verdict is None:
+                return None
+            if self._monotonic() - verdict.published_at > self._freshness_seconds:
+                return None
+            return verdict.result
+
+    def _dispatch_sweep(self) -> None:
+        """Start a background sweep unless one is in flight or the cadence forbids it."""
+
+        with self._lock:
+            if self._in_flight:
+                return
+            now = self._monotonic()
+            if (
+                self._last_sweep_started_at is not None
+                and now - self._last_sweep_started_at < self._sweep_interval_seconds
+            ):
+                # Same cadence rule as the tap worker's sweep: a start never
+                # stacks overlapping scans onto the disk. A sweep that FAILED
+                # (so published no verdict) is therefore retried on the next
+                # cadence, not on every start.
+                return
+            self._in_flight = True
+            self._last_sweep_started_at = now
+            self._sweeps_started += 1
+            thread = threading.Thread(
+                target=self._run_sweep,
+                name="civiccast-caption-readiness-retention",
+                daemon=True,
+            )
+            self._thread = thread
+        thread.start()
+
+    def _run_sweep(self) -> None:
+        """The blocking half, on the sweep thread. Never raises to the caller."""
+
+        try:
+            result = self.policy.enforce_discovered(
+                tap_root=self._tap_root,
+                review_store=self._review_store,
+                segment_seconds=self._segment_seconds,
+            )
+        except Exception:
+            # "Cannot verify" produced no verdict, and it must NOT become a
+            # refusal here: a start is answered by the pending verdict either
+            # way, and inventing a refusal for a storage error would take a
+            # station off the air over a transient database fault. The previous
+            # verdict therefore stands until it ages out of the freshness
+            # window. The SAFETY half is unaffected -- WAV retention is the
+            # caption tap's own fail-closed decision, and a tap whose sweep
+            # raises still publishes no ASR evidence.
+            _LOG.exception(
+                "Caption retention background sweep failed; the previous verdict stands."
+            )
+            with self._lock:
+                self._in_flight = False
+            return
+        with self._lock:
+            self._verdict = _Verdict(result=result, published_at=self._monotonic())
+            self._in_flight = False
+        if result.ready:
+            return
+        # A background refusal has no channel in hand, so it is published for
+        # every channel that is publishing caption status -- the same payload
+        # the synchronous path writes for the channel it is starting. Cleared by
+        # the CHANNEL SET, not by tap-directory presence, matching
+        # ``reset_existing_live_sidecars``: a channel whose tap directory was
+        # already swept can still be serving a stale sidecar.
+        for channel_id in self._published_channel_ids():
+            self._publish_refusal(channel_id, result)
+
+    def _published_channel_ids(self) -> tuple[str, ...]:
+        root = self._storage_root
+        if not root.is_dir():
+            return ()
+        return tuple(
+            sorted(path.parent.parent.name for path in root.glob("*/captions/runtime-status.json"))
+        )
+
+    def _publish_refusal(self, channel_id: str, result: CaptionRetentionResult) -> None:
+        # The egress gate can run before the next tap-worker poll. Clear the
+        # published sidecar at this same refusal boundary, never after a
+        # program encoder has already been allowed to start.
+        from civiccast.captions.live_sidecar import publish_caption_runtime_status
+
+        publish_caption_runtime_status(
+            self._storage_root,
+            channel_id,
+            state="storage-refused",
+            backlog_segments=0,
+            max_backlog_segments=0,
+            refusal_reason=result.refusal_reason,
+        )
+
+
 def build_caption_readiness_provider(
     *,
     tap_root: Path | None,
     review_store: CaptionReviewStore,
     storage_root: Path,
     segment_seconds: float = 5.0,
-) -> Any:
-    """Build the real storage/readiness provider used before egress starts."""
+) -> CaptionRetentionVerdictSource:
+    """Build the real storage/readiness provider used before egress starts.
 
-    policy = CaptionEvidenceRetentionPolicy.from_system(storage_root=storage_root)
+    The returned object is both the ``(channel_id) -> CaptionRetentionResult``
+    callable the daemon invokes and the owner of the background sweep that
+    keeps that verdict fresh. It is built here rather than reusing the caption
+    tap's sweep because the two are constructed by different code paths
+    (``civiccast/app.py`` for the tap, ``build_channel_automation`` here) and
+    the tap does not exist at all on a station that did not opt into live
+    captioning -- there, this is the only sweep in the process. When both
+    exist, ``_DISCOVERY_LOCK`` keeps them from scanning at the same time.
+    """
 
-    def _provider(channel_id: str) -> CaptionRetentionResult:
-        result = policy.enforce_discovered(
-            tap_root=tap_root,
-            review_store=review_store,
-            segment_seconds=segment_seconds,
-        )
-        if not result.ready:
-            # The egress gate can run before the next tap-worker poll. Clear the
-            # published sidecar at this same refusal boundary, never after a
-            # program encoder has already been allowed to start.
-            from civiccast.captions.live_sidecar import publish_caption_runtime_status
-
-            publish_caption_runtime_status(
-                storage_root,
-                channel_id,
-                state="storage-refused",
-                backlog_segments=0,
-                max_backlog_segments=0,
-                refusal_reason=result.refusal_reason,
-            )
-        return result
-
-    return _provider
+    return CaptionRetentionVerdictSource(
+        policy=CaptionEvidenceRetentionPolicy.from_system(storage_root=storage_root),
+        tap_root=tap_root,
+        review_store=review_store,
+        segment_seconds=segment_seconds,
+        storage_root=storage_root,
+    )
 
 
 def _normalize_candidate(candidate: Mapping[str, object]) -> _Candidate:
@@ -497,7 +766,10 @@ def _audit_lock(path: Path) -> threading.RLock:
 
 
 __all__ = [
+    "RETENTION_SWEEP_SECONDS",
+    "RETENTION_VERDICT_FRESHNESS_SECONDS",
     "CaptionEvidenceRetentionPolicy",
     "CaptionRetentionResult",
+    "CaptionRetentionVerdictSource",
     "build_caption_readiness_provider",
 ]
