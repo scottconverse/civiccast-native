@@ -1566,12 +1566,20 @@ def test_stall_watchdog_commits_ready_deferred_reload_when_live_source_freezes(
     assert text.count(force_marker) == 1, text
     assert text.count("CTRL reload committed") == 1, text
     assert "CTRL stall: no output for" not in text, text
+    # The staged commit prints prove the GStreamer 1.28 two-phase order: request
+    # both switches, release both held first buffers so the switches can apply,
+    # confirm both active pads, retire the old leg, then settle. This oracle
+    # carried the pre-#228 order (retire while held, then release) until U34; the
+    # sibling forced/immediate/deferred commit tests were updated with the
+    # reordering in 3e117ff1 ("confirm GStreamer selector handoff before
+    # retirement") and this one was missed, which is why it failed at HEAD.
     ordering = [
         text.index(force_marker),
         text.index("CTRL reload: firing"),
         text.index("CTRL reload: switching selector"),
-        text.index("CTRL reload: old leg disposed"),
         text.index("CTRL reload: holds released"),
+        text.index("CTRL reload diagnostic: stage=selector-handoff-confirmed"),
+        text.index("CTRL reload: old leg disposed"),
         text.index("CTRL reload committed"),
     ]
     assert ordering == sorted(ordering), f"forced commit ordering regressed;\n{text}"
