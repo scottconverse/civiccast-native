@@ -31,12 +31,16 @@ from civiccast.schedule.models import (
     ScheduleItemResponse,
     StaffAssetRow,
 )
-from civiccast.stream._ffmpeg import run_ffmpeg
+from civiccast.stream._ffmpeg import probe_media_duration_seconds, run_ffmpeg
 
 _LOG = logging.getLogger(__name__)
 
 AssetResolver = Callable[[str], StaffAssetRow | None]
 ScheduleItemsProvider = Callable[[str], Sequence[ScheduleItemResponse]]
+#: U36 (2026-09-25): the media's OWN playable length, in seconds, from its
+#: path -- or None when it cannot be measured. The production resolver is
+#: ``_default_media_duration_resolver`` below (a memoized ffprobe).
+MediaDurationResolver = Callable[[Path], float | None]
 _PLAYABLE_ASSET_STATES = {ASSET_STATE_VALIDATED, ASSET_STATE_RECORDED}
 
 #: D45 fix (2026-09-05): D43 (#170) set this to 1800.0 to lengthen a
@@ -330,6 +334,42 @@ class SlateSourceGenerator:
         return digest.hexdigest()[:24]
 
 
+def _default_media_duration_resolver() -> MediaDurationResolver:
+    """The production :data:`MediaDurationResolver`: a memoized media probe.
+
+    U36 (2026-09-25). The planner used to take an item's playable length
+    entirely from the database rows (``asset.duration_seconds`` and the trim
+    window), so a row that overstated the media by a few seconds let a plan end
+    past the file's real end -- see ``_playable_duration``. Measuring the file
+    is the only way to know.
+
+    Memoized on ``(path, mtime_ns, size)`` because the automation loop builds a
+    plan every ~2 seconds and the media lives on the station's storage (often a
+    NAS): one ffprobe per file VERSION, re-probed when the file is replaced,
+    never a blocking probe per poll. A changed ``st_mtime_ns``/``st_size`` is
+    the cache key rather than the file's identity so a re-uploaded asset of the
+    same length is still re-measured.
+
+    Returns None (fail-open: the rows stay authoritative, exactly as before
+    this change) when the file cannot be measured -- see
+    ``_segment_from_item``.
+    """
+
+    cache: dict[tuple[str, int, int], float | None] = {}
+
+    def resolve(path: Path) -> float | None:
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        key = (str(path), stat.st_mtime_ns, stat.st_size)
+        if key not in cache:
+            cache[key] = probe_media_duration_seconds(path)
+        return cache[key]
+
+    return resolve
+
+
 class ScheduleSourcePlanProvider:
     """Build concrete egress source plans from scheduled local media."""
 
@@ -346,6 +386,7 @@ class ScheduleSourcePlanProvider:
         loop_schedule: bool = False,
         max_segment_seconds: float | None = None,
         gap_absorb_seconds: float = 0.0,
+        media_duration_resolver: MediaDurationResolver | None = None,
     ) -> None:
         if max_segments <= 0:
             raise ValueError("max_segments must be greater than zero.")
@@ -365,6 +406,17 @@ class ScheduleSourcePlanProvider:
         self._loop_schedule = loop_schedule
         self._max_segment_seconds = max_segment_seconds
         self._gap_absorb_seconds = gap_absorb_seconds
+        # U36: the provider is where the media probe is wired in, because it is
+        # the shape both production sites construct (automation.py:2628,
+        # cli.py:1150) -- and it is the SAME provider instance that serves the
+        # rollover-time plan and the relaunch plan, so both get truthful
+        # durations. The bare ``build_source_plan_from_schedule`` stays
+        # row-only by default so its own callers remain deterministic.
+        self._media_duration_resolver = (
+            media_duration_resolver
+            if media_duration_resolver is not None
+            else _default_media_duration_resolver()
+        )
 
     def __call__(self, channel_id: str) -> EgressSourcePlan | None:
         return self.plan_at(channel_id, self._now_provider())
@@ -393,6 +445,7 @@ class ScheduleSourcePlanProvider:
             loop_schedule=self._loop_schedule,
             max_segment_seconds=self._max_segment_seconds,
             gap_absorb_seconds=self._gap_absorb_seconds,
+            media_duration_resolver=self._media_duration_resolver,
         )
 
 
@@ -409,6 +462,7 @@ def build_source_plan_from_schedule(
     loop_schedule: bool = False,
     max_segment_seconds: float | None = None,
     gap_absorb_seconds: float = 0.0,
+    media_duration_resolver: MediaDurationResolver | None = None,
 ) -> EgressSourcePlan | None:
     """Return the currently playable egress source plan, or None for slate fallback.
 
@@ -455,6 +509,25 @@ def build_source_plan_from_schedule(
     reach air quickly and lets the existing rollover machinery prepare the
     next join-in-progress slice while the current slice is playing.  It does
     not change the schedule's wall-clock position or the media trim window.
+
+    ``media_duration_resolver`` (U36, 2026-09-25) measures the media FILE, and
+    every segment is capped at what the file really has. Until this change the
+    plan's durations came only from the database rows (``item.duration_seconds``
+    -- the slot -- and ``asset.duration_seconds``/the trim window), so a row
+    that overstated the media made the plan end past the file's real end. On
+    the station's engine every plan is one leg (``max_segments=1``), so the
+    leg's true EOS ended the pipeline: the worker exited 0 while ON_AIR and the
+    relaunch re-resolved the same overstated clock into a sub-2-second sliver
+    of a program that had already finished. With the media measured, such an
+    item is recognised as exhausted like any other, so the U26 gap-absorb below
+    hands the boundary to the next program (when it is due within the window)
+    instead of re-airing a tail.
+
+    Left ``None`` (the default) the builder keeps its row-only behaviour, which
+    is what every direct caller wants: their fixtures are not real media, and a
+    probe per plan build would make them non-deterministic. ``None`` from a
+    resolver means the file could not be measured, and the rows stay
+    authoritative -- fail-open, so a station without ffprobe is unaffected.
     """
 
     if max_segments <= 0:
@@ -557,16 +630,20 @@ def build_source_plan_from_schedule(
                 asset_resolver,
                 elapsed_seconds=item_elapsed,
                 max_duration_seconds=max_segment_seconds,
+                media_duration_resolver=media_duration_resolver,
             )
             if segment is None:
                 # The item's media has fully aired (media shorter than its
                 # slot, or a late rejoin past the end). Honest behavior is
                 # slate until the next item is due — never an early start.
-                # ``_segment_from_item`` only answers None for an item that
-                # has already aired part of itself (elapsed > 0), so in
-                # practice this is always the FIRST iteration and ``built``
-                # is empty; a later item's media is resolved whole, and a
-                # broken or missing one raises SourcePrepareError instead.
+                # ``_segment_from_item`` answers None either for an item that
+                # has already aired part of itself (elapsed > 0) or (U36) for
+                # one whose media really ends at or before the point this
+                # segment would start; so in practice this is always the FIRST
+                # iteration and ``built`` is empty, and the gap-absorb below
+                # gets its chance to start the next program. A later item's
+                # media is resolved whole, and a broken or missing one raises
+                # SourcePrepareError instead.
                 break
             built.append(segment)
             built_seconds += segment.duration_seconds
@@ -861,6 +938,7 @@ def _segment_from_item(
     *,
     elapsed_seconds: float = 0.0,
     max_duration_seconds: float | None = None,
+    media_duration_resolver: MediaDurationResolver | None = None,
 ) -> EgressSourceSegment | None:
     """Build the segment for one scheduled item.
 
@@ -868,6 +946,12 @@ def _segment_from_item(
     item: playback resumes that far into the (trimmed) media. Returns None
     when the elapsed time exceeds the playable media — the item has fully
     aired and contributes nothing (the caller falls back to slate).
+
+    ``media_duration_resolver`` (U36) measures the media file itself; the
+    item's playable length is then capped by it as well as by the slot and the
+    trim window, so a segment never runs past the media's real end. Its
+    ``None`` answer (unreadable media, no ffprobe) leaves the rows
+    authoritative, exactly as before this parameter existed.
     """
 
     asset = asset_resolver(item.asset_id)
@@ -890,8 +974,19 @@ def _segment_from_item(
         )
     inpoint = asset.trim_in_seconds
     outpoint = asset.trim_out_seconds
-    duration = _segment_duration(item, asset, inpoint=inpoint, outpoint=outpoint)
+    media_end = media_duration_resolver(media_path) if media_duration_resolver is not None else None
+    duration = _segment_duration(
+        item, asset, inpoint=inpoint, outpoint=outpoint, media_end=media_end
+    )
     if duration <= 0:
+        if media_end is not None and media_end <= (inpoint or 0.0):
+            # U36 (2026-09-25): the rows say this item has media left, but the
+            # media itself ends at or before the point this segment would start
+            # from — there is nothing left of this item to air. That is an
+            # EXHAUSTED item (the caller advances to the next one / falls back),
+            # not a misconfigured trim window: the live defect was a 2-second
+            # sliver of a program whose file had already ended.
+            return None
         raise SourcePrepareError(
             f"Scheduled asset {item.asset_id!r} has an invalid trim window for egress."
         )
@@ -949,6 +1044,7 @@ def _segment_duration(
     *,
     inpoint: float | None,
     outpoint: float | None,
+    media_end: float | None = None,
 ) -> float:
     """The airtime this item contributes: its SLOT, capped by playable media.
 
@@ -958,9 +1054,14 @@ def _segment_duration(
     whole hour — the published schedule was not honoured at all — while a
     schedule of short assets built a plan far shorter than its own slots.
     The slot is the contract; the media can only ever cut it short.
+
+    ``media_end`` (U36) is the media's real length from the file itself; it
+    caps the playable length, so D42's "the media can only ever cut the slot
+    short" is finally measured against the media rather than against a row
+    that can be wrong.
     """
 
-    playable = _playable_duration(asset, inpoint=inpoint, outpoint=outpoint)
+    playable = _playable_duration(asset, inpoint=inpoint, outpoint=outpoint, media_end=media_end)
     if item.duration_seconds is None:
         # No slot on record (should not happen: the caller filters these out)
         # — fall back to whatever the media offers.
@@ -978,23 +1079,38 @@ def _playable_duration(
     *,
     inpoint: float | None,
     outpoint: float | None,
+    media_end: float | None = None,
 ) -> float | None:
     """Seconds of media playable from ``inpoint``, or None when unknowable.
 
     A non-positive result (an inverted trim window) is returned as-is so the
     caller raises the existing ``invalid trim window`` SourcePrepareError.
+
+    ``media_end`` (U36, 2026-09-25) is the media's real length, measured from
+    the file. It only ever LOWERS the end — the trim out-point keeps its
+    precedence over the row's ``duration_seconds``, because a trim is an
+    operator's explicit instruction while the row is a record that can be
+    wrong — and it is the only source of an end when the rows can supply
+    none at all. ``None`` (a probe that could not answer) leaves the rows
+    authoritative, exactly as before this change.
     """
 
+    end: float | None
     if inpoint is not None and outpoint is not None:
-        return outpoint - inpoint
-    if asset.duration_seconds is not None:
+        end = float(outpoint)
+    elif asset.duration_seconds is not None:
         end = float(asset.duration_seconds)
         if outpoint is not None:
-            end = min(end, outpoint)
-        return end - (inpoint or 0.0)
-    if outpoint is not None:
-        return outpoint - (inpoint or 0.0)
-    return None
+            end = min(end, float(outpoint))
+    elif outpoint is not None:
+        end = float(outpoint)
+    else:
+        end = None
+    if media_end is not None:
+        end = media_end if end is None else min(end, media_end)
+    if end is None:
+        return None
+    return end - (inpoint or 0.0)
 
 
 def _as_utc(value: datetime) -> datetime:

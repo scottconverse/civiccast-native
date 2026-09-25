@@ -55,6 +55,7 @@ from civiccast.egress.runtime import FfmpegRunner
 from civiccast.stream._ffmpeg import (
     FfmpegCancelledError,
     FfmpegResult,
+    probe_has_decodable_stream,
     probe_media_duration_seconds,
     run_ffmpeg,
 )
@@ -352,6 +353,31 @@ class SourcePreparationReport:
 
 class SourcePreparationCancelledError(SourcePrepareError):
     """The owner cancelled preparation before it could be put on air."""
+
+
+def _format_optional_seconds(value: float | None) -> str:
+    """A segment's ``-ss``/``-t`` value for a log line: an untrimmed segment
+    carries ``None`` for both (see ``SourcePreparer._prepare_segment``'s emitted
+    segment), and ``"start"``/``"end"`` read better in a warning than ``None``
+    — which is also what a ``%.3f`` conversion would crash on."""
+    return "start" if value is None else f"{value:.3f}s"
+
+
+def _probe_prepared_segment_decodability(path: Path) -> bool | None:
+    """U36 item 7: the decodability probe the emission-time rejection uses.
+
+    A named boundary rather than a direct ffprobe call so two different
+    questions stay separable: "how long is the SOURCE media" (the
+    loudness/probe machinery around ``_prepare_segment``, which callers fake to
+    simulate an unknown-duration asset) and "is the file preparation just
+    EMITTED playable media at all" (this one). They both end at ffprobe today,
+    but faking one must not silently answer the other — the second question has
+    to stay answerable on its own, and with three answers rather than a
+    duration: ``True`` (ffprobe listed a stream), ``False`` (ffprobe ran and
+    found none) and ``None`` (ffprobe could not be asked at all). See
+    :func:`civiccast.stream._ffmpeg.probe_has_decodable_stream`.
+    """
+    return probe_has_decodable_stream(path)
 
 
 class SourcePreparer:
@@ -1529,6 +1555,33 @@ class SourcePreparer:
             except SourcePreparationCancelledError:
                 shutil.rmtree(prepared_dir, ignore_errors=True)
                 raise
+            # U36 item 7: never hand the worker a segment that is not real
+            # media. ffmpeg can exit 0 and still leave nothing playable -- a
+            # copy-out trimmed wholly past the media's end measured a 0-byte
+            # file on this station (reports/U36.md section 1.4), and the
+            # GStreamer worker's own diagnosis of the discarded boundary reloads
+            # was ``gst_decode_bin_expose (): ... all streams without buffers``,
+            # which is what an empty or stream-less segment produces. Rejecting
+            # it HERE names the source and the in-point and fails preparation,
+            # which the caller already handles -- instead of letting the worker
+            # abort the reload pre-commit and leave the boundary unprepared.
+            rejection = self._prepared_segment_rejection(prepared_segment)
+            if rejection is not None:
+                _LOG.warning(
+                    "Rejecting prepared segment for source %s at in-point %s "
+                    "(out-point %s, emitted %s): %s",
+                    segment.path,
+                    _format_optional_seconds(segment.inpoint_seconds),
+                    _format_optional_seconds(segment.outpoint_seconds),
+                    prepared_segment.path,
+                    rejection,
+                )
+                shutil.rmtree(prepared_dir, ignore_errors=True)
+                raise SourcePrepareError(
+                    f"Prepared segment for {segment.path} at in-point "
+                    f"{_format_optional_seconds(segment.inpoint_seconds)} is not "
+                    f"playable: {rejection}"
+                )
             seen[key] = (prepared_segment, record)
             prepared_segments.append(prepared_segment)
             records.append(record)
@@ -1552,6 +1605,50 @@ class SourcePreparer:
             records=tuple(records),
             plan_dir=reported_plan_dir,
         )
+
+    @staticmethod
+    def _prepared_segment_rejection(prepared: EgressSourceSegment) -> str | None:
+        """U36 item 7: is the segment preparation just EMITTED actually playable?
+
+        Returns a human-readable reason it is not (the caller logs it, naming the
+        source and the in-point, and fails preparation), or ``None`` when it looks
+        like real media.
+
+        Two checks, both cheap: the file exists and is non-empty, and ffprobe can
+        list a stream in it. The second is the one that matters -- ffmpeg exited
+        0 and wrote bytes for every discarded boundary reload on this station, and
+        the worker's own diagnosis was ``all streams without buffers``, i.e. bytes
+        with no decodable stream. A stream listing is a container read, not a
+        decode, so this costs one ffprobe per unique (path, in, out) segment.
+
+        An UNANSWERABLE probe is not evidence of bad media: ``None`` from
+        :func:`_probe_prepared_segment_decodability` means ffprobe is absent or
+        could not run, and rejecting on that would fail every prepared segment on
+        a box without ffmpeg -- and would also reject a perfectly playable file
+        whose container simply reports no duration, which is what a duration
+        probe cannot tell apart from a missing tool. Only a positive "no stream"
+        answer rejects.
+        """
+        emitted_path = Path(prepared.path)
+        try:
+            size = emitted_path.stat().st_size
+        except OSError as exc:
+            return f"the emitted file is missing ({exc.__class__.__name__}: {exc})"
+        if size == 0:
+            return "the emitted file is 0 bytes (the trim produced no media)"
+        decodable = _probe_prepared_segment_decodability(emitted_path)
+        if decodable is False:
+            return (
+                "ffprobe found no decodable stream in the emitted file (the worker "
+                "logs this as 'all streams without buffers')"
+            )
+        if decodable is None:
+            _LOG.debug(
+                "Could not probe emitted segment %s for a decodable stream "
+                "(ffprobe unavailable); accepting it.",
+                emitted_path,
+            )
+        return None
 
     @staticmethod
     def _raise_if_cancelled(cancel_event: threading.Event | None) -> None:

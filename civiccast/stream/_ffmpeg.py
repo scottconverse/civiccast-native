@@ -282,6 +282,55 @@ def probe_media_duration_seconds(path: Path) -> float | None:
     return duration
 
 
+def probe_has_decodable_stream(path: Path) -> bool | None:
+    """Does ffprobe see at least one stream inside ``path``?
+
+    Three answers on purpose, because two of them mean different things to a
+    caller deciding what to do with a file it just produced:
+
+    ``True``   ffprobe read the container and listed at least one stream.
+    ``False``  ffprobe ran and answered -- the container carries no stream, or
+               it could not be parsed at all (a 0-byte or truncated file).
+    ``None``   ffprobe could not be asked (absent from PATH, timed out, could
+               not be executed). A caller must NOT read this as "no streams":
+               that is exactly the ambiguity
+               :func:`probe_media_duration_seconds` deliberately folds into its
+               ``None`` (absent tool and unreadable container are the same
+               answer there), and treating it as bad media would fail every
+               segment on a box without ffmpeg installed.
+
+    Same cheapness as its siblings -- a container/stream read, not a decode --
+    and deliberately non-raising for the same reason: it measures a file, it
+    never owns the decision.
+    """
+
+    if shutil.which(_FFPROBE_EXECUTABLE) is None:
+        return None
+    try:
+        completed = subprocess.run(  # noqa: S603
+            [
+                _FFPROBE_EXECUTABLE,
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if completed.returncode != 0:
+        return False
+    return any(line.strip() for line in completed.stdout.splitlines())
+
+
 EncoderProbe = Callable[[str], Collection[str]]
 EncoderUsabilityCheck = Callable[[str, str], bool]
 

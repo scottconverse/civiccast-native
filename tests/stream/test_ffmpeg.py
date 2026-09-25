@@ -18,6 +18,7 @@ from civiccast.stream._ffmpeg import (
     _parse_ffmpeg_version,
     _version_is_supported,
     check_ffmpeg,
+    probe_has_decodable_stream,
     probe_media_duration_seconds,
     run_ffmpeg,
     start_ffmpeg,
@@ -599,6 +600,72 @@ class TestProbeMediaDurationSeconds:
             patch("civiccast.stream._ffmpeg.subprocess.run", return_value=completed),
         ):
             assert probe_media_duration_seconds(tmp_path / "asset.mp4") is None
+
+
+class TestProbeHasDecodableStream:
+    """U36 item 7: three answers, not two. The distinction matters because a
+    caller deciding what to do with a file it just produced must not read
+    "ffprobe could not be asked" as "there are no streams in it" — that is what
+    ``probe_media_duration_seconds``'s single ``None`` cannot express."""
+
+    def test_reports_true_and_the_stream_listing_query(self, tmp_path) -> None:
+        completed = MagicMock(returncode=0, stdout="video\naudio\n", stderr="")
+        with (
+            patch("civiccast.stream._ffmpeg.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch("civiccast.stream._ffmpeg.subprocess.run", return_value=completed) as spawn,
+        ):
+            assert probe_has_decodable_stream(tmp_path / "segment.ts") is True
+
+        assert spawn.call_args.args[0] == [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "csv=p=0",
+            str(tmp_path / "segment.ts"),
+        ]
+
+    def test_reports_false_when_the_container_lists_no_stream(self, tmp_path) -> None:
+        completed = MagicMock(returncode=0, stdout="\n", stderr="")
+        with (
+            patch("civiccast.stream._ffmpeg.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch("civiccast.stream._ffmpeg.subprocess.run", return_value=completed),
+        ):
+            assert probe_has_decodable_stream(tmp_path / "empty.ts") is False
+
+    def test_reports_false_when_ffprobe_cannot_parse_the_file(self, tmp_path) -> None:
+        completed = MagicMock(returncode=1, stdout="", stderr="Invalid data found")
+        with (
+            patch("civiccast.stream._ffmpeg.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch("civiccast.stream._ffmpeg.subprocess.run", return_value=completed),
+        ):
+            assert probe_has_decodable_stream(tmp_path / "truncated.ts") is False
+
+    def test_reports_none_when_ffprobe_is_absent(self, tmp_path) -> None:
+        with patch("civiccast.stream._ffmpeg.shutil.which", return_value=None):
+            assert probe_has_decodable_stream(tmp_path / "asset.mp4") is None
+
+    def test_reports_none_when_ffprobe_times_out(self, tmp_path) -> None:
+        with (
+            patch("civiccast.stream._ffmpeg.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch(
+                "civiccast.stream._ffmpeg.subprocess.run",
+                side_effect=subprocess.TimeoutExpired(cmd="ffprobe", timeout=30),
+            ),
+        ):
+            assert probe_has_decodable_stream(tmp_path / "asset.mp4") is None
+
+    def test_reports_none_when_ffprobe_cannot_be_executed(self, tmp_path) -> None:
+        with (
+            patch("civiccast.stream._ffmpeg.shutil.which", return_value="/usr/bin/ffprobe"),
+            patch(
+                "civiccast.stream._ffmpeg.subprocess.run",
+                side_effect=OSError("cannot execute"),
+            ),
+        ):
+            assert probe_has_decodable_stream(tmp_path / "asset.mp4") is None
 
 
 class TestCheckFfmpeg:
