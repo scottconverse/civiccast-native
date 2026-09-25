@@ -5,13 +5,23 @@
 Discovery here is EXPENSIVE and therefore never runs on a channel-start path:
 MEASURED LIVE 2026-09-24 (installed station) one ``enforce_discovered`` over
 15,045 processed public chunks took 60.5 s -- a ``resolve()``, a ``stat()``, a
-``_wav_duration()`` and a full-read ``_sha256()`` per chunk -- and the egress
-readiness gate ran it synchronously on the automation thread, holding every
-other channel's start behind it (the automation watchdog fires at 30 s).  The
-verdict is now produced by :class:`CaptionRetentionVerdictSource` on a
+``_probe_wav_duration()`` and a full-read ``_sha256()`` per chunk -- and the
+egress readiness gate ran it synchronously on the automation thread, holding
+every other channel's start behind it (the automation watchdog fires at 30 s).
+The verdict is now produced by :class:`CaptionRetentionVerdictSource` on a
 background thread and the start path only READS it; see that class for the
 freshness/pending contract, and ``check_storage_divergence`` for the one
 refusal that stays synchronous (it costs three syscalls, not a scan).
+
+A sweep still runs every ``RETENTION_SWEEP_SECONDS`` forever, so its STEADY
+STATE cost matters as much as its latency: MEASURED 2026-09-24 on a synthetic
+9,996-file archive shaped like the live station (5,000 chunks at the live
+160,044-byte size, 4,998 matching evidence WAVs) one warm sweep took
+11.3-12.1 s, of which SHA-256 was 6.8 s and the WAV duration 1.0 s -- both of
+them pure functions of file CONTENT that the tap never rewrites.  They are
+reused while a file's size and mtime are unchanged
+(:class:`_ReusableFileFacts`), which takes the steady state to roughly the
+cost of stat-ing the archive.
 """
 
 from __future__ import annotations
@@ -28,9 +38,10 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from stat import S_ISREG
 from typing import cast
 
-from civiccast.captions.review import CaptionReviewStore
+from civiccast.captions.review import CaptionReviewAudioEvidence, CaptionReviewStore
 from civiccast.captions.review_media import (
     CaptionReviewClipError,
     verify_caption_review_audio_evidence,
@@ -114,6 +125,100 @@ class _Candidate:
     evidence_pending: bool = True
 
 
+class _ReusableFileFacts:
+    """One policy's reuse of a file's digest and WAV duration while it is unchanged.
+
+    MEASURED 2026-09-24 (synthetic 9,996-file archive shaped like the live
+    station: 5,000 chunks at the live measured 160,044-byte size plus 4,998
+    matching evidence WAVs, every phase of ``_discover_candidates``
+    instrumented): a warm steady-state sweep cost 11.3-12.1 s, of which SHA-256
+    was 6.8 s and the WAV duration 1.0 s.  Both are pure functions of a file's
+    CONTENT, and the files under them are write-once -- the tap parks a settled
+    chunk in ``processed/`` and the evidence writer does an ``os.replace`` --
+    so re-deriving them on every sweep is a full read of the recorded audio
+    once a minute, forever, on the volume whose contention is the standing
+    defect (the whole sweep measured 60.5 s live over 21,153 files).
+
+    The key is ``(size, mtime_ns)``, and it is checked on EVERY use: a digest is
+    reused only while both are unchanged, so any ordinary write -- which moves
+    mtime -- is re-read.  What this is NOT is a tamper detector, and
+    ``_discover_candidates`` deliberately does not use it for the one digest
+    that is: ``review_media.verify_caption_review_audio_evidence`` compares a
+    fresh digest against the digest recorded in the review row, which is how an
+    operator's approval of a low-confidence cue is blocked when the retained
+    audio no longer matches the cue.  That read stays a read of the CURRENT
+    bytes, once per sweep per file (``_verify_evidence_once``).
+
+    Bounded by construction: ``begin_pass``/``end_pass`` wrap one discovery and
+    a pass DROPS every entry whose file it did not see, so a deleted file's
+    digest can never be served to a different file that later reuses its path.
+    An entry is only written after a successful read, so a transient failure (a
+    locked file, a partial write) is retried next sweep rather than cached as an
+    answer.
+
+    One instance per policy object: every caller of the same policy shares it,
+    and a new policy starts cold.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._digests: dict[Path, tuple[int, int, str]] = {}
+        self._durations: dict[Path, tuple[int, int, float]] = {}
+        self._visited: set[Path] | None = None
+
+    def begin_pass(self) -> None:
+        with self._lock:
+            self._visited = set()
+
+    def end_pass(self) -> None:
+        with self._lock:
+            visited = self._visited
+            self._visited = None
+            if visited is None:
+                return
+            self._digests = {
+                path: entry for path, entry in self._digests.items() if path in visited
+            }
+            self._durations = {
+                path: entry for path, entry in self._durations.items() if path in visited
+            }
+
+    def digest(self, path: Path, stat_result: os.stat_result) -> str:
+        key = (stat_result.st_size, stat_result.st_mtime_ns)
+        with self._lock:
+            self._note(path)
+            cached = self._digests.get(path)
+        if cached is not None and cached[:2] == key:
+            return cached[2]
+        value = _sha256(path)
+        with self._lock:
+            self._digests[path] = (key[0], key[1], value)
+        return value
+
+    def duration(self, path: Path, stat_result: os.stat_result) -> float:
+        key = (stat_result.st_size, stat_result.st_mtime_ns)
+        with self._lock:
+            self._note(path)
+            cached = self._durations.get(path)
+        if cached is not None and cached[:2] == key:
+            return cached[2]
+        probed = _probe_wav_duration(path)
+        if probed is None:
+            # Unreadable right now. Cache nothing: the file did not give an
+            # answer, and a stale 0.0 would silently change coverage math for
+            # as long as the file stays unreadable.
+            return 0.0
+        with self._lock:
+            self._durations[path] = (key[0], key[1], probed)
+        return probed
+
+    def _note(self, path: Path) -> None:
+        """Record that this pass saw ``path``, so ``end_pass`` keeps its entry."""
+
+        if self._visited is not None:
+            self._visited.add(path)
+
+
 class CaptionEvidenceRetentionPolicy:
     """Apply the owner-approved lifecycle without deleting protected evidence."""
 
@@ -130,6 +235,7 @@ class CaptionEvidenceRetentionPolicy:
     ) -> None:
         self.volume_bytes = volume_bytes
         self.free_bytes = free_bytes
+        self._facts = _ReusableFileFacts()
         self._audit_path = audit_path.expanduser().resolve() if audit_path is not None else None
         self._storage_root = (
             storage_root.expanduser().resolve()
@@ -307,6 +413,9 @@ class CaptionEvidenceRetentionPolicy:
     ) -> list[dict[str, object]]:
         evidence_by_path: dict[Path, dict[str, object]] = {}
         verified_windows: dict[str, list[tuple[float, float]]] = {}
+        #: Evidence verification for THIS pass only, keyed by the row's recorded
+        #: identity for the file. See _verify_evidence_once.
+        checks: dict[tuple[str, str, int], Path | None] = {}
         bulk_reader = getattr(review_store, "list_with_audio_evidence", None)
         if callable(bulk_reader):
             review_items = bulk_reader()
@@ -318,119 +427,182 @@ class CaptionEvidenceRetentionPolicy:
                 (item, review_store.get_audio_evidence(item.review_item_id))
                 for item in review_store.list()
             ]
-        for item, evidence in review_items:
-            if evidence is None:
-                continue
-            try:
-                evidence_path = verify_caption_review_audio_evidence(evidence)
-                duration = _wav_duration(evidence_path)
-            except CaptionReviewClipError:
-                continue
-            item_resolved_at = item.updated_at if item.status != "pending" else None
-            candidate = evidence_by_path.get(evidence_path)
-            if candidate is None:
-                candidate = {
-                    "path": evidence_path,
-                    "kind": "review-evidence",
-                    "review_status": item.status,
-                    "resolved_at": item_resolved_at,
-                    "created_at": item.created_at,
-                    "sha256": evidence.source_sha256,
-                    "bytes": evidence.source_bytes,
-                    "low_confidence": item.low_confidence,
-                }
-                evidence_by_path[evidence_path] = candidate
-            else:
-                candidate["low_confidence"] = (
-                    bool(candidate["low_confidence"]) or item.low_confidence
+        # Everything below the pass marker reuses digests and durations for
+        # files it has already seen unchanged; end_pass drops what it did not.
+        self._facts.begin_pass()
+        try:
+            for item, evidence in review_items:
+                if evidence is None:
+                    continue
+                evidence_path = self._verify_evidence_once(evidence, checks)
+                if evidence_path is None:
+                    continue
+                duration = self._file_duration(evidence_path)
+                item_resolved_at = item.updated_at if item.status != "pending" else None
+                candidate = evidence_by_path.get(evidence_path)
+                if candidate is None:
+                    candidate = {
+                        "path": evidence_path,
+                        "kind": "review-evidence",
+                        "review_status": item.status,
+                        "resolved_at": item_resolved_at,
+                        "created_at": item.created_at,
+                        "sha256": evidence.source_sha256,
+                        "bytes": evidence.source_bytes,
+                        "low_confidence": item.low_confidence,
+                    }
+                    evidence_by_path[evidence_path] = candidate
+                else:
+                    candidate["low_confidence"] = (
+                        bool(candidate["low_confidence"]) or item.low_confidence
+                    )
+                    if item.status == "pending":
+                        candidate["review_status"] = "pending"
+                        candidate["resolved_at"] = None
+                    elif candidate["review_status"] != "pending":
+                        # One offline ASR chunk (or one live tap segment) can
+                        # attach the SAME evidence WAV to several cues
+                        # (_offline_audio_evidence_factory /
+                        # CaptionTapWorker._audio_evidence_factory each write
+                        # the file once and reuse it across every cue from that
+                        # window). Coalescing by path must not let an early
+                        # decision on one of those cues start the 90-day clock
+                        # while a later cue sharing the same file is still
+                        # unresolved-at-merge-time or was resolved after it
+                        # (audit finding, P2): keep the LATEST resolution
+                        # timestamp seen across every row sharing this path,
+                        # not the first one processed -- order-independent,
+                        # since every row is visited regardless of
+                        # review_store.list()'s ordering.
+                        existing_resolved_at = cast("datetime | None", candidate["resolved_at"])
+                        if item_resolved_at is not None and (
+                            existing_resolved_at is None or item_resolved_at > existing_resolved_at
+                        ):
+                            candidate["resolved_at"] = item_resolved_at
+                verified_windows.setdefault(item.asset_id, []).append(
+                    (evidence.source_start_seconds, evidence.source_start_seconds + duration)
                 )
-                if item.status == "pending":
-                    candidate["review_status"] = "pending"
-                    candidate["resolved_at"] = None
-                elif candidate["review_status"] != "pending":
-                    # One offline ASR chunk (or one live tap segment) can
-                    # attach the SAME evidence WAV to several cues
-                    # (_offline_audio_evidence_factory /
-                    # CaptionTapWorker._audio_evidence_factory each write
-                    # the file once and reuse it across every cue from that
-                    # window). Coalescing by path must not let an early
-                    # decision on one of those cues start the 90-day clock
-                    # while a later cue sharing the same file is still
-                    # unresolved-at-merge-time or was resolved after it
-                    # (audit finding, P2): keep the LATEST resolution
-                    # timestamp seen across every row sharing this path,
-                    # not the first one processed -- order-independent,
-                    # since every row is visited regardless of
-                    # review_store.list()'s ordering.
-                    existing_resolved_at = cast("datetime | None", candidate["resolved_at"])
-                    if item_resolved_at is not None and (
-                        existing_resolved_at is None or item_resolved_at > existing_resolved_at
-                    ):
-                        candidate["resolved_at"] = item_resolved_at
-            verified_windows.setdefault(item.asset_id, []).append(
-                (evidence.source_start_seconds, evidence.source_start_seconds + duration)
-            )
 
-        candidates = list(evidence_by_path.values())
-        known_evidence_paths = set(evidence_by_path)
-        if self._storage_root is not None and self._storage_root.is_dir():
-            for evidence_path in sorted(self._storage_root.glob("*/captions/evidence/*.wav")):
-                resolved_path = evidence_path.resolve()
-                if resolved_path in known_evidence_paths or not resolved_path.is_file():
-                    continue
-                candidates.append(
-                    {
-                        "path": resolved_path,
-                        "kind": "unclassified-evidence",
-                        "review_status": "pending",
-                        "resolved_at": None,
-                        "created_at": datetime.fromtimestamp(resolved_path.stat().st_mtime, UTC),
-                        "sha256": _sha256(resolved_path),
-                        "bytes": resolved_path.stat().st_size,
-                        "low_confidence": False,
-                    }
-                )
-        if tap_root is None or not tap_root.is_dir():
+            candidates = list(evidence_by_path.values())
+            known_evidence_paths = set(evidence_by_path)
+            if self._storage_root is not None and self._storage_root.is_dir():
+                for evidence_path in sorted(self._storage_root.glob("*/captions/evidence/*.wav")):
+                    resolved_path = evidence_path.resolve()
+                    if resolved_path in known_evidence_paths:
+                        continue
+                    stats = _stat_regular_file(resolved_path)
+                    if stats is None:
+                        continue
+                    candidates.append(
+                        {
+                            "path": resolved_path,
+                            "kind": "unclassified-evidence",
+                            "review_status": "pending",
+                            "resolved_at": None,
+                            "created_at": datetime.fromtimestamp(stats.st_mtime, UTC),
+                            "sha256": self._file_digest(resolved_path, stats),
+                            "bytes": stats.st_size,
+                            "low_confidence": False,
+                        }
+                    )
+            if tap_root is None or not tap_root.is_dir():
+                return candidates
+            for channel_dir in sorted(path for path in tap_root.iterdir() if path.is_dir()):
+                for raw_path in sorted((channel_dir / "processed").glob("chunk-*.wav")):
+                    index = _chunk_index(raw_path)
+                    if index is None:
+                        continue
+                    stats = _stat_regular_file(raw_path)
+                    if stats is None:
+                        continue
+                    start = index * segment_seconds
+                    duration = self._file_duration(raw_path, stats)
+                    windows = verified_windows.get(channel_dir.name, ())
+                    covering = tuple(
+                        (evidence_start, evidence_end)
+                        for evidence_start, evidence_end in windows
+                        if evidence_start <= start and start + duration <= evidence_end
+                    )
+                    verified = bool(covering)
+                    candidates.append(
+                        {
+                            "path": raw_path.resolve(),
+                            "kind": "raw-chunk",
+                            "review_status": "pending",
+                            "resolved_at": None,
+                            "created_at": datetime.fromtimestamp(stats.st_mtime, UTC),
+                            "sha256": self._file_digest(raw_path, stats),
+                            "bytes": stats.st_size,
+                            "low_confidence": False,
+                            "derived_evidence_verified": verified,
+                            # Evidence for this window is still expected whenever a
+                            # review row can still cover it.  A chunk with NO covering
+                            # evidence window at all can never become verified, so it
+                            # is retired on the age cap instead of being retained
+                            # forever.  MEASURED LIVE 2026-09-17 (Blackwell station):
+                            # public/processed reached 12,980 files / 1,980.8 MB
+                            # (indices 0..13,857) while the retention audit's last
+                            # prune was index 569 -- 12,737 permanently unprunable
+                            # chunks, which then trips the max-2 backlog gate and
+                            # pauses live captions for 120 s on every start.
+                            "evidence_pending": bool(windows),
+                        }
+                    )
             return candidates
-        for channel_dir in sorted(path for path in tap_root.iterdir() if path.is_dir()):
-            for raw_path in sorted((channel_dir / "processed").glob("chunk-*.wav")):
-                index = _chunk_index(raw_path)
-                if index is None or not raw_path.is_file():
-                    continue
-                start = index * segment_seconds
-                duration = _wav_duration(raw_path)
-                windows = verified_windows.get(channel_dir.name, ())
-                covering = tuple(
-                    (evidence_start, evidence_end)
-                    for evidence_start, evidence_end in windows
-                    if evidence_start <= start and start + duration <= evidence_end
-                )
-                verified = bool(covering)
-                candidates.append(
-                    {
-                        "path": raw_path.resolve(),
-                        "kind": "raw-chunk",
-                        "review_status": "pending",
-                        "resolved_at": None,
-                        "created_at": datetime.fromtimestamp(raw_path.stat().st_mtime, UTC),
-                        "sha256": _sha256(raw_path),
-                        "bytes": raw_path.stat().st_size,
-                        "low_confidence": False,
-                        "derived_evidence_verified": verified,
-                        # Evidence for this window is still expected whenever a
-                        # review row can still cover it.  A chunk with NO covering
-                        # evidence window at all can never become verified, so it
-                        # is retired on the age cap instead of being retained
-                        # forever.  MEASURED LIVE 2026-09-17 (Blackwell station):
-                        # public/processed reached 12,980 files / 1,980.8 MB
-                        # (indices 0..13,857) while the retention audit's last
-                        # prune was index 569 -- 12,737 permanently unprunable
-                        # chunks, which then trips the max-2 backlog gate and
-                        # pauses live captions for 120 s on every start.
-                        "evidence_pending": bool(windows),
-                    }
-                )
-        return candidates
+        finally:
+            self._facts.end_pass()
+
+    def _verify_evidence_once(
+        self,
+        evidence: CaptionReviewAudioEvidence,
+        checks: dict[tuple[str, str, int], Path | None],
+    ) -> Path | None:
+        """``verify_caption_review_audio_evidence``, at most once per file per sweep.
+
+        That call is a TAMPER CHECK -- it hashes the file's current bytes and
+        compares them with the digest recorded when the evidence was written --
+        so its result is deliberately not reused across sweeps (a digest cache
+        keyed on size and mtime cannot see a same-size, same-mtime
+        substitution; see :class:`_ReusableFileFacts`).  What it is not allowed
+        to do is read the SAME file once per review row that shares it: one tap
+        segment or one offline ASR window writes one evidence WAV and attaches
+        it to every cue from that window, so a station with k cues per window
+        was hashing that window's audio k times per sweep.
+
+        The memo key carries the row's RECORDED identity (path, digest, size)
+        as well as the file, so two rows that disagree about what the file
+        should be each get their own check and the stale one is still skipped.
+        Scope is one sweep, so a change is always seen by the next one.
+        """
+
+        key = (evidence.source_path, evidence.source_sha256, evidence.source_bytes)
+        if key in checks:
+            return checks[key]
+        try:
+            verified: Path | None = verify_caption_review_audio_evidence(evidence)
+        except CaptionReviewClipError:
+            verified = None
+        checks[key] = verified
+        return verified
+
+    def _file_digest(self, path: Path, stat_result: os.stat_result | None = None) -> str:
+        """``_sha256``, reused while the file's size and mtime are unchanged."""
+
+        if stat_result is None:
+            stat_result = path.stat()
+        return self._facts.digest(path, stat_result)
+
+    def _file_duration(self, path: Path, stat_result: os.stat_result | None = None) -> float:
+        """``_wav_duration``, reused while the file's size and mtime are unchanged."""
+
+        try:
+            if stat_result is None:
+                stat_result = path.stat()
+        except OSError:
+            # The historical contract of _wav_duration: an unreadable file is
+            # 0.0 seconds, not an exception.
+            return 0.0
+        return self._facts.duration(path, stat_result)
 
     def _append_audit_records(self, records: Iterable[dict[str, object]]) -> None:
         if self._audit_path is None:
@@ -476,6 +648,19 @@ class CaptionRetentionVerdictSource:
     one. The heavy discovery is serialized process-wide by
     :data:`_DISCOVERY_LOCK`, so this sweep and the caption tap's own sweep can
     never hash the archive at the same time.
+
+    The verdict is kept fresh by its OWN cadence, not by starts: the first
+    ``__call__`` arms a daemon refresh thread that dispatches a sweep every
+    ``sweep_interval_seconds`` from then on (``_arm_background_refresh``).
+    As first built, a sweep was dispatched only when a start found no fresh
+    verdict -- and channel starts are normally further apart than one interval,
+    so nearly every start found a stale verdict, returned "pending", and
+    dispatched the scan it would have dispatched anyway. The consequence was
+    that a background refusal could essentially never gate a start: a refusal
+    published 60 s after the last start was already past
+    ``RETENTION_VERDICT_FRESHNESS_SECONDS`` (180 s) by the time the next start
+    arrived. Arming on the first call rather than in ``__init__`` keeps
+    "building the provider starts no thread" true.
     """
 
     def __init__(
@@ -503,6 +688,8 @@ class CaptionRetentionVerdictSource:
         self._in_flight = False
         self._last_sweep_started_at: float | None = None
         self._thread: threading.Thread | None = None
+        self._refresh_thread: threading.Thread | None = None
+        self._stopped = threading.Event()
         #: Sweeps dispatched, for tests and for the report's sweeps-per-minute.
         self._sweeps_started = 0
 
@@ -513,13 +700,16 @@ class CaptionRetentionVerdictSource:
         if divergence is not None:
             self._publish_refusal(channel_id, divergence)
             return divergence
-        # 2. A fresh verdict is the real answer.
+        # 2. From here on this provider keeps its own verdict fresh; a start is
+        #    no longer the only thing that re-arms a sweep.
+        self._arm_background_refresh()
+        # 3. A fresh verdict is the real answer.
         verdict = self._fresh_verdict()
         if verdict is not None:
             if not verdict.ready:
                 self._publish_refusal(channel_id, verdict)
             return verdict
-        # 3. No fresh verdict: dispatch the sweep and start anyway. ONE line
+        # 4. No fresh verdict: dispatch the sweep and start anyway. ONE line
         #    per start, so a station that is permanently pending is visible.
         self._dispatch_sweep()
         with self._lock:
@@ -533,6 +723,26 @@ class CaptionRetentionVerdictSource:
             in_flight,
         )
         return _PENDING_VERDICT
+
+    def stop(self, timeout: float = 5.0) -> bool:
+        """End the background refresh. Returns True when no refresh thread remains.
+
+        Production never calls this -- the provider lives as long as the
+        process. It exists so a test (or an orderly shutdown) can prove that
+        the thread named ``civiccast-caption-readiness-retention-timer`` ends,
+        and so no test leaks a timer into the next one. An in-flight sweep is
+        joined too, bounded by ``timeout``; one that outruns the timeout is
+        left running, which is harmless -- it publishes its verdict and exits.
+        """
+
+        self._stopped.set()
+        with self._lock:
+            refresh, sweep = self._refresh_thread, self._thread
+        current = threading.current_thread()
+        for thread in (refresh, sweep):
+            if thread is not None and thread is not current:
+                thread.join(timeout)
+        return refresh is None or not refresh.is_alive()
 
     def wait_for_sweep(self, timeout: float = 30.0) -> bool:
         """Block until any in-flight background sweep finishes. Returns True if idle.
@@ -548,6 +758,35 @@ class CaptionRetentionVerdictSource:
             return True
         thread.join(timeout)
         return not thread.is_alive()
+
+    def _arm_background_refresh(self) -> None:
+        """Start the self-scheduling refresh thread, once, on first use."""
+
+        with self._lock:
+            if self._refresh_thread is not None:
+                return
+            thread = threading.Thread(
+                target=self._refresh_loop,
+                name="civiccast-caption-readiness-retention-timer",
+                daemon=True,
+            )
+            self._refresh_thread = thread
+        thread.start()
+
+    def _refresh_loop(self) -> None:
+        """Dispatch a sweep every cadence until ``stop()``. Never exits by raising."""
+
+        while not self._stopped.wait(self._sweep_interval_seconds):
+            try:
+                self._dispatch_sweep()
+            except Exception:
+                # The loop outlives any single sweep: a bad cadence must not
+                # silently end the freshness guarantee for the rest of the
+                # process's life.
+                _LOG.exception(
+                    "Caption retention refresh could not dispatch a sweep; "
+                    "the refresh continues on the next cadence."
+                )
 
     def _fresh_verdict(self) -> CaptionRetentionResult | None:
         with self._lock:
@@ -743,13 +982,37 @@ def _chunk_index(path: Path) -> int | None:
     return int(stem[len(prefix) :])
 
 
-def _wav_duration(path: Path) -> float:
+def _probe_wav_duration(path: Path) -> float | None:
+    """The WAV's duration in seconds, or ``None`` when it cannot be read now.
+
+    ``None`` rather than the historical ``0.0`` so a caller that caches the
+    answer can tell "this file is zero seconds long" from "this file did not
+    answer", and declines to cache the second.
+    """
+
     try:
         with wave.open(str(path), "rb") as handle:
             rate = handle.getframerate()
             return handle.getnframes() / rate if rate else 0.0
     except (OSError, EOFError, wave.Error):
-        return 0.0
+        return None
+
+
+def _stat_regular_file(path: Path) -> os.stat_result | None:
+    """One ``stat()`` replacing ``is_file()`` + ``stat()`` + ``stat()``.
+
+    Returns ``None`` for anything that is not a regular file (or is gone), which
+    is exactly the set ``Path.is_file()`` rejects, but costs one syscall instead
+    of the three the chunk loop used to spend per chunk -- MEASURED 2026-09-24,
+    the archive's stat/resolve phase was 64,983 calls and 3.9-4.7 s of a
+    11.3-12.1 s warm sweep, of which roughly two calls per chunk were this.
+    """
+
+    try:
+        stats = path.stat()
+    except OSError:
+        return None
+    return stats if S_ISREG(stats.st_mode) else None
 
 
 def _sha256(path: Path) -> str:
