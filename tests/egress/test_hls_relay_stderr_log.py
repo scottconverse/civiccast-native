@@ -868,6 +868,16 @@ def test_a_logging_storm_does_not_stall_the_child_and_stays_bounded(
         best_baseline = min(baseline)
         best_supervised = min(run.seconds for run in runs)
         if best_supervised <= best_baseline * _TIMING_BOUND:
+            # Printed (not just asserted) so the evidence file carries the numbers
+            # this run actually measured, on whichever host ran it.
+            nuls = runs[0].raw.count(b"\x00")
+            print(
+                f"drain stall check: best supervised {best_supervised:.2f}s vs best DEVNULL "
+                f"{best_baseline:.2f}s = {best_supervised / best_baseline:.3f}x (bound "
+                f"{_TIMING_BOUND:.2f}x); DEVNULL {[round(s, 2) for s in baseline]}, "
+                f"supervised {[round(run.seconds, 2) for run in runs]}; log "
+                f"{len(runs[0].raw)} bytes, {runs[0].trims} trims, {nuls} NUL bytes"
+            )
             return
 
     pytest.fail(
@@ -931,3 +941,7 @@ def test_terminating_a_relay_is_not_slowed_by_its_drain_thread(
         f"the drain thread slowed terminate: {t_threaded:.4f}s vs {t_plain:.4f}s"
     )
     assert _wait_for_drain_threads_to_end(5.0) == [], "a drain thread outlived its relay"
+    print(
+        f"terminate timing: stop_all {t_threaded:.4f}s vs plain terminate {t_plain:.4f}s; "
+        f"delta {t_threaded - t_plain:+.4f}s"
+    )
