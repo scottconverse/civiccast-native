@@ -252,6 +252,35 @@ def _wait_for_log_growth(path: Path, timeout: float) -> bool:
     return False
 
 
+def _wait_until_the_cap_is_crossed(
+    sup: HlsRelaySupervisor, path: Path, cap_bytes: int, timeout: float
+) -> str:
+    """Wait until the log is over its cap on whichever shape is under test.
+
+    The regression test below has to run the daemon's ``maybe_trim_logs`` tick
+    *after* the cap has been crossed, or it proves nothing about the trim -- it
+    only proves the tick ran early. Crossing has two shapes and this waits for
+    either:
+
+    * parent-owns-the-file: the drain thread trims in-thread, so the file never
+      sits over the cap for long; the writer's own trim count is the signal;
+    * the pre-U24.1 shape: no thread owns the file and nothing trims it between
+      ticks, so the file's raw size is the signal.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        writer = _writer(sup)
+        if writer is not None and writer.trims >= 1:
+            return "writer"
+        try:
+            if path.stat().st_size > cap_bytes:
+                return "file"
+        except OSError:
+            pass
+        time.sleep(0.01)
+    return ""
+
+
 def _time_call(call: Callable[..., object], *args: object) -> float:
     started = time.perf_counter()
     call(*args)
@@ -751,6 +780,11 @@ def test_a_real_childs_storm_is_capped_with_no_nul_padding_and_no_restart(
     larger than the cap it had just been trimmed to. It runs the daemon's
     ``maybe_trim_logs`` tick mid-storm *and* waits for the child to finish, so
     both the belt and the writer's braces are exercised.
+
+    The tick is run only once the cap has actually been crossed
+    (:func:`_wait_until_the_cap_is_crossed`), so the failure it reports on the
+    old shape is the trim's doing and not a tick that happened to run before
+    the file was over the cap.
     """
     monkeypatch.setattr(hls_relay_module, "HLS_RELAY_LOG_CAP_BYTES", _CAP_BYTES)
     monkeypatch.setattr(hls_relay_module, "HLS_RELAY_LOG_TAIL_BYTES", _TAIL_BYTES)
@@ -761,12 +795,22 @@ def test_a_real_childs_storm_is_capped_with_no_nul_padding_and_no_restart(
         handle = starter.handles[0]
         path = _log_path(tmp_path)
         assert _wait_for_log_growth(path, 30.0), "the storm child wrote no stderr"
+        crossed = _wait_until_the_cap_is_crossed(sup, path, _CAP_BYTES, 30.0)
+        assert crossed, "the storm never crossed the cap: this test's premise was not met"
 
         sup.maybe_trim_logs("gov")
         time.sleep(1.0)
         mid_flight = path.read_bytes()
-        assert b"\x00" not in mid_flight, "the log grew a NUL hole while the child was writing"
-        assert len(mid_flight) <= _CAP_BYTES + _MID_APPEND_ALLOWANCE
+        nul = mid_flight.count(b"\x00")
+        assert nul == 0, (
+            f"the log grew a NUL hole while the child was still writing: {nul} NUL bytes "
+            f"in {len(mid_flight)}; something rewrote the file under a child that kept "
+            "appending at its own offset"
+        )
+        assert len(mid_flight) <= _CAP_BYTES + _MID_APPEND_ALLOWANCE, (
+            f"the log is {len(mid_flight)} bytes against a {_CAP_BYTES}-byte cap while the "
+            "child is still writing: the cap bounds nothing"
+        )
 
         assert _wait_for_exit(handle, 300.0), "the storm child never exited"
         assert handle.poll() == 0
