@@ -46,8 +46,14 @@ from urllib.parse import urlsplit
 
 import pytest
 
+from civiccast.egress import hls_relay as hls_relay_mod
 from civiccast.egress.daemon import EgressDaemon
-from civiccast.egress.hls_relay import HlsRelaySupervisor, _Relay, hls_relay_uri_for
+from civiccast.egress.hls_relay import (
+    HlsRelaySupervisor,
+    _Relay,
+    _segment_has_video,
+    hls_relay_uri_for,
+)
 from civiccast.egress.models import EgressCommand, EgressConfig, EgressSinkSpec
 from civiccast.egress.sinks import HlsSink
 from civiccast.egress.source_plan import EgressSourcePlan, EgressSourceSegment
@@ -172,6 +178,22 @@ def test_relay_argv_leaves_an_audio_only_sink_unchanged(
     sup.apply(_config(_hls_sink(str(tmp_path / "gov"))))
 
     assert "-map" not in calls[0]
+
+
+def test_shipped_video_retry_cadence_and_mapping_are_the_documented_ones() -> None:
+    """The SHIPPED cadence, not a test-tuned one: three prompt attempts at 5s,
+    then one attempt per 60s, plus the exact required-video mapping. The other
+    tests tighten the delays to fit a test-scale wall clock, so this is the only
+    place the values an operator actually gets are pinned."""
+    assert hls_relay_mod._VIDEO_SINK_MAP_ARGS == ("-map", "0:v:0", "-map", "0:a:0?")
+    assert hls_relay_mod._DEFAULT_VIDEO_RETRY_DELAY_S == 5.0
+    assert hls_relay_mod._DEFAULT_VIDEO_RETRY_SLOW_DELAY_S == 60.0
+    assert hls_relay_mod._VIDEO_FAST_ATTEMPTS == 3
+
+    default = HlsRelaySupervisor()
+    assert default._video_retry_delay_s == 5.0
+    assert default._video_retry_slow_delay_s == 60.0
+    assert default._segment_probe is _segment_has_video
 
 
 # --- bounded, backed-off restart of a child that cannot carry video --------------
@@ -647,6 +669,66 @@ def _probe_stream_kinds(path: Path) -> set[str]:
             if isinstance(kind, str):
                 kinds.add(kind)
     return kinds
+
+
+@pytestmark_real
+def test_segment_probe_verdicts_are_tri_state(tmp_path: Path) -> None:
+    """The probe the alive-shape recovery judges on, against real files.
+
+    ``True`` when the segment carries video, ``False`` when it demonstrably does
+    not, and ``None`` -- claim nothing, never restart -- for anything ffprobe
+    cannot read (a missing file, or bytes that are not a transport stream). The
+    tri-state is the safety property: a restart must never be triggered by the
+    supervisor failing to tell rather than by it seeing audio-only.
+    """
+    encoded = tmp_path / "with-video.ts"
+    audio_only = tmp_path / "audio-only.ts"
+    for path, inputs in (
+        (
+            encoded,
+            (
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=320x180:rate=15",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-g",
+                "15",
+                "-pix_fmt",
+                "yuv420p",
+            ),
+        ),
+        (audio_only, ("-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-c:a", "aac")),
+    ):
+        completed = subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                *inputs,
+                "-t",
+                "1",
+                "-f",
+                "mpegts",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert completed.returncode == 0, completed.stderr
+
+    garbage = tmp_path / "garbage.ts"
+    garbage.write_bytes(b"this is not a transport stream")
+
+    assert _segment_has_video(encoded) is True
+    assert _segment_has_video(audio_only) is False
+    assert _segment_has_video(tmp_path / "missing.ts") is None
+    assert _segment_has_video(garbage) is None
 
 
 @pytestmark_real
