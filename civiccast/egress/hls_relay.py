@@ -935,6 +935,14 @@ class _Relay:
     #: a frozen playlist left on disk must not read as progress just because the
     #: replacement child started, or the heal would re-arm every bound and
     #: become a restart storm.
+    #:
+    #: The latch carries onto the HEAL's own replacement child (see
+    #: ``maybe_self_heal_stalled``), but not across a U21 drop: a caller that
+    #: reaches ``apply(new_session=True)`` discards this whole record, so the
+    #: rebind's fresh child starts with ``heal_attempted=False`` and the frozen
+    #: playlist re-arms exactly one more heal per INCARNATION. That is bounded
+    #: by the caller, not here -- U30's rolling-hour
+    #: ``_FREEZE_ESCALATION_RESTART_BUDGET`` in ``civiccast.egress.daemon``.
     heal_attempted: bool = False
     #: The last-segment name observed at the moment a heal was attempted. The
     #: latch above clears only once progress moves past THIS value.

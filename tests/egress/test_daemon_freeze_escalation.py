@@ -326,20 +326,32 @@ def test_u30_a_freeze_that_survives_the_self_heal_restarts_the_worker(
     assert "restart 1 of at most 3" in message
 
 
-def test_u30_the_escalation_leaves_the_relay_child_alone(tmp_path: Path) -> None:
-    """The escalation restarts the WORKER and nothing else -- not the relay child.
+def test_u30_the_escalation_does_not_stop_the_relay_child_itself(tmp_path: Path) -> None:
+    """The escalation restarts the WORKER and touches no relay child ITSELF.
 
     The self-heal this escalation escalates has already replaced that child (the
     age of the replacement is what ``heal_frozen_seconds`` measures), and in both
     live incidents the fresh child wrote nothing either, so a child that stopped
     writing while its upstream stopped feeding it is not evidence about the
-    child. Tearing it down again is not neutral, either: ``HlsRelaySupervisor``
-    reuses an alive child and the relaunch would respawn it, which re-opens the
-    restart storm the relay's own one-shot heal latch closes -- the invariant
-    ``tests/egress/test_hls_relay_progress.py::test_daemon_tick_sequence_no_restart_storm_with_frozen_playlist``
-    asserts. That test failed on an earlier draft of this escalation which did
-    stop the relay; this asserts the decision directly rather than trusting that
-    the older test continues to cover it.
+    child. Restarting the relay here would also spend the channel's one bounded
+    move on the half of the two-step failure that has not been shown to be at
+    fault. This asserts the call site directly rather than trusting that some
+    older test continues to cover it.
+
+    READ THE ASSERTION NARROWLY -- the relay is NOT left alone end to end. This
+    test's ``fixture.relay`` is a double, so all it can show is what
+    ``_restart_frozen_channel`` does on its own. On the merged beta10 line the
+    escalation is followed, on the next tick, by the ordinary crashed-encoder
+    relaunch, and that relaunch reaches ``_start`` with the worker dead ->
+    ``apply(..., new_session=True)`` -> U21's ``_drop_channel_relays`` discards
+    the channel's ``_Relay`` record and spawns a fresh child. The replacement
+    therefore gets a fresh one-shot ``heal_attempted`` latch, and the frozen
+    playlist re-arms one further heal per incarnation. What keeps that bounded
+    is the rolling-hour restart budget below (3/hour), NOT the heal latch.
+    ``tests/egress/test_hls_relay_progress.py::test_daemon_tick_sequence_with_escalation_is_bounded_not_a_storm``
+    is the test that pins the merged-line sequence; its sibling
+    ``..._no_restart_storm_with_frozen_playlist`` pins the latch in isolation,
+    with ``_poll_freeze_escalation`` switched off.
     """
     fixture = _freeze_fixture(tmp_path)
     worker = _started_on_air(fixture)

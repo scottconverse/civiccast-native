@@ -3242,20 +3242,30 @@ class EgressDaemon:
         accounting. The kill is bounded, so the worker is genuinely gone by the
         next tick rather than only asked to leave.
 
-        The relay child is deliberately left ALONE, and that is the whole point of
+        This method does NOT touch the relay child, and that is the whole point of
         the split: the self-heal this escalation exists to escalate ALREADY
         replaced that child (its age is what ``heal_frozen_seconds`` reports), and
         in both live incidents the fresh child wrote nothing either -- a child
         that stops writing while its upstream has stopped feeding it is evidence
         about the upstream, not about the child, so replacing it a second time
-        buys nothing. What it does cost is real: ``HlsRelaySupervisor.apply``
-        REUSES an alive child whose source URI matches (``_ensure_relay``), so an
-        escalation that stops the relay would have the relaunch respawn a child
-        the relay's own one-shot heal latch (hls_relay audit finding 4) was built
-        to keep from being respawned -- the restart storm that guard closes, and
-        ``tests/egress/test_hls_relay_progress.py``'s frozen-playlist test asserts
-        it stays closed. Nothing has replaced the WORKER, so the WORKER is what
-        this restarts.
+        buys nothing. Nothing has replaced the WORKER, so the WORKER is what this
+        restarts.
+
+        Do NOT read that as "the relaunch leaves the relay alone end to end".
+        On the merged beta10 line it does not: the relaunch reaches
+        ``HlsRelaySupervisor.apply`` with the worker dead, so it takes U21's
+        ``new_session=True`` path, which drops the channel's ``_Relay`` record
+        and spawns a FRESH child -- a fresh one-shot ``heal_attempted`` latch
+        (hls_relay audit finding 4) on the same deterministic port, so the
+        still-frozen playlist re-arms exactly one further heal per relay
+        incarnation. That is bounded, but the bound is the rolling-hour
+        ``_FREEZE_ESCALATION_RESTART_BUDGET`` below (and the throttled CRITICAL
+        once it is spent), NOT the heal latch. The merged-line sequence is pinned
+        by
+        ``test_hls_relay_progress.py::test_daemon_tick_sequence_with_escalation_is_bounded_not_a_storm``;
+        the latch by itself is pinned by that file's
+        ``..._no_restart_storm_with_frozen_playlist``, with this escalation
+        switched off.
 
         Past ``_FREEZE_ESCALATION_RESTART_BUDGET`` restarts in the rolling hour
         the channel is reported and NOT restarted again.
