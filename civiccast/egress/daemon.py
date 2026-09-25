@@ -370,6 +370,57 @@ _OUTPUT_AV_GUARD_BUDGET_WINDOW_S = 3600.0
 #: Cadence of the budget-exhausted ERROR line (it repeats, but not per probe).
 _OUTPUT_AV_GUARD_EXHAUSTED_LOG_INTERVAL_S = 600.0
 
+# BETA.10 U30: the relay-self-heal FAILURE escalation.
+#
+# The U30 finding (2026-09-25, observed live twice: education 06:27, government
+# 01:03) is that the relay self-heal is a one-step recovery with no step after
+# it. A deferred program->program reload commits at a segment boundary
+# (``CTRL reload committed (elements=52)``), the HLS window stops advancing, the
+# relay supervisor correctly detects the frozen window, correctly respawns its
+# ffmpeg child once -- and that child then writes nothing either. The one-shot
+# ``heal_attempted`` latch (hls_relay audit finding 4) deliberately prevents a
+# second heal in the same episode, so the relay path is out of moves and the
+# channel sits frozen until a human restarts it. Both live incidents ended
+# exactly that way: ``STALE 36s -> 144s -> full channel restart``.
+#
+# This guard is the missing second step, modeled on the U16 output A/V guard
+# above (same shape: probe on the existing poll tick, act through the existing
+# bounded worker termination, bounded restarts per rolling hour, throttled
+# CRITICAL once the budget is gone).
+#
+# SIGNAL DECISION: the HLS live window is the signal, and it is the only one.
+# It is what residents actually see, the daemon already reads it every tick for
+# the relay poll, and the relay supervisor already stamps an exact clock for it
+# (``heal_frozen_seconds`` -- time since the heal). The worker's ``CTRL output: N
+# buffers`` progress line is deliberately NOT used even though it is the more
+# direct "is the engine producing" question: the daemon has no cheap, reliable
+# seam to it. Those lines are written to the worker child's stderr and the
+# daemon holds only a ``Popen`` handle and a probe counter, never the child's
+# text stream; reading it would mean capturing and parsing a child's stderr on
+# the hot path, and (see the U30 report) the stderr of the live incident shows
+# the counter ADVANCING all the way through the freeze, so it would not even
+# have answered the question. The window is ground truth; production is a
+# hypothesis about the window.
+#
+# The bound is the relay's own bound plus one segment cadence of slack. The
+# relay already required ``_DEFAULT_STALL_BOUND_S`` (30s) of a motionless
+# window before it healed at all, and a healthy replacement ffmpeg child writes
+# its first segment within its normal segment cadence (seconds). Waiting
+# another 30s after the heal is an order of magnitude past that, and it keeps
+# the two bounds identical and equally explainable to an operator instead of
+# introducing a second magic number.
+_FREEZE_ESCALATION_AFTER_HEAL_S = 30.0
+#: Worker restarts this escalation may spend per channel inside the window
+#: below, mirroring the U16 budget. Past it the channel is reported and NOT
+#: restarted again: a freeze that survives three replacement workers (each of
+#: which also replaces the relay child) is not fixed by a fourth, and a station
+#: otherwise on air is worse off in an unbounded restart loop than with one
+#: channel an operator has been told about.
+_FREEZE_ESCALATION_RESTART_BUDGET = 3
+_FREEZE_ESCALATION_BUDGET_WINDOW_S = 3600.0
+#: Cadence of the budget-exhausted CRITICAL line (it repeats, but not per tick).
+_FREEZE_ESCALATION_EXHAUSTED_LOG_INTERVAL_S = 600.0
+
 
 class _PendingReloadSettlement(NamedTuple):
     """F1 redesign: everything ``_poll_reload_settlement`` needs to either
@@ -535,6 +586,32 @@ class _OutputAvGuardState:
     streak: int = 0
     offsets: list[tuple[float, str]] = field(default_factory=list)
     last_probe_at: float | None = None
+    restarted_at: list[float] = field(default_factory=list)
+    last_exhausted_log_at: float | None = None
+
+
+@dataclass
+class _FreezeEscalationState:
+    """Per-channel bookkeeping for the relay-self-heal failure escalation (U30).
+
+    Two different kinds of state live here, and they are deliberately NOT
+    cleared together:
+
+    * ``pid``/``escalated_for_pid`` are the CURRENT EPISODE -- which worker the
+      frozen window is evidence about, and whether this escalation has already
+      acted on that worker. A pid change voids the episode: whatever the
+      replacement does, its predecessor's frozen window says nothing about it.
+      ``escalated_for_pid`` is what makes "exactly one ERROR line and one
+      restart per escalation" true even in the ticks before a killed worker's
+      exit is reaped and its replacement started.
+    * ``restarted_at``/``last_exhausted_log_at`` are the CHANNEL's budget, and
+      are deliberately NOT voided by a pid change: a restart obviously changes
+      the pid, so clearing the budget with it would make the budget meaningless
+      and the escalation an unbounded restart loop.
+    """
+
+    pid: int | None = None
+    escalated_for_pid: int | None = None
     restarted_at: list[float] = field(default_factory=list)
     last_exhausted_log_at: float | None = None
 
@@ -908,6 +985,10 @@ class EgressDaemon:
             _segment_first_packet_pts
         )
         self._output_av_guard: dict[str, _OutputAvGuardState] = {}
+        # BETA.10 U30: the relay-self-heal failure escalation's per-channel
+        # bookkeeping. No seam is needed here -- its input signal is the relay
+        # supervisor's ``heal_frozen_seconds``, which the daemon already holds.
+        self._freeze_escalation: dict[str, _FreezeEscalationState] = {}
         # The STORED config each live pipeline was built from (review round 3
         # delta, MAJOR 2). Health samples key ``sink_connected`` by sink label
         # from this, not from whatever the config row says NOW: a sink saved
@@ -1153,6 +1234,15 @@ class EgressDaemon:
             self._service_backoff_relaunch,
             self._poll_reload_settlement,
             self._poll_output_av_guard,
+            # BETA.10 U30: the relay-self-heal failure escalation goes after the
+            # A/V guard, for the same reason the A/V guard goes last -- it
+            # judges a settled channel state, so it must see the row the polls
+            # above just wrote. It is also strictly downstream of
+            # ``_poll_hls_relay`` in the same tick: that is the poll that calls
+            # the self-heal whose failure this one escalates, so ordering them
+            # this way means a heal performed this tick is observable by the
+            # escalation immediately rather than a tick late.
+            self._poll_freeze_escalation,
         ):
             try:
                 poll(channel_id)
@@ -3047,6 +3137,162 @@ class EgressDaemon:
             "%s. Restarting this channel's worker through the ordinary crashed-encoder "
             "relaunch path.",
             detail,
+        )
+        _process_terminate_bounded(process)
+
+    def _freeze_escalation_state(self, channel_id: str) -> _FreezeEscalationState:
+        state = self._freeze_escalation.get(channel_id)
+        if state is None:
+            state = _FreezeEscalationState()
+            self._freeze_escalation[channel_id] = state
+        return state
+
+    def _poll_freeze_escalation(self, channel_id: str) -> None:
+        """U30: escalate when a relay self-heal has run and the window is STILL frozen.
+
+        The relay supervisor's self-heal is one-shot per stall episode by design
+        (hls_relay audit finding 4: a second heal in the same episode would be a
+        restart storm), so a heal that does not restore the window leaves that
+        path with no next move. This poll is the next move: it waits
+        ``_FREEZE_ESCALATION_AFTER_HEAL_S`` past the heal and, if the window is
+        still frozen, restarts the channel's worker through the ordinary
+        crashed-encoder relaunch path.
+
+        The gate order is the contract, and each clause exists so that nothing
+        healthy is ever restarted:
+
+        * No live worker entry -> nothing to restart, and the channel's
+          bookkeeping is dropped (a stopped channel must not carry a stale
+          budget into its next start).
+        * Not ON_AIR/FALLBACK_SLATE, or draining -> not judged. These are the
+          only two states in which the channel is supposed to be delivering a
+          settled program. STARTING and TRANSITIONING are explicitly exempt:
+          both are transient by construction (TRANSITIONING is what
+          ``_poll_process`` publishes while a content reload is in flight --
+          exactly when the U30 freeze has been seen) and neither has a window
+          that is supposed to be advancing yet. DRAINING is leaving air on
+          purpose.
+        * Worker pid changed -> the episode is voided. A replacement worker's
+          frozen predecessor-window is not evidence about it.
+        * Already escalated for THIS pid -> nothing more to do (the killed
+          worker is still the live entry until its exit is reaped).
+        * ``heal_frozen_seconds`` is under the bound -> not a failed heal yet,
+          or no relay in a failed-heal state at all. ``None`` (no relay
+          tracked, or no live relay is mid-failed-heal) means "this question
+          does not apply" and must never escalate: with no relay in play there
+          is no heal to have failed.
+
+        The signal is the HLS live window and only that -- see the constants
+        block at the top of this module for why the worker's own output-progress
+        line is deliberately not used.
+        """
+        process = self._processes.get(channel_id)
+        if process is None:
+            self._freeze_escalation.pop(channel_id, None)
+            return
+
+        state = self._freeze_escalation_state(channel_id)
+        pid = _process_pid(process)
+        if state.pid != pid:
+            state.pid = pid
+            state.escalated_for_pid = None
+
+        row = self._store.read_state(channel_id)
+        if (
+            row is None
+            or row.state not in ("ON_AIR", "FALLBACK_SLATE")
+            or channel_id in self._draining_channels
+        ):
+            return
+        if state.escalated_for_pid == pid:
+            return
+
+        supervisor = self._hls_relay
+        if supervisor is None:
+            return
+        # Defensive like the rest of this daemon's relay seams (see
+        # ``_poll_hls_relay``): a supervisor double that predates this signal
+        # must read as "not applicable", never as an exception on every tick.
+        frozen_seconds = getattr(supervisor, "heal_frozen_seconds", None)
+        if not callable(frozen_seconds):
+            return
+        now = self._monotonic()
+        frozen = frozen_seconds(channel_id, now=now)
+        if frozen is None or frozen < _FREEZE_ESCALATION_AFTER_HEAL_S:
+            return
+        self._restart_frozen_channel(channel_id, state, process, pid=pid, frozen=frozen, now=now)
+
+    def _restart_frozen_channel(
+        self,
+        channel_id: str,
+        state: _FreezeEscalationState,
+        process: object,
+        *,
+        pid: int | None,
+        frozen: float,
+        now: float,
+    ) -> None:
+        """Report a confirmed post-heal freeze and restart the worker, or refuse.
+
+        The restart is the SAME route the output A/V guard and a dead encoder
+        take: terminate the worker WITHOUT recording it in ``_reload_kills``, so
+        its exit is an ordinary non-zero exit that ``_poll_process`` next tick
+        finds, with the row still ON_AIR, and hands to ``_relaunch_after_crash``
+        -- the ordinary crash-relaunch path with its own back-off and
+        accounting. The kill is bounded, so the worker is genuinely gone by the
+        next tick rather than only asked to leave.
+
+        The relay child is deliberately left ALONE, and that is the whole point of
+        the split: the self-heal this escalation exists to escalate ALREADY
+        replaced that child (its age is what ``heal_frozen_seconds`` reports), and
+        in both live incidents the fresh child wrote nothing either -- a child
+        that stops writing while its upstream has stopped feeding it is evidence
+        about the upstream, not about the child, so replacing it a second time
+        buys nothing. What it does cost is real: ``HlsRelaySupervisor.apply``
+        REUSES an alive child whose source URI matches (``_ensure_relay``), so an
+        escalation that stops the relay would have the relaunch respawn a child
+        the relay's own one-shot heal latch (hls_relay audit finding 4) was built
+        to keep from being respawned -- the restart storm that guard closes, and
+        ``tests/egress/test_hls_relay_progress.py``'s frozen-playlist test asserts
+        it stays closed. Nothing has replaced the WORKER, so the WORKER is what
+        this restarts.
+
+        Past ``_FREEZE_ESCALATION_RESTART_BUDGET`` restarts in the rolling hour
+        the channel is reported and NOT restarted again.
+        """
+        state.restarted_at = [
+            at for at in state.restarted_at if at > now - _FREEZE_ESCALATION_BUDGET_WINDOW_S
+        ]
+        detail = (
+            f"channel {channel_id}: the HLS live window is still frozen {frozen:.1f}s after "
+            f"the relay self-heal replaced its ffmpeg child, so the self-heal did not "
+            f"restore it (residents are watching a stalled stream)"
+        )
+        if len(state.restarted_at) >= _FREEZE_ESCALATION_RESTART_BUDGET:
+            if (
+                state.last_exhausted_log_at is None
+                or now - state.last_exhausted_log_at >= _FREEZE_ESCALATION_EXHAUSTED_LOG_INTERVAL_S
+            ):
+                state.last_exhausted_log_at = now
+                _LOG.critical(
+                    "%s. Freeze escalation budget exhausted (%d worker restarts already "
+                    "spent in the last hour): NOT restarting the worker again. The window is "
+                    "still frozen after replacement workers, so this needs an operator -- "
+                    "check the channel's source program and the relay child's own output.",
+                    detail,
+                    len(state.restarted_at),
+                )
+            return
+        state.restarted_at.append(now)
+        state.escalated_for_pid = pid
+        _LOG.error(
+            "%s. Restarting this channel's worker through the ordinary crashed-encoder "
+            "relaunch path; restart %d of at most %d in the last hour (%d left in this "
+            "hour).",
+            detail,
+            len(state.restarted_at),
+            _FREEZE_ESCALATION_RESTART_BUDGET,
+            _FREEZE_ESCALATION_RESTART_BUDGET - len(state.restarted_at),
         )
         _process_terminate_bounded(process)
 

@@ -27,6 +27,7 @@ import subprocess
 import sys
 import threading
 import types
+from itertools import count
 from pathlib import Path
 from typing import Any
 
@@ -254,13 +255,23 @@ class _FakeOldPad:
         self.name = name
         self.recorder = recorder
         self._peer = peer
+        # U30: (probe_id, mask, callback, args) for every probe this pad took, so
+        # a test can fire the callback the way the streaming thread would -- the
+        # same contract ``_FakeDiagnosticPad.probes`` provides, one user_data
+        # argument richer (the boundary probes carry the transaction id).
+        self.probes: list[tuple[Any, Any, Any, tuple[Any, ...]]] = []
 
     def get_peer(self) -> _FakePeer | None:
         return self._peer
 
+    def get_name(self) -> str:
+        return self.name
+
     def add_probe(self, mask: Any, callback: Any, *_args: Any) -> str:
         self.recorder.calls.append(f"add_probe:{self.name}:{mask}:{callback.__name__}")
-        return f"{self.name}-probe-{mask}"
+        probe_id = f"{self.name}-probe-{mask}"
+        self.probes.append((probe_id, mask, callback, _args))
+        return probe_id
 
     def remove_probe(self, probe_id: Any) -> None:
         self.recorder.calls.append(f"remove_probe:{self.name}:{probe_id}")
@@ -3072,3 +3083,1334 @@ def test_u16_packaged_runtime_resolution_matches_its_declared_root() -> None:
         f"declared {_U16_DECLARED_ROOT!r} did not resolve to a packaged runtime "
         f"(version root {_U16_VERSION_ROOT!r})"
     )
+
+
+# --- (8) U30: naming WHICH stream stopped feeding the mux ---------------------
+#
+# Both live incidents of 2026-09-25 (education 06:27, government 01:03) committed
+# a deferred program->program reload at a segment boundary and then went silent:
+# the HLS window froze, the relay self-heal rewrote nothing, and only a full
+# channel restart recovered. Read off the education worker's own stderr, the
+# TOTAL mux-src counter kept ADVANCING right through the freeze -- its
+# per-interval deltas were 332-496 before the commit and 234/281 after it, i.e.
+# the audio-only rate. So the channel was airing audio with no video at all, and
+# nothing in the log said so (the S9-5 watchdog compares that same total, so it
+# could not fire either).
+#
+# Two always-on, read-only diagnostics close that gap. Neither changes behaviour:
+# every body is exception-guarded, and every probe only counts or prints.
+
+
+class _FakeEventProbeInfo:
+    """Probe info carrying an EVENT -- the U16 fakes only ever carried a buffer."""
+
+    def __init__(self, event: Any) -> None:
+        self.type = _FakePadProbeType.EVENT_DOWNSTREAM
+        self._event = event
+
+    def get_buffer(self) -> Any:
+        return None
+
+    def get_event(self) -> Any:
+        return self._event
+
+
+class _FakeProbeEvent:
+    def __init__(self, event_type: Any) -> None:
+        self.type = event_type
+
+
+def _u30_pending_for_eos(pad: Any, *, txn_id: int = 9) -> dict[str, Any]:
+    """The subset of a pending reload that ``_on_old_leg_eos`` actually reads."""
+    return {
+        "txn_id": txn_id,
+        "outgoing_end": {},
+        "boundary_probes": [(pad, 1)],
+        "outgoing_eos_pads": set(),
+        "old_video_pad": pad,
+        "new_leg_ready": False,
+    }
+
+
+def test_u30_mux_input_counters_count_each_sink_pad_separately(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One counter per mux SINK pad, so a starved stream is a first-class signal.
+
+    The mux SRC counter can only ever say "output is still advancing"; a channel
+    whose video branch stopped feeding the mux while audio continues keeps that
+    counter advancing at exactly the audio-only rate, which is the shape both
+    live incidents had. Counting at the SINK pads is what makes video's own
+    silence visible."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    video_pad = _FakeDiagnosticPad(
+        "sink_65", recorder, caps="video/x-h264, stream-format=byte-stream"
+    )
+    audio_pad = _FakeDiagnosticPad("sink_66", recorder, caps="audio/mpeg, mpegversion=4")
+    engine.mux = _FakeMux([video_pad, audio_pad])
+
+    engine._install_mux_input_counters()
+
+    assert "add_probe:sink_65:1:_count_mux_input" in recorder.calls, recorder.calls
+    assert "add_probe:sink_66:1:_count_mux_input" in recorder.calls, recorder.calls
+    assert engine._mux_input_buffers == {"sink_65": 0, "sink_66": 0}
+    assert capsys.readouterr().err == ""
+
+    for _ in range(4):
+        _mask, callback = video_pad.probes[0]
+        assert callback(video_pad, _FakeProbeInfo(_FakeProbeBuffer(0))) == (
+            engine_module.Gst.PadProbeReturn.OK
+        )
+    _mask, callback = audio_pad.probes[0]
+    callback(audio_pad, _FakeProbeInfo(_FakeProbeBuffer(0)))
+    assert engine._mux_input_buffers == {"sink_65": 4, "sink_66": 1}
+
+
+@pytest.mark.parametrize("mux", [None, _FakeMux([]), object()])
+def test_u30_mux_input_counters_are_silent_and_safe_without_sink_pads(
+    engine_module, capsys: pytest.CaptureFixture[str], mux: Any
+) -> None:
+    """No mux, no sink pads, or a mux with no iterator: silent, and no raise."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.mux = mux
+
+    engine._install_mux_input_counters()
+
+    assert capsys.readouterr().err == ""
+    assert recorder.calls == []
+    assert engine._mux_input_buffers == {}
+
+
+def test_u30_mux_input_counters_skip_a_pad_that_cannot_take_a_probe(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A pad that cannot be probed must NOT be listed.
+
+    A stream that is listed and then reads ``+0`` forever would be read as "that
+    stream stopped flowing", which would be a lie: the truth is "we could not
+    count this stream at all", and the right rendering of that is absence."""
+    recorder = _Recorder()
+
+    class _RefusingPad(_FakeDiagnosticPad):
+        def add_probe(self, mask: Any, callback: Any) -> str:
+            raise RuntimeError("probe refused")
+
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.mux = _FakeMux(
+        [
+            _RefusingPad("sink_65", recorder, caps="video/x-h264"),
+            _FakeDiagnosticPad("sink_66", recorder, caps="audio/mpeg, mpegversion=4"),
+        ]
+    )
+
+    engine._install_mux_input_counters()
+
+    assert engine._mux_input_buffers == {"sink_66": 0}
+    assert capsys.readouterr().err == ""
+
+
+def test_u30_mux_input_deltas_report_each_stream_and_advance_the_baseline(
+    engine_module,
+) -> None:
+    """Per-interval deltas, not a running total: ``video=+0`` is the signal.
+
+    The baseline is keyed by PAD NAME, not by resolved label -- the label comes
+    from negotiated caps, and a snapshot taken before negotiation would key on
+    something the next print cannot find, which would read as ``+0`` (a lie in
+    the exact direction this diagnostic exists to detect)."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_pads = {
+        "sink_65": _FakeDiagnosticPad("sink_65", _Recorder(), caps="video/x-h264"),
+        "sink_66": _FakeDiagnosticPad("sink_66", _Recorder(), caps="audio/mpeg, mpegversion=4"),
+    }
+    engine._mux_input_buffers = {"sink_65": 100, "sink_66": 200}
+    engine._mux_input_snapshot = {"sink_65": 90, "sink_66": 190}
+    engine._mux_input_snapshot_t = 10.0
+
+    assert engine._mux_input_delta_suffix(5.0) == " [mux-in 5.0s: video=+10 audio=+10]"
+
+    # A print advances the baseline to the counters it just reported, so the NEXT
+    # line reports its own interval only.
+    engine._snapshot_mux_input(15.0)
+    assert engine._mux_input_snapshot == {"sink_65": 100, "sink_66": 200}
+    assert engine._mux_input_snapshot_t == 15.0
+
+    engine._mux_input_buffers = {"sink_65": 150, "sink_66": 400}
+    assert engine._mux_input_delta_suffix(5.0) == " [mux-in 5.0s: video=+50 audio=+200]"
+
+
+def test_u30_mux_input_deltas_show_a_stream_that_stopped_flowing(engine_module) -> None:
+    """The incident shape in one log line: video flat, audio still moving.
+
+    The numbers are the ones MEASURED off the live education worker: 234 buffers
+    per 5s is that channel's audio-only rate (461 over 6s), against 332-496 per
+    interval for healthy A/V."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_pads = {
+        "sink_65": _FakeDiagnosticPad("sink_65", _Recorder(), caps="video/x-h264"),
+        "sink_66": _FakeDiagnosticPad("sink_66", _Recorder(), caps="audio/mpeg, mpegversion=4"),
+    }
+    engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145750}
+    engine._mux_input_snapshot = {"sink_65": 138577, "sink_66": 145516}
+
+    assert engine._mux_input_delta_suffix(5.0) == " [mux-in 5.0s: video=+0 audio=+234]"
+
+
+def test_u30_mux_input_deltas_put_video_and_audio_first_then_others(engine_module) -> None:
+    """Video first, then audio, then anything else by name.
+
+    An unrecognised pad label (an unnegotiated pad falls back to its own name)
+    must still be reported rather than dropped -- the point of the line is that
+    nothing which feeds the mux is invisible."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_pads = {
+        "sink_67": _FakeDiagnosticPad("sink_67", _Recorder()),
+        "sink_66": _FakeDiagnosticPad("sink_66", _Recorder(), caps="audio/mpeg, mpegversion=4"),
+        "sink_65": _FakeDiagnosticPad("sink_65", _Recorder(), caps="video/x-h264"),
+    }
+    engine._mux_input_buffers = {"sink_65": 1, "sink_66": 2, "sink_67": 3}
+    engine._mux_input_snapshot = {"sink_65": 0, "sink_66": 0, "sink_67": 0}
+
+    assert engine._mux_input_delta_suffix(5.0) == (" [mux-in 5.0s: video=+1 audio=+2 sink_67=+3]")
+
+
+def test_u30_mux_input_deltas_are_empty_when_nothing_was_counted(engine_module) -> None:
+    """No counted pad: no suffix at all, so the existing line is byte-identical."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_buffers = {}
+    engine._mux_input_pads = {}
+    engine._mux_input_snapshot = {}
+
+    assert engine._mux_input_delta_suffix(5.0) == ""
+
+
+def test_u30_a_dropped_outgoing_eos_is_named_before_it_is_dropped(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The line that tells "the outgoing leg never ended" from "it ended and we
+    dropped the event".
+
+    Until U30 the only trace of this path was the SETTLEMENT line the queued
+    callback prints later, so an EOS that was dropped and then declined by one of
+    ``_on_old_leg_eos``'s four guards left no line at all. The education incident
+    recorded ``stream=audio (1/2 stream(s))`` and never settled video; the U30
+    off-live reproduction has runs where the worker exits CLEANLY with no settle
+    line and no commit stage ever printed."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pad = _FakeDiagnosticPad("sink_65", recorder)
+    engine._pending_reload = _u30_pending_for_eos(pad)
+
+    result = engine._on_outgoing_pad_data(
+        pad, _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)), 9
+    )
+
+    assert result == engine_module.Gst.PadProbeReturn.DROP
+    err = capsys.readouterr().err
+    assert "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_65 pending_txn=9" in err
+    # The settle line that already existed still follows it (the fixture's fake
+    # ``GLib.idle_add`` runs the queued callback inline).
+    assert "CTRL reload: outgoing EOS observed stream=video (1/1 stream(s))" in err
+    assert engine._pending_reload["old_leg_eos"] is True
+
+
+def test_u30_a_dropped_eos_from_a_superseded_transaction_says_so(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Dropped with NO settle line is the state that used to be invisible.
+
+    A stale queued EOS from a superseded transaction is dropped here and then
+    declined by the transaction-id guard in ``_on_old_leg_eos``. Before U30 the
+    log showed neither event; now the drop is named, and the absence of the
+    settle line after it is the distinction."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pad = _FakeDiagnosticPad("sink_65", recorder)
+    engine._pending_reload = _u30_pending_for_eos(pad, txn_id=9)
+
+    result = engine._on_outgoing_pad_data(
+        pad, _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)), 8
+    )
+
+    assert result == engine_module.Gst.PadProbeReturn.DROP
+    err = capsys.readouterr().err
+    assert "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_65 pending_txn=9" in err
+    assert "outgoing EOS observed" not in err
+    assert not engine._pending_reload.get("old_leg_eos")
+
+
+def test_u30_a_dropped_eos_with_no_pending_transaction_is_still_named(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The retired-leg window: reload already committed, leg not yet disposed.
+
+    The probe deliberately stays installed and drops EOS unconditionally; this is
+    the line that shows an EOS arrived in that window even though there is no
+    transaction left to settle."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pad = _FakeDiagnosticPad("sink_66", recorder)
+    engine._pending_reload = None
+
+    result = engine._on_outgoing_pad_data(
+        pad, _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)), 9
+    )
+
+    assert result == engine_module.Gst.PadProbeReturn.DROP
+    assert (
+        "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_66 pending_txn=none"
+        in capsys.readouterr().err
+    )
+
+
+def test_u30_diagnostics_do_not_disturb_the_reload_preroll_log_grader() -> None:
+    """U16's guard, applied to the U30 lines.
+
+    ``scripts/ops/check_reload_preroll.py`` grades reload commits from worker
+    logs by regex; an unrelated line containing "preroll"/"rebased" in the wrong
+    shape would corrupt that verdict. The new lines must neither create, hide,
+    nor fake a commit proof."""
+    log = "\n".join(
+        [
+            "CTRL reload: new leg stream held at its first buffer "
+            "(0 stream(s) still to preroll) (reload_id=4)",
+            "CTRL reload: new leg preroll verified (reload_id=4) held_streams=2 "
+            "timing=finite mode=deferred",
+            "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_65 pending_txn=4",
+            "CTRL output: 138577 buffers (+138576) since PLAYING "
+            "[mux-in 5.0s: video=+0 audio=+234]",
+            "CTRL reload: finite switch rebased to running time 1799.402s mode=deferred "
+            "streams=2 reload_id=4",
+            "CTRL reload: firing (reload_id=4)",
+            "CTRL reload committed (elements=52)",
+        ]
+    )
+
+    assert check_log(log) == (1, [])
+
+
+class _FakeChainElement:
+    """A selector / isolation queue as the flow-ladder arming sees it.
+
+    ``get_static_pad`` is the only method the arming path calls; it returns the
+    src pad by name and ``None`` for anything else, exactly like
+    ``Gst.Element.get_static_pad`` on a pad that does not exist.
+
+    ``get_property`` answers ``active-pad`` with whatever the test set (``None``
+    by default) -- the read the ``sel`` EOS label makes lazily, at EOS time."""
+
+    def __init__(
+        self,
+        name: str,
+        recorder: _Recorder,
+        src_pad: Any = None,
+        *,
+        active_pad: Any = None,
+    ) -> None:
+        self.name = name
+        self.recorder = recorder
+        self.src_pad = src_pad
+        self.active_pad = active_pad
+
+    def get_static_pad(self, pad_name: str) -> Any:
+        self.recorder.calls.append(f"get_static_pad:{self.name}:{pad_name}")
+        return self.src_pad if pad_name == "src" else None
+
+    def get_property(self, prop_name: str) -> Any:
+        self.recorder.calls.append(f"get_property:{self.name}:{prop_name}")
+        return self.active_pad
+
+
+class _FakeNamedPipeline(_FakePipeline):
+    """A pipeline that can also look an element up by name (the isolation
+    queues are built as locals in ``_build``, so the ladder finds them the way
+    any other code would: by their stable element names)."""
+
+    def __init__(self, recorder: _Recorder, elements: dict[str, Any]) -> None:
+        super().__init__(recorder)
+        self._elements = elements
+
+    def get_by_name(self, name: str) -> Any:
+        self.recorder.calls.append(f"pipeline.get_by_name:{name}")
+        return self._elements.get(name)
+
+
+_VIDEO_QUEUE_NAME = "program_video_selector_isolation"
+_AUDIO_QUEUE_NAME = "program_audio_selector_isolation"
+
+
+def _u30_armed_chain(engine: Any, recorder: _Recorder) -> dict[str, Any]:
+    """Install the ladder on a bare engine with a full, countable chain.
+
+    Returns the four src pads keyed by ``(rung, stream)`` so a test can fire
+    them the way a streaming thread would."""
+    pads = {
+        ("sel", "video"): _FakeDiagnosticPad("sel_src", recorder),
+        ("sel", "audio"): _FakeDiagnosticPad("asel_src", recorder),
+        ("queue", "video"): _FakeDiagnosticPad("vq_src", recorder),
+        ("queue", "audio"): _FakeDiagnosticPad("aq_src", recorder),
+    }
+    engine.selector = _FakeChainElement("sel", recorder, pads[("sel", "video")])
+    engine.audio_selector = _FakeChainElement("asel", recorder, pads[("sel", "audio")])
+    engine.pipeline = _FakeNamedPipeline(
+        recorder,
+        {
+            _VIDEO_QUEUE_NAME: _FakeChainElement("vq", recorder, pads[("queue", "video")]),
+            _AUDIO_QUEUE_NAME: _FakeChainElement("aq", recorder, pads[("queue", "audio")]),
+        },
+    )
+    engine._install_chain_input_counters()
+    return pads
+
+
+def test_u30_chain_input_counters_arm_both_rungs_for_both_streams(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One counter at each end of the stretch the mux counters cannot see.
+
+    ``[mux-in ...]`` says the output half is still being fed; it says nothing
+    about WHERE inside ``selector -> isolation queue -> encoder -> mux`` a
+    stream stopped. The dead immediate-switch runs of the 2026-09-25 off-live
+    campaign show the switched-in leg's buffer arriving on the selector's own
+    input pad, the active-pad readback confirming the switch, and the mux input
+    counters never moving for that leg -- so the loss is inside that stretch,
+    and the ladder bisects it with one counter at each end."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = _u30_armed_chain(engine, recorder)
+
+    assert sorted(engine._chain_input_pads) == [
+        ("queue", "audio"),
+        ("queue", "video"),
+        ("sel", "audio"),
+        ("sel", "video"),
+    ]
+    assert engine._chain_input_buffers == dict.fromkeys(engine._chain_input_pads, 0)
+    assert "get_static_pad:sel:src" in recorder.calls
+    assert f"pipeline.get_by_name:{_VIDEO_QUEUE_NAME}" in recorder.calls
+    for pad in pads.values():
+        assert f"add_probe:{pad.name}:1:_count_chain_input" in recorder.calls, recorder.calls
+    assert capsys.readouterr().err == ""
+
+    # Each rung counts ITS OWN stream only -- a selector src pad carries both
+    # streams' data over the worker's lifetime, so a shared counter would make
+    # video's silence invisible again, which is the whole defect.
+    _mask, callback = pads[("sel", "video")].probes[0]
+    for _ in range(3):
+        assert (
+            callback(pads[("sel", "video")], _FakeProbeInfo(_FakeProbeBuffer(0)))
+            == engine_module.Gst.PadProbeReturn.OK
+        )
+    assert engine._chain_input_buffers[("sel", "video")] == 3
+    assert engine._chain_input_buffers[("sel", "audio")] == 0
+    assert engine._chain_input_buffers[("queue", "video")] == 0
+
+
+@pytest.mark.parametrize("missing", ["selector", "audio_selector", "video_queue"])
+def test_u30_chain_input_counters_skip_a_rung_that_cannot_be_counted(
+    engine_module, capsys: pytest.CaptureFixture[str], missing: str
+) -> None:
+    """An uncountable rung must be ABSENT from the ladder, never rendered ``+0``.
+
+    ``+0`` on the line means "this stream sent nothing", which is the exact
+    claim the diagnostic exists to make. A rung we could not count must not be
+    able to make that claim on a healthy channel, so an element that cannot be
+    found (or has no src pad) is left out of the map instead -- and the OTHER
+    rungs stay armed, so one unfindable element does not silence the ladder."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = _u30_armed_chain(engine, recorder)
+    engine._chain_input_pads = {}
+    engine._chain_input_buffers = {}
+    if missing == "selector":
+        engine.selector = object()  # no get_static_pad at all
+    elif missing == "audio_selector":
+        engine.audio_selector = None
+    else:
+        # The video isolation queue cannot be found by name; the audio one can.
+        engine.pipeline._elements.pop(_VIDEO_QUEUE_NAME)
+
+    engine._install_chain_input_counters()
+
+    dropped = ("sel", "video") if missing == "selector" else ("sel", "audio")
+    if missing == "video_queue":
+        dropped = ("queue", "video")
+    assert dropped not in engine._chain_input_pads
+    assert dropped not in engine._chain_input_buffers
+    assert len(engine._chain_input_pads) == 3
+    assert pads  # the armable rungs above were still armed
+    assert capsys.readouterr().err == ""
+
+
+def test_u30_chain_input_counters_skip_a_pad_that_refuses_a_probe(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Same rule for a pad that raises: absent, not ``+0``."""
+    recorder = _Recorder()
+
+    class _RefusingPad(_FakeDiagnosticPad):
+        def add_probe(self, mask: Any, callback: Any) -> str:
+            raise RuntimeError("probe refused")
+
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.selector = _FakeChainElement("sel", recorder, _RefusingPad("sel_src", recorder))
+    engine.audio_selector = _FakeChainElement(
+        "asel", recorder, _FakeDiagnosticPad("asel_src", recorder)
+    )
+    engine.pipeline = _FakeNamedPipeline(recorder, {})
+
+    engine._install_chain_input_counters()
+
+    assert sorted(engine._chain_input_pads) == [("sel", "audio")]
+    assert engine._chain_input_buffers == {("sel", "audio"): 0}
+    assert capsys.readouterr().err == ""
+
+
+def test_u30_chain_input_deltas_render_upstream_to_downstream(engine_module) -> None:
+    """The ladder's shape: rungs in data order, each stream labelled.
+
+    Keyed by ``(rung, stream)`` rather than by pad name, because an
+    ``input-selector``'s src pad can be armed before its caps are negotiated --
+    and a label read from unnegotiated caps would be the pad name, which the
+    next print could not match (reading as ``+0`` forever)."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._chain_input_pads = {
+        ("queue", "audio"): _FakeDiagnosticPad("aq_src", _Recorder()),
+        ("sel", "video"): _FakeDiagnosticPad("sel_src", _Recorder()),
+        ("queue", "video"): _FakeDiagnosticPad("vq_src", _Recorder()),
+        ("sel", "audio"): _FakeDiagnosticPad("asel_src", _Recorder()),
+    }
+    engine._chain_input_buffers = {
+        ("sel", "video"): 121,
+        ("sel", "audio"): 305,
+        ("queue", "video"): 121,
+        ("queue", "audio"): 305,
+    }
+    engine._chain_input_snapshot = {
+        ("sel", "video"): 0,
+        ("sel", "audio"): 71,
+        ("queue", "video"): 0,
+        ("queue", "audio"): 71,
+    }
+
+    assert engine._chain_input_delta_suffix(5.0) == (
+        " [chain-in 5.0s: sel video=+121 audio=+234 | queue video=+121 audio=+234]"
+    )
+
+
+def test_u30_chain_input_deltas_bisect_a_stream_that_never_reached_the_encoder(
+    engine_module,
+) -> None:
+    """The bisection this diagnostic exists for, in one line.
+
+    MEASURED off the dead immediate-switch runs (off-live campaign 5, 2026-09-25):
+    the mux input counters read ``video=+121 audio=+186`` over the whole 4.1 s
+    run while the switched-in leg's own buffer had already arrived on the
+    selector's input pad. If the selector's src rung advances and the queue's
+    does not, the data died between the selector and the encode chain; if both
+    advance, it died inside the encode chain. Either way the log names the
+    stage instead of only the mux."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._chain_input_pads = {
+        ("sel", "video"): _FakeDiagnosticPad("sel_src", _Recorder()),
+        ("sel", "audio"): _FakeDiagnosticPad("asel_src", _Recorder()),
+        ("queue", "video"): _FakeDiagnosticPad("vq_src", _Recorder()),
+        ("queue", "audio"): _FakeDiagnosticPad("aq_src", _Recorder()),
+    }
+    # Selector forwarded nothing more; the queue saw nothing new either.
+    engine._chain_input_buffers = {
+        ("sel", "video"): 121,
+        ("sel", "audio"): 186,
+        ("queue", "video"): 53,
+        ("queue", "audio"): 53,
+    }
+    engine._chain_input_snapshot = {
+        ("sel", "video"): 121,
+        ("sel", "audio"): 0,
+        ("queue", "video"): 53,
+        ("queue", "audio"): 0,
+    }
+
+    assert engine._chain_input_delta_suffix(4.1) == (
+        " [chain-in 4.1s: sel video=+0 audio=+186 | queue video=+0 audio=+53]"
+    )
+
+
+def test_u30_the_flow_ladder_rides_the_mux_clause_without_changing_it(
+    engine_module,
+) -> None:
+    """Both clauses on one line, mux clause byte-identical to before.
+
+    The progress line and the pipeline-EOS line already print
+    ``_mux_input_delta_suffix``; the ladder is appended to that same string so
+    the one line the live incidents already had becomes the whole picture. With
+    no ladder armed the string is exactly what it was."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_pads = {
+        "sink_65": _FakeDiagnosticPad("sink_65", _Recorder(), caps="video/x-h264"),
+        "sink_66": _FakeDiagnosticPad("sink_66", _Recorder(), caps="audio/mpeg, mpegversion=4"),
+    }
+    engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145750}
+    engine._mux_input_snapshot = {"sink_65": 138577, "sink_66": 145516}
+    engine._chain_input_pads = {}
+    engine._chain_input_buffers = {}
+    engine._chain_input_snapshot = {}
+
+    assert engine._mux_input_delta_suffix(5.0) == " [mux-in 5.0s: video=+0 audio=+234]"
+
+    engine._chain_input_pads = {
+        ("sel", "video"): _FakeDiagnosticPad("sel_src", _Recorder()),
+        ("sel", "audio"): _FakeDiagnosticPad("asel_src", _Recorder()),
+    }
+    engine._chain_input_buffers = {("sel", "video"): 138577, ("sel", "audio"): 145750}
+    engine._chain_input_snapshot = {("sel", "video"): 138577, ("sel", "audio"): 145516}
+
+    assert engine._mux_input_delta_suffix(5.0) == (
+        " [mux-in 5.0s: video=+0 audio=+234] [chain-in 5.0s: sel video=+0 audio=+234]"
+    )
+
+
+def test_u30_the_flow_ladder_alone_still_renders_with_no_mux_counters(
+    engine_module,
+) -> None:
+    """A graph with a countable chain but no countable mux: the ladder shows.
+
+    Both clauses are independent; the earlier "return ``''`` when nothing was
+    counted" contract is about what was COUNTED, not about which half of the
+    output graph it was."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_pads = {}
+    engine._mux_input_buffers = {}
+    engine._mux_input_snapshot = {}
+    engine._chain_input_pads = {("sel", "video"): _FakeDiagnosticPad("sel_src", _Recorder())}
+    engine._chain_input_buffers = {("sel", "video"): 7}
+    engine._chain_input_snapshot = {("sel", "video"): 2}
+
+    assert engine._mux_input_delta_suffix(5.0) == " [chain-in 5.0s: sel video=+5]"
+
+
+def test_u30_the_flow_ladder_is_empty_when_nothing_was_counted(engine_module) -> None:
+    """Neither counter group armed: no suffix at all, line byte-identical."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_pads = {}
+    engine._mux_input_buffers = {}
+    engine._mux_input_snapshot = {}
+    engine._chain_input_pads = {}
+    engine._chain_input_buffers = {}
+    engine._chain_input_snapshot = {}
+
+    assert engine._mux_input_delta_suffix(5.0) == ""
+
+
+def test_u30_a_pipeline_eos_names_itself_before_it_quits_the_worker(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The line that tells "the output ENDED" from "the output stopped".
+
+    A bus EOS quits the run loop, so the worker exits and the daemon sees a
+    clean teardown -- with no line anywhere saying the channel's output had
+    ended. The U30 off-live reproduction has runs in which an immediate reload
+    committed and then the mux reached the OUTGOING leg's own end 2.2 s later:
+    the tail file stops growing at exactly that PTS and the worker leaves with
+    ``{'error': None, 'teardown_clean': True}``. In a log with no EOS line that
+    is indistinguishable from an operator's ``stop``."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+
+    class _QuitCounter:
+        def __init__(self) -> None:
+            self.quits = 0
+
+        def quit(self) -> None:
+            self.quits += 1
+
+    class _EosMessage:
+        type = engine_module.Gst.MessageType.EOS
+        src = _FakeDiagnosticPad("mpegtsmux_3", recorder)
+
+    loop = _QuitCounter()
+    engine._loop = loop
+    engine._mux_input_pads = {
+        "sink_65": _FakeDiagnosticPad("sink_65", recorder, caps="video/x-h264"),
+        "sink_66": _FakeDiagnosticPad("sink_66", recorder, caps="audio/mpeg, mpegversion=4"),
+    }
+    engine._mux_input_buffers = {"sink_65": 40, "sink_66": 274}
+    engine._mux_input_snapshot = {"sink_65": 40, "sink_66": 40}
+    engine._mux_input_snapshot_t = 10.0
+    # The flow ladder rides the same line (U30 campaign 5: the dead runs print no
+    # ``CTRL output: ... since PLAYING`` line at all -- the EOS line is the only
+    # one their log has -- so this is where the ladder has to be readable).
+    engine._chain_input_pads = {
+        ("sel", "video"): _FakeDiagnosticPad("sel_src", recorder),
+        ("sel", "audio"): _FakeDiagnosticPad("asel_src", recorder),
+        ("queue", "video"): _FakeDiagnosticPad("vq_src", recorder),
+        ("queue", "audio"): _FakeDiagnosticPad("aq_src", recorder),
+    }
+    engine._chain_input_buffers = {
+        ("sel", "video"): 161,
+        ("sel", "audio"): 226,
+        ("queue", "video"): 161,
+        ("queue", "audio"): 226,
+    }
+    engine._chain_input_snapshot = {
+        ("sel", "video"): 161,
+        ("sel", "audio"): 40,
+        ("queue", "video"): 161,
+        ("queue", "audio"): 40,
+    }
+
+    assert engine._on_bus(None, _EosMessage()) is True
+
+    err = capsys.readouterr().err
+    assert "CTRL output: pipeline EOS from mpegtsmux_3" in err
+    # The interval counters ride along, so the line says what was still flowing
+    # when the output ended -- video silent, audio at its full rate here.
+    assert "video=+0 audio=+234]" in err
+    assert "[chain-in " in err
+    assert "sel video=+0 audio=+186 | queue video=+0 audio=+186]" in err
+    assert loop.quits == 1
+
+
+# -- U30 EOS-origin diagnostic: WHERE the EOS that ends output entered --------
+#
+# The U30 off-live campaigns produce a shape no other line explains: the outgoing
+# leg streamed its whole 4.05 s through ``sel``/``queue`` into the mux, the worker
+# then quit cleanly on a bus EOS, and not one of the reload's own guards printed
+# -- no ``outgoing-EOS-dropped``, no ``firing``, no commit. Either the EOS crossed
+# a selector sink pad the boundary probe was not on, or it was generated
+# downstream of every probe. Those are opposite fixes. One report-only observer on
+# each already-counted pad answers it: the arrival labels render in data order on
+# the EOS line, and ``none`` is itself a finding.
+
+
+def test_u30_eos_observers_arm_after_the_counters_never_instead_of_them(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The observer must never take the counter's place on a pad.
+
+    Same-priority pad probes run in installation order, and every other U30
+    reader assumes ``probes[0]`` is the flow counter (the stall watchdog reads
+    the mux src counter's pad, the ladder reads its rungs). An observer armed
+    FIRST would make those reads return an observer, which silently reports
+    nothing instead of failing -- the worst possible failure mode for a
+    diagnostic. So: counter at index 0, observer at index 1, on every pad."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = _u30_armed_chain(engine, recorder)
+
+    for key, pad in pads.items():
+        assert len(pad.probes) == 2, (key, pad.probes)
+        assert pad.probes[0][1].__name__ == "_count_chain_input", (key, pad.probes)
+        assert pad.probes[1][0] == engine_module.Gst.PadProbeType.EVENT_DOWNSTREAM
+        assert pad.probes[1][1].__name__ == "_observe_eos", (key, pad.probes)
+    assert capsys.readouterr().err == ""
+
+    # The mux src pad carries the stall watchdog's progress signal, so the same
+    # ordering rule applies there.
+    class _MuxWithSrc:
+        """``_install_output_counter`` reads only ``get_static_pad("src")``."""
+
+        def __init__(self, src: Any) -> None:
+            self._src = src
+
+        def get_static_pad(self, pad_name: str) -> Any:
+            return self._src if pad_name == "src" else None
+
+    mux_src = _FakeDiagnosticPad("mux_src", recorder)
+    engine.mux = _MuxWithSrc(mux_src)
+    engine._install_output_counter()
+
+    assert [callback.__name__ for _mask, callback in mux_src.probes] == [
+        "_count",
+        "_observe_eos",
+    ], mux_src.probes
+
+
+def test_u30_an_eos_observer_records_where_the_eos_came_from(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Firing one observer appends ITS label -- and only that one.
+
+    The observer is report-only: it returns OK, it never DROPs, and it never
+    prints a line of its own. The EOS it watches for is the one about to quit
+    the worker anyway, so a diagnostic that could alter the data path here would
+    be able to take a channel off air to watch it die."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = _u30_armed_chain(engine, recorder)
+    observer = pads[("queue", "audio")].probes[1][1]
+    engine._eos_arrivals = []
+    engine._eos_arrivals_overflow = 0
+
+    assert engine._eos_arrivals == []
+    eos_info = _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS))
+    assert observer(None, eos_info) == engine_module.Gst.PadProbeReturn.OK
+    assert engine._eos_arrivals == ["queue:audio"]
+    assert engine._eos_arrival_suffix() == " [eos-arrivals: queue:audio]"
+
+    # A pad that is observed but never fired must not appear: absence on this
+    # line is "we watched and saw nothing", which is what makes ``none`` mean
+    # something when EVERY observer is silent.
+    assert "sel:video" not in engine._eos_arrival_suffix()
+    assert capsys.readouterr().err == ""
+
+
+def test_u30_an_eos_observer_records_only_an_eos(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A caps/segment/tag event crossing an observed pad is NOT an arrival.
+
+    An EVENT_DOWNSTREAM probe fires for every downstream event on its pad, so an
+    observer that records unconditionally fills ``eos-arrivals`` with the startup
+    event stream of whatever leg last crossed it. The U30 campaign that shipped
+    that build read back ``[eos-arrivals: sel:audio, queue:audio, ... +186 more]``
+    on 4 s runs -- a clause named ``eos-arrivals`` reporting events that are not
+    EOSes, in a diagnostic whose entire product is the answer to "where did the
+    EOS enter?". Recording nothing is the honest output for a non-EOS event: the
+    line then still says ``none``, which is a claim about the pipeline, instead of
+    a label that is merely a claim about traffic."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = _u30_armed_chain(engine, recorder)
+    observer = pads[("queue", "audio")].probes[1][1]
+    engine._eos_arrivals = []
+    engine._eos_arrivals_overflow = 0
+
+    for event_type in (_FakeEventType.SEGMENT, "CAPS", "STREAM_START", "TAG"):
+        info = _FakeEventProbeInfo(_FakeProbeEvent(event_type))
+        assert observer(None, info) == engine_module.Gst.PadProbeReturn.OK
+
+    assert engine._eos_arrivals == []
+    assert engine._eos_arrival_suffix() == " [eos-arrivals: none]"
+
+    # Probe info that carries no event at all (the U16 buffer-only fixture, and
+    # the ``None`` a hand-fired probe passes): unreadable is not an arrival, so
+    # the observer must not invent one.
+    assert observer(None, None) == engine_module.Gst.PadProbeReturn.OK
+    assert observer(None, _FakeEventProbeInfo(None)) == engine_module.Gst.PadProbeReturn.OK
+    assert engine._eos_arrivals == []
+
+    # And a real EOS on the same observer still lands, so the filter is a filter
+    # and not a mute.
+    assert observer(None, _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS))) == (
+        engine_module.Gst.PadProbeReturn.OK
+    )
+    assert engine._eos_arrivals == ["queue:audio"]
+    assert capsys.readouterr().err == ""
+
+
+def test_u30_eos_arrivals_fold_a_repeat_and_stay_bounded(engine_module) -> None:
+    """Two observers on one pad see ONE arrival, and the list cannot grow forever.
+
+    A superseded reload re-arms the observer on the same outgoing selector sink
+    pad, so a single EOS there is observed twice -- reporting it twice would read
+    as two arrivals. And a channel that emits many EOSes over a long run must not
+    be able to grow an unbounded list in the worker's memory."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine._eos_arrivals = []
+    engine._eos_arrivals_overflow = 0
+
+    engine._record_eos_arrival("out:video")
+    engine._record_eos_arrival("out:video")
+    engine._record_eos_arrival("sel:video")
+    engine._record_eos_arrival("sel:video")
+
+    assert engine._eos_arrivals == ["out:video", "sel:video"]
+    assert engine._eos_arrivals_overflow == 0
+
+    for index in range(engine._EOS_ARRIVAL_MAX + 5):
+        engine._record_eos_arrival(f"mux-sink:{index}")
+
+    # Two labels are already in the list, so of the 17 more arrivals only the
+    # first 10 fit: 12 on the line, 7 counted as overflow.
+    assert len(engine._eos_arrivals) == engine._EOS_ARRIVAL_MAX
+    assert engine._eos_arrivals_overflow == 7
+    assert engine._eos_arrival_suffix().endswith(", +7 more]")
+
+
+def test_u30_the_eos_line_says_where_the_eos_entered_or_that_nothing_did(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``none`` is the finding, not a missing line.
+
+    The two shapes the U30 campaigns cannot tell apart -- "the outgoing leg's own
+    end escaped a guard that was not watching it" and "something inside the
+    output half emitted EOS on its own" -- are separated by exactly this: a
+    rendered label names the furthest downstream pad the EOS reached, and
+    ``none`` says every observed pad watched and saw nothing, so the EOS was born
+    below all of them."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+
+    class _QuitCounter:
+        def __init__(self) -> None:
+            self.quits = 0
+
+        def quit(self) -> None:
+            self.quits += 1
+
+    class _EosMessage:
+        type = engine_module.Gst.MessageType.EOS
+        src = _FakeDiagnosticPad("mpegtsmux_3", recorder)
+
+    engine._loop = _QuitCounter()
+    assert engine._on_bus(None, _EosMessage()) is True
+    assert "[eos-arrivals: none]" in capsys.readouterr().err
+
+    engine._record_eos_arrival("out:video")
+    engine._record_eos_arrival("sel:video")
+    engine._record_eos_arrival("queue:video")
+    engine._record_eos_arrival("mux-sink:video")
+    engine._record_eos_arrival("mux-src")
+    engine._loop = _QuitCounter()
+    assert engine._on_bus(None, _EosMessage()) is True
+
+    err = capsys.readouterr().err
+    assert "[eos-arrivals: out:video, sel:video, queue:video, mux-sink:video, mux-src]" in err, err
+    # The U16/U30 clauses still ride the same line, unchanged.
+    assert "CTRL output: pipeline EOS from mpegtsmux_3 -- quitting the worker [" in err
+
+
+def test_u30_each_selector_sink_pad_is_named_by_its_own_eos_observer(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The EOS crossed a sink pad the ``out:*`` labels cannot name -- so name them ALL.
+
+    ``out:video``/``out:audio`` are armed on ``selector_sink_pads[0]`` /
+    ``audio_sink_pads[0]``, the pads the outgoing leg is EXPECTED to deliver on.
+    Ten of the eleven deferred deaths of the 2026-09-25 off-live campaign (see
+    the ``eos-arrivals`` clause) recorded an EOS at the selector's OWN src pad
+    with no arrival on either of them -- and an ``input-selector`` only pushes an
+    EOS downstream after one reached a sink pad, so the EOS crossed a sink pad
+    that carries no label. A label that cannot name the pad cannot name the
+    cause: this observer names each pad after itself.
+
+    The two pads that already carry ``out:*`` are skipped, so one EOS never
+    renders under two labels and the existing clause keeps its shape."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = {
+        "out_video": _FakeDiagnosticPad("sink_0v", recorder),
+        "other_video": _FakeDiagnosticPad("sink_1v", recorder),
+        "new_video": _FakeDiagnosticPad("sink_2v", recorder),
+        "out_audio": _FakeDiagnosticPad("sink_0a", recorder),
+        "other_audio": _FakeDiagnosticPad("sink_1a", recorder),
+        "new_audio": _FakeDiagnosticPad("sink_2a", recorder),
+    }
+    engine.selector_sink_pads = [pads["out_video"], pads["other_video"], None]
+    engine.audio_sink_pads = [pads["out_audio"], pads["other_audio"]]
+    engine._eos_arrivals = []
+    engine._eos_arrivals_overflow = 0
+
+    engine._install_selector_sink_eos_observers(
+        extra=(("video", pads["new_video"]), ("audio", pads["new_audio"])),
+        skip=(pads["out_video"], pads["out_audio"]),
+    )
+
+    for key in ("other_video", "other_audio", "new_video", "new_audio"):
+        pad = pads[key]
+        assert f"add_probe:{pad.name}:4:_observe_eos" in recorder.calls, recorder.calls
+    for key in ("out_video", "out_audio"):
+        pad = pads[key]
+        assert f"add_probe:{pad.name}:4:_observe_eos" not in recorder.calls, recorder.calls
+
+    observer = pads["other_video"].probes[0][1]
+    assert (
+        observer(pads["other_video"], _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)))
+        == engine_module.Gst.PadProbeReturn.OK
+    )
+    assert engine._eos_arrivals == ["sink-pad:sink_1v:video"]
+    assert engine._eos_arrival_suffix() == " [eos-arrivals: sink-pad:sink_1v:video]"
+
+    # Same filter as every other observer: a segment crossing the pad is not an
+    # arrival, so a named sink pad cannot manufacture one either.
+    observer = pads["new_audio"].probes[0][1]
+    assert (
+        observer(pads["new_audio"], _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.SEGMENT)))
+        == engine_module.Gst.PadProbeReturn.OK
+    )
+    assert engine._eos_arrivals == ["sink-pad:sink_1v:video"]
+    assert capsys.readouterr().err == ""
+
+
+def test_u30_a_selector_src_arrival_names_the_active_sink_pad(engine_module) -> None:
+    """``sel:video`` says the selector emitted an EOS; ``active`` says from where.
+
+    Which input the selector was pointed at when it forwarded that EOS is what
+    separates the two readings of a deferred death -- the EOS came out of the
+    leg that was still selected, or the selector had already been pointed
+    elsewhere -- and it is one property read at EOS time, not a new probe.
+
+    A selector whose ``active-pad`` cannot be read renders the bare ``sel:video``
+    the line rendered before: silence about the pad, never a guess at it."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = _u30_armed_chain(engine, recorder)
+    engine._eos_arrivals = []
+    engine._eos_arrivals_overflow = 0
+    engine.selector.active_pad = _FakeDiagnosticPad("sink_0v", recorder)
+
+    observer = pads[("sel", "video")].probes[1][1]
+    assert (
+        observer(pads[("sel", "video")], _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)))
+        == engine_module.Gst.PadProbeReturn.OK
+    )
+    assert engine._eos_arrivals == ["sel:video[active=sink_0v]"]
+
+    # Unreadable active pad -> the un-annotated label, not an invented one.
+    engine.selector.active_pad = None
+    assert (
+        observer(pads[("sel", "video")], _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)))
+        == engine_module.Gst.PadProbeReturn.OK
+    )
+    assert engine._eos_arrivals == ["sel:video[active=sink_0v]", "sel:video"]
+
+    # A selector that cannot answer at all is the same case, and the OTHER rungs
+    # keep their plain labels.
+    class _NoProperties:
+        def get_static_pad(self, pad_name: str) -> Any:
+            return pads[("sel", "video")]
+
+    engine.selector = _NoProperties()
+    engine._chain_input_pads = {}
+    engine._chain_input_buffers = {}
+    engine._install_chain_input_counters()
+    assert engine._chain_input_pads[("sel", "video")] is pads[("sel", "video")]
+    engine._eos_arrivals = []
+    observer = pads[("sel", "video")].probes[-1][1]
+    assert (
+        observer(pads[("sel", "video")], _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)))
+        == engine_module.Gst.PadProbeReturn.OK
+    )
+    assert engine._eos_arrivals == ["sel:video"]
+    # The re-armed ladder still observes the OTHER rungs -- this selector losing
+    # its property read did not disarm anything else.
+    queue_observer = pads[("queue", "audio")].probes[-1][1]
+    assert (
+        queue_observer(
+            pads[("queue", "audio")], _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS))
+        )
+        == engine_module.Gst.PadProbeReturn.OK
+    )
+    assert engine._eos_arrivals == ["sel:video", "queue:audio"]
+
+
+def test_u30_inbound_counters_count_the_new_leg_at_its_selector_sink_pad(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Rung ``in``: did the switched-in leg KEEP pushing after the switch?
+
+    Rungs ``sel`` and ``queue`` can only say where the data stopped being
+    forwarded; ``sel video=+0`` after a switch is either "the leg's producer
+    stopped pushing" or "the selector swallowed what it pushed". ``in`` counts
+    the leg's buffers ARRIVING at its selector request sink pad -- the pad the
+    ``new-leg-selector-first-buffer`` diagnostic already reports ONCE -- so
+    ``in +N, sel +0`` names the selector and ``in +0, sel +0`` names the
+    producer. Renders first (upstream to downstream), which is what makes that
+    reading order possible."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    _u30_armed_chain(engine, recorder)
+    inbound = {
+        "video": _FakeDiagnosticPad("new_sel_sink_video", recorder),
+        "audio": _FakeDiagnosticPad("new_sel_sink_audio", recorder),
+    }
+
+    engine._install_new_leg_inbound_counters(
+        {"new_video_pad": inbound["video"], "new_audio_pad": inbound["audio"]}
+    )
+
+    assert engine._chain_input_pads[("in", "video")] is inbound["video"]
+    assert engine._chain_input_pads[("in", "audio")] is inbound["audio"]
+    assert engine._chain_input_buffers[("in", "video")] == 0
+    assert engine._chain_input_buffers[("in", "audio")] == 0
+    for pad in inbound.values():
+        assert f"add_probe:{pad.name}:1:_count_chain_input" in recorder.calls, recorder.calls
+    assert capsys.readouterr().err == ""
+
+    # Each rung counts its own stream only, same contract as ``sel``/``queue``.
+    _mask, callback = inbound["audio"].probes[0]
+    for _ in range(2):
+        assert (
+            callback(inbound["audio"], _FakeProbeInfo(_FakeProbeBuffer(0)))
+            == engine_module.Gst.PadProbeReturn.OK
+        )
+    assert engine._chain_input_buffers[("in", "audio")] == 2
+    assert engine._chain_input_buffers[("in", "video")] == 0
+
+    engine._chain_input_snapshot = dict.fromkeys(engine._chain_input_pads, 0)
+    assert engine._chain_input_delta_suffix(3.0).startswith(
+        " [chain-in 3.0s: in video=+0 audio=+2 | sel "
+    )
+
+
+def test_u30_inbound_counters_skip_a_pad_that_cannot_be_counted(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Same absence rule as every other rung: uncountable is ABSENT, never ``+0``.
+
+    A missing ``new_audio_pad`` (a reload whose audio leg never got a selector
+    pad) and a pad that refuses the probe must both leave the rung out -- a
+    registered-but-uncountable rung would read ``+0`` forever and accuse a
+    healthy stream of having stopped."""
+    recorder = _Recorder()
+
+    class _RefusingPad(_FakeDiagnosticPad):
+        def add_probe(self, mask: Any, callback: Any) -> str:
+            raise RuntimeError("probe refused")
+
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine._chain_input_pads = {("sel", "video"): _FakeDiagnosticPad("sel_src", recorder)}
+    engine._chain_input_buffers = {("sel", "video"): 0}
+
+    engine._install_new_leg_inbound_counters(
+        {
+            "new_video_pad": _RefusingPad("refusing_sel_sink", recorder),
+            "new_audio_pad": None,
+        }
+    )
+
+    assert not [key for key in engine._chain_input_pads if key[0] == "in"]
+    assert not [key for key in engine._chain_input_buffers if key[0] == "in"]
+    assert ("sel", "video") in engine._chain_input_pads
+    assert capsys.readouterr().err == ""
+
+
+def test_u30_inbound_counters_are_skipped_when_no_ladder_was_ever_armed(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Rung ``in`` JOINS a ladder; it must never require one to exist.
+
+    ``_install_chain_input_counters`` arms ``_chain_input_pads`` /
+    ``_chain_input_buffers`` once per worker; this method only adds a key to
+    them. An engine that never armed the ladder therefore has no rung ``in`` to
+    add -- and no ladder to render, since ``_chain_input_delta_suffix`` already
+    renders a missing rung as absent rather than ``+0``. The shape is real, not
+    hypothetical: the U16 real-runtime emitter arms the selector-side
+    diagnostics on a bare ``object.__new__(GstPlayoutEngine)`` (no ``__init__``,
+    no pipeline), which is where the unguarded write raised
+    ``AttributeError: 'GstPlayoutEngine' object has no attribute
+    '_chain_input_pads'`` and took the whole emit down with it.
+    """
+    engine = object.__new__(engine_module.GstPlayoutEngine)
+
+    engine._install_new_leg_inbound_counters(
+        {"new_video_pad": _FakeDiagnosticPad("stub_sel_sink_video", _Recorder())}
+    )
+
+    assert not hasattr(engine, "_chain_input_pads")
+    assert not hasattr(engine, "_chain_input_buffers")
+    assert capsys.readouterr().err == ""
+
+
+def test_u30_reset_stall_reference_rebaselines_the_flow_ladder(engine_module) -> None:
+    """A committed reload starts the diagnostic interval, so the numbers that
+    follow it are POST-COMMIT numbers.
+
+    MEASURED off-live (campaign 6, immediate switch, dead runs): the run's only
+    line was the pipeline-EOS line reading ``[mux-in 4.1s: video=+121 ...]`` and
+    ``[chain-in 4.1s: sel video=+126 audio=+142 | queue video=+120 audio=+187]``
+    -- a 4.1 s interval that STARTS at arm time and therefore straddles the
+    commit, so it reads the healthy outgoing leg's flow plus the 2.2 s retiring
+    tail and says nothing about the leg that was switched in. Anchoring the
+    interval at the commit turns the same line into ``+0`` for a leg that never
+    fed the mux. Only the interval moves: the stall watchdog reads
+    ``_output_buffers``, not these counters."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_pads = {
+        "sink_65": _FakeDiagnosticPad("sink_65", _Recorder(), caps="video/x-h264"),
+    }
+    engine._mux_input_buffers = {"sink_65": 900}
+    engine._mux_input_snapshot = {"sink_65": 779}
+    engine._chain_input_pads = {
+        ("in", "video"): _FakeDiagnosticPad("new_sel_sink_video", _Recorder()),
+        ("sel", "video"): _FakeDiagnosticPad("sel_src", _Recorder()),
+        ("queue", "video"): _FakeDiagnosticPad("vq_src", _Recorder()),
+    }
+    engine._chain_input_buffers = {
+        ("in", "video"): 0,
+        ("sel", "video"): 130,
+        ("queue", "video"): 120,
+    }
+    engine._chain_input_snapshot = {("in", "video"): 0, ("sel", "video"): 4, ("queue", "video"): 4}
+
+    assert engine._mux_input_delta_suffix(4.1) == (
+        " [mux-in 4.1s: video=+121] [chain-in 4.1s: in video=+0 | sel video=+126 "
+        "| queue video=+116]"
+    )
+
+    engine._reset_stall_reference()
+
+    assert engine._mux_input_delta_suffix(0.5) == (
+        " [mux-in 0.5s: video=+0] [chain-in 0.5s: in video=+0 | sel video=+0 | queue video=+0]"
+    )
+    assert engine._stall_last_advance_t > 0.0
+
+
+# ---------------------------------------------------------------------------
+# U30 / Work 2 -- the outgoing leg's EOS must be caught DURING the build
+# ---------------------------------------------------------------------------
+#
+# OBSERVED, ``%TEMP%\u30\campaign11\run00\worker.log`` (GST_DEBUG=
+# input-selector:7,concat:7): the concat sub-chain boundary EOS crossed the
+# selector's ACTIVE sink pad while ``reload_program`` was still building the new
+# leg, because the pending transaction and its boundary DROP probes used to be
+# installed only AFTER ``_instantiate_source_leg``/``_link_leg_to_selectors``
+# returned:
+#
+#   0:00:02.193483700 gst_concat_sink_event:<vconcat_program_1:sink_1> received eos
+#   0:00:02.194962100 gst_concat_switch_pad:<vconcat_program_1> Switching
+#   0:00:02.195077700 gst_selector_pad_event:<sel:sink_0> received EOS
+#   0:00:02.196030700 gst_input_selector_eos_wait:<sel:sink_0> send EOS event
+#   0:00:02.441608800 CTRL reload: new leg stream held at its first buffer ...
+#   0:00:02.449068400 CTRL reload: new leg preroll verified ...
+#   0:00:02.452308800 CTRL output: pipeline EOS ... quitting the worker
+#
+# The EOS crossed 0.25 s BEFORE the reload armed anything that would have
+# dropped it. It reached mpegtsmux, then the bus, then ``_announce_pipeline_eos``
+# -- and the worker quit with ``teardown_clean=True``, ``reload-status.json``
+# ``aborted:stopped``, and no commit stage ever printed: output stops for good.
+# ``run01`` of the same campaign ends its leg at the same wall instant and
+# commits, because there the probes were armed in time. One race, two outcomes.
+#
+# The repair is ordering, not new machinery: transaction identity, the pending
+# slot and the boundary DROP probes are installed BEFORE the build, so no EOS
+# can cross unguarded; the new-leg fields are filled in afterwards. Nothing in
+# ``_on_old_leg_eos`` touches a new-leg field and ``_on_new_leg_ready`` commits
+# immediately when the boundary was already seen, so an EOS recorded during the
+# build turns this shape into the ordinary healthy deferred switch.
+
+
+class _StopBuild(Exception):
+    """Freeze ``reload_program`` at the instant it is inside the build."""
+
+
+class _StubLeg:
+    """A replacement program good enough for ``source_leg_is_clock_timed``.
+
+    Empty ``elements``/``audio`` make that helper answer "segment-timed" without
+    touching GStreamer, so the reload takes the finite/held path -- the path
+    every deferred death in the off-live campaign was on."""
+
+    label = "program"
+    elements: tuple[Any, ...] = ()
+    audio: tuple[Any, ...] = ()
+
+
+def test_u30_outgoing_eos_is_dropped_while_the_reload_is_still_building(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The boundary EOS is this transaction's to drop from the moment the build
+    starts -- not from the moment the build finishes.
+
+    A build is not instantaneous (0.25 s measured off-live on the reproducer),
+    and the outgoing leg keeps streaming throughout it. An EOS that arrives in
+    that window and is not dropped is forwarded by the selector, reaches the
+    mux, and quits the worker: the exact ``teardown_clean`` death the campaign
+    recorded. It must be dropped AND recorded, so the reload commits on the
+    boundary it just observed instead of waiting for a boundary already past."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine._reload_txn_counter = count(1)
+    old_video = _FakeOldPad("sink_0", recorder, None)
+    old_audio = _FakeOldPad("sink_1", recorder, None)
+    engine.selector_sink_pads = [old_video]
+    engine.audio_sink_pads = [old_audio]
+    # The boundary probes are the BUFFER|EVENT_DOWNSTREAM ones -- distinct from
+    # the plain EVENT_DOWNSTREAM ``out:*`` observers armed just above them.
+    boundary_mask = (
+        engine_module.Gst.PadProbeType.BUFFER | engine_module.Gst.PadProbeType.EVENT_DOWNSTREAM
+    )
+
+    observed: dict[str, Any] = {}
+
+    def _build(leg: Any) -> Any:
+        pending = engine._pending_reload
+        observed["pending_during_build"] = pending is not None
+        observed["armed_during_build"] = (
+            None if pending is None else len(pending["boundary_probes"])
+        )
+        observed["txn_during_build"] = None if pending is None else pending["txn_id"]
+        armed = [probe for probe in old_video.probes if probe[1] == boundary_mask]
+        observed["video_boundary_probes"] = len(armed)
+        for _probe_id, _mask, callback, args in armed:
+            # Fired the way the streaming thread fires it, from inside the build.
+            observed["probe_return"] = callback(
+                old_video, _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)), *args
+            )
+        observed["old_leg_eos_during_build"] = None if pending is None else pending["old_leg_eos"]
+        raise _StopBuild
+
+    engine._instantiate_source_leg = _build  # type: ignore[method-assign]
+
+    with pytest.raises(_StopBuild):
+        engine.reload_program(_StubLeg(), switch_at_end_of_current=True)
+
+    # While the build was still running, this transaction already owned the
+    # outgoing pads: two boundary probes armed, and the EOS dropped + recorded.
+    assert observed["pending_during_build"] is True, observed
+    assert observed["armed_during_build"] == 2, observed
+    assert observed["video_boundary_probes"] == 1, observed
+    assert observed["probe_return"] == engine_module.Gst.PadProbeReturn.DROP, observed
+    assert observed["old_leg_eos_during_build"] is True, observed
+    err = capsys.readouterr().err
+    assert "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_0 pending_txn=1" in err
+    assert "CTRL reload: outgoing EOS observed stream=video (1/2 stream(s))" in err
+
+    # A build that RAISES must leave nothing behind. A DROP probe left installed
+    # on the live outgoing pad would swallow that leg's real EOS forever -- the
+    # channel would never switch at a boundary again.
+    assert engine._pending_reload is None
+    assert f"remove_probe:sink_0:sink_0-probe-{boundary_mask}" in recorder.calls, recorder.calls
+    assert f"remove_probe:sink_1:sink_1-probe-{boundary_mask}" in recorder.calls, recorder.calls
+
+
+def test_u30_a_failed_build_removes_the_probes_it_armed(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The unwind is an unwind, not a half-started transaction.
+
+    Hoisting the pending slot above the build is only safe if a build that
+    raises restores the pre-call state exactly: no pending reload, and every
+    boundary probe that was armed is removed again -- a DROP probe left on the
+    live outgoing pad swallows that leg's real EOS forever. The caller still
+    gets the original exception (its contract), so the failure is reported once
+    and honestly, and the settle callback does not fire."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine._reload_txn_counter = count(1)
+    old_video = _FakeOldPad("sink_0", recorder, None)
+    old_audio = _FakeOldPad("sink_1", recorder, None)
+    engine.selector_sink_pads = [old_video]
+    engine.audio_sink_pads = [old_audio]
+    boundary_mask = (
+        engine_module.Gst.PadProbeType.BUFFER | engine_module.Gst.PadProbeType.EVENT_DOWNSTREAM
+    )
+    settled: list[tuple[bool, str | None]] = []
+
+    def _build(_leg: Any) -> Any:
+        raise RuntimeError("instantiate failed")
+
+    engine._instantiate_source_leg = _build  # type: ignore[method-assign]
+
+    def _on_settled(committed: bool, reason: str | None) -> None:
+        settled.append((committed, reason))
+
+    with pytest.raises(RuntimeError, match="instantiate failed"):
+        engine.reload_program(_StubLeg(), switch_at_end_of_current=True, on_settled=_on_settled)
+
+    armed = [
+        (pad, probe_id)
+        for pad in (old_video, old_audio)
+        for probe_id, mask, _callback, _args in pad.probes
+        if mask == boundary_mask
+    ]
+    assert len(armed) == 2, recorder.calls
+    for pad, probe_id in armed:
+        assert f"remove_probe:{pad.name}:{probe_id}" in recorder.calls, recorder.calls
+    assert engine._pending_reload is None
+    assert settled == []
+    assert capsys.readouterr().err == ""

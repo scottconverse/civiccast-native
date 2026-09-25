@@ -1843,6 +1843,59 @@ class HlsRelaySupervisor:
             # Every relay is alive with a window and none is stale.
             return False
 
+    def heal_frozen_seconds(self, channel_id: str, *, now: float) -> float | None:
+        """How long this channel's window has been frozen SINCE a failed self-heal.
+
+        This is the daemon's "the relay self-heal has already been tried and it
+        did not work" measurement, and its clock is exact rather than estimated:
+        :meth:`maybe_self_heal_stalled` stamps the replacement child's
+        ``progress_at`` at the heal, and :meth:`note_progress` refreshes
+        ``progress_at`` only when the served segment NAME changes. So for a
+        still-frozen window ``now - progress_at`` IS the time since the heal,
+        and a window that genuinely advances past the pre-heal baseline clears
+        ``heal_attempted`` (audit finding 4) and stops being reported here.
+
+        ANY-relay semantics, mirroring :meth:`progress_stale`: with two HLS
+        sinks, one healed-and-frozen, that sink must still be reported, so the
+        per-relay verdicts are max-combined (the largest freeze wins, since
+        that is the one an operator needs to hear about).
+
+        Return contract, and why it is NOT :meth:`is_alive`'s tri-state: this
+        method answers a MEASUREMENT question, not a health question, so
+        ``None`` means "no live child of this channel is in a failed-heal
+        state -- or none is tracked" and every caller treats it identically
+        (do nothing, and make no health claim). Contrast ``is_alive``, whose
+        ``None`` means "not applicable" and must never be read as "dead".
+        Dead relay children contribute nothing (that is ``is_alive``'s signal),
+        so a child that exited after its heal cannot hold a freeze open.
+        """
+        with self._guard:
+            relays = [
+                relay for key, relay in self._relays.items() if key.startswith(f"{channel_id}|")
+            ]
+            frozen: float | None = None
+            for relay in relays:
+                if relay.process.poll() is not None:
+                    continue
+                if not relay.heal_attempted:
+                    continue
+                anchor = relay.progress_at
+                if anchor is None:
+                    anchor = (
+                        relay.started_at if relay.started_at is not None else relay.first_seen_at
+                    )
+                if anchor is None:
+                    continue
+                elapsed = now - anchor
+                if elapsed < 0:
+                    # Clock moved backwards relative to the stamp: never report
+                    # a negative freeze (the daemon's bound is compared against
+                    # this, and a negative would silently never escalate).
+                    continue
+                if frozen is None or elapsed > frozen:
+                    frozen = elapsed
+            return frozen
+
     def never_emitted(self, channel_id: str, *, now: float, startup_grace_s: float) -> bool | None:
         """True when ANY live relay has produced NO window past its OWN grace.
 
