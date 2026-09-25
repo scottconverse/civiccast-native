@@ -24,6 +24,53 @@ came across and what deliberately did not.
 
 Candidate identity: `v1.0.0-beta.9` (unpublished).
 
+### A killed control plane left its relay ffmpegs holding the relays (U31, 2026-09-25)
+
+On 2026-09-25 the supervisor killed the control plane at 07:21:07 after a 30 s
+readiness budget expired, and the three HLS relay ffmpegs that control plane had
+started at 07:20:52 survived it, still holding their channels' UDP relay ports.
+Every supervised relay after that failed instantly with `[udp @ ...] bind failed:
+Error number -10048` and retried on the 60 s backoff; the channels only came on
+air once those orphans were killed by hand, about 11 minutes after the install.
+
+- The control plane now creates an **anonymous kill-on-close Job Object of its
+  own at startup and assigns itself to it** (`civiccast.platform.
+  child_containment`, called from the top of `create_app` under the same
+  `CIVICAST_SUPERVISED` guard the control-plane logging uses). Windows captures a
+  child spawned by an in-job parent into that parent's job, so every long-lived
+  child the control plane starts -- relay ffmpegs, playout workers, TS/NDI/SDI
+  relays, contribution coprocesses, and their own children -- is reaped by the
+  kernel when the control plane dies, by any means including `TerminateProcess`.
+  Nested jobs are supported on Windows 8+. `JOB_OBJECT_LIMIT_BREAKAWAY_OK` is
+  deliberately kept: the tier-5 detached GStreamer repair launch asks to leave and
+  must outlive its parent, and without the flag that launch fails `winerror=5`.
+  A containment that cannot be established is logged at ERROR and does not stop
+  startup.
+- Why the supervisor's own job did not already cover this: the control plane *is*
+  assigned to it, but `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` fires when the **last
+  handle to the job closes**, not when a member process dies, and the supervisor
+  holds its handle for its whole life -- so terminating one member reaps nothing
+  of that member's own subtree. Measured with real processes: a grandchild under
+  inherited membership alone survived its parent's `TerminateProcess`; the same
+  grandchild under a nested kill-on-close job was gone within 2 s.
+- Defence in depth: when a relay child has died and its own captured stderr shows
+  the `-10048` bind failure, the supervisor now identifies the UDP port holder
+  from the OS connection table and kills it **only** if it is an ffmpeg whose raw
+  argv carries this relay's own relay URI and it is not one of this supervisor's
+  live relays (`civiccast.egress.relay_reclaim`), then respawns immediately. Every
+  other holder is refused with a named reason at WARNING. The fast path is bounded
+  by an episode counter (3 attempts) so a refused holder converges on the ordinary
+  cadence instead of a spawn storm.
+- The control plane's readiness budget goes from 30 s to **180 s**, and a
+  readiness poll that is making no progress at all is now released by a **60 s
+  no-progress window** instead of the budget. A wall-clock budget cannot tell a
+  slow start from a wedged one; on this box the control plane's cold start
+  measured 15.5 s worst case, and the 30 s budget killed a start that was merely
+  slow on a loaded machine. A child that keeps spending CPU is never released
+  inside the budget, and a progress sample that cannot be taken is never read as a
+  stall. Only the control-plane child opts in; every other child's readiness keeps
+  its previous semantics.
+
 ### Live captions catch up after an ASR stall instead of pausing (U23, 2026-09-25)
 
 A channel whose settled backlog stayed over `max_backlog_segments` for the whole
