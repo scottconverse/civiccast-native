@@ -166,10 +166,11 @@ class SlateSourceGenerator:
         # CA-8 finding: a single-segment plan relaunched the encoder (and
         # reset the TS session) every `duration_seconds` during slate
         # periods — a headend monitor logs CC errors at every reset. The
-        # plan repeats the one rendered file, but never beyond the shared
-        # decoder-chain cap. The plan's horizon consequently matches what the
-        # bridge can actually play; a due scheduled item still replaces slate
-        # through the normal fallback replan path.
+        # fix for that was a longer horizon, not a longer pipeline: U27
+        # made it ONE pre-conformed file covering the whole horizon (see
+        # `_render_fill`), which keeps a single decoder chain and still
+        # never relaunches the encoder inside the horizon. A due scheduled
+        # item still replaces slate through the normal fallback replan path.
         self._target_fill_seconds = target_fill_seconds
 
     def __call__(self, config: EgressConfig) -> EgressSourcePlan:
@@ -202,21 +203,83 @@ class SlateSourceGenerator:
             finally:
                 with contextlib.suppress(OSError):
                     staging.unlink(missing_ok=True)
-        repeats = min(
-            MAX_PLAYLIST_SUBCHAINS,
-            max(1, -(-self._target_fill_seconds // self._duration_seconds)),
-        )
+        repeats = max(1, -(-self._target_fill_seconds // self._duration_seconds))
+        fill_seconds = repeats * self._duration_seconds
         segment = EgressSourceSegment(
             label="CivicCast slate",
-            path=str(output_path),
-            duration_seconds=self._duration_seconds,
+            path=str(
+                output_path
+                if repeats == 1
+                else self._render_fill(
+                    source=output_path,
+                    cache_key=cache_key,
+                    fill_seconds=fill_seconds,
+                )
+            ),
+            duration_seconds=fill_seconds,
             kind="slate",
             source_ref="civiccast-slate",
         )
         return EgressSourcePlan(
             channel_id=config.channel_id,
-            segments=[segment] * repeats,
+            segments=[segment],
         )
+
+    def _render_fill(self, *, source: Path, cache_key: str, fill_seconds: int) -> Path:
+        """Concatenate the rendered slate into the ONE file the slate leg plays.
+
+        U27 finding (reproduced off-live through the relay's own argv): a plan
+        of N repeats of one finite file makes the bridge build N decoder
+        sub-chains feeding the two concat aggregators. On the live caption
+        shape the hand-off between sub-chains withholds the outgoing chain's
+        video branch while audio keeps flowing, so the mux hands the relay
+        about one slate duration of audio with no video; the relay's
+        ``-fflags +genpts`` restarts its timeline at that discontinuity and
+        every 2s output segment afterwards carries ~20s of a/v offset until
+        the channel is restarted. Stream-copying the same pre-conformed slate
+        into a single file leaves one decoder chain -- nothing to hand off,
+        no 12-subchain teardown -- and one continuous timeline with no
+        per-seam PTS reset.
+
+        Deliberately does NOT fall back to the multi-segment plan on failure:
+        that plan is the defect. A failed fill is a ``SourcePrepareError``,
+        exactly like a failed slate render.
+        """
+
+        fill_dir = source.parent
+        fill_key = self._fill_cache_key(cache_key, fill_seconds, source)
+        fill_path = fill_dir / f"slate-fill-{fill_key}.ts"
+        if fill_path.exists() and fill_path.stat().st_size > 0:
+            return fill_path
+        manifest = fill_dir / f".{fill_key}.{uuid.uuid4().hex}.concat.txt"
+        staging = fill_dir / f".{fill_key}.{uuid.uuid4().hex}.partial.ts"
+        try:
+            manifest.write_text(
+                "".join(
+                    f"file '{_escape_concat_path(str(source))}'\n"
+                    for _ in range(fill_seconds // self._duration_seconds)
+                ),
+                encoding="utf-8",
+            )
+            result = self._ffmpeg_runner(concat_copy_args(manifest=manifest, destination=staging))
+            if result.returncode != 0:
+                raise SourcePrepareError(
+                    "Could not assemble the egress slate fill file; inspect FFmpeg output before retrying."
+                )
+            staging.replace(fill_path)
+        finally:
+            with contextlib.suppress(OSError):
+                manifest.unlink(missing_ok=True)
+                staging.unlink(missing_ok=True)
+        return fill_path
+
+    @staticmethod
+    def _fill_cache_key(cache_key: str, fill_seconds: int, source: Path) -> str:
+        digest = hashlib.sha256()
+        for part in (cache_key, str(fill_seconds), str(source.stat().st_size)):
+            digest.update(part.encode("utf-8"))
+            digest.update(b"\0")
+        return digest.hexdigest()[:24]
 
     @staticmethod
     def _cache_key(config: EgressConfig, duration_seconds: int) -> str:
@@ -613,6 +676,32 @@ def _escape_drawtext(value: str) -> str:
     required; neither substitutes for the other.
     """
     return value.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+
+
+def _escape_concat_path(path: str) -> str:
+    """Quote one absolute path for FFmpeg's concat demuxer manifest.
+
+    This is the ONE shared implementation for every ``-f concat`` manifest in
+    the egress package (``SlateSourceGenerator`` and
+    ``BulletinFillerSourceGenerator`` both use it) -- do not add a second copy.
+
+    A backslash inside a single-quoted ffconcat token is literal. Close the
+    quote, escape the apostrophe outside it, then reopen the quote.
+    """
+
+    return Path(path).resolve().as_posix().replace("'", "'\\''")
+
+
+def concat_copy_args(*, manifest: Path, destination: Path) -> list[str]:
+    """FFmpeg args that concatenate a manifest's files into one continuous file.
+
+    The sources are already-conformed MPEG-TS, so this is a stream copy: no
+    re-encode, no generation loss, and the demuxer's output timeline is
+    continuous across every seam (measured: 12 x 30s slate copies -> one
+    360.20s video span / 360.23s audio span, 0 non-monotonic PTS pairs).
+    """
+
+    return ["-f", "concat", "-safe", "0", "-i", str(manifest), "-c", "copy", str(destination)]
 
 
 def _current_item_index(

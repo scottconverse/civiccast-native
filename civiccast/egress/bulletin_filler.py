@@ -40,7 +40,12 @@ from civiccast.egress.models import (
     EgressSourceSegment,
 )
 from civiccast.egress.runtime import FfmpegRunner
-from civiccast.egress.source_plan import SlateSourceGenerator, _escape_drawtext
+from civiccast.egress.source_plan import (
+    SlateSourceGenerator,
+    _escape_concat_path,
+    _escape_drawtext,
+    concat_copy_args,
+)
 from civiccast.schedule.store import PostgresAssetStore
 from civiccast.stream._ffmpeg import FfmpegError, FfmpegNotFoundError, run_ffmpeg
 
@@ -227,7 +232,7 @@ class BulletinFillerSourceGenerator:
                 encoding="utf-8",
             )
             result = self._run_ffmpeg_or_fail_open(
-                ["-f", "concat", "-safe", "0", "-i", str(manifest), "-c", "copy", str(staging)],
+                concat_copy_args(manifest=manifest, destination=staging),
                 what=f"bulletin rotation for channel {config.channel_id}",
             )
             if result.returncode != 0:
@@ -410,14 +415,6 @@ class BulletinFillerSourceGenerator:
     @staticmethod
     def _background(branding: ChannelBranding | None) -> str:
         return "0x" + branding.color.lstrip("#") if branding is not None else _DEFAULT_BACKGROUND
-
-
-def _escape_concat_path(path: str) -> str:
-    """Quote one absolute path for FFmpeg's concat demuxer manifest."""
-
-    # A backslash inside a single-quoted ffconcat token is literal. Close
-    # the quote, escape the apostrophe outside it, then reopen the quote.
-    return Path(path).resolve().as_posix().replace("'", "'\\''")
 
 
 class FillerSourceProvider:
