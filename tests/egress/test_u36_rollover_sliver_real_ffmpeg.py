@@ -22,15 +22,21 @@ Two things are pinned here:
    resolver: they drive the production ``ScheduleSourcePlanProvider`` seam and
    let the default do the work).
 
-2. **What the engine was actually handed** (test 3): the prepared artifact,
+2. **What the engine was actually handed** (tests 3 and 4): the prepared artifact,
    produced by ``SourcePreparer`` with the production
    ``playout_trim_supported=False`` (``cli.py:1226`` / ``automation.py:2657``:
    ``not gstreamer_engine_selected()``) for a window that runs past the media
    end. The copy-out cannot manufacture media that does not exist, so the
-   artifact is SHORTER than the plan promises -- and, when the in-point is past
-   the end, it is a zero-byte file -- while the emitted segment keeps the
-   plan's promised ``duration_seconds``. That is the exact lie the single-leg
-   pipeline is handed.
+   artifact is SHORTER than the plan promises -- while the emitted segment keeps
+   the plan's promised ``duration_seconds``. That is the exact lie the single-leg
+   pipeline was handed: a plan promising 5.0s over a 3.0s artifact.
+
+   An in-point past the media's end used to hand the worker something worse than
+   short: a ZERO-BYTE file, still reported as a 2.0s segment. U36 item 7's
+   emission-time rejection now refuses to emit it at all -- and this module's
+   real media is where that guard has to bite, because the 0-byte artifact it
+   rejects is the one this host's ffmpeg actually produces for that window, not
+   a fixture. Both halves are pinned below.
 
 Skipped when ffmpeg/ffprobe are not on PATH, matching
 ``test_preparer_conform_cache_real_ffmpeg.py``. The GStreamer half of the
@@ -41,6 +47,7 @@ environment -- see ``reports/U36.md`` section 2 for that environmental gap.
 
 from __future__ import annotations
 
+import logging
 import shutil
 import subprocess
 from datetime import UTC, datetime, timedelta
@@ -49,6 +56,7 @@ from uuid import uuid4
 
 import pytest
 
+from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.models import (
     CanonicalProfile,
     EgressConfig,
@@ -258,46 +266,8 @@ def test_u36_a_real_rollover_past_the_end_resolves_the_next_program(tmp_path: Pa
     assert segment.duration_seconds == pytest.approx(measured, abs=0.2)
 
 
-@pytest.mark.parametrize(
-    ("inpoint_s", "promised_s", "expected_tail_s"),
-    [
-        # Past the real end: the copy-out produces NOTHING at all. Measured on
-        # this host's ffmpeg 8.1.1 through the preparer's own args: a 0-byte
-        # .ts, ffprobe answering None.
-        (12.0, 2.0, None),
-        # Inside the media but asking for more than remains: the copy-out
-        # yields the tail that exists -- the 3.0s left of an 8.0s file -- not
-        # the promised 5.0s. The exact figure lands within a keyframe interval
-        # of 3.0s (this host measured 3.097122s and 3.203789s on two builds),
-        # so the assertion brackets it rather than pinning one frame layout.
-        (5.0, 5.0, 3.0),
-    ],
-)
-def test_u36_the_prepared_sliver_is_shorter_than_the_window_it_promises(
-    tmp_path: Path,
-    inpoint_s: float,
-    promised_s: float,
-    expected_tail_s: float | None,
-) -> None:
-    """What the engine is handed cannot fill what the plan promised.
-
-    The segment handed to ``prepare`` here is EXACTLY the shape the rows-only
-    planner produces for a window past the media end (pinned pre-fix by the two
-    tests above, and by the injected probe in
-    ``tests/egress/test_source_plan.py``), so this measures the artifact that
-    defect produced. ``playout_trim_supported=False`` is the production value
-    with the GStreamer engine selected.
-    """
-
-    media = _real_asset(tmp_path, name="asset.mp4", seconds=_REAL_MEDIA_S)
-    preparer = SourcePreparer(
-        work_dir=tmp_path / "work",
-        ffmpeg_runner=run_ffmpeg,
-        loudness_checker=check_streaming_loudness,
-        warm_scheduler=lambda job: job(),  # synchronous: any warm completes inline
-        playout_trim_supported=False,  # the GStreamer engine's value
-    )
-    plan = EgressSourcePlan(
+def _sliver_plan(media: Path, *, inpoint_s: float, promised_s: float) -> EgressSourcePlan:
+    return EgressSourcePlan(
         channel_id="gov",
         segments=[
             EgressSourceSegment(
@@ -310,7 +280,36 @@ def test_u36_the_prepared_sliver_is_shorter_than_the_window_it_promises(
         ],
     )
 
-    report = preparer.prepare(plan, _config())
+
+def _sliver_preparer(tmp_path: Path) -> SourcePreparer:
+    return SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=run_ffmpeg,
+        loudness_checker=check_streaming_loudness,
+        warm_scheduler=lambda job: job(),  # synchronous: any warm completes inline
+        playout_trim_supported=False,  # the GStreamer engine's value
+    )
+
+
+def test_u36_the_prepared_sliver_is_shorter_than_the_window_it_promises(tmp_path: Path) -> None:
+    """A window reaching past the media end emits a SHORT but real artifact.
+
+    Inside the media but asking for more than remains: the copy-out yields the
+    tail that exists -- the 3.0s left of an 8.0s file -- not the promised 5.0s.
+    The exact figure lands within a keyframe interval of 3.0s (this host measured
+    3.097122s and 3.203789s on two builds), so the assertion brackets it rather
+    than pinning one frame layout.
+
+    This is also the guard's lower bound on real media: a segment that is merely
+    SHORT is real media and must still be prepared. U36 item 7 rejects only a
+    positively stream-less artifact, and a regression that widened it to
+    "shorter than promised" would fail here.
+    """
+
+    media = _real_asset(tmp_path, name="asset.mp4", seconds=_REAL_MEDIA_S)
+    preparer = _sliver_preparer(tmp_path)
+    report = preparer.prepare(_sliver_plan(media, inpoint_s=5.0, promised_s=5.0), _config())
+
     segment = report.source_plan.segments[0]
     artifact = Path(segment.path)
     measured = probe_media_duration_seconds(artifact)
@@ -318,18 +317,48 @@ def test_u36_the_prepared_sliver_is_shorter_than_the_window_it_promises(
     # The emitted segment still claims the planner's promise, whatever the file
     # turned out to be -- the engine is told the plan's duration, not the
     # artifact's.
-    assert segment.duration_seconds == promised_s
+    assert segment.duration_seconds == 5.0
+    assert measured is not None
+    assert measured == pytest.approx(3.0, abs=0.5)
+    # The artifact cannot fill the window the plan promised.
+    assert measured + 0.5 < 5.0, f"artifact measured {measured}s against a promised 5.0s"
 
-    if expected_tail_s is None:
-        assert artifact.stat().st_size == 0, "expected the past-EOF copy-out to be empty"
-        assert measured is None
-    else:
-        assert measured is not None
-        assert measured == pytest.approx(expected_tail_s, abs=0.5)
-    # Either way the artifact cannot fill the window the plan promised.
-    assert (measured or 0.0) + 0.5 < promised_s, (
-        f"artifact measured {measured}s against a promised {promised_s}s"
-    )
+
+def test_u36_a_window_past_the_media_end_never_reaches_the_worker(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The past-EOF window is refused at preparation, naming source and in-point.
+
+    Past the real end the copy-out produces NOTHING at all. Measured on this
+    host's ffmpeg 8.1.1 through the preparer's own args: a 0-byte .ts, ffprobe
+    answering None. Before U36 item 7's guard that empty file was handed on as a
+    2.0s segment -- exactly the artifact the GStreamer worker EOS'd on when the
+    boundary reload's single leg delivered 1.6s (``reports/U36.md`` 1.4). Now
+    ``prepare`` raises instead, so the caller's own failure handling runs
+    instead of the worker's stall exit, and the operator gets a WARNING naming
+    the source and the in-point rather than a channel that went dark.
+    """
+
+    media = _real_asset(tmp_path, name="asset.mp4", seconds=_REAL_MEDIA_S)
+    preparer = _sliver_preparer(tmp_path)
+
+    with (
+        caplog.at_level(logging.WARNING, logger="civiccast.egress.preparer"),
+        pytest.raises(SourcePrepareError) as raised,
+    ):
+        preparer.prepare(_sliver_plan(media, inpoint_s=12.0, promised_s=2.0), _config())
+
+    message = str(raised.value)
+    assert "0 bytes" in message, message
+    assert "12.000s" in message, message  # the in-point is named
+    assert str(media) in message, message  # and so is the source
+
+    warnings = [
+        record.getMessage() for record in caplog.records if record.levelno == logging.WARNING
+    ]
+    assert any(
+        str(media) in line and "12.000s" in line and "0 bytes" in line for line in warnings
+    ), f"no warning named the source, the in-point and the 0-byte artifact: {warnings}"
 
 
 def test_u36_the_fixed_plan_and_the_artifact_it_produces_agree(tmp_path: Path) -> None:
