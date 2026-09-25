@@ -86,6 +86,15 @@ class FakeRunner:
     def is_alive(self, handle: FakeHandle) -> bool:
         return self.alive.get(handle.pid, False)
 
+    def cpu_seconds(self, handle: FakeHandle) -> float | None:
+        # U31: there is no OS process behind a FakeHandle, so the readiness
+        # poll's no-progress window gets NO evidence and the poll stays on its
+        # plain wall-clock budget -- exactly the pre-U31 behaviour. Sampling a
+        # real pid here would be a bug: FakeRunner pids (1001, 1002, ...) can
+        # collide with live processes on the test machine, and a sample that
+        # happened not to advance would trip a spurious stall.
+        return None
+
     def send_ctrl_break(self, handle: FakeHandle) -> None:
         self.ctrl_break_pids.append(handle.pid)
 
@@ -2449,6 +2458,11 @@ def test_postmaster_assign_fault_logs_containment_forensics(
 # The fix is the ``should_abort`` seam, checked between children and inside
 # every readiness poll. These tests pin BOTH: that an in-flight iteration ends
 # within one probe attempt, and that no further child is started after a stop.
+#
+# (Those chain numbers are the pre-F1 ones, nats included. U31 has since raised
+# the control plane's own budget from 30s to 180s, so the same chain would now
+# be longer -- which is only safe because the abort seam, not the budgets, is
+# what bounds the stop path.)
 
 
 def test_f1_start_child_readiness_poll_aborts_on_a_stop_request_mid_poll() -> None:
@@ -2657,3 +2671,112 @@ def test_postmaster_foreign_job_membership_is_accepted_and_postgres_reaches_read
     # No rollback ran: postgres was neither gracefully stopped nor terminated.
     assert postmaster_pid not in runner.graceful_stopped_pids
     assert postmaster_pid not in runner.terminated_pids
+
+
+# ---------------------------------------------------------------------------
+# U31 (2026-09-25): a control plane that is SLOW must not be killed, and one
+# that is WEDGED must not be waited on for the whole budget
+# ---------------------------------------------------------------------------
+#
+# OBSERVED on the station (``supervisor.log`` 07:20:32 - 07:31:45): the control
+# plane was alive and running all three channels' start preparation when a 30s
+# wall-clock readiness budget expired, so the supervisor killed it; the restart
+# re-queued the same preparation and the channels only came on air ~11 minutes
+# after the install. ``children.poll_until_ready`` now takes an optional
+# progress sample plus a no-progress window, and an optional liveness check.
+# These two tests pin the SUPERVISOR-level wiring of those seams: the sample
+# must come from the child (the runner owns the OS handle -- the orchestrator
+# must never read the process table itself), a frozen sample must end the wait
+# at the window, and an advancing one must keep the child alive past it.
+
+
+@dataclass
+class _ScriptedCpuRunner(FakeRunner):
+    """U31: a runner whose per-child CPU sample is scripted, so a test can drive
+    "alive and working" against "alive and wedged" with no real process.
+
+    ``advance_per_sample`` of 0.0 is a WEDGED child (its cumulative CPU time
+    never moves); anything above 0.0 is a child still doing work, whose sample
+    moves on every poll tick."""
+
+    advance_per_sample: float = 0.0
+    sampled: dict[int, float] = field(default_factory=dict)
+    samples: dict[int, int] = field(default_factory=dict)
+
+    def cpu_seconds(self, handle: FakeHandle) -> float | None:
+        current = self.sampled.get(handle.pid, 0.0)
+        self.sampled[handle.pid] = current + self.advance_per_sample
+        self.samples[handle.pid] = self.samples.get(handle.pid, 0) + 1
+        return current
+
+
+def _wedged_control_plane(
+    runner: _ScriptedCpuRunner,
+) -> tuple[Supervisor, FakeClock, dict[str, int]]:
+    """Bring a supervisor up, then kill+restart its control plane with a health
+    probe that answers 503 forever -- the station's own shape."""
+
+    clock = FakeClock()
+    health_status = {"code": 200}
+    sup = make_supervisor(
+        runner=runner,
+        clock=clock,
+        health=lambda: ControlPlaneHealthProbe(status_code=health_status["code"]),
+    )
+    sup.start()
+    assert sup.state == "ready"
+    runner.alive[sup.handles()["control_plane"].pid] = False
+    sup.on_dependency_lost("control_plane")
+    assert sup.state == "starting"
+    health_status["code"] = 503  # answers, but never attests ready
+    return sup, clock, health_status
+
+
+def test_a_control_plane_that_stops_doing_work_is_released_by_the_stall_window(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """U31: alive but WEDGED -- its CPU sample never advances, so the poll ends
+    at the 60s no-progress window instead of holding the whole 180s budget."""
+
+    runner = _ScriptedCpuRunner(advance_per_sample=0.0)
+    sup, clock, _health = _wedged_control_plane(runner)
+
+    with caplog.at_level("WARNING", logger=_CORE_LOGGER_NAME):
+        for _ in range(6):
+            clock.sleep(1.0)
+            sup.tick(now=clock.now())
+
+        stalled = [r for r in caplog.records if "no CPU progress" in r.getMessage()]
+        assert stalled, "a child that has made no CPU progress must be released by the window"
+        assert "no CPU progress for 60.0s" in stalled[0].getMessage()
+        assert "readiness budget (180.0s) exhausted" not in stalled[0].getMessage()
+
+
+def test_a_control_plane_still_burning_cpu_is_never_released_by_the_stall_window(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """U31: the station's own shape -- SLOW but working. Its CPU sample advances
+    on every tick, so the no-progress window never fires and the child is given
+    the whole budget. This is the assertion that would have prevented the
+    incident: a start that is making progress is never killed for being slow."""
+
+    runner = _ScriptedCpuRunner(advance_per_sample=0.25)
+    sup, clock, _health = _wedged_control_plane(runner)
+
+    with caplog.at_level("WARNING", logger=_CORE_LOGGER_NAME):
+        for _ in range(6):
+            clock.sleep(1.0)
+            sup.tick(now=clock.now())
+
+        # The seam was genuinely consulted (a supervisor that never samples the
+        # child cannot tell slow from wedged at all), and it never called this
+        # child stalled.
+        assert runner.samples, "the child's CPU must actually be sampled"
+        assert max(runner.samples.values()) > 1
+        assert not [r for r in caplog.records if "no CPU progress" in r.getMessage()], (
+            "a child that is still doing work must never be called stalled"
+        )
+        budget = [
+            r for r in caplog.records if "readiness budget (180.0s) exhausted" in r.getMessage()
+        ]
+        assert budget, "a slow-but-working child must be given the whole 180s budget"

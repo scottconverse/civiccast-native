@@ -78,6 +78,12 @@ class FakeRunner:
     def is_alive(self, handle: FakeHandle) -> bool:
         return self.alive.get(handle.pid, False)
 
+    def cpu_seconds(self, handle: FakeHandle) -> float | None:
+        # U31: no process behind a fake handle -> "no evidence", so the
+        # readiness poll keeps its plain wall-clock budget (see the same stub
+        # in test_supervisor_core's FakeRunner).
+        return None
+
     def send_ctrl_break(self, handle: FakeHandle) -> None:
         pass
 

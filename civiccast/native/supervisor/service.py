@@ -103,6 +103,7 @@ from civiccast.native.supervisor.children import (
     graceful_stop_action,
     ollama_child_spec,
     postgres_child_spec,
+    process_cpu_seconds,
     read_postmaster_pid,
 )
 from civiccast.native.supervisor.config import (
@@ -693,6 +694,17 @@ class Win32ChildProcessRunner:
     def is_alive(self, handle: ChildHandle) -> bool:
         return cast(_ProcHandle, handle).proc.poll() is None
 
+    def cpu_seconds(self, handle: ChildHandle) -> float | None:
+        """U31: the child's cumulative CPU seconds, via ``psutil`` on its pid --
+        what the readiness poll's no-progress window samples. ``None`` when the
+        sample cannot be taken (the process is gone, or its times are not
+        readable): "no evidence", never a stall. Kept on the runner because
+        this is the seam that owns the OS handle; the orchestrator never reads
+        the process table itself (a fake handle must not be able to reach a
+        REAL process that happens to share its pid)."""
+
+        return process_cpu_seconds(cast(_ProcHandle, handle).pid)
+
     def send_ctrl_break(self, handle: ChildHandle) -> None:
         self._safe_ctrl_break(cast(_ProcHandle, handle).pid)
 
@@ -916,8 +928,9 @@ SVC_STOP_IN_FLIGHT_ITERATION_SECONDS = float(_DB_CONNECT_TIMEOUT_SECONDS) + 1.0
 
 Before the F1 abort seam this term was UNBOUNDED in practice: nothing inside
 ``Supervisor.start()``/``tick()`` read the stop event, so a single iteration
-could chain three readiness budgets (postgres 60 + control_plane 30 +
-ollama 60 = 150s) before the stop chain could even begin -- longer, on its own,
+could chain three readiness budgets (60 + 30 + 60 = 150s when F1 was written;
+U31 has since raised the control plane's own budget to 180s, making the same
+chain 300s) before the stop chain could even begin -- longer, on its own,
 than this whole watchdog. With ``should_abort`` checked between children and
 inside ``poll_until_ready``, the worst case collapses to whichever of these the
 stop request lands just after:
