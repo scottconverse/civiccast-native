@@ -1970,8 +1970,16 @@ class GstPlayoutEngine:
     # of it bisects that stretch on the next occurrence, at the same cost as the
     # mux counters (one int increment per buffer, no allocation, no locking, no
     # logging, and no extra line).
+    #
+    # Rung ``in`` closes the remaining ambiguity: ``sel`` at ``+0`` after a switch
+    # says the new leg's data stopped at or before the selector's src pad, which
+    # is either "the leg's producer stopped pushing" or "the selector swallowed
+    # it". ``in`` counts the leg's buffers arriving at the selector's OWN request
+    # sink pad, so ``in +N, sel +0`` names the selector and ``in +0, sel +0``
+    # names the producer. Armed per reload (the pad is created by the reload), so
+    # it is absent until the first switch and re-baselined at each one.
 
-    _CHAIN_INPUT_RUNGS: ClassVar[tuple[str, ...]] = ("sel", "queue")
+    _CHAIN_INPUT_RUNGS: ClassVar[tuple[str, ...]] = ("in", "sel", "queue")
     _CHAIN_INPUT_STREAMS: ClassVar[tuple[str, ...]] = ("video", "audio")
     _CHAIN_INPUT_ISOLATION_QUEUES: ClassVar[dict[str, str]] = {
         "video": "program_video_selector_isolation",
@@ -1986,7 +1994,9 @@ class GstPlayoutEngine:
         encode chain's own input. Two rungs, one per stream each: the selectors
         and the queues are part of the persistent output half and never restart
         across a swap, so their src pads are the same objects for the whole
-        worker lifetime.
+        worker lifetime. Rung ``in`` (see ``_install_new_leg_inbound_counters``)
+        is the third and cannot be armed here: its pad only exists once a reload
+        has built a replacement leg.
 
         Keyed by ``(rung, stream)`` rather than by pad name: an
         ``input-selector``'s src pad can be armed before caps are negotiated, and
@@ -2037,6 +2047,29 @@ class GstPlayoutEngine:
             self._chain_input_buffers[key] = 0
             try:
                 pad.add_probe(Gst.PadProbeType.BUFFER, self._make_chain_input_counter(rung, stream))
+            except Exception:
+                # Could not be counted -> must not be listed (see docstring).
+                self._chain_input_pads.pop(key, None)
+                self._chain_input_buffers.pop(key, None)
+
+    def _install_new_leg_inbound_counters(self, pending: dict[str, Any]) -> None:
+        """Arm rung ``in``: the new leg's buffers arriving at its selector sink pad.
+
+        Called from ``_arm_new_leg_selector_diagnostics`` -- after the rebase
+        offsets are set and while the holds still block the first buffer, so no
+        buffer can cross before the counter exists. Overwrites the previous
+        reload's pad reference for the key, so ``in`` always names the leg that
+        is selected NOW. Best-effort per pad, exactly like every other rung: a
+        pad that cannot be counted is left out, never registered as ``+0``."""
+        for label, pad_key in (("video", "new_video_pad"), ("audio", "new_audio_pad")):
+            pad = pending.get(pad_key)
+            if pad is None or not hasattr(pad, "add_probe"):
+                continue
+            key = ("in", label)
+            self._chain_input_pads[key] = pad
+            self._chain_input_buffers[key] = 0
+            try:
+                pad.add_probe(Gst.PadProbeType.BUFFER, self._make_chain_input_counter("in", label))
             except Exception:
                 # Could not be counted -> must not be listed (see docstring).
                 self._chain_input_pads.pop(key, None)
@@ -2385,8 +2418,20 @@ class GstPlayoutEngine:
         the duration of a commit (the commit watchdog owns that window), and this
         is what makes the hand-back clean: the channel that comes out of a commit
         gets a full ``stall_timeout_s`` to resume output, rather than inheriting
-        however much of the budget had already elapsed when the commit began."""
-        self._stall_last_advance_t = time.monotonic()
+        however much of the budget had already elapsed when the commit began.
+
+        U30: the flow ladder's interval restarts here too. A committed reload is
+        exactly the moment the question "is the SWITCHED-IN leg feeding the mux
+        yet?" starts to have an answer, and without this baseline the first
+        progress/EOS line after a commit would report a delta that straddles the
+        commit and the healthy outgoing flow before it -- which is how the
+        2026-09-25 freezes read as ``video=+121`` while the mux was receiving
+        nothing but the retiring tail. Only the diagnostic interval moves; the
+        stall watchdog reads ``_output_buffers`` and is unaffected."""
+        now = time.monotonic()
+        self._stall_last_advance_t = now
+        self._snapshot_mux_input(now)
+        self._snapshot_chain_input()
 
     def _await_playing(self) -> None:
         """Bounded wait for the PLAYING transition so a wedged preroll can't hang the
@@ -3420,6 +3465,10 @@ class GstPlayoutEngine:
                         label=label, txn_id=txn_id, applied_offset=applied_offset
                     ),
                 )
+        # U30: the same pad, counted rather than reported once -- see the flow
+        # ladder's ``in`` rung for why the first buffer alone cannot say whether
+        # the producer KEPT pushing after the switch.
+        self._install_new_leg_inbound_counters(pending)
 
     @staticmethod
     def _mux_pad_stream_label(pad: Any) -> str:

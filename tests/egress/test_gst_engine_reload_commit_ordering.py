@@ -3745,3 +3745,128 @@ def test_u30_a_pipeline_eos_names_itself_before_it_quits_the_worker(
     assert "[chain-in " in err
     assert "sel video=+0 audio=+186 | queue video=+0 audio=+186]" in err
     assert loop.quits == 1
+
+
+def test_u30_inbound_counters_count_the_new_leg_at_its_selector_sink_pad(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Rung ``in``: did the switched-in leg KEEP pushing after the switch?
+
+    Rungs ``sel`` and ``queue`` can only say where the data stopped being
+    forwarded; ``sel video=+0`` after a switch is either "the leg's producer
+    stopped pushing" or "the selector swallowed what it pushed". ``in`` counts
+    the leg's buffers ARRIVING at its selector request sink pad -- the pad the
+    ``new-leg-selector-first-buffer`` diagnostic already reports ONCE -- so
+    ``in +N, sel +0`` names the selector and ``in +0, sel +0`` names the
+    producer. Renders first (upstream to downstream), which is what makes that
+    reading order possible."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    _u30_armed_chain(engine, recorder)
+    inbound = {
+        "video": _FakeDiagnosticPad("new_sel_sink_video", recorder),
+        "audio": _FakeDiagnosticPad("new_sel_sink_audio", recorder),
+    }
+
+    engine._install_new_leg_inbound_counters(
+        {"new_video_pad": inbound["video"], "new_audio_pad": inbound["audio"]}
+    )
+
+    assert engine._chain_input_pads[("in", "video")] is inbound["video"]
+    assert engine._chain_input_pads[("in", "audio")] is inbound["audio"]
+    assert engine._chain_input_buffers[("in", "video")] == 0
+    assert engine._chain_input_buffers[("in", "audio")] == 0
+    for pad in inbound.values():
+        assert f"add_probe:{pad.name}:1:_count_chain_input" in recorder.calls, recorder.calls
+    assert capsys.readouterr().err == ""
+
+    # Each rung counts its own stream only, same contract as ``sel``/``queue``.
+    _mask, callback = inbound["audio"].probes[0]
+    for _ in range(2):
+        assert (
+            callback(inbound["audio"], _FakeProbeInfo(_FakeProbeBuffer(0)))
+            == engine_module.Gst.PadProbeReturn.OK
+        )
+    assert engine._chain_input_buffers[("in", "audio")] == 2
+    assert engine._chain_input_buffers[("in", "video")] == 0
+
+    engine._chain_input_snapshot = dict.fromkeys(engine._chain_input_pads, 0)
+    assert engine._chain_input_delta_suffix(3.0).startswith(
+        " [chain-in 3.0s: in video=+0 audio=+2 | sel "
+    )
+
+
+def test_u30_inbound_counters_skip_a_pad_that_cannot_be_counted(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Same absence rule as every other rung: uncountable is ABSENT, never ``+0``.
+
+    A missing ``new_audio_pad`` (a reload whose audio leg never got a selector
+    pad) and a pad that refuses the probe must both leave the rung out -- a
+    registered-but-uncountable rung would read ``+0`` forever and accuse a
+    healthy stream of having stopped."""
+    recorder = _Recorder()
+
+    class _RefusingPad(_FakeDiagnosticPad):
+        def add_probe(self, mask: Any, callback: Any) -> str:
+            raise RuntimeError("probe refused")
+
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine._chain_input_pads = {("sel", "video"): _FakeDiagnosticPad("sel_src", recorder)}
+    engine._chain_input_buffers = {("sel", "video"): 0}
+
+    engine._install_new_leg_inbound_counters(
+        {
+            "new_video_pad": _RefusingPad("refusing_sel_sink", recorder),
+            "new_audio_pad": None,
+        }
+    )
+
+    assert not [key for key in engine._chain_input_pads if key[0] == "in"]
+    assert not [key for key in engine._chain_input_buffers if key[0] == "in"]
+    assert ("sel", "video") in engine._chain_input_pads
+    assert capsys.readouterr().err == ""
+
+
+def test_u30_reset_stall_reference_rebaselines_the_flow_ladder(engine_module) -> None:
+    """A committed reload starts the diagnostic interval, so the numbers that
+    follow it are POST-COMMIT numbers.
+
+    MEASURED off-live (campaign 6, immediate switch, dead runs): the run's only
+    line was the pipeline-EOS line reading ``[mux-in 4.1s: video=+121 ...]`` and
+    ``[chain-in 4.1s: sel video=+126 audio=+142 | queue video=+120 audio=+187]``
+    -- a 4.1 s interval that STARTS at arm time and therefore straddles the
+    commit, so it reads the healthy outgoing leg's flow plus the 2.2 s retiring
+    tail and says nothing about the leg that was switched in. Anchoring the
+    interval at the commit turns the same line into ``+0`` for a leg that never
+    fed the mux. Only the interval moves: the stall watchdog reads
+    ``_output_buffers``, not these counters."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_pads = {
+        "sink_65": _FakeDiagnosticPad("sink_65", _Recorder(), caps="video/x-h264"),
+    }
+    engine._mux_input_buffers = {"sink_65": 900}
+    engine._mux_input_snapshot = {"sink_65": 779}
+    engine._chain_input_pads = {
+        ("in", "video"): _FakeDiagnosticPad("new_sel_sink_video", _Recorder()),
+        ("sel", "video"): _FakeDiagnosticPad("sel_src", _Recorder()),
+        ("queue", "video"): _FakeDiagnosticPad("vq_src", _Recorder()),
+    }
+    engine._chain_input_buffers = {
+        ("in", "video"): 0,
+        ("sel", "video"): 130,
+        ("queue", "video"): 120,
+    }
+    engine._chain_input_snapshot = {("in", "video"): 0, ("sel", "video"): 4, ("queue", "video"): 4}
+
+    assert engine._mux_input_delta_suffix(4.1) == (
+        " [mux-in 4.1s: video=+121] [chain-in 4.1s: in video=+0 | sel video=+126 "
+        "| queue video=+116]"
+    )
+
+    engine._reset_stall_reference()
+
+    assert engine._mux_input_delta_suffix(0.5) == (
+        " [mux-in 0.5s: video=+0] [chain-in 0.5s: in video=+0 | sel video=+0 | queue video=+0]"
+    )
+    assert engine._stall_last_advance_t > 0.0
