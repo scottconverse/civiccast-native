@@ -2105,20 +2105,35 @@ class GstPlayoutEngine:
         buffer can cross before the counter exists. Overwrites the previous
         reload's pad reference for the key, so ``in`` always names the leg that
         is selected NOW. Best-effort per pad, exactly like every other rung: a
-        pad that cannot be counted is left out, never registered as ``+0``."""
+        pad that cannot be counted is left out, never registered as ``+0``.
+
+        Rung ``in`` JOINS the ladder; it must never require one to exist.
+        ``_install_chain_input_counters`` arms these two maps once per worker and
+        this method only adds a key to them, so an object that never armed the
+        ladder has no rung ``in`` to add -- and no ladder to render either, since
+        ``_chain_input_delta_suffix`` already renders a missing rung as absent
+        rather than ``+0``. The shape is real, not hypothetical: the U16
+        real-runtime emitter arms the selector-side diagnostics on a bare
+        ``object.__new__(GstPlayoutEngine)`` (no ``__init__``, no pipeline), and
+        an unguarded write here raised ``AttributeError`` and took that whole
+        emit down with it."""
+        pads = getattr(self, "_chain_input_pads", None)
+        counters = getattr(self, "_chain_input_buffers", None)
+        if pads is None or counters is None:
+            return
         for label, pad_key in (("video", "new_video_pad"), ("audio", "new_audio_pad")):
             pad = pending.get(pad_key)
             if pad is None or not hasattr(pad, "add_probe"):
                 continue
             key = ("in", label)
-            self._chain_input_pads[key] = pad
-            self._chain_input_buffers[key] = 0
+            pads[key] = pad
+            counters[key] = 0
             try:
                 pad.add_probe(Gst.PadProbeType.BUFFER, self._make_chain_input_counter("in", label))
             except Exception:
                 # Could not be counted -> must not be listed (see docstring).
-                self._chain_input_pads.pop(key, None)
-                self._chain_input_buffers.pop(key, None)
+                pads.pop(key, None)
+                counters.pop(key, None)
             # U30: armed after the counter, so ``probes[0]`` stays the counter.
             self._install_eos_observer(pad, self._make_chain_eos_label("in", label))
 

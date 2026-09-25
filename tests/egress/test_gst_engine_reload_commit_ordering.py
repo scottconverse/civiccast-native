@@ -4179,6 +4179,33 @@ def test_u30_inbound_counters_skip_a_pad_that_cannot_be_counted(
     assert capsys.readouterr().err == ""
 
 
+def test_u30_inbound_counters_are_skipped_when_no_ladder_was_ever_armed(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Rung ``in`` JOINS a ladder; it must never require one to exist.
+
+    ``_install_chain_input_counters`` arms ``_chain_input_pads`` /
+    ``_chain_input_buffers`` once per worker; this method only adds a key to
+    them. An engine that never armed the ladder therefore has no rung ``in`` to
+    add -- and no ladder to render, since ``_chain_input_delta_suffix`` already
+    renders a missing rung as absent rather than ``+0``. The shape is real, not
+    hypothetical: the U16 real-runtime emitter arms the selector-side
+    diagnostics on a bare ``object.__new__(GstPlayoutEngine)`` (no ``__init__``,
+    no pipeline), which is where the unguarded write raised
+    ``AttributeError: 'GstPlayoutEngine' object has no attribute
+    '_chain_input_pads'`` and took the whole emit down with it.
+    """
+    engine = object.__new__(engine_module.GstPlayoutEngine)
+
+    engine._install_new_leg_inbound_counters(
+        {"new_video_pad": _FakeDiagnosticPad("stub_sel_sink_video", _Recorder())}
+    )
+
+    assert not hasattr(engine, "_chain_input_pads")
+    assert not hasattr(engine, "_chain_input_buffers")
+    assert capsys.readouterr().err == ""
+
+
 def test_u30_reset_stall_reference_rebaselines_the_flow_ladder(engine_module) -> None:
     """A committed reload starts the diagnostic interval, so the numbers that
     follow it are POST-COMMIT numbers.
