@@ -3291,10 +3291,11 @@ def test_conform_failure_after_a_successful_measurement_still_raises(tmp_path: P
 # the in-point, instead of letting the worker abort the reload pre-commit and
 # leave the boundary unprepared.
 #
-# The check's default probe is the module-global ``probe_media_duration_seconds``
-# (preparer.py imports it as a bare name), so the tests that are NOT about the
-# check stub it for the placeholder-writing fake runners, and the test that IS
-# about it points it at "no decodable stream".
+# The check's probe hook is the module-global
+# ``_probe_prepared_segment_decodability``, so the tests that are NOT about the
+# check stub it for the placeholder-writing fake runners, and the tests that ARE
+# about it answer it ``False`` ("no stream") or ``None`` ("ffprobe could not be
+# asked").
 # ---------------------------------------------------------------------------
 
 
@@ -3302,16 +3303,18 @@ def test_conform_failure_after_a_successful_measurement_still_raises(tmp_path: P
 def _placeholder_output_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     """The fake ffmpeg runners in this module write placeholder bytes, not media,
     so the preparer's new decodability check (U36 item 7) would reject every one
-    of them. Stub the real ffprobe-based probe; a test that is about the check
-    overrides this again with its own ``monkeypatch.setattr``.
+    of them. Stub its probe hook as "yes, decodable"; a test that is about the
+    check overrides this again with its own ``monkeypatch.setattr``.
+    Deliberately NOT ``probe_media_duration_seconds``: several tests in this
+    module fake THAT one to simulate an unknown-duration source asset, and the
+    emitted-file question ("is what preparation just wrote playable at all")
+    must not be answered by a fake aimed at the source-duration question.
     ``test_preparer_conform_cache_real_ffmpeg.py`` runs real ffmpeg and is a
     separate module, so it keeps the real probe."""
-    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 12.5)
+    monkeypatch.setattr(preparer_module, "_probe_prepared_segment_decodability", lambda _path: True)
 
 
-def _u36_preparer(
-    tmp_path: Path, runner: Callable[[list[str]], FfmpegResult]
-) -> SourcePreparer:
+def _u36_preparer(tmp_path: Path, runner: Callable[[list[str]], FfmpegResult]) -> SourcePreparer:
     return SourcePreparer(
         work_dir=tmp_path / "work",
         ffmpeg_runner=runner,
@@ -3383,7 +3386,9 @@ def test_prepare_rejects_a_prepared_segment_with_no_decodable_stream(
         _write_fake_output(args)
         return FfmpegResult(returncode=0, stdout="", stderr="")
 
-    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: None)
+    monkeypatch.setattr(
+        preparer_module, "_probe_prepared_segment_decodability", lambda _path: False
+    )
     plan = _u36_tail_plan(tmp_path, inpoint=664.0, seconds=2.0)
     preparer = _u36_preparer(tmp_path, runner)
 
@@ -3395,6 +3400,64 @@ def test_prepare_rejects_a_prepared_segment_with_no_decodable_stream(
     text = rejected[0]
     assert plan.segments[0].path in text
     assert "664" in text
+
+
+def test_prepare_rejects_a_zero_byte_untrimmed_segment_naming_the_source_start(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An untrimmed segment carries ``inpoint_seconds=None`` (there is no ``-ss``
+    to name), and the rejection must survive that: naming the source and saying
+    "start" rather than crashing on a ``%.3f`` of ``None`` before it can log."""
+
+    def runner(args: list[str]) -> FfmpegResult:
+        Path(args[-1]).write_bytes(b"")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    plan = _source_plan(tmp_path)
+    plan = plan.model_copy(
+        update={
+            "segments": [
+                plan.segments[0].model_copy(
+                    update={"inpoint_seconds": None, "outpoint_seconds": None}
+                )
+            ]
+        }
+    )
+    preparer = _u36_preparer(tmp_path, runner)
+
+    with caplog.at_level(logging.WARNING), pytest.raises(SourcePrepareError) as excinfo:
+        preparer.prepare(plan, _config(), protected_plan_dirs=frozenset())
+
+    rejected = _u36_rejection_warnings(caplog)
+    assert rejected, [r.getMessage() for r in caplog.records]
+    assert plan.segments[0].path in rejected[0]
+    assert "start" in rejected[0]
+    assert "start" in str(excinfo.value)
+
+
+def test_prepare_accepts_a_segment_when_the_decodability_probe_cannot_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unanswerable probe is NOT evidence of bad media. ``None`` means ffprobe
+    is absent or could not run -- rejecting on it would fail every prepared
+    segment on a box without ffmpeg, and would reject a playable file whose
+    container reports no duration, which is what a duration probe cannot tell
+    apart from a missing tool. Red evidence for this behaviour is the
+    pre-existing real-ffmpeg test
+    ``test_ffprobe_unavailable_never_promotes_a_fragment_as_full_asset`` failing
+    at commit 733dc995 (it fakes ffprobe away and every segment came back
+    rejected); this locks the same rule in at the unit level."""
+
+    def runner(args: list[str]) -> FfmpegResult:
+        _write_fake_output(args)
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(preparer_module, "_probe_prepared_segment_decodability", lambda _path: None)
+    preparer = _u36_preparer(tmp_path, runner)
+
+    report = preparer.prepare(_source_plan(tmp_path), _config(), protected_plan_dirs=frozenset())
+
+    assert report.records[0].prepared_path.endswith("segment-0001.ts")
 
 
 def test_prepare_accepts_a_decodable_prepared_segment(tmp_path: Path) -> None:
