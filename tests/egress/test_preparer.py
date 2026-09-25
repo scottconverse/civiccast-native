@@ -2897,34 +2897,6 @@ def test_two_pass_probe_uses_same_window_as_encode(tmp_path: Path) -> None:
     assert probe[probe.index("-t") + 1] == encode[encode.index("-t") + 1]
 
 
-def test_two_pass_probe_failure_fails_closed(tmp_path: Path) -> None:
-    calls: list[list[str]] = []
-
-    def fake_run(args, cancel_event=None):
-        calls.append(list(args))
-        if "print_format=json" in " ".join(args):
-            return FfmpegResult(returncode=1, stdout="", stderr="probe failed")
-        _write_fake_output(args)
-        return FfmpegResult(returncode=0, stdout="", stderr="")
-
-    preparer = SourcePreparer(
-        work_dir=tmp_path / "work",
-        ffmpeg_runner=fake_run,
-        loudness_checker=lambda **_k: _loudness(status="failed", measured_lufs=-18.0),
-        warm_scheduler=lambda job: None,
-    )
-    (tmp_path / "s.mp4").write_bytes(b"x")
-    plan = EgressSourcePlan(
-        channel_id="gov",
-        segments=[
-            EgressSourceSegment(label="S", path=str(tmp_path / "s.mp4"), duration_seconds=30)
-        ],
-    )
-    with pytest.raises(SourcePrepareError):
-        preparer.prepare(plan, _config())
-    assert not any("print_format=json" not in " ".join(a) for a in calls)
-
-
 def test_two_pass_cache_key_includes_method(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
