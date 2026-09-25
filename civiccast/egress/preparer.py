@@ -72,6 +72,46 @@ WarmScheduler = Callable[[Callable[[], None]], None]
 _CACHE_DIR_NAME = "conform-cache"
 _DEFAULT_CACHE_GB = 20.0
 _DEFAULT_PREPARATION_TIMEOUT_SECONDS = 300.0
+
+#: BETA.10 U29: the conform-cache warm is a WHOLE-ASSET conform, but it used
+#: the same 300s flat bound as a bounded foreground segment. A long meeting
+#: can never finish inside it, so the warm was killed, the failure was logged
+#: and the next airing re-queued it -- the same asset burned CPU forever and
+#: never populated the cache. Measured on the live station (2026-09-25, three
+#: station encoders running) a 9020.8s asset conforms at 16.3x realtime on one
+#: thread at below-normal priority, i.e. 555s alone and 866s under contention;
+#: the flat 300s bound was below even the uncontended cost. The warm bound now
+#: scales with the asset, from a de-rated design speed rather than the best
+#: measurement, and keeps the flat bound as a floor for short assets -- see
+#: ``warm_preparation_timeout_seconds``. The on-demand/air-path timeout is
+#: deliberately NOT rescaled: a segment's airing must still fail closed fast.
+#:
+#: 8.0x is the design speed: the measured 16.3x alone and 10.4x against a
+#: concurrent foreground conform are both faster, so this is a worst case that
+#: still terminates rather than a target.
+_WARM_CONFORM_DESIGN_SPEED_RPS = 8.0
+#: Headroom over the design-speed estimate. The warm has no interactive
+#: deadline -- its only cost of over-running is a longer-lived child -- so the
+#: bound is set to tolerate a machine materially slower than the one the design
+#: speed was measured on.
+_WARM_CONFORM_TIMEOUT_FACTOR = 1.5
+#: Ceiling on the scaled bound. There is ONE warm worker thread, so a bound
+#: that scales without limit would let a single pathological asset (or a
+#: misreported duration) hold the warm queue for the rest of the day. This is a
+#: cap on WALL CLOCK, not on asset duration: at the measured 16.3x, 2h still
+#: covers an asset longer than a day. No asset the station has recorded comes
+#: anywhere near it (the longest observed, 9154s, designs to ~29 min).
+_WARM_CONFORM_TIMEOUT_CEILING_SECONDS = 7200.0
+#: BETA.10 U29: how long a warm that FAILED or timed out is left alone before
+#: the scheduler will try that asset again. The live failure mode re-queued the
+#: same asset on its own rotation (measured re-queue gap ~1800s), so the CPU
+#: burn was continuous. Six hours suppresses roughly twelve consecutive airings
+#: -- long enough that a permanently unwarmable asset costs a handful of
+#: whole-asset attempts a day instead of one per airing, short enough that a
+#: transient cause (disk pressure, a saturated box) gets another attempt the
+#: same working day with no operator action.
+_WARM_FAILURE_BACKOFF_SECONDS = 6 * 60 * 60.0
+
 #: F3 fix (hostile-review follow-up, 2026-09-06): the age-only GC this replaced
 #: had no size/count budget at all, so a channel doing frequent rollovers (the
 #: exact scenario H5 was fixed for) could accumulate an unbounded number of
@@ -284,6 +324,44 @@ def preparation_timeout_seconds_from_env() -> float:
     return value
 
 
+def warm_preparation_timeout_seconds(
+    media_duration_seconds: float | None,
+    base_timeout_seconds: float,
+) -> float:
+    """BETA.10 U29: the ffmpeg-call timeout a cache WARM may use for an asset.
+
+    A conform-cache warm re-encodes the whole asset, so its cost is
+    proportional to the asset's duration -- unlike the foreground path, whose
+    unit of work is a bounded segment. Applying the foreground path's flat
+    ``base_timeout_seconds`` to a warm made every long meeting unwarmable: the
+    child was killed at the bound, the failure was logged, and the next airing
+    re-queued the same asset, so CPU burned forever without the cache ever
+    being populated (U29's live symptom). This scales the warm's budget with
+    the asset instead, from a de-rated design speed:
+
+        timeout = max(base, duration / design_speed * factor), capped by the
+        ceiling; ``base`` alone when the duration is unknown or non-positive.
+
+    The base is kept as a FLOOR, so this can only ever widen a warm's budget.
+    It is never used for the on-demand/air path: an airing must still fail
+    closed fast, and a slow warm is cheaper than a slow channel.
+
+    ``media_duration_seconds`` is the probe-reported duration (``None`` when
+    the source has not been probed or reports no duration); ``base_timeout_seconds``
+    is the configured preparation timeout the foreground path uses.
+    """
+
+    if media_duration_seconds is None or media_duration_seconds <= 0:
+        return base_timeout_seconds
+    estimate = (
+        media_duration_seconds / _WARM_CONFORM_DESIGN_SPEED_RPS * _WARM_CONFORM_TIMEOUT_FACTOR
+    )
+    return max(
+        base_timeout_seconds,
+        min(estimate, _WARM_CONFORM_TIMEOUT_CEILING_SECONDS),
+    )
+
+
 def _foreground_thread_cap() -> int:
     """Item 66 (point 2, Opus review, measured on HALO): conforming 300s of
     content at ``-threads 1`` took 233s vs 36.6s unthrottled -- the
@@ -417,6 +495,14 @@ class SourcePreparer:
         # ponytail: one Lock per cache key ever seen, never pruned -- bounded
         # by the number of distinct assets aired over the process lifetime.
         self._conform_locks: dict[str, threading.Lock] = {}
+        # BETA.10 U29: monotonic deadline before which a warm that FAILED or
+        # timed out for this cache key is not re-attempted -- the anti-loop for
+        # the live symptom, where every airing re-queued the same unwarmable
+        # asset and burned CPU forever. Guarded by ``self._warming_guard``
+        # (the same lock that owns ``self._warming``), pruned on success and
+        # whenever an expired entry is read, so it is bounded by the assets
+        # that have failed inside one backoff window.
+        self._warm_backoff_until: dict[str, float] = {}
         # Hostile-review follow-up, item 5: this module has no visibility of
         # its own into which per-plan directories a caller still considers
         # LIVE (an active on-air plan, an armed-but-not-yet-settled reload) --
@@ -585,6 +671,8 @@ class SourcePreparer:
         loudness_target_lufs: float,
         threads: int | None,
         cancel_event: threading.Event | None,
+        timeout_seconds: float | None = None,
+        lower_priority: bool = False,
     ) -> tuple[dict[str, str] | None, str]:
         """Pass 1 of loudnorm for one window: measure it, or degrade loudly.
 
@@ -607,6 +695,13 @@ class SourcePreparer:
         ledError`` is a shutdown/pause signal and re-raises untouched, exactly
         as both call sites handled it before.  Real conform errors (pass 2's
         encode) are likewise untouched: only the measurement pass degrades.
+
+        U29: the probe decodes the same window the conform will encode, so on
+        the warm path it must carry the warm's own scaled budget and priority
+        -- a probe killed at the flat 300s bound measures nothing, degrades to
+        single-pass, and (per U20) leaves the whole-asset cache entry unpopulated,
+        which is the same permanent re-warm loop by another route.  Both knobs
+        default to the previous behavior for the on-demand/air path.
         """
         args = build_loudnorm_probe_args(
             source_path=source_path,
@@ -618,7 +713,12 @@ class SourcePreparer:
         reason = "unrecognized measurement failure"
         parsed: dict[str, str] | None = None
         try:
-            probe_result = self._run_ffmpeg(args, cancel_event)
+            probe_result = self._run_ffmpeg(
+                args,
+                cancel_event,
+                timeout_seconds=timeout_seconds,
+                lower_priority=lower_priority,
+            )
         except SourcePreparationCancelledError:
             raise
         except Exception as exc:  # any probe failure degrades to single-pass
@@ -659,6 +759,8 @@ class SourcePreparer:
         threads: int = 1,
         media_duration_seconds: float | None = None,
         cancel_event: threading.Event | None = None,
+        timeout_seconds: float | None = None,
+        lower_priority: bool = False,
     ) -> Path | None:
         """Conform the WHOLE asset (no trim) into the cache, atomically.
 
@@ -703,6 +805,14 @@ class SourcePreparer:
         through to its bounded per-segment conform exactly as it does for lock
         contention. Both ``None`` cases mean the same thing to every caller
         ("this call did not populate ``{key}``"); neither is an error.
+
+        U29 adds ``timeout_seconds``/``lower_priority`` as pass-through knobs
+        for the warm path only. They are parameters rather than a computed
+        scaling here on purpose: this method is ALSO called synchronously from
+        ``_prepare_segment``'s untrimmed-MISS branch, on the air path, and
+        computing a duration-scaled budget inside would silently change the
+        air path's timeout -- which U29 must not do. Defaults keep that
+        caller exactly as it was; see ``warm_preparation_timeout_seconds``.
         """
         lock = self._conform_lock(key)
         if not lock.acquire(blocking=False):
@@ -725,6 +835,8 @@ class SourcePreparer:
                     loudness_target_lufs=config.loudness_target_lufs,
                     threads=threads,
                     cancel_event=cancel_event,
+                    timeout_seconds=timeout_seconds,
+                    lower_priority=lower_priority,
                 )
                 if loudness_method == _LOUDNESS_METHOD_SINGLE_PASS_FALLBACK:
                     # U20: the measurement pass measured nothing usable, so we
@@ -758,7 +870,12 @@ class SourcePreparer:
                 measured_loudness=measured_loudness,
             )
             try:
-                result = self._run_ffmpeg(args, cancel_event)
+                result = self._run_ffmpeg(
+                    args,
+                    cancel_event,
+                    timeout_seconds=timeout_seconds,
+                    lower_priority=lower_priority,
+                )
             except Exception:
                 # A timeout or any other runner failure can leave a partial
                 # multi-gigabyte output behind.  Remove it before propagating
@@ -1220,10 +1337,43 @@ class SourcePreparer:
         "discarded" before it ever ran would otherwise leave the key
         stuck, silently suppressing every future GENUINE warm for this
         asset for the life of this ``SourcePreparer`` instance.
+
+        U29 makes three properties of this job explicit, because the station
+        showed all three were missing: the job's ffmpeg calls get a
+        duration-scaled budget (``warm_preparation_timeout_seconds``) instead
+        of the flat foreground bound that no long meeting can meet; they run
+        at lowered process priority so the warm yields to the live encoders,
+        the caption ASR and the air path; and a warm that fails or times out
+        puts this cache key on a ``_WARM_FAILURE_BACKOFF_SECONDS`` window so
+        the next airings stop re-queuing the attempt that just burned a
+        whole-asset conform. Nothing here touches the audio filter chain or
+        the conform arguments -- ``_conform_full_asset_into_cache`` and
+        ``build_conform_source_args`` build those exactly as before.
         """
+        # U29: the warm's OWN budget, scaled to the asset -- see
+        # ``warm_preparation_timeout_seconds``. Computed here (not inside the
+        # job) so the value the job hands ffmpeg and the value the failure
+        # warning prints are provably the same number.
+        warm_timeout_seconds = warm_preparation_timeout_seconds(
+            media_duration_seconds, self._preparation_timeout_seconds
+        )
         with self._warming_guard:
             if key in self._warming:
                 return
+            # U29: the anti-loop. A warm that failed or timed out leaves a
+            # deadline for this cache key; until it passes, airings of the same
+            # asset must NOT enqueue the warm that just failed. Without this the
+            # live symptom was self-sustaining: every airing re-queued the same
+            # unwarmable asset, each attempt burned a full whole-asset conform
+            # (or its probe) until the bound killed it, and the cache never
+            # populated. The entry is dropped once its window has passed, so a
+            # genuinely transient cause (contention, a full disk) gets another
+            # attempt on a later airing without any manual intervention.
+            backoff_until = self._warm_backoff_until.get(key)
+            if backoff_until is not None:
+                if backoff_until > time.monotonic():
+                    return
+                del self._warm_backoff_until[key]
             self._warming.add(key)
 
         def _job() -> None:
@@ -1249,18 +1399,64 @@ class SourcePreparer:
                     and cached_meta.get("full_asset_conform") is True
                 ):
                     return
-                self._conform_full_asset_into_cache(
+                populated = self._conform_full_asset_into_cache(
                     key,
                     source_path,
                     config,
                     loudness,
                     normalized,
                     media_duration_seconds=media_duration_seconds,
+                    timeout_seconds=warm_timeout_seconds,
+                    lower_priority=True,
                 )
-            except Exception:
-                # A failed warm must never surface at air; the next airing
-                # simply misses the cache and warms again.
-                _LOG.exception("Conform-cache warm failed; next airing re-warms.")
+            except SourcePreparationCancelledError:
+                # U29: a shutdown/pause is not a property of the asset, so it
+                # must neither warn nor start a backoff window -- the caller
+                # driving the cancellation is already reporting it, and the
+                # asset deserves a warm as soon as the station is running
+                # again. (Nothing currently passes a cancel_event to a warm;
+                # this keeps that true if it ever does.)
+                pass
+            except Exception as exc:
+                # U29: a failed warm must never surface at air -- but it must
+                # also not be re-attempted by every airing forever. Record the
+                # backoff deadline and report ONCE, as a warning: this is a
+                # known, bounded, per-asset condition (the asset is too slow to
+                # conform inside its budget on this box, or the box is
+                # saturated), not an unexpected crash, so a traceback is noise
+                # the operator cannot act on. ``_run_ffmpeg`` has already
+                # turned a timeout into a ``SourcePrepareError`` naming the
+                # bound it exceeded; ffmpeg's own stderr is in the log.
+                with self._warming_guard:
+                    self._warm_backoff_until[key] = time.monotonic() + _WARM_FAILURE_BACKOFF_SECONDS
+                duration_text = (
+                    "unknown duration"
+                    if media_duration_seconds is None
+                    else f"{media_duration_seconds:g}s of media"
+                )
+                reason = f"{type(exc).__name__}: {exc}"
+                if len(reason) > 300:
+                    reason = f"{type(exc).__name__} (details in the ffmpeg log)"
+                _LOG.warning(
+                    "Conform-cache warm failed for %r (%s, allowed %gs to conform, "
+                    "reason: %s); not retrying it for 6h. Airings of this asset "
+                    "keep serving their bounded per-segment conform and the "
+                    "full-asset cache entry stays cold in the meantime.",
+                    source_path.name,
+                    duration_text,
+                    warm_timeout_seconds,
+                    reason,
+                )
+            else:
+                # The warm completed the attempt. Only a populated cache entry
+                # clears the backoff: ``None`` means the call deliberately did
+                # not write one (the per-key lock was held by another conform,
+                # or the loudnorm measurement degraded to single-pass), which is
+                # a benign, already-logged outcome rather than a failure of this
+                # asset's warm.
+                if populated is not None:
+                    with self._warming_guard:
+                        self._warm_backoff_until.pop(key, None)
             finally:
                 with self._warming_guard:
                     self._warming.discard(key)
@@ -1655,14 +1851,39 @@ class SourcePreparer:
         if cancel_event is not None and cancel_event.is_set():
             raise SourcePreparationCancelledError("Source preparation was cancelled.")
 
-    def _run_ffmpeg(self, args: list[str], cancel_event: threading.Event | None) -> FfmpegResult:
+    def _run_ffmpeg(
+        self,
+        args: list[str],
+        cancel_event: threading.Event | None,
+        *,
+        timeout_seconds: float | None = None,
+        lower_priority: bool = False,
+    ) -> FfmpegResult:
+        """Run one preparation ffmpeg child.
+
+        BETA.10 U29: ``timeout_seconds`` overrides the configured preparation
+        timeout for this one call, and ``lower_priority`` asks the runner to
+        start the child one scheduling step down (Windows BELOW_NORMAL, POSIX
+        ``nice`` -- see ``civiccast.stream._ffmpeg.run_ffmpeg``). Both are
+        warm-only knobs: the conform-cache warm is unattended whole-asset
+        background work whose budget is scaled to the asset
+        (``warm_preparation_timeout_seconds``) and which must yield to the live
+        encoders, the caption ASR and the air path. The defaults leave every
+        existing caller on exactly the previous behavior -- the configured
+        timeout at normal priority.
+        """
+
+        effective_timeout = (
+            self._preparation_timeout_seconds if timeout_seconds is None else timeout_seconds
+        )
         self._raise_if_cancelled(cancel_event)
         try:
             if self._ffmpeg_runner is run_ffmpeg:
                 result = self._ffmpeg_runner(
                     args,
                     cancel_event=cancel_event,
-                    timeout=self._preparation_timeout_seconds,
+                    timeout=effective_timeout,
+                    lower_priority=lower_priority,
                 )
             else:
                 result = self._ffmpeg_runner(args)
@@ -1671,7 +1892,7 @@ class SourcePreparer:
         except subprocess.TimeoutExpired as exc:
             raise SourcePrepareError(
                 "FFmpeg source preparation timed out after "
-                f"{self._preparation_timeout_seconds:g}s; the channel will use its "
+                f"{effective_timeout:g}s; the channel will use its "
                 "configured fallback until the source can be prepared."
             ) from exc
         self._raise_if_cancelled(cancel_event)

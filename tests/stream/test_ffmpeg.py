@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -510,6 +511,52 @@ class TestRunFfmpeg:
 
         expected = getattr(ffmpeg_module.subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
         assert spawn.call_args.kwargs["creationflags"] == expected
+
+    def test_lower_priority_prefixes_nice_on_posix(self) -> None:
+        """U29 3b: Windows has no ``nice``; the equivalent there is the
+        BELOW_NORMAL priority class above.  On a POSIX host the same opt-in
+        must lower the process's scheduling priority to ``nice`` 10 -- and it
+        must do it by prefixing the argv (``nice`` execs ffmpeg itself) rather
+        than ``preexec_fn``, which is unsafe from a thread other than the one
+        that called ``subprocess`` and the warm runs on its own worker
+        thread."""
+        mock_completed = MagicMock(returncode=0, stdout="", stderr="")
+        posix_os = SimpleNamespace(name="posix")
+        with (
+            patch.object(ffmpeg_module, "os", posix_os),
+            patch("civiccast.stream._ffmpeg.shutil.which", return_value="/usr/bin/ffmpeg"),
+            patch("civiccast.stream._ffmpeg.subprocess.run", return_value=mock_completed) as spawn,
+        ):
+            run_ffmpeg(["-version"], lower_priority=True)
+
+        assert spawn.call_args.args[0] == [
+            "nice",
+            "-n",
+            "10",
+            "/usr/bin/ffmpeg",
+            "-y",
+            "-version",
+        ]
+        assert spawn.call_args.kwargs["creationflags"] == 0  # no Windows flag on POSIX
+
+    def test_lower_priority_is_a_noop_without_nice_on_posix(self) -> None:
+        """Degrade rather than fail: a POSIX host with no ``nice`` on PATH
+        still runs ffmpeg (at normal priority) instead of raising
+        FileNotFoundError from the subprocess call."""
+        mock_completed = MagicMock(returncode=0, stdout="", stderr="")
+        posix_os = SimpleNamespace(name="posix")
+
+        def which(name: str) -> str | None:
+            return None if name == "nice" else "/usr/bin/ffmpeg"
+
+        with (
+            patch.object(ffmpeg_module, "os", posix_os),
+            patch("civiccast.stream._ffmpeg.shutil.which", side_effect=which),
+            patch("civiccast.stream._ffmpeg.subprocess.run", return_value=mock_completed) as spawn,
+        ):
+            run_ffmpeg(["-version"], lower_priority=True)
+
+        assert spawn.call_args.args[0] == ["/usr/bin/ffmpeg", "-y", "-version"]
 
 
 @pytest.mark.parametrize("output_stream", ["stdout", "stderr"])
