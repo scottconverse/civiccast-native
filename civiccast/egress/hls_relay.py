@@ -569,17 +569,39 @@ class HlsRelaySupervisor:
         # the daemon uses its own ``_monotonic`` for exactly that reason.
         self._clock: Callable[[], float] = time.monotonic
 
-    def apply(self, config: EgressConfig) -> EgressConfig:
+    def apply(self, config: EgressConfig, *, new_session: bool = False) -> EgressConfig:
         """Return a config whose ``hls`` sinks point at their channel-lifetime relay.
 
         Idempotent per (channel_id, sink.label): the relay is reused across
-        encoder relaunches. A sink whose relay could not be started (ffmpeg
-        missing) is returned UNCHANGED — still declared ``hls``, so
-        ``sink_element_spec``'s own hls branch builds a udpsink to the same
-        deterministic port; nothing is listening there, but the channel still
-        starts (degraded: no live HLS, everything else on the channel keeps
-        working) rather than crashing.
+        repeated ``apply`` calls for the SAME worker session. A sink whose relay
+        could not be started (ffmpeg missing) is returned UNCHANGED — still
+        declared ``hls``, so ``sink_element_spec``'s own hls branch builds a
+        udpsink to the same deterministic port; nothing is listening there, but
+        the channel still starts (degraded: no live HLS, everything else on the
+        channel keeps working) rather than crashing.
+
+        BETA.10 U21: ``new_session=True`` means the caller is starting a GENUINE
+        new worker session (first start, crash relaunch, output-desync guard
+        restart, slate->program restart) and the channel's existing relay
+        child(ren) are torn down before the sinks are walked, so the child that
+        ends up serving the new session was spawned FOR it. Relay reuse is only
+        safe while the writer it serves is the same writer: the relay's own
+        timeline outlives its writer, so a child that was corrected for a
+        previous session's PTS jump keeps serving that offset for as long as the
+        child lives — which is exactly how a desync becomes permanent
+        (education channel, 2026-09-25 00:51:26). The replacement is spawned on
+        the SAME deterministic port (see :func:`hls_relay_uri_for`), so the
+        config already handed to the engine graph stays valid across the rebind.
+
+        ``new_session=False`` is the in-place reload path
+        (``EgressDaemon._request_reload``): the worker is not being restarted,
+        so its relay must not be either.
         """
+        if new_session:
+            # A separate critical section on purpose: ``self._guard`` is a plain
+            # (non-reentrant) Lock, so the teardown must complete before
+            # ``_ensure_relay`` below takes the lock for its own spawn.
+            self._drop_channel_relays(config.channel_id)
         if not any(sink.kind == "hls" for sink in config.sinks):
             return config
         new_sinks: list[EgressSinkSpec] = []
@@ -1064,12 +1086,26 @@ class HlsRelaySupervisor:
                 healed = True
             return healed
 
-    def stop_channel(self, channel_id: str) -> None:
-        """Tear down a channel's HLS relay(s) (channel stop, not encoder relaunch)."""
+    def _drop_channel_relays(self, channel_id: str) -> int:
+        """Terminate and forget every relay child tracked for ``channel_id``.
+
+        Returns how many children were torn down. The single teardown seam for
+        two callers: :meth:`stop_channel` (the channel is stopping) and
+        :meth:`apply` with ``new_session=True`` (the channel is starting a
+        genuinely new worker session). ``terminate`` is synchronous and bounded
+        (``FfmpegProcessHandle.terminate``), so when this returns the UDP port is
+        released and a replacement started immediately after can bind it.
+        """
         with self._guard:
-            for key in [k for k in self._relays if k.startswith(f"{channel_id}|")]:
+            keys = [key for key in self._relays if key.startswith(f"{channel_id}|")]
+            for key in keys:
                 relay = self._relays.pop(key)
                 relay.process.terminate()
+        return len(keys)
+
+    def stop_channel(self, channel_id: str) -> None:
+        """Tear down a channel's HLS relay(s) (channel stop, not encoder relaunch)."""
+        self._drop_channel_relays(channel_id)
 
     def stop_all(self) -> None:
         with self._guard:

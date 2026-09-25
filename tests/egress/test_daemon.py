@@ -928,6 +928,63 @@ def test_start_leaves_the_playlist_alone_while_the_hls_relay_is_still_alive(
     assert (folder / "playlist.m3u8").exists()
 
 
+def test_crash_relaunch_rebinds_the_channels_hls_relay_to_the_new_worker_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # U21: the relay child corrects input PTS discontinuities itself and keeps the
+    # resulting per-stream offset for the rest of its life, so a relaunched worker
+    # must not inherit the previous worker's relay. The window on disk is still
+    # carried forward (the manifest must survive the relaunch), but the CHILD
+    # writing it from here on is a new one.
+    from civiccast.egress.hls_relay import HlsRelaySupervisor
+
+    root = tmp_path / "hls-root"
+    folder = root / "gov"
+    folder.mkdir(parents=True)
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(root))
+    store = InMemoryEgressStore()
+    store.upsert_config(_hls_config(folder))
+    store.enqueue_command(_command())
+    relay_calls: list[list[str]] = []
+    relay_procs: list[_FakeProcess] = []
+
+    def relay_starter(args: list[str]) -> _FakeProcess:
+        relay_calls.append(args)
+        proc = _FakeProcess(pid=9000 + len(relay_calls))
+        relay_procs.append(proc)
+        return proc
+
+    worker_procs: list[_FakeProcess] = []
+
+    def worker_starter(_args: list[str]) -> _FakeProcess:
+        proc = _FakeProcess(pid=7000 + len(worker_procs))
+        worker_procs.append(proc)
+        return proc
+
+    relay = HlsRelaySupervisor(starter=relay_starter)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path / "work",
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=worker_starter,
+        hls_relay_supervisor=relay,
+    )
+    assert daemon.process_once("gov") == 1
+    assert len(relay_calls) == 1
+    (folder / "playlist.m3u8").write_text("#EXTM3U\n", encoding="utf-8")
+
+    # The worker dies on its own; the next tick relaunches it.
+    daemon._processes["gov"].returncode = 1  # type: ignore[attr-defined]
+    daemon.process_once("gov")
+
+    assert len(worker_procs) == 2, "the worker was not relaunched"
+    assert len(relay_calls) == 2, "the relaunched worker inherited the previous session's relay"
+    assert relay_calls[0] == relay_calls[1], "the rebound relay must keep the same udp port"
+    assert relay_procs[0].terminated
+    assert not relay_procs[1].terminated
+    assert (folder / "playlist.m3u8").exists()
+
+
 def test_daemon_clears_active_cg_overlay_when_encoder_exits(tmp_path: Path) -> None:
     store = InMemoryEgressStore()
     store.upsert_config(_config())

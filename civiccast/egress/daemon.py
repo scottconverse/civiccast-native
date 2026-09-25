@@ -1672,18 +1672,39 @@ class EgressDaemon:
                 # #151: route udp-ts sinks through the channel-lifetime relay so
                 # this (re)launch splices into ONE continuous mux session.
                 config = self._ts_relay.apply(config)
-            # Read BEFORE ``apply`` below starts a relay: "was anything writing
-            # this channel's HLS window when this start began?"
+            # Was anything writing this channel's HLS window when this start
+            # began? Read BEFORE the U21 new-session reset below tears the
+            # previous relay child down. It answers a question the rebind does
+            # not: "should whatever playlist.m3u8 is on disk be deleted, or
+            # carried forward?" A relay that WAS alive leaves a window its
+            # replacement continues (``delete_segments+append_list``), so
+            # residents keep a manifest across an encoder crash-relaunch; a
+            # playlist whose writer is already gone belongs to a previous
+            # broadcast and must not be advertised.
             hls_relay_was_alive = (
                 self._hls_relay is not None and self._hls_relay.is_alive(channel_id) is True
+            )
+            # Is a worker still alive and owning this channel right now? Decided
+            # BEFORE ``apply`` so the relay reset and the short-circuit below
+            # agree on the same fact: a start that is a NO-OP must not disturb a
+            # live worker's session -- and must not restart that session's relay
+            # out from under it.
+            existing_process = self._processes.get(channel_id)
+            worker_already_live = (
+                existing_process is not None and _process_poll(existing_process) is None
             )
             stored_config = config
             if self._hls_relay is not None:
                 # DEFECT A: route hls sinks through the supervised ffmpeg relay
                 # that actually writes segments + a manifest for this engine.
-                config = self._hls_relay.apply(config)
-            existing_process = self._processes.get(channel_id)
-            if existing_process is not None and _process_poll(existing_process) is None:
+                # BETA.10 U21: every GENUINE worker (re)start -- first start,
+                # crash relaunch, output-desync guard restart, slate->program
+                # restart -- rebinds this channel's relay to the NEW session. A
+                # relay child carries its own corrected timeline, so an inherited
+                # child strands a PTS jump in the new worker's output as a
+                # constant output A/V offset for the rest of that child's life.
+                config = self._hls_relay.apply(config, new_session=not worker_already_live)
+            if worker_already_live:
                 state = self._store.read_state(channel_id)
                 current_state: EgressState = (
                     "DRAINING" if channel_id in self._draining_channels else "ON_AIR"
@@ -1752,9 +1773,11 @@ class EgressDaemon:
                 # HlsSink worker that is gone): whatever playlist.m3u8 is on
                 # disk belongs to a previous broadcast. Remove it before the
                 # new writer produces anything so /api/public/live/current does
-                # not advertise it. A relay that was already alive
-                # (crash-relaunch of the encoder alone) keeps writing the same
-                # window and is left alone. Uses the STORED config: ``apply``
+                # not advertise it. A relay that WAS already alive leaves a
+                # window its replacement continues across the U21 rebind
+                # (``apply(..., new_session=True)`` above), so that window is
+                # carried forward rather than deleted -- the manifest survives
+                # an encoder crash-relaunch. Uses the STORED config: ``apply``
                 # above rewrote hls sinks to their relay's local-ts uri.
                 self._discard_stale_hls_playlists(channel_id, config=stored_config)
             using_fallback_slate = False
