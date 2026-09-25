@@ -101,22 +101,24 @@ producing.
 
 ### A channel whose HLS window stayed frozen after a failed relay self-heal is now restarted (U30, 2026-09-25)
 
-Four live freezes on 2026-09-25, across all three channels, had one shape: a
-deferred program-to-program reload commits (`stage=committed elements=52`) and
-the worker's stderr then shows no further `CTRL output` progress lines. The
-relay's live window stops advancing, the relay's own self-heal cannot help, and
-only a whole-channel restart brings the channel back. The engine survives its own
-stall because its stall watchdog watches an **aggregate** mux-output counter that
-the audio leg keeps feeding -- so a video-only freeze never trips it.
+Two live freezes were captured on 2026-09-25 (`government` 08:39, `public`
+10:04) with one shape: a deferred program-to-program reload commits
+(`stage=committed elements=52`) and the channel's **video** output stops while the
+worker stays alive and keeps printing `CTRL output` lines -- at the audio-only
+rate, 244 buffers per 5 s measured against ~390 healthy. The relay's live window
+stops advancing, the relay's own self-heal cannot help, and only a whole-channel
+restart brings the channel back. The engine survives its own stall because its
+stall watchdog watches an **aggregate** mux-output counter that the audio leg
+keeps feeding, so a video-only freeze never trips it (a code read plus that
+measured rate; U30's harness did not reproduce the live shape).
 
 - The daemon now treats the **HLS live window as ground truth**: if it is still
   frozen 30 s after a relay self-heal has run and failed,
-  `civiccast/egress/daemon.py` restarts the **worker** -- the same cure the
-  operator has been applying by hand (`Recover-RelayStall.ps1 -Mode RestartOne`)
-  -- bounded to **3 restarts per channel per rolling hour**, after which it stops
-  restarting and logs one CRITICAL per 10 minutes. Every escalation logs one ERROR
-  naming the channel, how long the window has been frozen, and the budget left in
-  the hour.
+  `civiccast/egress/daemon.py` restarts the **worker** -- the cure applied by hand
+  on 2026-09-25 was a full restart of the affected channel -- bounded to
+  **3 restarts per channel per rolling hour**, after which it stops restarting and
+  logs one CRITICAL per 10 minutes. Every escalation logs one ERROR naming the
+  channel, how long the window has been frozen, and the budget left in the hour.
 - The probe the poll reads is `HlsRelaySupervisor.heal_frozen_seconds` in
   `civiccast/egress/hls_relay.py`: it reports frozen seconds only for a **live**
   relay child whose one-shot self-heal has already been spent, so the escalation
@@ -128,6 +130,12 @@ the audio leg keeps feeding -- so a video-only freeze never trips it.
   bounded is the two budgets above plus the relay heal's one-heal-per-child latch,
   not a claim that the relay is untouched end to end. The daemon-level guard test
   asserts that bound directly.
+- The escalation has **not fired on a live freeze yet** -- the station is
+  read-only for this unit -- so its evidence is the unit tests plus its two seams
+  (`heal_frozen_seconds` reading relay state; the restart reusing the existing
+  crashed-encoder relaunch path). The 30 s delay and the 3-per-hour budget are
+  judgement calls, not measurements; the live heal cadence observed was ~32 s per
+  cycle, so 30 s is roughly one cycle.
 - Not fixed, and recorded so it is not read as fixed: **why** the engine stops
   after a committed reload was **not** reproduced off-live (9/20 deaths at the
   baseline engine versus 10/20 at HEAD, every death of a different shape from the
