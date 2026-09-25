@@ -3187,10 +3187,11 @@ class EgressDaemon:
         _LOG.error(
             "%s. Restarting this channel's worker through the ordinary crashed-encoder "
             "relaunch path (and replacing its relay child); restart %d of at most %d in the "
-            "last hour.",
+            "last hour (%d left in this hour).",
             detail,
             len(state.restarted_at),
             _FREEZE_ESCALATION_RESTART_BUDGET,
+            _FREEZE_ESCALATION_RESTART_BUDGET - len(state.restarted_at),
         )
         supervisor = self._hls_relay
         if supervisor is not None:

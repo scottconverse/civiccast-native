@@ -421,6 +421,28 @@ def test_u30_one_restart_per_worker_incarnation(
     assert len(state.restarted_at) == 1
 
 
+def test_u30_the_escalation_line_names_the_budget_left(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The single ERROR line IS the operator's notification, so it carries the
+    three facts the brief names: the channel, how long the window has been
+    frozen, and the budget LEFT. Naming only what has been spent ("restart 1 of
+    at most 3") makes the reader do the subtraction at the exact moment they
+    are deciding whether to intervene by hand."""
+    fixture = _freeze_fixture(tmp_path)
+    _started_on_air(fixture)
+    fixture.relay.frozen = _FREEZE_ESCALATION_AFTER_HEAL_S + 4.0
+
+    with caplog.at_level(logging.ERROR, logger=_DAEMON_LOGGER):
+        fixture.daemon._poll_freeze_escalation("gov")
+
+    (line,) = _error_lines(caplog)
+    assert "channel gov" in line
+    assert "still frozen 34.0s after the relay self-heal" in line
+    assert f"restart 1 of at most {_FREEZE_ESCALATION_RESTART_BUDGET} in the last hour" in line
+    assert f"({_FREEZE_ESCALATION_RESTART_BUDGET - 1} left in this hour)" in line
+
+
 def test_u30_a_new_worker_incarnation_may_be_escalated_again(tmp_path: Path) -> None:
     """After the restart the episode is over: if the replacement worker's window
     freezes after its own heal, it is judged on its own evidence."""
