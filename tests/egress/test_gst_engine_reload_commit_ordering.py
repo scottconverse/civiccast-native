@@ -3898,9 +3898,7 @@ def test_u30_the_eos_line_says_where_the_eos_entered_or_that_nothing_did(
     assert engine._on_bus(None, _EosMessage()) is True
 
     err = capsys.readouterr().err
-    assert (
-        "[eos-arrivals: out:video, sel:video, queue:video, mux-sink:video, mux-src]" in err
-    ), err
+    assert "[eos-arrivals: out:video, sel:video, queue:video, mux-sink:video, mux-src]" in err, err
     # The U16/U30 clauses still ride the same line, unchanged.
     assert "CTRL output: pipeline EOS from mpegtsmux_3 -- quitting the worker [" in err
 
