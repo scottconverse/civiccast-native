@@ -2626,6 +2626,84 @@ def test_u16_new_leg_first_buffer_line_says_none_when_it_cannot_measure(
     assert "stream=video" in err
 
 
+def test_u16_commit_arms_the_selector_side_observation_in_the_same_window(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The reading that shows the offset, armed where the offset is visible.
+
+    ``Gst.Pad.set_offset`` materialises at the CROSSING to the pad's peer, so the
+    new-leg tail src pads report that leg's own PRE-offset timeline (measured on
+    the packaged 1.28.5 runtime in section (7): the offset pad said
+    ``segment_base=0.000 running=0.300`` for the buffer its peer reported as
+    ``segment_base=5.000 running=5.300``). The selector sink pads are on the far
+    side of that crossing, and their running time is the number that has to line
+    up with ``switch_running_time`` for a seam with no step. Same window as the
+    tail-pad probe: after the offsets, before the holds lift."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending, _new_video_src, _new_audio_src = _u16_pending(recorder)
+    receiving = _FakeSegment(
+        base=1_100_000_000, running_time_for_pts={5_000_000_000: 6_100_000_000}
+    )
+    pending["new_video_pad"] = _FakeDiagnosticPad(
+        "new-video-selector", recorder, sticky=_FakeStickyEvent(receiving)
+    )
+    pending["new_audio_pad"] = _FakeDiagnosticPad(
+        "new-audio-selector", recorder, sticky=_FakeStickyEvent(receiving)
+    )
+    engine._pending_reload = pending
+    engine._prepare_reload_handoff(pending)
+
+    engine._begin_reload_commit(pending)
+
+    calls = recorder.calls
+    arms = [
+        _index_of(calls, "add_probe:new-video-selector:1:_report_new_leg_selector_first_buffer"),
+        _index_of(calls, "add_probe:new-audio-selector:1:_report_new_leg_selector_first_buffer"),
+    ]
+    releases = [
+        _index_of(calls, "remove_probe:new-video-src:video-hold"),
+        _index_of(calls, "remove_probe:new-audio-src:audio-hold"),
+    ]
+    offsets = [
+        _index_of(calls, "set_offset:new-video-src:1100000000"),
+        _index_of(calls, "set_offset:new-audio-src:1100000000"),
+    ]
+    assert max(offsets) < min(arms), calls
+    assert max(arms) < min(releases), calls
+
+    for pad, label in (
+        (pending["new_video_pad"], "video"),
+        (pending["new_audio_pad"], "audio"),
+    ):
+        mask, callback = pad.probes[0]
+        assert mask == 1, f"expected Gst.PadProbeType.BUFFER, got {mask}"
+        assert callback(pad, _FakeProbeInfo(_FakeProbeBuffer(5_000_000_000))) == (
+            engine_module.Gst.PadProbeReturn.REMOVE
+        )
+        assert (
+            f"CTRL reload diagnostic: new-leg-selector-first-buffer stream={label} "
+            f"pad=new-{label}-selector reload_id=28 applied_offset=1.100 pts=5.000 "
+            "running_time=6.100 segment_base=1.100"
+        ) in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("absent", [None, object()])
+def test_u16_selector_side_observation_is_silent_without_a_probeable_pad(
+    engine_module, capsys: pytest.CaptureFixture[str], absent: Any
+) -> None:
+    """An audio-less leg, or a pad that cannot take a probe: silent, no raise."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+
+    engine._arm_new_leg_selector_diagnostics(
+        {"txn_id": 7, "new_video_pad": absent, "new_audio_pad": None}, 5_000_000_000
+    )
+
+    assert capsys.readouterr().err == ""
+    assert recorder.calls == []
+
+
 def test_u16_mux_first_buffer_line_labels_each_stream_from_its_caps(
     engine_module, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -2812,7 +2890,7 @@ def _build():
         pipe.add(element)
     for upstream, downstream in links:
         assert upstream.link(downstream), (upstream.get_name(), downstream.get_name())
-    return pipe, mux, vparse
+    return pipe, mux, vparse, apar
 
 
 def _run(pipe, arm):
@@ -2840,7 +2918,7 @@ def _run(pipe, arm):
 #    mux SINK pad. Installed after linking (so the request pads exist) and before
 #    PLAYING (so the FIRST buffer -- not a later one -- fires it), exactly the
 #    window run_forever uses.
-pipe, mux, vparse = _build()
+pipe, mux, vparse, _apar = _build()
 mux_stub = object.__new__(GstPlayoutEngine)
 mux_stub.mux = mux
 text = _run(pipe, lambda: GstPlayoutEngine._install_mux_input_diagnostics(mux_stub))
@@ -2856,7 +2934,7 @@ for line in start_lines:
 # 2. Reload side: the new leg's first buffer AFTER the offset. The offset is set
 #    before PLAYING and the probe armed behind it, which is the production
 #    order (the leg is held at that buffer when ``set_offset`` runs).
-pipe2, _mux2, vparse2 = _build()
+pipe2, _mux2, vparse2, _apar2 = _build()
 leg_stub = object.__new__(GstPlayoutEngine)
 
 
@@ -2876,6 +2954,47 @@ assert "new-leg-first-buffer stream=video reload_id=7 applied_offset=5.000" in l
 assert "pts=none" not in line, line
 assert "running_time=none" not in line, line
 print("U16_LINE " + line)
+
+# 3. The same first buffer, read on the RECEIVING side of the offset crossing.
+#    The offset is set on the video leg's tail src pad; its PEER (the mux request
+#    sink pad) is where the shift becomes visible. The audio leg is left
+#    un-offset as a control inside the same pipeline, so exactly one of the two
+#    lines must carry the offset -- and it must be the video one.
+pipe3, _mux3, vparse3, apar3 = _build()
+video_peer = vparse3.get_static_pad("src").get_peer()
+audio_peer = apar3.get_static_pad("src").get_peer()
+assert video_peer is not None and audio_peer is not None, "the offset pad has no peer"
+sel_stub = object.__new__(GstPlayoutEngine)
+
+
+def _arm_selector_side():
+    vparse3.get_static_pad("src").set_offset(OFFSET_NS)
+    GstPlayoutEngine._arm_new_leg_selector_diagnostics(
+        sel_stub,
+        {"txn_id": 9, "new_video_pad": video_peer, "new_audio_pad": audio_peer},
+        OFFSET_NS,
+    )
+
+
+text3 = _run(pipe3, _arm_selector_side)
+sel_lines = [
+    ln
+    for ln in text3.splitlines()
+    if ln.startswith("CTRL reload diagnostic: new-leg-selector-first-buffer")
+]
+assert len(sel_lines) == 2, (sel_lines, text3)
+shifted = [ln for ln in sel_lines if "segment_base=5.000" in ln]
+assert len(shifted) == 1, sel_lines
+line3 = shifted[0]
+assert "stream=video" in line3, sel_lines
+video_running = line3.split("running_time=")[1].split()[0]
+assert video_running != "none" and float(video_running) >= 5.0, line3
+control = [ln for ln in sel_lines if ln is not line3][0]
+control_running = control.split("running_time=")[1].split()[0]
+assert "segment_base=0.000" in control, control
+assert control_running != "none" and float(control_running) < 5.0, control
+print("U16_LINE " + line3)
+print("U16_LINE " + control)
 print("U16_EMIT_OK")
 '''
 
@@ -2926,6 +3045,15 @@ def test_u16_diagnostics_print_on_a_real_packaged_pipeline(tmp_path: Path) -> No
     assert (
         "U16_LINE CTRL reload diagnostic: new-leg-first-buffer stream=video reload_id=7 "
         "applied_offset=5.000" in emit.stdout
+    ), emit.stdout
+    selector_lines = [
+        line
+        for line in emit.stdout.splitlines()
+        if line.startswith("U16_LINE CTRL reload diagnostic: new-leg-selector-first-buffer")
+    ]
+    assert len(selector_lines) == 2, emit.stdout
+    assert any(
+        "stream=video" in line and "segment_base=5.000" in line for line in selector_lines
     ), emit.stdout
 
 

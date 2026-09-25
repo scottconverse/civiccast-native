@@ -2972,6 +2972,88 @@ class GstPlayoutEngine:
                 )
 
     @staticmethod
+    def _new_leg_selector_first_buffer_diagnostic(
+        *,
+        label: str,
+        pad_name: str,
+        txn_id: Any,
+        applied_offset: int,
+        measured: tuple[int | None, int | None, int | None] | None,
+    ) -> str:
+        """That same first buffer, read where the rebase offset is visible.
+
+        ``Gst.Pad.set_offset`` takes effect at the CROSSING to the pad's peer, not
+        on the pad it is called on: a probe on the offset pad keeps reading that
+        leg's own pre-offset timeline. Measured on the packaged 1.28.5 runtime --
+        the offset pad reported ``pts=0.300 segment_base=0.000 running=0.300`` for
+        a buffer its peer reported as ``pts=0.300 segment_base=5.000
+        running=5.300``, and every later buffer likewise (5.333, 5.367, ...). So
+        the tail-src-pad line above cannot show the post-offset running time; this
+        one is measured on the receiving side (the new leg's selector sink pad),
+        and it is the number that has to line up with ``switch_running_time`` for a
+        seam with no step. ``segment_base`` here should read as the applied offset.
+        """
+        pts, running_time, segment_base = measured if measured is not None else (None, None, None)
+        return (
+            f"CTRL reload diagnostic: new-leg-selector-first-buffer stream={label} "
+            f"pad={pad_name} reload_id={txn_id} applied_offset={_seconds_or_none(applied_offset)} "
+            f"pts={_seconds_or_none(pts)} running_time={_seconds_or_none(running_time)} "
+            f"segment_base={_seconds_or_none(segment_base)}"
+        )
+
+    def _make_new_leg_selector_first_buffer_reporter(
+        self, *, label: str, txn_id: Any, applied_offset: int
+    ) -> Any:
+        """A one-shot probe callback for one new-leg selector SINK pad."""
+
+        def _report_new_leg_selector_first_buffer(
+            pad: Gst.Pad, info: Gst.PadProbeInfo
+        ) -> Gst.PadProbeReturn:
+            with contextlib.suppress(Exception):
+                pad_name = "unknown"
+                with contextlib.suppress(Exception):
+                    pad_name = str(pad.get_name())
+                print(
+                    self._new_leg_selector_first_buffer_diagnostic(
+                        label=label,
+                        pad_name=pad_name,
+                        txn_id=txn_id,
+                        applied_offset=applied_offset,
+                        measured=self._measure_first_buffer(pad, info),
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return Gst.PadProbeReturn.REMOVE
+
+        return _report_new_leg_selector_first_buffer
+
+    def _arm_new_leg_selector_diagnostics(
+        self, pending: dict[str, Any], applied_offset: int
+    ) -> None:
+        """One self-removing first-buffer probe per new-leg selector SINK pad.
+
+        Same window as ``_arm_new_leg_rebase_diagnostics`` -- after the offsets are
+        set, before the holds lift -- and race-free for the same reason: the leg's
+        first buffer cannot flow until the holds lift. Labelled by pad IDENTITY
+        (``new_video_pad``/``new_audio_pad`` are the selector request pads, built
+        video-first), which is exact here, unlike the index fallback the tail-src
+        pads need.
+        """
+        txn_id = pending["txn_id"]
+        for label, pad_key in (("video", "new_video_pad"), ("audio", "new_audio_pad")):
+            pad = pending.get(pad_key)
+            if pad is None or not hasattr(pad, "add_probe"):
+                continue
+            with contextlib.suppress(Exception):
+                pad.add_probe(
+                    Gst.PadProbeType.BUFFER,
+                    self._make_new_leg_selector_first_buffer_reporter(
+                        label=label, txn_id=txn_id, applied_offset=applied_offset
+                    ),
+                )
+
+    @staticmethod
     def _mux_pad_stream_label(pad: Any) -> str:
         """``video``/``audio`` from the pad's negotiated caps, else its name.
 
@@ -3488,6 +3570,11 @@ class GstPlayoutEngine:
             # can reach a probe without already carrying the rebase offset.
             with contextlib.suppress(Exception):
                 self._arm_new_leg_rebase_diagnostics(pending, switch_running_time)
+            # U16: the same first buffer, read where the offset is actually visible
+            # (set_offset materialises at the crossing to the peer, so the tail src
+            # pads above report the leg's own pre-offset timeline).
+            with contextlib.suppress(Exception):
+                self._arm_new_leg_selector_diagnostics(pending, switch_running_time)
         print("CTRL reload: switching selector", flush=True)
         print("CTRL reload diagnostic: stage=switching-selector", file=sys.stderr, flush=True)
         # Explicitly preserve successful upstream flow while each request is
