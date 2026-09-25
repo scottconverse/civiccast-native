@@ -299,6 +299,22 @@ def _foreground_thread_cap() -> int:
     return max(1, cpu_count // 2)
 
 
+def _describe_segment_window(segment: EgressSourceSegment | None) -> str:
+    """Name the window a loudnorm pass measured, for operator-facing log lines.
+
+    ``"full asset"`` for the whole-file conform (``segment is None``),
+    otherwise the segment's own label plus the ``-ss``/``-t`` window the probe
+    and the encode both use.  Used by
+    ``SourcePreparer._measure_loudnorm_metadata``'s single fallback warning.
+    """
+    if segment is None:
+        return "full asset"
+    return (
+        f"{segment.label!r} in={segment.inpoint_seconds or 0.0:g}s "
+        f"dur={segment.duration_seconds:g}s"
+    )
+
+
 @dataclass(frozen=True)
 class PreparedSegmentRecord:
     """Trace of one source segment preparation decision."""
@@ -309,6 +325,12 @@ class PreparedSegmentRecord:
     loudness_status: str
     measured_lufs: float | None
     normalized: bool
+    #: Which loudnorm shape produced ``prepared_path``: ``"two-pass"``,
+    #: ``"single-pass-fallback"``, or ``None`` when no loudnorm filter ran at
+    #: all (an unnormalized/passthrough segment, or a live passthrough emitted
+    #: without entering the preparer's conform paths).  See the
+    #: ``_LOUDNESS_METHOD_*`` constants for what each value means.
+    loudness_method: str | None = None
 
 
 @dataclass(frozen=True)
@@ -444,6 +466,7 @@ class SourcePreparer:
         *,
         media_duration_seconds: float | None = None,
         full_asset_conform: bool = False,
+        loudness_method: str | None = None,
     ) -> None:
         """Item 66 (point 1): now also called BEFORE any conform for this
         asset exists (a loudness-only probe result, persisted early so
@@ -490,6 +513,21 @@ class SourcePreparer:
         naturally reads False too -- a legacy short entry self-heals into a
         MISS (and gets correctly re-conformed) rather than staying silently
         wrong.
+
+        ``loudness_method`` (U20): which loudnorm shape produced the ``.ts``
+        this meta describes -- ``"two-pass"`` or ``"single-pass-fallback"``, or
+        ``None`` when no loudnorm filter ran at all. Written by the same single
+        choke point that sets ``full_asset_conform``
+        (``_promote_conform_into_cache``, which every conform path funnels
+        through), and read back by the cache-HIT path so a served segment's own
+        record still says how its audio was conformed. The probe-only write in
+        ``_prepare_segment`` -- which lands BEFORE any conform for this asset
+        exists -- leaves it ``None``, which is the honest answer at that point:
+        no conform has chosen a shape yet, and the later promote's write
+        replaces the whole sidecar with the real value. A meta file written by
+        pre-U20 code never carries this key, so ``.get(...)`` reads ``None``
+        there too -- also honest, since the installed base only ever
+        single-pass conformed.
         """
         cache_dir = self._cache_dir()
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -499,6 +537,7 @@ class SourcePreparer:
             "normalized": normalized,
             "media_duration_seconds": media_duration_seconds,
             "full_asset_conform": full_asset_conform,
+            "loudness_method": loudness_method,
         }
         final = cache_dir / f"{key}.json"
         tmp = final.with_name(final.name + ".tmp")
@@ -511,6 +550,77 @@ class SourcePreparer:
         identical {key}.ts.tmp concurrently."""
         with self._warming_guard:
             return self._conform_locks.setdefault(key, threading.Lock())
+
+    def _measure_loudnorm_metadata(
+        self,
+        *,
+        source_path: Path,
+        segment: EgressSourceSegment | None,
+        loudness_target_lufs: float,
+        threads: int | None,
+        cancel_event: threading.Event | None,
+    ) -> tuple[dict[str, str] | None, str]:
+        """Pass 1 of loudnorm for one window: measure it, or degrade loudly.
+
+        U20: a measurement pass that fails, times out, exits non-zero, emits no
+        parseable JSON, or yields metadata ``_validated_measured_loudness``
+        rejects is NOT fatal any more.  It degrades: ONE warning naming the
+        source, the exact window and the reason, and ``None`` for the metadata
+        -- which both callers read as "conform this window with the plain
+        single-pass ``loudnorm`` filter", byte-for-byte what the installed
+        station ships today.  The reason a measurement can fail here is
+        operator-legible on purpose: an unreadable/absent ``-af`` JSON block, an
+        ffmpeg that rejected the input, a runner timeout, or a non-finite
+        measured value.
+
+        Returns ``(metadata, method)``: ``(parsed, "two-pass")`` on success and
+        ``(None, "single-pass-fallback")`` on any measured failure, so the
+        caller can both pick the right filter and record which shape ran.
+
+        Cancellation is NOT a measurement failure -- ``SourcePreparationCancel
+        ledError`` is a shutdown/pause signal and re-raises untouched, exactly
+        as both call sites handled it before.  Real conform errors (pass 2's
+        encode) are likewise untouched: only the measurement pass degrades.
+        """
+        args = build_loudnorm_probe_args(
+            source_path=source_path,
+            segment=segment,
+            loudness_target_lufs=loudness_target_lufs,
+            threads=threads,
+        )
+        window = _describe_segment_window(segment)
+        reason = "unrecognized measurement failure"
+        parsed: dict[str, str] | None = None
+        try:
+            probe_result = self._run_ffmpeg(args, cancel_event)
+        except SourcePreparationCancelledError:
+            raise
+        except Exception as exc:  # any probe failure degrades to single-pass
+            reason = f"{type(exc).__name__}: {exc}"
+        else:
+            if probe_result.returncode != 0:
+                reason = f"probe exited {probe_result.returncode}"
+            else:
+                candidate = parse_loudnorm_measurement(probe_result.stderr)
+                if candidate is None:
+                    reason = "probe emitted no parseable loudnorm JSON"
+                else:
+                    try:
+                        _validated_measured_loudness(candidate)
+                    except SourcePrepareError as exc:
+                        reason = f"probe metadata unusable: {exc}"
+                    else:
+                        parsed = candidate
+        if parsed is not None:
+            return parsed, _LOUDNESS_METHOD_TWO_PASS
+        _LOG.warning(
+            "Loudnorm measurement pass failed for %r (window: %s): %s. Conforming "
+            "with the single-pass loudnorm filter instead.",
+            source_path.name,
+            window,
+            reason,
+        )
+        return None, _LOUDNESS_METHOD_SINGLE_PASS_FALLBACK
 
     def _conform_full_asset_into_cache(
         self,
@@ -556,6 +666,17 @@ class SourcePreparer:
         the same key can't happen -- see its own dedupe -- so ``None`` there
         would only mean an unrelated caller is already populating this exact
         entry, which is fine to leave to that caller).
+
+        U20 adds a SECOND ``None`` case to the same contract: the loudnorm
+        measurement pass for the whole asset failed or returned unusable
+        metadata, so this call degraded to the single-pass filter
+        (``_measure_loudnorm_metadata`` logged ONE warning and returned
+        ``"single-pass-fallback"``). A single-pass artifact must never occupy
+        the whole-asset cache entry -- see that branch's own comment -- so this
+        method returns ``None`` before writing anything, and the caller falls
+        through to its bounded per-segment conform exactly as it does for lock
+        contention. Both ``None`` cases mean the same thing to every caller
+        ("this call did not populate ``{key}``"); neither is an error.
         """
         lock = self._conform_lock(key)
         if not lock.acquire(blocking=False):
@@ -569,33 +690,38 @@ class SourcePreparer:
             cache_dir = self._cache_dir()
             cache_dir.mkdir(parents=True, exist_ok=True)
             tmp = cache_dir / f"{key}.ts.tmp"
+            loudness_method: str | None = None
             measured_loudness: dict[str, str] | None = None
             if normalized and config.loudness_target_lufs is not None:
-                probe_args = build_loudnorm_probe_args(
+                measured_loudness, loudness_method = self._measure_loudnorm_metadata(
                     source_path=source_path,
                     segment=None,
                     loudness_target_lufs=config.loudness_target_lufs,
                     threads=threads,
+                    cancel_event=cancel_event,
                 )
-                try:
-                    probe_result = self._run_ffmpeg(probe_args, cancel_event)
-                except Exception:
-                    with contextlib.suppress(OSError):
-                        tmp.unlink(missing_ok=True)
-                    raise
-                parsed = (
-                    parse_loudnorm_measurement(probe_result.stderr)
-                    if probe_result.returncode == 0
-                    else None
-                )
-                if parsed is None:
-                    tmp.unlink(missing_ok=True)
-                    raise SourcePrepareError(
-                        f"Full-asset loudnorm measurement pass failed for "
-                        f"{source_path.name!r}; refusing to conform without a "
-                        "same-window measurement."
-                    )
-                measured_loudness = parsed
+                if loudness_method == _LOUDNESS_METHOD_SINGLE_PASS_FALLBACK:
+                    # U20: the measurement pass measured nothing usable, so we
+                    # degrade instead of failing -- but NOT here.  A conform
+                    # under ``{key}`` is the cached WHOLE-ASSET artifact that
+                    # ``_promote_conform_into_cache`` marks
+                    # ``full_asset_conform=True`` and every later airing trusts
+                    # outright, so a single-pass artifact must never be written
+                    # under that key: it would be served to every future airing
+                    # as if a two-pass measurement had produced it.  Nothing has
+                    # been written at this point (the probe above outputs to
+                    # ``-f null``), so return ``None`` -- the same "someone else
+                    # is already conforming this asset" signal the lock-
+                    # contention path above uses -- leaving no ``.ts`` and no
+                    # ``.json`` behind for this key at all.  The synchronous
+                    # caller (``_prepare_segment``'s untrimmed-MISS branch)
+                    # falls through to its bounded per-segment conform, which
+                    # re-runs the measurement itself and degrades only that one
+                    # window straight to air.  Because no fallback entry is ever
+                    # created, a later run whose probe succeeds populates the
+                    # genuine two-pass entry with nothing to replace.
+                    return None
+                assert measured_loudness is not None  # two-pass -> validated metadata
             args = build_conform_source_args(
                 source_path=source_path,
                 output_path=tmp,
@@ -627,6 +753,7 @@ class SourcePreparer:
                 loudness,
                 normalized,
                 media_duration_seconds=media_duration_seconds,
+                loudness_method=loudness_method,
             )
         finally:
             lock.release()
@@ -640,6 +767,7 @@ class SourcePreparer:
         normalized: bool,
         *,
         media_duration_seconds: float | None = None,
+        loudness_method: str | None,
     ) -> Path:
         """Move an already-conformed ``tmp`` file (a full-asset conform, no
         trim) into the persistent conform cache atomically: rename into
@@ -684,6 +812,7 @@ class SourcePreparer:
             normalized,
             media_duration_seconds=media_duration_seconds,
             full_asset_conform=True,
+            loudness_method=loudness_method,
         )
         self._evict_cache_over_budget()
         if not final.exists():
@@ -706,6 +835,7 @@ class SourcePreparer:
         normalized: bool,
         *,
         media_duration_seconds: float | None = None,
+        loudness_method: str | None = None,
     ) -> None:
         """Item 66 round-3 BLOCKER fix (Opus review): populate the
         persistent conform cache from an ALREADY-FINISHED, already-airing
@@ -778,6 +908,7 @@ class SourcePreparer:
                     loudness,
                     normalized,
                     media_duration_seconds=media_duration_seconds,
+                    loudness_method=loudness_method,
                 )
         except Exception:
             _LOG.exception(
@@ -799,6 +930,7 @@ class SourcePreparer:
                 loudness,
                 normalized,
                 media_duration_seconds=media_duration_seconds,
+                loudness_method=loudness_method,
             )
 
     def _schedule_cache_copy_promotion(
@@ -810,6 +942,7 @@ class SourcePreparer:
         normalized: bool,
         *,
         media_duration_seconds: float | None = None,
+        loudness_method: str | None = None,
     ) -> None:
         """Item 66 round-4 (Opus review, point 3): queue a full
         byte-for-byte copy of an already-finished, already-airing per-plan
@@ -912,6 +1045,7 @@ class SourcePreparer:
                         loudness,
                         normalized,
                         media_duration_seconds=media_duration_seconds,
+                        loudness_method=loudness_method,
                     )
                 finally:
                     lock.release()
@@ -956,6 +1090,7 @@ class SourcePreparer:
         measured_lufs: float | None,
         normalized: bool,
         cancel_event: threading.Event | None = None,
+        loudness_method: str | None = None,
     ) -> tuple[EgressSourceSegment, PreparedSegmentRecord]:
         """Emit a prepared segment backed by the cached full-asset conform.
 
@@ -1035,6 +1170,7 @@ class SourcePreparer:
                 loudness_status=loudness_status,
                 measured_lufs=measured_lufs,
                 normalized=normalized,
+                loudness_method=loudness_method,
             ),
         )
 
@@ -1530,6 +1666,16 @@ class SourcePreparer:
                         ),
                         normalized=bool(meta.get("normalized", False)),
                         cancel_event=cancel_event,
+                        # U20: read back HOW the cached artifact was conformed
+                        # so the served segment's own record still says which
+                        # shape ran. A meta written before U20 (or by the
+                        # probe-only write, which has no conform behind it yet)
+                        # carries no such key -> ``None``, the honest answer.
+                        loudness_method=(
+                            method
+                            if isinstance(method := meta.get("loudness_method"), str)
+                            else None
+                        ),
                     )
 
         # Item 66 round-6 (point 3): declared here, before the reuse/probe
@@ -1538,6 +1684,14 @@ class SourcePreparer:
         # ``_promote_finished_conform_into_cache`` / ``_schedule_warm``)
         # thread it through to ``_write_cache_meta``.
         media_duration: float | None = None
+        # U20: same "always bound" discipline for the conform shape -- which
+        # loudnorm form produced the segment this call finally airs. Every
+        # conform path below sets it (``_conform_full_asset_into_cache``
+        # computes its own; the bounded per-segment path sets it right before
+        # its encode); the cache-HIT branch above returns early with its own
+        # value read from the meta. ``None`` -- no loudnorm filter ran (an
+        # unnormalized/passthrough segment) -- is the honest default.
+        loudness_method: str | None = None
         if meta is not None:
             # Item 66 (point 1, Opus review): the full conform isn't cached
             # yet, but a loudness probe for this SAME asset fingerprint
@@ -1856,6 +2010,16 @@ class SourcePreparer:
                     measured_lufs=loudness.measured_lufs,
                     normalized=normalized,
                     cancel_event=cancel_event,
+                    # U20: reaching here means ``_conform_full_asset_into_cache``
+                    # returned a path, and the ONLY way it does that is a
+                    # successful two-pass conform (its single-pass fallback
+                    # returns ``None`` before writing anything). So the shape
+                    # is two-pass exactly when a loudnorm filter ran at all.
+                    loudness_method=(
+                        _LOUDNESS_METHOD_TWO_PASS
+                        if (normalized and config.loudness_target_lufs is not None)
+                        else None
+                    ),
                 )
             # Item 66 round-4 BLOCKER fix (Opus review, point 1): ``None``
             # means a background warm already holds this exact asset's
@@ -1892,37 +2056,23 @@ class SourcePreparer:
         # parameters so the single-pass loudnorm shortfall on high-LRA material
         # is removed.  The probe pass is bounded by the identical -ss/-t as the
         # encode, so its measurement describes exactly the audio being written.
-        # A probe that fails or yields unusable metadata FAILS CLOSED -- we
-        # never silently fall back to a one-pass encode that would ship an
-        # out-of-tolerance segment.
+        # U20: a probe that fails or yields unusable metadata no longer FAILS
+        # CLOSED.  It degrades -- ONE warning naming the source, the window and
+        # the reason (see ``_measure_loudnorm_metadata``), then the plain
+        # single-pass ``loudnorm`` filter, which is exactly what the installed
+        # station ships today -- so the segment still airs instead of failing
+        # the channel over a measurement pass.  ``loudness_method`` records
+        # which of the two shapes actually ran; the tail gate below uses it to
+        # keep a degraded artifact out of the whole-asset cache entry.
         measured_loudness: dict[str, str] | None = None
         if normalized and config.loudness_target_lufs is not None:
-            probe_args = build_loudnorm_probe_args(
+            measured_loudness, loudness_method = self._measure_loudnorm_metadata(
                 source_path=source_path,
                 segment=segment,
                 loudness_target_lufs=config.loudness_target_lufs,
                 threads=_foreground_thread_cap(),
+                cancel_event=cancel_event,
             )
-            try:
-                probe_result = self._run_ffmpeg(probe_args, cancel_event)
-            except SourcePreparationCancelledError:
-                tmp_output_path.unlink(missing_ok=True)
-                raise
-            except SourcePrepareError:
-                tmp_output_path.unlink(missing_ok=True)
-                raise
-            parsed = (
-                parse_loudnorm_measurement(probe_result.stderr)
-                if probe_result.returncode == 0
-                else None
-            )
-            if parsed is None:
-                tmp_output_path.unlink(missing_ok=True)
-                raise SourcePrepareError(
-                    f"Egress source {segment.label!r} loudnorm measurement pass failed; "
-                    "refusing to conform without a same-window measurement."
-                )
-            measured_loudness = parsed
 
         args = build_conform_source_args(
             source_path=source_path,
@@ -2028,7 +2178,7 @@ class SourcePreparer:
                 and media_duration is not None
                 and segment.duration_seconds >= media_duration - _FULL_ASSET_DURATION_TOLERANCE_S
             )
-            if is_full_asset_conform:
+            if is_full_asset_conform and loudness_method != _LOUDNESS_METHOD_SINGLE_PASS_FALLBACK:
                 # This bounded conform's output already IS the full-asset
                 # conform the persistent cache wants. Populate the cache from
                 # the ALREADY-FINISHED, already-airing ``output_path`` via a
@@ -2039,6 +2189,17 @@ class SourcePreparer:
                 # (skipped rather than waited on), and any failure here is
                 # logged and swallowed rather than raised -- the segment is
                 # already safely on air regardless of whether this succeeds.
+                # U20: the ``loudness_method`` half of the gate is what keeps a
+                # DEGRADED artifact out of that entry. This window covers the
+                # whole asset, so without it a single-pass fallback conform
+                # would be promoted and then served to every later airing as
+                # the two-pass whole-asset conform; with it, a degraded window
+                # promotes nothing and the ``else`` branch below warms the
+                # whole asset behind it instead -- and that warm re-measures,
+                # so a later run whose probe succeeds populates the genuine
+                # two-pass entry. ``None`` (no loudnorm ran at all) stays
+                # promotable: an unnormalized asset's whole-file conform is
+                # exactly as trustworthy as a normalized one's.
                 self._promote_finished_conform_into_cache(
                     key,
                     output_path,
@@ -2046,12 +2207,17 @@ class SourcePreparer:
                     loudness,
                     normalized,
                     media_duration_seconds=media_duration,
+                    loudness_method=loudness_method,
                 )
             else:
                 # A genuinely trimmed miss, OR an untrimmed-but-slot-capped
-                # (D42) conform that is only a fragment of the asset -- this
-                # window is NOT the whole asset, so warm the full-asset cache
-                # behind it for later airings, same as before item 66.
+                # (D42) conform that is only a fragment of the asset, OR (U20)
+                # a window that did cover the whole asset but whose loudnorm
+                # measurement pass degraded to single-pass -- that last one
+                # still airs from ``output_path``, it just must not become the
+                # cached whole-asset artifact (see the gate above). Warm the
+                # full-asset cache behind it for later airings, same as before
+                # item 66; the warm re-measures the whole asset from scratch.
                 self._schedule_warm(
                     key,
                     source_path,
@@ -2075,6 +2241,7 @@ class SourcePreparer:
                 loudness_status=loudness.status,
                 measured_lufs=loudness.measured_lufs,
                 normalized=normalized,
+                loudness_method=loudness_method,
             ),
         )
 
@@ -2084,6 +2251,19 @@ _LOUDNORM_MEASURED_KEYS = ("input_i", "input_tp", "input_lra", "input_thresh", "
 #: Bump when the loudness normalization method changes so the conform
 #: cache cannot serve a stale artifact produced by an older method.
 _LOUDNORM_METHOD_VERSION = "loudnorm-v2-twopass"
+
+#: ``loudness_method`` recorded on every ``PreparedSegmentRecord`` and in the
+#: conform cache's sidecar meta: which loudnorm shape actually produced the
+#: audio.  ``two-pass`` = pass 1 measured the window and the encode ran with
+#: its measured_* parameters.  ``single-pass-fallback`` = the measurement pass
+#: failed or returned unusable metadata, so the window was conformed with the
+#: plain single-pass ``loudnorm`` filter -- byte-for-byte what the installed
+#: station ships today -- and the failure was logged as ONE warning instead of
+#: being raised (U20).  ``None`` means no loudnorm filter ran at all (an
+#: unnormalized/passthrough segment, or a meta sidecar written before the
+#: conform landed).
+_LOUDNESS_METHOD_TWO_PASS = "two-pass"  # noqa: S105 - label, not a secret
+_LOUDNESS_METHOD_SINGLE_PASS_FALLBACK = "single-pass-fallback"  # noqa: S105 - label, not a secret
 
 
 def parse_loudnorm_measurement(stderr: str) -> dict[str, str] | None:
@@ -2115,9 +2295,19 @@ def parse_loudnorm_measurement(stderr: str) -> dict[str, str] | None:
 def _validated_measured_loudness(measured: dict[str, str]) -> dict[str, str]:
     """Return a validated copy of measured loudnorm metadata, or raise.
 
-    Every value must be present and parse as a FINITE float.  Bad metadata must
-    fail loud (the caller refuses the conform) rather than silently fall back to
-    a one-pass encode that would ship an unnormalized or mis-normalized segment.
+    Every value must be present and parse as a FINITE float.  Bad metadata is
+    rejected here, loudly, rather than being passed on to
+    ``build_conform_source_args`` as if it described the audio about to be
+    encoded.
+
+    U20: this function's own contract is unchanged, but what a caller does with
+    the raise changed. ``_measure_loudnorm_metadata`` catches it, logs ONE
+    warning, and conforms that window with the plain single-pass ``loudnorm``
+    filter -- the behaviour the installed station ships today -- instead of
+    refusing to conform at all. So bad metadata still never reaches a two-pass
+    encode; it just no longer stops a segment from airing. Callers that DO
+    still treat it as fatal: ``build_conform_source_args``, which validates
+    again right before the encode.
     """
 
     if not isinstance(measured, dict):

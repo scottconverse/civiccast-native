@@ -3045,3 +3045,266 @@ def _loudnorm_probe_stderr_as_dict() -> dict[str, str]:
         "input_thresh": "-35.18",
         "target_offset": "0.83",
     }
+
+
+# ---------------------------------------------------------------------------
+# U20 — a failed loudnorm measurement pass DEGRADES, it does not block
+# ---------------------------------------------------------------------------
+
+
+def _probe_failing_runner(
+    calls: list[list[str]],
+    *,
+    stderr: str = "ffmpeg version n7.1\nno json here\n",
+    returncode: int = 0,
+):
+    """An ffmpeg runner whose loudnorm measurement pass yields nothing usable.
+
+    The ``print_format=json`` probe answers with junk (or a non-zero exit);
+    every other invocation behaves like a plain conform, creating the atomic
+    write's ``.tmp`` file so the rename lands.
+    """
+
+    def runner(args: list[str]) -> FfmpegResult:
+        calls.append(list(args))
+        if "print_format=json" in " ".join(args):
+            return FfmpegResult(returncode=returncode, stdout="", stderr=stderr)
+        Path(args[-1]).parent.mkdir(parents=True, exist_ok=True)
+        Path(args[-1]).write_text("prepared", encoding="utf-8")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    return runner
+
+
+def test_segment_probe_failure_degrades_to_a_single_pass_conform(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """U20 decision 1 (H5): a measurement pass that yields nothing usable must
+    not fail the segment.  It logs ONE warning naming the source, the window and
+    the reason, and conforms that window with the plain single-pass ``loudnorm``
+    filter -- byte-for-byte what the installed station ships today."""
+
+    calls: list[list[str]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_probe_failing_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda _job: None,
+    )
+
+    with caplog.at_level(logging.WARNING, logger=preparer_module.__name__):
+        report = preparer.prepare(_source_plan(tmp_path), _config())
+
+    warnings = [
+        record
+        for record in caplog.records
+        if record.levelno >= logging.WARNING and "measurement pass failed" in record.getMessage()
+    ]
+    assert len(warnings) == 1  # ONE warning, not one per segment/attempt
+    message = warnings[0].getMessage()
+    assert "raw-source.mp4" in message  # the source
+    assert "'Council meeting' in=2s dur=12.5s" in message  # the exact window
+    assert "no parseable loudnorm JSON" in message  # the reason
+
+    conform = next(args for args in calls if "-af" in args)
+    joined = " ".join(conform)
+    assert "loudnorm=I=-24:LRA=11:TP=-1.5" in joined
+    assert "measured_I=" not in joined  # single-pass: no measured_* parameters
+    assert ":linear=true" not in joined
+    assert all("measured_" not in " ".join(args) for args in calls)
+
+    assert report.records[0].normalized is True
+    assert report.records[0].loudness_method == "single-pass-fallback"
+
+
+def test_segment_probe_nonzero_exit_degrades_and_names_the_reason(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The degrade covers the other measured-failure shapes too: a probe that
+    exits non-zero degrades with its own one-line reason rather than raising."""
+
+    calls: list[list[str]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_probe_failing_runner(calls, stderr="boom", returncode=1),
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda _job: None,
+    )
+    with caplog.at_level(logging.WARNING, logger=preparer_module.__name__):
+        report = preparer.prepare(_source_plan(tmp_path), _config())
+    reasons = [
+        record.getMessage()
+        for record in caplog.records
+        if "measurement pass failed" in record.getMessage()
+    ]
+    assert len(reasons) == 1
+    assert "probe exited 1" in reasons[0]
+    assert report.records[0].loudness_method == "single-pass-fallback"
+
+
+def test_segment_probe_unusable_metadata_degrades(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A probe that exits 0 and emits parseable JSON whose values
+    ``_validated_measured_loudness`` rejects degrades the same way."""
+
+    calls: list[list[str]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_probe_failing_runner(
+            calls, stderr=_loudnorm_probe_stderr(input_i="not-a-number")
+        ),
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda _job: None,
+    )
+    with caplog.at_level(logging.WARNING, logger=preparer_module.__name__):
+        report = preparer.prepare(_source_plan(tmp_path), _config())
+    reasons = [
+        record.getMessage()
+        for record in caplog.records
+        if "measurement pass failed" in record.getMessage()
+    ]
+    assert len(reasons) == 1
+    assert "probe metadata unusable" in reasons[0]
+    assert report.records[0].loudness_method == "single-pass-fallback"
+
+
+def test_whole_asset_probe_failure_leaves_the_two_pass_cache_entry_empty(
+    tmp_path: Path,
+) -> None:
+    """U20 decision 1 (H3) + the cache requirement: when the WHOLE-ASSET
+    measurement degrades, no fallback artifact is cached under the two-pass
+    key -- the segment airs from a bounded single-pass conform instead, and a
+    later run whose probe succeeds populates the genuine two-pass entry."""
+
+    src = tmp_path / "long-recording.mp4"
+    plan = _untrimmed_plan(tmp_path)
+    config = _config()
+
+    calls: list[list[str]] = []
+    degraded = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_probe_failing_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda _job: None,
+        playout_trim_supported=True,
+    )
+    first = degraded.prepare(plan, config)
+
+    key = degraded._cache_key(src, config)
+    assert key is not None  # the cache is on, so this key is the real one
+    cache_dir = tmp_path / "work" / "conform-cache"
+    # No whole-asset artifact at all: not the finished file, not a partial tmp.
+    assert not (cache_dir / f"{key}.ts").exists()
+    assert not (cache_dir / f"{key}.ts.tmp").exists()
+    # The probe-only sidecar may exist, but it must claim neither a whole-asset
+    # conform nor a two-pass method -- otherwise a later cache HIT would serve
+    # this single-pass artifact as if a measurement had produced it.
+    meta = degraded._read_cache_meta(key)
+    assert meta is None or meta.get("full_asset_conform") is not True
+    assert meta is None or meta.get("loudness_method") != "two-pass"
+
+    assert first.records[0].loudness_method == "single-pass-fallback"
+    assert "conform-cache" not in first.source_plan.segments[0].path
+    conforms = [args for args in calls if "-af" in args]
+    assert conforms, "the segment must still be conformed, just single-pass"
+    assert all("measured_I=" not in " ".join(args) for args in conforms)
+
+    # A later airing whose measurement pass works populates the REAL two-pass
+    # entry -- nothing to replace, because the fallback never created one.
+    second = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda _job: None,
+        playout_trim_supported=True,
+    )
+    recovered = second.prepare(plan, config)
+
+    assert (cache_dir / f"{key}.ts").is_file()
+    recovered_meta = second._read_cache_meta(key)
+    assert recovered_meta is not None
+    assert recovered_meta.get("full_asset_conform") is True
+    assert recovered_meta.get("loudness_method") == "two-pass"
+    assert "conform-cache" in recovered.source_plan.segments[0].path
+    assert recovered.records[0].loudness_method == "two-pass"
+
+
+def test_cache_hit_reports_the_method_the_entry_was_conformed_with(tmp_path: Path) -> None:
+    """A cache HIT passes the method recorded in the sidecar through to the
+    record, so a caller can tell an airing conformed two-pass from one that
+    fell back to single-pass."""
+
+    calls: list[list[str]] = []
+    config = _config()
+    plan = _untrimmed_plan(tmp_path)
+    SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda _job: None,
+        playout_trim_supported=True,
+    ).prepare(plan, config)
+
+    hit = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda _job: None,
+        playout_trim_supported=True,
+    ).prepare(plan, config)
+
+    assert "conform-cache" in hit.source_plan.segments[0].path
+    assert hit.records[0].loudness_method == "two-pass"
+
+
+def test_probe_cancellation_still_propagates_instead_of_degrading(tmp_path: Path) -> None:
+    """Cancellation is a shutdown/pause signal, not a measurement failure: it
+    re-raises untouched, and nothing is conformed with the fallback filter."""
+
+    calls: list[list[str]] = []
+
+    def runner(args: list[str]) -> FfmpegResult:
+        calls.append(list(args))
+        if "print_format=json" in " ".join(args):
+            raise SourcePreparationCancelledError("Source preparation was cancelled.")
+        _write_fake_output(args)
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=runner,
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda _job: None,
+    )
+
+    with pytest.raises(SourcePreparationCancelledError):
+        preparer.prepare(
+            _source_plan(tmp_path),
+            _config(),
+            cancel_event=threading.Event(),
+            protected_plan_dirs=frozenset(),
+        )
+
+    assert calls, "the probe must have run before the cancellation"
+    assert all("print_format=json" in " ".join(args) for args in calls)
+
+
+def test_conform_failure_after_a_successful_measurement_still_raises(tmp_path: Path) -> None:
+    """Only the measurement pass degrades.  A real pass-2 error still fails the
+    segment, two-pass or not."""
+
+    def runner(args: list[str]) -> FfmpegResult:
+        if "print_format=json" in " ".join(args):
+            return FfmpegResult(returncode=0, stdout="", stderr=_loudnorm_probe_stderr())
+        return FfmpegResult(returncode=1, stdout="", stderr="boom")
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=runner,
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda _job: None,
+    )
+
+    with pytest.raises(SourcePrepareError, match="could not be conformed"):
+        preparer.prepare(_source_plan(tmp_path), _config())
