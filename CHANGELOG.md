@@ -71,6 +71,68 @@ air once those orphans were killed by hand, about 11 minutes after the install.
   stall. Only the control-plane child opts in; every other child's readiness keeps
   its previous semantics.
 
+### Live captions stop round-tripping their own audio through a temporary WAV (U33, 2026-09-25)
+
+The live caption tap wrote every 10 s chunk to a temporary WAV and handed
+faster-whisper the path, which made the runtime decode back the exact audio the
+tap had just encoded: PyAV open, resample to 16 kHz mono s16le,
+`astype(np.float32) / 32768.0`, and a `gc.collect()` per call. A 16 kHz mono
+s16le chunk needs none of it -- its samples are already the array the decoder was
+producing.
+
+- `civiccast/captions/runtime.py` now short-circuits the decode when the chunk is
+  already at `LIVE_TAP_PCM_PASSTHROUGH_RATE_HZ` (16 kHz -- the constant carries
+  this measurement in its docstring) and hands the model the array directly.
+  Other rates, and every batch/VOD chunk, keep the temporary-WAV round trip
+  because the resampler is the whole point there. `numpy` is imported inside the
+  conversion helper rather than at module scope: it ships with the optional
+  caption runtime, not with CivicCast.
+- Measured on the station's own settings and model pack, 24 windows per arm
+  (`beam_size` 1, `language=None`, `task="transcribe"`, `vad_filter=True`,
+  `word_timestamps=True`): **1879.9 -> 1609.4 ms median** per window, **1.097x**,
+  with the emitted word spans identical to the unmodified path on **24 of 24**
+  windows (WER 0.0000, 584/584 words) and the committed cues identical through
+  `CaptionStabilizer(live=True)`.
+- Stated limit rather than an implied one: this is a **1.097x** lever. The p95 is
+  2095.8 ms, inside the 2.5 s p95 target; the median is 1609.4 ms against an
+  800 ms median target. Closing that remainder needs the batched design, which
+  costs measurable word loss (WER mean 0.0066, max 0.125) and is a decision still
+  open -- not something this change claims to have done.
+
+### A channel whose HLS window stayed frozen after a failed relay self-heal is now restarted (U30, 2026-09-25)
+
+Four live freezes on 2026-09-25, across all three channels, had one shape: a
+deferred program-to-program reload commits (`stage=committed elements=52`) and
+the worker's stderr then shows no further `CTRL output` progress lines. The
+relay's live window stops advancing, the relay's own self-heal cannot help, and
+only a whole-channel restart brings the channel back. The engine survives its own
+stall because its stall watchdog watches an **aggregate** mux-output counter that
+the audio leg keeps feeding -- so a video-only freeze never trips it.
+
+- The daemon now treats the **HLS live window as ground truth**: if it is still
+  frozen 30 s after a relay self-heal has run and failed,
+  `civiccast/egress/daemon.py` restarts the **worker** -- the same cure the
+  operator has been applying by hand (`Recover-RelayStall.ps1 -Mode RestartOne`)
+  -- bounded to **3 restarts per channel per rolling hour**, after which it stops
+  restarting and logs one CRITICAL per 10 minutes. Every escalation logs one ERROR
+  naming the channel, how long the window has been frozen, and the budget left in
+  the hour.
+- The probe the poll reads is `HlsRelaySupervisor.heal_frozen_seconds` in
+  `civiccast/egress/hls_relay.py`: it reports frozen seconds only for a **live**
+  relay child whose one-shot self-heal has already been spent, so the escalation
+  cannot fire on a channel that is still being healed, and a window that truly
+  advances past its pre-heal baseline stops being reported.
+- The escalation does **not** stop the relay child itself. On this line the
+  relaunch rebinds it instead -- the supervisor drops the channel's relays when
+  the worker session they were bound to is gone -- so what keeps the sequence
+  bounded is the two budgets above plus the relay heal's one-heal-per-child latch,
+  not a claim that the relay is untouched end to end. The daemon-level guard test
+  asserts that bound directly.
+- Not fixed, and recorded so it is not read as fixed: **why** the engine stops
+  after a committed reload was **not** reproduced off-live (9/20 deaths at the
+  baseline engine versus 10/20 at HEAD, every death of a different shape from the
+  live one), so no blind fix was applied on top of the escalation.
+
 ### Live captions catch up after an ASR stall instead of pausing (U23, 2026-09-25)
 
 A channel whose settled backlog stayed over `max_backlog_segments` for the whole
