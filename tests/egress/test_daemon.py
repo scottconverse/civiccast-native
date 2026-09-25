@@ -8179,3 +8179,344 @@ def test_degenerate_tail_guard_is_inert_during_a_manual_override(
 
     assert daemon._avoid_schedule_tail_plan("gov", tail) is tail
     assert seen == []
+
+
+# ---------------------------------------------------------------------------
+# U36 (2026-09-25): the schedule tail floor on the horizon-bound rollover and
+# on the relaunch path, plus the bounded retry for an aborted boundary reload.
+#
+# Defect: a program -> program rollover switched onto a ~2s sliver of the
+# program that was already ending; the new leg EOSed immediately (with the
+# GStreamer engine max_segments=1 makes that leg the WHOLE pipeline) and the
+# worker exited. Measured on the public channel 2026-09-25: the 14:06:50
+# rollover resolved the July 23 program AT ITS HORIZON with the drifted
+# schedule clock (664s elapsed of a 667s item) and its new leg delivered 1.6s
+# (``mux-in 1.6s: video=+24 audio=+37``) before EOS. The horizon is the
+# OUTGOING leg's end, but the schedule clock and that leg's real start
+# disagree -- which is exactly why "the boundary is the tail's own end" (the
+# U26 reasoning that exempted this path) does not hold.
+# ---------------------------------------------------------------------------
+
+
+class _AbortingReloadStrategy(_FakeContentReloadStrategy):
+    """A content-reload strategy whose worker ABORTS the reload pre-commit
+    (``CTRL reload aborted: new program errored before commit``), the way the
+    2026-09-25 public channel's boundary reloads did. Arms normally but
+    settles ``abort_results`` in order (any further arming settles
+    ``applied``)."""
+
+    def __init__(
+        self,
+        processes: list[_FakeProcess],
+        started: list[_FakeProcess],
+        *,
+        abort_results: list[str] | None = None,
+    ) -> None:
+        super().__init__(processes, started, auto_settle=False)
+        self._abort_results = list(abort_results or [])
+
+    def reload_content(
+        self,
+        channel_id: str,
+        work_dir: Path,
+        request: EncoderStartRequest,
+        *,
+        command_id: str | None = None,
+    ) -> bool:
+        accepted = super().reload_content(channel_id, work_dir, request, command_id=command_id)
+        result = self._abort_results.pop(0) if self._abort_results else "applied"
+        _write_fake_reload_status(work_dir, channel_id, command_id, result)
+        return accepted
+
+
+def _u36_rollover_daemon(
+    tmp_path: Path,
+    *,
+    strategy: Any,
+    boundary: Callable[[str, datetime], EgressSourcePlan | None],
+    fallback: Callable[[EgressConfig], EgressSourcePlan] | None = None,
+) -> EgressDaemon:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    return EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _plan_with_seconds(
+            tmp_path, "Unused", 600.0
+        ),
+        boundary_source_plan_provider=boundary,
+        fallback_source_provider=fallback,
+        encoder_strategy=strategy,
+    )
+
+
+def _u36_on_air(daemon: EgressDaemon, *, pid: int = 111, label: str = "Longmont Weather :16") -> _FakeProcess:
+    process = _FakeProcess(pid=pid)
+    daemon._processes["gov"] = process
+    daemon._store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="ON_AIR",
+            current_source_label=label,
+            updated_at=datetime(2026, 6, 12, 6, 0, tzinfo=UTC),
+        )
+    )
+    return process
+
+
+def test_horizon_bound_rollover_resolves_past_a_sub_floor_schedule_tail(
+    tmp_path: Path,
+) -> None:
+    """U36 decision 2(i): a horizon-bound rollover must not install a sub-floor
+    tail of the item closing at its horizon -- the 14:06:50 case, which handed
+    the new leg 1.6s of already-aired media. Resolve where that tail ends
+    instead: the next program."""
+    started: list[_FakeProcess] = []
+    strategy = _FakeContentReloadStrategy([_FakeProcess(pid=222)], started)
+    boundary_args: list[datetime] = []
+    horizon = datetime.now(UTC) + timedelta(seconds=300.0)
+    next_due = horizon + timedelta(seconds=10.2)
+
+    def boundary(_channel_id: str, at: datetime) -> EgressSourcePlan:
+        boundary_args.append(at)
+        if at >= next_due:
+            return _plan_with_seconds(tmp_path, "City Council", 1800.0)
+        return _plan_with_seconds(tmp_path, "Longmont Weather :16", 9.2)
+
+    daemon = _u36_rollover_daemon(tmp_path, strategy=strategy, boundary=boundary)
+    _u36_on_air(daemon)
+
+    daemon.record_rollover_plan_end("gov", horizon, command_id=None)
+    daemon._request_reload("gov")
+
+    # Resolved once AT the horizon (a 9.2s tail), once where that tail ends.
+    assert boundary_args == [horizon, next_due]
+    assert strategy.reload_calls == ["City Council"]
+
+
+def test_horizon_bound_rollover_keeps_a_tail_with_more_than_the_floor_left(
+    tmp_path: Path,
+) -> None:
+    """The floor cannot skip a program that genuinely has more than 30s left:
+    the plan resolved at the horizon is installed untouched and the boundary is
+    never asked a second time."""
+    started: list[_FakeProcess] = []
+    strategy = _FakeContentReloadStrategy([_FakeProcess(pid=222)], started)
+    boundary_args: list[datetime] = []
+    horizon = datetime.now(UTC) + timedelta(seconds=300.0)
+
+    def boundary(_channel_id: str, at: datetime) -> EgressSourcePlan:
+        boundary_args.append(at)
+        return _plan_with_seconds(tmp_path, "Longmont Weather :16", 45.0)
+
+    daemon = _u36_rollover_daemon(tmp_path, strategy=strategy, boundary=boundary)
+    _u36_on_air(daemon)
+
+    daemon.record_rollover_plan_end("gov", horizon, command_id=None)
+    daemon._request_reload("gov")
+
+    assert boundary_args == [horizon]
+    assert strategy.reload_calls == ["Longmont Weather :16"]
+
+
+def test_relaunch_onto_a_sub_floor_schedule_tail_starts_the_next_program(
+    tmp_path: Path,
+) -> None:
+    """U36 decision 2(ii): the relaunch path is never given a sub-floor tail
+    either. A crash relaunch resolving the program whose media is (by the
+    schedule clock) seconds from its end starts the NEXT program instead of a
+    sliver that immediately EOSes the replacement worker -- the 14:17:52 case,
+    where reload 5's single segment was seconds of the program about to end."""
+    started: list[_FakeProcess] = []
+    strategy = _PlanLabelRecordingStrategy(
+        [_FakeProcess(pid=111), _FakeProcess(pid=222)], started
+    )
+    boundary_args: list[datetime] = []
+    plans = [
+        _plan_with_seconds(tmp_path, "Longmont Weather :16", 600.0),
+        _plan_with_seconds(tmp_path, "Longmont Weather :16", 9.2),
+    ]
+    calls = {"n": 0}
+
+    def next_plan() -> EgressSourcePlan:
+        plan = plans[min(calls["n"], len(plans) - 1)]
+        calls["n"] += 1
+        return plan
+
+    def boundary(_channel_id: str, at: datetime) -> EgressSourcePlan:
+        boundary_args.append(at)
+        return _plan_with_seconds(tmp_path, "City Council", 1800.0)
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: next_plan(),
+        boundary_source_plan_provider=boundary,
+        encoder_strategy=strategy,
+    )
+    store.enqueue_command(_command())
+    before = datetime.now(UTC)
+
+    daemon.process_once("gov")
+    assert store.read_state("gov").state == "ON_AIR"
+    # A 600s program is worth airing on its own: the start never consults the
+    # boundary, so the floor is invisible to an ordinary healthy start.
+    assert boundary_args == []
+    assert strategy.started_labels == ["Longmont Weather :16"]
+
+    started[0].returncode = 1
+    daemon.process_once("gov")  # crash -> crash-relaunch
+
+    assert store.read_state("gov").state == "ON_AIR"
+    assert len(boundary_args) == 1
+    assert boundary_args[0] >= before + timedelta(seconds=10.2)
+    assert strategy.started_labels == ["Longmont Weather :16", "City Council"]
+
+
+def test_relaunch_keeps_a_tail_with_more_than_the_floor_left(tmp_path: Path) -> None:
+    """45s of program is worth airing: the relaunch airs it and never consults
+    the boundary, so the floor cannot skip a program with real remainder."""
+    started: list[_FakeProcess] = []
+    strategy = _PlanLabelRecordingStrategy(
+        [_FakeProcess(pid=111), _FakeProcess(pid=222)], started
+    )
+    boundary_args: list[datetime] = []
+    plans = [
+        _plan_with_seconds(tmp_path, "Longmont Weather :16", 600.0),
+        _plan_with_seconds(tmp_path, "Longmont Weather :16", 45.0),
+    ]
+    calls = {"n": 0}
+
+    def next_plan() -> EgressSourcePlan:
+        plan = plans[min(calls["n"], len(plans) - 1)]
+        calls["n"] += 1
+        return plan
+
+    def boundary(_channel_id: str, at: datetime) -> EgressSourcePlan:
+        boundary_args.append(at)
+        return _plan_with_seconds(tmp_path, "City Council", 1800.0)
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: next_plan(),
+        boundary_source_plan_provider=boundary,
+        encoder_strategy=strategy,
+    )
+    store.enqueue_command(_command())
+    daemon.process_once("gov")
+
+    started[0].returncode = 1
+    daemon.process_once("gov")
+
+    assert boundary_args == []
+    assert strategy.started_labels == ["Longmont Weather :16", "Longmont Weather :16"]
+
+
+def test_aborted_boundary_reload_is_retried_before_the_horizon(tmp_path: Path) -> None:
+    """U36 item 7: a boundary reload the worker aborts pre-commit must not leave
+    the channel with nothing prepared at the horizon (public's 14:44
+    ``aborted:error`` was discarded with no retry, and its next boundary then
+    arrived with nothing prepared). The daemon re-resolves and re-arms."""
+    started: list[_FakeProcess] = []
+    strategy = _AbortingReloadStrategy(
+        [_FakeProcess(pid=222)], started, abort_results=["aborted:error"]
+    )
+    boundary_args: list[datetime] = []
+    horizon = datetime.now(UTC) + timedelta(seconds=300.0)
+
+    def boundary(_channel_id: str, at: datetime) -> EgressSourcePlan:
+        boundary_args.append(at)
+        if at >= horizon + timedelta(seconds=10.2):
+            return _plan_with_seconds(tmp_path, "City Council", 1800.0)
+        return _plan_with_seconds(tmp_path, "Longmont Weather :16", 9.2)
+
+    daemon = _u36_rollover_daemon(tmp_path, strategy=strategy, boundary=boundary)
+    process = _u36_on_air(daemon)
+
+    daemon.record_rollover_plan_end("gov", horizon, command_id=None)
+    daemon._request_reload("gov")
+    assert strategy.reload_calls == ["City Council"]
+
+    first_id = daemon._pending_reload_settle["gov"].reload_id
+    _write_fake_reload_status(tmp_path, "gov", first_id, "aborted:error")
+    daemon.process_once("gov")
+
+    # Retried, not fallen back to a restart: a new reload is armed, still
+    # carrying this boundary's horizon.
+    assert strategy.reload_calls == ["City Council", "City Council"]
+    assert daemon._pending_reload_settle["gov"].reload_id != first_id
+    assert daemon._pending_reload_settle["gov"].rollover_plan_end_at == horizon
+    # The outgoing leg keeps airing while the retry arms -- that is the point
+    # of retrying before the horizon instead of restarting the worker.
+    assert process.terminated is False
+    assert daemon._pending_reloads == {}
+
+
+def test_exhausted_boundary_reload_retries_arm_the_slate_at_the_boundary(
+    tmp_path: Path,
+) -> None:
+    """U36 item 7, the other arm: when the bounded retries are exhausted the
+    channel gets the fallback slate armed AT the boundary. It must never be
+    left with the outgoing leg running out into a stall exit -- the failure
+    that cost the public channel ~80s of dead air on 2026-09-25."""
+    started: list[_FakeProcess] = []
+    strategy = _AbortingReloadStrategy(
+        [_FakeProcess(pid=222)],
+        started,
+        abort_results=["aborted:error", "aborted:error", "aborted:error"],
+    )
+    boundary_args: list[datetime] = []
+    horizon = datetime.now(UTC) + timedelta(seconds=300.0)
+    exhausted = {"yes": False}
+
+    def boundary(_channel_id: str, at: datetime) -> EgressSourcePlan | None:
+        boundary_args.append(at)
+        if exhausted["yes"]:
+            # Nothing left on the schedule where the exhausted boundary falls.
+            return None
+        if at >= horizon + timedelta(seconds=10.2):
+            return _plan_with_seconds(tmp_path, "City Council", 1800.0)
+        return _plan_with_seconds(tmp_path, "Longmont Weather :16", 9.2)
+
+    daemon = _u36_rollover_daemon(
+        tmp_path,
+        strategy=strategy,
+        boundary=boundary,
+        fallback=lambda _config: _plan_with_seconds(tmp_path, "CivicCast slate", 3600.0),
+    )
+    process = _u36_on_air(daemon)
+
+    daemon.record_rollover_plan_end("gov", horizon, command_id=None)
+    daemon._request_reload("gov")
+
+    # Three abort/settle cycles: two bounded retries, then the slate arm.
+    for index in range(3):
+        assert "gov" in daemon._pending_reload_settle
+        if index == 2:
+            exhausted["yes"] = True
+        _write_fake_reload_status(
+            tmp_path,
+            "gov",
+            daemon._pending_reload_settle["gov"].reload_id,
+            "aborted:error",
+        )
+        daemon.process_once("gov")
+
+    assert strategy.reload_calls == [
+        "City Council",
+        "City Council",
+        "City Council",
+        "CivicCast slate",
+    ]
+    pending = daemon._pending_reload_settle["gov"]
+    assert pending.target_state == "FALLBACK_SLATE"
+    assert pending.source_plan.segments[0].label == "CivicCast slate"
+    # Never left to run out into an exit: the outgoing worker is still running
+    # and the slate is armed against the boundary.
+    assert process.terminated is False
+    assert daemon._pending_reloads == {}
