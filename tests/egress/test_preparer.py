@@ -3280,3 +3280,411 @@ def test_conform_failure_after_a_successful_measurement_still_raises(tmp_path: P
 
     with pytest.raises(SourcePrepareError, match="could not be conformed"):
         preparer.prepare(_source_plan(tmp_path), _config())
+
+
+# ---------------------------------------------------------------------------
+# U29 — the warm's timeout, priority and retry budget
+#
+# Observed on the live station (2026-09-25, reports/U29.md): the LPM rotation's
+# 9020.834 s Sustainability Advisory Board meeting was warmed every ~30-minute
+# rotation, timed out at the base 300 s, and re-armed forever -- a permanent
+# background CPU burn competing with three live encoders and live caption ASR.
+# ---------------------------------------------------------------------------
+
+#: The measured asset from reports/U29.md: 1920x1080 h264, 9020.834 s.
+_U29_LONG_ASSET_SECONDS = 9020.834
+
+
+class _FakeClock:
+    """A monotonic clock a test can move, for the six-hour backoff window."""
+
+    def __init__(self) -> None:
+        self._now = 1000.0
+
+    def monotonic(self) -> float:
+        return self._now
+
+    def time(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
+
+def _warm_kwargs_capturing_runner(
+    calls: list[dict[str, object]],
+) -> Callable[..., FfmpegResult]:
+    """A stand-in for ``run_ffmpeg`` that records the per-call keyword
+    arguments the warm path is required to pass (U29 3a/3b).
+
+    Install it as BOTH ``ffmpeg_runner`` and the module's ``run_ffmpeg`` name:
+    the preparer only forwards ``timeout``/``lower_priority``/``cancel_event``
+    when those two are the identical object (that identity check is exactly
+    what keeps a one-argument test double's signature working), so a test that
+    wants to SEE the forwarding must satisfy it.
+    """
+
+    def runner(
+        args: list[str],
+        *,
+        cancel_event: threading.Event | None = None,
+        timeout: float | None = None,
+        lower_priority: bool = False,
+    ) -> FfmpegResult:
+        calls.append({"args": args, "timeout": timeout, "lower_priority": lower_priority})
+        if "print_format=json" in " ".join(args):
+            return FfmpegResult(returncode=0, stdout="", stderr=_loudnorm_probe_stderr())
+        _write_fake_output(args)
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    return runner
+
+
+def _u29_warm_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    runner: Callable[..., FfmpegResult],
+) -> tuple[SourcePreparer, list[Callable[[], None]], Path, str, EgressConfig]:
+    warm_jobs: list[Callable[[], None]] = []
+    monkeypatch.setattr(preparer_module, "run_ffmpeg", runner)
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=runner,
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=warm_jobs.append,
+    )
+    source = tmp_path / "Sustainability_Advisory_Board_-_April_2026.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    config = _config()
+    key = preparer._cache_key(source, config)
+    assert key is not None
+    return preparer, warm_jobs, source, key, config
+
+
+def test_warm_timeout_scales_with_the_asset_and_keeps_the_base_as_a_floor() -> None:
+    """U29 3a, the arithmetic itself: ``timeout = max(base, duration /
+    design_speed * factor)``, bounded above by the ceiling, and the base
+    timeout whenever the duration is unknown or tiny."""
+
+    scaled = preparer_module.warm_preparation_timeout_seconds
+    base = 300.0
+
+    # Unknown / non-positive duration -> the caller's base timeout, untouched.
+    assert scaled(None, base) == base
+    assert scaled(0.0, base) == base
+    assert scaled(-5.0, base) == base
+    # A short asset designs far inside the base -> the base is the FLOOR, so
+    # this can only ever widen a warm's budget, never shrink the air path's.
+    assert scaled(60.0, base) == base
+
+    # The measured 9020.834 s asset: 8x-realtime design speed, 1.5x safety.
+    expected_long = (
+        _U29_LONG_ASSET_SECONDS
+        / preparer_module._WARM_CONFORM_DESIGN_SPEED_RPS
+        * preparer_module._WARM_CONFORM_TIMEOUT_FACTOR
+    )
+    assert scaled(_U29_LONG_ASSET_SECONDS, base) == pytest.approx(expected_long)
+    # Justify the design speed from the U29 measurements (reports/U29.md):
+    # the measured worst case was 10.42x realtime with a foreground conform
+    # running alongside (16.26x alone, at BELOW_NORMAL).  The budget must
+    # cover that worst case with real headroom...
+    assert scaled(_U29_LONG_ASSET_SECONDS, base) > 2 * 554.9
+    # ...and must be strictly wider than the 300 s base that produced the
+    # observed permanent re-warm loop for this very asset.
+    assert scaled(_U29_LONG_ASSET_SECONDS, base) > base
+
+    # Monotonic in duration, and never below the base.
+    previous = 0.0
+    for duration in (300.0, 900.0, 3600.0, 9020.834, 15949.2):
+        value = scaled(duration, base)
+        assert value >= base
+        assert value >= previous
+        previous = value
+    # Ceiling: one warm worker serves every asset, so a pathological input
+    # must not be able to hold the queue for a day.
+    ceiling = preparer_module._WARM_CONFORM_TIMEOUT_CEILING_SECONDS
+    assert scaled(24 * 3600.0, base) == ceiling
+
+
+def test_long_asset_warm_uses_the_scaled_timeout_at_lower_priority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U29 3a/3b end-to-end through the queued warm job: both the loudnorm
+    measurement pass AND the conform of a 2.5 h asset carry the SCALED
+    timeout, and both run at lowered process priority."""
+
+    calls: list[dict[str, object]] = []
+    preparer, warm_jobs, source, key, config = _u29_warm_fixture(
+        tmp_path, monkeypatch, _warm_kwargs_capturing_runner(calls)
+    )
+
+    preparer._schedule_warm(
+        key,
+        source,
+        config,
+        _loudness(),
+        True,
+        media_duration_seconds=_U29_LONG_ASSET_SECONDS,
+    )
+    assert len(warm_jobs) == 1
+    warm_jobs[0]()
+
+    expected = preparer_module.warm_preparation_timeout_seconds(
+        _U29_LONG_ASSET_SECONDS, preparer._preparation_timeout_seconds
+    )
+    assert expected > preparer._preparation_timeout_seconds
+    probes = [c for c in calls if "print_format=json" in " ".join(c["args"])]  # type: ignore[arg-type]
+    conforms = [c for c in calls if "print_format=json" not in " ".join(c["args"])]  # type: ignore[arg-type]
+    assert len(probes) == 1, "the warm measures before it conforms"
+    assert len(conforms) == 1
+    # The measurement pass decodes the WHOLE asset too -- a warm whose probe
+    # times out measures nothing, degrades to single-pass and is discarded
+    # (U20), so the scaled budget must cover BOTH passes.
+    assert probes[0]["timeout"] == pytest.approx(expected)
+    assert conforms[0]["timeout"] == pytest.approx(expected)
+    assert probes[0]["lower_priority"] is True
+    assert conforms[0]["lower_priority"] is True
+
+
+def test_on_demand_preparation_keeps_the_base_timeout_and_normal_priority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U29 3a/3b's guard rail: the AIR path must not inherit either change.
+    An untrimmed-miss airing of a 3600 s asset -- a duration that WOULD scale
+    a warm's budget -- still runs both passes at the base timeout and at
+    normal process priority, because a late segment is a channel outage and a
+    busy box is not."""
+
+    calls: list[dict[str, object]] = []
+    runner = _warm_kwargs_capturing_runner(calls)
+    monkeypatch.setattr(preparer_module, "run_ffmpeg", runner)
+    warm_jobs: list[Callable[[], None]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=runner,
+        # A failed loudness gate -> the air path genuinely normalizes, so BOTH
+        # of its passes (measurement + conform) are visible here.
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=warm_jobs.append,
+        playout_trim_supported=True,  # the legacy ffmpeg-concat engine's trim-passthrough wiring
+    )
+
+    preparer.prepare(_untrimmed_plan(tmp_path), _config())
+
+    assert preparer._preparation_timeout_seconds == 300.0
+    assert len(calls) == 2, "the air path measured and conformed"
+    for call in calls:
+        # The BASE timeout -- the air path's own budget, exactly as before U29.
+        assert call["timeout"] == 300.0
+        assert call["lower_priority"] is False
+    # The same duration WOULD have been scaled had this asset gone to a warm.
+    assert preparer_module.warm_preparation_timeout_seconds(3600.0, 300.0) > 300.0
+    assert warm_jobs == []  # an untrimmed airing that populated the cache warms nothing
+
+
+def test_a_failed_warm_backs_off_for_six_hours_and_warns_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """U29 3c: one failed warm for an asset stops that asset's warms for six
+    hours, and the operator gets ONE warning -- naming the asset, its duration
+    and the timeout it was given -- instead of an ERROR plus traceback every
+    30-minute rotation."""
+
+    mode = {"fail": True}
+
+    def runner(
+        args: list[str],
+        *,
+        cancel_event: threading.Event | None = None,
+        timeout: float | None = None,
+        lower_priority: bool = False,
+    ) -> FfmpegResult:
+        if mode["fail"]:
+            raise subprocess.TimeoutExpired(args, timeout=timeout or 300.0)
+        _write_fake_output(args)
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    preparer, warm_jobs, source, key, config = _u29_warm_fixture(tmp_path, monkeypatch, runner)
+
+    # The backoff deadline is written with ``time.monotonic()`` at FAILURE time
+    # and compared at SCHEDULING time, so both phases must read the same clock:
+    # take control of ``time`` before the first failure, not after it.
+    clock = _FakeClock()
+    monkeypatch.setattr(preparer_module, "time", clock)
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.preparer"):
+        preparer._schedule_warm(
+            key,
+            source,
+            config,
+            _loudness(),
+            False,
+            media_duration_seconds=_U29_LONG_ASSET_SECONDS,
+        )
+        assert len(warm_jobs) == 1
+        warm_jobs[0]()  # the warm times out
+        assert key not in preparer._warming  # not stuck -- the job cleaned up after itself
+
+        # The next three airings of the same asset (its own rotation cadence)
+        # must each enqueue nothing.
+        for _ in range(3):
+            preparer._schedule_warm(
+                key,
+                source,
+                config,
+                _loudness(),
+                False,
+                media_duration_seconds=_U29_LONG_ASSET_SECONDS,
+            )
+        assert len(warm_jobs) == 1, "a backed-off asset must not be re-queued"
+
+        records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert len(records) == 1, [r.getMessage() for r in caplog.records]
+        record = records[0]
+        assert record.exc_info is None, "no traceback: this is a known, bounded condition"
+        message = record.getMessage()
+        expected_timeout = preparer_module.warm_preparation_timeout_seconds(
+            _U29_LONG_ASSET_SECONDS, preparer._preparation_timeout_seconds
+        )
+        assert source.name in message
+        assert f"{_U29_LONG_ASSET_SECONDS:g}s" in message  # the asset's duration
+        assert f"{expected_timeout:g}s" in message  # the timeout it was given
+        assert "6h" in message  # the backoff window
+
+    # The window closes: the next airing warms again, and a warm that
+    # succeeds clears the backoff entry outright.
+    mode["fail"] = False
+    preparer._schedule_warm(
+        key,
+        source,
+        config,
+        _loudness(),
+        False,
+        media_duration_seconds=_U29_LONG_ASSET_SECONDS,
+    )
+    assert len(warm_jobs) == 1, "still inside the six-hour window"
+    clock.advance(preparer_module._WARM_FAILURE_BACKOFF_SECONDS + 1.0)
+    preparer._schedule_warm(
+        key,
+        source,
+        config,
+        _loudness(),
+        False,
+        media_duration_seconds=_U29_LONG_ASSET_SECONDS,
+    )
+    assert len(warm_jobs) == 2, "the window closed, so the next airing warms again"
+    warm_jobs[1]()
+    assert key not in preparer._warm_backoff_until
+    assert (tmp_path / "work" / "conform-cache" / f"{key}.ts").is_file()
+
+
+def test_a_cancelled_warm_neither_warns_nor_backs_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """U29 3c boundary: cancellation is not a failure of the asset.
+
+    A pause/shutdown mid-warm says nothing about whether this asset can be
+    warmed, so it must not start a six-hour backoff (the station would then
+    deny itself a warm it could have completed as soon as it resumed) and must
+    not emit the operator-facing failure warning.  U20 already draws exactly
+    this line for the measurement pass; this keeps the warm's own failure
+    handling on the same side of it.
+    """
+
+    def runner(
+        args: list[str],
+        *,
+        cancel_event: threading.Event | None = None,
+        timeout: float | None = None,
+        lower_priority: bool = False,
+    ) -> FfmpegResult:
+        raise SourcePreparationCancelledError("Source preparation was cancelled.")
+
+    preparer, warm_jobs, source, key, config = _u29_warm_fixture(tmp_path, monkeypatch, runner)
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.preparer"):
+        preparer._schedule_warm(
+            key,
+            source,
+            config,
+            _loudness(),
+            False,
+            media_duration_seconds=_U29_LONG_ASSET_SECONDS,
+        )
+        assert len(warm_jobs) == 1
+        warm_jobs[0]()
+
+        assert key not in preparer._warming
+        assert key not in preparer._warm_backoff_until, (
+            "a cancellation must not start the six-hour backoff window"
+        )
+        assert [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+        # ...and the very next airing is free to warm it again.
+        preparer._schedule_warm(
+            key,
+            source,
+            config,
+            _loudness(),
+            False,
+            media_duration_seconds=_U29_LONG_ASSET_SECONDS,
+        )
+        assert len(warm_jobs) == 2
+
+
+def test_on_demand_conform_shares_no_lock_or_queue_with_a_warm(tmp_path: Path) -> None:
+    """U29 3d: an airing never queues behind a warm.  A warm holds this
+    asset's per-key cache lock (exactly what ``_conform_full_asset_into_cache``
+    does for the whole of its run) while an untrimmed airing of the SAME asset
+    arrives.  The airing must (a) return promptly, (b) do its own bounded
+    conform on the calling thread -- the runner really ran, inside the window
+    where the lock was held -- and (c) not be executed by, or waited on by,
+    the warm worker: enqueueing a warm-behind job is fine and expected, being
+    run by that worker (or blocked behind one) is not."""
+
+    calls: list[list[str]] = []
+    warm_jobs: list[Callable[[], None]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=warm_jobs.append,
+        playout_trim_supported=True,  # the legacy ffmpeg-concat engine's trim-passthrough wiring
+    )
+    source = tmp_path / "long-recording.mp4"
+    source.write_text("fake long media", encoding="utf-8")
+    config = _config()
+    key = preparer._cache_key(source, config)
+    assert key is not None
+    lock = preparer._conform_lock(key)
+    release = threading.Event()
+
+    def fake_long_warm() -> None:
+        with lock:
+            release.wait(timeout=5)
+
+    warm_thread = threading.Thread(target=fake_long_warm, daemon=True)
+    warm_thread.start()
+    for _ in range(500):  # let the fake warm genuinely take the lock first
+        if lock.locked():
+            break
+        time.sleep(0.01)
+    assert lock.locked()
+
+    started = time.monotonic()
+    report = preparer.prepare(_untrimmed_plan(tmp_path), config)
+    elapsed = time.monotonic() - started
+
+    assert lock.locked(), "the warm was still holding the lock for the whole airing"
+    assert elapsed < 1.0
+    assert len(calls) == 1, "the airing ran its OWN conform, it did not wait"
+    # Warm-behind is enqueued by the airing (that is the design), but the job
+    # is never EXECUTED by this airing and this airing never waited for one.
+    assert len(warm_jobs) == 1
+    assert elapsed < 1.0
+    seg = report.source_plan.segments[0]
+    assert "conform-cache" not in seg.path  # its own per-plan file, not the warm's cache object
+    assert Path(seg.path).is_file()
+
+    release.set()
+    warm_thread.join(timeout=5)
