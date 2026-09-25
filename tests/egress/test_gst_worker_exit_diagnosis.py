@@ -309,6 +309,135 @@ def test_child_stderr_tail_recognizes_current_async_retirement_frame(tmp_path: P
     assert "C:\\CivicCast" not in tail
 
 
+# -- U14 F1: the compact clue must name the frame that actually blocked ---------------
+#
+# Both fixtures below are VERBATIM from the live station's
+# ``C:\ProgramData\CivicCast\data\egress\government\logs\gst-worker.stderr.log``
+# (the file the daemon itself read), including the real install path. The dump is
+# the whole point: ``faulthandler`` prints the blocked frame first and its callers
+# beneath it, so the operator-facing line has to pick the INNERMOST engine frame,
+# and which frame that is is decided by ``_RELOAD_FRAME_PRIORITY``'s order, not by
+# the frame's position in the dump.
+#
+# The install path in the U13 report is the same one; keeping the text verbatim is
+# what makes these a regression fixture rather than a paraphrase.
+
+_U14_WEDGE_DUMP_184811 = r"""Thread 0x000020ac (most recent call first):
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\engine.py", line 3468 in _dispose_confirmed_old_leg
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\engine.py", line 3151 in _retire_reload_old_leg
+  File "threading.py", line 1012 in run
+  File "threading.py", line 1075 in _bootstrap_inner
+  File "threading.py", line 1032 in _bootstrap
+
+Current thread 0x0000790c (most recent call first):
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\engine.py", line 2824 in _on_commit_wedged
+  File "threading.py", line 1433 in run
+  File "threading.py", line 1075 in _bootstrap_inner
+  File "threading.py", line 1032 in _bootstrap
+
+Thread 0x00006bfc (most recent call first):
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\worker.py", line 329 in _windows_pipe_read_line
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\worker.py", line 380 in _windows_pipe_reader_loop
+  File "threading.py", line 1012 in run
+  File "threading.py", line 1075 in _bootstrap_inner
+  File "threading.py", line 1032 in _bootstrap
+
+Thread 0x000013d0 (most recent call first):
+  File "threading.py", line 359 in wait
+  File "queue.py", line 180 in get
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\audio_tap.py", line 228 in run
+  File "threading.py", line 1075 in _bootstrap_inner
+  File "threading.py", line 1032 in _bootstrap
+
+Thread 0x00007854 (most recent call first):
+  File "C:\Program Files\CivicCast (Native)\runtime\dependencies\gstreamer\python\gi\overrides\GLib.py", line 497 in run
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\engine.py", line 2077 in run_forever
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\worker.py", line 520 in _run_forever_windows_pipe
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\worker.py", line 564 in main
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\worker.py", line 636 in <module>
+CTRL reload: commit did not finish within 15s - quitting for daemon restart
+"""
+
+# Verbatim likewise, from the same file's line 14796 -- one of the five sibling
+# wedges whose main-loop frame is the selector readback inside
+# ``_confirm_reload_selector_handoff``. Note the dump's 2965 frame is
+# ``<genexpr>``: the generator expression IS the comparison, and 2964 is the
+# enclosing named function. The clue must name the NAME (2964), because
+# ``<genexpr>`` identifies no caller.
+_U14_WEDGE_DUMP_MAIN_LOOP = r"""Thread 0x00007b78 (most recent call first):
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\engine.py", line 2965 in <genexpr>
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\engine.py", line 2964 in _confirm_reload_selector_handoff
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\engine.py", line 3141 in _begin_reload_commit
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\engine.py", line 3029 in _start_reload_commit
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\engine.py", line 2899 in _commit_reload
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\engine.py", line 2720 in _on_old_leg_eos
+  File "C:\Program Files\CivicCast (Native)\runtime\dependencies\gstreamer\python\gi\overrides\GLib.py", line 497 in run
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\engine.py", line 2077 in run_forever
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\worker.py", line 520 in _run_forever_windows_pipe
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\worker.py", line 564 in main
+  File "C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\gst\worker.py", line 636 in <module>
+CTRL reload: commit did not finish within 15s - quitting for daemon restart
+"""
+
+
+def _wedge_tail(dump: str, tmp_path: Path) -> str:
+    daemon = EgressDaemon(
+        InMemoryEgressStore(),
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+    )
+    log_path = tmp_path / "err.log"
+    log_path.write_text(dump, encoding="utf-8")
+    daemon._stderr_logs["gov"] = log_path
+    tail = daemon._child_stderr_tail("gov")
+    assert tail is not None
+    return tail
+
+
+def test_child_stderr_tail_names_the_disposal_frame_that_blocked_the_commit(
+    tmp_path: Path,
+) -> None:
+    """U14 F1, the 2026-09-24 18:48 government wedge.
+
+    The retirement thread is blocked in ``_dispose_confirmed_old_leg`` (engine.py:3468)
+    and its three-line caller ``_retire_reload_old_leg`` (engine.py:3151) sits directly
+    beneath it. The priority list held only the caller, so the state row and
+    control_plane-app.log:22310 named the WAITER -- the frame that names the blocking
+    synchronous selector call was never reachable.
+
+    RED against the pre-U14 pattern (it reported ``_retire_reload_old_leg``).
+    """
+    tail = _wedge_tail(_U14_WEDGE_DUMP_184811, tmp_path)
+
+    # The clue is PREPENDED, so it is what survives the 600-char cap -- measured
+    # here, because a real dump's frames carry full install paths and the eight-line
+    # tail they fill is longer than the cap. The marker line itself may be truncated
+    # away; nothing is lost by that, since the operator's ``last_error`` already
+    # carries "(reload-commit-timeout)" from the relaunch suffix in daemon.py.
+    head = tail.split("|")[0].strip()
+    assert head == "CTRL reload blocked at engine.py:3468 in _dispose_confirmed_old_leg"
+    assert "C:\\Program Files" not in head, "the clue stays path-free"
+    assert len(tail) <= 600
+
+
+def test_child_stderr_tail_names_the_selector_readback_frame(tmp_path: Path) -> None:
+    """The five sibling wedges in the same log block the MAIN LOOP at
+    ``engine.py:2964`` (``selector.get_property("active-pad")``), reached through
+    ``_begin_reload_commit``. Before U14 the priority list had no name for that
+    function, so those exits would report ``_begin_reload_commit`` -- one frame off
+    again, in the direction U13 could only infer.
+
+    The dump's own 2965 frame is ``<genexpr>``, so the reported line is 2964: the
+    named function is the only frame a reader can act on.
+    """
+    tail = _wedge_tail(_U14_WEDGE_DUMP_MAIN_LOOP, tmp_path)
+
+    head = tail.split("|")[0].strip()
+    assert head == "CTRL reload blocked at engine.py:2964 in _confirm_reload_selector_handoff"
+    assert "3141" not in head, "not the caller"
+    assert len(tail) <= 600
+
+
 def test_child_exit_error_still_says_ffmpeg_for_the_ffmpeg_strategy(tmp_path: Path) -> None:
     """Naming the engine must not rename the ffmpeg path -- that message is correct
     there and operators/runbooks match on it."""

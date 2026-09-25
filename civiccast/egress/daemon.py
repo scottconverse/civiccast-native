@@ -214,10 +214,33 @@ _STDERR_TAIL_MAX_CHARS = 600
 _RELOAD_COMMIT_TIMEOUT_MARKER = "CTRL reload: commit did not finish"
 _RELOAD_FRAME_RE = re.compile(
     r'^\s*File ".*[\\/]engine\.py", line (?P<line>\d+) in '
-    r"(?P<function>_dispose_source_leg|_retire_reload_old_leg|"
+    r"(?P<function>_dispose_confirmed_old_leg|_confirm_reload_selector_handoff|"
+    r"_dispose_source_leg|_retire_reload_old_leg|"
     r"_finish_reload_commit|_begin_reload_commit|_commit_reload|_commit_reload_body)\s*$"
 )
+# U14 F1: ordered INNERMOST blocking frame first, because ``_child_stderr_tail``
+# returns the first name in this tuple that appears anywhere in the log -- so a
+# caller listed ahead of its callee wins and sends the reader one frame off.
+#
+# Measured, 2026-09-24 18:48 (U13): the dump puts the retirement thread in
+# ``_dispose_confirmed_old_leg`` (engine.py:3468) with its three-line caller
+# ``_retire_reload_old_leg`` (engine.py:3151) directly beneath it; the tuple held
+# only the caller, so the operator's state row and control-plane-app.log:22310
+# named the waiter -- "blocked at engine.py:3151 in _retire_reload_old_leg" -- and
+# never the synchronous ``release_request_pad`` that actually held the lock.
+# ``_confirm_reload_selector_handoff`` is the twin case: five further watchdog
+# dumps in the same log block the main loop at its ``get_property("active-pad")``
+# readback (engine.py:2964) reached through ``_begin_reload_commit`` (engine.py:3141),
+# and before U14 no name in this tuple matched it at all.
+#
+# The two commit-path frames therefore rank above ``_dispose_source_leg`` (the
+# ABORT path's disposer, kept because beta.5-era evidence used it): a dump can
+# contain both threads' frames, and the marker that gates this whole branch
+# (``_RELOAD_COMMIT_TIMEOUT_MARKER``) is printed by the COMMIT watchdog, so the
+# commit-path frame is the one that answers the question the operator asked.
 _RELOAD_FRAME_PRIORITY = (
+    "_dispose_confirmed_old_leg",
+    "_confirm_reload_selector_handoff",
     "_dispose_source_leg",
     "_retire_reload_old_leg",
     "_finish_reload_commit",
