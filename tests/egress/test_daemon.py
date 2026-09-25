@@ -7789,14 +7789,16 @@ def test_held_prepared_restart_plan_is_released_when_a_newer_one_supersedes_it(
 # land the channel on the closing seconds of the item that is due.
 #
 # Live evidence (government, 2026-09-25 02:58 MDT): the slate -> program reload
-# prepared ONE 9.2s segment of the item whose slot was closing -- the daemon's own
-# stale-horizon WARNING at 02:58:31.968 quotes that plan's end,
-# 2026-09-25T08:58:30.392844+00:00 -- the restart aired it to EOS at 02:58:34.137,
-# and the channel needed a SECOND worker start at 02:58:36.562. Two worker starts
-# and ~8s of dead air to reach a program that was due the whole time.
+# prepared ONE segment covering only the remainder of the item whose slot was
+# closing. The engine reached EOS at 02:58:19,385 while that plan's own end --
+# the daemon's stale-horizon WARNING at 02:58:31.968 quotes it -- was
+# 2026-09-25T08:58:30.392844+00:00, ~11s later. The restart went ON_AIR at
+# 02:58:26,207, aired the stub to EOS at 02:58:34,137, and the channel needed a
+# SECOND worker start, reaching ON_AIR at 02:58:36,574. Two worker starts and
+# ~2.4s of dead air to reach a program that was due the whole time.
 #
 # The tail is structural, not a one-off: with the GStreamer engine selected the
-# production provider is built with max_segments=1 (automation.py:2633), so the
+# production provider is built with max_segments=1 (automation.py:2634), so the
 # plan for a closing slot is always exactly that slot's remainder.
 # ---------------------------------------------------------------------------
 
@@ -7835,10 +7837,11 @@ def test_reload_onto_a_degenerate_schedule_tail_prepares_the_next_item(
     tmp_path: Path,
 ) -> None:
     """U26 defect 2, the live case: a slate -> program reload resolves the item
-    whose slot is closing (9.2s left) and restarts the worker onto it. The
-    restart path itself (F3(b)) is untouched -- but the plan it carries must be
-    the item due where that tail ENDS, so the one restart the channel pays for
-    airs the program the automation asked for instead of a 9-second stub."""
+    whose slot is closing (9.2s left in this fixture; ~11s in the live log) and
+    restarts the worker onto it. The restart path itself (F3(b)) is untouched --
+    but the plan it carries must be the item due where that tail ENDS, so the
+    one restart the channel pays for airs the program the automation asked for
+    instead of the closing item's remainder."""
     store = InMemoryEgressStore()
     store.upsert_config(_config())
     started: list[_FakeProcess] = []

@@ -2639,8 +2639,8 @@ def build_channel_automation(
         # U26: absorb a small schedule gap at the rollover boundary instead of
         # resolving it to filler. The boundary between two items is where this
         # provider's answer decides whether the channel leaves its program at
-        # all -- filler there is what put it on slate and into F3(b)'s
-        # exit-and-restart detour on every switch (reports/U26.md). See
+        # all -- a filler answer there is what puts it on slate and into F3(b)'s
+        # exit-and-restart detour (reports/U26.md). See
         # SCHEDULE_GAP_ABSORB_SECONDS for the size and the reasoning.
         gap_absorb_seconds=SCHEDULE_GAP_ABSORB_SECONDS,
     )

@@ -72,16 +72,25 @@ DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS = 1800.0
 
 #: U26 (2026-09-25): the size of schedule gap this provider will absorb.
 #:
-#: Measured on the live station (2026-09-25; reports/U26.md items 1-2): the
-#: ending item's media runs out a few seconds before its own slot does, the
-#: next item is due 0-7s later, and a plan resolved at that instant used to
-#: come back empty -- the instant falls in the hole between two items. The
-#: rollover then resolved the boundary to filler, the channel left its program
-#: for a slate epoch, and the switch back went through FALLBACK_SLATE's
-#: immediate-reload path (daemon F3(b): worker exit, relay replacement, and the
-#: restart that landed on a stub). Resolving the boundary straight to the item
-#: due within this window removes the slate epoch entirely: the deferred switch
-#: is then program -> program, in-worker, with no exit.
+#: The gap this covers is a HOLE, not a short item: an instant that falls after
+#: one item's window closed and before the next one's opened resolves to
+#: nothing, and the rollover then fills it with filler -- the channel leaves its
+#: program for a slate epoch, and the switch back runs through FALLBACK_SLATE's
+#: immediate-reload path (daemon F3(b): worker exit, relay replacement).
+#: Resolving the boundary straight to the item due within this window removes
+#: the slate epoch entirely: the deferred switch is then program -> program,
+#: in-worker, with no exit. Proven at this provider's boundary by probe
+#: (reports/U26.md item 3): two items 0.5s apart resolve to None at 0.0 and to
+#: the next item, 0.5s early, at 30.0.
+#:
+#: The two archived live incidents (government 02:13 / 02:58 MDT) measured a
+#: related shortfall at a different layer, and this constant is not what
+#: repairs them: the engine reached EOS 10.99s (02:58) and ~9.6s (02:13) before
+#: the CLOSING item's own recorded plan end, and the boundary provider answered
+#: with that still-open item -- no filler plan and no ``target=filler`` rollover
+#: appears in either log. What removed their second restart is the daemon-side
+#: floor below (``daemon._SCHEDULE_TAIL_FLOOR_SECONDS``), which re-resolves 1s
+#: past the closing item's plan end. See reports/U26.md items 1-2.
 #:
 #: ``30.0`` matches ``daemon._SCHEDULE_TAIL_FLOOR_SECONDS``, which refuses to
 #: build a separate leg for a sub-30s remainder at all -- below that size a

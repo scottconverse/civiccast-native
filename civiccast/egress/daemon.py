@@ -299,11 +299,14 @@ _ROLLOVER_EXTENSION_TOLERANCE_S = 0.25
 # U26 defect 2 (live, government, 2026-09-25 02:58 MDT): a reload that resolves
 # the schedule at wall-clock now can land on the CLOSING SECONDS of the item
 # that is due. With the GStreamer engine selected the production provider is
-# built with ``max_segments=1`` (automation.py:2633), so the plan for a slot
-# with 9.2s left is one 9.2s segment -- legal, prepared, and aired to EOS, after
-# which the channel needs a SECOND worker start to reach the program that was
-# due the whole time (measured: restart onto the 9.2s stub at 02:58:26.179, EOS
-# at 02:58:34.137, relaunch at 02:58:36.562, ~8s of dead air in between).
+# built with ``max_segments=1`` (automation.py:2634), so the plan for that slot
+# is one segment covering only its remainder -- legal, prepared, and aired to
+# EOS, after which the channel needs a SECOND worker start to reach the program
+# that was due the whole time. The log pins the shape: the engine reached EOS at
+# 02:58:19,385 for a plan whose own recorded end was 02:58:30.392844Z (~11s of
+# slot left), the restart onto that stub went ON_AIR at 02:58:26,207, the stub
+# itself ran to EOS at 02:58:34,137, and the next worker only reached ON_AIR at
+# 02:58:36,574.
 #
 # Below this floor a tail is not worth the restart that installs it. Landing a
 # restart costs ~10s end to end on this box (prepare ~2.2s + [terminate + exit

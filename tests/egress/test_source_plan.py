@@ -1282,8 +1282,9 @@ def test_a_boundary_past_a_closing_slot_resolves_the_next_scheduled_item(
     _SCHEDULE_TAIL_BOUNDARY_MARGIN_S). For that to land the channel on the
     program it was asked for, the item whose slot is closing must be gone at
     that instant and the NEXT published item must be the one that resolves --
-    proven here against the real provider with the live case's numbers: a
-    300s slot with 9.2s left, boundary taken 10.2s past the tail's start.
+    proven here against the real provider: a 300s slot with 9.2s left (the
+    fixture's stand-in for the live log's ~11s remainder), boundary taken 10.2s
+    past the tail's start.
     """
     media = tmp_path / "program.ts"
     media.write_text("fake", encoding="utf-8")
@@ -1315,7 +1316,7 @@ def test_a_boundary_past_a_closing_slot_resolves_the_next_scheduled_item(
         asset_resolver=assets.get,
         now_provider=lambda: tail_now,
         # The production wiring with the GStreamer engine selected
-        # (automation.py:2633), which is what makes a closing slot resolve to a
+        # (automation.py:2634), which is what makes a closing slot resolve to a
         # bare tail in the first place.
         max_segments=1,
     )
@@ -1336,15 +1337,21 @@ def test_a_boundary_past_a_closing_slot_resolves_the_next_scheduled_item(
 
 
 # --------------------------------------------------------------------------
-# U26 gap absorb (reports/U26.md item 2, Option D). Live evidence, 2026-09-25:
-# the ending item's media ran out a few seconds before its own slot did, the
-# next item was due 0-7s later, and every boundary in that small gap resolved
-# to no plan at all. Automation rolled the channel onto filler, the channel
-# left its program for a slate epoch, and the switch back went through
-# FALLBACK_SLATE's immediate-reload path (daemon F3(b): worker exit, relay
-# replacement, restart onto a stub). gap_absorb_seconds resolves the boundary
-# straight to the item due within the window, so the deferred switch is
+# U26 gap absorb (reports/U26.md item 3, Option D). The case it covers is a
+# HOLE in the schedule: an instant that falls after one item's window closed and
+# before the next one's opened resolves to no plan at all. Automation then fills
+# that hole with filler, the channel leaves its program for a slate epoch, and
+# the switch back goes through FALLBACK_SLATE's immediate-reload path (daemon
+# F3(b): worker exit, relay replacement). gap_absorb_seconds resolves the
+# boundary straight to the item due within the window, so the deferred switch is
 # program -> program, in-worker, with no exit.
+#
+# The two archived live incidents (government, 2026-09-25 02:13 / 02:58 MDT)
+# were NOT that case: their closing item's own plan end was still ~9.6s / ~11.0s
+# away when the engine reached EOS, and the boundary provider answered with that
+# still-open item -- neither log contains a `target=filler` rollover. What
+# repaired them is the daemon's tail floor, not this constant. See
+# reports/U26.md items 1-2.
 # --------------------------------------------------------------------------
 
 
