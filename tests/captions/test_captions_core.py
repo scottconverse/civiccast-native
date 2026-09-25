@@ -1065,6 +1065,138 @@ class TestRuntimeBoundary:
             (w.text, w.start_seconds, w.end_seconds, w.confidence) for w in hypothesis.words
         ] == [(" motion", 10.25, 11.2, 0.8), (" carries", 11.2, 12.5, 0.7)]
 
+    def test_live_runtime_hands_16khz_pcm_to_the_model_as_a_float32_array(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The live tap's 16 kHz chunk reaches the model as PCM, not as a WAV path.
+
+        U33 measured the temporary-WAV round-trip as the live path's largest
+        pure-CPU stage -- 48.8 ms per window with one caller, 302.3 ms per
+        window with the tap's three channel threads in flight (6.2x, because
+        every byte of it holds the GIL) -- for a file the process itself just
+        wrote at 16 kHz.  ``faster_whisper.audio.decode_audio`` converts
+        little-endian signed 16-bit samples with ``astype(np.float32) /
+        32768.0``, so the chunk is already the array the decoder would have
+        produced.
+        """
+
+        runtime = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
+        seen: list[Any] = []
+
+        def transcribe(*args: Any, **kwargs: Any) -> tuple[list[Any], object]:
+            seen.append(args[0])
+            return (
+                [
+                    SimpleNamespace(
+                        start=0.0,
+                        end=1.0,
+                        text="motion carries",
+                        avg_logprob=-0.1,
+                        no_speech_prob=0.2,
+                    )
+                ],
+                object(),
+            )
+
+        def _refuse_temp_directory(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("the live tap must not write a temporary WAV for a 16 kHz chunk")
+
+        runtime._model = SimpleNamespace(transcribe=transcribe)
+        monkeypatch.setattr(runtime_module, "TemporaryDirectory", _refuse_temp_directory)
+        chunk = AudioChunk(
+            chunk_id="chunk-16k",
+            start_seconds=0.0,
+            end_seconds=0.001,
+            sample_rate_hz=16_000,
+            pcm_s16le=(
+                b"\x00\x00"  # 0
+                b"\x01\x00"  # 1
+                b"\xff\xff"  # -1
+                b"\x00\x40"  # 16384
+                b"\x00\xc0"  # -16384
+                b"\x00\x80"  # -32768
+                b"\xff\x7f"  # 32767
+            ),
+        )
+
+        hypotheses = list(runtime.transcribe([chunk]))
+
+        assert len(seen) == 1
+        source = seen[0]
+        assert not isinstance(source, str), (
+            "a 16 kHz live chunk must reach the model as a float32 PCM array, "
+            f"not a file path; got {source!r}"
+        )
+        assert str(getattr(source, "dtype", None)) == "float32"
+        assert list(source) == pytest.approx(
+            [0.0, 1 / 32768, -1 / 32768, 0.5, -0.5, -1.0, 32767 / 32768]
+        )
+        assert hypotheses[0].text == "motion carries"
+        assert (hypotheses[0].start_seconds, hypotheses[0].end_seconds) == (0.0, 1.0)
+
+    def test_live_runtime_keeps_the_wav_round_trip_for_a_non_16khz_chunk(self) -> None:
+        """Only the passthrough rate skips the decoder; a 48 kHz chunk needs it."""
+
+        runtime = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
+        seen: list[Any] = []
+
+        def transcribe(*args: Any, **kwargs: Any) -> tuple[list[Any], object]:
+            seen.append(args[0])
+            return (
+                [
+                    SimpleNamespace(
+                        start=0.0,
+                        end=1.0,
+                        text="motion carries",
+                        avg_logprob=-0.1,
+                        no_speech_prob=0.2,
+                    )
+                ],
+                object(),
+            )
+
+        runtime._model = SimpleNamespace(transcribe=transcribe)
+        chunk = AudioChunk(
+            chunk_id="chunk-48k",
+            start_seconds=0.0,
+            end_seconds=0.01,
+            sample_rate_hz=48_000,
+            pcm_s16le=b"\x00\x00" * 480,
+        )
+
+        list(runtime.transcribe([chunk]))
+
+        assert isinstance(seen[0], str)
+        assert seen[0].endswith(".wav")
+
+    def test_batch_runtime_keeps_the_wav_round_trip(self) -> None:
+        """The batch/VOD path is deliberately untouched by the live-tap change."""
+
+        runtime = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=False)
+        seen: list[Any] = []
+
+        def transcribe(*args: Any, **kwargs: Any) -> tuple[list[Any], object]:
+            seen.append(args[0])
+            return (
+                [
+                    SimpleNamespace(
+                        start=0.0,
+                        end=1.0,
+                        text="motion carries",
+                        avg_logprob=-0.1,
+                        no_speech_prob=0.2,
+                    )
+                ],
+                object(),
+            )
+
+        runtime._model = SimpleNamespace(transcribe=transcribe)
+
+        list(runtime.transcribe([self._audio_chunk()]))
+
+        assert isinstance(seen[0], str)
+        assert seen[0].endswith(".wav")
+
     def test_whisper_cpp_runtime_fails_closed_when_pack_files_are_missing(
         self,
         tmp_path: Path,

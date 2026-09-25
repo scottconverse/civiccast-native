@@ -10,7 +10,8 @@ import os
 import subprocess
 import threading
 import wave
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from math import exp
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -159,6 +160,35 @@ CAPTION_TAP_CPU_THREADS_ENV_VAR = "CIVICCAST_CAPTION_TAP_CPU_THREADS"
 #: seconds of wall time against a 5-second segment cadence.  CPU live captions
 #: deliberately stay at one worker so playout keeps the machine.
 LIVE_TAP_CUDA_NUM_WORKERS = 3
+
+#: Sample rate at which a LIVE chunk's raw PCM is handed to faster-whisper
+#: directly, instead of being written to a temporary WAV and decoded back.
+#:
+#: The temporary-WAV round-trip buys exactly one thing: a call to
+#: ``faster_whisper.audio.decode_audio``, which opens the file with PyAV,
+#: resamples it to 16 kHz mono s16le, converts the samples back with
+#: ``astype(np.float32) / 32768.0`` and then runs an explicit ``gc.collect()``
+#: per call (the library's own comment: "this slows down loading the audio a
+#: little bit"). MEASURED, U33, three-channel reference station (RTX 5070 Ti,
+#: ``medium``/float16, 10 s windows advancing 5 s, 39-window corpus): that
+#: stage is 49.7 ms per window with one caller in flight and 98.3 ms per
+#: window with the live tap's three channel threads in flight -- 1.98x
+#: inflation, 1.94 s -> 3.83 s across the same windows, because every byte of
+#: it is Python/GIL work the channel threads contend for. It is the largest
+#: *pure-CPU* stage in the live path: at three-way concurrency the other CPU
+#: stages are VAD 40.1 ms, word alignment 28.4 ms, feature extraction 19.4 ms
+#: and the WAV write 1.1 ms per window. Removing the round-trip measured
+#: 1817.5 ms -> 1630.6 ms mean and 1879.9 ms -> 1609.4 ms median per window
+#: across the three channels, with the emitted word spans identical to the
+#: unmodified path on 24 of 24 windows (U33 b9, arm ``array``).
+#:
+#: A 16 kHz mono s16le chunk needs none of it. Its samples are already
+#: little-endian signed 16-bit at this rate, so the conversion the decoder
+#: would have performed is exactly what
+#: :func:`_pcm_s16le_to_whisper_audio` does. Any other rate still needs the
+#: resampler and keeps the temporary-WAV path, as does every batch/VOD chunk,
+#: which has no real-time cadence to miss.
+LIVE_TAP_PCM_PASSTHROUGH_RATE_HZ = 16_000
 
 
 def default_live_tap_cpu_threads() -> int:
@@ -885,25 +915,58 @@ class FasterWhisperRuntime:
                         )
         return self._model
 
+    @contextmanager
+    def _chunk_audio_source(self, chunk: AudioChunk) -> Iterator[Any]:
+        """Yield the audio source to hand the model for one chunk.
+
+        A LIVE chunk already at :data:`LIVE_TAP_PCM_PASSTHROUGH_RATE_HZ` is
+        converted straight from its own samples -- see that constant's
+        docstring for the measurement. Everything else is written to a
+        temporary WAV for faster-whisper to decode, which is every batch/VOD
+        chunk and any live chunk at another rate (the resampler is the whole
+        point there). When there is a temporary directory, it lives exactly as
+        long as the model call inside the ``with`` body.
+        """
+
+        if self._live and chunk.sample_rate_hz == LIVE_TAP_PCM_PASSTHROUGH_RATE_HZ:
+            yield _pcm_s16le_to_whisper_audio(chunk.pcm_s16le)
+            return
+
+        with TemporaryDirectory(prefix="civiccast-caption-") as temp_dir:
+            wav_path = Path(temp_dir) / "chunk.wav"
+            _write_pcm_chunk_wav(chunk, wav_path)
+            yield str(wav_path)
+
+    def _transcribe_source(self, source: Any, *, initial_prompt: str | None) -> Iterable[Any]:
+        """Hand one audio source to the model; return its segment iterator.
+
+        The single place the live and batch/VOD paths state their model
+        settings. ``source`` is whatever faster-whisper accepts: a filesystem
+        path for the batch/VOD path and for a live chunk that is not at
+        :data:`LIVE_TAP_PCM_PASSTHROUGH_RATE_HZ`, or a float32 PCM array for a
+        live chunk that is (:func:`_pcm_s16le_to_whisper_audio`).
+        """
+
+        segments: Iterable[Any]
+        segments, _info = self._model_instance().transcribe(
+            source,
+            beam_size=self.beam_size,
+            language=self.language,
+            task=self.task,
+            vad_filter=self.vad_filter,
+            initial_prompt=initial_prompt,
+            **({"word_timestamps": True} if self._live else {}),
+        )
+        return segments
+
     def _transcribe_chunk(
         self,
         chunk: AudioChunk,
         *,
         initial_prompt: str | None,
     ) -> Iterable[CaptionHypothesis]:
-        with TemporaryDirectory(prefix="civiccast-caption-") as temp_dir:
-            wav_path = Path(temp_dir) / "chunk.wav"
-            _write_pcm_chunk_wav(chunk, wav_path)
-
-            segments, _info = self._model_instance().transcribe(
-                str(wav_path),
-                beam_size=self.beam_size,
-                language=self.language,
-                task=self.task,
-                vad_filter=self.vad_filter,
-                initial_prompt=initial_prompt,
-                **({"word_timestamps": True} if self._live else {}),
-            )
+        with self._chunk_audio_source(chunk) as source:
+            segments = self._transcribe_source(source, initial_prompt=initial_prompt)
 
             live_segments: list[CaptionHypothesis] = []
             live_words: list[CaptionWord] = []
@@ -965,6 +1028,25 @@ def _load_whisper_model_class() -> Any:
             "runtime compatibility before enabling live captions."
         ) from exc
     return WhisperModel
+
+
+def _pcm_s16le_to_whisper_audio(pcm_s16le: bytes) -> Any:
+    """Return the float32 [-1, 1] array faster-whisper's decoder would have.
+
+    Byte-for-byte the arithmetic ``decode_audio`` performs once PyAV has
+    decoded and resampled a file (``faster_whisper/audio.py``:
+    ``audio.astype(np.float32) / 32768.0`` over little-endian signed 16-bit
+    samples), for audio already mono and at
+    :data:`LIVE_TAP_PCM_PASSTHROUGH_RATE_HZ`.
+
+    ``numpy`` arrives with the optional caption runtime, not with CivicCast
+    itself, so it is imported here rather than at module scope -- the same
+    laziness :func:`_load_whisper_model_class` applies to faster-whisper.
+    """
+
+    import numpy as np
+
+    return np.frombuffer(pcm_s16le, dtype="<i2").astype(np.float32) / 32768.0
 
 
 def _write_pcm_chunk_wav(chunk: AudioChunk, output_path: Path) -> None:
