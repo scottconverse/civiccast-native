@@ -8,11 +8,15 @@ from pathlib import Path
 import pytest
 
 from civiccast.captions.models import CaptionCue
+from civiccast.egress import caption_embed
 from civiccast.egress.caption_embed import (
+    _ACTIVE_VTT_READ_ATTEMPTS,
+    _ACTIVE_VTT_READ_BACKOFF_SECONDS,
     CAPTION_EMBED_PROOF_BOUNDARY,
     PassThroughCaptionEmbedder,
     SidecarCaptionEmbedder,
     evaluate_caption_decode_back,
+    load_caption_cues_from_timed_text,
     parse_caption_cues_from_timed_text,
 )
 
@@ -183,3 +187,95 @@ Second valid cue.
     assert [cue.text for cue in cues] == ["First valid cue.", "Second valid cue."]
     assert [cue.start_seconds for cue in cues] == [1.0, 4.0]
     assert [cue.end_seconds for cue in cues] == [2.5, 5.5]
+
+
+# --- U21 B3: reading a live sidecar while the tap republishes it --------------------
+#
+# The caption tap publishes ``captions/active.vtt`` with an atomic replace
+# (``LiveWebVttPublisher`` -> ``live_sidecar._atomic_write_text``). On Windows a
+# reader whose open lands inside that rename window is refused with
+# ``PermissionError`` rather than serialized against it, which is the live
+# 23:44:45 / 23:45:29 defect: the file was there, being swapped, and the read
+# failed. These tests pin the bounded retry and, just as importantly, its bound.
+
+
+_WEBVTT = "WEBVTT\n\n00:00:01.000 --> 00:00:02.500\nMotion carries.\n"
+
+
+def _sharing_violation() -> PermissionError:
+    return PermissionError(
+        32, "The process cannot access the file because it is being used by another process"
+    )
+
+
+def test_load_caption_cues_retries_a_sharing_violation_and_succeeds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sidecar = tmp_path / "active.vtt"
+    sidecar.write_text(_WEBVTT, encoding="utf-8")
+    real_read_text = Path.read_text
+    attempts: list[Path] = []
+
+    def read_text(self: Path, *args: object, **kwargs: object) -> str:
+        attempts.append(self)
+        if len(attempts) < _ACTIVE_VTT_READ_ATTEMPTS:
+            raise _sharing_violation()
+        return real_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    sleeps: list[float] = []
+    monkeypatch.setattr(caption_embed.time, "sleep", sleeps.append)
+
+    cues = load_caption_cues_from_timed_text(sidecar, source_id="gov")
+
+    assert [cue.text for cue in cues] == ["Motion carries."]
+    assert len(attempts) == _ACTIVE_VTT_READ_ATTEMPTS
+    assert attempts == [sidecar] * _ACTIVE_VTT_READ_ATTEMPTS
+    assert sleeps == [_ACTIVE_VTT_READ_BACKOFF_SECONDS] * (_ACTIVE_VTT_READ_ATTEMPTS - 1)
+
+
+def test_load_caption_cues_raises_a_permanent_sharing_violation_instead_of_reporting_no_cues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The retry is bounded, and a permanent refusal must not read as "no cues"."""
+    sidecar = tmp_path / "active.vtt"
+    sidecar.write_text(_WEBVTT, encoding="utf-8")
+    attempts: list[Path] = []
+
+    def read_text(self: Path, *args: object, **kwargs: object) -> str:
+        attempts.append(self)
+        raise _sharing_violation()
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    sleeps: list[float] = []
+    monkeypatch.setattr(caption_embed.time, "sleep", sleeps.append)
+
+    with pytest.raises(PermissionError) as raised:
+        load_caption_cues_from_timed_text(sidecar, source_id="gov")
+
+    assert "being used by another process" in str(raised.value)
+    assert len(attempts) == _ACTIVE_VTT_READ_ATTEMPTS
+    assert sleeps == [_ACTIVE_VTT_READ_BACKOFF_SECONDS] * (_ACTIVE_VTT_READ_ATTEMPTS - 1)
+
+
+def test_load_caption_cues_does_not_retry_a_non_sharing_read_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only a sharing violation is a one-rename-wide race. Any other read failure
+    is a real answer about the file and must surface on the first attempt."""
+    sidecar = tmp_path / "active.vtt"
+    attempts: list[Path] = []
+
+    def read_text(self: Path, *args: object, **kwargs: object) -> str:
+        attempts.append(self)
+        raise IsADirectoryError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    sleeps: list[float] = []
+    monkeypatch.setattr(caption_embed.time, "sleep", sleeps.append)
+
+    with pytest.raises(IsADirectoryError):
+        load_caption_cues_from_timed_text(sidecar, source_id="gov")
+
+    assert len(attempts) == 1
+    assert sleeps == []
