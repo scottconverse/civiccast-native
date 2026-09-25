@@ -1270,6 +1270,7 @@ class TestPlanWindow:
             for record in caplog.records
         )
 
+
 def test_a_boundary_past_a_closing_slot_resolves_the_next_scheduled_item(
     tmp_path: Path,
 ) -> None:
@@ -1287,9 +1288,9 @@ def test_a_boundary_past_a_closing_slot_resolves_the_next_scheduled_item(
     media.write_text("fake", encoding="utf-8")
     start = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
     items = [
-        _schedule_item(
-            asset_id="weather", scheduled_at=start, duration_seconds=300
-        ).model_copy(update={"asset_title": "Longmont Weather :16"}),
+        _schedule_item(asset_id="weather", scheduled_at=start, duration_seconds=300).model_copy(
+            update={"asset_title": "Longmont Weather :16"}
+        ),
         _schedule_item(
             asset_id="council",
             scheduled_at=start + timedelta(seconds=300),

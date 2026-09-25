@@ -7783,6 +7783,7 @@ def test_held_prepared_restart_plan_is_released_when_a_newer_one_supersedes_it(
     assert run.released == [tmp_path / "plan-1"]
     assert run.daemon.live_prepared_plan_dirs("gov") == frozenset({newer_dir})
 
+
 # ---------------------------------------------------------------------------
 # U26 defect 2: a reload that resolves the schedule at wall-clock NOW must not
 # land the channel on the closing seconds of the item that is due.
