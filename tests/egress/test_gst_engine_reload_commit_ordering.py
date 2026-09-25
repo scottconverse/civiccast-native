@@ -22,9 +22,12 @@ and the independent commit-watchdog thread."""
 from __future__ import annotations
 
 import importlib
+import os
+import subprocess
 import sys
 import threading
 import types
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -63,6 +66,10 @@ class _FakePadProbeType:
 class _FakePadProbeReturn:
     OK = "OK"
     DROP = "DROP"
+    # U16: the one-shot first-buffer observers remove themselves from the pad.
+    # (The reload-readiness tests at (5) assign this attribute locally; having it
+    # on the class as well is purely additive.)
+    REMOVE = "REMOVE"
 
 
 class _FakeMessageType:
@@ -70,8 +77,18 @@ class _FakeMessageType:
     EOS = "EOS"
 
 
+class _FakeFormat:
+    TIME = "TIME"
+
+
+class _FakeEventType:
+    SEGMENT = "SEGMENT"
+    EOS = "EOS"
+
+
 class _FakeIteratorResult:
     OK = "OK"
+    DONE = "DONE"
 
 
 class _FakeElementIterator:
@@ -289,13 +306,161 @@ class _FakeEvent:
         return "FLUSH_START"
 
 
+# --- U16 diagnostics: pads, segments and buffers a streaming thread would see ---
+
+_CLOCK_TIME_NONE = (1 << 64) - 1
+
+
+class _FakeSegment:
+    """Minimal ``GstSegment`` whose ``to_running_time`` answers from a table.
+
+    What these tests assert through it is the diagnostic's PLUMBING -- whatever
+    this object answers is what gets printed -- never a claim about GStreamer's
+    own ``set_offset`` segment arithmetic. That arithmetic is measured on a real
+    packaged pipeline in section (7) at the end of this module.
+    """
+
+    def __init__(self, *, base: int, running_time_for_pts: dict[int, int]) -> None:
+        self.base = base
+        self._running_time_for_pts = running_time_for_pts
+
+    def to_running_time(self, fmt: Any, pts: int) -> int:
+        assert fmt == _FakeFormat.TIME
+        return self._running_time_for_pts.get(pts, _CLOCK_TIME_NONE)
+
+
+class _FakeStickyEvent:
+    def __init__(self, segment: _FakeSegment) -> None:
+        self._segment = segment
+
+    def parse_segment(self) -> _FakeSegment:
+        return self._segment
+
+
+class _FakeProbeBuffer:
+    def __init__(self, pts: int, duration: int = 0) -> None:
+        self.pts = pts
+        self.duration = duration
+
+
+class _FakeProbeInfo:
+    def __init__(self, buffer: Any) -> None:
+        self._buffer = buffer
+
+    def get_buffer(self) -> Any:
+        return self._buffer
+
+
+class _FakeClock:
+    def __init__(self, clock_time_ns: int) -> None:
+        self._clock_time_ns = clock_time_ns
+
+    def get_time(self) -> int:
+        return self._clock_time_ns
+
+
+class _FakeClockPipeline(_FakePipeline):
+    """A pipeline whose own running time the diagnostics can actually read."""
+
+    def __init__(self, recorder: _Recorder, *, clock_time_ns: int, base_time_ns: int = 0) -> None:
+        super().__init__(recorder)
+        self._clock = _FakeClock(clock_time_ns)
+        self._base_time_ns = base_time_ns
+
+    def get_clock(self) -> _FakeClock:
+        return self._clock
+
+    def get_base_time(self) -> int:
+        return self._base_time_ns
+
+
+class _FakeDiagnosticPad:
+    """A new-leg tail src pad / mux sink pad as the U16 diagnostics see it.
+
+    ``add_probe`` takes the callback ALONE -- the real ``Gst.Pad.add_probe``
+    signature minus its optional user_data, which is exactly how production arms
+    these probes, so a test can fire the recorded callback the way a streaming
+    thread would."""
+
+    def __init__(
+        self,
+        name: str,
+        recorder: _Recorder,
+        *,
+        sticky: Any = None,
+        caps: str | None = None,
+    ) -> None:
+        self.name = name
+        self.recorder = recorder
+        self.sticky = sticky
+        self.caps = caps
+        self.probes: list[tuple[Any, Any]] = []
+
+    def get_name(self) -> str:
+        return self.name
+
+    def add_probe(self, mask: Any, callback: Any) -> str:
+        self.recorder.calls.append(f"add_probe:{self.name}:{mask}:{callback.__name__}")
+        self.probes.append((mask, callback))
+        return f"{self.name}-probe-{mask}"
+
+    def remove_probe(self, probe_id: Any) -> None:
+        self.recorder.calls.append(f"remove_probe:{self.name}:{probe_id}")
+
+    def set_offset(self, offset: int) -> None:
+        self.recorder.calls.append(f"set_offset:{self.name}:{offset}")
+
+    def get_sticky_event(self, event_type: Any, index: int) -> Any:
+        self.recorder.calls.append(f"get_sticky_event:{self.name}:{event_type}:{index}")
+        return self.sticky
+
+    def get_current_caps(self) -> Any:
+        if self.caps is None:
+            return None
+        return types.SimpleNamespace(to_string=lambda: self.caps)
+
+
+class _FakePadIterator:
+    """``iterate_sink_pads()`` over a fixed pad list, then a DONE result."""
+
+    def __init__(self, pads: list[Any]) -> None:
+        self._pads = list(pads)
+        self._index = 0
+
+    def next(self) -> tuple[Any, Any]:
+        if self._index >= len(self._pads):
+            return _FakeIteratorResult.DONE, None
+        pad = self._pads[self._index]
+        self._index += 1
+        return _FakeIteratorResult.OK, pad
+
+
+class _FakeMux:
+    def __init__(self, pads: list[Any]) -> None:
+        self._pads = pads
+
+    def iterate_sink_pads(self) -> _FakePadIterator:
+        return _FakePadIterator(self._pads)
+
+
 def _install_fake_gst() -> types.ModuleType:
     fake_gst = types.ModuleType("gi.repository.Gst")
     fake_gst.State = _FakeState  # type: ignore[attr-defined]
     fake_gst.StateChangeReturn = _FakeStateChangeReturn  # type: ignore[attr-defined]
     fake_gst.MessageType = _FakeMessageType  # type: ignore[attr-defined]
     fake_gst.IteratorResult = _FakeIteratorResult  # type: ignore[attr-defined]
-    fake_gst.SECOND = 1  # type: ignore[attr-defined]
+    fake_gst.SECOND = 1_000_000_000  # type: ignore[attr-defined]
+    # U16: the diagnostics read ``Gst.Format.TIME``, ``Gst.EventType``,
+    # ``Gst.CLOCK_TIME_NONE`` and ``Gst.MSECOND``. This fake omitted them only
+    # because no test had reached those paths before -- adding them is additive.
+    # ``SECOND`` was 1 (a placeholder that made any ``x / Gst.SECOND`` print raw
+    # nanoseconds); U16 is the first line whose ASSERTED value is a seconds
+    # rendering, so it now carries the real nanosecond count. Offsets stay
+    # nanosecond ints either way -- only the printed form changes.
+    fake_gst.MSECOND = 1_000_000  # type: ignore[attr-defined]
+    fake_gst.CLOCK_TIME_NONE = _CLOCK_TIME_NONE  # type: ignore[attr-defined]
+    fake_gst.Format = _FakeFormat  # type: ignore[attr-defined]
+    fake_gst.EventType = _FakeEventType  # type: ignore[attr-defined]
     fake_gst.PadProbeType = _FakePadProbeType  # type: ignore[attr-defined]
     fake_gst.PadProbeReturn = _FakePadProbeReturn  # type: ignore[attr-defined]
     fake_gst.Event = _FakeEvent  # type: ignore[attr-defined]
@@ -2240,3 +2405,542 @@ def test_abort_settles_the_caller_without_waiting_for_retirement(engine_module) 
         thread.join(timeout=5.0)
 
     assert results == [(False, "timeout")]
+
+
+# --- (6) U16: the rebase reference and the first-buffer observations ------------
+#
+# U16's blocker was that a live one-sided A/V step could not be DECOMPOSED from
+# the logs. The shared rebase reference is printed (``finite switch rebased to
+# running time``) but its inputs -- each outgoing pad's own end -- are not, and
+# nothing reported what the new leg's first buffer actually became once the
+# offset had been applied. These tests pin the always-on diagnostics that make
+# the next occurrence decomposable. They assert the diagnostics' WIRING and
+# FORMAT; the numeric claim about GStreamer's own ``set_offset`` arithmetic is
+# measured on a real packaged pipeline in section (7).
+
+
+def _u16_pending(
+    recorder: _Recorder, *, txn_id: int = 28, switch_at_end_of_current: bool = False
+) -> tuple[dict[str, Any], _FakeDiagnosticPad, _FakeDiagnosticPad]:
+    """A finite (rebase) commit whose outgoing ends and new-leg pads a test owns."""
+    video_segment = _FakeSegment(
+        base=1_100_000_000, running_time_for_pts={5_000_000_000: 6_100_000_000}
+    )
+    audio_segment = _FakeSegment(
+        base=1_100_000_000, running_time_for_pts={5_000_000_000: 6_120_000_000}
+    )
+    new_video_src = _FakeDiagnosticPad(
+        "new-video-src", recorder, sticky=_FakeStickyEvent(video_segment)
+    )
+    new_audio_src = _FakeDiagnosticPad(
+        "new-audio-src", recorder, sticky=_FakeStickyEvent(audio_segment)
+    )
+    old_video_pad = _FakeOldPad("old-video", recorder, peer=None)
+    old_audio_pad = _FakeOldPad("old-audio", recorder, peer=None)
+    pending: dict[str, Any] = {
+        "txn_id": txn_id,
+        "timeout_id": None,
+        "defer_timeout_id": None,
+        "new_video_pad": object(),
+        "new_audio_pad": object(),
+        "new_elements": [],
+        "new_src_pads": [new_video_src, new_audio_src],
+        "hold_probes": [(new_video_src, "video-hold"), (new_audio_src, "audio-hold")],
+        "old_video_pad": old_video_pad,
+        "old_audio_pad": old_audio_pad,
+        "old_elements": [],
+        "outgoing_end": {
+            old_video_pad: {"end": 1_000_000_000, "segment": None},
+            old_audio_pad: {"end": 1_100_000_000, "segment": None},
+        },
+        "rebase_new_leg": True,
+        "switch_at_end_of_current": switch_at_end_of_current,
+        "old_tail_drop_probes": [],
+        "commit_in_progress": True,
+    }
+    return pending, new_video_src, new_audio_src
+
+
+def test_u16_rebase_reference_line_names_every_outgoing_end(engine_module) -> None:
+    """The line that decomposes the next one-sided step: each pad's OWN end."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending, _video, _audio = _u16_pending(recorder)
+
+    line = engine._rebase_reference_diagnostic(
+        pending,
+        switch_running_time=1_100_000_000,
+        rebase_fallback=False,
+        pipeline_running_time_ms=None,
+    )
+
+    assert line == (
+        "CTRL reload diagnostic: rebase-reference reload_id=28 mode=immediate "
+        "streams=2 fallback=no ends=[video=1.000,audio=1.100] "
+        "pipeline_running_time=none switch_running_time=1.100"
+    )
+
+
+def test_u16_rebase_reference_line_marks_the_fallback_and_a_missing_end(
+    engine_module,
+) -> None:
+    """No observed end (a leg that EOS'd at once) is named, not silently dropped."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending, _video, _audio = _u16_pending(recorder, txn_id=4, switch_at_end_of_current=True)
+    pending["outgoing_end"] = {
+        pad: {"end": None, "segment": None}
+        for pad in (pending["old_video_pad"], pending["old_audio_pad"])
+    }
+
+    line = engine._rebase_reference_diagnostic(
+        pending,
+        switch_running_time=1_799_412_000_000,
+        rebase_fallback=True,
+        pipeline_running_time_ms=1_799_412,
+    )
+
+    assert line == (
+        "CTRL reload diagnostic: rebase-reference reload_id=4 mode=deferred "
+        "streams=2 fallback=yes ends=[video=none,audio=none] "
+        "pipeline_running_time=1799.412 switch_running_time=1799.412"
+    )
+
+
+def test_u16_commit_arms_the_new_leg_observation_before_it_releases_the_holds(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One self-removing first-buffer probe per new-leg stream, armed in the
+    window between the offset and the hold release.
+
+    Arming there is what makes the observation race-free: the leg's first buffer
+    cannot flow until ``_release_hold_probes`` lifts the block, so every buffer
+    the probe can see already carries the rebase offset."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending, new_video_src, new_audio_src = _u16_pending(recorder)
+    engine._pending_reload = pending
+    engine._prepare_reload_handoff(pending)
+
+    engine._begin_reload_commit(pending)
+
+    calls = recorder.calls
+    video_offset = _index_of(calls, "set_offset:new-video-src:1100000000")
+    audio_offset = _index_of(calls, "set_offset:new-audio-src:1100000000")
+    arm_video = _index_of(calls, "add_probe:new-video-src:1:_report_new_leg_first_buffer")
+    arm_audio = _index_of(calls, "add_probe:new-audio-src:1:_report_new_leg_first_buffer")
+    release_video = _index_of(calls, "remove_probe:new-video-src:video-hold")
+    release_audio = _index_of(calls, "remove_probe:new-audio-src:audio-hold")
+    assert max(video_offset, audio_offset) < min(arm_video, arm_audio), calls
+    assert max(arm_video, arm_audio) < min(release_video, release_audio), calls
+
+    err = capsys.readouterr().err
+    assert (
+        "CTRL reload diagnostic: rebase-reference reload_id=28 mode=immediate "
+        "streams=2 fallback=no ends=[video=1.000,audio=1.100] "
+        "pipeline_running_time=none switch_running_time=1.100"
+    ) in err
+
+    # Fire each recorded new-leg probe the way the leg's own streaming thread
+    # would: that stream's first buffer, after the offset is applied.
+    for pad, label, running in (
+        (new_video_src, "video", "running_time=6.100"),
+        (new_audio_src, "audio", "running_time=6.120"),
+    ):
+        mask, callback = pad.probes[0]
+        assert mask == 1, f"expected Gst.PadProbeType.BUFFER, got {mask}"
+        assert callback(pad, _FakeProbeInfo(_FakeProbeBuffer(5_000_000_000))) == (
+            engine_module.Gst.PadProbeReturn.REMOVE
+        )
+        assert (
+            f"CTRL reload diagnostic: new-leg-first-buffer stream={label} reload_id=28 "
+            f"applied_offset=1.100 pts=5.000 {running} segment_base=1.100"
+        ) in capsys.readouterr().err
+
+
+def test_u16_commit_reports_the_pipeline_time_fallback_when_nothing_was_observed(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The fallback reference is named as the fallback, with the pipeline's own
+    running time beside it -- that is how a ``5069.451s``-style line becomes
+    checkable against the worker's uptime."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.pipeline = _FakeClockPipeline(recorder, clock_time_ns=1_799_412_000_000)
+    pending, _video, _audio = _u16_pending(recorder, txn_id=9)
+    pending["outgoing_end"] = {}
+    engine._pending_reload = pending
+    engine._prepare_reload_handoff(pending)
+
+    engine._begin_reload_commit(pending)
+
+    calls = recorder.calls
+    assert "set_offset:new-video-src:1799412000000" in calls, calls
+    err = capsys.readouterr().err
+    assert (
+        "CTRL reload diagnostic: rebase-reference reload_id=9 mode=immediate "
+        "streams=2 fallback=yes ends=[video=none,audio=none] "
+        "pipeline_running_time=1799.412 switch_running_time=1799.412"
+    ) in err
+
+
+def test_u16_new_leg_first_buffer_line_says_none_when_it_cannot_measure(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A diagnostic must never be able to fail a streaming thread.
+
+    With no sticky SEGMENT and, in the first call, no probe info at all, the
+    line still prints (naming what it could not measure) and the probe still
+    removes itself. ``pts`` is reported independently of the segment, so a pad
+    whose segment is missing is still informative."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+
+    line = engine._new_leg_first_buffer_diagnostic(
+        label="video", txn_id=7, applied_offset=5_000_000_000, measured=None
+    )
+    assert line == (
+        "CTRL reload diagnostic: new-leg-first-buffer stream=video reload_id=7 "
+        "applied_offset=5.000 pts=none running_time=none segment_base=none"
+    )
+
+    pad = _FakeDiagnosticPad("new-video-src", recorder, sticky=None)
+    engine._arm_new_leg_rebase_diagnostics({"txn_id": 7, "new_src_pads": [pad]}, 5_000_000_000)
+
+    _mask, callback = pad.probes[0]
+    assert callback(pad, None) == engine_module.Gst.PadProbeReturn.REMOVE
+    assert callback(pad, _FakeProbeInfo(_FakeProbeBuffer(4_000_000_000))) == (
+        engine_module.Gst.PadProbeReturn.REMOVE
+    )
+    err = capsys.readouterr().err
+    assert err.count("CTRL reload diagnostic: new-leg-first-buffer") == 2
+    assert (
+        "stream=video reload_id=7 applied_offset=5.000 pts=none running_time=none segment_base=none"
+    ) in err
+    assert (
+        "stream=video reload_id=7 applied_offset=5.000 "
+        "pts=4.000 running_time=none segment_base=none"
+    ) in err
+    # The label falls back to the pad's own name when there is no pad identity
+    # to compare against, and the mux-side label comes from the negotiated caps.
+    assert "stream=video" in err
+
+
+def test_u16_mux_first_buffer_line_labels_each_stream_from_its_caps(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The start-side observation: the first buffer to reach each mux sink pad.
+
+    This is the value that says whether the output side ever saw the offset --
+    the piece U16 was missing when it tried to place the live +108.95s step."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    segment = _FakeSegment(base=0, running_time_for_pts={0: 0})
+    video_pad = _FakeDiagnosticPad(
+        "sink",
+        recorder,
+        sticky=_FakeStickyEvent(segment),
+        caps="video/x-h264, stream-format=byte-stream",
+    )
+    audio_pad = _FakeDiagnosticPad(
+        "sink_1", recorder, sticky=_FakeStickyEvent(segment), caps="audio/mpeg, mpegversion=4"
+    )
+    engine.mux = _FakeMux([video_pad, audio_pad])
+
+    engine._install_mux_input_diagnostics()
+
+    assert "add_probe:sink:1:_report_mux_first_buffer" in recorder.calls, recorder.calls
+    assert "add_probe:sink_1:1:_report_mux_first_buffer" in recorder.calls, recorder.calls
+    for pad, label in ((video_pad, "video"), (audio_pad, "audio")):
+        _mask, callback = pad.probes[0]
+        assert callback(pad, _FakeProbeInfo(_FakeProbeBuffer(0))) == (
+            engine_module.Gst.PadProbeReturn.REMOVE
+        )
+        assert (
+            f"CTRL start diagnostic: mux-first-buffer stream={label} pad={pad.name} "
+            "pts=0.000 running_time=0.000 segment_base=0.000"
+        ) in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("mux", [None, _FakeMux([]), object()])
+def test_u16_mux_start_diagnostic_is_silent_and_safe_without_sink_pads(
+    engine_module, capsys: pytest.CaptureFixture[str], mux: Any
+) -> None:
+    """No mux, no sink pads, or a mux with no iterator: silent, and no raise."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.mux = mux
+
+    engine._install_mux_input_diagnostics()
+
+    assert capsys.readouterr().err == ""
+    assert recorder.calls == []
+
+
+def test_u16_diagnostics_do_not_disturb_the_reload_preroll_log_grader() -> None:
+    """The always-on lines must not create, hide, or fake a commit proof.
+
+    ``scripts/ops/check_reload_preroll.py`` grades reload commits from worker
+    logs by regex; an unrelated line that happens to contain "rebased" or
+    "preroll" would corrupt that verdict."""
+    log = "\n".join(
+        [
+            "CTRL reload: new leg stream held at its first buffer "
+            "(0 stream(s) still to preroll) (reload_id=4)",
+            "CTRL reload: new leg preroll verified (reload_id=4) held_streams=2 "
+            "timing=finite mode=deferred",
+            "CTRL reload diagnostic: stage=switching-selector",
+            "CTRL reload diagnostic: rebase-reference reload_id=4 mode=deferred streams=2 "
+            "fallback=no ends=[video=1799.339,audio=1799.402] "
+            "pipeline_running_time=1799.412 switch_running_time=1799.402",
+            "CTRL reload: finite switch rebased to running time 1799.402s mode=deferred "
+            "streams=2 reload_id=4",
+            "CTRL start diagnostic: mux-first-buffer stream=video pad=sink "
+            "pts=1.000 running_time=1.000 segment_base=0.000",
+            "CTRL reload diagnostic: new-leg-first-buffer stream=video reload_id=4 "
+            "applied_offset=1799.402 pts=1.000 running_time=1800.402 segment_base=1799.402",
+            "CTRL reload: firing (reload_id=4)",
+            "CTRL reload committed (elements=52)",
+        ]
+    )
+
+    assert check_log(log) == (1, [])
+
+
+# --- (7) the same diagnostics on a REAL packaged GStreamer pipeline -----------
+#
+# Sections (1)-(6) prove the diagnostics are wired and formatted correctly; the
+# fake pads answer whatever the test tells them to. This section proves the other
+# half: that the same code, run against real Gst pads/buffers/segments through the
+# product's own packaged runtime, actually PRINTS the lines and can measure a
+# buffer's running time. It is gated on the packaged runtime being declared --
+# that is a genuine capability boundary (the bundled GI extension is CPython
+# 3.12-only), so when it is absent the test SKIPS CLEANLY and says how to enable
+# it, rather than silently passing. When it is present it FAILS on any defect.
+_U16_DECLARED_ROOT = os.environ.get("CIVICCAST_GSTREAMER_RUNTIME_ROOT")
+_U16_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _u16_resolve_version_root() -> Path | None:
+    """``<version_root>`` (the dir holding ``python.exe`` + ``dependencies``).
+
+    The declared env var may name EITHER the install root (``<install>``) or the
+    version root (``<install>/runtime``); both are shipped shapes, so accept both
+    and derive by the same relative arithmetic the product uses. Duplicated from
+    ``test_hls_sink_captions.py`` rather than imported: ``tests/egress`` has no
+    ``__init__.py``, so a cross-module import would not resolve.
+    """
+    if not _U16_DECLARED_ROOT:
+        return None
+    declared = Path(_U16_DECLARED_ROOT)
+    if (declared / "python.exe").is_file() and (declared / "dependencies").is_dir():
+        return declared
+    runtime = declared / "runtime"
+    if (runtime / "python.exe").is_file() and (runtime / "dependencies").is_dir():
+        return runtime
+    return None
+
+
+_U16_VERSION_ROOT = _u16_resolve_version_root()
+_U16_GST_ROOT = _U16_VERSION_ROOT / "dependencies" / "gstreamer" if _U16_VERSION_ROOT else None
+_U16_PYTHON = _U16_VERSION_ROOT / "python.exe" if _U16_VERSION_ROOT else None
+_U16_GST_AVAILABLE = bool(
+    _U16_GST_ROOT
+    and (_U16_GST_ROOT / "bin").is_dir()
+    and (_U16_GST_ROOT / "python").is_dir()
+    and (_U16_GST_ROOT / "lib" / "gstreamer-1.0").is_dir()
+    and _U16_PYTHON
+    and _U16_PYTHON.is_file()
+)
+
+_U16_EMITTER = '''# emitted by the packaged CPython 3.12 interpreter
+import contextlib, io, os, sys, time
+
+VERSION_ROOT = os.environ["CIVICCAST_GST_VERSION_ROOT"]
+GST = os.path.join(VERSION_ROOT, "dependencies", "gstreamer")
+GSTBIN = os.path.join(GST, "bin")
+os.environ["GI_TYPELIB_PATH"] = os.path.join(GST, "lib", "girepository-1.0")
+os.environ["GST_PLUGIN_PATH"] = os.path.join(GST, "lib", "gstreamer-1.0")
+os.environ["PYGI_DLL_DIRS"] = GSTBIN
+os.environ["PATH"] = GSTBIN + os.pathsep + os.environ.get("PATH", "")
+sys.path.insert(0, os.path.join(GST, "python"))
+sys.path.insert(0, os.environ["CIVICCAST_REPO_ROOT"])
+import gi
+gi.require_version("Gst", "1.0")
+from gi.repository import Gst
+
+Gst.init(None)
+from civiccast.egress.gst.engine import GstPlayoutEngine
+
+OFFSET_NS = 5 * Gst.SECOND
+
+
+def _build():
+    """One real pipeline: videotestsrc + audiotestsrc -> mpegtsmux -> fakesink."""
+    pipe = Gst.Pipeline.new("u16-real")
+    vsrc = Gst.ElementFactory.make("videotestsrc")
+    vsrc.set_property("is-live", False)
+    vsrc.set_property("num-buffers", 240)
+    vcap = Gst.ElementFactory.make("capsfilter")
+    vcap.set_property(
+        "caps",
+        Gst.Caps.from_string("video/x-raw,format=I420,width=320,height=180,framerate=30/1"),
+    )
+    venc = Gst.ElementFactory.make("openh264enc")
+    vparse = Gst.ElementFactory.make("h264parse")
+    asrc = Gst.ElementFactory.make("audiotestsrc")
+    asrc.set_property("is-live", False)
+    asrc.set_property("num-buffers", 480)
+    acap = Gst.ElementFactory.make("capsfilter")
+    acap.set_property(
+        "caps", Gst.Caps.from_string("audio/x-raw,format=S16LE,rate=48000,channels=2")
+    )
+    aconv = Gst.ElementFactory.make("audioconvert")
+    ares = Gst.ElementFactory.make("audioresample")
+    aenc = Gst.ElementFactory.make("voaacenc")
+    apar = Gst.ElementFactory.make("aacparse")
+    mux = Gst.ElementFactory.make("mpegtsmux")
+    sink = Gst.ElementFactory.make("fakesink")
+    sink.set_property("sync", False)
+    elements = [vsrc, vcap, venc, vparse, asrc, acap, aconv, ares, aenc, apar, mux, sink]
+    links = [
+        (vsrc, vcap), (vcap, venc), (venc, vparse), (vparse, mux),
+        (asrc, acap), (acap, aconv), (aconv, ares), (ares, aenc), (aenc, apar),
+        (apar, mux), (mux, sink),
+    ]
+    for element in elements:
+        pipe.add(element)
+    for upstream, downstream in links:
+        assert upstream.link(downstream), (upstream.get_name(), downstream.get_name())
+    return pipe, mux, vparse
+
+
+def _run(pipe, arm):
+    """PLAY the pipeline with ``arm()`` run first; return everything printed to
+    PYTHON's stderr (which is where the diagnostics write)."""
+    captured = io.StringIO()
+    with contextlib.redirect_stderr(captured):
+        arm()
+        pipe.set_state(Gst.State.PLAYING)
+        bus = pipe.get_bus()
+        deadline = time.time() + 45
+        while time.time() < deadline:
+            message = bus.pop_filtered(Gst.MessageType.ERROR | Gst.MessageType.EOS)
+            if message:
+                if message.type == Gst.MessageType.ERROR:
+                    print("GST_ERROR", message.parse_error(), file=sys.stderr)
+                    sys.exit(3)
+                break
+            time.sleep(0.05)
+        pipe.set_state(Gst.State.NULL)
+    return captured.getvalue()
+
+
+# 1. Start side: one line per stream, from the first buffer that reaches each
+#    mux SINK pad. Installed after linking (so the request pads exist) and before
+#    PLAYING (so the FIRST buffer -- not a later one -- fires it), exactly the
+#    window run_forever uses.
+pipe, mux, vparse = _build()
+mux_stub = object.__new__(GstPlayoutEngine)
+mux_stub.mux = mux
+text = _run(pipe, lambda: GstPlayoutEngine._install_mux_input_diagnostics(mux_stub))
+start_lines = [ln for ln in text.splitlines() if ln.startswith("CTRL start diagnostic:")]
+assert len(start_lines) == 2, (start_lines, text)
+assert any("stream=video" in ln for ln in start_lines), start_lines
+assert any("stream=audio" in ln for ln in start_lines), start_lines
+for line in start_lines:
+    assert "pts=none" not in line, line
+    assert "running_time=none" not in line, line
+    print("U16_LINE " + line)
+
+# 2. Reload side: the new leg's first buffer AFTER the offset. The offset is set
+#    before PLAYING and the probe armed behind it, which is the production
+#    order (the leg is held at that buffer when ``set_offset`` runs).
+pipe2, _mux2, vparse2 = _build()
+leg_stub = object.__new__(GstPlayoutEngine)
+
+
+def _arm_new_leg():
+    pad = vparse2.get_static_pad("src")
+    pad.set_offset(OFFSET_NS)
+    GstPlayoutEngine._arm_new_leg_rebase_diagnostics(
+        leg_stub, {"txn_id": 7, "new_src_pads": [pad]}, OFFSET_NS
+    )
+
+
+text2 = _run(pipe2, _arm_new_leg)
+leg_lines = [ln for ln in text2.splitlines() if ln.startswith("CTRL reload diagnostic:")]
+assert len(leg_lines) == 1, (leg_lines, text2)
+line = leg_lines[0]
+assert "new-leg-first-buffer stream=video reload_id=7 applied_offset=5.000" in line, line
+assert "pts=none" not in line, line
+assert "running_time=none" not in line, line
+print("U16_LINE " + line)
+print("U16_EMIT_OK")
+'''
+
+
+@pytest.mark.skipif(
+    not _U16_GST_AVAILABLE,
+    reason=(
+        "packaged GStreamer runtime not declared, so the real-pipeline half of "
+        "the U16 diagnostics is NOT verified here -- set "
+        "CIVICCAST_GSTREAMER_RUNTIME_ROOT to the install root (e.g. "
+        "C:\\Program Files\\CivicCast (Native)) to run it against the bundled runtime"
+    ),
+)
+def test_u16_diagnostics_print_on_a_real_packaged_pipeline(tmp_path: Path) -> None:
+    """The real-GStreamer half: the diagnostics print, and can measure, for real."""
+    assert _U16_VERSION_ROOT is not None and _U16_PYTHON is not None
+    runner = tmp_path / "u16_emitter.py"
+    runner.write_text(_U16_EMITTER, encoding="utf-8")
+    env = dict(os.environ)
+    env["CIVICCAST_REPO_ROOT"] = str(_U16_REPO_ROOT)
+    # The child imports the engine, and the engine's import-time bootstrap reads
+    # CIVICCAST_GSTREAMER_RUNTIME_ROOT itself -- and that var must name the
+    # VERSION root (``<install>/runtime``), the directory that also holds
+    # ``python.exe``, because ``dependencies/gstreamer`` only resolves under it
+    # (civiccast/native/gstreamer_runtime.py's module note). The user may have
+    # declared the install root, so pass the resolved version root explicitly
+    # instead of forwarding whatever shape was declared.
+    env["CIVICCAST_GST_VERSION_ROOT"] = str(_U16_VERSION_ROOT)
+    env["CIVICCAST_GSTREAMER_RUNTIME_ROOT"] = str(_U16_VERSION_ROOT)
+    # An inherited PYTHONPATH would shadow the bundled ``gi``; drop it so the
+    # child imports the packaged bindings (same discipline as the captions test).
+    env.pop("PYTHONPATH", None)
+    emit = subprocess.run(
+        [str(_U16_PYTHON), str(runner)],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        env=env,
+    )
+    assert emit.returncode == 0, f"U16 real-runtime emit failed:\n{emit.stdout}\n{emit.stderr}"
+    assert "U16_EMIT_OK" in emit.stdout, f"emit produced no marker:\n{emit.stdout}\n{emit.stderr}"
+    assert "U16_LINE CTRL start diagnostic: mux-first-buffer stream=video " in emit.stdout, (
+        emit.stdout
+    )
+    assert "U16_LINE CTRL start diagnostic: mux-first-buffer stream=audio " in emit.stdout, (
+        emit.stdout
+    )
+    assert (
+        "U16_LINE CTRL reload diagnostic: new-leg-first-buffer stream=video reload_id=7 "
+        "applied_offset=5.000" in emit.stdout
+    ), emit.stdout
+
+
+def test_u16_packaged_runtime_resolution_matches_its_declared_root() -> None:
+    """When the env var IS declared, the gate must resolve to available.
+
+    A silently-wrong resolver would turn every real-runtime test into a skip --
+    "not verified" disguised as "nothing to verify".
+    """
+    if not _U16_DECLARED_ROOT:
+        pytest.skip(
+            "CIVICCAST_GSTREAMER_RUNTIME_ROOT not declared, so the real-runtime "
+            "half of these diagnostics is unverified on this host"
+        )
+    assert _U16_GST_AVAILABLE, (
+        f"declared {_U16_DECLARED_ROOT!r} did not resolve to a packaged runtime "
+        f"(version root {_U16_VERSION_ROOT!r})"
+    )

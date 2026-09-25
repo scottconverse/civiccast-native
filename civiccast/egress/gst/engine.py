@@ -402,6 +402,26 @@ def _drop_everything_probe(_pad: object, _info: object) -> object:
     return Gst.PadProbeReturn.DROP
 
 
+# U16: the two streams a playout leg carries, in the order a leg declares them --
+# ``new_src_pads`` is built as ``(out_pad, audio_out_pad)`` and ``selector_sink_pads``
+# is likewise video-first, so the index of a pad in either list IS its stream label.
+_NEW_LEG_STREAM_LABELS = ("video", "audio")
+_DIAGNOSTIC_NONE = "none"
+
+
+def _seconds_or_none(value_ns: int | None) -> str:
+    """A nanosecond count as ``1.100``, or ``none`` when nothing was measured.
+
+    Diagnostics print ``none`` rather than inventing a zero: a measured 0 and an
+    absent measurement mean opposite things at a rebase boundary, and U16's whole
+    problem was that the logs could not tell them apart. Note the ``is None``
+    test -- ``0`` is a real measurement and must render as ``0.000``.
+    """
+    if value_ns is None:
+        return _DIAGNOSTIC_NONE
+    return f"{int(value_ns) / Gst.SECOND:.3f}"
+
+
 # Item 84c addendum: how often ``_check_stall`` prints the
 # ``CTRL output: <N> buffers (+<delta>) since PLAYING`` progress line -- a
 # bounded, one-line-per-interval breadcrumb so the NEXT soak shows exactly
@@ -1694,6 +1714,73 @@ class GstPlayoutEngine:
 
         src.add_probe(Gst.PadProbeType.BUFFER | Gst.PadProbeType.BUFFER_LIST, _count)
 
+    # -- U16 start-side diagnostic: what the OUTPUT side first saw ---------------
+    #
+    # The mirror of the reload-side diagnostic: at worker start, one line per
+    # stream naming the running time of the first buffer that reached that
+    # stream's mux sink pad. U16's live one-sided +108.95s step was invisible
+    # because nothing recorded where each stream's output actually began.
+    #
+    # BUFFER only, NOT BUFFER_LIST: the buffer-list batching called out in
+    # ``_install_output_counter`` happens AFTER ``mpegtsmux`` -- on its SINK pads
+    # each stream is still one buffer at a time, and a BUFFER|BUFFER_LIST mask
+    # would make the callback name a type this probe can never receive.
+
+    def _make_mux_first_buffer_reporter(self, pad_name: str) -> Any:
+        """A one-shot probe callback for one mux sink pad.
+
+        A factory rather than a def-in-loop so the callback closes over ITS OWN
+        pad's name, and so the callback's ``__name__`` is stable for logs."""
+
+        def _report_mux_first_buffer(pad: Gst.Pad, info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+            # Guarded end to end: this runs on a streaming thread, and a
+            # diagnostic must never be able to take a channel off air.
+            with contextlib.suppress(Exception):
+                label = self._mux_pad_stream_label(pad)
+                print(
+                    self._mux_first_buffer_diagnostic(
+                        label=label,
+                        pad_name=pad_name,
+                        measured=self._measure_first_buffer(pad, info),
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return Gst.PadProbeReturn.REMOVE
+
+        return _report_mux_first_buffer
+
+    def _install_mux_input_diagnostics(self) -> None:
+        """Arm one self-removing first-buffer probe per mux sink pad.
+
+        Called once at worker start, beside ``_install_output_counter``. Silent
+        and safe when there is no mux, when the mux exposes no sink pads, or when
+        it cannot be iterated at all."""
+        mux = getattr(self, "mux", None)
+        if mux is None:
+            return
+        try:
+            iterator = mux.iterate_sink_pads()
+        except Exception:
+            return
+        if iterator is None:
+            return
+        while True:
+            try:
+                result, pad = iterator.next()
+            except Exception:
+                return
+            if result != Gst.IteratorResult.OK or pad is None:
+                return
+            try:
+                pad_name = pad.get_name()
+            except Exception:
+                pad_name = "unknown"
+            with contextlib.suppress(Exception):
+                pad.add_probe(
+                    Gst.PadProbeType.BUFFER, self._make_mux_first_buffer_reporter(pad_name)
+                )
+
     def _arm_stall_watchdog(self) -> None:
         # Item 84: arm unconditionally as long as EITHER budget is active --
         # before this fix a ``stall_timeout_s <= 0`` (an operator disabling the
@@ -2109,6 +2196,10 @@ class GstPlayoutEngine:
         bus.add_signal_watch()
         bus.connect("message", self._on_bus)
         self._install_output_counter()  # S9-5: count TS buffers past the mux
+        # U16: name what the OUTPUT side first saw, per stream. Armed here rather
+        # than per-reload because the start of a worker's timeline is the other
+        # end of the same question the reload diagnostic asks.
+        self._install_mux_input_diagnostics()
         loop = GLib.MainLoop()  # before PLAYING so a startup bus ERROR isn't swallowed
         self._loop = loop
         self._prime_live_caption_stream()
@@ -2706,6 +2797,215 @@ class GstPlayoutEngine:
             state["segment"] = event.parse_segment()
         return Gst.PadProbeReturn.OK
 
+    # -- U16 reload-side diagnostics: make the next displacement decomposable ----
+    #
+    # U16 (2026-09-24) could not explain a live, one-sided, constant +108.95s
+    # audio displacement after a leg switch. The engine applies ONE offset (the
+    # max of the outgoing ends) to BOTH streams, so the shared value cannot by
+    # itself produce a one-sided step -- the trigger had to be in the two
+    # per-pad ends, which were computed and then thrown away unprinted, and in
+    # what the new leg's own first buffer became once the offset was applied,
+    # which nothing recorded at all. These lines close both gaps.
+    #
+    # Always on, no env switch: the point is that the station's NEXT occurrence
+    # is decomposable from its own logs. Nothing here may change behaviour --
+    # every body is exception-guarded, every probe one-shot and read-only.
+
+    def _reload_outgoing_ends_in_order(
+        self, pending: dict[str, Any]
+    ) -> list[tuple[str, int | None]]:
+        """Each outgoing stream's observed ``state["end"]``, video first.
+
+        Labelled by PAD IDENTITY, not by iteration order: ``outgoing_end`` is
+        keyed by pad object and is populated in first-BUFFER order, which is not
+        the order a leg declares its streams, so iterating the dict could
+        silently swap the two labels. This is the same idiom ``_on_old_leg_eos``
+        uses to name the stream it is retiring, and the same
+        ``(("video", ...), ("audio", ...))`` tuple ``_arm_old_selector_cutoff``
+        walks. A stream with no recorded state is reported as ``none`` rather
+        than dropped -- "this pad observed nothing" is itself the finding.
+        """
+        ends: list[tuple[str, int | None]] = []
+        for label, pad_key in (("video", "old_video_pad"), ("audio", "old_audio_pad")):
+            pad = pending.get(pad_key)
+            if pad is None:
+                continue
+            state = pending["outgoing_end"].get(pad)
+            ends.append((label, None if state is None else state.get("end")))
+        return ends
+
+    def _rebase_reference_diagnostic(
+        self,
+        pending: dict[str, Any],
+        *,
+        switch_running_time: int,
+        rebase_fallback: bool,
+        pipeline_running_time_ms: int | None,
+    ) -> str:
+        """One line naming every input to the rebase reference.
+
+        Printed to stderr beside the existing ``finite switch rebased to running
+        time ...`` stdout line. ``ends=[video=..,audio=..]`` are the two numbers
+        the shared ``max`` was taken over -- the per-pad values that U16 could
+        not recover from the live logs -- and ``fallback`` says whether the
+        pipeline's own running time stood in for them. Both are needed to
+        decompose a step: two ends ~109s apart indict the shared max, while two
+        agreeing ends whose shared value still lands far from the output's own
+        position indict the reference basis instead.
+        """
+        ends = ",".join(
+            f"{label}={_seconds_or_none(end)}"
+            for label, end in self._reload_outgoing_ends_in_order(pending)
+        )
+        mode = "deferred" if pending["switch_at_end_of_current"] else "immediate"
+        pipeline = (
+            _DIAGNOSTIC_NONE
+            if pipeline_running_time_ms is None
+            else f"{pipeline_running_time_ms / 1000:.3f}"
+        )
+        return (
+            f"CTRL reload diagnostic: rebase-reference reload_id={pending['txn_id']} "
+            f"mode={mode} streams={len(pending['new_src_pads'])} "
+            f"fallback={'yes' if rebase_fallback else 'no'} ends=[{ends}] "
+            f"pipeline_running_time={pipeline} "
+            f"switch_running_time={_seconds_or_none(switch_running_time)}"
+        )
+
+    @staticmethod
+    def _measure_first_buffer(pad: Any, info: Any) -> tuple[int | None, int | None, int | None]:
+        """``(pts, running time, segment base)`` of this buffer, in ns.
+
+        Each field is measured independently and can be absent independently: a
+        buffer whose PTS is readable but whose segment is not still says
+        something useful, and a probe must never raise on a streaming thread.
+        ``None`` means "could not measure", which is deliberately distinct from a
+        measured ``0`` -- at a rebase boundary those mean opposite things.
+        """
+        pts: int | None = None
+        running_time: int | None = None
+        segment_base: int | None = None
+        with contextlib.suppress(Exception):
+            buffer = None if info is None else info.get_buffer()
+            if buffer is not None and buffer.pts != Gst.CLOCK_TIME_NONE:
+                pts = int(buffer.pts)
+        with contextlib.suppress(Exception):
+            sticky = pad.get_sticky_event(Gst.EventType.SEGMENT, 0)
+            segment = None if sticky is None else sticky.parse_segment()
+            if segment is not None:
+                segment_base = int(segment.base)
+                if pts is not None:
+                    converted = segment.to_running_time(Gst.Format.TIME, pts)
+                    if converted != Gst.CLOCK_TIME_NONE and converted >= 0:
+                        running_time = int(converted)
+        return pts, running_time, segment_base
+
+    @staticmethod
+    def _new_leg_first_buffer_diagnostic(
+        *,
+        label: str,
+        txn_id: Any,
+        applied_offset: int,
+        measured: tuple[int | None, int | None, int | None] | None,
+    ) -> str:
+        """What the new leg's first buffer became AFTER the rebase offset.
+
+        ``applied_offset`` is printed beside the measurement so the two can be
+        compared directly in the log."""
+        pts, running_time, segment_base = measured if measured is not None else (None, None, None)
+        return (
+            f"CTRL reload diagnostic: new-leg-first-buffer stream={label} "
+            f"reload_id={txn_id} applied_offset={_seconds_or_none(applied_offset)} "
+            f"pts={_seconds_or_none(pts)} running_time={_seconds_or_none(running_time)} "
+            f"segment_base={_seconds_or_none(segment_base)}"
+        )
+
+    def _make_new_leg_first_buffer_reporter(
+        self, *, label: str, txn_id: Any, applied_offset: int
+    ) -> Any:
+        """A one-shot probe callback for one new-leg tail src pad (see
+        ``_make_mux_first_buffer_reporter`` for why this is a factory)."""
+
+        def _report_new_leg_first_buffer(
+            pad: Gst.Pad, info: Gst.PadProbeInfo
+        ) -> Gst.PadProbeReturn:
+            with contextlib.suppress(Exception):
+                print(
+                    self._new_leg_first_buffer_diagnostic(
+                        label=label,
+                        txn_id=txn_id,
+                        applied_offset=applied_offset,
+                        measured=self._measure_first_buffer(pad, info),
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return Gst.PadProbeReturn.REMOVE
+
+        return _report_new_leg_first_buffer
+
+    def _arm_new_leg_rebase_diagnostics(self, pending: dict[str, Any], applied_offset: int) -> None:
+        """One self-removing first-buffer probe per new-leg tail src pad.
+
+        Called from ``_begin_reload_commit`` AFTER the offsets are set and BEFORE
+        the hold probes are released, and that window is what makes the
+        measurement race-free: the leg's first buffer cannot flow until the holds
+        lift, so every buffer this probe can see already carries the offset.
+
+        Labelled by the pad's INDEX in ``new_src_pads``, which the leg builds as
+        ``(video, audio)`` -- the same ordering convention the selector's sink
+        pads use. A padded-out index is named as ``streamN`` rather than
+        mislabelled as one of the two real streams.
+        """
+        txn_id = pending["txn_id"]
+        for index, pad in enumerate(pending["new_src_pads"]):
+            label = (
+                _NEW_LEG_STREAM_LABELS[index]
+                if index < len(_NEW_LEG_STREAM_LABELS)
+                else f"stream{index}"
+            )
+            with contextlib.suppress(Exception):
+                pad.add_probe(
+                    Gst.PadProbeType.BUFFER,
+                    self._make_new_leg_first_buffer_reporter(
+                        label=label, txn_id=txn_id, applied_offset=applied_offset
+                    ),
+                )
+
+    @staticmethod
+    def _mux_pad_stream_label(pad: Any) -> str:
+        """``video``/``audio`` from the pad's negotiated caps, else its name.
+
+        The caps are the negotiated truth about which stream this pad carries;
+        the pad's name is only a fallback for an unnegotiated pad."""
+        with contextlib.suppress(Exception):
+            caps = pad.get_current_caps()
+            if caps is not None:
+                text = caps.to_string()
+                if text.startswith("video/"):
+                    return "video"
+                if text.startswith("audio/"):
+                    return "audio"
+        with contextlib.suppress(Exception):
+            name = pad.get_name()
+            if name:
+                return str(name)
+        return "unknown"
+
+    @staticmethod
+    def _mux_first_buffer_diagnostic(
+        *,
+        label: str,
+        pad_name: str,
+        measured: tuple[int | None, int | None, int | None] | None,
+    ) -> str:
+        """The first buffer to reach one mux SINK pad, at worker start."""
+        pts, running_time, segment_base = measured if measured is not None else (None, None, None)
+        return (
+            f"CTRL start diagnostic: mux-first-buffer stream={label} pad={pad_name} "
+            f"pts={_seconds_or_none(pts)} running_time={_seconds_or_none(running_time)} "
+            f"segment_base={_seconds_or_none(segment_base)}"
+        )
+
     def _on_old_leg_eos(self, pad: Gst.Pad, txn_id: int) -> bool:
         """Main-loop: the first current outgoing stream reached its natural end.
 
@@ -3139,15 +3439,20 @@ class GstPlayoutEngine:
                 for state in pending["outgoing_end"].values()
                 if state["end"] is not None
             ]
-            switch_running_time = (
-                max(observed)
-                if observed
+            # U16: the pipeline-time read happens ONCE, in the branch that uses
+            # it, and both the applied value and the report come from that one
+            # read -- a second read a tick later would print a reference that is
+            # not the one the offset was actually set to.
+            if observed:
+                switch_running_time = max(observed)
+                pipeline_running_time_ms: int | None = None
+            else:
                 # No buffer was ever observed on the outgoing pads (a leg that
                 # EOS'd immediately, or a forced switch before any buffer): fall
                 # back to the pipeline's own running time. Never 0 -- that would
                 # rewind the output timeline by the whole uptime.
-                else self._pipeline_running_time_ms() * int(Gst.MSECOND)
-            )
+                pipeline_running_time_ms = self._pipeline_running_time_ms()
+                switch_running_time = pipeline_running_time_ms * int(Gst.MSECOND)
             for pad in pending["new_src_pads"]:
                 # NB: the leg's OWN tail src pad, not the selector's sink pad --
                 # set_offset there marks the leg's sticky SEGMENT for re-send, so
@@ -3163,6 +3468,26 @@ class GstPlayoutEngine:
                 f"streams={len(pending['new_src_pads'])} reload_id={pending['txn_id']}",
                 flush=True,
             )
+            # U16: the same switch, decomposed -- the per-pad ends the shared max
+            # was taken over, whether the pipeline-time fallback stood in for
+            # them, and the value actually applied. Guarded: a diagnostic must
+            # never be able to abort a commit.
+            with contextlib.suppress(Exception):
+                print(
+                    self._rebase_reference_diagnostic(
+                        pending,
+                        switch_running_time=switch_running_time,
+                        rebase_fallback=pipeline_running_time_ms is not None,
+                        pipeline_running_time_ms=pipeline_running_time_ms,
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
+            # U16: observe each new stream's FIRST post-offset buffer. Armed here,
+            # between the offsets above and the hold release below, so no buffer
+            # can reach a probe without already carrying the rebase offset.
+            with contextlib.suppress(Exception):
+                self._arm_new_leg_rebase_diagnostics(pending, switch_running_time)
         print("CTRL reload: switching selector", flush=True)
         print("CTRL reload diagnostic: stage=switching-selector", file=sys.stderr, flush=True)
         # Explicitly preserve successful upstream flow while each request is
