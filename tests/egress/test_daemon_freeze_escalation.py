@@ -130,8 +130,19 @@ class _ScriptedRelay:
         self.stopped: list[str] = []
         self.frozen_queries: list[tuple[str, float]] = []
         self.heal_calls: list[str] = []
+        self.apply_calls: list[tuple[bool, Path | str | None]] = []
 
-    def apply(self, config: EgressConfig) -> EgressConfig:
+    def apply(
+        self,
+        config: EgressConfig,
+        *,
+        new_session: bool = False,
+        log_root: Path | str | None = None,
+    ) -> EgressConfig:
+        # U21 (0d8b410a) added the ``new_session``/``log_root`` keywords to
+        # ``HlsRelaySupervisor.apply``; this double mirrors the real signature so
+        # a rename in the daemon still surfaces as an AttributeError here.
+        self.apply_calls.append((new_session, log_root))
         return config
 
     def is_alive(self, channel_id: str) -> bool:
