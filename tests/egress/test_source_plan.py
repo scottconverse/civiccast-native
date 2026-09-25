@@ -1640,3 +1640,273 @@ def test_gap_absorb_seconds_rejects_a_negative_window(tmp_path: Path) -> None:
             asset_resolver=lambda _asset_id: None,
             gap_absorb_seconds=-1.0,
         )
+
+
+# --------------------------------------------------------------------------
+# U36 (2026-09-25): a program->program rollover whose RECORDED duration runs
+# past the media's real end.
+#
+# Live incident (channel `public`, 14:06:50 - 14:18:02): the planner's plan end
+# for the July 23 weather report was 3.6-6.5s past the media's real end
+# (probe: video=667.100000 audio=667.114000 format=667.114000). On the
+# station's engine every plan is ONE leg (`max_segments=1`), so the leg's true
+# EOS ended the pipeline: the worker exited 0 while ON_AIR, and the relaunch
+# re-resolved the same lying clock into a 2-second sliver of the program that
+# had already ended (`the live plan ends in 2s`) -- then exited the same way
+# again, tripping `restart #2; backing off`. See reports/U36.md section 1.
+#
+# The planner's durations come from the DATABASE rows (`item.duration_seconds`,
+# `asset.duration_seconds`/the trim window) and are never checked against the
+# media file. These tests pin the fix: a segment is capped at the media's REAL
+# playable duration, so a plan never ends past it.
+#
+# The probe is injected here rather than measured: this module stays
+# ffprobe-free and deterministic (the rest of its ~50 callers use a 4-byte
+# `fake` file that ffprobe honestly answers None for -- which is also why the
+# existing cases are unaffected). tests/egress/test_u36_rollover_sliver_real_ffmpeg.py
+# is the same shape against real media.
+# --------------------------------------------------------------------------
+
+
+def _u36_provider(
+    tmp_path: Path,
+    items: list[ScheduleItemResponse],
+    *,
+    recorded_seconds: dict[str, float],
+    gap_absorb_seconds: float | None = SCHEDULE_GAP_ABSORB_SECONDS,
+) -> ScheduleSourcePlanProvider:
+    """Production-shaped provider for a rollover past the media's real end.
+
+    Each asset gets its OWN fake media file, so a path-keyed probe can tell
+    them apart. ``recorded_seconds`` is what the database rows claim --
+    ``asset.duration_seconds`` AND the trim window -- deliberately longer than
+    the real media for the item under test, which is the live shape.
+    """
+
+    assets: dict[str, StaffAssetRow] = {}
+    for item in items:
+        media = tmp_path / f"{item.asset_id}.ts"
+        media.write_text("fake", encoding="utf-8")
+        assets[item.asset_id] = _asset(media, asset_id=item.asset_id).model_copy(
+            update={
+                "title": item.asset_title,
+                "duration_seconds": recorded_seconds[item.asset_id],
+                "trim_in_seconds": None,
+                "trim_out_seconds": recorded_seconds[item.asset_id],
+            }
+        )
+    kwargs: dict[str, float] = {}
+    if gap_absorb_seconds is not None:
+        kwargs["gap_absorb_seconds"] = gap_absorb_seconds
+    return ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _channel_id: items,
+        asset_resolver=assets.get,
+        # The production wiring with the GStreamer engine selected
+        # (automation.py:2628): ONE leg per plan, so the leg's EOS is the
+        # pipeline's EOS.
+        max_segments=1,
+        **kwargs,
+    )
+
+
+def _u36_truthful_probe(
+    real_media_seconds: dict[str, float],
+    calls: list[str] | None = None,
+) -> object:
+    """A stand-in for the real ffprobe-backed media probe, keyed by file name."""
+
+    def probe(path: Path) -> float | None:
+        name = Path(path).name
+        if calls is not None:
+            calls.append(name)
+        return real_media_seconds.get(name)
+
+    return probe
+
+
+_U36_START = datetime(2026, 9, 25, 14, 6, 41, tzinfo=UTC)
+# The measured live overshoot: the July 23 upload is 667.114s while its rows
+# let the planner end the plan 3.6-6.5s later.
+_U36_REAL_MEDIA = {"weather.ts": 174.5, "council.ts": 120.0}
+
+
+def _u36_two_short_programs() -> list[ScheduleItemResponse]:
+    return [
+        _schedule_item(
+            asset_id="weather",
+            scheduled_at=_U36_START,
+            duration_seconds=180,
+        ).model_copy(update={"asset_title": "Weather Report"}),
+        _schedule_item(
+            asset_id="council",
+            scheduled_at=_U36_START + timedelta(seconds=180),
+            duration_seconds=120,
+        ).model_copy(update={"asset_title": "City Council"}),
+    ]
+
+
+def test_u36_a_rollover_past_the_media_end_never_ends_its_plan_past_that_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The live defect, at the plan level.
+
+    `monkeypatch` (raising=False: this is the RED commit -- the module attribute
+    the fix consults does not exist yet, and the test must fail on the PLAN, not
+    on an AttributeError) installs a truthful media probe. The schedule's rows
+    claim 180s / 120s; the media is really 174.5s / 120s. The boundary is 178s
+    into the first program's 180s slot -- inside the recorded slot, 3.5s past
+    the media's real end, which is exactly where the 14:17:52 relaunch landed.
+    """
+
+    monkeypatch.setattr(
+        source_plan_module,
+        "probe_media_duration_seconds",
+        _u36_truthful_probe(_U36_REAL_MEDIA),
+        raising=False,
+    )
+    provider = _u36_provider(
+        tmp_path,
+        _u36_two_short_programs(),
+        recorded_seconds={"weather": 180.0, "council": 120.0},
+    )
+
+    plan = provider.plan_at("gov", _U36_START + timedelta(seconds=178))
+
+    assert plan is not None
+    # Clause 1: no segment may start at or past its own media's real end. The
+    # live sliver was the July 23 program at inpoint 178.0 for 2.0s -- a leg
+    # 3.5s past the end of media that had already played.
+    for segment in plan.segments:
+        start_seconds = segment.inpoint_seconds or 0.0
+        assert start_seconds + segment.duration_seconds <= _U36_REAL_MEDIA[
+            Path(segment.path).name
+        ] + 0.05, (
+            f"segment {segment.label!r} airs to "
+            f"{start_seconds + segment.duration_seconds}s of a "
+            f"{_U36_REAL_MEDIA[Path(segment.path).name]}s file"
+        )
+    # Clause 2: with the exhausted program recognised as exhausted, the
+    # already-wired gap-absorb hands the boundary to the NEXT program (due 2s
+    # later) instead of re-airing the tail of the one that just ended.
+    assert [segment.source_ref for segment in plan.segments] == ["council"]
+    assert plan.segments[0].duration_seconds == pytest.approx(120.0)
+    assert plan.segments[0].inpoint_seconds in (None, 0.0)
+
+
+def test_u36_a_segment_is_capped_to_the_media_it_really_has(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Join-in-progress at the item's own start: the row's 180s is not the
+    number the engine can play, so it is not the number the plan may use."""
+
+    monkeypatch.setattr(
+        source_plan_module,
+        "probe_media_duration_seconds",
+        _u36_truthful_probe(_U36_REAL_MEDIA),
+        raising=False,
+    )
+    provider = _u36_provider(
+        tmp_path,
+        _u36_two_short_programs(),
+        recorded_seconds={"weather": 180.0, "council": 120.0},
+    )
+
+    plan = provider.plan_at("gov", _U36_START)
+
+    assert plan is not None
+    assert plan.segments[0].source_ref == "weather"
+    assert plan.segments[0].duration_seconds == pytest.approx(174.5)
+
+
+def test_u36_the_media_probe_is_memoized_per_file_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The automation loop builds a plan every ~2s, so the probe must not
+    re-spawn ffprobe per build (the media lives on a station NAS: a blocking
+    probe per poll would stall every rollover decision). One probe per file
+    version, re-probed when the file changes."""
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        source_plan_module,
+        "probe_media_duration_seconds",
+        _u36_truthful_probe(_U36_REAL_MEDIA, calls),
+        raising=False,
+    )
+    provider = _u36_provider(
+        tmp_path,
+        _u36_two_short_programs(),
+        recorded_seconds={"weather": 180.0, "council": 120.0},
+    )
+
+    provider.plan_at("gov", _U36_START)
+    assert calls == ["weather.ts"]
+
+    provider.plan_at("gov", _U36_START + timedelta(seconds=5))
+    assert calls == ["weather.ts"], "a probe per plan build was re-spawned"
+
+    (tmp_path / "weather.ts").write_text("fake-but-longer", encoding="utf-8")
+    provider.plan_at("gov", _U36_START + timedelta(seconds=9))
+    assert calls == ["weather.ts", "weather.ts"], "a changed file was not re-probed"
+
+
+def test_u36_a_probe_that_cannot_answer_leaves_the_row_duration_authoritative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail-open, pinned: a station without ffprobe (or media it cannot read)
+    keeps EXACTLY today's row-derived behavior. The defect can still recur
+    there -- that is the honest residual, not a silent new failure mode, and
+    the planner has never had any other number to plan from."""
+
+    monkeypatch.setattr(
+        source_plan_module, "probe_media_duration_seconds", lambda _path: None, raising=False
+    )
+    provider = _u36_provider(
+        tmp_path,
+        _u36_two_short_programs(),
+        recorded_seconds={"weather": 180.0, "council": 120.0},
+    )
+
+    at_start = provider.plan_at("gov", _U36_START)
+    assert at_start is not None
+    assert at_start.segments[0].duration_seconds == pytest.approx(180.0)
+
+    past_the_end = provider.plan_at("gov", _U36_START + timedelta(seconds=178))
+    assert past_the_end is not None
+    assert past_the_end.segments[0].source_ref == "weather"
+    assert past_the_end.segments[0].inpoint_seconds == pytest.approx(178.0)
+    assert past_the_end.segments[0].duration_seconds == pytest.approx(2.0)
+
+
+def test_u36_the_direct_builder_never_probes_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bare builder keeps its row-only contract.
+
+    Every existing caller of `build_source_plan_from_schedule` (the module's own
+    ~50 test cases and any future one) is deterministic and ffprobe-free; the
+    media probe is wired in at the PROVIDER, which is the shape both production
+    sites construct (automation.py:2628, cli.py:1150). This test exists so that
+    boundary cannot move silently.
+    """
+
+    def loud_probe(_path: Path) -> float | None:
+        raise AssertionError("the direct builder must not probe media")
+
+    monkeypatch.setattr(
+        source_plan_module, "probe_media_duration_seconds", loud_probe, raising=False
+    )
+    media = tmp_path / "program.ts"
+    media.write_text("fake", encoding="utf-8")
+
+    plan = build_source_plan_from_schedule(
+        channel_id="gov",
+        schedule_items=[_schedule_item(scheduled_at=_U36_START, duration_seconds=180)],
+        asset_resolver=lambda asset_id: _asset(media, asset_id=asset_id),
+        now=_U36_START,
+    )
+
+    assert plan is not None
+    # `_asset`'s rows: trim_out 120 - trim_in 10 = 110s playable, inside a
+    # 180s slot -> D42's min(slot, playable). Row-derived, exactly as before.
+    assert plan.segments[0].duration_seconds == pytest.approx(110.0)
