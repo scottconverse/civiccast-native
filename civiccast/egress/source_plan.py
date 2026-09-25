@@ -85,8 +85,9 @@ DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS = 1800.0
 #:
 #: The two archived live incidents (government 02:13 / 02:58 MDT) measured a
 #: related shortfall at a different layer, and this constant is not what
-#: repairs them: the engine reached EOS 10.99s (02:58) and ~9.6s (02:13) before
-#: the CLOSING item's own recorded plan end, and the boundary provider answered
+#: repairs them: the channel left its program with 11.0s of the CLOSING item's
+#: own recorded plan end still to run (02:58:30.392844 - 02:58:19.385; ~9.6s at
+#: 02:13), and the boundary provider answered
 #: with that still-open item -- no filler plan and no ``target=filler`` rollover
 #: appears in either log. What removed their second restart is the daemon-side
 #: floor below (``daemon._SCHEDULE_TAIL_FLOOR_SECONDS``), which re-resolves 1s
