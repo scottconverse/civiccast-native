@@ -168,6 +168,44 @@ reload had ALREADY prepared so the restart does not conform it a second time
   newer attempt superseding it — has its directory released rather than left to
   the plan cache's own GC.
 
+### Bundled GStreamer runtime updated 1.28.5 → 1.28.7 (U17, 2026-09-24)
+
+The station's bundled runtime moves to the newest upstream stable release, so
+the beta.10 acceptance runs certify the version that actually ships. Both
+1.28.6 (2026-08-05) and 1.28.7 (2026-09-07) are upstream security releases.
+
+- The seven pinned PyPI inputs (`gstreamer-libs`, `-plugins`,
+  `-plugins-restricted`, `-plugins-libs`, `-python`, `-ext-runtime`, `-cli`)
+  move to `==1.28.7`; the hashed lock is regenerated with the exact `uv pip
+  compile` command in its own header, so only those seven distributions and
+  their hashes move — same 8 distributions, same 66 hashes, unchanged
+  `setuptools` pin.
+- `scripts/verify_native_runtime_closure.py`'s pinned CLI-consumer gate moves
+  with it: the required lock line and the `cp39-abi3-win_amd64` wheel hash of
+  the pinned release. Both detail strings now interpolate that constant instead
+  of repeating the literal, so the gate cannot drift from the pin again.
+- The closure rebuilds clean (224 files, no build refusal) and the verifier
+  goes 7 PASS / 0 FAIL against the new tree: required-factory sweep, plugin
+  origin, caption embed/decode-back, GPL negative control, manifest binding and
+  the dynamic-load trace all pass unchanged. Element inventory grows by 13
+  `typefindfunctions` entries and loses none; the shipped plugin set is the same
+  38. No file is added to or removed from the tree, and no file's licence or
+  owning distribution changes — 121 of 224 files change only in bytes.
+- Verified against the new tree, not assumed: every element the engine's graph
+  needs resolves (openh264enc, mpegtsmux, input-selector, concat, cccombiner,
+  tttocea608, h264ccinserter, ccconverter, cea608tott, h264parse, avdec_h264,
+  aacparse, avenc_aac, audioconvert, audioresample, videoconvert, videoscale,
+  videorate, udpsink, filesrc, decodebin, queue), and the `queue` property
+  defaults the engine's selector-isolation queues pin are unchanged
+  (200 / 10485760 / 1000000000 / not-leaky).
+- One pre-existing discrepancy found and reported rather than silently
+  corrected: `gsthlssink3.dll` reports `License=MPL` / `Source module
+  gst-plugin-hlssink3` under a live `gst-inspect-1.0`, not the
+  `LGPL-2.1-or-later` the licence table records for it. The same probe on the
+  installed 1.28.5 tree gives the same answer, so this predates the update. The
+  table value is left unchanged because it feeds the shipped per-file licence
+  table and the licence posture is an owner-acceptance item.
+
 ## [1.0.0-beta.7] - 2026-09-15
 
 **PUBLISHED.** `v1.0.0-beta.7` was published as a GitHub prerelease from
