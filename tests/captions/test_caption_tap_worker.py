@@ -2764,7 +2764,7 @@ class TestCaptionTapWorkerStartupLeftovers:
     """
 
     def test_a_worker_constructed_over_leftovers_does_not_pause_on_its_first_scan(
-        self, tmp_path: Path
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         tap_root = tmp_path / "tap"
         channel = "government"
@@ -2774,9 +2774,23 @@ class TestCaptionTapWorkerStartupLeftovers:
             _write_wav(tap_root / channel / f"chunk-{index:06d}.wav", seconds=5.0)
 
         runtime = _ScriptedRuntime()
-        worker = _worker(tap_root, runtime, InMemoryCaptionReviewStore())
+        # Construction is inside the capture window on purpose: the startup
+        # discard logs there.
+        with caplog.at_level(logging.DEBUG, logger="civiccast.captions.tap_worker"):
+            worker = _worker(tap_root, runtime, InMemoryCaptionReviewStore())
+            result = worker.run_once()
 
-        result = worker.run_once()
+        # The acceptance rung for this unit is a grep of the station log for
+        # "Caption tap overload ... PAUSED". Pin the same shape here: the
+        # startup scan of a restarted tap must produce neither string.
+        assert not [r for r in caplog.records if "Caption tap overload" in r.getMessage()], (
+            "a restart over the previous broadcast's audio logged an overload"
+        )
+        assert not [r for r in caplog.records if "PAUSED" in r.getMessage()]
+        # It DID say what it discarded, once, naming the boundary.
+        discarded = [r for r in caplog.records if "discarded" in r.getMessage()]
+        assert len(discarded) == 1, [r.getMessage() for r in discarded]
+        assert "worker startup" in discarded[0].getMessage()
 
         assert result.dropped_overload_segments == 0
         assert result.overloaded_channels == (), (
