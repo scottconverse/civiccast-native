@@ -3819,7 +3819,8 @@ def test_u30_an_eos_observer_records_where_the_eos_came_from(
     engine._eos_arrivals_overflow = 0
 
     assert engine._eos_arrivals == []
-    assert observer(None, None) == engine_module.Gst.PadProbeReturn.OK
+    eos_info = _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS))
+    assert observer(None, eos_info) == engine_module.Gst.PadProbeReturn.OK
     assert engine._eos_arrivals == ["queue:audio"]
     assert engine._eos_arrival_suffix() == " [eos-arrivals: queue:audio]"
 
@@ -3827,6 +3828,50 @@ def test_u30_an_eos_observer_records_where_the_eos_came_from(
     # line is "we watched and saw nothing", which is what makes ``none`` mean
     # something when EVERY observer is silent.
     assert "sel:video" not in engine._eos_arrival_suffix()
+    assert capsys.readouterr().err == ""
+
+
+def test_u30_an_eos_observer_records_only_an_eos(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A caps/segment/tag event crossing an observed pad is NOT an arrival.
+
+    An EVENT_DOWNSTREAM probe fires for every downstream event on its pad, so an
+    observer that records unconditionally fills ``eos-arrivals`` with the startup
+    event stream of whatever leg last crossed it. The U30 campaign that shipped
+    that build read back ``[eos-arrivals: sel:audio, queue:audio, ... +186 more]``
+    on 4 s runs -- a clause named ``eos-arrivals`` reporting events that are not
+    EOSes, in a diagnostic whose entire product is the answer to "where did the
+    EOS enter?". Recording nothing is the honest output for a non-EOS event: the
+    line then still says ``none``, which is a claim about the pipeline, instead of
+    a label that is merely a claim about traffic."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = _u30_armed_chain(engine, recorder)
+    observer = pads[("queue", "audio")].probes[1][1]
+    engine._eos_arrivals = []
+    engine._eos_arrivals_overflow = 0
+
+    for event_type in (_FakeEventType.SEGMENT, "CAPS", "STREAM_START", "TAG"):
+        info = _FakeEventProbeInfo(_FakeProbeEvent(event_type))
+        assert observer(None, info) == engine_module.Gst.PadProbeReturn.OK
+
+    assert engine._eos_arrivals == []
+    assert engine._eos_arrival_suffix() == " [eos-arrivals: none]"
+
+    # Probe info that carries no event at all (the U16 buffer-only fixture, and
+    # the ``None`` a hand-fired probe passes): unreadable is not an arrival, so
+    # the observer must not invent one.
+    assert observer(None, None) == engine_module.Gst.PadProbeReturn.OK
+    assert observer(None, _FakeEventProbeInfo(None)) == engine_module.Gst.PadProbeReturn.OK
+    assert engine._eos_arrivals == []
+
+    # And a real EOS on the same observer still lands, so the filter is a filter
+    # and not a mute.
+    assert observer(None, _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS))) == (
+        engine_module.Gst.PadProbeReturn.OK
+    )
+    assert engine._eos_arrivals == ["queue:audio"]
     assert capsys.readouterr().err == ""
 
 

@@ -2208,6 +2208,16 @@ class GstPlayoutEngine:
     # sink pads are armed before the reload's boundary probes are (same-priority
     # pads probes run in installation order), so an arrival is recorded even when
     # the boundary probe installed after it returns DROP.
+    #
+    # ONLY ``Gst.EventType.EOS`` is recorded. An EVENT_DOWNSTREAM probe fires for
+    # every downstream event on its pad -- stream-start, caps, segment, tag -- and
+    # an earlier U30 build of this diagnostic recorded all of them: the campaign
+    # line came back ``[eos-arrivals: sel:audio, queue:audio, ... +186 more]`` on
+    # runs whose entire log was 4 s long, which is a per-buffer event stream, not
+    # 198 ends of output. A label list that admits non-EOS events does not answer
+    # "where did the EOS enter?" -- it answers "what happened on these pads", and
+    # it answers it in a clause named ``eos-arrivals``. Filtering on the event type
+    # is what makes a rendered label a claim about an EOS.
 
     _EOS_ARRIVAL_MAX: ClassVar[int] = 12
 
@@ -2232,17 +2242,26 @@ class GstPlayoutEngine:
     def _make_eos_observer(self, label: Callable[[], str]) -> Any:
         """A report-only EOS observer closing over a LAZY label.
 
+        Records an arrival for ``Gst.EventType.EOS`` and nothing else, so the
+        rendered list is a list of ends of output rather than of every caps,
+        segment and tag event that happened to cross the same pad.
+
         A factory rather than a def-in-loop for the same reason as
         ``_make_mux_input_counter``: ``__name__`` stays stable for logs and tests.
         Lazy rather than a plain string because a mux sink pad's stream label is
         only readable once caps are negotiated, and these observers are armed
         before PLAYING."""
 
-        def _observe_eos(_pad: Gst.Pad, _info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+        def _observe_eos(_pad: Gst.Pad, info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
             # Guarded end to end -- streaming thread. OK, never DROP: this probe
             # observes the data path, it does not police it.
             with contextlib.suppress(Exception):
-                self._record_eos_arrival(label())
+                event = info.get_event() if info is not None else None
+                # An unreadable event is NOT an arrival: silence here stays
+                # silence, and the line keeps saying ``none`` rather than
+                # inventing an EOS this observer never saw.
+                if event is not None and event.type == Gst.EventType.EOS:
+                    self._record_eos_arrival(label())
             return Gst.PadProbeReturn.OK
 
         return _observe_eos
