@@ -75,9 +75,11 @@ from civiccast.native.models import GuardDecision, InterlockStatus
 from civiccast.native.runtime_guard import GuardMonitorStatus
 from civiccast.native.supervisor.children import (
     AbortFn,
+    AliveFn,
     ChildSpec,
     ControlPlaneHealthProbe,
     OllamaChildDecision,
+    ProgressFn,
     ReadinessResult,
     backoff_with_jitter,
     check_control_plane_maintenance_ready,
@@ -161,6 +163,18 @@ class ChildProcessRunner(Protocol):
 
     def spawn(self, spec: ChildSpec) -> ChildHandle: ...
     def is_alive(self, handle: ChildHandle) -> bool: ...
+
+    def cpu_seconds(self, handle: ChildHandle) -> float | None:
+        """U31: the child's cumulative CPU seconds, or ``None`` when it cannot
+        be sampled. The readiness poll's no-progress window is the only
+        consumer: a sample that has not advanced for a whole window is what
+        separates a WEDGED child from a slow one, so the seam lives here, on
+        the runner that owns the OS handle, rather than reading the process
+        table from the orchestrator. ``None`` means "no evidence" and is never
+        read as a stall -- a fake handle with no process behind it returns
+        ``None`` and keeps the poll on its plain wall-clock budget."""
+        ...
+
     def send_ctrl_break(self, handle: ChildHandle) -> None: ...
     def terminate(self, handle: ChildHandle) -> None: ...
 
@@ -238,6 +252,23 @@ def _never_abort() -> bool:
     exactly the pre-F1 behaviour."""
 
     return False
+
+
+def _cpu_progress_reader(runner: ChildProcessRunner, handle: ChildHandle) -> ProgressFn:
+    """U31: bind one child handle to the no-argument progress sample
+    :func:`~civiccast.native.supervisor.children.poll_until_ready` takes --
+    that child's cumulative CPU seconds, resampled on every poll tick through
+    the runner (the seam that owns the OS handle)."""
+
+    return lambda: runner.cpu_seconds(handle)
+
+
+def _child_liveness_reader(runner: ChildProcessRunner, handle: ChildHandle) -> AliveFn:
+    """U31: bind one child handle to the no-argument liveness sample
+    :func:`~civiccast.native.supervisor.children.poll_until_ready` takes, so a
+    child that dies mid-poll ends the poll instead of holding the budget."""
+
+    return lambda: runner.is_alive(handle)
 
 
 # ---------------------------------------------------------------------------
@@ -737,6 +768,22 @@ class Supervisor:
             clock=self._clock,
             sleep=self._sleep,
             should_abort=self._abort_requested,
+            # U31: a spec that carries a stall window (only the control plane
+            # does today) also gets the two seams that let the poll tell "slow"
+            # from "wedged" -- its cumulative CPU time (which moves only when
+            # the child's own threads run) and its liveness. A spec without a
+            # window passes None for both and keeps the exact pre-U31 call.
+            progress=(
+                _cpu_progress_reader(self._runner, handle)
+                if spec.readiness_stall_seconds is not None
+                else None
+            ),
+            stall_seconds=spec.readiness_stall_seconds,
+            liveness=(
+                _child_liveness_reader(self._runner, handle)
+                if spec.readiness_stall_seconds is not None
+                else None
+            ),
         )
         if result.outcome == "aborted":
             # F1: a stop was requested mid-poll. The child was SPAWNED and its
@@ -931,9 +978,10 @@ class Supervisor:
         child (and, via ``poll_until_ready``, inside each readiness poll), so a
         stop requested during bring-up returns from here after at most ONE
         in-flight probe attempt instead of after every remaining child's full
-        readiness budget (postgres 60s + control_plane 30s + ollama
-        60s chained into a single uninterruptible ~150s stretch, which blew the
-        150s stop watchdog mid-chain and hard-killed the postgres cluster)."""
+        readiness budget (60s + 30s + 60s when F1 was written, chained into a
+        single uninterruptible ~150s stretch -- U31 has since raised the control
+        plane's own budget to 180s, making that same chain 300s -- which blew
+        the 150s stop watchdog mid-chain and hard-killed the postgres cluster)."""
 
         self._sweep_once()
         # Task #57 D2: the OPTIONAL ollama child first -- it has no D6 edge to
@@ -1065,17 +1113,25 @@ class Supervisor:
         stays 'starting' and the freeze holds."""
 
         spec = self._spec_for("control_plane", maintenance=True)
+        cp = self._handles.get("control_plane")
         result = poll_until_ready(
             lambda: check_control_plane_maintenance_ready(self._health_probe),
             budget_seconds=spec.readiness_budget_seconds,
             clock=self._clock,
             sleep=self._sleep,
-            # F1: the maintenance gate polls the SAME 30s budget on the stop
-            # path (a held-interlock tick calls this), so it gets the same
-            # abort seam. An aborted poll leaves the CP 'starting' -- exactly
-            # the fail-closed non-ready state a non-'ready' outcome already
-            # produced, so the freeze still holds.
+            # F1: the maintenance gate polls the SAME budget on the stop path (a
+            # held-interlock tick calls this), so it gets the same abort seam.
+            # An aborted poll leaves the CP 'starting' -- exactly the fail-closed
+            # non-ready state a non-'ready' outcome already produced, so the
+            # freeze still holds.
             should_abort=self._abort_requested,
+            # U31: the maintenance CP is the SAME cold Python start as the normal
+            # one, so it gets the same progress/liveness seams and the same stall
+            # window. A maintenance CP that has died mid-poll fails at once
+            # instead of holding the freeze for the whole budget.
+            progress=(_cpu_progress_reader(self._runner, cp) if cp is not None else None),
+            stall_seconds=spec.readiness_stall_seconds,
+            liveness=(_child_liveness_reader(self._runner, cp) if cp is not None else None),
         )
         self._child_states["control_plane"] = "ready" if result.outcome == "ready" else "starting"
         return result

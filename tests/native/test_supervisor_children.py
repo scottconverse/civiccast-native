@@ -21,6 +21,10 @@ socket. Covers:
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+
 import pytest
 from pydantic import ValidationError
 
@@ -36,8 +40,10 @@ from civiccast.native.supervisor.children import (
     default_egress_work_dir,
     default_upload_dir,
     graceful_stop_action,
+    ollama_child_spec,
     poll_until_ready,
     postgres_child_spec,
+    process_cpu_seconds,
     read_postmaster_pid,
     restart_storm_check,
 )
@@ -595,6 +601,268 @@ def test_poll_until_ready_without_the_abort_seam_is_unchanged() -> None:
         poll_interval_seconds=10.0,
     )
     assert result.outcome == "timeout"
+
+
+# ---------------------------------------------------------------------------
+# U31: a slow-but-WORKING start must never be killed for being slow, and a
+# WEDGED one must still fail.
+#
+# OBSERVED (station, 2026-09-25, supervisor.log 07:20:32-07:21:45, right after
+# the U28 install): the control plane was up and demonstrably WORKING -- it had
+# spawned the three HLS relay ffmpegs at 07:20:52 and was running all three
+# channels' start preparation -- but had not yet bound GET /health when its 30s
+# budget expired, so the supervisor killed it, and each of three restarts
+# re-queued the same preparation (the channels only came on air at
+# 07:30:41-45, ~11 minutes after the install). The box was loaded by two other
+# coder units running ffmpeg/GStreamer work.
+#
+# A wall-clock budget alone cannot tell "slow" from "wedged". The seams below
+# split it: a monotone CPU-time sample says whether the child is still doing
+# work, so the no-progress window -- not the absolute cap -- is what fails a
+# genuinely wedged child, and a liveness probe fails a DEAD one at once.
+# ---------------------------------------------------------------------------
+
+
+def test_poll_until_ready_keeps_polling_while_the_child_is_still_doing_work() -> None:
+    """FALSIFICATION: an implementation that keeps the wall-clock-only rule
+    (or that reads any sample as "no progress") kills this child at the first
+    60s window even though it is burning CPU the whole time -- it would return
+    with ``sleep.calls == 6`` and ``clock.now == 60.0``, not 18 and 180.0."""
+
+    clock = _FakeClock()
+    sleep = _FakeSleep(clock, step=10.0)
+    result = poll_until_ready(
+        lambda: check_control_plane_ready(lambda: ControlPlaneHealthProbe(status_code=0)),
+        budget_seconds=180.0,
+        clock=clock,
+        sleep=sleep,
+        poll_interval_seconds=10.0,
+        progress=lambda: clock.now / 2.0,  # 0.5 CPU-seconds burned per wall second
+        stall_seconds=60.0,
+    )
+
+    assert result.outcome == "timeout"
+    assert sleep.calls == 18, "a working child must get its whole 180s budget"
+    assert clock.now == 180.0
+    assert "readiness budget (180.0s)" in result.detail
+
+
+def test_poll_until_ready_gives_up_at_the_no_progress_window() -> None:
+    """The other half, and what makes a raised budget safe: a child whose CPU
+    time has stopped advancing is wedged (deadlock, a blocking call that will
+    never return), and it fails well inside the absolute cap -- at 60s, with a
+    detail that says so rather than the misleading "budget exhausted"."""
+
+    clock = _FakeClock()
+    sleep = _FakeSleep(clock, step=10.0)
+    frozen = 4.0
+    result = poll_until_ready(
+        lambda: check_control_plane_ready(lambda: ControlPlaneHealthProbe(status_code=0)),
+        budget_seconds=180.0,
+        clock=clock,
+        sleep=sleep,
+        poll_interval_seconds=10.0,
+        progress=lambda: frozen,
+        stall_seconds=60.0,
+    )
+
+    assert result.outcome == "timeout"
+    assert clock.now == 60.0, "the no-progress window must fire long before the 180s cap"
+    assert sleep.calls == 6
+    assert result.detail == (
+        "readiness stalled: no CPU progress for 60.0s; last result: GET /health returned 0"
+    )
+
+
+def test_a_cpu_sample_that_advances_restarts_the_no_progress_window() -> None:
+    """A child that was briefly quiet and then resumed work is NOT wedged: the
+    window is measured from the last OBSERVED progress, never from entry."""
+
+    clock = _FakeClock()
+    sleep = _FakeSleep(clock, step=10.0)
+    result = poll_until_ready(
+        lambda: check_control_plane_ready(lambda: ControlPlaneHealthProbe(status_code=0)),
+        budget_seconds=100.0,
+        clock=clock,
+        sleep=sleep,
+        poll_interval_seconds=10.0,
+        progress=lambda: 0.0 if clock.now < 50.0 else 7.0,
+        stall_seconds=60.0,
+    )
+
+    assert result.outcome == "timeout"
+    assert "readiness budget (100.0s)" in result.detail, (
+        "work resumed at t=50, so the window must restart there and never fire"
+    )
+
+
+def test_an_unsampled_cpu_is_not_evidence_of_a_stall() -> None:
+    """``progress()`` returning ``None`` means "cannot be sampled" (an unknown
+    pid, a denied query), never "no progress". Failing a child on evidence we
+    do not have is the same class of mistake as the defect itself -- killing
+    something that may be perfectly healthy -- so it keeps the plain budget."""
+
+    clock = _FakeClock()
+    sleep = _FakeSleep(clock, step=10.0)
+    result = poll_until_ready(
+        lambda: check_control_plane_ready(lambda: ControlPlaneHealthProbe(status_code=0)),
+        budget_seconds=180.0,
+        clock=clock,
+        sleep=sleep,
+        poll_interval_seconds=10.0,
+        progress=lambda: None,
+        stall_seconds=60.0,
+    )
+
+    assert result.outcome == "timeout"
+    assert clock.now == 180.0
+    assert "readiness budget (180.0s)" in result.detail
+
+
+def test_poll_until_ready_fails_fast_when_the_child_is_gone() -> None:
+    """A DEAD child must not hold the service in "starting" for the whole
+    budget: the liveness seam returns ``not_ready`` at once, so the normal
+    restart path owns it."""
+
+    clock = _FakeClock()
+    sleep = _FakeSleep(clock, step=10.0)
+    attempts = {"n": 0}
+
+    def never_ready() -> ControlPlaneHealthProbe:
+        attempts["n"] += 1
+        return ControlPlaneHealthProbe(status_code=0)
+
+    result = poll_until_ready(
+        lambda: check_control_plane_ready(never_ready),
+        budget_seconds=180.0,
+        clock=clock,
+        sleep=sleep,
+        poll_interval_seconds=10.0,
+        liveness=lambda: False,
+    )
+
+    assert result.outcome == "not_ready"
+    assert attempts["n"] == 1, "one in-flight probe, then out"
+    assert sleep.calls == 0
+    assert result.detail == (
+        "child process exited while waiting for readiness; last result: GET /health returned 0"
+    )
+
+
+def test_liveness_is_never_consulted_for_a_child_that_reports_ready() -> None:
+    """Order matters: ``ready`` is returned before anything looks at the
+    process handle, so a runner that cannot answer ``is_alive`` cannot turn a
+    good start into a failure."""
+
+    def _explode() -> bool:
+        raise AssertionError("liveness must not be consulted once the check reports ready")
+
+    clock = _FakeClock()
+    result = poll_until_ready(
+        lambda: check_control_plane_ready(lambda: ControlPlaneHealthProbe(status_code=200)),
+        budget_seconds=180.0,
+        clock=clock,
+        sleep=_FakeSleep(clock),
+        liveness=_explode,
+    )
+
+    assert result.outcome == "ready"
+
+
+def test_poll_until_ready_without_the_stall_window_keeps_the_budget_behaviour() -> None:
+    """The no-progress rule is opt-in by construction: a caller that supplies a
+    ``progress`` reader but no ``stall_seconds`` keeps the pre-U31 budget-only
+    behaviour, including the timeout detail the supervisor log has always
+    carried verbatim -- so any caller whose readiness probe is a one-shot
+    statement (postgres' SELECT 1, ollama's GET /api/version) is untouched."""
+
+    clock = _FakeClock()
+    sleep = _FakeSleep(clock, step=10.0)
+    result = poll_until_ready(
+        lambda: check_control_plane_ready(lambda: ControlPlaneHealthProbe(status_code=0)),
+        budget_seconds=30.0,
+        clock=clock,
+        sleep=sleep,
+        poll_interval_seconds=10.0,
+        progress=lambda: clock.now / 2.0,  # supplied, but no window to apply it to
+    )
+
+    assert result.outcome == "timeout"
+    assert (
+        result.detail == "readiness budget (30.0s) exhausted; last result: GET /health returned 0"
+    )
+
+
+def test_childspec_defaults_to_a_wall_clock_only_readiness_window() -> None:
+    """``readiness_stall_seconds`` is opt-in data, not a global policy: every
+    spec that does not set it behaves exactly as before."""
+
+    spec = ChildSpec(
+        name="control_plane",
+        argv=["python"],
+        graceful_stop_kind="ctrl_break_event",
+        graceful_stop_argv_template=[],
+        graceful_stop_deadline_seconds=15.0,
+        readiness_budget_seconds=30.0,
+    )
+    assert spec.readiness_stall_seconds is None
+
+
+def test_the_control_plane_carries_a_progress_aware_window_and_the_others_do_not() -> None:
+    """The budget raise and the window ship TOGETHER -- a 180s wall-clock budget
+    with no way to tell a wedged child from a slow one would just move the
+    defect's damage from 30s to 180s.
+
+    The numbers (MEASURED on this box, 2026-09-25, ``%TEMP%\\u31\\
+    startup_measurements.json``: three idle runs, wall 15462.6 / 10883.3 /
+    11207.9 ms of which the interpreter import alone was 12669.9 / 8304.3 /
+    8559.3 ms, ``create_app`` 1066.8 / 1302.3 / 1331.8 ms; the loaded runs
+    exceeded 30s outright on the station). 60s of NO progress is 4x the worst
+    measured idle wall; 180s is the absolute cap a genuinely slow first import
+    on a loaded box may use. postgres and ollama keep ``None``."""
+
+    control_plane = control_plane_child_spec()
+    assert control_plane.readiness_budget_seconds == 180.0
+    assert control_plane.readiness_stall_seconds == 60.0
+
+    postgres = postgres_child_spec(data_dir=r"C:\data\pg")
+    ollama = ollama_child_spec(ollama_exe_path="ollama.exe", models_dir=r"C:\models")
+    assert postgres.readiness_stall_seconds is None
+    assert ollama.readiness_stall_seconds is None
+
+    # Every knob stays caller-overridable, including switching the window off
+    # (a deployment that wants the old wall-clock-only rule back).
+    overridden = control_plane_child_spec(
+        readiness_budget_seconds=30.0, readiness_stall_seconds=None
+    )
+    assert overridden.readiness_budget_seconds == 30.0
+    assert overridden.readiness_stall_seconds is None
+
+
+def test_process_cpu_seconds_reads_a_real_process_and_stops_at_a_dead_pid() -> None:
+    """The progress seam runs against the REAL box, not only a fake. OBSERVED:
+    our own process has certainly burned CPU by the time a 3000-test suite
+    reaches here; a child we start has a readable total; a pid that has exited
+    and been reaped is ``None`` -- never 0.0, because "cannot be sampled" and
+    "used no CPU" are different facts and conflating them would stall-fail a
+    healthy child.
+    """
+
+    own = process_cpu_seconds(os.getpid())
+    assert own is not None
+    assert own > 0.0
+
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30.0)"])
+    try:
+        sampled = process_cpu_seconds(child.pid)
+        assert sampled is not None
+        assert sampled >= 0.0
+    finally:
+        child.kill()
+        child.wait(timeout=30.0)
+
+    assert process_cpu_seconds(child.pid) is None
+    assert process_cpu_seconds(0) is None
 
 
 # ---------------------------------------------------------------------------
