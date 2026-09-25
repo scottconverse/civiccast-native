@@ -1641,6 +1641,10 @@ def test_success_callback_reentry_can_start_a_new_reload(engine_module) -> None:
         engine._pending_reload = {"newer": True}
 
     pending = {
+        # Production pending dicts always carry the txn id (engine._begin_reload);
+        # _finish_reload_commit now records it as the stall diagnostic's reload
+        # context on the committed path, exactly as the cleanup path already did.
+        "txn_id": 1,
         "commit_in_progress": True,
         "retirement_result": (True, None),
         "boundary_probes": [],
@@ -1652,6 +1656,7 @@ def test_success_callback_reentry_can_start_a_new_reload(engine_module) -> None:
     engine._pending_reload = pending
     assert engine._finish_reload_commit(pending) is False
     assert current_results == [(True, None)]
+    assert engine._reload_context == (1, "committed")
     assert engine._pending_reload == {"newer": True}
 
 
@@ -1759,6 +1764,7 @@ def test_cleanup_failure_settles_false_but_keeps_a_producing_channel_on_air(
     loop = _Loop()
     engine._loop = loop
     pending = {
+        "txn_id": 1,
         "commit_in_progress": True,
         "retirement_result": (False, "element-null-failed:2"),
         "boundary_probes": [],
@@ -1771,6 +1777,7 @@ def test_cleanup_failure_settles_false_but_keeps_a_producing_channel_on_air(
 
     assert engine._finish_reload_commit(pending) is False
     assert results == [(False, "cleanup-failed")]
+    assert engine._reload_context == (1, "cleanup-failed")
     assert engine._pending_reload is None
     assert engine._stopping is False
     assert engine._error is None
@@ -2025,6 +2032,7 @@ def test_stop_settles_current_callback_once(engine_module) -> None:
     engine.pipeline = _StopPipeline(recorder)
     engine._reload_commit_thread = _StoppedThread()
     engine._pending_reload = {
+        "txn_id": 1,
         "commit_in_progress": True,
         "selector_handoff_confirmed": True,
         "selector_notify_handlers": [],

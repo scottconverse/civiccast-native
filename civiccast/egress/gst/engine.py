@@ -749,6 +749,30 @@ class GstPlayoutEngine:
         self._mux_input_buffers: dict[str, int] = {}
         self._mux_input_snapshot: dict[str, int] = {}
         self._mux_input_snapshot_t = 0.0
+        # U34: per-stream stall state -- the watchdog above measures ONE
+        # aggregate count (the mux SRC pad), so a channel whose video branch
+        # stopped feeding the mux while audio kept flowing keeps "advancing"
+        # and is never judged stalled. That is exactly the shape of all four
+        # 2026-09-25 freezes (U30 measured 390 buffers/5s healthy against 244
+        # buffers/5s with video gone -- the audio-only rate), and the worker
+        # never exited. These three follow the per-pad counters above, keyed by
+        # pad NAME for the same reason those are: a pad whose caps are not yet
+        # negotiated has no honest label, and a wrong label would accuse the
+        # wrong stream. ``_stream_last_count``/``_stream_last_advance_t`` are
+        # re-baselined wherever the aggregate reference is (arm time, commit
+        # settlement). ``_stream_ever_seen`` is never cleared: a stream that has
+        # fed the mux once is a stream whose silence is news, while a pad that
+        # has never produced at all is the first-output budget's business.
+        self._stream_last_count: dict[str, int] = {}
+        self._stream_last_advance_t: dict[str, float] = {}
+        self._stream_ever_seen: set[str] = set()
+        # U34: the reload context the per-stream stall line reports -- the last
+        # content reload's id and where it got to ("prepared"/"committing"/
+        # "committed"/"cleanup-failed"). None until the first content reload;
+        # the live reload-7 case renders ``last reload id=7 stage=committed``,
+        # matching the ``stage=committed elements=52`` line the coordinator
+        # read off the station.
+        self._reload_context: tuple[int, str] | None = None
         # U30 EOS-origin diagnostic: WHERE the EOS that ends this worker's output
         # first arrived. Both 2026-09-25 incidents and both off-live campaigns end
         # with a bus EOS that quits the run loop -- a CLEAN teardown the daemon
@@ -2515,6 +2539,9 @@ class GstPlayoutEngine:
         # cumulative total.
         self._snapshot_mux_input(self._stall_last_advance_t)
         self._snapshot_chain_input()
+        # U34: the per-stream references start at the same moment and against
+        # the same baseline as the aggregate one -- see ``_check_stream_stalls``.
+        self._arm_stream_stall_reference(self._stall_last_advance_t)
         GLib.timeout_add_seconds(1, self._check_stall)
 
     def _maybe_print_first_output_marker(self) -> None:
@@ -2621,7 +2648,15 @@ class GstPlayoutEngine:
                 self._first_output_seen = True
                 self._maybe_print_first_output_marker()
             self._maybe_print_output_progress(now)
-            return True  # output advancing — keep watching
+            # U34: the aggregate advanced -- but it advanced on SOME stream.
+            # In both shapes of a real freeze one branch keeps feeding the mux
+            # (audio), so this is the only branch where the aggregate counter
+            # is blind by construction; a per-stream judgement belongs here and
+            # nowhere else. When the aggregate itself is flat the code below
+            # keeps precedence unchanged.
+            # False here means a per-stream stall was judged and the loop was
+            # quit -- the watchdog is done, exactly like the paths below.
+            return self._check_stream_stalls(now)
         self._maybe_print_output_progress(now)
         elapsed = now - self._stall_last_advance_t
         if not self._first_output_seen:
@@ -2657,27 +2692,20 @@ class GstPlayoutEngine:
             return True
         if elapsed >= self.stall_timeout_s:
             pending = self._pending_reload
-            if (
-                pending is not None
-                and pending.get("switch_at_end_of_current", False)
-                and pending.get("new_leg_ready", False)
-                and not pending.get("old_leg_eos", False)
-                and not pending.get("commit_in_progress", False)
+            # A fully prerolled replacement is held safely off the selector,
+            # but a broken outgoing leg can stop producing without ever
+            # delivering EOS. Once output has flatlined for the ordinary
+            # stall budget, force this transaction through the existing
+            # forced-boundary path instead of killing the worker and losing
+            # the ready replacement. The helper marks this transaction's
+            # boundary satisfied and reuses the normal lock-safe
+            # commit/retirement path. U34: the per-stream path asks the same
+            # question of the same preconditions, so both call this one
+            # predicate rather than restating it.
+            if self._force_ready_deferred_switch(
+                reason="output stalled after replacement preroll; forcing switch"
             ):
-                # A fully prerolled replacement is held safely off the selector,
-                # but a broken outgoing leg can stop producing without ever
-                # delivering EOS. Once output has flatlined for the ordinary
-                # stall budget, force this transaction through the existing
-                # forced-boundary path instead of killing the worker and losing
-                # the ready replacement. The helper marks this transaction's
-                # boundary satisfied and reuses the normal lock-safe
-                # commit/retirement path.
-                forced = self._force_deferred_boundary(
-                    pending["txn_id"],
-                    reason="output stalled after replacement preroll; forcing switch",
-                )
-                if forced:
-                    return True
+                return True
             if pending is not None and pending.get("commit_in_progress", False):
                 # Round-2 finding 2: the two watchdogs were racing and the WRONG
                 # one always won. A commit holds the replacement leg held (not
@@ -2777,6 +2805,187 @@ class GstPlayoutEngine:
         self._stall_last_advance_t = now
         self._snapshot_mux_input(now)
         self._snapshot_chain_input()
+        # U34: the per-stream references restart here too, for the same reason
+        # and with the same clean hand-back: the leg that was switched IN has
+        # only just begun to have a chance to feed the mux, and it must get the
+        # full per-stream budget rather than inherit the commit's silence.
+        self._arm_stream_stall_reference(now)
+
+    # -- U34 per-stream stall judgement ---------------------------------------
+
+    def _required_stream_labels(self) -> set[str]:
+        """The stream labels whose silence means the channel stopped airing.
+
+        ``video`` always; ``audio`` only when the persistent output half
+        actually carries an audio branch (``self.audio_selector`` is built iff
+        the graph declares an audio encoder -- see the pipeline build), because
+        a graph with no audio branch has no audio mux pad to judge and an
+        audio-less channel must not be judged silent for having no audio.
+
+        Caption/subtitle pads are deliberately excluded from this set: a cue
+        track is legitimately sparse (minutes can pass between cues), so its
+        silence is not an outage. They stay in the logged flow ladder
+        (``_mux_input_delta_suffix``) where an operator can see them."""
+        labels = {"video"}
+        if getattr(self, "audio_selector", None) is not None:
+            labels.add("audio")
+        return labels
+
+    def _arm_stream_stall_reference(self, now: float) -> None:
+        """Baseline every counted mux SINK pad's stall reference at ``now``.
+
+        Called at arm time and from ``_reset_stall_reference`` (commit
+        settlement), exactly where the aggregate reference is re-baselined, so
+        the two watchdogs always agree about when the current window started.
+
+        Pads whose counter is already non-zero at this moment are credited as
+        having produced -- ``_stream_ever_seen`` is additive and never cleared,
+        so a stream that fed the mux before a commit is still a stream whose
+        later silence is an outage."""
+        with contextlib.suppress(Exception):
+            pads = getattr(self, "_mux_input_pads", None) or {}
+            counters = getattr(self, "_mux_input_buffers", None) or {}
+            ever = getattr(self, "_stream_ever_seen", None)
+            if ever is None:
+                ever = set()
+                self._stream_ever_seen = ever
+            self._stream_last_count = dict(counters)
+            self._stream_last_advance_t = dict.fromkeys(pads, now)
+            for pad_name in pads:
+                if counters.get(pad_name, 0) > 0:
+                    ever.add(pad_name)
+
+    def _check_stream_stalls(self, now: float) -> bool:
+        """U34: judge each REQUIRED stream's own mux SINK pad.
+
+        Called only from ``_check_stall``'s output-ADVANCING branch, because
+        that is the branch where the aggregate counter is blind by
+        construction: the four 2026-09-25 freezes each kept the mux SRC counter
+        climbing at the audio-only rate (244 buffers/5s against 390 healthy)
+        while the video branch fed the mux nothing at all. A required stream
+        (``video``, plus ``audio`` when the graph has an audio branch) flat for
+        ``stall_timeout_s`` is judged stalled even though the aggregate moved.
+
+        Returns True to keep watching, False when this watchdog has stopped it
+        (the loop was quit), mirroring ``_check_stall``.
+
+        Deliberately NOT judged:
+
+        * a pad outside ``_required_stream_labels`` (caption/subtitle -- sparse
+          by nature -- or an unnegotiated pad with no honest label);
+        * a pad that has never advanced since the reference was armed: that is
+          a stream that never started, which is the first-output budget's
+          question, not this one;
+        * any stream while a reload commit is in flight -- the commit watchdog
+          owns that window (same rationale as the aggregate suspension), and
+          the reference is pushed forward silently so the per-stream check
+          cannot print inside a window the healthy-run test asserts is free of
+          ``CTRL stall`` lines.
+
+        Lock-free on purpose: the counters are written by one streaming thread
+        per pad and read here on the GLib main loop, the same single-writer
+        contract as ``_output_buffers``. Nothing is re-baselined outside this
+        method except at arm/reset time from the same main loop."""
+        if self.stall_timeout_s <= 0:
+            # Same operator opt-out as the aggregate check: ``stall_timeout_s
+            # <= 0`` means "no post-first-buffer stall bound at all".
+            return True
+        pads = getattr(self, "_mux_input_pads", None) or {}
+        counters = getattr(self, "_mux_input_buffers", None) or {}
+        if not pads or not counters:
+            return True
+        last_count = getattr(self, "_stream_last_count", None)
+        if last_count is None:
+            last_count = {}
+            self._stream_last_count = last_count
+        last_advance = getattr(self, "_stream_last_advance_t", None)
+        if last_advance is None:
+            last_advance = {}
+            self._stream_last_advance_t = last_advance
+        ever = getattr(self, "_stream_ever_seen", None)
+        if ever is None:
+            ever = set()
+            self._stream_ever_seen = ever
+        required = self._required_stream_labels()
+        pending = getattr(self, "_pending_reload", None)
+        suspended = pending is not None and pending.get("commit_in_progress", False)
+        judged: list[tuple[str, float]] = []
+        for pad_name in sorted(pads):
+            current = counters.get(pad_name, 0)
+            previous = last_count.get(pad_name)
+            if previous is None or current != previous:
+                # Advanced since the previous tick (or registered since then):
+                # this stream is feeding the mux.
+                last_count[pad_name] = current
+                last_advance[pad_name] = now
+                if current > 0:
+                    ever.add(pad_name)
+                continue
+            if pad_name not in ever or self._mux_pad_stream_label(pads[pad_name]) not in required:
+                continue
+            elapsed = now - last_advance.get(pad_name, now)
+            if elapsed < self.stall_timeout_s:
+                continue
+            if suspended:
+                last_advance[pad_name] = now
+                continue
+            judged.append((pad_name, elapsed))
+        if not judged:
+            return True
+        # Judge the stream silent longest: one line, one exit, and the most
+        # informative of the offenders.
+        pad_name, elapsed = max(judged, key=lambda item: item[1])
+        label = self._mux_pad_stream_label(pads[pad_name])
+        # Same rescue as the aggregate path, same preconditions: a fully
+        # prerolled replacement held off the selector can take over a wedged
+        # channel without any restart at all.
+        if self._force_ready_deferred_switch(
+            reason=f"{label} stream stalled after replacement preroll; forcing switch"
+        ):
+            return True
+        ctx = getattr(self, "_reload_context", None)
+        ctx_text = (
+            f"last reload id={ctx[0]} stage={ctx[1]}" if ctx is not None else "no content reload"
+        )
+        print(
+            # STDERR, not stdout, and ASCII only: the daemon reads the worker's
+            # stderr tail into ``last_error`` for the operator's state row (see
+            # the aggregate stall message). Deliberately does NOT reuse the
+            # aggregate wording "no output for" -- the aggregate watchdog did
+            # NOT judge this stall, and a log reader (or a test) must be able to
+            # tell which watchdog named it.
+            f"CTRL stall: no {label} buffers for {int(elapsed)}s "
+            f"({ctx_text}) - quitting for daemon restart",
+            file=sys.stderr,
+            flush=True,
+        )
+        # ("stall", ...) -- the ordinary exit-1 case the daemon already
+        # relaunches, with a reason that names the stream that stopped.
+        self._error = ("stall", f"{label} stream stalled")
+        if self._loop is not None:
+            self._loop.quit()
+        return False
+
+    def _force_ready_deferred_switch(self, *, reason: str) -> bool:
+        """Force a ready-but-waiting deferred switch through the existing
+        forced-boundary path; True when the force was accepted.
+
+        A fully prerolled replacement is held safely off the selector, but a
+        broken outgoing leg can stop producing without ever delivering the EOS
+        or boundary this switch is waiting for -- the live reload-7 case. Both
+        stall paths (the aggregate one and U34's per-stream one) reach their
+        bound in exactly that state and need exactly this rescue, so the
+        predicate lives here once instead of being restated (and drifting)."""
+        pending = getattr(self, "_pending_reload", None)
+        if (
+            pending is not None
+            and pending.get("switch_at_end_of_current", False)
+            and pending.get("new_leg_ready", False)
+            and not pending.get("old_leg_eos", False)
+            and not pending.get("commit_in_progress", False)
+        ):
+            return bool(self._force_deferred_boundary(pending["txn_id"], reason=reason))
+        return False
 
     def _await_playing(self) -> None:
         """Bounded wait for the PLAYING transition so a wedged preroll can't hang the
@@ -3492,6 +3701,8 @@ class GstPlayoutEngine:
             f"held_streams={len(pending['hold_probes'])} timing={timing} mode={switch_mode}",
             flush=True,
         )
+        # U34: the context a later per-stream stall line reports.
+        self._reload_context = (txn_id, "prepared")
         if pending["switch_at_end_of_current"] and not pending["old_leg_eos"]:
             pending["defer_timeout_id"] = GLib.timeout_add_seconds(
                 max(1, int(self.defer_switch_timeout_s)), self._on_defer_switch_timeout, txn_id
@@ -4152,6 +4363,10 @@ class GstPlayoutEngine:
             return False
         print(f"CTRL reload: firing (reload_id={pending['txn_id']})", flush=True)
         pending["commit_in_progress"] = True
+        # U34: set synchronously with the commit flag, so a per-stream stall
+        # judged in this window (it cannot be -- commits suspend that check --
+        # but a crash dump can) still names where the channel was.
+        self._reload_context = (pending["txn_id"], "committing")
         pending["retirement_cancelled"] = False
         try:
             watchdog, completed = self._arm_commit_watchdog()
@@ -4488,6 +4703,7 @@ class GstPlayoutEngine:
                 file=sys.stderr,
                 flush=True,
             )
+            self._reload_context = (pending["txn_id"], "cleanup-failed")
             for pad, probe_id in pending["boundary_probes"]:
                 with contextlib.suppress(Exception):
                     pad.remove_probe(probe_id)
@@ -4515,6 +4731,10 @@ class GstPlayoutEngine:
             file=sys.stderr,
             flush=True,
         )
+        # U34: the state a per-stream stall in the live reload-7 shape reports
+        # ("committed") -- the freeze happened after the commit, and this is
+        # the line the coordinator's station evidence carried.
+        self._reload_context = (pending["txn_id"], "committed")
         # Item 4 (honest ack): tell the caller the reload actually landed. Fired
         # last, after every other commit side-effect, and guarded so a callback
         # failure (e.g. the worker's pipe write) can never re-wedge a reload that
