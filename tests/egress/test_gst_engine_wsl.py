@@ -1586,6 +1586,116 @@ def test_stall_watchdog_commits_ready_deferred_reload_when_live_source_freezes(
     _assert_continuous(out_ts, text)
 
 
+def test_per_stream_watchdog_forces_a_ready_deferred_switch_that_never_fires(
+    tmp_path: Path,
+) -> None:
+    """U34 / live reload 7: a deferred replacement sat READY and never fired.
+
+    The public 2026-09-25 case reached ``new leg preroll verified ...
+    mode=deferred`` and stopped there: its boundary was the OUTGOING leg's, and
+    the outgoing leg's ``video`` branch had stopped feeding ``mpegtsmux`` while
+    its audio kept the aggregate mux counter climbing. The aggregate watchdog is
+    blind to that by construction, so the only bound left was the deferred
+    switch timer -- 900 s by default, and the daemon's escalation got there
+    first (see reports/U34.md).
+
+    This drives that shape off-live: the outgoing leg carries live UDP video and
+    in-graph audio, an ENDLESS deferred replacement is armed and proven ready,
+    and then only the live video feed is frozen (`_LiveUdpSender.freeze`: paused,
+    no EOS, no bus error) while the audio keeps the aggregate moving. The
+    per-stream watchdog judges the mux ``video`` sink pad silent and takes the
+    same rescue the aggregate path takes on a fully frozen source: force the
+    ready, prerolled replacement through the existing boundary machinery, commit
+    it, and STAY ON AIR. That is the whole point against the live incident,
+    where the channel stayed frozen until the daemon restarted the worker.
+    """
+    port = _free_udp_port()
+    out_ts = tmp_path / "out.ts"
+    start_graph = _filesink_graph(_half_live_program_graph(port, live="video"), out_ts)
+    reload_path = tmp_path / f"ready-never-fires{reloadpolicy.DEFERRED_SWITCH_SUFFIX}"
+    reload_path.write_text(
+        graphmod.graph_to_json(_segment_timed_reload_graph(18, audio=True)),
+        encoding="utf-8",
+    )
+    stall_timeout_s = 3
+    sender = _half_live_sender(port, "video")
+    proc, control, log = _launch_worker(
+        tmp_path,
+        start_graph,
+        out_ts,
+        env_extra={"CIVICCAST_STALL_TIMEOUT_S": str(stall_timeout_s)},
+    )
+    try:
+        _wait_for_interval_line(log, r"\[mux-in [\d.]+s:", timeout=25.0)
+        _send(control, f"reload {reload_path}")
+        _wait_for_log(log, "CTRL reload: new leg preroll verified", timeout=25.0)
+        text = log.read_text(encoding="utf-8", errors="replace")
+        ready_line = next(line for line in text.splitlines() if "new leg preroll verified" in line)
+        assert "mode=deferred" in ready_line, (
+            f"replacement was not armed as a deferred switch: {ready_line!r}"
+        )
+        assert "CTRL reload committed" not in text, (
+            "the deferred replacement committed before anything was frozen; this "
+            f"test needs it WAITING on its boundary;\n{text}"
+        )
+        ready_at = text.index("CTRL reload: new leg preroll verified")
+        # "Never fired" only means something against a live leg that WAS feeding:
+        # require an interval line after the arming in which the video branch
+        # actually delivered buffers to the mux pad the watchdog will judge.
+        _wait_for_interval_line(
+            log, r"\[mux-in [\d.]+s: [^\]]*\bvideo=\+[1-9]", after=ready_at, timeout=25.0
+        )
+        assert proc.poll() is None, (
+            f"worker died before the freeze;\n{log.read_text(encoding='utf-8', errors='replace')}"
+        )
+        frozen_at = time.monotonic()
+        size_at_freeze = out_ts.stat().st_size
+        sender.freeze()
+        force_marker = "video stream stalled after replacement preroll; forcing switch"
+        _wait_for_log(log, force_marker, timeout=25.0)
+        forced_after = time.monotonic() - frozen_at
+        _wait_for_log(log, "CTRL reload committed", timeout=25.0)
+        committed_at_size = out_ts.stat().st_size
+        committed_at = log.read_text(encoding="utf-8", errors="replace").index(
+            "CTRL reload committed"
+        )
+        time.sleep(1.5)
+        assert proc.poll() is None, (
+            "the worker quit instead of forcing the ready replacement through;\n"
+            + log.read_text(encoding="utf-8", errors="replace")
+        )
+        assert out_ts.stat().st_size > committed_at_size, (
+            "the forced replacement committed but TS output did not resume;\n"
+            + log.read_text(encoding="utf-8", errors="replace")
+        )
+        # The pad the watchdog judged silent must be fed again by the leg that
+        # replaced the frozen one -- otherwise "resumed" would only mean the
+        # audio-only rate kept the transport stream growing.
+        _wait_for_interval_line(
+            log, r"\[mux-in [\d.]+s: [^\]]*\bvideo=\+[1-9]", after=committed_at, timeout=25.0
+        )
+        _send(control, "stop")
+        rc = proc.wait(timeout=25)
+    finally:
+        _reap(proc)
+        sender.stop()
+
+    text = log.read_text(encoding="utf-8", errors="replace")
+    assert rc == 0, f"unclean teardown after the forced deferred commit (rc={rc});\n{text}"
+    assert text.count(force_marker) == 1, text
+    assert text.count("CTRL reload committed") == 1, text
+    # The rescue returns before the quit print, so neither the per-stream quit
+    # line nor the aggregate one may appear: this run must stay on air.
+    assert "CTRL stall: no video buffers for" not in text, text
+    assert "CTRL stall: no output for" not in text, text
+    assert forced_after < stall_timeout_s + 8, (
+        f"the forced switch took {forced_after:.1f}s after the freeze for a "
+        f"{stall_timeout_s}s bound; the per-stream watchdog is not what rescued this"
+    )
+    assert size_at_freeze > 0, "no output before the freeze; the check would be vacuous"
+    _assert_continuous(out_ts, text)
+
+
 def test_stall_watchdog_does_not_fire_on_healthy_output(tmp_path: Path) -> None:
     """S9-5 fail-closed check: with a SHORT stall_timeout, healthy flowing output must
     NOT trip the watchdog — every output buffer resets it. Runs well past the timeout."""
