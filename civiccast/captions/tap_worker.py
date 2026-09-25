@@ -547,6 +547,12 @@ class CaptionTapScanResult:
     consumed_segments: int = 0
     quarantined_segments: int = 0
     committed_review_items: int = 0
+    # Settled segments discarded because the channel was over its backlog
+    # limit. Since U23 that is BOTH shapes of the over-limit response: the
+    # oldest-settled shed of a catch-up (``max-backlog-catch-up-shed``, captions
+    # keep running) and the fail-closed discard of a retained pause
+    # (``max-backlog-exceeded``). Read ``overloaded_channels``/``paused_channels``
+    # alongside it to tell the two apart -- a shed leaves both empty.
     dropped_overload_segments: int = 0
     # Pending hypotheses the stabilizer expired without re-confirmation: never
     # committed/never on-air, but counted here so the drop is never silent
