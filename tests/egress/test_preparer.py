@@ -2925,12 +2925,44 @@ def test_two_pass_probe_failure_fails_closed(tmp_path: Path) -> None:
     assert not any("print_format=json" not in " ".join(a) for a in calls)
 
 
-def test_two_pass_cache_key_includes_method(tmp_path: Path) -> None:
+def test_two_pass_cache_key_includes_method(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The conform cache key must depend on the loudness-normalization method.
+
+    Switching preparer.py from a one-pass ``loudnorm`` to a measured two-pass
+    ``loudnorm`` changes the bytes of every conformed segment, so an entry
+    written by the old method must never be served for the same source. The key
+    mixes the module-level ``_LOUDNORM_METHOD_VERSION`` into its digest, so
+    holding (source, profile, loudness config) fixed and *only* changing the
+    method version yields a different key.
+    """
     preparer = SourcePreparer(work_dir=tmp_path / "work")
     src = tmp_path / "asset.mp4"
     src.write_bytes(b"x")
-    key = preparer._cache_key(src, _config())
-    assert isinstance(key, str) and len(key) == 32
+    config = _config()
+
+    method = preparer_module._LOUDNORM_METHOD_VERSION
+    baseline = preparer._cache_key(src, config)
+    assert isinstance(baseline, str) and len(baseline) == 32
+    # Same source, same config, same method -> same key (the cache still hits).
+    assert preparer._cache_key(src, config) == baseline
+
+    # Different method version -> different key (the stale one-pass entry is
+    # unreachable, so the segment is re-conformed under the new method).
+    monkeypatch.setattr(preparer_module, "_LOUDNORM_METHOD_VERSION", f"{method}+other")
+    bumped = preparer._cache_key(src, config)
+    assert bumped is not None
+    assert bumped != baseline
+
+    # Restoring the shipped version restores the shipped key: the key is a pure
+    # function of these inputs, not of process history.
+    monkeypatch.setattr(preparer_module, "_LOUDNORM_METHOD_VERSION", method)
+    assert preparer._cache_key(src, config) == baseline
+
+    # The shipped method version is the two-pass one: a one-pass build would
+    # leave a single-pass conform reachable under the same key.
+    assert method == "loudnorm-v2-twopass"
 
 
 def test_probe_args_carry_foreground_thread_cap(tmp_path: Path) -> None:
