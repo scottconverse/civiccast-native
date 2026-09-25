@@ -314,9 +314,9 @@ _ROLLOVER_EXTENSION_TOLERANCE_S = 0.25
 # so 30s is ~3x the cost of the switch itself -- while still an order of
 # magnitude below the shortest plausible scheduled item, and half the
 # automation's own 60s rollover lead margin so it can never fight the rollover
-# machinery. It is also far below the slate fill horizon (~360s, 12 x 30s
-# subchains), which is what makes replacing the tail safe rather than a second
-# way to sit on slate.
+# machinery. It is also far below the slate fill horizon (3600s, one continuous
+# pre-conformed fill file since U27), which is what makes replacing the tail
+# safe rather than a second way to sit on slate.
 _SCHEDULE_TAIL_FLOOR_SECONDS = 30.0
 # The boundary is taken just PAST the tail's own end, where the next item
 # becomes due: the resolver's item test is the half-open ``starts_at <= t <
