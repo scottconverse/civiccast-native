@@ -423,6 +423,65 @@ _CONTROL_PLANE_SUPERVISED_ENV_VAR = "CIVICCAST_SUPERVISED"
 #: :func:`_maybe_configure_control_plane_logging`.
 _control_plane_logging_configured = False
 
+#: Process-global latch for :func:`_maybe_contain_own_descendants`.
+_descendants_contained = False
+
+
+def _maybe_contain_own_descendants() -> None:
+    """Put this process in its own kill-on-close Job Object when (and only
+    when) it is running as the native supervisor's control-plane child.
+
+    U31. The live defect (station, 2026-09-25, ``supervisor.log``
+    07:20:32-07:32:15): the supervisor killed an unready control plane, and the
+    three HLS relay ffmpegs that control plane had spawned SURVIVED as orphans
+    holding the relays' UDP ports -- so every supervised relay after that failed
+    with ``[udp @ ...] bind failed: Error number -10048`` until the orphans were
+    killed by hand, and the channels were off air for eleven minutes.
+
+    Inherited membership in the supervisor's job is not enough to prevent that:
+    ``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`` fires when the last HANDLE to the job
+    closes, and the supervisor holds its handle for its own lifetime, so killing
+    one member reaps nothing. See ``civiccast.platform.child_containment`` for
+    the mechanism, the measurement behind it, and why the job deliberately still
+    permits ``CREATE_BREAKAWAY_FROM_JOB`` (the tier-5 detached GStreamer repair
+    launches from this process that way).
+
+    Same guard as :func:`_maybe_configure_control_plane_logging` and for the
+    same reason: containment belongs to the supervised control plane, not to a
+    test run, a bare ``uvicorn`` dev run, or any other unsupervised context that
+    calls ``create_app()`` -- none of which set the var, and none of which want
+    their own child processes reaped when the process exits.
+
+    Called from the TOP of ``create_app``, before ``_maybe_configure_control_plane_logging()``
+    and before anything can spawn a child, because containment only holds for
+    processes created AFTER the assignment.
+
+    A failure here is logged at ERROR and does NOT stop startup: a station that
+    cannot establish containment must still come on air, but the operator has to
+    be able to find out from the log that its relays are not protected."""
+
+    global _descendants_contained
+    if _descendants_contained:
+        return
+    if os.environ.get(_CONTROL_PLANE_SUPERVISED_ENV_VAR) != "1":
+        return
+    # Lazy import for the same reason the logging helper imports lazily: no
+    # reason for every civiccast.app import to pull this in when unsupervised.
+    from civiccast.platform.child_containment import contain_own_descendants
+
+    status = contain_own_descendants()
+    if status.active:
+        _descendants_contained = True
+        _LOG.info("control-plane containment active: %s", status.detail)
+    else:
+        _LOG.error(
+            "control-plane containment INACTIVE (%s): relay ffmpegs and other "
+            "long-lived children started by this process will NOT be reaped if it "
+            "dies, and will hold their UDP ports against the supervised replacement "
+            "(U31 orphan defect)",
+            status.detail,
+        )
+
 
 def _maybe_configure_control_plane_logging() -> None:
     """Attach the ``civiccast`` package's INFO file logger for this process
@@ -2099,6 +2158,9 @@ def create_app() -> FastAPI:
     can reach a CDN is not the defect; a municipal station that cannot is. Any
     deployment without the flag keeps both UIs exactly as before.
     """
+    # Before anything else: containment only covers children created AFTER the
+    # job assignment, so it must precede every spawn site in startup.
+    _maybe_contain_own_descendants()
     _maybe_configure_control_plane_logging()
     lan_only_station = _lan_only_station()
     app = FastAPI(
