@@ -90,6 +90,32 @@ the investigation's corrected conclusions.
   requirement that a sustained collapse still pauses. A deferred scan is not
   counted as recovery evidence, so a chronically behind station still escalates.
 
+### HLS relay half-program lock (U12, 2026-09-24)
+
+The `hls` sink's supervised ffmpeg relay fixed its output stream set when it
+probed its loopback input, so a child (re)started mid-stream while the input was
+missing a stream served that half program until the channel itself restarted.
+Live: the government relay was restarted by the bounded stall self-heal at
+18:46:32 and served audio-only segments until the channel was restarted, and its
+post-self-heal segments at 18:47:44-18:47:56 carried TS PID 256 with no PID 257
+(video-only).
+
+- The relay argv now REQUIRES every stream kind the sink declares
+  (`-map 0:v:0 -map 0:a:0` for the video+audio sinks every station ships), so a
+  probe missing one fails the child fast instead of silently serving a half
+  program. An audio-only sink keeps its historical mapping-less argv; a
+  hypothetical video-only sink keeps audio optional.
+- The supervisor verifies the newest served segment of a live child against
+  those kinds and restarts it when one is missing — a fault in either direction,
+  audio-only or video-only — on the same bounded, backed-off cadence as the
+  stall self-heal: three attempts at 5 s, then one per 60 s with an `ERROR` per
+  attempt naming the missing stream. The check is tri-state, so a segment the
+  probe cannot read never triggers a restart; a child that exits is recovered on
+  the daemon tick rather than waiting for the channel's next start/reload.
+- `EgressSink` gains `carries_audio` beside `carries_video` (both default True;
+  no shipped sink carries one without the other). Proven red then green against
+  real ffmpeg end to end in both directions.
+
 ## [1.0.0-beta.7] - 2026-09-15
 
 **PUBLISHED.** `v1.0.0-beta.7` was published as a GitHub prerelease from
