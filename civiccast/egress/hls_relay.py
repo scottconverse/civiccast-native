@@ -95,28 +95,117 @@ audio-only sink (``EgressSink.carries_video`` False) keeps its historical argv
 and is never judged at all. Today every shipped sink carries both; the
 ``carries_video``/``carries_audio`` flags exist so a future one can say
 otherwise (see ``civiccast/egress/sinks.py``).
+
+**Beta.10 live finding (2026-09-25, U24): the relay child's stderr went to the
+null device, so two incidents left no evidence.** (1) On slate entry at
+00:51:26 the education channel's output went +19.75 s A/V out of sync *inside
+the relay*; U21 could not decide where the jump is born because the child's own
+``timestamp discontinuity``/``Non-monotonous DTS`` lines had been discarded.
+(2) At 01:04 a freshly restarted government relay wrote nothing for ~2 minutes
+while the engine was producing; U21 recorded INFERRED ("its input was not
+delivering") with no child-side evidence. ``_default_starter`` called
+``start_ffmpeg(args)`` with no ``stderr_path``, which is
+``subprocess.DEVNULL``.
+
+The supervisor now captures each child's stderr into a bounded, per-(channel,
+sink) file next to the channel's other egress logs:
+
+* **path** — ``<log_root>/<channel_id>/logs/hls-relay.<sink label>.stderr.log``
+  where ``log_root`` is the daemon's ``work_dir`` (the same directory the
+  encoder's ``ffmpeg.stderr.log``/``gst-worker.stderr.log`` live under). On an
+  installed station that is
+  ``C:\\ProgramData\\CivicCast\\data\\egress\\<channel_id>\\logs\\``.
+* **one header line per spawn** — ``[hls-relay] pid=… utc=… channel=… sink=…
+  spawn=<ordinal> reason=<start|rebind|uri-change|respawn-dead|self-heal|
+  stream-restore> argv=[…]``, written before the child starts and stamped with
+  the pid in place once it does. ``reason`` plus the spawn ordinal is this
+  layer's session identity: the relay is (re)bound *before* the worker that
+  will feed it exists, so no worker pid/session id is knowable here.
+* **bounded** — current + one previous (``…log.1``), rotated at spawn only,
+  each ≤ :data:`HLS_RELAY_LOG_CAP_BYTES` (5 MiB); a file over the cap is
+  rewritten to its header plus the newest
+  :data:`HLS_RELAY_LOG_TAIL_BYTES` (the drain thread does this itself, and
+  :meth:`HlsRelaySupervisor.maybe_trim_logs` retries it on each poll).
+  The numbers are measured, not assumed: the default level was run against a
+  fixture built to reproduce the live backward-PTS jump and produced ~1.4 KiB
+  per ``timestamp discontinuity`` event, so 5 MiB is ~3,700 events and the
+  worst-case retained set is 30 MiB on a three-channel station -- an 8-hour run
+  cannot fill a disk. Raw table and method:
+  ``civiccast-ds-oversight/staging/U24/evidence/loglevel/summary.json``.
+* **the parent owns the file (U24.1)** — the child's stderr goes to a pipe and
+  one daemon thread per child drains it into the log. The first cut gave the
+  child a real append-mode file handle and had the parent trim that file in
+  place; on Windows that cannot bound anything, because an inherited handle
+  keeps its own position, so the child's next write lands at its old offset and
+  the gap is zero-filled. Measured against the real starter: a 5,663-byte log
+  rewritten to 2,007 bytes was 5,882 bytes a second later, with 3,656 NULs. See
+  :class:`_RelayLogWriter`.
+* **Windows** — a file another handle holds open cannot be renamed
+  (``WinError 32``; Python opens with share read+write, no share delete), so
+  rotation still happens at spawn, after the predecessor has been terminated
+  and its drain thread closed (the child never holds the file at all now).
+  Neither the live child's own logging nor the relay's replaceability depends on
+  the log file: the drain thread discards on any write error rather than
+  stalling the child.
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from threading import Lock
-from typing import Protocol
+from threading import Lock, RLock, Thread
+from typing import IO, Protocol
 
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.sinks import HlsSink
 from civiccast.stream._ffmpeg import FfmpegNotFoundError, FfmpegProcessHandle, start_ffmpeg
 
 _LOG = logging.getLogger(__name__)
+
+#: U24 per-relay-child stderr capture. Two files are kept per (channel, sink):
+#: the current child's and its immediate predecessor's, rotated at spawn.
+HLS_RELAY_LOG_PREFIX = "hls-relay."
+HLS_RELAY_LOG_SUFFIX = ".stderr.log"
+#: Hard cap for ONE of those files, 5 MiB.
+#:
+#: Derivation (measured, see ``civiccast-ds-oversight/staging/U24/evidence/loglevel/summary.json``):
+#: ffmpeg runs at its default ``info`` level -- no ``-loglevel`` is passed --
+#: and a fixture built to reproduce the live backward-PTS jump (one segment
+#: concatenated with itself, fed to this module's real argv) produced 5,276
+#: bytes total for one jump and 30,744 for nineteen, i.e. ~1.4 KiB per
+#: ``timestamp discontinuity`` event once the fixed startup banner is divided
+#: out. 5 MiB is therefore ~3,700 such events. A child would have to log one
+#: every ~8 s for a full 8-hour run to reach the cap, and a healthy child logs
+#: none at all, so the cap only ever engages on a genuinely storming child --
+#: which is what it is for. The retained set is 2 files x 5 MiB per
+#: (channel, sink); a three-channel station with one sink each holds at most
+#: 30 MiB of relay logs, so an 8-hour run cannot fill a disk.
+HLS_RELAY_LOG_CAP_BYTES = 5 * 1024 * 1024
+#: What an over-cap file is trimmed down to on the next poll: the spawn header
+#: (the argument/session evidence) plus this much of the newest output (the
+#: incident's tail). At the same measured ~1.4 KiB per event, 1 MiB keeps
+#: several hundred events while bounding the rewrite cost of each trim.
+HLS_RELAY_LOG_TAIL_BYTES = 1024 * 1024
+#: Longest sink-label stem kept in a log filename; the label reaches us from
+#: operator config, so it is sanitized and bounded before it becomes a path.
+HLS_RELAY_LOG_STEM_MAX = 40
+#: Fixed-width pid field in the spawn header. The header is written BEFORE the
+#: spawn (so a spawn that never returns still has its evidence), then the pid
+#: is stamped over this field in place. 10 digits covers every Windows pid.
+_LOG_PID_FIELD = "pid="
+_LOG_PID_WIDTH = 10
+_LOG_PID_PLACEHOLDER = "-" * _LOG_PID_WIDTH
 
 _PORT_BASE_ENV = "CIVICCAST_HLS_RELAY_BASE_PORT"
 #: ffprobe binary name, resolved from PATH at probe time. Declared locally
@@ -471,6 +560,351 @@ def _describe_kinds(kinds: frozenset[str]) -> str:
     return "+".join(sorted(kinds))
 
 
+def _relay_log_component(value: str, fallback: str) -> str:
+    """Turn a config-supplied string into one safe path component.
+
+    The value comes from channel config, so it is treated as hostile: anything
+    outside ``[A-Za-z0-9._-]`` collapses to ``_``, and leading/trailing dots,
+    underscores and dashes are stripped so it can never produce a ``..`` (or a
+    dot-prefixed) component. Bounded to :data:`HLS_RELAY_LOG_STEM_MAX`
+    characters so a long value cannot push the station's log path past a
+    Windows path limit. Production channel ids and sink labels are already
+    plain names (``education``, ``Web``), so for them this is a no-op and the
+    log lands exactly where the channel's other egress logs live.
+    """
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._-")
+    return (cleaned or fallback)[:HLS_RELAY_LOG_STEM_MAX]
+
+
+def _relay_log_stem(label: str) -> str:
+    """The file-name stem for a sink label (see :func:`_relay_log_component`)."""
+    return _relay_log_component(label, "sink")
+
+
+def _relay_log_header(
+    *,
+    channel_id: str,
+    sink_label: str,
+    spawn: int,
+    reason: str,
+    args: list[str],
+) -> bytes:
+    """One spawn, one line: who, when, why, and the exact argv.
+
+    The pid is left as a fixed-width placeholder and stamped in place once the
+    child exists (see :meth:`HlsRelaySupervisor._stamp_relay_log_pid`) so the
+    header is on disk even when the spawn itself fails. Field order is fixed
+    and ``pid`` comes first, so a reader (or a parser) can find the pid field
+    without knowing the rest of the line. Values that reach this line from
+    config are collapsed to one line first: a channel id containing a newline
+    must not be able to forge a second header.
+    """
+    stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    fields = {
+        "utc": stamp,
+        "channel": _one_line(channel_id),
+        "sink": _one_line(sink_label),
+        "spawn": str(spawn),
+        "reason": reason,
+    }
+    prefix = f"[hls-relay] {_LOG_PID_FIELD}{_LOG_PID_PLACEHOLDER}"
+    rest = " ".join(f"{key}={value}" for key, value in fields.items())
+    return f"{prefix} {rest} argv={json.dumps(list(args))}\n".encode()
+
+
+def _one_line(value: str) -> str:
+    """Collapse a config-derived string to a single log-safe field."""
+    return " ".join(value.split()) or "-"
+
+
+#: U24.1: the most characters one drain read will buffer. Bounds what a single
+#: pathological (newline-free) ffmpeg line can make the drain thread hold; a
+#: longer line is appended in consecutive pieces, in order, so no byte is lost.
+_RELAY_LOG_READ_CHARS = 64 * 1024
+
+#: U24.1: how long a teardown waits for a relay's drain thread to see EOF.
+#: The child is already dead by then -- ``terminate`` waits for it -- so the
+#: pipe is at EOF and this returns immediately. The bound exists only so a
+#: wedged disk write can never hold a channel's stop (or its next spawn) open.
+_RELAY_LOG_DRAIN_JOIN_S = 2.0
+
+
+def _relay_log_header_line(path: Path) -> bytes:
+    """The log's first line, as bytes: the spawn header a trim must preserve.
+
+    Read from the file rather than remembered, so a trim preserves whatever is
+    actually on disk -- including the pid the supervisor stamped in place after
+    the spawn (see :meth:`HlsRelaySupervisor._stamp_relay_log_pid`).
+    """
+    try:
+        with path.open("rb") as handle:
+            line = handle.readline(_RELAY_LOG_READ_CHARS)
+    except OSError:
+        return b""
+    if not line:
+        return b""
+    return line if line.endswith(b"\n") else line + b"\n"
+
+
+class _RelayLogWriter:
+    """Owns one relay child's stderr: the pipe's read end and the log file.
+
+    U24.1 replaced "the child writes the file, the parent trims it" with "the
+    parent writes the file". The old shape cannot work on Windows: the child
+    inherits a raw file handle whose position is its own, so a parent-side
+    rewrite (truncate, then write the newest tail) leaves the child appending at
+    its OLD offset, and the gap between the two is zero-filled. The measured
+    repro against the real starter -- ``before 5663 after_trim 2007 1s later
+    5809 final 5882 NULs 3656 first_nul_at 2007`` -- is a file that grew back
+    past its pre-trim size with 3,656 NULs in it: the cap bounded nothing, the
+    trim fired every tick, and the retained bytes were mostly padding.
+
+    So the child gets ``subprocess.PIPE`` instead, and this object runs the one
+    thread that:
+
+    * reads the pipe in bounded chunks and appends them to the log file it owns
+      -- the only handle on that file anywhere in the system, which is exactly
+      what makes a rewrite (or a rename) safe here and unsafe in the parent's
+      hands while a child still holds one (``WinError 32``);
+    * enforces the cap itself, in that thread, by rewriting the file as ``spawn
+      header + newest tail`` -- the same retained set the supervisor used to
+      produce, now actually bounded;
+    * never lets the log stall the relay: if the file cannot be opened, or a
+      write fails, it keeps reading and discards, and warns once per episode.
+      A thread that does nothing but read and append always keeps up with
+      ffmpeg's stderr, which is why a pipe is safe here and an undrained pipe is
+      not.
+
+    Lifecycle: :meth:`start` once, :meth:`close` at teardown. The thread
+    references only this object -- never the supervisor, never the relay record
+    -- so it keeps no channel state alive, and it ends by itself at EOF of the
+    pipe (the child exited) even if nobody ever calls :meth:`close`.
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        cap_bytes: int = HLS_RELAY_LOG_CAP_BYTES,
+        tail_bytes: int = HLS_RELAY_LOG_TAIL_BYTES,
+    ) -> None:
+        self._path = path
+        self._cap_bytes = cap_bytes
+        self._tail_bytes = tail_bytes
+        # Reentrant: :meth:`_append` holds it and may call :meth:`trim_if_over_cap`,
+        # which takes it again.
+        self._lock = RLock()
+        self._handle: IO[str] | None = None
+        # An estimate between trims (it resyncs from ``stat`` on every check);
+        # its only job is to decide when a cap CHECK is worth a syscall.
+        self._bytes = 0
+        self._trims = 0
+        self._thread: Thread | None = None
+        #: True after a write failure: the episode is warned once and every
+        #: later line is discarded rather than re-warning per line.
+        self._discarding = False
+
+    # --- lifecycle -------------------------------------------------------------------
+
+    def start(self, stream: IO[str]) -> None:
+        """Begin draining ``stream`` (the child's stderr pipe) into the log."""
+        thread = Thread(
+            target=self._drain,
+            args=(stream,),
+            name=f"hls-relay-log:{self._path.name}",
+            # Daemon so a drain wedged on a dead disk can never hold interpreter
+            # shutdown open. The channel's own teardown still joins it explicitly.
+            daemon=True,
+        )
+        self._thread = thread
+        thread.start()
+
+    def join(self, timeout: float | None = None) -> bool:
+        """Wait for the drain thread to end. True when it has ended."""
+        thread = self._thread
+        if thread is None:
+            return True
+        thread.join(timeout)
+        return not thread.is_alive()
+
+    def close(self, *, timeout: float = _RELAY_LOG_DRAIN_JOIN_S) -> None:
+        """Join the drain thread and release the log file. Safe to call twice.
+
+        The child is terminated before this is called, so the pipe is at EOF and
+        the join returns at once; ``timeout`` is the bound on a wedged disk
+        write, not the expected wait.
+        """
+        if not self.join(timeout):
+            _LOG.warning(
+                "HLS relay stderr log %s: the drain thread did not stop within %.1fs; "
+                "the log file is released anyway and the relay is NOT affected.",
+                self._path,
+                timeout,
+            )
+        with self._lock:
+            handle, self._handle = self._handle, None
+        _close_quietly(handle)
+
+    # --- draining --------------------------------------------------------------------
+
+    def _drain(self, stream: IO[str]) -> None:
+        """Read the pipe to EOF, appending to the log. Never raises, never stalls."""
+        try:
+            while True:
+                try:
+                    line = stream.readline(_RELAY_LOG_READ_CHARS)
+                except (OSError, ValueError):
+                    # The read end was closed under us (teardown, or a failed
+                    # child). Nothing left to drain.
+                    break
+                if not line:
+                    break  # EOF: the child exited
+                self._append(line)
+        finally:
+            _close_quietly(stream)
+            with self._lock:
+                handle, self._handle = self._handle, None
+            _close_quietly(handle)
+
+    def _append(self, text: str) -> None:
+        with self._lock:
+            if self._handle is None and not self._discarding:
+                self._handle = self._open_append()
+            handle = self._handle
+            if handle is None:
+                return  # open failed (already warned): keep draining, discard
+            try:
+                handle.write(text)
+                self._bytes += len(text)
+            except OSError:
+                self._note_write_failure()
+                return
+            if self._bytes > self._cap_bytes:
+                self.trim_if_over_cap()
+
+    def _open_append(self) -> IO[str] | None:
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            # ``newline="\n"``: this file is a log, and a CRLF written by the
+            # parent's text layer would not match what the child's own handle
+            # produced on the same file before U24.1.
+            handle = self._path.open("a", encoding="utf-8", errors="replace", newline="\n")
+        except OSError:
+            _LOG.warning(
+                "HLS relay stderr log %s could not be opened; the relay still runs and "
+                "its child's diagnostics are discarded until the next spawn.",
+                self._path,
+                exc_info=True,
+            )
+            self._discarding = True
+            return None
+        try:
+            self._bytes = self._path.stat().st_size
+        except OSError:
+            self._bytes = 0
+        return handle
+
+    def _note_write_failure(self) -> None:
+        """One warning per episode; the relay is never blocked by its own log."""
+        if self._discarding:
+            return
+        self._discarding = True
+        _close_quietly(self._handle)
+        self._handle = None
+        _LOG.warning(
+            "HLS relay stderr log %s could not be written; the relay keeps running and "
+            "its child's stderr is now discarded. The trim is not the relay's.",
+            self._path,
+            exc_info=True,
+        )
+
+    # --- bounding --------------------------------------------------------------------
+
+    def trim_if_over_cap(self) -> bool:
+        """Enforce the cap in place. True when the file was rewritten.
+
+        Holds the writer's lock, so the drain thread and the daemon's tick can
+        both call it and exactly one rewrite happens. Closing our own handle
+        first is what makes the rewrite safe, and is the whole point of the
+        parent owning the file -- the trim never touches the child.
+        """
+        with self._lock:
+            handle = self._handle
+            if handle is None:
+                return False
+            try:
+                size = self._path.stat().st_size
+            except OSError:
+                return False
+            if size <= self._cap_bytes:
+                return False
+            _close_quietly(handle)
+            self._handle = None
+            trimmed = self._rewrite_to_tail(size)
+            self._handle = self._open_append()
+            try:
+                self._bytes = self._path.stat().st_size
+            except OSError:
+                self._bytes = 0
+            if trimmed:
+                self._trims += 1
+            return trimmed
+
+    def _rewrite_to_tail(self, size: int) -> bool:
+        """Rewrite the file as ``header + newest tail``. True on success."""
+        path = self._path
+        header = _relay_log_header_line(path)
+        try:
+            with path.open("rb") as reader:
+                reader.seek(max(0, size - self._tail_bytes), os.SEEK_END)
+                tail = reader.read()
+            # Drop the first (very likely partial) line so the retained tail
+            # starts on a real line boundary.
+            newline = tail.find(b"\n")
+            if newline != -1:
+                tail = tail[newline + 1 :]
+            with path.open("wb") as writer:
+                writer.write(header)
+                writer.write(tail)
+        except OSError:
+            _LOG.warning(
+                "HLS relay stderr log %s could not be trimmed at %d bytes; it keeps "
+                "growing until the next spawn rotates it. The relay child was NOT "
+                "restarted.",
+                path,
+                size,
+                exc_info=True,
+            )
+            return False
+        _LOG.warning(
+            "HLS relay stderr log %s passed its %d-byte cap (%d bytes); trimmed to the "
+            "spawn header plus the newest %d bytes. The relay child was NOT restarted; "
+            "if this repeats every tick the child is logging a storm -- read the file.",
+            path,
+            self._cap_bytes,
+            size,
+            self._tail_bytes,
+        )
+        return True
+
+    @property
+    def trims(self) -> int:
+        """How many times this writer has trimmed its log."""
+        return self._trims
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+
+def _close_quietly(handle: IO[str] | None) -> None:
+    """Close a log handle, ignoring a failure: a log must never raise at teardown."""
+    if handle is None:
+        return
+    with contextlib.suppress(OSError):
+        handle.close()
+
+
 class _Ffmpeg(Protocol):
     def poll(self) -> int | None: ...
     def terminate(self, *, grace_seconds: float = 5.0) -> int | None: ...
@@ -519,6 +953,13 @@ class _Relay:
     streams_probed_segment: str | None = None
     stream_fault_attempts: int = 0
     stream_retry_not_before: float | None = None
+    #: U24: this child's stderr drain, which owns the log file. ``None`` means
+    #: the operator configured no log root (the child's stderr is discarded,
+    #: exactly as before U24) or the starter is a double that returns no pipe.
+    #: U24.1: the child no longer holds the file -- the writer does -- so the
+    #: cap trim is the writer's, and the trim can never leave the child
+    #: appending past a rewrite into a zero-filled hole.
+    log_writer: _RelayLogWriter | None = None
 
 
 class HlsRelaySupervisor:
@@ -544,12 +985,27 @@ class HlsRelaySupervisor:
         segment_probe: Callable[[Path], frozenset[str] | None] | None = None,
         stream_retry_delay_s: float | None = None,
         stream_retry_slow_delay_s: float | None = None,
+        log_root: Path | str | None = None,
     ) -> None:
         self._starter = starter or _default_starter
         self._base_port = base_port
         self._guard = Lock()
         self._relays: dict[str, _Relay] = {}
         self._unavailable_logged = False
+        # U24: where per-(channel, sink) relay stderr logs live. ``None`` keeps
+        # the pre-U24 behaviour (child stderr discarded). The daemon passes its
+        # authoritative ``work_dir`` per ``apply`` call -- see ``apply``.
+        self._log_root: Path | None = Path(log_root) if log_root is not None else None
+        # U24.1: captured at construction. A test can shrink them by
+        # monkeypatching the module constants before the supervisor is built, so
+        # a REAL child can be driven through a trim in a second or two instead of
+        # megabytes; production never widens them.
+        self._log_cap_bytes = HLS_RELAY_LOG_CAP_BYTES
+        self._log_tail_bytes = HLS_RELAY_LOG_TAIL_BYTES
+        # Per-(channel, sink) spawn ordinal, the session identity this layer
+        # can honestly stamp in the header (the relay is (re)bound BEFORE the
+        # worker that will feed it exists, so no worker pid is knowable here).
+        self._spawn_counts: dict[str, int] = {}
         self._stall_bound_s = stall_bound_s if stall_bound_s is not None else _DEFAULT_STALL_BOUND_S
         # U12 seams, injected the same way ``starter`` is: the probe is a real
         # ffprobe by default, and the two delays default to the shipped cadence.
@@ -569,17 +1025,60 @@ class HlsRelaySupervisor:
         # the daemon uses its own ``_monotonic`` for exactly that reason.
         self._clock: Callable[[], float] = time.monotonic
 
-    def apply(self, config: EgressConfig) -> EgressConfig:
+    def apply(
+        self,
+        config: EgressConfig,
+        *,
+        new_session: bool = False,
+        log_root: Path | str | None = None,
+    ) -> EgressConfig:
         """Return a config whose ``hls`` sinks point at their channel-lifetime relay.
 
         Idempotent per (channel_id, sink.label): the relay is reused across
-        encoder relaunches. A sink whose relay could not be started (ffmpeg
-        missing) is returned UNCHANGED — still declared ``hls``, so
-        ``sink_element_spec``'s own hls branch builds a udpsink to the same
-        deterministic port; nothing is listening there, but the channel still
-        starts (degraded: no live HLS, everything else on the channel keeps
-        working) rather than crashing.
+        repeated ``apply`` calls for the SAME worker session. A sink whose relay
+        could not be started (ffmpeg missing) is returned UNCHANGED — still
+        declared ``hls``, so ``sink_element_spec``'s own hls branch builds a
+        udpsink to the same deterministic port; nothing is listening there, but
+        the channel still starts (degraded: no live HLS, everything else on the
+        channel keeps working) rather than crashing.
+
+        BETA.10 U21: ``new_session=True`` means the caller is starting a GENUINE
+        new worker session (first start, crash relaunch, output-desync guard
+        restart, slate->program restart) and the channel's existing relay
+        child(ren) are torn down before the sinks are walked, so the child that
+        ends up serving the new session was spawned FOR it. Relay reuse is only
+        safe while the writer it serves is the same writer: the relay's own
+        timeline outlives its writer, so a child that was corrected for a
+        previous session's PTS jump keeps serving that offset for as long as the
+        child lives — which is exactly how a desync becomes permanent
+        (education channel, 2026-09-25 00:51:26). The replacement is spawned on
+        the SAME deterministic port (see :func:`hls_relay_uri_for`), so the
+        config already handed to the engine graph stays valid across the rebind.
+
+        ``new_session=False`` is the in-place reload path
+        (``EgressDaemon._request_reload``): the worker is not being restarted,
+        so its relay must not be either.
+
+        U24: ``log_root`` is where per-(channel, sink) relay stderr logs are
+        written -- in production the daemon's own ``work_dir``, so the relay's
+        child log sits beside the channel's ``ffmpeg``/``gst-worker`` logs (see
+        the module docstring for the installed path). It is remembered for the
+        life of this supervisor (later respawns, including daemon-driven
+        self-heals that never call ``apply``, must land in the same place); a
+        later call with an explicit ``log_root`` replaces it.
         """
+        if log_root is not None:
+            self._log_root = Path(log_root)
+        rebind_keys: set[str] = set()
+        if new_session:
+            # A separate critical section on purpose: ``self._guard`` is a plain
+            # (non-reentrant) Lock, so the teardown must complete before
+            # ``_ensure_relay`` below takes the lock for its own spawn. The keys
+            # are captured first so the U24 header can say "rebind" for exactly
+            # the sinks whose child was actually torn down for this session, and
+            # "start" for a sink that had no child to replace.
+            rebind_keys = self._relay_keys(config.channel_id)
+            self._drop_channel_relays(config.channel_id)
         if not any(sink.kind == "hls" for sink in config.sinks):
             return config
         new_sinks: list[EgressSinkSpec] = []
@@ -588,7 +1087,11 @@ class HlsRelaySupervisor:
             if sink.kind != "hls":
                 new_sinks.append(sink)
                 continue
-            relay_uri = self._ensure_relay(config.channel_id, sink)
+            relay_uri = self._ensure_relay(
+                config.channel_id,
+                sink,
+                reason="rebind" if f"{config.channel_id}|{sink.label}" in rebind_keys else "start",
+            )
             if relay_uri is None:
                 new_sinks.append(sink)
                 continue
@@ -598,7 +1101,15 @@ class HlsRelaySupervisor:
             return config
         return config.model_copy(update={"sinks": new_sinks})
 
-    def _ensure_relay(self, channel_id: str, sink: EgressSinkSpec) -> str | None:
+    def _ensure_relay(self, channel_id: str, sink: EgressSinkSpec, *, reason: str) -> str | None:
+        """Reuse this (channel, sink)'s live relay, or spawn its one replacement.
+
+        ``reason`` names the caller's intent for the header line
+        (``start``/``rebind``); when a predecessor really was torn down here,
+        the reason narrows to what actually happened to it (``uri-change``
+        when the sink's directory moved, ``respawn-dead`` when the child had
+        already exited).
+        """
         key = f"{channel_id}|{sink.label}"
         relay_uri = hls_relay_uri_for(sink.uri, base_port=self._base_port)
         with self._guard:
@@ -606,18 +1117,33 @@ class HlsRelaySupervisor:
             if relay is not None and relay.source_uri == sink.uri and relay.process.poll() is None:
                 return relay.relay_uri
             if relay is not None:
-                relay.process.terminate()
+                self._terminate_relay(relay)
                 self._relays.pop(key, None)
-            return self._start_relay_locked(key, channel_id, sink, relay_uri)
+                reason = "uri-change" if relay.source_uri != sink.uri else "respawn-dead"
+            return self._start_relay_locked(key, channel_id, sink, relay_uri, reason=reason)
 
     def _start_relay_locked(
-        self, key: str, channel_id: str, sink: EgressSinkSpec, relay_uri: str
+        self,
+        key: str,
+        channel_id: str,
+        sink: EgressSinkSpec,
+        relay_uri: str,
+        *,
+        reason: str,
     ) -> str | None:
         """Spawn one relay child and register it. Caller MUST hold ``self._guard``.
 
         Every spawn path funnels through here so the process count for one
         (channel, sink) key is structurally bounded at one: the caller has
         already terminated any predecessor before reaching this helper.
+
+        U24: the child's stderr is captured here, and only here, because this is
+        the only place a child is ever created. The header line is written
+        BEFORE the spawn and the log is rotated BEFORE that, while the
+        predecessor's handles are provably closed (the caller terminated it) --
+        Windows refuses to rename a file another process holds open
+        (``WinError 32``), and the predecessor held its stderr file for its
+        whole life.
         """
         hls_sink = HlsSink(sink)
         args = [
@@ -634,8 +1160,35 @@ class HlsRelaySupervisor:
             ),
             *hls_sink.output_args(),
         ]
+        log_path = self._relay_log_path(channel_id, sink.label)
+        pid_offset: int | None = None
+        if log_path is not None:
+            prepared = self._begin_relay_log(
+                log_path,
+                key=key,
+                channel_id=channel_id,
+                sink_label=sink.label,
+                reason=reason,
+                args=args,
+            )
+            if prepared is not None:
+                # The header bytes are on disk; the writer reads them from
+                # there, so a trim can never rewrite a stale copy.
+                _, pid_offset = prepared
         try:
-            process = self._starter(args)
+            if log_path is None or pid_offset is None:
+                # No log root configured (or the log could not be opened): the
+                # pre-U24 call shape, and the child's stderr goes to the null
+                # device exactly as it did before U24.
+                process = self._starter(args)
+            else:
+                # U24.1: the child writes to a PIPE and this process owns the
+                # file. The starter hands back the pipe's read end on the
+                # handle; we start the drain thread below. A pipe was the
+                # pre-U24.1 worry (a full one blocks ffmpeg) and it is exactly
+                # why the drain thread exists -- it reads and appends and
+                # nothing else, so it cannot fall behind.
+                process = self._starter(args, stderr_path=log_path)
         except FfmpegNotFoundError:
             if not self._unavailable_logged:
                 self._unavailable_logged = True
@@ -657,6 +1210,23 @@ class HlsRelaySupervisor:
                 sink.uri,
             )
             return None
+        writer: _RelayLogWriter | None = None
+        if log_path is not None and pid_offset is not None:
+            # The pid is stamped BEFORE the drain starts: the header is already
+            # on disk (written before the spawn, so a child that fails to start
+            # still leaves its record), and nothing else can be writing that
+            # offset. Only then does the thread take the file over -- it is the
+            # sole writer from here on, which is what makes its own cap trim
+            # safe (U24.1).
+            self._stamp_relay_log_pid(log_path, pid_offset, process)
+            stream = getattr(process, "stderr_pipe", None)
+            if stream is not None:
+                writer = _RelayLogWriter(
+                    log_path,
+                    cap_bytes=self._log_cap_bytes,
+                    tail_bytes=self._log_tail_bytes,
+                )
+                writer.start(stream)
         now = self._clock()
         self._relays[key] = _Relay(
             source_uri=sink.uri,
@@ -668,6 +1238,7 @@ class HlsRelaySupervisor:
             heal_baseline_segment=None,
             started_at=now,
             first_seen_at=now,
+            log_writer=writer,
         )
         _LOG.info(
             "HLS relay up for %s (sink %r): %s -> %s.",
@@ -678,7 +1249,9 @@ class HlsRelaySupervisor:
         )
         return relay_uri
 
-    def _respawn_locked(self, key: str, channel_id: str, relay: _Relay) -> _Relay | None:
+    def _respawn_locked(
+        self, key: str, channel_id: str, relay: _Relay, *, reason: str
+    ) -> _Relay | None:
         """Terminate one relay child and spawn its single replacement.
 
         Caller MUST hold ``self._guard``. Every restart path (the stall heal
@@ -686,15 +1259,185 @@ class HlsRelaySupervisor:
         (channel, sink) invariant is structurally preserved. Returns the new
         :class:`_Relay`, or ``None`` when the replacement could not be spawned
         (ffmpeg gone) -- in which case the key is left untracked and the sink
-        falls to the existing dead-relay/health path.
+        falls to the existing dead-relay/health path. ``reason`` is the
+        U24 header's word for why this child exists (``self-heal``,
+        ``stream-restore``), so the log says which supervisor path replaced it.
         """
         sink = EgressSinkSpec(kind="hls", label=key.split("|", 1)[1], uri=relay.source_uri)
-        relay.process.terminate()
+        self._terminate_relay(relay)
         self._relays.pop(key, None)
         relay_uri = hls_relay_uri_for(relay.source_uri, base_port=self._base_port)
-        if self._start_relay_locked(key, channel_id, sink, relay_uri) is None:
+        if self._start_relay_locked(key, channel_id, sink, relay_uri, reason=reason) is None:
             return None
         return self._relays.get(key)
+
+    # --- U24: per-(channel, sink) relay stderr capture ---------------------------------
+    #
+    # U24.1: THIS PROCESS owns the file. The child writes to a pipe and a
+    # per-child daemon thread (:class:`_RelayLogWriter`) drains it into the
+    # per-channel log. The first cut had the child hold the file and the parent
+    # trim it in place, which cannot bound anything on Windows: an inherited
+    # handle keeps its own position, so a parent-side rewrite leaves the child
+    # appending at its old offset and the gap is zero-filled -- the file size
+    # stays equal to the child's total bytes ever written. See the class
+    # docstring for the measured repro.
+    #
+    # Rotation still happens at SPAWN, once the predecessor has been terminated
+    # and its writer closed (Windows refuses to rename a file another handle
+    # holds open -- WinError 32), and the hard cap is now the writer's own
+    # in-place rewrite, which only the writer's single handle can see.
+
+    def _relay_log_path(self, channel_id: str, sink_label: str) -> Path | None:
+        """This (channel, sink)'s relay log, or ``None`` when no root is set.
+
+        ``<log_root>/<channel>/logs/hls-relay.<sink>.stderr.log`` -- the same
+        ``<channel>/logs`` directory the channel's ``gst-worker.stderr.log`` and
+        ``ffmpeg.stderr.log`` already live in, so an operator reads one place.
+        """
+        if self._log_root is None:
+            return None
+        return (
+            self._log_root
+            / _relay_log_component(channel_id, "channel")
+            / "logs"
+            / f"{HLS_RELAY_LOG_PREFIX}{_relay_log_stem(sink_label)}{HLS_RELAY_LOG_SUFFIX}"
+        )
+
+    def _begin_relay_log(
+        self,
+        path: Path,
+        *,
+        key: str,
+        channel_id: str,
+        sink_label: str,
+        reason: str,
+        args: list[str],
+    ) -> tuple[bytes, int] | None:
+        """Rotate, then write this spawn's header. Returns ``(header, pid offset)``.
+
+        Called with ``self._guard`` held and BEFORE the child is spawned, so the
+        predecessor (terminated by the caller) is not holding the file. The pid
+        cannot be known yet -- the header is written with a fixed-width
+        placeholder and stamped in place once the process exists, which means a
+        child that fails to spawn still leaves its header on disk.
+        """
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self._rotate_relay_log(path)
+            spawn = self._spawn_counts.get(key, 0) + 1
+            self._spawn_counts[key] = spawn
+            header = _relay_log_header(
+                channel_id=channel_id,
+                sink_label=sink_label,
+                spawn=spawn,
+                reason=reason,
+                args=args,
+            )
+            with path.open("ab") as handle:
+                handle.write(header)
+        except OSError:
+            _LOG.warning(
+                "HLS relay for %s (sink %r) could not open its stderr log at %s; the "
+                "relay still runs, but its own diagnostics are discarded until the "
+                "next spawn.",
+                channel_id,
+                sink_label,
+                path,
+                exc_info=True,
+            )
+            return None
+        return header, header.index(_LOG_PID_FIELD.encode("ascii")) + len(_LOG_PID_FIELD)
+
+    def _rotate_relay_log(self, path: Path) -> None:
+        """Shift the running log aside to ``.1``, discarding any older one.
+
+        One previous generation is kept -- enough to read the child that was
+        serving when the incident started, without unbounded history. The
+        predecessor's handles MUST already be closed (see the caller); Windows
+        raises ``WinError 32`` otherwise, which is swallowed as a warning
+        because a lost rotation must never cost the channel its relay.
+        """
+        try:
+            previous = path.with_name(path.name + ".1")
+            previous.unlink(missing_ok=True)
+            if path.exists():
+                path.rename(previous)
+        except OSError:
+            _LOG.warning(
+                "HLS relay stderr log %s could not be rotated; the new child appends "
+                "to the existing file instead.",
+                path,
+                exc_info=True,
+            )
+
+    def _stamp_relay_log_pid(self, path: Path, offset: int, process: _Ffmpeg) -> None:
+        """Write the child's real pid over the header's placeholder.
+
+        Best-effort: the header is already on disk, and a pid that cannot be
+        stamped is a missing field, not a lost spawn record.
+        """
+        pid = getattr(process, "pid", None)
+        if not isinstance(pid, int):
+            return
+        try:
+            with path.open("r+b") as handle:
+                handle.seek(offset)
+                handle.write(f"{pid:0{_LOG_PID_WIDTH}d}".encode("ascii"))
+        except OSError:
+            _LOG.warning(
+                "HLS relay pid could not be stamped into %s at offset %d; the header "
+                "keeps its placeholder.",
+                path,
+                offset,
+                exc_info=True,
+            )
+
+    def maybe_trim_logs(self, channel_id: str) -> int:
+        """Trim this channel's relay logs to the cap. Returns how many were trimmed.
+
+        Called from the daemon's relay poll (the same tick that already watches
+        the relays), never from the spawn path, so the trim cannot lengthen a
+        restart. ``self._guard`` is taken because the relay records it reads are
+        mutated by spawns -- but only to take the writers out; the rewrite itself
+        happens under each writer's own lock, because the drain thread enforces
+        the same cap on its own and exactly one of them may rewrite.
+
+        U24.1: this is now a belt to the writer's braces. The writer trims
+        in-thread the moment its own byte count crosses the cap, so by the time
+        a tick runs there is usually nothing left to do. It stays because the
+        writer's check can only run when it appends: a file left over the cap
+        with the child gone quiet (a trim that hit a transient disk error, or a
+        rotation that failed and left the predecessor's file in place) would
+        otherwise sit there until the next spawn. This tick retries it, and its
+        return value is the count the daemon reports.
+        """
+        if self._log_root is None:
+            return 0
+        with self._guard:
+            writers = [
+                relay.log_writer
+                for key, relay in self._relays.items()
+                if key.split("|", 1)[0] == channel_id and relay.log_writer is not None
+            ]
+        return sum(1 for writer in writers if writer.trim_if_over_cap())
+
+    def _terminate_relay(self, relay: _Relay) -> None:
+        """Terminate one relay child, then release its stderr log.
+
+        Both halves of the order are load-bearing. The child must be dead before
+        the drain thread is joined, or the join waits on a pipe that is still
+        open. And the writer must release the file before the next spawn rotates
+        this same path: where the child used to hold the handle that made the
+        rename impossible (``WinError 32``), the parent holds it now.
+
+        ``close`` is bounded (``_RELAY_LOG_DRAIN_JOIN_S``), and the child is
+        already reaped by the time it runs, so the drain thread sees EOF at once
+        and this costs nothing on the hot restart path.
+        """
+        relay.process.terminate()
+        writer, relay.log_writer = relay.log_writer, None
+        if writer is not None:
+            writer.close()
 
     def _stream_retry_blocked(self, relay: _Relay, *, now: float) -> bool:
         """Is this relay inside the backoff window of its last stream attempt?"""
@@ -732,7 +1475,7 @@ class HlsRelaySupervisor:
             attempts,
             delay,
         )
-        replacement = self._respawn_locked(key, channel_id, relay)
+        replacement = self._respawn_locked(key, channel_id, relay, reason="stream-restore")
         if replacement is None:
             _LOG.error(
                 "HLS relay for %s (sink %r) could not be restarted after %s; the "
@@ -1048,7 +1791,7 @@ class HlsRelaySupervisor:
                     key.split("|", 1)[1],
                     reason,
                 )
-                new_relay = self._respawn_locked(key, channel_id, relay)
+                new_relay = self._respawn_locked(key, channel_id, relay, reason="self-heal")
                 if new_relay is None:
                     # Could not respawn (ffmpeg gone): report no heal and leave
                     # the sink to the existing dead-relay/health path.
@@ -1064,19 +1807,57 @@ class HlsRelaySupervisor:
                 healed = True
             return healed
 
+    def _relay_keys(self, channel_id: str) -> set[str]:
+        """The ``(channel, sink)`` keys this supervisor currently tracks.
+
+        Read under ``self._guard``, but only for its own statement: callers take
+        the lock again for their own critical section (``Lock`` is not
+        reentrant, so this must never be called while holding it).
+        """
+        with self._guard:
+            return {key for key in self._relays if key.split("|", 1)[0] == channel_id}
+
+    def _drop_channel_relays(self, channel_id: str) -> int:
+        """Terminate and forget every relay child tracked for ``channel_id``.
+
+        Returns how many children were torn down. The single teardown seam for
+        two callers: :meth:`stop_channel` (the channel is stopping) and
+        :meth:`apply` with ``new_session=True`` (the channel is starting a
+        genuinely new worker session). ``terminate`` is synchronous and bounded
+        (``FfmpegProcessHandle.terminate``), so when this returns the UDP port is
+        released and a replacement started immediately after can bind it.
+        """
+        with self._guard:
+            keys = [key for key in self._relays if key.startswith(f"{channel_id}|")]
+            for key in keys:
+                relay = self._relays.pop(key)
+                self._terminate_relay(relay)
+        return len(keys)
+
     def stop_channel(self, channel_id: str) -> None:
         """Tear down a channel's HLS relay(s) (channel stop, not encoder relaunch)."""
-        with self._guard:
-            for key in [k for k in self._relays if k.startswith(f"{channel_id}|")]:
-                relay = self._relays.pop(key)
-                relay.process.terminate()
+        self._drop_channel_relays(channel_id)
 
     def stop_all(self) -> None:
         with self._guard:
             for relay in self._relays.values():
-                relay.process.terminate()
+                self._terminate_relay(relay)
             self._relays.clear()
 
 
-def _default_starter(args: list[str]) -> FfmpegProcessHandle:
-    return start_ffmpeg(args)
+def _default_starter(args: list[str], *, stderr_path: Path | None = None) -> FfmpegProcessHandle:
+    """Spawn the shipped relay child, optionally capturing its stderr (U24).
+
+    U24.1: when a path is given the child's stderr goes to a PIPE, not to that
+    file, and the returned handle carries the pipe's read end on
+    ``stderr_pipe``. ``stderr_path`` is still the path the caller named (the
+    supervisor has already rotated it and written this spawn's header into it);
+    it is what the supervisor's drain thread writes to. The child never touches
+    it -- which is the whole fix: the child cannot hold a handle to a file this
+    process needs to rewrite.
+
+    Without a path the child's stderr goes to ``subprocess.DEVNULL``, exactly as
+    it did before U24 (and as every test double that takes no ``stderr_path``
+    expects).
+    """
+    return start_ffmpeg(args, stderr_path=stderr_path, stderr_pipe=stderr_path is not None)

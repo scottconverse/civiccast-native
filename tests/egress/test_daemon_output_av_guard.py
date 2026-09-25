@@ -54,7 +54,11 @@ from civiccast.egress.daemon import (
     _OUTPUT_AV_GUARD_RESTART_BUDGET,
     EgressDaemon,
 )
-from civiccast.egress.hls_relay import _last_complete_segment, _segment_first_packet_pts
+from civiccast.egress.hls_relay import (
+    HlsRelaySupervisor,
+    _last_complete_segment,
+    _segment_first_packet_pts,
+)
 from civiccast.egress.models import EgressCommand, EgressConfig, EgressSinkSpec
 from civiccast.egress.source_plan import EgressSourcePlan, EgressSourceSegment
 from civiccast.egress.store import InMemoryEgressStore
@@ -180,6 +184,7 @@ def _guard_fixture(
     *,
     hls_dir: Path | None = None,
     segments: tuple[str, ...] = ("seg000000001.ts", "seg000000002.ts"),
+    hls_relay_supervisor: HlsRelaySupervisor | None = None,
 ) -> _GuardFixture:
     """A daemon whose one ON_AIR channel has an HLS window on disk.
 
@@ -213,6 +218,7 @@ def _guard_fixture(
         work_dir=tmp_path,
         source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
         ffmpeg_starter=starter,
+        hls_relay_supervisor=hls_relay_supervisor,
     )
     daemon._monotonic = clock  # type: ignore[method-assign]
     return _GuardFixture(daemon=daemon, store=store, workers=workers, clock=clock, hls_dir=live_dir)
@@ -438,32 +444,127 @@ def test_u16_guard_a_new_worker_pid_resets_the_streak(tmp_path: Path) -> None:
     assert replacement.terminated
 
 
-# --- the ON_AIR gate -------------------------------------------------------------
+# --- the judged-state gate -------------------------------------------------------
+#
+# U21 item B2 widened this gate from ON_AIR to ON_AIR + FALLBACK_SLATE. A slate
+# leg is written by the same mux, the same udpsink and the same long-lived relay
+# child as a program leg, so it can carry -- and strand -- the same output A/V
+# offset; the live slate-entry incident was measured on a slate leg, and B1's
+# relay rebind cannot cure an offset born on a slate the worker never restarts
+# out of. Everything else is gate-kept exactly as before.
 
 
-def test_u16_guard_never_probes_a_channel_that_is_not_on_air(tmp_path: Path) -> None:
-    """FALLBACK_SLATE / STARTING / TRANSITIONING have no settled output to judge.
-    Proving both halves here keeps the gate from being trivially satisfied by an
-    unrelated early return."""
+def test_u16_guard_judges_a_fallback_slate_output(tmp_path: Path) -> None:
+    """A settled slate is judged like any other settled output: three consecutive
+    over-limit probes restart the worker through the ordinary crash-relaunch path."""
     fixture = _guard_fixture(tmp_path)
-    probe = _RecordingProbe([(0.0, 2.5)] * 6)
+    probe = _RecordingProbe([(0.0, 2.5)] * 3)
+    fixture.daemon._output_av_probe = probe
+
+    assert fixture.daemon.process_once("gov") == 1
+    fixture.daemon._write_state("gov", "FALLBACK_SLATE")
+
+    _probe_ticks(fixture, 2)
+    assert probe.calls == 2, "a slate output was not measured at all"
+    assert not fixture.workers[0].terminated, "two slate probes are not yet a fault"
+
+    _probe_ticks(fixture, 1)
+
+    assert probe.calls == 3
+    assert fixture.workers[0].terminated
+    assert fixture.workers[0].poll() == 1
+
+
+def test_u16_guard_does_not_judge_a_channel_with_no_settled_output(tmp_path: Path) -> None:
+    """The slate half of the gate widened; the rest of it did not.
+
+    STARTING has no output yet; TRANSITIONING is what ``_poll_process`` publishes
+    for a channel with a content reload in flight -- exactly the moment the U16
+    rebase step happens and A/V legitimately moves against itself; and a draining
+    channel is deliberately leaving air. None of the three is a settled output,
+    so none may be probed or restarted. Proving all three here keeps the widened
+    gate from being satisfied by an unrelated early return.
+
+    The state row is written per tick and the guard is polled directly: the
+    daemon's own writer preserves FALLBACK_SLATE and DRAINING but re-publishes
+    ON_AIR for a live worker, which is not a state this test is about.
+    """
+    fixture = _guard_fixture(tmp_path)
+    probe = _RecordingProbe([(0.0, 2.5)] * 12)
     fixture.daemon._output_av_probe = probe
 
     assert fixture.daemon.process_once("gov") == 1
 
-    # A slate channel is on screen but is not this program's settled output.
-    fixture.daemon._write_state("gov", "FALLBACK_SLATE")
+    for state in ("STARTING", "TRANSITIONING"):
+        for _ in range(3):
+            fixture.daemon._write_state("gov", state)
+            fixture.clock.value += 30.0
+            fixture.daemon._poll_output_av_guard("gov")
+        assert probe.calls == 0, f"{state} was judged"
+        assert not fixture.workers[0].terminated, f"{state} restarted the worker"
+
+    # Draining is a channel on its way off air, whatever state row it still holds.
+    fixture.daemon._draining_channels.add("gov")
     for _ in range(3):
+        fixture.daemon._write_state("gov", "ON_AIR")
         fixture.clock.value += 30.0
-        fixture.daemon.process_once("gov")
-    assert probe.calls == 0
+        fixture.daemon._poll_output_av_guard("gov")
+    assert probe.calls == 0, "a draining channel was judged"
     assert not fixture.workers[0].terminated
 
-    # The same channel, settled on air, is judged.
+    # And the same channel, settled on air, is judged.
+    fixture.daemon._draining_channels.discard("gov")
     fixture.daemon._write_state("gov", "ON_AIR")
     _probe_ticks(fixture, 1)
     assert probe.calls == 1
     assert not fixture.workers[0].terminated
+
+
+def test_u16_guard_slate_restart_rebinds_the_hls_relay_to_the_new_worker_session(
+    tmp_path: Path,
+) -> None:
+    """U21 B2: the slate restart must take B1's path -- worker AND relay.
+
+    A slate desync is by construction the case B1 cannot pre-empt: the worker is
+    healthy, it is the relay child's own corrected timeline that is wrong, so the
+    guard's kill is the only thing that ever replaces either. The replacement
+    worker must therefore get a relay bound to ITS session, not the desynced one
+    still writing the channel's playlist."""
+    relay_calls: list[list[str]] = []
+    relay_procs: list[_FakeWorker] = []
+
+    def relay_starter(args: list[str], *, stderr_path: Path | None = None) -> _FakeWorker:
+        relay_calls.append(args)
+        proc = _FakeWorker(pid=9000 + len(relay_calls))
+        relay_procs.append(proc)
+        return proc
+
+    fixture = _guard_fixture(
+        tmp_path, hls_relay_supervisor=HlsRelaySupervisor(starter=relay_starter)
+    )
+    probe = _RecordingProbe([(0.0, 2.5)] * 3)
+    fixture.daemon._output_av_probe = probe
+
+    assert fixture.daemon.process_once("gov") == 1
+    assert len(relay_calls) == 1, "the first worker session did not start a relay"
+    fixture.daemon._write_state("gov", "FALLBACK_SLATE")
+
+    for _ in range(_OUTPUT_AV_GUARD_CONSECUTIVE_PROBES):
+        fixture.clock.value += _OUTPUT_AV_GUARD_PROBE_INTERVAL_S
+        fixture.daemon.process_once("gov")
+
+    assert fixture.workers[0].terminated, "the slate desync did not restart the worker"
+
+    # The next ordinary tick replaces the killed worker; the replacement session
+    # must rebind the channel's relay.
+    fixture.clock.value += 2.0
+    fixture.daemon.process_once("gov")
+
+    assert len(fixture.workers) == 2, "the worker was not relaunched"
+    assert len(relay_calls) == 2, "the relaunched worker inherited the desynced relay"
+    assert relay_calls[0] == relay_calls[1], "the rebound relay must keep the same udp port"
+    assert relay_procs[0].terminated
+    assert not relay_procs[1].terminated
 
 
 # --- budget ----------------------------------------------------------------------

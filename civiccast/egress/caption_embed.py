@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import re
+import time
 from html import unescape
 from pathlib import Path
 from typing import Annotated, Literal, Protocol
@@ -178,13 +179,51 @@ def evaluate_caption_decode_back(
     )
 
 
+#: Bounded retry for reading a live caption sidecar on Windows.
+#:
+#: Field defect (beta.10, 2026-09-25 23:44:45 and 23:45:29): the egress service
+#: logged ``PermissionError [WinError 32]`` ("the process cannot access the file
+#: because it is being used by another process") reading a channel's
+#: ``captions/active.vtt``. The writer is the caption tap's atomic publish
+#: (``LiveWebVttPublisher`` -> ``live_sidecar._atomic_write_text``): a
+#: ``tempfile`` + ``replace``. Windows does not serialize a reader against that
+#: rename -- a read whose ``CreateFile`` lands inside the window while the
+#: replace holds the destination is REFUSED, where POSIX would simply have
+#: opened the old or the new inode. That window is one rename wide, so it is
+#: retried here rather than left to surface as a caption read failure.
+#:
+#: The retry is bounded and last-error-preserving: a refusal that outlives every
+#: attempt is re-raised, never degraded to an empty cue list. "No cues readable"
+#: and "no cues" must not be the same answer -- the decode-back proof and the
+#: feed both act on the difference. Worst case added wait: 2 x 50ms.
+_ACTIVE_VTT_READ_ATTEMPTS = 3
+_ACTIVE_VTT_READ_BACKOFF_SECONDS = 0.05
+
+
+def _read_timed_text(path: Path) -> str:
+    """``path.read_text`` with a bounded Windows sharing-violation retry."""
+
+    for _attempt in range(_ACTIVE_VTT_READ_ATTEMPTS - 1):
+        try:
+            return path.read_text(encoding="utf-8")
+        except PermissionError:
+            time.sleep(_ACTIVE_VTT_READ_BACKOFF_SECONDS)
+    return path.read_text(encoding="utf-8")  # final attempt surfaces the real error
+
+
 def load_caption_cues_from_timed_text(
     path: Path, *, source_id: str | None = None
 ) -> list[CaptionCue]:
-    """Load proof-input captions from a WebVTT or SRT-style timed-text file."""
+    """Load proof-input captions from a WebVTT or SRT-style timed-text file.
+
+    A live sidecar is republished by an atomic replace while readers are active
+    (see ``_ACTIVE_VTT_READ_ATTEMPTS``), so the read is retried a bounded number
+    of times against a Windows sharing violation before the failure is allowed
+    through.
+    """
 
     return parse_caption_cues_from_timed_text(
-        path.read_text(encoding="utf-8"),
+        _read_timed_text(path),
         source_id=source_id or path.stem or "caption-proof",
     )
 

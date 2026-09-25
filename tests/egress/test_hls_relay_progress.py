@@ -372,7 +372,7 @@ def _stalled_daemon(tmp_path: Path, *, sink_label: str = "Web"):
 
     relay_procs: list[_FakeProcess] = []
 
-    def relay_starter(_args: list[str]) -> _FakeProcess:
+    def relay_starter(_args: list[str], *, stderr_path: Path | None = None) -> _FakeProcess:
         relay_procs.append(_FakeProcess(pid=900 + len(relay_procs)))
         return relay_procs[-1]
 
@@ -462,7 +462,7 @@ def test_daemon_reports_never_emitted_relay_unhealthy_when_producing(tmp_path: P
     hls_dir = tmp_path / "gov-empty"  # never created
     relay_procs: list[_FakeProcess] = []
 
-    def relay_starter(_args: list[str]) -> _FakeProcess:
+    def relay_starter(_args: list[str], *, stderr_path: Path | None = None) -> _FakeProcess:
         relay_procs.append(_FakeProcess(pid=901))
         return relay_procs[0]
 
@@ -545,7 +545,7 @@ def test_daemon_never_emitted_path_actually_self_heals(tmp_path: Path) -> None:
     hls_dir = tmp_path / "gov-empty"  # never created
     relay_procs: list[_FakeProcess] = []
 
-    def relay_starter(_args: list[str]) -> _FakeProcess:
+    def relay_starter(_args: list[str], *, stderr_path: Path | None = None) -> _FakeProcess:
         relay_procs.append(_FakeProcess(pid=900 + len(relay_procs)))
         return relay_procs[-1]
 
@@ -584,7 +584,7 @@ def test_old_api_alive_relay_with_frozen_window_reads_unhealthy(tmp_path: Path) 
     hls_dir = tmp_path / "gov-live"
     _write_playlist(hls_dir, last_segment="seg000000010.ts")
 
-    relay = HlsRelaySupervisor(starter=lambda _args: _FakeProcess(pid=900))
+    relay = HlsRelaySupervisor(starter=lambda _args, *, stderr_path=None: _FakeProcess(pid=900))
     # Keep construction old-API-only (so OLD code raises nothing here), but
     # shrink the stall bound via the attribute so three quick ticks exceed it
     # without sleeping. On OLD code this attribute is simply unused.

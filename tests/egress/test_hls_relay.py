@@ -188,6 +188,64 @@ def test_apply_creates_a_fresh_relay_after_stop_channel() -> None:
     assert not procs[1].terminated
 
 
+# --- U21: a new worker session must not inherit the old relay's timeline ---------------
+#
+# The relay child does its own per-stream PTS-discontinuity correction and keeps
+# the resulting offset for as long as the child lives (U21 task A, proven on the
+# station's bundled ffmpeg: a one-sided +20s forward jump on the RE-ENCODED audio
+# leg left a permanent -10.0s output a-v offset that survived every later
+# segment, and the relay logged a DIFFERENT "new offset" per stream). So reuse is
+# only safe while the writer the relay serves is the same writer. Every genuine
+# worker (re)start -- first start, crash relaunch, output-desync guard restart,
+# slate->program restart -- must rebind the channel's relay to the new session.
+
+
+def test_apply_with_new_session_rebinds_the_relay_to_the_new_worker_session() -> None:
+    sup, calls, procs = _supervisor()
+    config = _config(_hls_sink())
+
+    first = sup.apply(config)
+    second = sup.apply(config, new_session=True)
+
+    assert len(calls) == 2, "the new worker session kept the previous session's relay child"
+    assert procs[0].terminated, "the previous session's relay child was left running"
+    assert not procs[1].terminated
+    # Same argv, therefore the same deterministic udp port: the config already
+    # handed to the engine graph stays valid across the rebind.
+    assert calls[0] == calls[1]
+    assert second.sinks[0].uri == first.sinks[0].uri == hls_relay_uri_for("C:/CivicCast/live/gov")
+
+
+def test_apply_without_new_session_keeps_the_relay_for_an_in_place_reload() -> None:
+    """The reload path (``new_session=False``) is not a worker restart: the
+    relay must be left alone so an in-place reload keeps one continuous mux."""
+
+    sup, calls, procs = _supervisor()
+    config = _config(_hls_sink())
+
+    sup.apply(config)
+    sup.apply(config, new_session=False)
+
+    assert len(calls) == 1
+    assert not procs[0].terminated
+
+
+def test_apply_with_new_session_drops_a_previous_sessions_relay_with_no_hls_sink() -> None:
+    """A channel restarted onto a config with no hls sink at all must not leave
+    the previous session's relay child (and its udp port) running."""
+
+    sup, calls, procs = _supervisor()
+    sup.apply(_config(_hls_sink()))
+    config = _config(EgressSinkSpec(kind="file", label="Proof", uri="build/out.ts"))
+
+    updated = sup.apply(config, new_session=True)
+
+    assert updated is config
+    assert procs[0].terminated
+    assert calls == [calls[0]]  # nothing respawned
+    assert sup.is_alive("gov") is None
+
+
 # --- MAJOR M1: relay-child liveness ----------------------------------------------------
 #
 # Before ``is_alive`` existed, nothing polled the relay subprocess after ``apply()``

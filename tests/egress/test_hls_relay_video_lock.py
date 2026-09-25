@@ -597,7 +597,7 @@ def _relay_daemon(
 ]:
     relay_procs: list[_FakeProcess] = []
 
-    def relay_starter(_args: list[str]) -> _FakeProcess:
+    def relay_starter(_args: list[str], *, stderr_path: Path | None = None) -> _FakeProcess:
         relay_procs.append(_FakeProcess(pid=900 + len(relay_procs)))
         return relay_procs[-1]
 

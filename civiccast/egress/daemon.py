@@ -1672,18 +1672,46 @@ class EgressDaemon:
                 # #151: route udp-ts sinks through the channel-lifetime relay so
                 # this (re)launch splices into ONE continuous mux session.
                 config = self._ts_relay.apply(config)
-            # Read BEFORE ``apply`` below starts a relay: "was anything writing
-            # this channel's HLS window when this start began?"
+            # Was anything writing this channel's HLS window when this start
+            # began? Read BEFORE the U21 new-session reset below tears the
+            # previous relay child down. It answers a question the rebind does
+            # not: "should whatever playlist.m3u8 is on disk be deleted, or
+            # carried forward?" A relay that WAS alive leaves a window its
+            # replacement continues (``delete_segments+append_list``), so
+            # residents keep a manifest across an encoder crash-relaunch; a
+            # playlist whose writer is already gone belongs to a previous
+            # broadcast and must not be advertised.
             hls_relay_was_alive = (
                 self._hls_relay is not None and self._hls_relay.is_alive(channel_id) is True
+            )
+            # Is a worker still alive and owning this channel right now? Decided
+            # BEFORE ``apply`` so the relay reset and the short-circuit below
+            # agree on the same fact: a start that is a NO-OP must not disturb a
+            # live worker's session -- and must not restart that session's relay
+            # out from under it.
+            existing_process = self._processes.get(channel_id)
+            worker_already_live = (
+                existing_process is not None and _process_poll(existing_process) is None
             )
             stored_config = config
             if self._hls_relay is not None:
                 # DEFECT A: route hls sinks through the supervised ffmpeg relay
                 # that actually writes segments + a manifest for this engine.
-                config = self._hls_relay.apply(config)
-            existing_process = self._processes.get(channel_id)
-            if existing_process is not None and _process_poll(existing_process) is None:
+                # BETA.10 U21: every GENUINE worker (re)start -- first start,
+                # crash relaunch, output-desync guard restart, slate->program
+                # restart -- rebinds this channel's relay to the NEW session. A
+                # relay child carries its own corrected timeline, so an inherited
+                # child strands a PTS jump in the new worker's output as a
+                # constant output A/V offset for the rest of that child's life.
+                # U24: the relay child's stderr is captured next to the
+                # channel's other egress logs (``<work_dir>/<channel>/logs``),
+                # so a live incident leaves child-side evidence behind.
+                config = self._hls_relay.apply(
+                    config,
+                    new_session=not worker_already_live,
+                    log_root=self._work_dir,
+                )
+            if worker_already_live:
                 state = self._store.read_state(channel_id)
                 current_state: EgressState = (
                     "DRAINING" if channel_id in self._draining_channels else "ON_AIR"
@@ -1752,9 +1780,11 @@ class EgressDaemon:
                 # HlsSink worker that is gone): whatever playlist.m3u8 is on
                 # disk belongs to a previous broadcast. Remove it before the
                 # new writer produces anything so /api/public/live/current does
-                # not advertise it. A relay that was already alive
-                # (crash-relaunch of the encoder alone) keeps writing the same
-                # window and is left alone. Uses the STORED config: ``apply``
+                # not advertise it. A relay that WAS already alive leaves a
+                # window its replacement continues across the U21 rebind
+                # (``apply(..., new_session=True)`` above), so that window is
+                # carried forward rather than deleted -- the manifest survives
+                # an encoder crash-relaunch. Uses the STORED config: ``apply``
                 # above rewrote hls sinks to their relay's local-ts uri.
                 self._discard_stale_hls_playlists(channel_id, config=stored_config)
             using_fallback_slate = False
@@ -2658,6 +2688,23 @@ class EgressDaemon:
         except Exception:
             _LOG.exception("channel %s: HLS relay stream-restore attempt failed.", channel_id)
 
+    def _trim_relay_logs(self, channel_id: str) -> None:
+        """BETA.10 U24: hard-cap this channel's relay stderr logs.
+
+        A thin hand-off like the neighbouring relay-poll helpers: the supervisor
+        owns the cap, the in-place rewrite, and the warning that names the file.
+        ``getattr``/``callable`` keeps it working with the simpler supervisor
+        doubles the tests inject. It never restarts a child -- the whole point of
+        the in-place rewrite is that the relay serving residents keeps serving.
+        """
+        trim = getattr(self._hls_relay, "maybe_trim_logs", None)
+        if not callable(trim):
+            return
+        try:
+            trim(channel_id)
+        except Exception:
+            _LOG.exception("channel %s: HLS relay stderr log trim failed.", channel_id)
+
     def _poll_hls_relay(self, channel_id: str) -> None:
         """MAJOR M1: poll this channel's supervised HLS relay child liveness.
 
@@ -2672,6 +2719,11 @@ class EgressDaemon:
         """
         if self._hls_relay is None:
             return
+        # BETA.10 U24: the same tick that watches the relay also bounds its
+        # stderr capture. It runs FIRST and regardless of liveness, because a
+        # child that has already exited leaving an oversized log behind is
+        # exactly the case the cap exists for.
+        self._trim_relay_logs(channel_id)
         is_alive = getattr(self._hls_relay, "is_alive", None)
         if not callable(is_alive):
             return
@@ -2801,12 +2853,21 @@ class EgressDaemon:
         * Worker pid changed -> the previous worker's measurements are void
           (streak reset), but the probe CADENCE is left alone: a relaunch must
           not make the guard probe faster than once per interval.
-        * Not ON_AIR -> not judged. FALLBACK_SLATE/STARTING have no settled
-          program of their own, DRAINING is deliberately leaving air, and
-          TRANSITIONING is what ``_poll_process`` publishes for a channel with a
-          content reload in flight -- exactly the moment the U16 rebase step
-          happens, and a legitimate reason for A/V to move against each other
-          for a moment. This guard judges the settled output, never the switch.
+        * Not ON_AIR/FALLBACK_SLATE -> not judged. STARTING has no output yet,
+          DRAINING is deliberately leaving air, and TRANSITIONING is what
+          ``_poll_process`` publishes for a channel with a content reload in
+          flight -- exactly the moment the U16 rebase step happens, and a
+          legitimate reason for A/V to move against each other for a moment.
+          This guard judges the settled output, never the switch.
+        * FALLBACK_SLATE IS judged (U21 item B2). The slate leg runs through the
+          same mux, the same udpsink and the same relay child as a program leg,
+          so it can carry - and strand - the same output A/V offset; the U21
+          slate-entry incident was measured on a slate leg. Excluding it left
+          the desync shape with no net at all, because B1's rebind cannot cure
+          an offset born on a slate the worker never restarts out of. Judging a
+          slate leg is safe for the same reason judging a program leg is: the
+          guard reads the worker's own settled output, and a slate leg that
+          cannot settle is exactly what a restart repairs.
         * Inside the probe interval -> not yet time (the tick rate is 2s).
         * Probe could not measure -> neither advances nor resets the streak, and
           can never restart anything by itself.
@@ -2836,7 +2897,11 @@ class EgressDaemon:
             del guard.offsets[:]
 
         state = self._store.read_state(channel_id)
-        if state is None or state.state != "ON_AIR" or channel_id in self._draining_channels:
+        if (
+            state is None
+            or state.state not in {"ON_AIR", "FALLBACK_SLATE"}
+            or channel_id in self._draining_channels
+        ):
             return
 
         now = self._monotonic()
@@ -4039,7 +4104,7 @@ class EgressDaemon:
             # relay-routed URIs the running encoder was started with.
             config = self._ts_relay.apply(config)
         if self._hls_relay is not None:
-            config = self._hls_relay.apply(config)
+            config = self._hls_relay.apply(config, log_root=self._work_dir)
         source_plan = None
         target_state: EgressState = "ON_AIR"
         # Scheduled rollover prepares the item due at the outgoing boundary.
