@@ -705,15 +705,149 @@ def test_output_progress_line_names_each_streams_mux_input_delta(
     ), err
 
     # ... and the baseline ADVANCES with the print, so the next line reports the
-    # NEXT interval rather than re-reporting the same cumulative numbers.
+    # NEXT interval rather than re-reporting the same cumulative numbers. (U34:
+    # the second interval advances BOTH streams -- a second consecutive interval
+    # of video silence is now an outage the per-stream watchdog judges, which is
+    # exactly what U34 added; the interval-relative-baseline claim under test
+    # does not need video to stay flat twice.)
     clock["t"] = 10.0
     engine._output_buffers = 120
-    engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145984}
+    engine._mux_input_buffers = {"sink_65": 138699, "sink_66": 145984}
     assert engine._check_stall() is True
     assert (
-        "CTRL output: 120 buffers (+20) since PLAYING [mux-in 5.0s: video=+0 audio=+234]"
+        "CTRL output: 120 buffers (+20) since PLAYING [mux-in 5.0s: video=+122 audio=+234]"
         in capsys.readouterr().err
     )
+
+
+# --- U34: per-stream stall judgement --------------------------------------------------
+
+
+def test_per_stream_stall_judges_the_stream_that_stopped_while_the_aggregate_advanced(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """U34: all four 2026-09-25 freezes left the mux SRC counter climbing at the
+    audio-only rate while the video branch fed the mux nothing at all, so the
+    aggregate check above never judged them and the worker never exited. The
+    per-stream check judges the SILENT stream on the same ``stall_timeout_s``
+    budget, names it, and exits so the daemon relaunches in seconds."""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(engine_module.GLib, "timeout_add_seconds", lambda *a, **k: None)
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine._mux_input_pads = {
+        "sink_65": _CapsPadStub("sink_65", "video/x-h264, stream-format=byte-stream"),
+        "sink_66": _CapsPadStub("sink_66", "audio/mpeg, mpegversion=4"),
+    }
+    engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145516}
+    engine._output_buffers = 100
+    engine._arm_stall_watchdog()
+    engine._loop = _FakeLoop()
+    # The live reload-7 shape: the freeze happened after this commit.
+    engine._reload_context = (7, "committed")
+
+    # The incident shape for the whole budget: video flat, audio on its own
+    # cadence, the aggregate advancing at the audio-only rate throughout.
+    for tick in range(1, 10):
+        clock["t"] = float(tick)
+        engine._output_buffers = 100 + tick * 2
+        engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145516 + tick * 47}
+        assert engine._check_stall() is True
+    assert engine._error is None
+    assert engine._loop.quit_calls == 0
+
+    # Past the bound on the SILENT stream -- judged, though the aggregate moved.
+    clock["t"] = 10.0
+    engine._output_buffers = 122
+    engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145987}
+    assert engine._check_stall() is False
+
+    assert engine._error == ("stall", "video stream stalled")
+    assert engine._loop.quit_calls == 1
+    err = capsys.readouterr().err
+    assert (
+        "CTRL stall: no video buffers for 10s (last reload id=7 stage=committed) "
+        "- quitting for daemon restart" in err
+    ), err
+
+
+def test_per_stream_stall_judges_a_silent_audio_branch_when_the_graph_has_one(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other half of the same class, and the rule for when audio counts:
+    ``audio`` is judged iff the persistent output half actually carries an audio
+    branch (``audio_selector``), so an audio-less channel is never accused of
+    having lost audio."""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(engine_module.GLib, "timeout_add_seconds", lambda *a, **k: None)
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine._mux_input_pads = {
+        "sink_65": _CapsPadStub("sink_65", "video/x-h264, stream-format=byte-stream"),
+        "sink_66": _CapsPadStub("sink_66", "audio/mpeg, mpegversion=4"),
+    }
+    engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145516}
+    engine._output_buffers = 100
+    engine._arm_stall_watchdog()
+    engine._loop = _FakeLoop()
+    # No audio branch in this graph: the (flat) audio pad must NOT be judged.
+    assert engine._required_stream_labels() == {"video"}
+
+    engine.audio_selector = object()  # now the graph HAS an audio branch
+    assert engine._required_stream_labels() == {"video", "audio"}
+
+    # Audio flat from arm time, video advancing, aggregate advancing.
+    clock["t"] = 10.0
+    engine._output_buffers = 130
+    engine._mux_input_buffers = {"sink_65": 138877, "sink_66": 145516}
+    assert engine._check_stall() is False
+
+    assert engine._error == ("stall", "audio stream stalled")
+    assert engine._loop.quit_calls == 1
+    err = capsys.readouterr().err
+    assert (
+        "CTRL stall: no audio buffers for 10s (no content reload) - quitting for daemon restart"
+        in err
+    ), err
+
+
+def test_per_stream_stall_ignores_caption_pads_and_streams_that_never_produced(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The two honest exclusions, both of which would otherwise take a healthy
+    channel off air: a caption/subtitle pad is sparse by nature (no cues for
+    minutes is normal), and a stream that has produced nothing since the
+    reference was armed is the FIRST-OUTPUT budget's question, not this one's."""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(engine_module.GLib, "timeout_add_seconds", lambda *a, **k: None)
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine.audio_selector = object()  # audio IS a required stream in this graph
+    engine._mux_input_pads = {
+        "sink_65": _CapsPadStub("sink_65", "video/x-h264, stream-format=byte-stream"),
+        "sink_66": _CapsPadStub("sink_66", "audio/mpeg, mpegversion=4"),
+        "sink_67": _CapsPadStub("sink_67", "text/x-raw, format=utf8"),
+        "sink_68": _CapsPadStub("sink_68", "video/x-h264, stream-format=byte-stream"),
+    }
+    # sink_68 has never produced a single buffer; sink_67 is the caption pad and
+    # is flat throughout; the two REQUIRED streams both keep feeding the mux.
+    engine._mux_input_buffers = {"sink_65": 1000, "sink_66": 500, "sink_67": 0, "sink_68": 0}
+    engine._output_buffers = 100
+    engine._arm_stall_watchdog()
+    engine._loop = _FakeLoop()
+
+    for tick in range(1, 25):
+        clock["t"] = float(tick)
+        engine._output_buffers = 100 + tick * 30
+        engine._mux_input_buffers = {
+            "sink_65": 1000 + tick * 30,
+            "sink_66": 500 + tick * 47,
+            "sink_67": 0,
+            "sink_68": 0,
+        }
+        assert engine._check_stall() is True, f"tick {tick}"
+    assert engine._error is None
+    assert engine._loop.quit_calls == 0
 
 
 # --- round-2 finding 2: the stall bound yields to the commit watchdog ---------------
