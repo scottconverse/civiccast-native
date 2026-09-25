@@ -172,7 +172,10 @@ class TestBulletinFiller:
         plan = generator(_config())
 
         assert plan.segments[0].kind == "slate"
-        assert len(slate_calls) == 1
+        # U27: the slate generator renders the 30s message slate and then
+        # stream-copies it into the one fill file the plan plays -- two runner
+        # calls, one slate.
+        assert len([a for a in slate_calls if "lavfi" in a]) == 1
 
     def test_drawtext_failure_retries_then_raises(self, tmp_path: Path) -> None:
         attempts: list[list[str]] = []
@@ -304,7 +307,7 @@ class TestBulletinTimeWindow:
         )
         plan = generator(_config())
         assert plan.segments[0].kind == "slate"
-        assert len(slate_calls) == 1
+        assert len([a for a in slate_calls if "lavfi" in a]) == 1
 
 
 class TestFillerSourceProvider:

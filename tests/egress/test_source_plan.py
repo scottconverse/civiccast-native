@@ -792,10 +792,12 @@ def test_resolver_module_exports_source_plan_contracts() -> None:
     assert resolver.build_slate_source_args is build_slate_source_args
 
 
-def test_slate_plan_is_capped_to_the_playable_fill_horizon(tmp_path: Path) -> None:
-    # The bridge can build at most MAX_PLAYLIST_SUBCHAINS decoder chains. The
-    # producer must expose that same shorter horizon rather than claim a
-    # one-hour plan that the bridge silently truncates after six minutes.
+def test_slate_plan_is_one_continuous_fill_file_covering_the_horizon(tmp_path: Path) -> None:
+    # U27: a plan of N repeats of one finite file made the bridge build N
+    # decoder sub-chains, and the hand-off between them desynced audio from
+    # video on the live caption shape. One stream-copied fill file keeps a
+    # single decoder chain (nothing to hand off) while still spanning the
+    # whole fill horizon, so the encoder is not relaunched inside it (CA-8).
     calls: list[list[str]] = []
 
     def runner(args: list[str]) -> FfmpegResult:
@@ -809,12 +811,64 @@ def test_slate_plan_is_capped_to_the_playable_fill_horizon(tmp_path: Path) -> No
 
     plan = generator(_config())
 
-    assert len(calls) == 1  # one render, bounded repeats
-    assert len(plan.segments) == MAX_PLAYLIST_SUBCHAINS
-    assert len({segment.path for segment in plan.segments}) == 1
-    total = sum(segment.duration_seconds for segment in plan.segments)
-    assert total == MAX_PLAYLIST_SUBCHAINS * 30
-    assert total < 3600
+    assert len(plan.segments) == 1
+    segment = plan.segments[0]
+    assert segment.kind == "slate"
+    assert Path(segment.path).name.startswith("slate-fill-")
+    assert segment.duration_seconds == 3600
+    # one slate render + one concat stream copy of it
+    assert len(calls) == 2
+    assert calls[1][:3] == ["-f", "concat", "-safe"]
+    assert Path(calls[1][-1]).name.startswith("."), "assembled via a staging file"
+
+
+def test_slate_fill_is_reused_until_the_rendered_slate_changes(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def runner(args: list[str]) -> FfmpegResult:
+        calls.append(args)
+        Path(args[-1]).write_bytes(b"ts")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    generator = SlateSourceGenerator(
+        work_dir=tmp_path, ffmpeg_runner=runner, target_fill_seconds=600
+    )
+
+    first = generator(_config())
+    again = generator(_config())
+    changed = generator(
+        _config().model_copy(update={"slate_message": "Scheduled programming resumes shortly."})
+    )
+    rebuilds = [args for args in calls if args[:2] == ["-f", "concat"]]
+
+    assert first.segments[0].path == again.segments[0].path
+    assert changed.segments[0].path != first.segments[0].path
+    assert len(rebuilds) == 2, "one fill per rendered slate, reused in between"
+    assert Path(first.segments[0].path).exists()
+    assert Path(changed.segments[0].path).exists()
+    assert Path(again.segments[0].path).stat().st_size > 0
+
+
+def test_slate_fill_failure_raises_instead_of_falling_back_to_repeats(tmp_path: Path) -> None:
+    # The multi-segment plan IS the defect, so a failed concat must surface as
+    # SourcePrepareError: falling back to repeats would put the desync back on
+    # air, and a 1x30s plan would relaunch the encoder every 30s (CA-8).
+    calls: list[list[str]] = []
+
+    def runner(args: list[str]) -> FfmpegResult:
+        calls.append(args)
+        if args[:2] == ["-f", "concat"]:
+            return FfmpegResult(returncode=1, stdout="", stderr="boom")
+        Path(args[-1]).write_bytes(b"ts")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    generator = SlateSourceGenerator(
+        work_dir=tmp_path, ffmpeg_runner=runner, target_fill_seconds=3600
+    )
+
+    with pytest.raises(SourcePrepareError, match="slate fill"):
+        generator(_config())
+    assert len(calls) == 2
 
 
 def test_slate_cache_is_immutable_across_changed_content(tmp_path: Path) -> None:
@@ -832,7 +886,8 @@ def test_slate_cache_is_immutable_across_changed_content(tmp_path: Path) -> None
         _config().model_copy(update={"slate_message": "Scheduled programming resumes shortly."})
     )
 
-    assert len(calls) == 2
+    renders = [args for args in calls if "-vf" in args or "lavfi" in args]
+    assert len(renders) == 2, "one render per distinct slate message"
     assert first.segments[0].path == again.segments[0].path
     assert changed.segments[0].path != first.segments[0].path
     assert Path(first.segments[0].path).exists()
