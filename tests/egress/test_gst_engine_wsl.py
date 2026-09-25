@@ -220,6 +220,13 @@ _E = graphmod.ElementSpec
 _CAPS = "video/x-raw,width=640,height=360,framerate=30/1"
 _PRODUCTION_CAPS = "video/x-raw,width=1280,height=720,framerate=30/1"
 _ACAPS = "audio/x-raw,rate=48000,channels=2"
+# U34's raw-audio UDP feed: a udpsrc consumer has to be TOLD the caps of a
+# container-less feed, so the sender's capsfilter and the consumer's udpsrc
+# ``caps`` property must be the same string -- one constant, not two literals
+# that can drift apart. PCM, not AAC-in-TS, on purpose: it needs no decoder in
+# the worker's audio branch, so the only thing the feed can do to that branch is
+# stop, which is the shape under test.
+_RAW_AUDIO_CAPS = "audio/x-raw,format=S16LE,layout=interleaved,rate=48000,channels=2"
 _H264_ENCODER = os.environ.get("CIVICCAST_GST_TEST_H264_ENCODER", "openh264enc")
 
 
@@ -246,6 +253,20 @@ def _live_udp_sender_pipeline_str(port: int, *, bitrate_kbps: int = 1500, gop: i
     return (
         f"videotestsrc is-live=true pattern=18 ! {_CAPS} ! {encoder_str} "
         f"mpegtsmux ! udpsink host=127.0.0.1 port={port}"
+    )
+
+
+def _live_raw_audio_sender_pipeline_str(port: int) -> str:
+    """The audio-only twin of :func:`_live_udp_sender_pipeline_str`: raw PCM over
+    UDP, no container and no encoder, so the consumer needs no decoder and the
+    feed has exactly one way to change what the worker sees -- it stops.
+    ``sync=false`` because there is nothing to timestamp-pace against: the
+    ``is-live`` source already paces production, and the consumer is a live
+    ``udpsrc``, so forcing clock sync on the sink would only add latency."""
+    return (
+        f"audiotestsrc is-live=true wave=8 ! audioconvert ! audioresample ! "
+        f"capsfilter caps={_RAW_AUDIO_CAPS} ! "
+        f"udpsink host=127.0.0.1 port={port} sync=false"
     )
 
 
@@ -284,13 +305,25 @@ class _LiveUdpSender:
     kill; this sender lives IN the pytest process, so a hang here hangs the whole
     test run)."""
 
-    def __init__(self, port: int, *, bitrate_kbps: int = 1500, gop: int = 30) -> None:
+    def __init__(
+        self,
+        port: int,
+        *,
+        bitrate_kbps: int = 1500,
+        gop: int = 30,
+        pipeline_str: str | None = None,
+    ) -> None:
         from gi.repository import Gst  # local: only ever constructed once gi is available
 
         if not Gst.is_initialized():
             Gst.init(None)
         self._Gst = Gst
-        pipeline_str = _live_udp_sender_pipeline_str(port, bitrate_kbps=bitrate_kbps, gop=gop)
+        # ``pipeline_str`` lets a caller swap the feed itself (U34's raw-audio
+        # sender) while keeping this class's whole freeze/stop contract --
+        # the "still there, gone quiet" pause is the part that must not be
+        # reimplemented per feed shape.
+        if pipeline_str is None:
+            pipeline_str = _live_udp_sender_pipeline_str(port, bitrate_kbps=bitrate_kbps, gop=gop)
         self._pipeline = Gst.parse_launch(pipeline_str)
         if self._pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
             self._pipeline.set_state(Gst.State.NULL)
@@ -535,6 +568,37 @@ def _wait_for_log(log: Path, marker: str, *, count: int = 1, timeout: float = 15
         time.sleep(0.1)
     got = log.read_text(encoding="utf-8", errors="replace") if log.exists() else "<no log>"
     raise AssertionError(f"marker {marker!r} x{count} not seen within {timeout}s; log:\n{got}")
+
+
+def _wait_for_interval_line(
+    log: Path, pattern: str, *, after: int = 0, timeout: float = 20.0
+) -> str:
+    """Poll until a log line matching the compiled-in ``pattern`` appears at or
+    after character offset ``after``; return the log text seen.
+
+    The flow-ladder lines (``CTRL output: ... [mux-in 5.0s: video=+N audio=+M]``)
+    are emitted on a fixed interval, not on a marker, so the readiness signal for
+    "the stream I am about to freeze has actually fed the mux" has to be the line
+    itself. ``after`` scopes the search to the region of the log that matters --
+    the same ``video=+N`` line exists BEFORE a reload commits, and a match from
+    there would claim a readiness the new leg never demonstrated."""
+    import re
+
+    matcher = re.compile(pattern)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        text = log.read_text(encoding="utf-8", errors="replace") if log.exists() else ""
+        if matcher.search(text[after:]):
+            return text
+        time.sleep(0.1)
+    got = log.read_text(encoding="utf-8", errors="replace") if log.exists() else "<no log>"
+    raise AssertionError(f"no line matching {pattern!r} within {timeout}s; log:\n{got}")
+
+
+def _mux_in_lines(text: str) -> list[str]:
+    """Every flow-ladder interval line in ``text`` (one ``CTRL output`` line per
+    progress interval)."""
+    return [line for line in text.splitlines() if "[mux-in " in line]
 
 
 def _launch_worker(tmp_path: Path, graph, out_ts: Path, env_extra: dict | None = None):
@@ -1139,6 +1203,78 @@ def _udpsrc_program_graph(port: int):
     )
 
 
+def _half_live_program_graph(port: int, *, live: str):
+    """A reload payload whose program leg (``sources[0]``) carries exactly ONE
+    live stream and one in-graph stream.
+
+    U34's live shape, reduced to one variable: after a committed reload the
+    mux's ``video`` sink pad goes silent while ``audio`` keeps feeding (the four
+    2026-09-25 freezes), or the reverse. Splitting the leg like this is what
+    makes the shape reproducible at all -- with both streams live, freezing the
+    feed would stop the aggregate counter too and the OLD watchdog would
+    (correctly) fire on it, proving nothing about the stream-level judgement.
+    The in-graph twin is a plain ``is-live`` testsrc, so the aggregate stays fed
+    exactly as it did in production.
+
+    ``live="video"``: the leg's video is the UDP MPEG-TS ingest (the same
+    ``udpsrc ! decodebin`` chain ``_udpsrc_program_graph`` uses), its audio is a
+    local ``audiotestsrc``.
+    ``live="audio"``: the leg's audio is a raw-PCM UDP feed (see
+    ``_live_raw_audio_sender_pipeline_str``), its video is a local
+    ``videotestsrc``.
+
+    Encoder/audio-encoder/mux/sinks come from ``_av_demo_graph`` so the
+    persistent output half is production-shaped; ``sources[1]`` is the same
+    bystander leg every other reload test uses.
+    """
+    if live == "video":
+        elements = (
+            _E("udpsrc", props={"uri": f"udp://127.0.0.1:{port}"}),
+            _E("decodebin"),
+            _E("videoconvert"),
+            _E("videoscale"),
+            _E("videorate"),
+            _E("capsfilter", props={"caps": _CAPS}),
+        )
+        audio = (
+            _E("audiotestsrc", props={"is-live": True, "wave": 8}),
+            _E("audioconvert"),
+            _E("audioresample"),
+            _E("capsfilter", props={"caps": _ACAPS}),
+        )
+    elif live == "audio":
+        elements = (
+            _E("videotestsrc", props={"is-live": True, "pattern": 18}),
+            _E("capsfilter", props={"caps": _CAPS}),
+        )
+        audio = (
+            _E("udpsrc", props={"uri": f"udp://127.0.0.1:{port}", "caps": _RAW_AUDIO_CAPS}),
+            _E("audioconvert"),
+            _E("audioresample"),
+            _E("capsfilter", props={"caps": _ACAPS}),
+        )
+    else:
+        raise ValueError(f"live must be 'video' or 'audio', not {live!r}")
+    program = graphmod.SourceLeg(label="program", elements=elements, audio=audio)
+    base = _av_demo_graph(nsrc=2)
+    return graphmod.PlayoutGraph(
+        sources=(program, base.sources[1]),
+        encoder=base.encoder,
+        audio_encoder=base.audio_encoder,
+        mux=base.mux,
+        sinks=base.sinks,
+    )
+
+
+def _half_live_sender(port: int, live: str) -> _LiveUdpSender:
+    """The feed for :func:`_half_live_program_graph`'s one live stream: the
+    MPEG-TS video sender, or the raw-PCM audio sender -- same class, same
+    freeze/stop contract, only the pipeline differs."""
+    if live == "video":
+        return _LiveUdpSender(port, bitrate_kbps=1500, gop=30)
+    return _LiveUdpSender(port, pipeline_str=_live_raw_audio_sender_pipeline_str(port))
+
+
 # --- tests ---------------------------------------------------------------------------
 
 
@@ -1456,6 +1592,127 @@ def test_stall_watchdog_does_not_fire_on_healthy_output(tmp_path: Path) -> None:
     assert "CTRL stall" not in log, f"watchdog FALSE-FIRED on healthy output; log:\n{log}"
     assert rc == 0, f"unclean teardown (rc={rc}); log:\n{log}"
     _assert_continuous(out_ts, log)
+
+
+@pytest.mark.parametrize("live", ["video", "audio"])
+def test_per_stream_watchdog_fires_when_one_stream_stops_after_a_committed_reload(
+    tmp_path: Path, live: str
+) -> None:
+    """U34: the four 2026-09-25 freezes each kept the aggregate counter climbing
+    at the audio-only rate while ONE stream's branch stopped feeding
+    ``mpegtsmux`` -- so the pre-U34 watchdog, which judges the mux SRC total
+    only, never fired and the worker stayed alive with the channel frozen.
+
+    This drives that exact shape off-live: the worker airs an in-graph A/V
+    program, an immediate content-reload commits a new leg whose ``video`` (or,
+    parametrised, ``audio``) comes from a live UDP feed, that feed is proven to
+    have fed the mux, and then it is FROZEN (paused, not killed: no EOS, no bus
+    error -- see ``_LiveUdpSender.freeze``) while the leg's other stream keeps
+    feeding from a local ``is-live`` source.
+
+    The assertions split the two watchdogs apart on purpose: the message that
+    must appear is the per-stream one (``no <stream> buffers for``) and the
+    aggregate one (``no output for``) must NOT -- the aggregate counter is
+    advancing the whole time, so the aggregate watchdog is not entitled to
+    judge this and a run that reports it has regressed the very distinction
+    this unit exists to make. The exit must be non-zero (the daemon relaunches
+    only on a non-zero exit) and the judged silence must land inside a bound
+    that the freeze itself caused, not at some later wall-clock accident."""
+    port = _free_udp_port()
+    out_ts = tmp_path / "out.ts"
+    start_graph = _filesink_graph(_av_demo_graph(nsrc=2), out_ts)
+    reload_path = tmp_path / "half-live.json"
+    reload_path.write_text(
+        graphmod.graph_to_json(_half_live_program_graph(port, live=live)),
+        encoding="utf-8",
+    )
+    stall_timeout_s = 3
+    sender = _half_live_sender(port, live)
+    proc, control, log = _launch_worker(
+        tmp_path,
+        start_graph,
+        out_ts,
+        env_extra={"CIVICCAST_STALL_TIMEOUT_S": str(stall_timeout_s)},
+    )
+    try:
+        # The outgoing program must be on air before the reload goes in, so the
+        # commit below is a real hand-off rather than a first-output race.
+        _wait_for_interval_line(log, r"\[mux-in [\d.]+s:", timeout=25.0)
+        _send(control, f"reload {reload_path}")
+        _wait_for_log(log, "CTRL reload committed", timeout=25.0)
+        committed_at = log.read_text(encoding="utf-8", errors="replace").index(
+            "CTRL reload committed"
+        )
+        # "Stopped" only means something against "was flowing": require an
+        # interval line AFTER the commit in which the stream about to be frozen
+        # actually delivered buffers to the mux. Without this the test would
+        # pass on a leg that never started feeding at all (which is the
+        # first-output budget's question, not this watchdog's).
+        _wait_for_interval_line(
+            log,
+            rf"\[mux-in [\d.]+s: [^\]]*\b{live}=\+[1-9]",
+            after=committed_at,
+            timeout=25.0,
+        )
+        assert proc.poll() is None, (
+            f"worker died before the freeze;\n{log.read_text(encoding='utf-8', errors='replace')}"
+        )
+        frozen_at = time.monotonic()
+        size_at_freeze = out_ts.stat().st_size
+        sender.freeze()
+        _wait_for_log(log, f"CTRL stall: no {live} buffers for", timeout=25.0)
+        detected_after = time.monotonic() - frozen_at
+        rc = proc.wait(timeout=25)
+        size_after_freeze = out_ts.stat().st_size
+    finally:
+        _reap(proc)
+        sender.stop()
+
+    text = log.read_text(encoding="utf-8", errors="replace")
+    assert f"CTRL stall: no {live} buffers for" in text, (
+        f"per-stream watchdog did not name the stopped {live} stream;\n{text}"
+    )
+    assert "CTRL stall: no output for" not in text, (
+        "the AGGREGATE watchdog named this stall -- the mux src counter never "
+        f"stopped advancing (the other stream kept feeding), so the per-stream "
+        f"judgement is the only correct one here;\n{text}"
+    )
+    # The ERROR line names the stream, the seconds without a buffer, and the
+    # last reload id/stage (the operator's state row reads this).
+    stall_line = next(
+        line for line in text.splitlines() if f"CTRL stall: no {live} buffers for" in line
+    )
+    assert "last reload id=" in stall_line and "stage=committed" in stall_line, (
+        f"stall line does not name the reload context: {stall_line!r}"
+    )
+    judged = int(re.search(rf"no {live} buffers for (\d+)s", stall_line).group(1))
+    assert stall_timeout_s <= judged <= stall_timeout_s + 5, (
+        f"judged silence {judged}s is not the {stall_timeout_s}s bound: {stall_line!r}"
+    )
+    # A bound the FREEZE caused, not a later accident: the freeze is the only
+    # event after `frozen_at`, and detection must follow it by roughly the bound.
+    assert detected_after < stall_timeout_s + 8, (
+        f"detection took {detected_after:.1f}s after the freeze for a "
+        f"{stall_timeout_s}s bound; the watchdog is not tracking this freeze"
+    )
+    # Non-zero: the daemon's _poll_process only crash-relaunches on a non-zero
+    # exit. 1 = the ("stall", ...) error this path sets; 70 = forced teardown.
+    assert rc not in (0, None), f"stall exit must be non-zero for daemon relaunch (rc={rc})"
+    assert "'error': ('stall', '" in text and f"{live} stream stalled" in text, (
+        f"WORKER_RESULT does not name the {live} stream as the stall reason;\n{text}"
+    )
+    # The other stream really did keep feeding while the frozen one was silent --
+    # that is what makes this the per-stream case and not an aggregate one, and
+    # it is measured, not assumed: the worker wrote more TS between the freeze
+    # and its own exit than it had written by the freeze, with the frozen
+    # stream's branch contributing nothing after it. (The worker has exited by
+    # now, so filesink has closed the file and every byte is on disk.)
+    assert size_after_freeze > size_at_freeze, (
+        f"no TS was produced in the {detected_after:.1f}s the {live} stream was "
+        f"frozen: {size_at_freeze} -> {size_after_freeze} bytes. The aggregate "
+        f"counter was NOT advancing, so this run did not reproduce a one-stream "
+        f"stop;\n{text}"
+    )
 
 
 def test_content_reload_to_live_udp_ingest_continuity(tmp_path: Path) -> None:
