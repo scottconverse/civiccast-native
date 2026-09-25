@@ -116,6 +116,31 @@ post-self-heal segments at 18:47:44-18:47:56 carried TS PID 256 with no PID 257
   no shipped sink carries one without the other). Proven red then green against
   real ffmpeg end to end in both directions.
 
+### Reload-wedge diagnostics (U14, 2026-09-24)
+
+Two changes to what the daemon and the playout worker write when a seamless
+reload wedges, both driven by the 2026-09-24 18:48 government incident in which
+the reload-commit watchdog fired (`exit_code=5`, "the reload commit itself did
+not finish in time (reload-commit-timeout)") and the channel stayed dark for
+269.6 s. Diagnostic only: no reload policy, timing, or control-flow change.
+
+- The operator row's compact engine frame now names the frame that actually
+  blocked, not its caller. The priority list held only the callers, so the
+  incident reported `engine.py:3151 in _retire_reload_old_leg` while the
+  retirement thread was blocked one frame deeper in
+  `_dispose_confirmed_old_leg` (`engine.py:3468`), and the five sibling dumps
+  blocked in the selector `active-pad` readback
+  (`_confirm_reload_selector_handoff`) matched no name at all and reported the
+  caller (`engine.py:3141 in _begin_reload_commit`). Both names are added,
+  innermost first.
+- The disposal loop now prints its entry (naming the streams it is about to
+  release) and one line per release that returned, so a future stall inside
+  `release_request_pad` names the stalled stream by elimination instead of
+  leaving `stage=selector-handoff-confirmed` as the last surviving stage line,
+  one step before the loop. No line claims a release that raised; failures keep
+  reaching the operator through the existing `selector-retirement-error` →
+  "leg disposal did not reach NULL" path.
+
 ## [1.0.0-beta.7] - 2026-09-15
 
 **PUBLISHED.** `v1.0.0-beta.7` was published as a GitHub prerelease from
