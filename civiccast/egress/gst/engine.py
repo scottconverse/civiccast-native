@@ -1923,37 +1923,190 @@ class GstPlayoutEngine:
             self._mux_input_snapshot_t = now
 
     def _mux_input_delta_suffix(self, elapsed: float) -> str:
-        """``" [mux-in <elapsed>s: video=+N audio=+M ...]"``, or ``""``.
+        """The whole flow ladder as one suffix: the mux clause, then the chain
+        clause. ``""`` when nothing was counted anywhere.
 
-        A pure read of the counters against the last snapshot. Returns exactly
-        ``""`` when nothing was counted, so the existing progress line is
-        byte-identical on any graph without a countable mux; and it is guarded
-        throughout, because it runs inside the progress path and must never be
-        able to raise into it.
+        The mux clause is ``" [mux-in <elapsed>s: video=+N audio=+M ...]"`` -- a
+        pure read of the counters against the last snapshot, and byte-identical
+        to what it rendered before the chain clause existed whenever no chain
+        counter was armed. Video first, then audio, then anything else by pad
+        name: those two are the streams whose silence changes what the channel
+        is airing. See ``_chain_input_delta_suffix`` for the rest of the ladder.
 
-        Video first, then audio, then anything else by pad name: those two are
-        the streams whose silence changes what the channel is airing."""
+        Guarded throughout, because it runs inside the progress path and must
+        never be able to raise into it."""
         pads = getattr(self, "_mux_input_pads", None) or {}
         counters = getattr(self, "_mux_input_buffers", None) or {}
         snapshot = getattr(self, "_mux_input_snapshot", None) or {}
+        mux_clause = ""
+        if pads and counters:
+            try:
+                parts: list[tuple[int, str, int]] = []
+                for pad_name, pad in pads.items():
+                    current = counters.get(pad_name, 0)
+                    # A pad missing from the snapshot has no interval baseline yet
+                    # (it was registered after the last print): report ``+0`` rather
+                    # than invent a delta from a baseline we never took.
+                    previous = snapshot.get(pad_name, current)
+                    label = self._mux_pad_stream_label(pad)
+                    rank = 0 if label == "video" else 1 if label == "audio" else 2
+                    parts.append((rank, str(label), current - previous))
+                parts.sort(key=lambda item: (item[0], item[1]))
+                rendered = " ".join(f"{label}=+{delta}" for _rank, label, delta in parts)
+            except Exception:
+                return self._chain_input_delta_suffix(elapsed)
+            mux_clause = f" [mux-in {elapsed:.1f}s: {rendered}]"
+        return mux_clause + self._chain_input_delta_suffix(elapsed)
+
+    # -- U30 flow ladder: WHERE between the selector and the mux data stops -----
+    #
+    # ``[mux-in ...]`` says whether the output half is still being fed; it cannot
+    # say WHERE inside it a stream stopped. The dead immediate-switch runs of the
+    # 2026-09-25 off-live campaign show the switched-in leg's buffer arriving on
+    # the selector's own input pad, the selector's active-pad readback confirming
+    # the switch, and the mux input counters never moving for that leg -- so the
+    # loss is in the stretch those counters cannot see:
+    # ``selector -> isolation queue -> encoder -> mux``. One counter at each end
+    # of it bisects that stretch on the next occurrence, at the same cost as the
+    # mux counters (one int increment per buffer, no allocation, no locking, no
+    # logging, and no extra line).
+
+    _CHAIN_INPUT_RUNGS: ClassVar[tuple[str, ...]] = ("sel", "queue")
+    _CHAIN_INPUT_STREAMS: ClassVar[tuple[str, ...]] = ("video", "audio")
+    _CHAIN_INPUT_ISOLATION_QUEUES: ClassVar[dict[str, str]] = {
+        "video": "program_video_selector_isolation",
+        "audio": "program_audio_selector_isolation",
+    }
+
+    def _install_chain_input_counters(self) -> None:
+        """Arm one BUFFER counter at each end of the selector->queue stretch.
+
+        Rung ``sel`` is the selector's src pad -- what the selector actually
+        forwarded -- and rung ``queue`` is the isolation queue's src pad, the
+        encode chain's own input. Two rungs, one per stream each: the selectors
+        and the queues are part of the persistent output half and never restart
+        across a swap, so their src pads are the same objects for the whole
+        worker lifetime.
+
+        Keyed by ``(rung, stream)`` rather than by pad name: an
+        ``input-selector``'s src pad can be armed before caps are negotiated, and
+        a label read from unnegotiated caps falls back to the pad name, which the
+        next print could not match (reading ``+0`` forever).
+
+        Same registration contract as ``_install_mux_input_counters``: an element
+        that cannot be found, a missing src pad, or a refused probe leaves that
+        rung/stream OUT of the map. A registered-but-uncountable rung would read
+        ``+0`` forever and accuse a healthy stream of having stopped; absence is
+        the honest rendering of "not counted". Silent and safe with no selector,
+        no queue, or no pipeline."""
+        self._chain_input_pads: dict[tuple[str, str], Gst.Pad] = {}
+        self._chain_input_buffers: dict[tuple[str, str], int] = {}
+        pipeline = getattr(self, "pipeline", None)
+        lookup = getattr(pipeline, "get_by_name", None)
+
+        def _src_pad(element: Any) -> Any:
+            """The element's static ``src`` pad, or ``None`` if it has none."""
+            get_static_pad = getattr(element, "get_static_pad", None)
+            if not callable(get_static_pad):
+                return None
+            with contextlib.suppress(Exception):
+                return get_static_pad("src")
+            return None
+
+        def _isolation_queue(stream: str) -> Any:
+            """The named isolation queue for ``stream``, or ``None``."""
+            if not callable(lookup):
+                return None
+            with contextlib.suppress(Exception):
+                return lookup(self._CHAIN_INPUT_ISOLATION_QUEUES[stream])
+            return None
+
+        candidates: list[tuple[str, str, Any]] = [
+            ("sel", "video", _src_pad(getattr(self, "selector", None))),
+            ("sel", "audio", _src_pad(getattr(self, "audio_selector", None))),
+        ]
+        candidates += [
+            ("queue", stream, _src_pad(_isolation_queue(stream)))
+            for stream in self._CHAIN_INPUT_ISOLATION_QUEUES
+        ]
+        for rung, stream, pad in candidates:
+            if pad is None:
+                continue
+            key = (rung, stream)
+            self._chain_input_pads[key] = pad
+            self._chain_input_buffers[key] = 0
+            try:
+                pad.add_probe(Gst.PadProbeType.BUFFER, self._make_chain_input_counter(rung, stream))
+            except Exception:
+                # Could not be counted -> must not be listed (see docstring).
+                self._chain_input_pads.pop(key, None)
+                self._chain_input_buffers.pop(key, None)
+
+    def _make_chain_input_counter(self, rung: str, stream: str) -> Any:
+        """A per-rung BUFFER counter closing over ITS OWN rung and stream.
+
+        A factory rather than a def-in-loop, for the same two reasons as
+        ``_make_mux_input_counter``: the closure must key on its own rung, and
+        ``__name__`` stays stable for logs and tests."""
+
+        def _count_chain_input(_pad: Gst.Pad, _info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+            # Guarded end to end -- this runs on a streaming thread, and a
+            # diagnostic must never be able to take a channel off air. OK, never
+            # DROP: this probe observes, it does not police the data path.
+            with contextlib.suppress(Exception):
+                key = (rung, stream)
+                self._chain_input_buffers[key] = self._chain_input_buffers.get(key, 0) + 1
+            return Gst.PadProbeReturn.OK
+
+        return _count_chain_input
+
+    def _snapshot_chain_input(self) -> None:
+        """Move the flow ladder's baseline to right now.
+
+        Called at arm time and after every progress print, for the same reason as
+        ``_snapshot_mux_input``: each line reports its own interval, and a
+        cumulative total would hide a stream that stopped ten minutes ago behind
+        everything it sent before that."""
+        with contextlib.suppress(Exception):
+            self._chain_input_snapshot = dict(self._chain_input_buffers)
+
+    def _chain_input_delta_suffix(self, elapsed: float) -> str:
+        """``" [chain-in <elapsed>s: sel video=+N audio=+M | queue video=+N audio=+M]"``.
+
+        Rungs upstream to downstream, then video before audio, so the clause
+        reads in data order and matches the mux clause's stream order. A rung or
+        stream that was never counted is absent, not ``+0``. Returns ``""`` when
+        nothing was counted, so a graph without these elements renders exactly the
+        line it rendered before -- and is guarded throughout, because it runs
+        inside the same progress/EOS path as the mux clause."""
+        pads = getattr(self, "_chain_input_pads", None) or {}
+        counters = getattr(self, "_chain_input_buffers", None) or {}
+        snapshot = getattr(self, "_chain_input_snapshot", None) or {}
         if not pads or not counters:
             return ""
         try:
-            parts: list[tuple[int, str, int]] = []
-            for pad_name, pad in pads.items():
-                current = counters.get(pad_name, 0)
-                # A pad missing from the snapshot has no interval baseline yet
-                # (it was registered after the last print): report ``+0`` rather
-                # than invent a delta from a baseline we never took.
-                previous = snapshot.get(pad_name, current)
-                label = self._mux_pad_stream_label(pad)
-                rank = 0 if label == "video" else 1 if label == "audio" else 2
-                parts.append((rank, str(label), current - previous))
-            parts.sort(key=lambda item: (item[0], item[1]))
-            rendered = " ".join(f"{label}=+{delta}" for _rank, label, delta in parts)
+            rung_rank = {rung: index for index, rung in enumerate(self._CHAIN_INPUT_RUNGS)}
+            stream_rank = {stream: index for index, stream in enumerate(self._CHAIN_INPUT_STREAMS)}
+            ranked = sorted(
+                pads,
+                key=lambda key: (
+                    rung_rank.get(key[0], len(rung_rank)),
+                    stream_rank.get(key[1], len(stream_rank)),
+                    key,
+                ),
+            )
+            grouped: dict[str, list[str]] = {}
+            for key in ranked:
+                current = counters.get(key, 0)
+                # A rung missing from the snapshot has no interval baseline yet
+                # (registered after the last print): report ``+0`` rather than
+                # invent a delta from a baseline we never took.
+                previous = snapshot.get(key, current)
+                grouped.setdefault(key[0], []).append(f"{key[1]}=+{current - previous}")
+            rendered = " | ".join(f"{rung} {' '.join(items)}" for rung, items in grouped.items())
         except Exception:
             return ""
-        return f" [mux-in {elapsed:.1f}s: {rendered}]"
+        return f" [chain-in {elapsed:.1f}s: {rendered}]"
 
     def _arm_stall_watchdog(self) -> None:
         # Item 84: arm unconditionally as long as EITHER budget is active --
@@ -1979,9 +2132,11 @@ class GstPlayoutEngine:
         self._first_output_seen = False
         self._last_output_progress_print_t = self._stall_last_advance_t
         # U30: the per-stream counters' baseline must start here too -- the
-        # progress line's ``[mux-in ...]`` delta is measured from arm time (and
-        # from each later print), never from a cumulative total.
+        # progress line's ``[mux-in ...]`` / ``[chain-in ...]`` deltas are
+        # measured from arm time (and from each later print), never from a
+        # cumulative total.
         self._snapshot_mux_input(self._stall_last_advance_t)
+        self._snapshot_chain_input()
         GLib.timeout_add_seconds(1, self._check_stall)
 
     def _maybe_print_first_output_marker(self) -> None:
@@ -2046,6 +2201,7 @@ class GstPlayoutEngine:
             flush=True,
         )
         self._snapshot_mux_input(now)
+        self._snapshot_chain_input()
 
     def _check_stall(self) -> bool:
         """Quit the run loop on either of two DISTINCT budgets, measured from
@@ -2390,6 +2546,12 @@ class GstPlayoutEngine:
         # next freeze says WHICH stream stopped, in the same line the live
         # incidents already had and misread as healthy.
         self._install_mux_input_counters()
+        # U30: the second half of that ladder -- counters at the two ends of the
+        # ``selector -> isolation queue`` stretch the mux counters cannot see, so
+        # the next occurrence of the 2026-09-25 stop says not just THAT the
+        # switched-in leg's data stopped, but WHERE. Same persistent-output-half
+        # lifetime, same one-int-per-buffer cost, no extra line.
+        self._install_chain_input_counters()
         loop = GLib.MainLoop()  # before PLAYING so a startup bus ERROR isn't swallowed
         self._loop = loop
         self._prime_live_caption_stream()

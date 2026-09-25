@@ -3380,6 +3380,304 @@ def test_u30_diagnostics_do_not_disturb_the_reload_preroll_log_grader() -> None:
     assert check_log(log) == (1, [])
 
 
+class _FakeChainElement:
+    """A selector / isolation queue as the flow-ladder arming sees it.
+
+    ``get_static_pad`` is the only method the arming path calls; it returns the
+    src pad by name and ``None`` for anything else, exactly like
+    ``Gst.Element.get_static_pad`` on a pad that does not exist."""
+
+    def __init__(self, name: str, recorder: _Recorder, src_pad: Any = None) -> None:
+        self.name = name
+        self.recorder = recorder
+        self.src_pad = src_pad
+
+    def get_static_pad(self, pad_name: str) -> Any:
+        self.recorder.calls.append(f"get_static_pad:{self.name}:{pad_name}")
+        return self.src_pad if pad_name == "src" else None
+
+
+class _FakeNamedPipeline(_FakePipeline):
+    """A pipeline that can also look an element up by name (the isolation
+    queues are built as locals in ``_build``, so the ladder finds them the way
+    any other code would: by their stable element names)."""
+
+    def __init__(self, recorder: _Recorder, elements: dict[str, Any]) -> None:
+        super().__init__(recorder)
+        self._elements = elements
+
+    def get_by_name(self, name: str) -> Any:
+        self.recorder.calls.append(f"pipeline.get_by_name:{name}")
+        return self._elements.get(name)
+
+
+_VIDEO_QUEUE_NAME = "program_video_selector_isolation"
+_AUDIO_QUEUE_NAME = "program_audio_selector_isolation"
+
+
+def _u30_armed_chain(engine: Any, recorder: _Recorder) -> dict[str, Any]:
+    """Install the ladder on a bare engine with a full, countable chain.
+
+    Returns the four src pads keyed by ``(rung, stream)`` so a test can fire
+    them the way a streaming thread would."""
+    pads = {
+        ("sel", "video"): _FakeDiagnosticPad("sel_src", recorder),
+        ("sel", "audio"): _FakeDiagnosticPad("asel_src", recorder),
+        ("queue", "video"): _FakeDiagnosticPad("vq_src", recorder),
+        ("queue", "audio"): _FakeDiagnosticPad("aq_src", recorder),
+    }
+    engine.selector = _FakeChainElement("sel", recorder, pads[("sel", "video")])
+    engine.audio_selector = _FakeChainElement("asel", recorder, pads[("sel", "audio")])
+    engine.pipeline = _FakeNamedPipeline(
+        recorder,
+        {
+            _VIDEO_QUEUE_NAME: _FakeChainElement("vq", recorder, pads[("queue", "video")]),
+            _AUDIO_QUEUE_NAME: _FakeChainElement("aq", recorder, pads[("queue", "audio")]),
+        },
+    )
+    engine._install_chain_input_counters()
+    return pads
+
+
+def test_u30_chain_input_counters_arm_both_rungs_for_both_streams(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One counter at each end of the stretch the mux counters cannot see.
+
+    ``[mux-in ...]`` says the output half is still being fed; it says nothing
+    about WHERE inside ``selector -> isolation queue -> encoder -> mux`` a
+    stream stopped. The dead immediate-switch runs of the 2026-09-25 off-live
+    campaign show the switched-in leg's buffer arriving on the selector's own
+    input pad, the active-pad readback confirming the switch, and the mux input
+    counters never moving for that leg -- so the loss is inside that stretch,
+    and the ladder bisects it with one counter at each end."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = _u30_armed_chain(engine, recorder)
+
+    assert sorted(engine._chain_input_pads) == [
+        ("queue", "audio"),
+        ("queue", "video"),
+        ("sel", "audio"),
+        ("sel", "video"),
+    ]
+    assert engine._chain_input_buffers == dict.fromkeys(engine._chain_input_pads, 0)
+    assert "get_static_pad:sel:src" in recorder.calls
+    assert f"pipeline.get_by_name:{_VIDEO_QUEUE_NAME}" in recorder.calls
+    for pad in pads.values():
+        assert f"add_probe:{pad.name}:1:_count_chain_input" in recorder.calls, recorder.calls
+    assert capsys.readouterr().err == ""
+
+    # Each rung counts ITS OWN stream only -- a selector src pad carries both
+    # streams' data over the worker's lifetime, so a shared counter would make
+    # video's silence invisible again, which is the whole defect.
+    _mask, callback = pads[("sel", "video")].probes[0]
+    for _ in range(3):
+        assert (
+            callback(pads[("sel", "video")], _FakeProbeInfo(_FakeProbeBuffer(0)))
+            == engine_module.Gst.PadProbeReturn.OK
+        )
+    assert engine._chain_input_buffers[("sel", "video")] == 3
+    assert engine._chain_input_buffers[("sel", "audio")] == 0
+    assert engine._chain_input_buffers[("queue", "video")] == 0
+
+
+@pytest.mark.parametrize("missing", ["selector", "audio_selector", "video_queue"])
+def test_u30_chain_input_counters_skip_a_rung_that_cannot_be_counted(
+    engine_module, capsys: pytest.CaptureFixture[str], missing: str
+) -> None:
+    """An uncountable rung must be ABSENT from the ladder, never rendered ``+0``.
+
+    ``+0`` on the line means "this stream sent nothing", which is the exact
+    claim the diagnostic exists to make. A rung we could not count must not be
+    able to make that claim on a healthy channel, so an element that cannot be
+    found (or has no src pad) is left out of the map instead -- and the OTHER
+    rungs stay armed, so one unfindable element does not silence the ladder."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = _u30_armed_chain(engine, recorder)
+    engine._chain_input_pads = {}
+    engine._chain_input_buffers = {}
+    if missing == "selector":
+        engine.selector = object()  # no get_static_pad at all
+    elif missing == "audio_selector":
+        engine.audio_selector = None
+    else:
+        # The video isolation queue cannot be found by name; the audio one can.
+        engine.pipeline._elements.pop(_VIDEO_QUEUE_NAME)
+
+    engine._install_chain_input_counters()
+
+    dropped = ("sel", "video") if missing == "selector" else ("sel", "audio")
+    if missing == "video_queue":
+        dropped = ("queue", "video")
+    assert dropped not in engine._chain_input_pads
+    assert dropped not in engine._chain_input_buffers
+    assert len(engine._chain_input_pads) == 3
+    assert pads  # the armable rungs above were still armed
+    assert capsys.readouterr().err == ""
+
+
+def test_u30_chain_input_counters_skip_a_pad_that_refuses_a_probe(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Same rule for a pad that raises: absent, not ``+0``."""
+    recorder = _Recorder()
+
+    class _RefusingPad(_FakeDiagnosticPad):
+        def add_probe(self, mask: Any, callback: Any) -> str:
+            raise RuntimeError("probe refused")
+
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.selector = _FakeChainElement("sel", recorder, _RefusingPad("sel_src", recorder))
+    engine.audio_selector = _FakeChainElement(
+        "asel", recorder, _FakeDiagnosticPad("asel_src", recorder)
+    )
+    engine.pipeline = _FakeNamedPipeline(recorder, {})
+
+    engine._install_chain_input_counters()
+
+    assert sorted(engine._chain_input_pads) == [("sel", "audio")]
+    assert engine._chain_input_buffers == {("sel", "audio"): 0}
+    assert capsys.readouterr().err == ""
+
+
+def test_u30_chain_input_deltas_render_upstream_to_downstream(engine_module) -> None:
+    """The ladder's shape: rungs in data order, each stream labelled.
+
+    Keyed by ``(rung, stream)`` rather than by pad name, because an
+    ``input-selector``'s src pad can be armed before its caps are negotiated --
+    and a label read from unnegotiated caps would be the pad name, which the
+    next print could not match (reading as ``+0`` forever)."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._chain_input_pads = {
+        ("queue", "audio"): _FakeDiagnosticPad("aq_src", _Recorder()),
+        ("sel", "video"): _FakeDiagnosticPad("sel_src", _Recorder()),
+        ("queue", "video"): _FakeDiagnosticPad("vq_src", _Recorder()),
+        ("sel", "audio"): _FakeDiagnosticPad("asel_src", _Recorder()),
+    }
+    engine._chain_input_buffers = {
+        ("sel", "video"): 121,
+        ("sel", "audio"): 305,
+        ("queue", "video"): 121,
+        ("queue", "audio"): 305,
+    }
+    engine._chain_input_snapshot = {
+        ("sel", "video"): 0,
+        ("sel", "audio"): 71,
+        ("queue", "video"): 0,
+        ("queue", "audio"): 71,
+    }
+
+    assert engine._chain_input_delta_suffix(5.0) == (
+        " [chain-in 5.0s: sel video=+121 audio=+234 | queue video=+121 audio=+234]"
+    )
+
+
+def test_u30_chain_input_deltas_bisect_a_stream_that_never_reached_the_encoder(
+    engine_module,
+) -> None:
+    """The bisection this diagnostic exists for, in one line.
+
+    MEASURED off the dead immediate-switch runs (off-live campaign 5, 2026-09-25):
+    the mux input counters read ``video=+121 audio=+186`` over the whole 4.1 s
+    run while the switched-in leg's own buffer had already arrived on the
+    selector's input pad. If the selector's src rung advances and the queue's
+    does not, the data died between the selector and the encode chain; if both
+    advance, it died inside the encode chain. Either way the log names the
+    stage instead of only the mux."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._chain_input_pads = {
+        ("sel", "video"): _FakeDiagnosticPad("sel_src", _Recorder()),
+        ("sel", "audio"): _FakeDiagnosticPad("asel_src", _Recorder()),
+        ("queue", "video"): _FakeDiagnosticPad("vq_src", _Recorder()),
+        ("queue", "audio"): _FakeDiagnosticPad("aq_src", _Recorder()),
+    }
+    # Selector forwarded nothing more; the queue saw nothing new either.
+    engine._chain_input_buffers = {
+        ("sel", "video"): 121,
+        ("sel", "audio"): 186,
+        ("queue", "video"): 53,
+        ("queue", "audio"): 53,
+    }
+    engine._chain_input_snapshot = {
+        ("sel", "video"): 121,
+        ("sel", "audio"): 0,
+        ("queue", "video"): 53,
+        ("queue", "audio"): 0,
+    }
+
+    assert engine._chain_input_delta_suffix(4.1) == (
+        " [chain-in 4.1s: sel video=+0 audio=+186 | queue video=+0 audio=+53]"
+    )
+
+
+def test_u30_the_flow_ladder_rides_the_mux_clause_without_changing_it(
+    engine_module,
+) -> None:
+    """Both clauses on one line, mux clause byte-identical to before.
+
+    The progress line and the pipeline-EOS line already print
+    ``_mux_input_delta_suffix``; the ladder is appended to that same string so
+    the one line the live incidents already had becomes the whole picture. With
+    no ladder armed the string is exactly what it was."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_pads = {
+        "sink_65": _FakeDiagnosticPad("sink_65", _Recorder(), caps="video/x-h264"),
+        "sink_66": _FakeDiagnosticPad("sink_66", _Recorder(), caps="audio/mpeg, mpegversion=4"),
+    }
+    engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145750}
+    engine._mux_input_snapshot = {"sink_65": 138577, "sink_66": 145516}
+    engine._chain_input_pads = {}
+    engine._chain_input_buffers = {}
+    engine._chain_input_snapshot = {}
+
+    assert engine._mux_input_delta_suffix(5.0) == " [mux-in 5.0s: video=+0 audio=+234]"
+
+    engine._chain_input_pads = {
+        ("sel", "video"): _FakeDiagnosticPad("sel_src", _Recorder()),
+        ("sel", "audio"): _FakeDiagnosticPad("asel_src", _Recorder()),
+    }
+    engine._chain_input_buffers = {("sel", "video"): 138577, ("sel", "audio"): 145750}
+    engine._chain_input_snapshot = {("sel", "video"): 138577, ("sel", "audio"): 145516}
+
+    assert engine._mux_input_delta_suffix(5.0) == (
+        " [mux-in 5.0s: video=+0 audio=+234] [chain-in 5.0s: sel video=+0 audio=+234]"
+    )
+
+
+def test_u30_the_flow_ladder_alone_still_renders_with_no_mux_counters(
+    engine_module,
+) -> None:
+    """A graph with a countable chain but no countable mux: the ladder shows.
+
+    Both clauses are independent; the earlier "return ``''`` when nothing was
+    counted" contract is about what was COUNTED, not about which half of the
+    output graph it was."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_pads = {}
+    engine._mux_input_buffers = {}
+    engine._mux_input_snapshot = {}
+    engine._chain_input_pads = {("sel", "video"): _FakeDiagnosticPad("sel_src", _Recorder())}
+    engine._chain_input_buffers = {("sel", "video"): 7}
+    engine._chain_input_snapshot = {("sel", "video"): 2}
+
+    assert engine._mux_input_delta_suffix(5.0) == " [chain-in 5.0s: sel video=+5]"
+
+
+def test_u30_the_flow_ladder_is_empty_when_nothing_was_counted(engine_module) -> None:
+    """Neither counter group armed: no suffix at all, line byte-identical."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_pads = {}
+    engine._mux_input_buffers = {}
+    engine._mux_input_snapshot = {}
+    engine._chain_input_pads = {}
+    engine._chain_input_buffers = {}
+    engine._chain_input_snapshot = {}
+
+    assert engine._mux_input_delta_suffix(5.0) == ""
+
+
 def test_u30_a_pipeline_eos_names_itself_before_it_quits_the_worker(
     engine_module, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -3415,6 +3713,27 @@ def test_u30_a_pipeline_eos_names_itself_before_it_quits_the_worker(
     engine._mux_input_buffers = {"sink_65": 40, "sink_66": 274}
     engine._mux_input_snapshot = {"sink_65": 40, "sink_66": 40}
     engine._mux_input_snapshot_t = 10.0
+    # The flow ladder rides the same line (U30 campaign 5: the dead runs print no
+    # ``CTRL output: ... since PLAYING`` line at all -- the EOS line is the only
+    # one their log has -- so this is where the ladder has to be readable).
+    engine._chain_input_pads = {
+        ("sel", "video"): _FakeDiagnosticPad("sel_src", recorder),
+        ("sel", "audio"): _FakeDiagnosticPad("asel_src", recorder),
+        ("queue", "video"): _FakeDiagnosticPad("vq_src", recorder),
+        ("queue", "audio"): _FakeDiagnosticPad("aq_src", recorder),
+    }
+    engine._chain_input_buffers = {
+        ("sel", "video"): 161,
+        ("sel", "audio"): 226,
+        ("queue", "video"): 161,
+        ("queue", "audio"): 226,
+    }
+    engine._chain_input_snapshot = {
+        ("sel", "video"): 161,
+        ("sel", "audio"): 40,
+        ("queue", "video"): 161,
+        ("queue", "audio"): 40,
+    }
 
     assert engine._on_bus(None, _EosMessage()) is True
 
@@ -3423,4 +3742,6 @@ def test_u30_a_pipeline_eos_names_itself_before_it_quits_the_worker(
     # The interval counters ride along, so the line says what was still flowing
     # when the output ended -- video silent, audio at its full rate here.
     assert "video=+0 audio=+234]" in err
+    assert "[chain-in " in err
+    assert "sel video=+0 audio=+186 | queue video=+0 audio=+186]" in err
     assert loop.quits == 1
