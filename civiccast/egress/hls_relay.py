@@ -100,6 +100,7 @@ otherwise (see ``civiccast/egress/sinks.py``).
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -244,6 +245,48 @@ def _last_segment(path: Path) -> str | None:
     return last_segment or None
 
 
+def _last_complete_segment(path: Path) -> str | None:
+    """The newest segment of a playlist that has stopped growing, or None.
+
+    ``_last_segment`` answers "which entry is the window's newest", which is what
+    progress tracking wants. THIS answers "which entry is CLOSED", which is what
+    MEASURING wants: on a live window the muxer publishes the final entry's name
+    the moment it opens that file, so the final ``.ts`` is still being appended
+    to and only its first packets are settled. The entry before it is therefore
+    the newest COMPLETE one. Under ``#EXT-X-ENDLIST`` the window is closed and
+    its final entry is itself complete -- which is also what a closed-window
+    writer means by publishing the tag -- so that entry is used directly.
+
+    Correct under either playlist-write behaviour: a writer that publishes an
+    entry only once it is closed makes the second-to-last merely one segment
+    older -- still a complete, measurable segment, just not the newest.
+
+    Same "no answer" contract as its siblings below: an unreadable playlist, a
+    window with no ``.ts`` entry yet, and a live window holding only ONE entry
+    (that entry is the one being written) are all ``None`` -- ignorance, never a
+    fault.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    closed = False
+    segments: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#EXT-X-ENDLIST"):
+            closed = True
+        elif stripped.endswith(".ts"):
+            segments.append(stripped)
+    if not segments:
+        return None
+    if closed:
+        return segments[-1]
+    if len(segments) < 2:
+        return None
+    return segments[-2]
+
+
 def _segment_stream_kinds(path: Path) -> frozenset[str] | None:
     """Which stream kinds (``video``/``audio``) does THIS served segment carry?
 
@@ -292,6 +335,117 @@ def _segment_stream_kinds(path: Path) -> frozenset[str] | None:
     if completed.returncode != 0:
         return None
     return frozenset(line.strip() for line in completed.stdout.splitlines() if line.strip())
+
+
+def _seconds_from_pts_time(value: object) -> float | None:
+    """One packet's ``pts_time`` as float seconds, or None if ffprobe gave none.
+
+    ffprobe's JSON prints ``pts_time`` as a STRING (``"0.033367"``) and as
+    ``"N/A"`` for a packet whose timestamp it could not express; neither the
+    string form nor the unparsable one is a fault here.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _segment_first_packet_pts(path: Path) -> tuple[float, float] | None:
+    """``(video_pts, audio_pts)`` of THIS segment's first packets, or None.
+
+    BETA.10 U16 item B: the output-side A/V check measures the RELATIONSHIP
+    between the two streams, so a one-kind segment is not a measurement at all
+    -- a single kind has nothing to be out of step WITH. Every other outcome is
+    also ``None``: the segment is not on disk, ffprobe is absent, the probe
+    failed or timed out, its JSON did not parse, or a stream's first packet
+    carried no usable timestamp. Same tri-state contract as
+    ``_segment_stream_kinds``: ``None`` is ignorance, never a fault, and never
+    on its own a reason to restart anything. The caller is responsible for the
+    policy (how big a difference is a desync, how many probes in a row matter).
+
+    Per kind this is the first packet, in file order, whose timestamp ffprobe
+    could express: a first packet it could not timestamp is skipped rather than
+    discarding the whole measurement, which cannot mask a desync of seconds
+    (segments here are ~2s long and a late stream's first packet is the one the
+    desync is measured from).
+
+    ONE ffprobe call answers both kinds, because two calls could straddle a
+    window roll and report two different segments' first packets as if they
+    belonged together. That is why this asks for JSON rather than the flat
+    ``csv`` of ``_segment_stream_kinds``: the answer pairs a stream identity
+    with a timestamp, which a column-order-dependent csv would have to be read
+    back positionally.
+    """
+    if not path.is_file():
+        return None
+    if shutil.which(_FFPROBE_EXECUTABLE) is None:
+        return None
+    try:
+        completed = subprocess.run(  # noqa: S603
+            [
+                _FFPROBE_EXECUTABLE,
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=index,codec_type:packet=stream_index,pts_time",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_SEGMENT_PROBE_TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        payload = json.loads(completed.stdout)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    kinds: dict[int, str] = {}
+    streams = payload.get("streams")
+    if isinstance(streams, list):
+        for stream in streams:
+            if not isinstance(stream, dict):
+                continue
+            index = stream.get("index")
+            kind = stream.get("codec_type")
+            if isinstance(index, int) and isinstance(kind, str):
+                kinds[index] = kind
+
+    first: dict[str, float] = {}
+    packets = payload.get("packets")
+    if isinstance(packets, list):
+        for packet in packets:
+            if not isinstance(packet, dict):
+                continue
+            index = packet.get("stream_index")
+            if not isinstance(index, int):
+                continue
+            kind = kinds.get(index)
+            if kind not in {"video", "audio"} or kind in first:
+                continue
+            seconds = _seconds_from_pts_time(packet.get("pts_time"))
+            if seconds is None:
+                continue
+            first[kind] = seconds
+
+    if "video" not in first or "audio" not in first:
+        return None
+    return (first["video"], first["audio"])
 
 
 def _sink_required_kinds(source_uri: str) -> frozenset[str]:

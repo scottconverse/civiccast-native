@@ -116,6 +116,33 @@ post-self-heal segments at 18:47:44-18:47:56 carried TS PID 256 with no PID 257
   no shipped sink carries one without the other). Proven red then green against
   real ffmpeg end to end in both directions.
 
+### Output A/V sync guard (U16, 2026-09-24)
+
+The 2026-09-24 rebase incident put a channel on air with its audio and its video
+~109 s apart, and nothing in the egress path was looking at the OUTPUT
+program's own A/V relationship -- the only place that step was visible was a
+human watching the channel. The daemon now measures it.
+
+- For a channel that is genuinely `ON_AIR`, every ~30 s, the daemon reads the
+  newest COMPLETE segment of that channel's HLS window and measures the first
+  packet PTS of video and of audio, reusing the relay's own manifest semantics
+  and its `ffprobe` resolution, timeout and tri-state fail-safe.
+- A one-off difference is normal: segment cuts land on video keyframes, so a
+  fresh segment's audio can legitimately lead or lag by a fraction of a frame.
+  A difference over 1.0 s on three consecutive probes is a fault the channel
+  cannot air through, so the daemon restarts that channel's WORKER through the
+  ordinary crashed-encoder relaunch path -- the same path a dead encoder takes,
+  with its own back-off and escalation accounting, not a parallel restart
+  mechanism -- and logs one `ERROR` naming the channel and each of the three
+  measured offsets and the segment it came from.
+- Bounded: at most 3 such restarts per channel per rolling hour; after that,
+  one `ERROR` every 10 minutes and no restart.
+- Not judged: a channel that is not `ON_AIR` (a slate, a drain, or a reload in
+  flight has no settled program of its own), and a probe that cannot measure --
+  no complete segment yet, a segment missing one of the kinds, `ffprobe` absent,
+  failed or timed out -- which is "no answer": neither evidence of a fault nor a
+  reset of the streak, and never by itself a restart.
+
 ### Reload-wedge diagnostics (U14, 2026-09-24)
 
 Two changes to what the daemon and the playout worker write when a seamless

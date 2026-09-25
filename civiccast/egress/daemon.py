@@ -12,7 +12,7 @@ import time
 import uuid
 from collections.abc import Callable, Generator
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
@@ -60,6 +60,17 @@ from civiccast.egress.health import (
     read_ffmpeg_encoder_metrics_since,
     read_latest_ffmpeg_encoder_metrics,
     worker_produced_output,
+)
+
+# BETA.10 U16 item B: the output A/V guard reads the channel's own HLS window
+# with the SAME manifest semantics (and the same ffprobe resolution/timeout/
+# tri-state fail-safe) U12 gave the relay's progress and stream-kind checks: an
+# independent reader of the same window would eventually disagree with those
+# about what "the newest complete segment" means.
+from civiccast.egress.hls_relay import (
+    _last_complete_segment,
+    _playlist_path_for,
+    _segment_first_packet_pts,
 )
 from civiccast.egress.models import (
     CaptionStatus,
@@ -293,6 +304,42 @@ _START_EXPIRED_FALLBACK_REASON = (
     "automation resolves the current schedule."
 )
 
+# BETA.10 U16 item B: the OUTPUT A/V sync guard.
+#
+# The U16 finding (2026-09-24) was a one-sided rebase step -- one leg's
+# timestamps moved ~109s and the other's did not -- and NOTHING in the egress
+# path looked at the A/V relationship of the program actually leaving the
+# encoder, so the only place that step was ever visible was a human watching the
+# channel. This guard is the cheap output-side self-check that closes that gap:
+# per channel, on a settled ON_AIR channel only, measure the first packet PTS of
+# video and of audio in the newest COMPLETE segment of the channel's HLS window
+# (``_segment_first_packet_pts``, U12's own ffprobe resolution/timeout/fail-safe)
+# and, when the two stay apart across consecutive probes, restart that channel's
+# worker the same way a dead encoder is restarted.
+#
+# The thresholds are deliberately loose. A SINGLE probe being off is normal --
+# segment cuts land on video keyframes, so a cut segment's audio can legitimately
+# lead or lag its video by a fraction of a frame, and a window roll can show one
+# more of those -- which is why the verdict needs THREE consecutive over-limit
+# probes (~90s of a channel that is visibly broken) and why the limit itself is
+# a whole second rather than a frame. This guard is a backstop for a fault the
+# system cannot yet prevent (see the U16 reports): it must be far slower to
+# act than the rebase path it watches.
+_OUTPUT_AV_GUARD_PROBE_INTERVAL_S = 30.0
+#: |audio first PTS - video first PTS| above this (seconds) is over limit.
+_OUTPUT_AV_GUARD_MAX_OFFSET_S = 1.0
+#: Consecutive over-limit probes before the guard acts.
+_OUTPUT_AV_GUARD_CONSECUTIVE_PROBES = 3
+#: Restarts the guard may spend per channel inside the rolling window below.
+#: Past it the channel keeps being reported but is NOT restarted again: a
+#: channel whose output is still desynced after three replacement workers is
+#: not fixed by a fourth, and an unbounded restart loop on a station that is
+#: otherwise on air is worse than a channel an operator has been told about.
+_OUTPUT_AV_GUARD_RESTART_BUDGET = 3
+_OUTPUT_AV_GUARD_BUDGET_WINDOW_S = 3600.0
+#: Cadence of the budget-exhausted ERROR line (it repeats, but not per probe).
+_OUTPUT_AV_GUARD_EXHAUSTED_LOG_INTERVAL_S = 600.0
+
 
 class _PendingReloadSettlement(NamedTuple):
     """F1 redesign: everything ``_poll_reload_settlement`` needs to either
@@ -434,6 +481,32 @@ class _PendingPreparation:
     kind: str
     process: object | None
     config: EgressConfig | None
+
+
+@dataclass
+class _OutputAvGuardState:
+    """Per-channel bookkeeping for the output A/V sync guard (U16 item B).
+
+    ``pid`` is the worker these measurements describe: the streak is reset
+    whenever it changes, because a replacement worker's first segment says
+    nothing about its predecessor's last one.
+
+    ``offsets`` holds the last ``_OUTPUT_AV_GUARD_CONSECUTIVE_PROBES``
+    ``(offset_seconds, segment_name)`` pairs -- the evidence the ERROR line
+    reports, so an operator can see the three measurements rather than only
+    being told the channel was restarted.
+
+    ``restarted_at`` is this channel's restart timestamps inside
+    ``_OUTPUT_AV_GUARD_BUDGET_WINDOW_S`` (pruned on each use), and
+    ``last_exhausted_log_at`` throttles the exhausted-budget line.
+    """
+
+    pid: int | None = None
+    streak: int = 0
+    offsets: list[tuple[float, str]] = field(default_factory=list)
+    last_probe_at: float | None = None
+    restarted_at: list[float] = field(default_factory=list)
+    last_exhausted_log_at: float | None = None
 
 
 class EgressDaemon:
@@ -794,6 +867,17 @@ class EgressDaemon:
         # _poll_hls_relay) so a relay death (disk full / ffmpeg missing / OOM)
         # is visible even while the main encoder keeps sending fine.
         self._hls_relay_dead: dict[str, bool] = {}
+        # BETA.10 U16 item B: the output A/V sync guard's measurement seam and
+        # per-channel bookkeeping. The probe is a plain attribute (not a
+        # constructor parameter) for the same reason ``_monotonic`` is one: it
+        # is not a production wiring choice -- the shipped measurement is
+        # ``_segment_first_packet_pts`` and always will be -- but tests must be
+        # able to script measurements without an ffprobe and without real
+        # segments on disk.
+        self._output_av_probe: Callable[[Path], tuple[float, float] | None] = (
+            _segment_first_packet_pts
+        )
+        self._output_av_guard: dict[str, _OutputAvGuardState] = {}
         # The STORED config each live pipeline was built from (review round 3
         # delta, MAJOR 2). Health samples key ``sink_connected`` by sink label
         # from this, not from whatever the config row says NOW: a sink saved
@@ -1026,11 +1110,19 @@ class EgressDaemon:
         # channel with an armed-but-not-yet-settled content-reload -- a no-op
         # for every other channel (it returns immediately when there is no
         # pending entry).
+        # BETA.10 U16 item B: the output A/V guard runs LAST, deliberately. It
+        # judges the state row, so it must see the row the polls above just
+        # wrote -- in particular ``_poll_process`` rewrites it every tick and
+        # publishes ON_AIR / FALLBACK_SLATE / TRANSITIONING / DRAINING from the
+        # channel's own live condition. Running last also means a worker the
+        # guard kills at the end of one tick is already replaced (or is being
+        # replaced) by the time the next tick's guard pass looks at it.
         for poll in (
             self._poll_hls_relay,
             self._poll_process,
             self._service_backoff_relaunch,
             self._poll_reload_settlement,
+            self._poll_output_av_guard,
         ):
             try:
                 poll(channel_id)
@@ -2698,6 +2790,170 @@ class EgressDaemon:
             )
         except Exception:
             _LOG.exception("channel %s: HLS relay self-heal attempt failed.", channel_id)
+
+    def _poll_output_av_guard(self, channel_id: str) -> None:
+        """U16 item B: measure the ON-AIR channel's output A/V relationship.
+
+        The gate order here is the contract, and each clause exists because
+        violating it would restart something that is not broken:
+
+        * No live worker -> nothing to measure and nothing to restart.
+        * Worker pid changed -> the previous worker's measurements are void
+          (streak reset), but the probe CADENCE is left alone: a relaunch must
+          not make the guard probe faster than once per interval.
+        * Not ON_AIR -> not judged. FALLBACK_SLATE/STARTING have no settled
+          program of their own, DRAINING is deliberately leaving air, and
+          TRANSITIONING is what ``_poll_process`` publishes for a channel with a
+          content reload in flight -- exactly the moment the U16 rebase step
+          happens, and a legitimate reason for A/V to move against each other
+          for a moment. This guard judges the settled output, never the switch.
+        * Inside the probe interval -> not yet time (the tick rate is 2s).
+        * Probe could not measure -> neither advances nor resets the streak, and
+          can never restart anything by itself.
+
+        The guard does NOT poll the worker itself. It runs LAST in the poll
+        tuple, so ``_poll_process`` has already processed any exit this tick --
+        it either published the state row for a live worker or moved the channel
+        on (relaunch, slate, stop). A poll here would be a second, unordered
+        reader of the same process's exit state: it changes when the exit is
+        first observed by everything downstream of it, which is a real coupling
+        (it silently shifted a reload-settlement tick's liveness re-check in
+        ``test_worker_exit_between_poll_process_and_poll_reload_settlement_falls_back``)
+        for no gain -- the state row this guard gates on is already the answer.
+        """
+        process = self._processes.get(channel_id)
+        if process is None:
+            return
+
+        pid = _process_pid(process)
+        guard = self._output_av_guard.get(channel_id)
+        if guard is None:
+            guard = _OutputAvGuardState(pid=pid)
+            self._output_av_guard[channel_id] = guard
+        elif guard.pid != pid:
+            guard.pid = pid
+            guard.streak = 0
+            del guard.offsets[:]
+
+        state = self._store.read_state(channel_id)
+        if state is None or state.state != "ON_AIR" or channel_id in self._draining_channels:
+            return
+
+        now = self._monotonic()
+        if (
+            guard.last_probe_at is not None
+            and now - guard.last_probe_at < _OUTPUT_AV_GUARD_PROBE_INTERVAL_S
+        ):
+            return
+        guard.last_probe_at = now
+
+        measurement = self._measure_output_av_offset(channel_id)
+        if measurement is None:
+            return
+        offset, segment = measurement
+        if abs(offset) <= _OUTPUT_AV_GUARD_MAX_OFFSET_S:
+            guard.streak = 0
+            del guard.offsets[:]
+            return
+
+        guard.streak += 1
+        guard.offsets.append((offset, segment))
+        del guard.offsets[: -_OUTPUT_AV_GUARD_CONSECUTIVE_PROBES]
+        if guard.streak < _OUTPUT_AV_GUARD_CONSECUTIVE_PROBES:
+            return
+        self._restart_desynced_output(channel_id, guard, process, now=now)
+
+    def _measure_output_av_offset(self, channel_id: str) -> tuple[float, str] | None:
+        """The newest COMPLETE segment's ``(audio - video)`` first-packet offset.
+
+        ``None`` when there is nothing to measure: no config, no measurable
+        ``hls`` sink, no complete segment yet, or a probe that could not answer
+        (see ``_segment_first_packet_pts``). Sinks are tried in config order and
+        the first measurable one wins -- two hls sinks of the same channel see
+        the same program, so any of them answers the same question, and one
+        unmeasurable sink (a directory not written yet) must not hide a sibling
+        that can answer.
+
+        Only ``hls`` sinks can be measured at all: an rtmp/rtsp sink's output is
+        not on this machine to read, so a channel with no hls sink is simply
+        never judged by this guard rather than judged on a guess.
+        """
+        config = self._built_configs.get(channel_id) or self._store.get_config(channel_id)
+        if config is None:
+            return None
+        for sink in config.sinks:
+            if sink.kind != "hls":
+                continue
+            playlist = _playlist_path_for(sink.uri)
+            segment = _last_complete_segment(playlist)
+            if segment is None:
+                continue
+            first_packets = self._output_av_probe(playlist.parent / segment)
+            if first_packets is None:
+                continue
+            video_pts, audio_pts = first_packets
+            return (audio_pts - video_pts, segment)
+        return None
+
+    def _restart_desynced_output(
+        self,
+        channel_id: str,
+        guard: _OutputAvGuardState,
+        process: object,
+        *,
+        now: float,
+    ) -> None:
+        """Report a confirmed output desync and restart the worker, or refuse.
+
+        The restart is the SAME route a dead encoder takes, and deliberately not
+        a private one: this terminates the worker WITHOUT recording it in
+        ``_reload_kills``, so the exit is an ordinary non-zero worker exit and
+        ``_poll_process`` next tick finds the row still ON_AIR and calls
+        ``_relaunch_after_crash`` -- the ordinary crash-relaunch path, with its
+        own back-off, escalation accounting and proof event. Recording it as a
+        deliberate kill would instead preserve a pending reload the guard never
+        intended and bind the two mechanisms together.
+
+        The kill is bounded (terminate -> short wait -> kill) so the worker is
+        genuinely gone by the next tick rather than merely asked to leave: the
+        ordinary path then sees a real non-zero exit, which is what it handles.
+        """
+        guard.restarted_at = [
+            at for at in guard.restarted_at if at > now - _OUTPUT_AV_GUARD_BUDGET_WINDOW_S
+        ]
+        measured = "; ".join(
+            f"{segment} measured {offset:+.3f}s" for offset, segment in guard.offsets
+        )
+        detail = (
+            f"channel {channel_id}: output A/V desync -- audio and video first packet "
+            f"timestamps differ by more than {_OUTPUT_AV_GUARD_MAX_OFFSET_S:.1f}s on "
+            f"{_OUTPUT_AV_GUARD_CONSECUTIVE_PROBES} consecutive probes "
+            f"(audio minus video: {measured})"
+        )
+        if len(guard.restarted_at) >= _OUTPUT_AV_GUARD_RESTART_BUDGET:
+            if (
+                guard.last_exhausted_log_at is None
+                or now - guard.last_exhausted_log_at >= _OUTPUT_AV_GUARD_EXHAUSTED_LOG_INTERVAL_S
+            ):
+                guard.last_exhausted_log_at = now
+                _LOG.error(
+                    "%s. Guard restart budget exhausted (%d restarts already spent in the "
+                    "last hour): NOT restarting the worker again. The output is still "
+                    "desynced after replacement workers, so this needs an operator -- "
+                    "check the channel's source program and encoder.",
+                    detail,
+                    len(guard.restarted_at),
+                )
+            return
+        guard.restarted_at.append(now)
+        guard.streak = 0
+        del guard.offsets[:]
+        _LOG.error(
+            "%s. Restarting this channel's worker through the ordinary crashed-encoder "
+            "relaunch path.",
+            detail,
+        )
+        _process_terminate_bounded(process)
 
     def _poll_process(self, channel_id: str) -> None:
         process = self._processes.get(channel_id)
