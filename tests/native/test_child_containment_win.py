@@ -74,9 +74,7 @@ _FFMPEG = shutil.which("ffmpeg")
 
 def _pid_alive(pid: int) -> bool:
     """True while ``pid`` is still running (a real handle wait, not a guess)."""
-    handle = _KERNEL32.OpenProcess(
-        _SYNCHRONIZE | _PROCESS_QUERY_LIMITED_INFORMATION, False, pid
-    )
+    handle = _KERNEL32.OpenProcess(_SYNCHRONIZE | _PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
         return False
     try:
@@ -202,7 +200,9 @@ while True:
 '''
 
 
-def _start_parent(tmp_path: Path, *, contain: str) -> tuple[subprocess.Popen[bytes], dict[str, object]]:
+def _start_parent(
+    tmp_path: Path, *, contain: str
+) -> tuple[subprocess.Popen[bytes], dict[str, object]]:
     """Launch the helper and wait for its handshake; return (proc, payload)."""
 
     helper = tmp_path / "cp_orphan_helper.py"
