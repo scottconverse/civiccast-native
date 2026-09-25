@@ -296,8 +296,8 @@ def test_u30_escalation_bounds_match_the_authorized_values() -> None:
 def test_u30_a_freeze_that_survives_the_self_heal_restarts_the_worker(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The incident: heal ran, window still frozen -> ONE ERROR, the relay child
-    is torn down, and the worker is terminated so the ordinary relaunch owns it."""
+    """The incident: heal ran, window still frozen -> ONE ERROR, and the worker is
+    terminated so the ordinary relaunch owns it."""
     fixture = _freeze_fixture(tmp_path)
     worker = _started_on_air(fixture)
 
@@ -306,13 +306,38 @@ def test_u30_a_freeze_that_survives_the_self_heal_restarts_the_worker(
         fixture.daemon._poll_freeze_escalation("gov")
 
     assert worker.terminated
-    assert fixture.relay.stopped == ["gov"]
+    assert fixture.relay.stopped == []
     errors = _error_lines(caplog)
     assert len(errors) == 1
     message = errors[0]
     assert "gov" in message
     assert "148.3s" in message  # the MEASURED freeze, not the constant
     assert "restart 1 of at most 3" in message
+
+
+def test_u30_the_escalation_leaves_the_relay_child_alone(tmp_path: Path) -> None:
+    """The escalation restarts the WORKER and nothing else -- not the relay child.
+
+    The self-heal this escalation escalates has already replaced that child (the
+    age of the replacement is what ``heal_frozen_seconds`` measures), and in both
+    live incidents the fresh child wrote nothing either, so a child that stopped
+    writing while its upstream stopped feeding it is not evidence about the
+    child. Tearing it down again is not neutral, either: ``HlsRelaySupervisor``
+    reuses an alive child and the relaunch would respawn it, which re-opens the
+    restart storm the relay's own one-shot heal latch closes -- the invariant
+    ``tests/egress/test_hls_relay_progress.py::test_daemon_tick_sequence_no_restart_storm_with_frozen_playlist``
+    asserts. That test failed on an earlier draft of this escalation which did
+    stop the relay; this asserts the decision directly rather than trusting that
+    the older test continues to cover it.
+    """
+    fixture = _freeze_fixture(tmp_path)
+    worker = _started_on_air(fixture)
+    fixture.relay.frozen = _FREEZE_ESCALATION_AFTER_HEAL_S + 1.0
+
+    fixture.daemon._poll_freeze_escalation("gov")
+
+    assert worker.terminated
+    assert fixture.relay.stopped == []
 
 
 def test_u30_a_freeze_the_self_heal_actually_cured_is_never_escalated(
@@ -415,7 +440,7 @@ def test_u30_one_restart_per_worker_incarnation(
             fixture.daemon._poll_freeze_escalation("gov")
 
     assert worker.terminated
-    assert fixture.relay.stopped == ["gov"]
+    assert fixture.relay.stopped == []
     assert len(_error_lines(caplog)) == 1
     state = fixture.daemon._freeze_escalation["gov"]
     assert len(state.restarted_at) == 1
@@ -502,7 +527,7 @@ def test_u30_the_budget_is_exhausted_after_three_restarts_then_critical(
         assert len(_critical_lines(caplog)) == reported + 1
 
     assert not fourth.terminated
-    assert fixture.relay.stopped.count("gov") == _FREEZE_ESCALATION_RESTART_BUDGET
+    assert fixture.relay.stopped == []
     assert "gov" in critical
     assert "budget exhausted" in critical
     assert "NOT restarting the worker again" in critical

@@ -3147,14 +3147,20 @@ class EgressDaemon:
         accounting. The kill is bounded, so the worker is genuinely gone by the
         next tick rather than only asked to leave.
 
-        The relay child is torn down FIRST, and this is load-bearing rather than
-        tidiness: ``HlsRelaySupervisor.apply`` REUSES an alive child whose
-        source URI matches (``_ensure_relay``), so a relaunch would otherwise
-        adopt the very ffmpeg child that just failed to write a window. Stopping
-        the channel's relay makes the relaunch build a fresh child on the same
-        deterministic loopback port. This is the same "relay replaced too" shape
-        as the operator's full channel restart, which is the only thing observed
-        to clear this fault live.
+        The relay child is deliberately left ALONE, and that is the whole point of
+        the split: the self-heal this escalation exists to escalate ALREADY
+        replaced that child (its age is what ``heal_frozen_seconds`` reports), and
+        in both live incidents the fresh child wrote nothing either -- a child
+        that stops writing while its upstream has stopped feeding it is evidence
+        about the upstream, not about the child, so replacing it a second time
+        buys nothing. What it does cost is real: ``HlsRelaySupervisor.apply``
+        REUSES an alive child whose source URI matches (``_ensure_relay``), so an
+        escalation that stops the relay would have the relaunch respawn a child
+        the relay's own one-shot heal latch (hls_relay audit finding 4) was built
+        to keep from being respawned -- the restart storm that guard closes, and
+        ``tests/egress/test_hls_relay_progress.py``'s frozen-playlist test asserts
+        it stays closed. Nothing has replaced the WORKER, so the WORKER is what
+        this restarts.
 
         Past ``_FREEZE_ESCALATION_RESTART_BUDGET`` restarts in the rolling hour
         the channel is reported and NOT restarted again.
@@ -3186,17 +3192,13 @@ class EgressDaemon:
         state.escalated_for_pid = pid
         _LOG.error(
             "%s. Restarting this channel's worker through the ordinary crashed-encoder "
-            "relaunch path (and replacing its relay child); restart %d of at most %d in the "
-            "last hour (%d left in this hour).",
+            "relaunch path; restart %d of at most %d in the last hour (%d left in this "
+            "hour).",
             detail,
             len(state.restarted_at),
             _FREEZE_ESCALATION_RESTART_BUDGET,
             _FREEZE_ESCALATION_RESTART_BUDGET - len(state.restarted_at),
         )
-        supervisor = self._hls_relay
-        if supervisor is not None:
-            with contextlib.suppress(Exception):
-                supervisor.stop_channel(channel_id)
         _process_terminate_bounded(process)
 
     def _poll_process(self, channel_id: str) -> None:
