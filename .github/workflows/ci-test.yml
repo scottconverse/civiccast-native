@@ -500,7 +500,7 @@ jobs:
   #
   # It ran `bash tests/egress/run_wsl_engine_tests.sh` against an
   # apt-installed Linux GStreamer 1.28.4 stack. Both are gone from this repo
-  # by design -- the native product ships GStreamer 1.28.5 as pinned
+  # by design -- the native product ships GStreamer 1.28.7 as pinned
   # `gstreamer-*` PyPI wheels, so that job proved a runtime this product does
   # not use, on a platform it does not run on. Its script was deliberately not
   # migrated, so the job could only ever fail with

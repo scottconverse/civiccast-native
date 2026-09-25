@@ -480,7 +480,7 @@ def stage_upstream_wheels(requirements_file: Path, stage: Path) -> None:
 
 
 def _distribution_name(dist_info_dirname: str) -> str:
-    """ "gstreamer_plugins_gpl-1.28.5.dist-info" -> "gstreamer_plugins_gpl"."""
+    """ "gstreamer_plugins_gpl-1.28.7.dist-info" -> "gstreamer_plugins_gpl"."""
     stem = dist_info_dirname.removesuffix(".dist-info")
     name, _sep, _version = stem.rpartition("-")
     return name or stem
@@ -547,7 +547,7 @@ def build_origins(stage: Path, file_index: Mapping[str, str]) -> dict[str, tuple
 # They are not developer conveniences: the installed runtime uses
 # gst-discoverer as a concrete, independently executable validation target.
 # Their exact wheel-relative paths and owner bind the consumer requirement to
-# the reviewed `gstreamer-cli==1.28.5` lock input rather than to any executable
+# the reviewed `gstreamer-cli==1.28.7` lock input rather than to any executable
 # that happens to be present in the staging directory.
 CLI_CONSUMER_EXECUTABLES: Final[tuple[str, ...]] = (
     "gstreamer_cli/bin/gst-discoverer-1.0.exe",

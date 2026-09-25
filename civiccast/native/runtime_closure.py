@@ -198,10 +198,12 @@ EXCLUDED_GPL_FACTORIES = frozenset({"x264enc", "x265enc"})
 
 #: Factory -> the GStreamer plugin module that provides it.
 #:
-#: Measured against the pinned upstream inputs (gstreamer-* 1.28.5 MSVC wheels)
+#: Measured against the pinned upstream inputs (gstreamer-* 1.28.7 MSVC wheels)
 #: rather than assumed. `tests/native/test_runtime_closure.py` guards the
 #: table's completeness; the build script fails loudly if a named plugin is
-#: absent from the staged tree.
+#: absent from the staged tree. Re-measured for the 1.28.7 pin on 2026-09-24
+#: (U17): the build resolved 66/68 named factories across 36 seed plugin
+#: file(s) from the 1.28.7 stage, the same counts as the 1.28.5 pin.
 FACTORY_PLUGIN: Mapping[str, str] = {
     # -- core elements (gstreamer_libs) ------------------------------------
     "appsink": "gstapp.dll",
@@ -357,7 +359,7 @@ REQUIRED_FACTORIES = frozenset(
 #: factories today -- so they do NOT belong in `REQUIRED_FACTORIES`, whose
 #: docstring is specifically "the factories the product's pipelines cannot
 #: run without". They belong here instead: plugins whose DLLs already ship
-#: in the pinned `gstreamer-libs`/`gstreamer-plugins` 1.28.5 wheels (no new
+#: in the pinned `gstreamer-libs`/`gstreamer-plugins` 1.28.7 wheels (no new
 #: upstream artifact, no version bump) and are staged now so the S15
 #: CG-lite compositing and native-HLS work can start against a runtime that
 #: already carries them, rather than needing a separate packaging change

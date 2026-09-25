@@ -1379,9 +1379,13 @@ class GstPlayoutEngine:
         return selector
 
     _SELECTOR_ISOLATION_QUEUE_PROPS: ClassVar[dict[str, object]] = {
-        # Explicit GStreamer 1.28.5 queue defaults. A queue starts forwarding as
-        # soon as data arrives; these are capacity bounds, not one second of added
-        # latency. Non-leaky is load-bearing: station media must never be dropped.
+        # Explicit GStreamer 1.28.7 queue defaults (pinned by U17's 2026-09-24
+        # runtime update). Read back live from the built 1.28.7 tree's own
+        # queue element: max-size-buffers 200, max-size-bytes 10485760,
+        # max-size-time 1000000000, leaky "not leaky" -- identical to the
+        # installed 1.28.5 tree's. A queue starts forwarding as soon as data
+        # arrives; these are capacity bounds, not one second of added latency.
+        # Non-leaky is load-bearing: station media must never be dropped.
         "max-size-buffers": 200,
         "max-size-bytes": 10_485_760,
         "max-size-time": 1_000_000_000,

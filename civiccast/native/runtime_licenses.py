@@ -87,13 +87,29 @@ PLUGIN_LICENSE: Final[dict[str, str]] = {
     # documentation instead: all three are gst-plugins-base/gst-plugins-good
     # C plugins covered by the same upstream COPYING.LIB (LGPL-2.1-or-later)
     # as every other plugin in this table drawn from those two modules, and
-    # `gstreamer-libs`/`gstreamer-plugins` 1.28.5's own METADATA declares
+    # `gstreamer-libs`/`gstreamer-plugins` 1.28.7's own METADATA declares
     # "LGPL" project-wide (see `licenses/gstreamer_libs.txt` /
     # `licenses/gstreamer_plugins.txt` after a build). A live probe against
     # the first built tree that actually contains them is a real follow-up,
     # same as `gsttypefindfunctions.dll` got above -- reviewed-against-
     # documentation is recorded as the weaker claim it is, not upgraded to
     # "observed" before it has been.
+    #
+    # U17 live probe, 2026-09-24, `gst-inspect-1.0 <plugin.dll>` against the
+    # BUILT 1.28.7 tree (and the installed 1.28.5 tree, for comparison):
+    #   gstcompositor.dll  -> License=LGPL, Source module=gst-plugins-base
+    #   gstpango.dll       -> License=LGPL, Source module=gst-plugins-base
+    #   gsthlssink3.dll    -> License=MPL,  Source module=gst-plugin-hlssink3
+    # The first two agree with the entries below. The third does NOT: it is
+    # a gst-plugins-rs Rust plugin (MPL-2.0 is that family's licence), not a
+    # gst-plugins-base/gst-plugins-good C plugin, so the documentation-derived
+    # premise above is wrong for it. The value below is deliberately LEFT
+    # UNCHANGED because it feeds the shipped per-file licence table in
+    # LICENSE-BOM.md and the licence posture is an owner-acceptance item
+    # (docs/design/spec-packaging-closure.md's header) -- correcting a
+    # compliance artifact is the owner's call, not this slice's. The probe is
+    # identical on the installed 1.28.5 tree, i.e. PRE-EXISTING, not
+    # introduced by the 1.28.5 -> 1.28.7 update.
     "gstcompositor.dll": "LGPL-2.1-or-later",
     "gstpango.dll": "LGPL-2.1-or-later",
     "gsthlssink3.dll": "LGPL-2.1-or-later",
@@ -126,9 +142,10 @@ PLUGIN_LICENSE: Final[dict[str, str]] = {
     # Probed 2026-08-07 when NON_FACTORY_PLUGINS first shipped it (the
     # provenance gate on candidate run 31208490253 refused the file, as
     # designed): gst_plugin_get_license() via gst-inspect-1.0 against the
-    # pinned 1.28.5 DLL reports License=LGPL, Source module
-    # gst-plugins-base -- normalized per this table's rule to the SPDX id
-    # below.
+    # pinned DLL reports License=LGPL, Source module gst-plugins-base --
+    # normalized per this table's rule to the SPDX id below. Re-probed
+    # 2026-09-24 (U17) against the BUILT 1.28.7 tree: License=LGPL, Source
+    # module=gst-plugins-base, unchanged from the 1.28.5 probe.
     "gsttypefindfunctions.dll": "LGPL-2.1-or-later",
     "gstudp.dll": "LGPL-2.1-or-later",
     "gstvideoconvertscale.dll": "LGPL-2.1-or-later",
@@ -186,7 +203,10 @@ FONTCONFIG_2_16_1_LICENSE: Final[str] = (
 )
 
 SUPPORT_LIBRARY_LICENSE: Final[dict[str, str]] = {
-    # --- GStreamer CLI consumers: gstreamer-cli 1.28.5, LGPL-2.1-or-later.
+    # --- GStreamer CLI consumers: gstreamer-cli 1.28.7, LGPL-2.1-or-later.
+    # (U17 2026-09-24: re-asserted for the new pin -- the built tree's
+    # LICENSE-BOM.md still records both consumers as LGPL-2.1-or-later and
+    # the gstreamer_cli distribution row's licence set is unchanged.)
     # These are staged deliberately as real installed-runtime consumers; their
     # import closure is walked exactly like plugin/PyGObject seed binaries.
     "gst-discoverer-1.0.exe": "LGPL-2.1-or-later",

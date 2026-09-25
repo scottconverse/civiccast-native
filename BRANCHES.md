@@ -35,7 +35,7 @@ Carried over only if it belongs to a native Windows product:
 
 * `docker/`, `deploy/systemd/`, `civiccast/egress/{service_unit,recovery,soak}.py`
 * the Linux GStreamer container build (1.28.4) — native Windows uses the
-  pinned `gstreamer-*` **1.28.5** PyPI wheels instead
+  pinned `gstreamer-*` **1.28.7** PyPI wheels instead
 * the installer's WSL2 bootstrap lane
 * `docs/audits/`, `docs/releases/`, `docs/research/`, `tester-handoff/`,
   `.agent-runs/` scratch, and the dated handoff memos

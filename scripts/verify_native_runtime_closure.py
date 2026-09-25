@@ -90,8 +90,13 @@ CLI_CONSUMER_RELATIVES = (
     "bin/gst-inspect-1.0.exe",
 )
 CLI_CONSUMER_DISTRIBUTION = "gstreamer_cli"
-_PINNED_CLI_LOCK_LINE = "gstreamer-cli==1.28.5"
-_PINNED_CLI_WINDOWS_SHA256 = "ef562bfc43817e7f497b11456be50609184672e4f276b77b8c126e5b247544ca"
+# U17 (2026-09-24): bumped with the 1.28.5 -> 1.28.7 runtime update. The hash
+# is the `cp39-abi3-win_amd64` wheel of the pinned release -- the same wheel
+# tag `_PINNED_CLI_WINDOWS_SHA256` named for every earlier pin -- read from
+# the release's own PyPI file list, and required to be present in the lock
+# below, so a lock that pins a different artifact still fails closed.
+_PINNED_CLI_LOCK_LINE = "gstreamer-cli==1.28.7"
+_PINNED_CLI_WINDOWS_SHA256 = "d89e0036f9cdcc1f2bbb8b6fd6ac2fb3fdc1cb00fbe35e89cdebc83d6aaa183d"
 
 if TYPE_CHECKING:
     from civiccast.native.runtime_manifest import FileEntry
@@ -554,7 +559,7 @@ def check_cli_consumer_verification(tree: Path) -> CheckResult:
         return CheckResult(
             name="cli_consumer_verification",
             status="FAIL",
-            detail="current runtime lock does not pin gstreamer-cli==1.28.5 Windows artifact",
+            detail=(f"current runtime lock does not pin {_PINNED_CLI_LOCK_LINE} Windows artifact"),
         )
     try:
         manifest = json.loads((tree / "runtime-manifest.json").read_text(encoding="utf-8"))
@@ -595,7 +600,7 @@ def check_cli_consumer_verification(tree: Path) -> CheckResult:
     return CheckResult(
         name="cli_consumer_verification",
         status="PASS",
-        detail="both gstreamer-cli 1.28.5 consumers are present, hashed, and lock-bound",
+        detail=(f"both {_PINNED_CLI_LOCK_LINE} consumers are present, hashed, and lock-bound"),
     )
 
 

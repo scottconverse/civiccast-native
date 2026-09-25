@@ -102,7 +102,7 @@ def test_staged_optional_factories_are_the_three_cg_lite_plugins_pr88_named() ->
     """PR #88's body named exactly these as staged-but-not-required: the
     compositor (video mixer), the pango overlays (text/clock CG), and the
     native HLS sink -- present in the already-pinned `gstreamer-libs`/
-    `gstreamer-plugins` 1.28.5 wheels, no new upstream artifact. `interpipe`
+    `gstreamer-plugins` 1.28.7 wheels, no new upstream artifact. `interpipe`
     is deliberately excluded: PR #88 recorded it as absent from the pinned
     wheels entirely (a RidgeRun-only artifact), so it cannot be staged
     additively the way these three can."""
