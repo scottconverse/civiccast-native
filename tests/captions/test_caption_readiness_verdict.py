@@ -21,7 +21,7 @@ import json
 import os
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +39,44 @@ from civiccast.captions.review import InMemoryCaptionReviewStore
 #: The brief's start-path budget. Measured discovery on the live archive is
 #: 60.5 s, so anything above this cannot be the "consult a verdict" path.
 _START_BUDGET_SECONDS = 0.5
+
+#: The refresh thread's name, asserted by name so the test cannot pass on some
+#: other thread happening to be alive.
+_REFRESH_THREAD_NAME = "civiccast-caption-readiness-retention-timer"
+
+#: Providers built by ``_build_source``, so every test leaves no thread behind.
+_SOURCES: list[CaptionRetentionVerdictSource] = []
+
+
+def _thread_names() -> set[str]:
+    return {thread.name for thread in threading.enumerate()}
+
+
+def _refresh_threads() -> set[threading.Thread]:
+    """Live threads carrying the refresh name, by IDENTITY.
+
+    By identity rather than by name-membership, because the claim under test is
+    "the thread THIS provider armed has ended". The egress suite arms its own
+    provider (``tests/egress/test_daemon.py``), so a name-membership assertion
+    would be measuring whoever else is alive in the process.
+    """
+    return {thread for thread in threading.enumerate() if thread.name == _REFRESH_THREAD_NAME}
+
+
+@pytest.fixture(autouse=True)
+def _stop_every_provider_after_its_test() -> Iterator[None]:
+    yield
+    while _SOURCES:
+        _SOURCES.pop().stop(10.0)
+
+
+def _wait_until(predicate: Callable[[], bool], *, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
 
 
 class _Clock:
@@ -92,20 +130,21 @@ def _build_source(
     tmp_path: Path,
     *,
     monotonic: Callable[[], float] | None = None,
+    sweep_interval_seconds: float = RETENTION_SWEEP_SECONDS,
 ) -> tuple[CaptionRetentionVerdictSource, Path]:
     storage_root = tmp_path / "egress"
     storage_root.mkdir(parents=True, exist_ok=True)
-    return (
-        CaptionRetentionVerdictSource(
-            policy=CaptionEvidenceRetentionPolicy.from_system(storage_root=storage_root),
-            tap_root=None,
-            review_store=InMemoryCaptionReviewStore(),
-            segment_seconds=5.0,
-            storage_root=storage_root,
-            monotonic=monotonic or time.monotonic,
-        ),
-        storage_root,
+    source = CaptionRetentionVerdictSource(
+        policy=CaptionEvidenceRetentionPolicy.from_system(storage_root=storage_root),
+        tap_root=None,
+        review_store=InMemoryCaptionReviewStore(),
+        segment_seconds=5.0,
+        storage_root=storage_root,
+        monotonic=monotonic or time.monotonic,
+        sweep_interval_seconds=sweep_interval_seconds,
     )
+    _SOURCES.append(source)
+    return source, storage_root
 
 
 def _status(storage_root: Path, channel_id: str) -> dict[str, object]:
@@ -270,6 +309,117 @@ class TestTheSharedVerdict:
         assert discovery.calls == 2
         assert source("public").ready is True
         assert discovery.calls == 2
+
+
+class TestTheVerdictStaysFreshWithoutAStart:
+    """The provider keeps its own verdict fresh, so a start is not what re-arms it.
+
+    As first built the provider swept only when a start found no fresh verdict.
+    Channel starts are usually more than one sweep interval apart, so almost
+    every start saw a stale verdict, returned "pending", and dispatched one
+    scan -- which means a background REFUSAL could essentially never gate a
+    start. The refresh thread arms on the first ``__call__`` and then dispatches
+    on its own cadence forever.
+    """
+
+    def test_building_the_provider_starts_no_thread(self, tmp_path: Path) -> None:
+        before = _thread_names()
+        armed_before = _refresh_threads()
+
+        source, _storage_root = _build_source(tmp_path)
+
+        assert _thread_names() <= before, "building the provider must start nothing"
+        source("public")
+        assert len(_refresh_threads() - armed_before) == 1, "the first start arms the refresh"
+
+    def test_a_sweep_re_runs_without_another_start(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source, _storage_root = _build_source(tmp_path, sweep_interval_seconds=0.05)
+        discovery = _Discovery(block=False)
+        monkeypatch.setattr(source.policy, "_discover_candidates", discovery)
+
+        assert source("public").ready is True
+        assert source.wait_for_sweep(10.0)
+        assert discovery.calls == 1
+
+        # No second start, no other caller: the refresh alone must dispatch it.
+        assert _wait_until(lambda: discovery.calls >= 2), (
+            f"the verdict was not refreshed in the background (calls={discovery.calls})"
+        )
+
+    def test_a_background_refusal_gates_the_next_start(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source, storage_root = _build_source(tmp_path, sweep_interval_seconds=0.05)
+        sweeps: list[int] = []
+
+        def sweep(**_kwargs: object) -> CaptionRetentionResult:
+            sweeps.append(1)
+            if len(sweeps) == 1:
+                return CaptionRetentionResult(
+                    ready=True, refusal_reason=None, requires_fallback_slate=False
+                )
+            return _divergence_refusal()
+
+        monkeypatch.setattr(source.policy, "enforce_discovered", sweep)
+
+        # Start 1: nothing is known yet, so the program starts.
+        assert source("public").ready is True
+        assert source.wait_for_sweep(10.0)
+
+        # The refusal is published by the BACKGROUND sweep, with no start to
+        # carry it -- this is the case the first build could not reach.
+        assert _wait_until(lambda: len(sweeps) >= 2)
+        assert _wait_until(lambda: source._fresh_verdict() is not None)
+
+        result = source("public")
+
+        assert result.ready is False
+        assert result.refusal_reason == "caption-storage-volumes-diverge"
+        assert result.requires_fallback_slate is True
+        status = _status(storage_root, "public")
+        assert status["state"] == "storage-refused"
+
+    def test_the_refresh_never_stacks_sweeps(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source, _storage_root = _build_source(tmp_path, sweep_interval_seconds=0.05)
+        discovery = _Discovery()
+        monkeypatch.setattr(source.policy, "_discover_candidates", discovery)
+        try:
+            assert source("public").ready is True
+            assert discovery.entered.wait(5.0)
+            # Several refresh cadences pass with a sweep still in flight.
+            time.sleep(0.3)
+            assert discovery.calls == 1, "a slow sweep must not be fanned out"
+        finally:
+            discovery.release.set()
+            assert source.wait_for_sweep(10.0)
+
+    def test_stop_ends_the_refresh_thread(self, tmp_path: Path) -> None:
+        source, _storage_root = _build_source(tmp_path, sweep_interval_seconds=0.05)
+        armed_before = _refresh_threads()
+        assert source("public").ready is True
+        assert source.wait_for_sweep(10.0)
+        assert len(_refresh_threads() - armed_before) == 1, "the start armed exactly one refresh"
+
+        assert source.stop(10.0) is True
+
+        assert _refresh_threads() == armed_before, (
+            "the refresh thread this provider armed is still alive"
+        )
+
+    def test_a_stopped_provider_does_not_re_arm(self, tmp_path: Path) -> None:
+        source, _storage_root = _build_source(tmp_path, sweep_interval_seconds=0.05)
+        armed_before = _refresh_threads()
+        assert source("public").ready is True
+        assert source.stop(10.0) is True
+        assert _refresh_threads() == armed_before
+
+        assert source("public").ready is True
+
+        assert _refresh_threads() == armed_before, "a stopped provider must not re-arm"
 
 
 class _OtherVolume:
