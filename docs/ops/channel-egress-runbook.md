@@ -696,9 +696,48 @@ a bounced channel is the same failure mode as any other:
   itself is unreachable.
 - `CTRL stall: no output for 10s - quitting for daemon restart` (S9-5,
   unchanged by item 84) -- the pipeline WAS producing output and then
-  stopped for `stall_timeout_s` (10s default). This is the pipeline going
-  silently dead after already airing (a frozen live source that never posts
-  an error) -- treat it as a genuine on-air interruption, not a slow start.
+  stopped for `stall_timeout_s` (10s default). Treat a line you actually see
+  as a genuine on-air interruption, not a slow start -- but read what it
+  CANNOT see before concluding that a dark channel is feeding fine. Its
+  progress signal is ONE aggregate count of what leaves the mux
+  (`_install_output_counter`, a probe on the mux src pad), and `_check_stall`
+  treats any advance of that single integer as healthy output, so a freeze
+  that stops one stream while another keeps flowing never trips it. Both
+  2026-09-25 live freezes were that shape: the video branch stopped
+  delivering buffers while audio carried on, measured over the worker's own
+  `CTRL output:` totals as ~244 buffers per 5s interval against ~390 on the
+  healthy intervals before the freeze. A dark channel whose worker stderr
+  holds no `CTRL stall` line is therefore NOT evidence that residents are
+  still being fed. Since U30 the progress line also names the streams that
+  aggregate cannot separate -- `CTRL output: <total> buffers (+<delta>) since
+  PLAYING [mux-in 5.0s: video=+0 audio=+235]` -- where `(+<delta>)` is still
+  cumulative since PLAYING while each `[mux-in ...]` value is that stream's
+  count over the interval since the previous line (always armed, not an
+  opt-in diagnostic). `video=+0` against a climbing `audio` is the marker for
+  a video-only freeze. A pad the worker could not count is omitted from the
+  clause rather than shown as `+0`, so absence means "not counted", not
+  "stopped".
+- **A channel restarted while its worker was still ALIVE (U30 freeze
+  escalation).** The one daemon-driven restart here that is not a worker
+  failure: when the HLS live window measures as still frozen 30s after the
+  relay self-heal replaced its ffmpeg child, the daemon terminates that
+  channel's worker through the same crashed-encoder relaunch path and logs at
+  ERROR `... the HLS live window is still frozen <n>s after the relay
+  self-heal replaced its ffmpeg child, so the self-heal did not restore it
+  (residents are watching a stalled stream). Restarting this channel's worker
+  through the ordinary crashed-encoder relaunch path; restart N of at most 3
+  in the last hour (M left in this hour).` The budget is per channel per
+  rolling hour; once it is spent the daemon stops restarting that channel and
+  logs a CRITICAL `... Freeze escalation budget exhausted (N worker restarts
+  already spent in the last hour): NOT restarting the worker again ... check
+  the channel's source program and the relay child's own output.` at most once
+  per 10 minutes. **A CRITICAL here needs an operator**: the daemon has spent
+  its restarts and the window is still frozen, so the cause is upstream of the
+  worker. The escalation does not stop the relay child itself (the self-heal it
+  escalates already replaced that child, and the replacement wrote nothing
+  either), but the relaunch reaches the relay's `new_session=True` path, so a
+  fresh child with one fresh heal attempt arrives with each restart -- that is
+  why the restart count is the bound rather than the heal latch alone.
 
 A THIRD line, `CTRL first-output: first buffer after Ns pid=N` (item 84
 Round-2 review), is not a failure -- it is the positive-evidence marker a
@@ -717,7 +756,11 @@ from the worker's stderr tail); the exit code the daemon actually observed
 (`GST_FIRST_OUTPUT_TIMEOUT_EXIT_CODE` vs the ordinary crash code for a
 `("stall", ...)` exit vs `GST_PREROLL_TIMEOUT_EXIT_CODE`) is not itself
 operator-visible, so the stderr marker text is the fastest way to tell the
-three failure shapes apart when triaging a relaunch storm.
+three failure shapes apart when triaging a relaunch storm. The U30 freeze
+escalation is not one of those shapes -- the worker did not fail at all, so
+its marker is the daemon's own ERROR line above rather than the worker's
+stderr, and the restart it triggers then arrives at the same crash-relaunch
+machinery these markers otherwise describe.
 
 **`CIVICCAST_STALL_TIMEOUT_S=0` no longer disables output supervision.**
 Before item 84, setting this env var to `0` (or any non-positive value) fully
