@@ -1269,3 +1269,65 @@ class TestPlanWindow:
             "gov" in record.message and "MAX_PLAYLIST_SUBCHAINS" in record.message
             for record in caplog.records
         )
+
+def test_a_boundary_past_a_closing_slot_resolves_the_next_scheduled_item(
+    tmp_path: Path,
+) -> None:
+    """U26 evidence for the daemon's degenerate-tail guard.
+
+    The guard resolves the schedule at "now + the tail's own remaining seconds +
+    a margin" (daemon._SCHEDULE_TAIL_FLOOR_SECONDS /
+    _SCHEDULE_TAIL_BOUNDARY_MARGIN_S). For that to land the channel on the
+    program it was asked for, the item whose slot is closing must be gone at
+    that instant and the NEXT published item must be the one that resolves --
+    proven here against the real provider with the live case's numbers: a
+    300s slot with 9.2s left, boundary taken 10.2s past the tail's start.
+    """
+    media = tmp_path / "program.ts"
+    media.write_text("fake", encoding="utf-8")
+    start = datetime(2026, 6, 5, 18, 0, tzinfo=UTC)
+    items = [
+        _schedule_item(
+            asset_id="weather", scheduled_at=start, duration_seconds=300
+        ).model_copy(update={"asset_title": "Longmont Weather :16"}),
+        _schedule_item(
+            asset_id="council",
+            scheduled_at=start + timedelta(seconds=300),
+            duration_seconds=600,
+        ).model_copy(update={"asset_title": "City Council"}),
+    ]
+    assets = {
+        item.asset_id: _asset(media, asset_id=item.asset_id).model_copy(
+            update={
+                "title": item.asset_title,
+                "duration_seconds": 1800,
+                "trim_in_seconds": None,
+                "trim_out_seconds": None,
+            }
+        )
+        for item in items
+    }
+    tail_now = start + timedelta(seconds=290.8)
+    provider = ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _channel_id: items,
+        asset_resolver=assets.get,
+        now_provider=lambda: tail_now,
+        # The production wiring with the GStreamer engine selected
+        # (automation.py:2633), which is what makes a closing slot resolve to a
+        # bare tail in the first place.
+        max_segments=1,
+    )
+
+    tail = provider("gov")
+
+    assert tail is not None
+    assert len(tail.segments) == 1
+    assert tail.segments[0].label == "Longmont Weather :16"
+    assert tail.segments[0].duration_seconds == pytest.approx(9.2)
+
+    boundary = provider.plan_at("gov", tail_now + timedelta(seconds=9.2 + 1.0))
+
+    assert boundary is not None
+    assert boundary.segments[0].label == "City Council"
+    # One second into the item's own slot, so one second into its media.
+    assert boundary.segments[0].inpoint_seconds == pytest.approx(1.0)

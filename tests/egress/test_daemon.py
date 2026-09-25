@@ -7782,3 +7782,273 @@ def test_held_prepared_restart_plan_is_released_when_a_newer_one_supersedes_it(
 
     assert run.released == [tmp_path / "plan-1"]
     assert run.daemon.live_prepared_plan_dirs("gov") == frozenset({newer_dir})
+
+# ---------------------------------------------------------------------------
+# U26 defect 2: a reload that resolves the schedule at wall-clock NOW must not
+# land the channel on the closing seconds of the item that is due.
+#
+# Live evidence (government, 2026-09-25 02:58 MDT): the slate -> program reload
+# prepared ONE 9.2s segment of the item whose slot was closing -- the daemon's own
+# stale-horizon WARNING at 02:58:31.968 quotes that plan's end,
+# 2026-09-25T08:58:30.392844+00:00 -- the restart aired it to EOS at 02:58:34.137,
+# and the channel needed a SECOND worker start at 02:58:36.562. Two worker starts
+# and ~8s of dead air to reach a program that was due the whole time.
+#
+# The tail is structural, not a one-off: with the GStreamer engine selected the
+# production provider is built with max_segments=1 (automation.py:2633), so the
+# plan for a closing slot is always exactly that slot's remainder.
+# ---------------------------------------------------------------------------
+
+
+def _plan_with_seconds(tmp_path: Path, label: str, seconds: float) -> EgressSourcePlan:
+    source = tmp_path / f"{label.replace(' ', '-').replace(':', '').lower()}.ts"
+    source.write_text(label, encoding="utf-8")
+    return EgressSourcePlan(
+        channel_id="gov",
+        segments=[
+            EgressSourceSegment(
+                label=label,
+                path=str(source),
+                duration_seconds=seconds,
+                source_ref=f"asset-{label}",
+            )
+        ],
+    )
+
+
+def _tail_guard_daemon(
+    tmp_path: Path,
+    boundary: Callable[[str, datetime], EgressSourcePlan | None],
+) -> EgressDaemon:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    return EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        boundary_source_plan_provider=boundary,
+    )
+
+
+def test_reload_onto_a_degenerate_schedule_tail_prepares_the_next_item(
+    tmp_path: Path,
+) -> None:
+    """U26 defect 2, the live case: a slate -> program reload resolves the item
+    whose slot is closing (9.2s left) and restarts the worker onto it. The
+    restart path itself (F3(b)) is untouched -- but the plan it carries must be
+    the item due where that tail ENDS, so the one restart the channel pays for
+    airs the program the automation asked for instead of a 9-second stub."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    started: list[_FakeProcess] = []
+    prepared_labels: list[str] = []
+    boundary_args: list[datetime] = []
+    counter = {"n": 0}
+    base_prepare = _prepare_with_tracked_plan_dirs(tmp_path, counter)
+    old_process = _FakeProcess(pid=111)
+    strategy = _PlanLabelRecordingStrategy([_FakeProcess(pid=222)], started)
+
+    def boundary(channel_id: str, at: datetime) -> EgressSourcePlan:
+        boundary_args.append(at)
+        return _plan_with_seconds(tmp_path, "City Council", 1800.0)
+
+    def prepare(plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
+        prepared_labels.append(plan.segments[0].label)
+        return base_prepare(plan, config)
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _plan_with_seconds(
+            tmp_path, "Longmont Weather :16", 9.2
+        ),
+        boundary_source_plan_provider=boundary,
+        encoder_strategy=strategy,
+        source_preparer=prepare,
+    )
+    daemon.enable_async_preparation()
+    daemon._processes["gov"] = old_process
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="FALLBACK_SLATE",
+            current_source_label="CivicCast slate",
+            updated_at=datetime(2026, 6, 12, 6, 0, tzinfo=UTC),
+        )
+    )
+    before = datetime.now(UTC)
+    daemon._request_reload("gov")
+    assert daemon._preparations["gov"].kind == "reload"
+    daemon._preparations["gov"].future.result(timeout=10)
+
+    daemon.process_once("gov")
+
+    # The degenerate tail never even reaches the preparer.
+    assert prepared_labels == ["City Council"]
+    assert len(boundary_args) == 1
+    # Resolved at the tail's own end plus the guard's margin -- strictly past
+    # the tail, which is the whole point: the NEXT item is what is due there.
+    assert boundary_args[0] >= before + timedelta(seconds=10.2)
+    assert boundary_args[0] <= before + timedelta(seconds=20.0)
+    # F3(b) unchanged: still the restart path, not an in-place selector swap.
+    assert strategy.reload_calls == []
+    assert old_process.terminated is True
+
+    daemon.process_once("gov")
+
+    assert strategy.started_labels == ["City Council"]
+
+
+def test_reload_onto_a_healthy_schedule_tail_never_consults_the_boundary(
+    tmp_path: Path,
+) -> None:
+    """The guard must be invisible whenever the tail is worth airing: no extra
+    provider call, and the ordinary ON_AIR in-place reload exactly as it was."""
+    boundary_calls: list[datetime] = []
+
+    def boundary(channel_id: str, at: datetime) -> EgressSourcePlan:
+        boundary_calls.append(at)
+        return _plan_with_seconds(tmp_path, "Some other item", 1800.0)
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    started: list[_FakeProcess] = []
+    strategy = _PlanLabelRecordingStrategy([_FakeProcess(pid=222)], started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _plan_with_seconds(
+            tmp_path, "City Council", 1800.0
+        ),
+        boundary_source_plan_provider=boundary,
+        encoder_strategy=strategy,
+    )
+    process = _FakeProcess(pid=111)
+    daemon._processes["gov"] = process
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="ON_AIR",
+            current_source_label="Longmont Weather :16",
+            updated_at=datetime(2026, 6, 12, 6, 0, tzinfo=UTC),
+        )
+    )
+
+    daemon._request_reload("gov")
+
+    assert boundary_calls == []
+    assert strategy.reload_calls == ["City Council"]
+    assert strategy.switch_at_end_of_current_calls == [True]
+    assert process.terminated is False
+
+
+@pytest.mark.parametrize("tail_seconds", [29.9, 0.5])
+def test_degenerate_tail_guard_is_consulted_below_the_floor(
+    tmp_path: Path, tail_seconds: float
+) -> None:
+    """N = 30s: below it the boundary is asked for and its answer is used."""
+    seen: list[datetime] = []
+
+    def boundary(channel_id: str, at: datetime) -> EgressSourcePlan:
+        seen.append(at)
+        return _plan_with_seconds(tmp_path, "City Council", 1800.0)
+
+    daemon = _tail_guard_daemon(tmp_path, boundary)
+    tail = _plan_with_seconds(tmp_path, "Longmont Weather :16", tail_seconds)
+
+    resolved = daemon._avoid_schedule_tail_plan("gov", tail)
+
+    assert resolved.segments[0].label == "City Council"
+    assert len(seen) == 1
+
+
+@pytest.mark.parametrize("tail_seconds", [30.0, 1800.0])
+def test_degenerate_tail_guard_is_inert_at_or_above_the_floor(
+    tmp_path: Path, tail_seconds: float
+) -> None:
+    """At the floor and above, the plan is returned untouched and no provider
+    call is made -- 30s of real program is worth airing on its own."""
+    seen: list[datetime] = []
+
+    def boundary(channel_id: str, at: datetime) -> EgressSourcePlan:
+        seen.append(at)
+        return _plan_with_seconds(tmp_path, "City Council", 1800.0)
+
+    daemon = _tail_guard_daemon(tmp_path, boundary)
+    tail = _plan_with_seconds(tmp_path, "Longmont Weather :16", tail_seconds)
+
+    assert daemon._avoid_schedule_tail_plan("gov", tail) is tail
+    assert seen == []
+
+
+def test_degenerate_tail_guard_keeps_the_tail_when_the_boundary_is_not_better(
+    tmp_path: Path,
+) -> None:
+    """Every way the boundary can fail to improve on the tail keeps today's
+    behavior: air the tail. A media-shorter-than-slot tail, a gap the fill
+    policy owns, the end of the schedule, a channel id that is not this
+    channel's, or a preparation error -- none of them may leave the channel
+    with a plan it did not have before."""
+
+    def _raise(_channel_id: str, _at: datetime) -> EgressSourcePlan | None:
+        raise SourcePrepareError("scheduled asset is not playable")
+
+    boundaries: list[Callable[[str, datetime], EgressSourcePlan | None]] = [
+        lambda _channel_id, _at: None,
+        lambda _channel_id, _at: _plan_with_seconds(tmp_path, "Shorter", 5.0),
+        lambda _channel_id, _at: _plan_with_seconds(tmp_path, "Same length", 9.2),
+        lambda _channel_id, _at: _plan_with_seconds(tmp_path, "Other channel", 900.0).model_copy(
+            update={"channel_id": "clr"}
+        ),
+        _raise,
+    ]
+    tail = _plan_with_seconds(tmp_path, "Longmont Weather :16", 9.2)
+
+    for boundary in boundaries:
+        daemon = _tail_guard_daemon(tmp_path, boundary)
+        assert daemon._avoid_schedule_tail_plan("gov", tail) is tail
+
+
+def test_degenerate_tail_guard_is_inert_without_a_boundary_provider(
+    tmp_path: Path,
+) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+    )
+    tail = _plan_with_seconds(tmp_path, "Longmont Weather :16", 9.2)
+
+    assert daemon._avoid_schedule_tail_plan("gov", tail) is tail
+
+
+def test_degenerate_tail_guard_is_inert_during_a_manual_override(
+    tmp_path: Path,
+) -> None:
+    """An operator override owns the plan resolution: the override's own
+    contracts resolve at wall-clock now, so the guard must not reach for a
+    later boundary behind it."""
+    seen: list[datetime] = []
+
+    def boundary(channel_id: str, at: datetime) -> EgressSourcePlan:
+        seen.append(at)
+        return _plan_with_seconds(tmp_path, "City Council", 1800.0)
+
+    class _OverrideDaemon(EgressDaemon):
+        def has_manual_override(self, channel_id: str) -> bool:
+            return True
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    daemon = _OverrideDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        boundary_source_plan_provider=boundary,
+    )
+    tail = _plan_with_seconds(tmp_path, "Longmont Weather :16", 9.2)
+
+    assert daemon._avoid_schedule_tail_plan("gov", tail) is tail
+    assert seen == []
