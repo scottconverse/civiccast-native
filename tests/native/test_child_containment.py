@@ -288,7 +288,10 @@ def test_guard_logs_an_inactive_containment_at_error(
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert len(errors) == 1
     assert "control-plane containment INACTIVE (not Windows)" in caplog.text
-    assert "U31 orphan defect" in caplog.text
+    # Assert the operator-facing CONSEQUENCE, not a unit tag: the string is what
+    # an operator reads at 3am to learn their relays are unprotected.
+    assert "will NOT be reaped if it dies" in caplog.text
+    assert "will hold their UDP ports against the supervised replacement" in caplog.text
     assert app_module._descendants_contained is False, (
         "an inactive containment must not latch as contained -- the next call "
         "would then be a silent no-op and the ERROR would never be re-logged"

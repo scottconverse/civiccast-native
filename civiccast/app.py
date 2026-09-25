@@ -477,8 +477,7 @@ def _maybe_contain_own_descendants() -> None:
         _LOG.error(
             "control-plane containment INACTIVE (%s): relay ffmpegs and other "
             "long-lived children started by this process will NOT be reaped if it "
-            "dies, and will hold their UDP ports against the supervised replacement "
-            "(U31 orphan defect)",
+            "dies, and will hold their UDP ports against the supervised replacement",
             status.detail,
         )
 

@@ -1604,7 +1604,7 @@ class HlsRelaySupervisor:
             return False
         _LOG.warning(
             "HLS relay for %s (sink %r): reaped orphaned relay ffmpeg pid %d (%s) "
-            "holding %s; restarting the relay now (U31).",
+            "holding %s; restarting the relay now.",
             channel_id,
             sink_label,
             owner.pid,
