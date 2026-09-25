@@ -20,21 +20,37 @@ Audit-repaired semantics under test:
     from legitimate STARTING/no-source (finding 3).
   * The one-shot heal latch survives the frozen on-disk playlist left behind by
     the replaced child, so a heal cannot re-arm every bound into a restart
-    storm (finding 4).
+    storm (finding 4). Scope matters: the latch is per relay INCARNATION, and a
+    U21 ``new_session=True`` rebind discards it -- see
+    ``test_daemon_tick_sequence_with_escalation_is_bounded_not_a_storm``, which
+    pins the merged-line bound U30's rolling-hour budget supplies in its place.
 
 ``tests/egress/test_hls_relay.py`` still owns the wiring/idempotency contract.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
-from civiccast.egress.daemon import EgressDaemon
+import pytest
+
+from civiccast.egress.daemon import (
+    _FREEZE_ESCALATION_EXHAUSTED_LOG_INTERVAL_S,
+    _FREEZE_ESCALATION_RESTART_BUDGET,
+    EgressDaemon,
+)
 from civiccast.egress.hls_relay import HlsRelaySupervisor
 from civiccast.egress.models import EgressCommand, EgressConfig, EgressSinkSpec
 from civiccast.egress.source_plan import EgressSourcePlan, EgressSourceSegment
 from civiccast.egress.store import InMemoryEgressStore
+
+#: The two loggers the bounded-escalation test reads: the daemon owns the
+#: escalation verdict (ERROR for a restart, CRITICAL when the budget is spent)
+#: and the relay supervisor owns the one heal per incarnate child.
+_DAEMON_LOGGER = "civiccast.egress.daemon"
+_RELAY_LOGGER = "civiccast.egress.hls_relay"
 
 
 def _config(*sinks: EgressSinkSpec, channel_id: str = "gov") -> EgressConfig:
@@ -399,6 +415,88 @@ def _stalled_daemon(tmp_path: Path, *, sink_label: str = "Web"):
     return daemon, store, relay, hls_dir, relay_procs, clock, sink_label
 
 
+def _escalating_daemon(
+    tmp_path: Path,
+) -> tuple[EgressDaemon, HlsRelaySupervisor, list[_FakeProcess], list[_FakeProcess], _FakeClock]:
+    """A stalled daemon whose every WORKER incarnation gets a distinct pid.
+
+    ``_stalled_daemon`` hands every worker the same pid (4242), which is right
+    for the relay-level cases above -- none of them relaunches a worker. The
+    U30 escalation voids its episode when the worker pid changes
+    (``EgressDaemon._poll_freeze_escalation``: "a replacement worker's frozen
+    predecessor-window is not evidence about it"), so pinning the escalation's
+    BOUNDED behaviour needs a relaunch to look like a relaunch. Relay children
+    are distinct pid per spawn either way -- that is what the counters read.
+    """
+    hls_dir = tmp_path / "gov-live-Web"
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")
+
+    worker_procs: list[_FakeProcess] = []
+    relay_procs: list[_FakeProcess] = []
+
+    def worker_starter(_args: list[str]) -> _FakeProcess:
+        worker_procs.append(_FakeProcess(pid=4242 + len(worker_procs)))
+        return worker_procs[-1]
+
+    def relay_starter(_args: list[str], *, stderr_path: Path | None = None) -> _FakeProcess:
+        relay_procs.append(_FakeProcess(pid=900 + len(relay_procs)))
+        return relay_procs[-1]
+
+    clock = _FakeClock(50_000.0)
+    relay = HlsRelaySupervisor(starter=relay_starter, stall_bound_s=0.0)
+    relay._clock = clock
+    store = InMemoryEgressStore()
+    sink = EgressSinkSpec(kind="hls", label="Web", uri=str(hls_dir))
+    store.upsert_config(
+        EgressConfig(channel_id="gov", enabled=True, slate_message="slate", sinks=[sink])
+    )
+    store.enqueue_command(_daemon_command())
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _daemon_source_plan(tmp_path),
+        ffmpeg_starter=worker_starter,
+        hls_relay_supervisor=relay,
+        sink_health_provider=lambda _channel_id, _config, _metrics: {"Web": True},
+    )
+    daemon._monotonic = clock  # type: ignore[method-assign]
+    return daemon, relay, relay_procs, worker_procs, clock
+
+
+def _stall_tick(daemon: EgressDaemon, clock: _FakeClock) -> None:
+    """One 60s daemon tick on a channel that is producing (from the daemon's own
+    point of view) while the on-disk window never advances."""
+    clock.value += 60.0
+    daemon._on_air_confirmed_at["gov"] = clock() - 10_000.0
+    daemon.process_once("gov")
+
+
+def _records(caplog: pytest.LogCaptureFixture, name: str) -> list[str]:
+    return [record.getMessage() for record in caplog.records if record.name == name]
+
+
+def _restart_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Exactly U30's restart verdicts. Filtered on its own wording rather than on
+    ERROR level, because ``_poll_hls_relay`` also logs an ERROR on this channel
+    every tick (the frozen window it is self-healing), and a helper that counted
+    both would mistake "the relay noticed" for "the worker was restarted"."""
+    return [line for line in _records(caplog, _DAEMON_LOGGER) if "crashed-encoder relaunch" in line]
+
+
+def _heal_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        line for line in _records(caplog, _RELAY_LOGGER) if "restarting the relay child" in line
+    ]
+
+
+def _critical_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == _DAEMON_LOGGER and record.levelno >= logging.CRITICAL
+    ]
+
+
 def test_daemon_reports_stalled_but_alive_relay_unhealthy_behavioral(tmp_path: Path) -> None:
     """BEHAVIORAL RED (audit finding 5): frozen-but-alive relay -> health False.
 
@@ -431,10 +529,23 @@ def test_daemon_does_not_self_heal_before_the_channel_is_producing(tmp_path: Pat
     assert not procs[0].terminated
 
 
-def test_daemon_tick_sequence_no_restart_storm_with_frozen_playlist(tmp_path: Path) -> None:
+def test_daemon_tick_sequence_no_restart_storm_with_frozen_playlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """NEGATIVE (audit finding 4, daemon-level): after one heal, the frozen
-    on-disk playlist must NOT re-arm a restart on later daemon ticks."""
+    on-disk playlist must NOT re-arm a restart on later daemon ticks.
+
+    U30's escalation is switched OFF for this case, by one monkeypatch, so the
+    case pins exactly what it has always pinned: the relay supervisor's own
+    one-shot heal latch, ISOLATED from the worker restart the escalation adds.
+    With the escalation live the same frozen playlist does re-arm -- once per
+    relay incarnation, because the escalation's relaunch is a U21 new session
+    and that rebind spawns a fresh child with a fresh latch -- and the sequence
+    is still bounded rather than storming. That companion property is pinned by
+    ``test_daemon_tick_sequence_with_escalation_is_bounded_not_a_storm``.
+    """
     daemon, _store, relay, _hls_dir, procs, clock, _label = _stalled_daemon(tmp_path)
+    monkeypatch.setattr(daemon, "_poll_freeze_escalation", lambda _channel_id: None)
 
     assert daemon.process_once("gov") == 1
     # Relay is already well past its startup grace.
@@ -454,6 +565,87 @@ def test_daemon_tick_sequence_no_restart_storm_with_frozen_playlist(tmp_path: Pa
         daemon.process_once("gov")
     assert len(procs) == 2
     assert not procs[1].terminated
+
+
+def test_daemon_tick_sequence_with_escalation_is_bounded_not_a_storm(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """U30 x U21 on the merged line: the frozen playlist re-arms a heal once per
+    relay INCARNATION, and the whole sequence is still bounded by the
+    escalation's rolling-hour budget -- it stops, loudly, rather than storming.
+
+    This is the property the pre-U30 version of this file asserted as "exactly
+    2". The escalation makes that number wrong and the STRONGER claim true:
+    U30's restart goes through the ordinary crashed-encoder relaunch, the
+    relaunch is a fresh worker session, so U21 rebinds the channel's relay and
+    the replacement child gets its own one-shot latch. So each escalation costs
+    exactly two relay spawns -- the rebind, then the replacement incarnation's
+    single heal -- and the number of escalations is capped by
+    ``_FREEZE_ESCALATION_RESTART_BUDGET`` with a CRITICAL once it is spent.
+    Relay children in total: 1 initial + 1 heal of the initial incarnation +
+    2 per escalation, and then NOTHING further, however long the window stays
+    frozen. Measured on the merged line, that is 8 children and 4 worker
+    incarnations; the tail below keeps ticking long past the refusal and the
+    counts do not move.
+    """
+    daemon, relay, relay_procs, worker_procs, clock = _escalating_daemon(tmp_path)
+
+    assert daemon.process_once("gov") == 1
+    # Relay is already well past its startup grace.
+    next(iter(relay._relays.values())).started_at -= 10_000.0
+    daemon._on_air_confirmed_at["gov"] = clock() - 10_000.0
+
+    daemon.process_once("gov")  # anchor baseline
+    clock.value += 1.0
+    daemon.process_once("gov")  # heal #1 (no escalation can follow yet)
+    assert len(relay_procs) == 2
+    assert len(worker_procs) == 1
+
+    with caplog.at_level(logging.WARNING):
+        # Four 60s ticks per escalation: one to kill the worker, one for the
+        # relaunch's rebind, one for the replacement's heal, one to reach the
+        # 30s post-heal bound again. The last pass is the refusal.
+        for _ in range(4 * (_FREEZE_ESCALATION_RESTART_BUDGET + 1)):
+            _stall_tick(daemon, clock)
+
+        escalations = len(_restart_lines(caplog))
+        assert escalations == _FREEZE_ESCALATION_RESTART_BUDGET, (
+            "every restart the budget allows must actually have been spent"
+        )
+
+        # ONE HEAL PER RELAY INCARNATION: the initial child healed once, and each
+        # of the escalation-caused rebinds healed its replacement once, so the
+        # heal count equals the number of incarnations that ever served.
+        heals = _heal_lines(caplog)
+        assert len(heals) == 1 + _FREEZE_ESCALATION_RESTART_BUDGET
+
+        # ...and the spawn count is exactly the identity that follows: the
+        # initial child, one replacement per heal, one rebind per escalation.
+        assert len(relay_procs) == 1 + len(heals) + escalations
+        assert len(relay_procs) == 1 + 1 + 2 * _FREEZE_ESCALATION_RESTART_BUDGET
+        assert len(worker_procs) == 1 + escalations
+
+        # The refusal: reported CRITICAL, and the worker left alone.
+        criticals = _critical_lines(caplog)
+        assert len(criticals) == 1
+        assert "budget exhausted" in criticals[0]
+        assert "NOT restarting the worker again" in criticals[0]
+        assert not worker_procs[-1].terminated
+
+        # The tail: the window is still frozen for another 20 ticks and NOTHING
+        # more is spawned or killed -- and the operator is re-told on the
+        # throttle, not on every tick (20 ticks would be 20 CRITICALs).
+        relay_procs_at_refusal = len(relay_procs)
+        worker_procs_at_refusal = len(worker_procs)
+        tail_ticks = 20
+        for _ in range(tail_ticks):
+            _stall_tick(daemon, clock)
+        assert len(relay_procs) == relay_procs_at_refusal
+        assert len(worker_procs) == worker_procs_at_refusal
+        assert len(_critical_lines(caplog)) == 1 + int(
+            tail_ticks * 60.0 // _FREEZE_ESCALATION_EXHAUSTED_LOG_INTERVAL_S
+        ), "the report is throttled, not per-tick"
+        assert relay_procs[-1].poll() is None, "the surviving relay child is left running"
 
 
 def test_daemon_reports_never_emitted_relay_unhealthy_when_producing(tmp_path: Path) -> None:
