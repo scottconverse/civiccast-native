@@ -156,8 +156,19 @@ if args.contain == "yes":
             detail = "civiccast.app has no _maybe_contain_own_descendants"
         else:
             entry()
-            contained = True
-            detail = "entry point called"
+            # Report the REAL latched status, not "the entry point existed".
+            # An earlier revision of this helper set contained=True on the mere
+            # presence of the entry point, which let a silently-inactive
+            # containment (guard saw no env var) pass the flag assertion while
+            # the child still survived -- the exact mask this test exists to
+            # prevent.
+            from civiccast.platform.child_containment import containment_status
+
+            status = containment_status()
+            contained = bool(status is not None and status.active)
+            detail = "entry point called; " + (
+                status.detail if status is not None else "no latched status"
+            )
 
 from civiccast.stream._ffmpeg import start_ffmpeg
 
@@ -201,7 +212,7 @@ def _start_parent(tmp_path: Path, *, contain: str) -> tuple[subprocess.Popen[byt
     env["PROGRAMDATA"] = str(tmp_path / "programdata")
     env["CIVICAST_EGRESS_WORK_DIR"] = str(tmp_path / "egress")
     env["CIVICAST_UPLOAD_DIR"] = str(tmp_path / "uploads")
-    env["CIVICAST_SUPERVISED"] = "1"
+    env["CIVICCAST_SUPERVISED"] = "1"
     env["PYTHONPATH"] = os.pathsep.join(
         [str(_REPO_ROOT), *([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])]
     )
