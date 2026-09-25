@@ -141,6 +141,33 @@ not finish in time (reload-commit-timeout)") and the channel stayed dark for
   reaching the operator through the existing `selector-retirement-error` →
   "leg disposal did not reach NULL" path.
 
+### Non-deferred slate reloads restart instead of swapping in place (U14 F3(b), 2026-09-24)
+
+A content reload that will not defer **and** finds the channel on `FALLBACK_SLATE`
+no longer asks the playout worker for the in-place selector swap. That
+combination tore down the live slate leg underneath the input-selector and
+wedged one commit for 270 s in the 2026-09-24 18:48 government incident. It now
+takes the terminate+restart path the daemon already owns, carrying the plan that
+reload had ALREADY prepared so the restart does not conform it a second time
+(that repeat conform measured 133.6 s of the 269.6 s dark window).
+
+- The immediate cut is unchanged policy (`should_defer_switch` is not touched):
+  a due program still interrupts filler at once. Only the mechanism moved.
+- Scope is exactly that combination. A deferred rollover — the ordinary ON_AIR
+  boundary case — and every operator takeover keep the seamless path
+  byte-for-byte, and a restart that is handed no prepared plan behaves exactly
+  as before.
+- The channel comes back up on the plan the reload prepared, and the state row
+  reports that plan's own source; a filler rollover whose prepared plan is the
+  slate comes back up as `FALLBACK_SLATE`, not `ON_AIR`. If the schedule horizon
+  moved while the restart was in flight, the next ordinary rollover corrects it.
+- The restart logs an `INFO` line naming the channel, the reused plan's source
+  label, its directory and the state, so a moved-horizon case is visible.
+- A prepared plan held for a restart that never consumes it — operator stop,
+  drain, service shutdown, a worker exit that takes no pending reload, or a
+  newer attempt superseding it — has its directory released rather than left to
+  the plan cache's own GC.
+
 ## [1.0.0-beta.7] - 2026-09-15
 
 **PUBLISHED.** `v1.0.0-beta.7` was published as a GitHub prerelease from
