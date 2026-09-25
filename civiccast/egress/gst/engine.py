@@ -781,6 +781,15 @@ class GstPlayoutEngine:
         self._source_leg_seq = 0
         self._reload_txn_counter = count(1)
         self._abort_retire_threads: list[threading.Thread] = []
+        # Item 3 (education exit 1, 2026-09-25 14:51:22): an aborted reload leg is
+        # NOT gone when ``_abort_pending_reload`` returns -- its disposal runs on a
+        # worker thread -- so its elements are still live and still post to the bus
+        # for the whole of that window. ``_abort_retire_threads`` above is only the
+        # join list for ``stop()``; this is the attribution record
+        # ``_belongs_to_aborted_leg`` reads, one entry per aborted leg whose
+        # elements have not been proven gone:
+        # ``{"thread": Thread, "elements": list, "retired": bool}``.
+        self._abort_retire_legs: list[dict[str, Any]] = []
         self._pending_reload: dict[str, Any] | None = None
         # A commit keeps its transaction in ``_pending_reload`` until old-leg
         # retirement and main-loop finalization both complete. Only the potentially
@@ -1704,6 +1713,23 @@ class GstPlayoutEngine:
                     flush=True,
                 )
                 self._abort_pending_overlay_swap(overlay_layer_name, reason="error")
+                return True
+            # Item 3: last attribution before the fatal tail. A leg the engine has
+            # ALREADY aborted is not gone until its background retirement finishes,
+            # and in that window neither ``_belongs_to_pending_reload`` (slot
+            # cleared) nor ``_belongs_to_retiring_reload`` (an abort never had a
+            # commit) can attribute it -- so its teardown used to decide the
+            # worker's fate. See ``_belongs_to_aborted_leg``.
+            if self._belongs_to_aborted_leg(message.src):
+                err, _debug = message.parse_error()
+                source_name = "unknown"
+                with contextlib.suppress(Exception):
+                    source_name = message.src.get_name()
+                print(
+                    "CTRL reload: contained error from an already-aborted reload leg "
+                    f"(source={source_name}): {err}",
+                    flush=True,
+                )
                 return True
             self._error = message.parse_error()
             if self._loop is not None:
@@ -4651,12 +4677,25 @@ class GstPlayoutEngine:
         elements: list[Gst.Element],
     ) -> None:
         """Retire an aborted leg on a worker thread; see ``_abort_pending_reload``."""
+        # Item 3: reap a previous aborted leg only once it is provably gone -- its
+        # retirement thread finished AND that retirement reported complete. Until
+        # both hold, ``_belongs_to_aborted_leg`` keeps attributing its elements, so
+        # the teardown of a leg this engine already rejected cannot take a still-
+        # producing channel off air. A leg whose disposal FAILED is deliberately
+        # kept: it is still in the pipeline, and the WARN below is the evidence.
+        self._abort_retire_legs = [
+            record
+            for record in self._abort_retire_legs
+            if record["thread"].is_alive() or not record["retired"]
+        ]
+        record: dict[str, Any] = {"thread": None, "elements": list(elements), "retired": False}
 
         def _retire() -> None:
             try:
                 retired, detail = self._dispose_source_leg(video_pad, audio_pad, elements)
             except Exception as exc:  # defensive: disposal returns a failure result
                 retired, detail = False, f"unexpected abort retirement error: {exc!r}"
+            record["retired"] = retired
             if not retired:
                 print(
                     f"WARN: aborted reload leg ({reason}) did not retire cleanly: {detail}",
@@ -4666,7 +4705,9 @@ class GstPlayoutEngine:
 
         self._abort_retire_threads = [t for t in self._abort_retire_threads if t.is_alive()]
         thread = threading.Thread(target=_retire, name="cc-abort-retire", daemon=True)
+        record["thread"] = thread
         self._abort_retire_threads.append(thread)
+        self._abort_retire_legs.append(record)
         try:
             thread.start()
         except Exception as exc:
@@ -4674,6 +4715,7 @@ class GstPlayoutEngine:
             # in-line retirement this method exists to move OFF the loop. The
             # blocking risk is the lesser problem versus never cleaning up at all.
             self._abort_retire_threads.remove(thread)
+            self._abort_retire_legs.remove(record)
             print(
                 f"WARN: aborted reload leg ({reason}) retiring inline; "
                 f"worker thread did not start: {exc!r}",
@@ -4839,6 +4881,40 @@ class GstPlayoutEngine:
             if node in old_elements:
                 return True
             node = node.get_parent() if hasattr(node, "get_parent") else None
+        return False
+
+    def _belongs_to_aborted_leg(self, src: object) -> bool:
+        """True when ``src`` is an element of a leg this engine has ALREADY aborted.
+
+        Item 3 (education, 2026-09-25 14:51:22; ``gst-worker.stdout.log`` 2649-2650):
+        ``_abort_pending_reload`` clears ``_pending_reload`` the moment it rejects
+        the new leg, but the leg is not gone -- its disposal runs on a worker thread
+        (``_start_aborted_leg_retirement``). Between those two instants the leg's
+        elements are still live and still post to the bus, and BOTH predicates above
+        return False for an element that provably IS the aborted leg's:
+        ``_belongs_to_pending_reload`` early-outs on the cleared slot, and
+        ``_belongs_to_retiring_reload`` needs a commit that an abort never had. So
+        the second error from the aborted leg's own decodebin fell through every
+        containment branch to the fatal tail, and the worker exited
+        (``WORKER_RESULT {'error': (gerror=... decodebin14 ... all streams without
+        buffers)}``, exit_code=1) on a channel that was still producing output.
+
+        Containing it is what the leg's own state already promises: before the
+        abort's holds are lifted it is DROP-fenced at its own src pads
+        (``_detach_leg_from_selectors``), so nothing it emits can reach the
+        selector, the mux, or the on-air output -- its errors are bookkeeping, not
+        airtime. Attributing by parent walk, exactly like the two predicates above,
+        so a decodebin-internal decoder is attributed to the leg that owns it.
+        """
+        if src is None:
+            return False
+        for record in self._abort_retire_legs:
+            elements = record["elements"]
+            node = src
+            while node is not None:
+                if node in elements:
+                    return True
+                node = node.get_parent() if hasattr(node, "get_parent") else None
         return False
 
     def _element_count(self) -> int:
