@@ -17,10 +17,10 @@
 # installed-runtime validation seam (gst-discoverer/gst-inspect) and must ship
 # in the same verified closure as the Python bindings.
 
-gstreamer-libs==1.28.5
-gstreamer-plugins==1.28.5
-gstreamer-plugins-restricted==1.28.5
-gstreamer-plugins-libs==1.28.5
-gstreamer-python==1.28.5
-gstreamer-ext-runtime==1.28.5
-gstreamer-cli==1.28.5
+gstreamer-libs==1.28.7
+gstreamer-plugins==1.28.7
+gstreamer-plugins-restricted==1.28.7
+gstreamer-plugins-libs==1.28.7
+gstreamer-python==1.28.7
+gstreamer-ext-runtime==1.28.7
+gstreamer-cli==1.28.7
