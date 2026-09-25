@@ -3515,11 +3515,30 @@ class GstPlayoutEngine:
             reason = "; ".join(failures)
             print(f"WARN: old-tail containment did not arm: {reason}", flush=True)
             return False, reason
+        # The 18:48:11 wedge dump put the retirement thread inside
+        # ``release_request_pad``, but the last stage line on stderr was
+        # ``stage=selector-handoff-confirmed`` -- one step before this loop, so
+        # the log could not say whether the loop was even entered. Entry names
+        # the streams about to be released; each stream then prints *after* its
+        # own release call returns, so a stall leaves that stream's line missing
+        # and identifies the stalled stream by elimination.
+        print(
+            "CTRL reload diagnostic: stage=retiring-tail-release-entered streams="
+            f"{','.join(stream for stream, _selector, _pad in tails) or '-'}",
+            file=sys.stderr,
+            flush=True,
+        )
         for stream, selector, selector_pad in tails:
             try:
                 selector.release_request_pad(selector_pad)
             except Exception as exc:
                 failures.append(f"selector-retirement-error:{stream}:{exc!r}")
+                continue
+            print(
+                f"CTRL reload diagnostic: stage=retiring-tail-released stream={stream}",
+                file=sys.stderr,
+                flush=True,
+            )
         print("CTRL reload diagnostic: stage=old-tail-detached", file=sys.stderr, flush=True)
         for index, element in enumerate(pending["old_elements"]):
             self._null_retiring_element(element, index + 1, failures)

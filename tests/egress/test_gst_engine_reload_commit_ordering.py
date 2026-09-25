@@ -1030,6 +1030,71 @@ def test_captions_av_pending_selector_switches_confirm_before_old_tail_retiremen
     assert "commit did not finish" not in captured.err
 
 
+def test_retiring_tail_release_loop_names_entry_and_every_released_stream(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Localize a future release-loop wedge to one stream, not just one method.
+
+    The 18:48:11 wedge dump put the blocking retirement thread inside
+    ``release_request_pad``, but the last stage line on that stderr was
+    ``stage=selector-handoff-confirmed`` -- one step *before* the loop, so the
+    surviving log could not say whether the loop was even entered. The loop
+    prints its entry (with the streams it is about to release) and one line per
+    release that actually returned, so a stall leaves the stalled stream's line
+    missing and names it by elimination.
+    """
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+
+    class _OrderedStderr:
+        """Interleave stderr lines into the same ordered log as the Gst calls.
+
+        Text position inside captured stderr cannot prove the entry line
+        preceded the release *call*; one shared ordered list can.
+        """
+
+        def write(self, text: str) -> int:
+            stripped = text.strip()
+            if stripped:
+                recorder.calls.append(f"stderr:{stripped}")
+            return len(text)
+
+        def flush(self) -> None:
+            pass
+
+    monkeypatch.setattr(sys, "stderr", _OrderedStderr())
+
+    pending: dict[str, Any] = {
+        "old_video_pad": _FakeOldPad("old-video", recorder, _FakePeer("old-video-peer", recorder)),
+        "old_audio_pad": _FakeOldPad("old-audio", recorder, _FakePeer("old-audio-peer", recorder)),
+        "old_elements": [],
+        "old_tail_drop_probes": [],
+    }
+
+    ok, reason = engine._dispose_confirmed_old_leg(pending)
+
+    assert ok is True
+    assert reason is None
+    calls = recorder.calls
+    entered = _index_of(
+        calls, "stderr:CTRL reload diagnostic: stage=retiring-tail-release-entered streams="
+    )
+    release_video = _index_of(calls, "video_sel.release_request_pad:old-video")
+    release_audio = _index_of(calls, "audio_sel.release_request_pad:old-audio")
+    released_video = _index_of(
+        calls, "stderr:CTRL reload diagnostic: stage=retiring-tail-released stream=video"
+    )
+    released_audio = _index_of(
+        calls, "stderr:CTRL reload diagnostic: stage=retiring-tail-released stream=audio"
+    )
+    detached = _index_of(calls, "stderr:CTRL reload diagnostic: stage=old-tail-detached")
+
+    assert calls[entered].endswith("streams=video,audio"), calls
+    assert entered < release_video < released_video, calls
+    assert released_video < release_audio < released_audio, calls
+    assert released_audio < detached, calls
+
+
 def test_post_handoff_old_tail_fence_failure_is_reported_without_stopping_output(
     engine_module, monkeypatch: pytest.MonkeyPatch
 ) -> None:
