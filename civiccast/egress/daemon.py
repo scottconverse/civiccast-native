@@ -2435,9 +2435,9 @@ class EgressDaemon:
                     "HLS relay child for channel %s is no longer running (disk full, "
                     "ffmpeg missing, or OOM are the known causes; a relay child whose "
                     "probing found no video exits by design -- see hls_relay's "
-                    "required video mapping). The main encoder is unaffected; the "
-                    "relay is being restarted now, bounded and backed off, to "
-                    "re-establish its window.",
+                    "required video mapping). The main encoder is unaffected. The "
+                    "relay is recovered on a bounded, backed-off cadence, so it may "
+                    "briefly have no live window while that cadence runs.",
                     channel_id,
                 )
             # BETA.10 U12: recover a dead relay child on THIS tick instead of
