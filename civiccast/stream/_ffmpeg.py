@@ -15,6 +15,7 @@ when the operator UI needs live progress. The signature is forward-compatible.
 from __future__ import annotations
 
 import contextlib
+import os
 import re
 import shutil
 import subprocess
@@ -437,6 +438,14 @@ _DEFAULT_TIMEOUT_SECONDS = 6 * 3600  # generous: won't kill a legitimate large c
 _CANCEL_POLL_SECONDS = 0.1
 _CANCEL_TERMINATE_SECONDS = 2.0
 
+#: U29: the POSIX counterpart of Windows' BELOW_NORMAL priority class -- one
+#: scheduling step down, so unattended background work yields to the live
+#: encoders, live caption ASR and the air path's own preparation. ``nice``
+#: values are relative and capped at 19 by the kernel; 10 is the conventional
+#: "background job" step and leaves the warm comfortably above the 19 a
+#: batch-of-last-resort would use.
+_LOWER_PRIORITY_NICE_ADJUSTMENT: Final = 10
+
 
 class FfmpegCancelledError(RuntimeError):
     """Raised when an owned ffmpeg process is stopped by its caller."""
@@ -488,7 +497,19 @@ def run_ffmpeg(
     # Security: shell=False (the default); args is an explicit list, never a string.
     cmd = [ffmpeg_path, "-y", *resolved_args]
 
-    creationflags = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0) if lower_priority else 0
+    # U29: one priority knob, two platform spellings.  Windows lowers the
+    # process's priority class at creation; POSIX lowers it with ``nice``,
+    # which must be an argv PREFIX (nice execs ffmpeg itself) -- NOT
+    # ``preexec_fn``, which is unsafe to use from any thread but the one that
+    # called subprocess and the warm runs on its own worker thread.  A POSIX
+    # host with no ``nice`` on PATH runs ffmpeg at normal priority rather than
+    # failing the job: degrading the priority hint must never fail the work.
+    creationflags = 0
+    if lower_priority:
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+        elif shutil.which("nice") is not None:
+            cmd = ["nice", "-n", str(_LOWER_PRIORITY_NICE_ADJUSTMENT), *cmd]
 
     if cancel_event is None:
         completed = subprocess.run(  # noqa: S603
