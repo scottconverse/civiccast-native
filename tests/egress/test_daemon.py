@@ -2908,7 +2908,18 @@ def test_retry_collision_a_stalled_retry_that_overwrites_the_recorded_value_stil
 def test_content_reload_never_defers_switch_off_of_fallback_slate(tmp_path: Path) -> None:
     """Issue #157: filler must be interrupted the moment a due program is
     ready -- a reload issued from FALLBACK_SLATE must never defer (wait out
-    the rest of a slate/filler leg's own "duration")."""
+    the rest of a slate/filler leg's own "duration").
+
+    F3(b) (U14, owner-authorized 2026-09-24): that immediate cut no longer
+    goes through the engine's in-place selector swap at all -- doing so tore
+    down the live slate leg under the selector and wedged a commit for 270 s
+    (U13). The policy is unchanged (the switch still must not defer); only the
+    MECHANISM moved to the daemon's terminate+restart path, which is why no
+    reload request reaches the strategy here and the reload reports "not
+    armed" so its caller runs the restart. With no preparer configured there
+    is nothing to carry, so the restart re-resolves the plan exactly as a
+    declined arm always did -- the case _hold_fallback_slate_restart_plan's
+    tests cover WITH a preparer, where the prepared plan is reused."""
     store = InMemoryEgressStore()
     store.upsert_config(_config())
     processes = [_FakeProcess(pid=111)]
@@ -2937,8 +2948,11 @@ def test_content_reload_never_defers_switch_off_of_fallback_slate(tmp_path: Path
     assert state is not None
     applied = daemon._try_content_reload("gov", state, processes[0], rollover_plan_end_at=None)  # type: ignore[attr-defined]
 
-    assert applied is True
-    assert strategy.switch_at_end_of_current_calls == [False]
+    assert applied is False
+    # No seamless request was sent to the worker, so no switch policy was ever
+    # expressed to it -- the immediate cut is now the restart path's business.
+    assert strategy.reload_calls == []
+    assert strategy.switch_at_end_of_current_calls == []
 
 
 def test_content_reload_never_defers_switch_during_a_manual_override(tmp_path: Path) -> None:
@@ -7356,3 +7370,415 @@ def test_peek_pending_commands_does_not_consume(tmp_path: Path) -> None:
     assert store.peek_pending_commands("other") == []
     assert [c.command_id for c in store.pop_pending_commands("gov")] == ["cmd-start", "cmd-later"]
     assert store.peek_pending_commands("gov") == []
+
+
+# ---------------------------------------------------------------------------
+# F3(b) (U14, owner-authorized 2026-09-24): a NON-deferred content reload issued
+# while the channel is on FALLBACK_SLATE must not attempt the in-place selector
+# swap -- that combination tore down the live slate leg under the selector and
+# wedged one commit for 270 s on 2026-09-24 (U13). It takes the daemon's own
+# terminate+restart path instead, carrying the plan the reload ALREADY prepared
+# so the restart does not conform it a second time (measured 133.6 s for the
+# 18:48 government program).
+# ---------------------------------------------------------------------------
+
+
+class _PlanLabelRecordingStrategy(_FakeContentReloadStrategy):
+    """Records the label of every plan a ``start`` was handed, so a test can
+    prove WHICH plan the restarted worker actually airs."""
+
+    def __init__(self, processes: list[_FakeProcess], started: list[_FakeProcess]) -> None:
+        super().__init__(processes, started)
+        self.started_labels: list[str] = []
+
+    def start(self, request: EncoderStartRequest) -> EncoderStartResult:
+        self.started_labels.append(request.source_plan.segments[0].label)
+        return super().start(request)
+
+
+def _hold_fallback_slate_restart_plan(tmp_path: Path) -> SimpleNamespace:
+    """Drive one FALLBACK_SLATE + immediate (non-deferred) program-due content
+    reload up to the moment its prepared plan is HELD for the restart, and
+    return that run's observation surface.
+
+    By the time this returns the slate worker has been terminated (that is what
+    triggers the restart) but the restart itself has NOT run: the next
+    ``process_once`` tick is what consumes the held plan."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    released: list[Any] = []  # hook is Path | None
+    started: list[_FakeProcess] = []
+    prepared_labels: list[str] = []
+    provider_calls: list[str] = []
+    counter = {"n": 0}
+    base_prepare = _prepare_with_tracked_plan_dirs(tmp_path, counter)
+    old_process = _FakeProcess(pid=111)
+    new_process = _FakeProcess(pid=222)
+    strategy = _PlanLabelRecordingStrategy([new_process], started)
+
+    def source_provider(channel_id: str) -> EgressSourcePlan:
+        provider_calls.append(channel_id)
+        return _source_plan_with_label(tmp_path, "Due program")
+
+    def prepare(plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
+        prepared_labels.append(plan.segments[0].label)
+        return base_prepare(plan, config)
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        encoder_strategy=strategy,
+        source_preparer=prepare,
+        prepared_plan_release=released.append,
+    )
+    daemon.enable_async_preparation()
+    # A live worker already airing the fallback slate (no process_once start
+    # needed -- _request_reload only reads state + the tracked process).
+    daemon._processes["gov"] = old_process
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="FALLBACK_SLATE",
+            current_source_label="CivicCast slate",
+            updated_at=datetime(2026, 6, 12, 6, 0, tzinfo=UTC),
+        )
+    )
+
+    daemon._request_reload("gov")
+    assert daemon._preparations["gov"].kind == "reload"
+    daemon._preparations["gov"].future.result(timeout=10)
+    daemon.process_once("gov")  # completes the preparation: hold the plan + kill the slate worker
+
+    return SimpleNamespace(
+        daemon=daemon,
+        store=store,
+        strategy=strategy,
+        released=released,
+        started=started,
+        prepared_labels=prepared_labels,
+        provider_calls=provider_calls,
+        old_process=old_process,
+        new_process=new_process,
+    )
+
+
+def test_fallback_slate_immediate_reload_restarts_onto_the_plan_it_prepared(
+    tmp_path: Path,
+) -> None:
+    """The whole F3(b) contract, in one run: no seamless reload is requested,
+    the worker is restarted, the preparer ran exactly ONCE for the reload, and
+    that restart airs the report's own plan and directory."""
+    run = _hold_fallback_slate_restart_plan(tmp_path)
+
+    # Nothing was sent to the worker's in-place reload seam at all.
+    assert run.strategy.reload_calls == []
+    assert run.strategy.switch_at_end_of_current_calls == []
+    # ... and the slate worker was terminated, which is the restart's trigger.
+    assert run.old_process.terminated is True
+    # Exactly one conform for this reload, and its directory is the one held --
+    # live for the preparer's GC while the restart is in flight.
+    assert run.prepared_labels == ["Due program"]
+    assert run.provider_calls == ["gov"]
+    assert run.released == []
+    assert run.daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-1"})
+
+    run.daemon.process_once("gov")  # the pending-reload restart consumes it
+
+    assert run.strategy.started_labels == ["Due program"]
+    assert run.started == [run.new_process]
+    assert run.daemon._processes["gov"] is run.new_process
+    # The restarted start aired the prepared directory itself, and neither
+    # re-prepared nor re-resolved the plan.
+    assert run.daemon._active_prepared_plan_dir["gov"] == tmp_path / "plan-1"
+    assert run.prepared_labels == ["Due program"]
+    assert run.provider_calls == ["gov"]
+    assert run.released == []
+    # Consumed, so nothing is held any more.
+    assert run.daemon._prepared_restart_plans == {}
+    state = run.store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Due program"
+
+
+def test_fallback_slate_immediate_reload_reuses_the_plan_on_the_synchronous_path(
+    tmp_path: Path,
+) -> None:
+    """Same contract through the SYNCHRONOUS preparation path (no
+    ``enable_async_preparation`` executor): the steps finish inline, so the
+    decision reaches ``_try_content_reload`` directly. Without handling it
+    there the carry would be dropped and the reload would silently never
+    restart."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    released: list[Any] = []  # hook is Path | None
+    started: list[_FakeProcess] = []
+    prepared_labels: list[str] = []
+    counter = {"n": 0}
+    base_prepare = _prepare_with_tracked_plan_dirs(tmp_path, counter)
+    old_process = _FakeProcess(pid=111)
+    new_process = _FakeProcess(pid=222)
+    strategy = _PlanLabelRecordingStrategy([new_process], started)
+
+    def prepare(plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
+        prepared_labels.append(plan.segments[0].label)
+        return base_prepare(plan, config)
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Due program"),
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        encoder_strategy=strategy,
+        source_preparer=prepare,
+        prepared_plan_release=released.append,
+    )
+    daemon._processes["gov"] = old_process
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="FALLBACK_SLATE",
+            current_source_label="CivicCast slate",
+            updated_at=datetime(2026, 6, 12, 6, 0, tzinfo=UTC),
+        )
+    )
+
+    state = store.read_state("gov")
+    assert state is not None
+    applied = daemon._try_content_reload("gov", state, old_process, rollover_plan_end_at=None)
+
+    assert applied is False
+    assert strategy.reload_calls == []
+    assert strategy.switch_at_end_of_current_calls == []
+    assert prepared_labels == ["Due program"]
+    assert old_process.terminated is True
+    assert released == []
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-1"})
+
+    daemon.process_once("gov")
+
+    assert strategy.started_labels == ["Due program"]
+    assert prepared_labels == ["Due program"]
+    assert daemon._active_prepared_plan_dir["gov"] == tmp_path / "plan-1"
+    assert released == []
+
+
+def test_fallback_slate_immediate_filler_rollover_comes_back_up_on_the_slate(
+    tmp_path: Path,
+) -> None:
+    """A force-fallback filler rollover is the one route to a non-deferred
+    reload whose prepared plan is the SLATE itself. The restart must publish
+    FALLBACK_SLATE for it -- not ON_AIR over a slate plan."""
+    released: list[Any] = []  # hook is Path | None
+    started: list[_FakeProcess] = []
+    prepared_labels: list[str] = []
+    counter = {"n": 0}
+    base_prepare = _prepare_with_tracked_plan_dirs(tmp_path, counter)
+    old_process = _FakeProcess(pid=111)
+    new_process = _FakeProcess(pid=222)
+    strategy = _PlanLabelRecordingStrategy([new_process], started)
+
+    def prepare(plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
+        prepared_labels.append(plan.segments[0].label)
+        return base_prepare(plan, config)
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Live feed"),
+        boundary_source_plan_provider=lambda _cid, _at: None,
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        encoder_strategy=strategy,
+        source_preparer=prepare,
+        prepared_plan_release=released.append,
+    )
+    daemon.enable_async_preparation()
+    daemon._processes["gov"] = old_process
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="FALLBACK_SLATE",
+            current_source_label="CivicCast slate",
+            updated_at=datetime(2026, 6, 12, 6, 0, tzinfo=UTC),
+        )
+    )
+    # A horizon that has already passed is what makes should_defer_switch cut
+    # immediately even for a filler rollover.
+    command_id = "rollover-filler"
+    daemon.record_rollover_plan_end(
+        "gov",
+        datetime.now(UTC) - timedelta(minutes=5),
+        command_id=command_id,
+        force_fallback=True,
+    )
+    daemon._request_reload("gov", command_id=command_id)
+    assert daemon._preparations["gov"].kind == "reload"
+    daemon._preparations["gov"].future.result(timeout=10)
+    daemon.process_once("gov")
+
+    assert strategy.reload_calls == []
+    assert prepared_labels == ["Fallback slate"]
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-1"})
+
+    daemon.process_once("gov")
+
+    assert strategy.started_labels == ["Fallback slate"]
+    assert prepared_labels == ["Fallback slate"]
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+    assert state.current_source_label == "Fallback slate"
+
+
+def test_on_air_deferred_rollover_still_arms_the_seamless_swap_with_a_preparer(
+    tmp_path: Path,
+) -> None:
+    """F3(b) is scoped to FALLBACK_SLATE + a NON-deferred switch. An ON_AIR
+    rollover that defers to the outgoing leg's own EOS must keep the in-place
+    selector swap exactly as it was -- even with a preparer configured, and
+    even though that prepare completes synchronously here."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    released: list[Any] = []  # hook is Path | None
+    started: list[_FakeProcess] = []
+    prepared_labels: list[str] = []
+    counter = {"n": 0}
+    base_prepare = _prepare_with_tracked_plan_dirs(tmp_path, counter)
+    live_process = _FakeProcess(pid=111)
+    strategy = _PlanLabelRecordingStrategy([_FakeProcess(pid=222)], started)
+
+    def prepare(plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
+        prepared_labels.append(plan.segments[0].label)
+        return base_prepare(plan, config)
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Live feed"),
+        boundary_source_plan_provider=lambda _cid, _at: _source_plan_with_label(
+            tmp_path, "Due program"
+        ),
+        encoder_strategy=strategy,
+        source_preparer=prepare,
+        prepared_plan_release=released.append,
+    )
+    daemon._processes["gov"] = live_process
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="ON_AIR",
+            current_source_label="Live feed",
+            updated_at=datetime(2026, 6, 12, 6, 0, tzinfo=UTC),
+        )
+    )
+    command_id = "rollover-on-air"
+    daemon.record_rollover_plan_end(
+        "gov", datetime.now(UTC) + timedelta(minutes=20), command_id=command_id
+    )
+    daemon._request_reload("gov", command_id=command_id)
+
+    # Deferred: the swap is armed against the outgoing leg's own EOS.
+    assert strategy.reload_calls == ["Due program"]
+    assert strategy.switch_at_end_of_current_calls == [True]
+    # Nothing was terminated, nothing was restarted, nothing was released.
+    assert live_process.terminated is False
+    assert daemon._processes["gov"] is live_process
+    assert started == []
+    assert prepared_labels == ["Due program"]
+    assert released == []
+    # The seamless path's own tracking holds the prepared plan while it settles.
+    assert daemon.live_prepared_plan_dirs("gov") == frozenset({tmp_path / "plan-1"})
+    assert daemon._prepared_restart_plans == {}
+
+
+@pytest.mark.parametrize("tracked_process", [True, False])
+def test_held_prepared_restart_plan_is_released_on_operator_stop(
+    tmp_path: Path, tracked_process: bool
+) -> None:
+    run = _hold_fallback_slate_restart_plan(tmp_path)
+    if not tracked_process:
+        run.daemon._processes.pop("gov", None)
+
+    run.daemon._stop("gov", draining=False)
+
+    assert run.released == [tmp_path / "plan-1"]
+    assert run.daemon._prepared_restart_plans == {}
+    assert run.daemon.live_prepared_plan_dirs("gov") == frozenset()
+
+
+@pytest.mark.parametrize("tracked_process", [True, False])
+def test_held_prepared_restart_plan_is_released_on_drain(
+    tmp_path: Path, tracked_process: bool
+) -> None:
+    run = _hold_fallback_slate_restart_plan(tmp_path)
+    if not tracked_process:
+        run.daemon._processes.pop("gov", None)
+
+    run.daemon._drain("gov")
+
+    assert run.released == [tmp_path / "plan-1"]
+    assert run.daemon._prepared_restart_plans == {}
+    assert run.daemon.live_prepared_plan_dirs("gov") == frozenset()
+
+
+@pytest.mark.parametrize("tracked_process", [True, False])
+def test_held_prepared_restart_plan_is_released_on_service_shutdown(
+    tmp_path: Path, tracked_process: bool
+) -> None:
+    run = _hold_fallback_slate_restart_plan(tmp_path)
+    if not tracked_process:
+        run.daemon._processes.pop("gov", None)
+
+    run.daemon.stop_all_channels(deadline_seconds=0.0)
+
+    assert run.released == [tmp_path / "plan-1"]
+    assert run.daemon._prepared_restart_plans == {}
+    assert run.daemon.live_prepared_plan_dirs("gov") == frozenset()
+
+
+def test_held_prepared_restart_plan_is_released_when_the_exit_takes_no_pending_reload(
+    tmp_path: Path,
+) -> None:
+    """A worker exit that does NOT take the pending-reload restart (here: it
+    crashes instead of being the deliberate reload kill) can never air the held
+    plan, so it must be released -- and nothing may restart onto it later."""
+    run = _hold_fallback_slate_restart_plan(tmp_path)
+    # The exit arrives as a crash with no pending reload: drop both pieces of
+    # bookkeeping the deliberate-kill path had set.
+    run.daemon._pending_reloads.pop("gov", None)
+    run.daemon._reload_kills.discard("gov")
+    run.old_process.returncode = 1
+
+    run.daemon.process_once("gov")
+
+    assert run.released == [tmp_path / "plan-1"]
+    assert run.daemon._prepared_restart_plans == {}
+    assert run.strategy.started_labels == []
+    assert run.started == []
+
+
+def test_held_prepared_restart_plan_is_released_when_a_newer_one_supersedes_it(
+    tmp_path: Path,
+) -> None:
+    """Two prepared restarts for one channel must not both hold a directory:
+    the superseded plan is released, the newer one is held."""
+    from civiccast.egress.daemon import _ReusePreparedPlan
+
+    run = _hold_fallback_slate_restart_plan(tmp_path)
+    newer_dir = tmp_path / "plan-2"
+    newer_dir.mkdir()
+    newer = _ReusePreparedPlan(
+        report=SourcePreparationReport(
+            source_plan=_source_plan_with_label(tmp_path, "Newer"), records=(), plan_dir=newer_dir
+        ),
+        target_state="ON_AIR",
+    )
+
+    run.daemon._stash_prepared_restart_plan("gov", newer)
+
+    assert run.released == [tmp_path / "plan-1"]
+    assert run.daemon.live_prepared_plan_dirs("gov") == frozenset({newer_dir})

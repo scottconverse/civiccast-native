@@ -383,8 +383,43 @@ class _PreparationRequest(NamedTuple):
     config: EgressConfig
 
 
+class _ReusePreparedPlan(NamedTuple):
+    """F3(b): the outcome a reload's steps return when it must NOT take the
+    in-place selector swap because the channel is on FALLBACK_SLATE and the
+    policy declined to defer, carrying the preparation report that reload had
+    ALREADY produced.
+
+    A non-deferred reload out of FALLBACK_SLATE tears down the live slate leg
+    under the input-selector, which wedged for 270 s on 2026-09-24 (U13), so
+    that combination is routed to the terminate+restart path instead. Carrying
+    the report is what keeps that restart from conforming the same plan a
+    second time (measured 133.6 s for the 18:48 government program).
+
+    Never constructed without a report: when this daemon has no
+    ``source_preparer`` there is nothing to reuse, so the steps return plain
+    ``False`` and the ordinary restart re-resolves the plan.
+
+    ``target_state`` is the running state the SEAMLESS path would have
+    published for this same report (``_reload_steps``' own ``target_state``,
+    ``FALLBACK_SLATE`` only for a force-fallback filler rollover). The restart
+    reproduces it rather than re-deriving it, so a reused slate plan cannot be
+    published as ``ON_AIR`` and vice versa."""
+
+    report: SourcePreparationReport
+    target_state: EgressState
+
+
+# What a preparation's steps can hand back when they finish: ``True``/``False``
+# for a reload's arm outcome, ``None`` for a start that ran (or deliberately
+# declined), a ``_PreparationState`` for the one state a start can report, and
+# ``_ReusePreparedPlan`` for an F3(b) reload that declined the in-place swap
+# while holding a plan the restart must air instead of re-preparing.
+_PreparationOutcome = bool | _PreparationState | _ReusePreparedPlan | None
+
 _PreparationSteps = Generator[
-    _PreparationRequest, SourcePreparationReport, bool | _PreparationState | None
+    _PreparationRequest,
+    SourcePreparationReport,
+    _PreparationOutcome,
 ]
 AsyncSourcePreparerFunc = Callable[
     [EgressSourcePlan, EgressConfig, Event, frozenset[Path]], SourcePreparationReport
@@ -785,6 +820,14 @@ class EgressDaemon:
         # settles applied; the PREVIOUS value is released at that point (see
         # ``_poll_reload_settlement``) rather than left for GC alone.
         self._active_prepared_plan_dir: dict[str, Path] = {}
+        # F3(b): the plan a non-deferred FALLBACK_SLATE reload already
+        # prepared (carried in a ``_ReusePreparedPlan``), held between "the
+        # restart was decided" and "the restart's ``_start`` consumes it". Its
+        # ``report.plan_dir`` is part of ``live_prepared_plan_dirs`` while it
+        # is held, and EVERY path that does not consume it must release it
+        # (see ``_discard_prepared_restart_plan``) -- an entry here is a live
+        # directory the preparer's GC may not evict.
+        self._prepared_restart_plans: dict[str, _ReusePreparedPlan] = {}
         self._prepared_plan_release = prepared_plan_release
         # Hostile-review follow-up (2026-09-06), item 1: the reload_id a
         # discarded (worker-exited/superseded/restarted) pending settlement
@@ -844,7 +887,7 @@ class EgressDaemon:
 
     def _drive_preparation(
         self, channel_id: str, steps: _PreparationSteps, *, kind: str
-    ) -> bool | _PreparationState | None:
+    ) -> _PreparationOutcome:
         with self._preparation_guard:
             if self._preparation_closed:
                 steps.close()
@@ -852,7 +895,8 @@ class EgressDaemon:
             try:
                 request = next(steps)
             except StopIteration as done:
-                return cast(bool | _PreparationState | None, done.value)
+                # ``Generator``'s StopIteration value is typed ``Any``.
+                return cast(_PreparationOutcome, done.value)
             preparer = self._source_preparer
             assert preparer is not None
             executor = self._preparation_executor
@@ -865,7 +909,7 @@ class EgressDaemon:
                     else:
                         steps.send(report)
                 except StopIteration as done:
-                    return cast(bool | _PreparationState | None, done.value)
+                    return cast(_PreparationOutcome, done.value)
                 raise RuntimeError("Unexpected second media preparation in one operation")
 
             cancel = Event()
@@ -906,7 +950,7 @@ class EgressDaemon:
                 return
             self._preparations.pop(channel_id)
             completed = False
-            outcome: bool | _PreparationState | None = None
+            outcome: _PreparationOutcome = None
             try:
                 try:
                     report = pending.future.result()
@@ -916,11 +960,17 @@ class EgressDaemon:
                     pending.steps.send(report)
             except StopIteration as done:
                 completed = True
-                outcome = cast(bool | _PreparationState | None, done.value)
+                outcome = cast(_PreparationOutcome, done.value)
             finally:
                 pending.steps.close()
             if completed:
-                if pending.kind == "reload" and outcome is False:
+                if isinstance(outcome, _ReusePreparedPlan):
+                    # F3(b): the reload declined the in-place selector swap
+                    # (FALLBACK_SLATE + non-deferred) and handed back the plan
+                    # it had already prepared. Terminate+restart, carrying that
+                    # report so the restart does not conform it again.
+                    self._fall_back_to_restart_for_reused_plan(channel_id, outcome)
+                elif pending.kind == "reload" and outcome is False:
                     self._fall_back_to_restart_reload(channel_id)
                 elif pending.kind == "start" and outcome is _PreparationState.START_EXPIRED:
                     self._start(
@@ -1439,27 +1489,50 @@ class EgressDaemon:
         force_fallback_reason: str | None = None,
         resolved_plan: EgressSourcePlan | None = None,
         plan_resolution_started_at: float | None = None,
+        prepared_reload: _ReusePreparedPlan | None = None,
     ) -> None:
         with self._preparation_guard:
             if channel_id in self._preparations:
+                # F3(b): a newer operation already owns this channel's
+                # preparation slot, so this restart never runs and the plan it
+                # was handed will not be aired. Release it here rather than let
+                # a caller-held plan leak past its restart (the caller has
+                # already dropped its own reference).
+                self._release_prepared_restart_plan(
+                    channel_id, prepared_reload, reason="a newer preparation owns this channel"
+                )
                 return
-            result = self._drive_preparation(
-                channel_id,
-                self._start_steps(
+            try:
+                result = self._drive_preparation(
                     channel_id,
-                    previous_state=previous_state,
-                    previous_source_label=previous_source_label,
-                    force_fallback_slate=force_fallback_slate,
-                    force_fallback_reason=force_fallback_reason,
-                    resolved_plan=resolved_plan,
-                    plan_resolution_started_at=(
-                        self._monotonic()
-                        if plan_resolution_started_at is None
-                        else plan_resolution_started_at
+                    self._start_steps(
+                        channel_id,
+                        previous_state=previous_state,
+                        previous_source_label=previous_source_label,
+                        force_fallback_slate=force_fallback_slate,
+                        force_fallback_reason=force_fallback_reason,
+                        resolved_plan=resolved_plan,
+                        prepared_reload=prepared_reload,
+                        plan_resolution_started_at=(
+                            self._monotonic()
+                            if plan_resolution_started_at is None
+                            else plan_resolution_started_at
+                        ),
                     ),
-                ),
-                kind="start",
-            )
+                    kind="start",
+                )
+            except BaseException:
+                # F3(b): a failure BEFORE the reused plan is bound (no config,
+                # plan resolution, an encoder start that raises) would drop a
+                # caller-supplied report's directory with no owner at all --
+                # the steps' own release paths only cover what they have
+                # already bound. Release, then propagate unchanged.
+                self._release_prepared_restart_plan(
+                    channel_id,
+                    prepared_reload,
+                    reason="start failed before the reused plan was bound",
+                )
+                raise
             if result is _PreparationState.START_EXPIRED:
                 self._start(
                     channel_id,
@@ -1476,6 +1549,7 @@ class EgressDaemon:
         force_fallback_slate: bool = False,
         force_fallback_reason: str | None = None,
         resolved_plan: EgressSourcePlan | None = None,
+        prepared_reload: _ReusePreparedPlan | None = None,
         plan_resolution_started_at: float,
     ) -> _PreparationSteps:
         # ``resolved_plan``: a program plan the caller ALREADY resolved from
@@ -1486,6 +1560,16 @@ class EgressDaemon:
         # refills) _source_lookahead, running the DB lookahead twice for one
         # start. Ignored when ``force_fallback_slate`` is set (the caller has
         # already decided the program is not to be trusted).
+        if prepared_reload is not None:
+            # F3(b): the plan this start must air was ALREADY resolved and
+            # conformed by the reload that just declined the in-place swap.
+            # Presenting it as the resolved plan is what keeps the provider
+            # from being consulted again (and its lookahead popped) for a plan
+            # this start will not use -- and what makes the "no valid source
+            # plan available" aborts below unreachable while a perfectly good
+            # prepared plan is in hand. The reuse branch further down binds it
+            # for real (with the reload's own target state).
+            resolved_plan = prepared_reload.report.source_plan
         try:
             config = self._store.get_config(channel_id)
             if config is None:
@@ -1527,6 +1611,13 @@ class EgressDaemon:
                         state=current_state,
                     ),
                     seconds_on_air=self._seconds_on_air(channel_id),
+                )
+                # F3(b): this start is a no-op (a live worker already owns the
+                # channel), so the reuse branch below is never reached and a
+                # carried plan would be neither aired nor released -- the
+                # caller dropped its own reference when it handed it over.
+                self._release_prepared_restart_plan(
+                    channel_id, prepared_reload, reason="a live worker already owns this channel"
                 )
                 return None
             # Hostile-review follow-up, items 1 & 4: reaching here means either
@@ -1608,6 +1699,13 @@ class EgressDaemon:
                 if self._fallback_source_provider is None:
                     self._write_state(channel_id, "FALLBACK_SLATE", last_error=fallback_reason)
                     self._append_health(channel_id, "FALLBACK_SLATE", sink_connected={})
+                    # F3(b): aborts before the reuse branch -- see the matching
+                    # release at this method's live-worker early return.
+                    self._release_prepared_restart_plan(
+                        channel_id,
+                        prepared_reload,
+                        reason="caption storage refused and no fallback slate is configured",
+                    )
                     return None
                 self._write_state(channel_id, "FALLBACK_SLATE", last_error=fallback_reason)
                 source_plan = self._fallback_source_provider(config)
@@ -1681,7 +1779,48 @@ class EgressDaemon:
             # relying solely on _try_content_reload's tracking (which never
             # runs at all while supports_content_reload is False).
             prepared_plan_dir: Path | None = None
-            if self._source_preparer is not None:
+            if prepared_reload is not None and using_fallback_slate:
+                # F3(b): the resolution above REFUSED the prepared plan --
+                # caption storage refused and demanded the fallback slate, so
+                # this start must air what it resolved, not the plan it was
+                # handed. Release the held plan (the caller dropped its own
+                # reference) and fall through to the ordinary preparation of
+                # the slate. ``resolved_plan`` above makes every OTHER
+                # resolution failure mode unreachable here.
+                self._release_prepared_restart_plan(
+                    channel_id,
+                    prepared_reload,
+                    reason="this start must air its own resolved fallback slate",
+                )
+            if prepared_reload is not None and not using_fallback_slate:
+                # F3(b): this start IS the restart of an interrupted
+                # FALLBACK_SLATE reload, and the plan it was interrupted on
+                # has already been conformed. Bind exactly what the yield
+                # below would have produced, without yielding -- re-running
+                # the preparer is the whole cost this path exists to avoid
+                # (measured 133.6 s on 2026-09-24). The plan aired is the
+                # report's own, per the owner-authorized option (a): if the
+                # schedule horizon moved while the restart was in flight, the
+                # next ordinary rollover corrects it.
+                reused_report = prepared_reload.report
+                source_plan = reused_report.source_plan
+                prepared_plan_dir = reused_report.plan_dir
+                # The state the SEAMLESS path would have published for this
+                # same plan, carried rather than re-derived: a force-fallback
+                # filler rollover (the one route to a non-deferred reload whose
+                # prepared plan is the SLATE) must come back up as
+                # FALLBACK_SLATE, not as ON_AIR over a slate plan.
+                using_fallback_slate = prepared_reload.target_state == "FALLBACK_SLATE"
+                self._record_prepared_loudness(channel_id, reused_report)
+                _LOG.info(
+                    "Restarting %s onto the plan its interrupted reload already prepared: "
+                    "label=%r plan_dir=%s state=%s.",
+                    channel_id,
+                    source_plan.segments[0].label if source_plan.segments else "-",
+                    prepared_plan_dir,
+                    prepared_reload.target_state,
+                )
+            elif self._source_preparer is not None:
                 try:
                     preparation_report = yield _PreparationRequest(source_plan, config)
                     source_plan = preparation_report.source_plan
@@ -2691,8 +2830,22 @@ class EgressDaemon:
                 channel_id,
                 previous_state=previous_state,
                 previous_source_label=previous_source_label,
+                # F3(b): this IS the restart a FALLBACK_SLATE reload's
+                # terminate was for -- hand it the plan that reload already
+                # prepared, so the restart does not conform it again. Popped
+                # here (not left stashed) so the entry cannot outlive the
+                # restart it was held for; ``_start`` releases it itself if
+                # something prevents it from being aired.
+                prepared_reload=self._prepared_restart_plans.pop(channel_id, None),
             )
             return
+        # F3(b): nothing below takes the pending-reload restart this exit could
+        # have consumed a held prepared-restart plan, so that plan will never
+        # be aired by it -- release it now rather than leave a live directory
+        # (or a stale plan a LATER, unrelated restart would wrongly air) behind.
+        self._discard_prepared_restart_plan(
+            channel_id, reason=f"worker exit took no pending reload (code={returncode})"
+        )
         # A queued operator stop/drain is an explicit intent to leave air and
         # must win over recovery, even when the worker exits between command
         # enqueue and this poll.  The command is drained below against the
@@ -3377,6 +3530,68 @@ class EgressDaemon:
         release."""
         self._release_prepared_plan_dir(self._active_prepared_plan_dir.pop(channel_id, None))
 
+    def _stash_prepared_restart_plan(self, channel_id: str, plan: _ReusePreparedPlan) -> None:
+        """F3(b): hold the plan a FALLBACK_SLATE reload prepared, for the
+        restart that will air it.
+
+        Supersedes -- and releases -- any plan still held for this channel
+        first, mirroring ``_try_content_reload``'s handling of a still-pending
+        previous reload attempt: silently overwriting here would leak the
+        replaced plan's directory. A held plan's ``plan_dir`` is part of
+        ``live_prepared_plan_dirs`` for as long as it is held, so the
+        preparer's own GC cannot evict a directory this daemon still intends
+        to air."""
+        self._discard_prepared_restart_plan(
+            channel_id, reason="superseded by a newer prepared restart"
+        )
+        self._prepared_restart_plans[channel_id] = plan
+
+    def _discard_prepared_restart_plan(self, channel_id: str, *, reason: str) -> None:
+        """F3(b): release any prepared-restart plan held for ``channel_id``.
+
+        Called from every path where the restart that would have consumed it
+        can no longer happen -- operator stop, drain, a worker exit that did
+        not take the pending-reload restart, shutdown, and a superseding
+        attempt -- so a held directory is never left for GC alone."""
+        self._release_prepared_restart_plan(
+            channel_id, self._prepared_restart_plans.pop(channel_id, None), reason=reason
+        )
+
+    def _discard_all_prepared_restart_plans(self, *, reason: str) -> None:
+        """F3(b): release every held prepared-restart plan this daemon owns.
+
+        The service-shutdown sweep: no channel's restart can run after it, so
+        every held directory must be released here rather than left to GC.
+        Snapshot the keys first -- ``_discard_prepared_restart_plan`` mutates
+        the dict being iterated."""
+        for channel_id in tuple(self._prepared_restart_plans):
+            self._discard_prepared_restart_plan(channel_id, reason=reason)
+
+    def _release_prepared_restart_plan(
+        self,
+        channel_id: str,
+        plan: _ReusePreparedPlan | None,
+        *,
+        reason: str,
+    ) -> None:
+        """Release one given prepared-restart plan (no-op when ``None``).
+
+        Separate from ``_discard_prepared_restart_plan`` for the caller that
+        already holds the plan itself rather than the stash entry: ``_start``
+        takes it as an argument and must release it when its own
+        already-preparing guard means this start will not run."""
+        if plan is None:
+            return
+        report = plan.report
+        _LOG.info(
+            "Prepared restart plan for %s released unused (%s): label=%r plan_dir=%s.",
+            channel_id,
+            reason,
+            report.source_plan.segments[0].label if report.source_plan.segments else "-",
+            report.plan_dir,
+        )
+        self._release_prepared_plan_dir(report.plan_dir)
+
     def live_prepared_plan_dirs(self, channel_id: str) -> frozenset[Path]:
         """Hostile-review follow-up, item 5: every ``SourcePreparer`` per-plan
         directory this daemon currently considers LIVE for ``channel_id`` --
@@ -3387,11 +3602,16 @@ class EgressDaemon:
         size, or keep-N recency -- closing the gap where nothing but this
         daemon actually knows which directories are still referenced."""
         pending = self._pending_reload_settle.get(channel_id)
+        # F3(b): a report held for an in-flight FALLBACK_SLATE restart is just
+        # as live as an armed reload's -- the restart is about to air it, so
+        # the preparer's GC must keep its directory too.
+        restart_plan = self._prepared_restart_plans.get(channel_id)
         return frozenset(
             plan_dir
             for plan_dir in (
                 self._active_prepared_plan_dir.get(channel_id),
                 pending.plan_dir if pending is not None else None,
+                restart_plan.report.plan_dir if restart_plan is not None else None,
             )
             if plan_dir is not None
         )
@@ -3457,6 +3677,21 @@ class EgressDaemon:
             return True
         return bool(reader(channel_id))
 
+    def _fall_back_to_restart_for_reused_plan(
+        self, channel_id: str, outcome: _ReusePreparedPlan
+    ) -> bool:
+        """F3(b): take the terminate+restart path for a reload that declined
+        the in-place selector swap, carrying the plan it already prepared so
+        the restart does not conform it a second time.
+
+        Returns ``False`` -- "not armed" -- which is what both call sites
+        mean by it: ``_poll_preparation`` ignores the value, and
+        ``_try_content_reload`` passes it up so ``_request_reload`` runs its
+        own (report-less, therefore harmless) fallback exactly as it does for
+        a declined arm today."""
+        self._fall_back_to_restart_reload(channel_id, prepared_reload=outcome)
+        return False
+
     def _try_content_reload(
         self,
         channel_id: str,
@@ -3478,6 +3713,14 @@ class EgressDaemon:
             ),
             kind="reload",
         )
+        if isinstance(result, _ReusePreparedPlan):
+            # F3(b): the SYNCHRONOUS preparation path (no
+            # ``enable_async_preparation`` executor) completes the steps inline,
+            # so the decision reaches here directly instead of via
+            # ``_poll_preparation``. Same outcome, same handling -- without
+            # this the carried plan would be dropped and the reload silently
+            # never restarted.
+            return self._fall_back_to_restart_for_reused_plan(channel_id, result)
         return result if result is not None else False
 
     def _reload_steps(
@@ -3609,6 +3852,7 @@ class EgressDaemon:
         # pending settlement below so _commit_reload_settlement can release the
         # PREVIOUS plan once this one lands.
         prepared_plan_dir: Path | None = None
+        preparation_report: SourcePreparationReport | None = None
         if self._source_preparer is not None:
             # Retain per-channel elapsed preparation evidence while the
             # production automation loop runs this work in the background.
@@ -3695,6 +3939,27 @@ class EgressDaemon:
                 now=datetime.now(UTC),
             ),
         )
+        # F3(b), owner-authorized 2026-09-24: an IMMEDIATE (non-deferred) reload
+        # out of FALLBACK_SLATE must not attempt the in-place selector swap.
+        # That combination tears down the live slate leg under the selector and
+        # wedged one commit for 270 s on 2026-09-24 (U13). The immediate cut
+        # itself is correct policy (U13 Q3) and is unchanged -- only the
+        # MECHANISM changes, to the terminate+restart the daemon already owns,
+        # carrying the report this reload just produced so that restart does not
+        # conform the same plan again. Scope is exactly this combination: a
+        # deferred rollover (the common case) and every ON_AIR/override reload
+        # keep the seamless path byte-for-byte.
+        if (
+            not request.switch_at_end_of_current
+            and state is not None
+            and state.state == "FALLBACK_SLATE"
+        ):
+            if preparation_report is None:
+                # No preparer configured, so nothing was prepared to reuse: the
+                # ordinary restart path re-resolves the plan, exactly as a
+                # declined seamless arm does today.
+                return False
+            return _ReusePreparedPlan(preparation_report, target_state)
         # F1 redesign: a daemon-generated id (not the strategy's own internal
         # uuid, which this layer never sees) so _poll_reload_settlement can
         # correlate reload-status.json's "id" field back to THIS specific
@@ -4022,7 +4287,11 @@ class EgressDaemon:
         return data if isinstance(data, dict) else None
 
     def _fall_back_to_restart_reload(
-        self, channel_id: str, *, failure_reason: str | None = None
+        self,
+        channel_id: str,
+        *,
+        failure_reason: str | None = None,
+        prepared_reload: _ReusePreparedPlan | None = None,
     ) -> None:
         """The terminate+restart reload path a declined/aborted/lost content-
         reload always falls through to -- factored out of ``_request_reload``
@@ -4033,8 +4302,17 @@ class EgressDaemon:
         reload-settlement tracking for this channel too (a no-op if the
         caller already did -- every current call site does). Kept here as a
         backstop so a future call site reaching this method can never leave a
-        stale pending entry (and its leaked plan_dir) behind."""
+        stale pending entry (and its leaked plan_dir) behind.
+
+        ``prepared_reload`` (F3(b), default ``None``): the plan a
+        FALLBACK_SLATE reload prepared before declining the in-place selector
+        swap. Held for the restart ``_poll_process`` performs when this
+        method's worker exit arrives, so that restart reuses it instead of
+        conforming it again. Every other caller passes nothing and behaves
+        exactly as before."""
         self._discard_pending_reload_settlement(channel_id, reason="falling back to restart")
+        if prepared_reload is not None:
+            self._stash_prepared_restart_plan(channel_id, prepared_reload)
         state = self._store.read_state(channel_id)
         process = self._processes.get(channel_id)
         self._pending_reloads[channel_id] = (
@@ -4183,11 +4461,19 @@ class EgressDaemon:
             # see the matching pop/comment in _poll_process's worker-exit
             # branches and ``_rollover_plan_end_at``'s docstring.
             self._rollover_plan_end_at.pop(channel_id, None)
+            # F3(b): a drain is a terminal off-air intent -- any plan held for
+            # a restart that will now never run must be released, not left for
+            # GC. Safe for the LIVE plan too: this release only ever touches a
+            # plan that has not been aired yet.
+            self._discard_prepared_restart_plan(channel_id, reason="channel drained")
             return
         state = self._store.read_state(channel_id)
         config = self._store.get_config(channel_id)
         self._draining_channels.add(channel_id)
         self._pending_reloads.pop(channel_id, None)
+        # F3(b): see the matching release in the no-process branch above -- a
+        # drain never restarts onto a held plan, so it must release it.
+        self._discard_prepared_restart_plan(channel_id, reason="channel draining to off air")
         self._reload_kills.discard(channel_id)  # drain cancels a pending kill
         self._write_state(
             channel_id,
@@ -4234,6 +4520,12 @@ class EgressDaemon:
         # logging, never recording the discarded reload_id for late-arrival
         # detection) -- routed through the shared helper now.
         self._discard_pending_reload_settlement(channel_id, reason="channel stopped")
+        # F3(b): same reasoning, and the same unconditional placement -- a held
+        # prepared-restart plan has not been aired by anything, so it is safe
+        # to release on BOTH stop flavors (the comment below is about the
+        # ACTIVE plan's directory, which the draining worker may still be
+        # reading; this one it is not).
+        self._discard_prepared_restart_plan(channel_id, reason="channel stopped")
         # Hostile-review follow-up (third pass), P2: the ACTIVE prepared-plan
         # directory is only safe to release here when this is a direct
         # (non-draining) stop -- the _process_terminate call further down
@@ -4318,6 +4610,7 @@ class EgressDaemon:
                 self._cancel_preparation(channel_id)
             snapshot = list(self._processes.items())
         if not snapshot:
+            self._discard_all_prepared_restart_plans(reason="service shutdown")
             return DrainResult(outcomes=())
 
         outcomes: dict[str, str] = {}
@@ -4370,6 +4663,12 @@ class EgressDaemon:
         # no named-pipe server leaks past supervised shutdown.
         for channel_id, _ in snapshot:
             self._close_worker_channel(channel_id)
+        # F3(b): service shutdown is a terminal off-air for every channel this
+        # daemon owns -- no restart will ever consume a prepared-restart plan
+        # still held here, so release them all rather than leak their
+        # directories for GC. Swept once, after the drain, so a channel that
+        # held a plan without appearing in the snapshot is covered too.
+        self._discard_all_prepared_restart_plans(reason="service shutdown")
 
         return DrainResult(
             outcomes=tuple(
