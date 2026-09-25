@@ -168,9 +168,7 @@ class Win32ContainmentApi:
             | win32job.JOB_OBJECT_LIMIT_BREAKAWAY_OK
         )
         info["BasicLimitInformation"] = limits
-        win32job.SetInformationJobObject(
-            handle, win32job.JobObjectExtendedLimitInformation, info
-        )
+        win32job.SetInformationJobObject(handle, win32job.JobObjectExtendedLimitInformation, info)
         return handle
 
     def assign_current_process(self, job: object) -> None:
@@ -254,7 +252,10 @@ def _contain(api: ContainmentApi) -> ContainmentStatus:
         )
     try:
         job = api.create_kill_on_job_close_job()
-    except Exception as exc:  # noqa: BLE001 - pywintypes.error is not an OSError
+    # Broad on purpose: ``pywintypes.error`` is NOT an ``OSError`` subclass, so
+    # a narrow catch would let the real Win32 fault escape and take the control
+    # plane's startup down with it.
+    except Exception as exc:
         return ContainmentStatus(
             active=False,
             detail=f"CreateJobObject/SetInformationJobObject failed: {exc!r}",
@@ -272,11 +273,11 @@ def _contain(api: ContainmentApi) -> ContainmentStatus:
                     "it spawns is reaped with it"
                 ),
             )
-    except Exception as exc:  # noqa: BLE001 - pywintypes.error is not an OSError
+    # Same broad catch, same reason as above -- and the handle is closed before
+    # returning, so a failed containment never leaves a job alive.
+    except Exception as exc:
         api.close_handle(job)
-        return ContainmentStatus(
-            active=False, detail=f"AssignProcessToJobObject failed: {exc!r}"
-        )
+        return ContainmentStatus(active=False, detail=f"AssignProcessToJobObject failed: {exc!r}")
     # Assignment reported no error but membership could not be confirmed: do
     # not claim a guarantee that IsProcessInJob just contradicted.
     api.close_handle(job)
