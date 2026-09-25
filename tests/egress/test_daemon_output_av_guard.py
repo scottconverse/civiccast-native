@@ -533,7 +533,7 @@ def test_u16_guard_slate_restart_rebinds_the_hls_relay_to_the_new_worker_session
     relay_calls: list[list[str]] = []
     relay_procs: list[_FakeWorker] = []
 
-    def relay_starter(args: list[str]) -> _FakeWorker:
+    def relay_starter(args: list[str], *, stderr_path: Path | None = None) -> _FakeWorker:
         relay_calls.append(args)
         proc = _FakeWorker(pid=9000 + len(relay_calls))
         relay_procs.append(proc)

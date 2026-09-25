@@ -1703,7 +1703,14 @@ class EgressDaemon:
                 # relay child carries its own corrected timeline, so an inherited
                 # child strands a PTS jump in the new worker's output as a
                 # constant output A/V offset for the rest of that child's life.
-                config = self._hls_relay.apply(config, new_session=not worker_already_live)
+                # U24: the relay child's stderr is captured next to the
+                # channel's other egress logs (``<work_dir>/<channel>/logs``),
+                # so a live incident leaves child-side evidence behind.
+                config = self._hls_relay.apply(
+                    config,
+                    new_session=not worker_already_live,
+                    log_root=self._work_dir,
+                )
             if worker_already_live:
                 state = self._store.read_state(channel_id)
                 current_state: EgressState = (
@@ -2681,6 +2688,23 @@ class EgressDaemon:
         except Exception:
             _LOG.exception("channel %s: HLS relay stream-restore attempt failed.", channel_id)
 
+    def _trim_relay_logs(self, channel_id: str) -> None:
+        """BETA.10 U24: hard-cap this channel's relay stderr logs.
+
+        A thin hand-off like the neighbouring relay-poll helpers: the supervisor
+        owns the cap, the in-place rewrite, and the warning that names the file.
+        ``getattr``/``callable`` keeps it working with the simpler supervisor
+        doubles the tests inject. It never restarts a child -- the whole point of
+        the in-place rewrite is that the relay serving residents keeps serving.
+        """
+        trim = getattr(self._hls_relay, "maybe_trim_logs", None)
+        if not callable(trim):
+            return
+        try:
+            trim(channel_id)
+        except Exception:
+            _LOG.exception("channel %s: HLS relay stderr log trim failed.", channel_id)
+
     def _poll_hls_relay(self, channel_id: str) -> None:
         """MAJOR M1: poll this channel's supervised HLS relay child liveness.
 
@@ -2695,6 +2719,11 @@ class EgressDaemon:
         """
         if self._hls_relay is None:
             return
+        # BETA.10 U24: the same tick that watches the relay also bounds its
+        # stderr capture. It runs FIRST and regardless of liveness, because a
+        # child that has already exited leaving an oversized log behind is
+        # exactly the case the cap exists for.
+        self._trim_relay_logs(channel_id)
         is_alive = getattr(self._hls_relay, "is_alive", None)
         if not callable(is_alive):
             return
@@ -4075,7 +4104,7 @@ class EgressDaemon:
             # relay-routed URIs the running encoder was started with.
             config = self._ts_relay.apply(config)
         if self._hls_relay is not None:
-            config = self._hls_relay.apply(config)
+            config = self._hls_relay.apply(config, log_root=self._work_dir)
         source_plan = None
         target_state: EgressState = "ON_AIR"
         # Scheduled rollover prepares the item due at the outgoing boundary.

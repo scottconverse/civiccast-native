@@ -909,7 +909,10 @@ def test_start_leaves_the_playlist_alone_while_the_hls_relay_is_still_alive(
     store = InMemoryEgressStore()
     store.upsert_config(_hls_config(folder))
     store.enqueue_command(_command())
-    relay = HlsRelaySupervisor(starter=lambda _args: _FakeProcess(pid=9001))
+    # U24: the daemon now hands the supervisor its work dir, so a starter
+    # double must accept the per-child stderr capture path. This one ignores
+    # it: the child is a fake, so there is no child stderr to capture.
+    relay = HlsRelaySupervisor(starter=lambda _args, *, stderr_path=None: _FakeProcess(pid=9001))
     daemon = EgressDaemon(
         store,
         work_dir=tmp_path / "work",
@@ -926,6 +929,69 @@ def test_start_leaves_the_playlist_alone_while_the_hls_relay_is_still_alive(
     daemon.process_once("gov")
 
     assert (folder / "playlist.m3u8").exists()
+
+
+def test_daemon_gives_the_relay_its_work_dir_so_child_stderr_lands_beside_the_worker_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # U24 end-to-end wiring: the daemon is what knows the station's work dir, so
+    # the daemon is what must hand it to the supervisor. Without this the relay
+    # capture is inert -- correct in isolation, never pointed anywhere. The
+    # asserted directory is the same one ``GstPlayoutStrategy`` writes
+    # ``gst-worker.stderr.log`` into (``<work_dir>/<channel>/logs``), which on an
+    # installed station is ``C:\ProgramData\CivicCast\data\egress\<channel>\logs``:
+    # the incident's relay evidence lands next to the worker's, not somewhere else.
+    from civiccast.egress.hls_relay import HlsRelaySupervisor
+
+    root = tmp_path / "hls-root"
+    folder = root / "gov"
+    folder.mkdir(parents=True)
+    monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(root))
+    store = InMemoryEgressStore()
+    store.upsert_config(_hls_config(folder))
+    store.enqueue_command(_command())
+
+    work_dir = tmp_path / "work"
+    seen: list[Path | None] = []
+    argv: list[list[str]] = []
+
+    def relay_starter(args: list[str], *, stderr_path: Path | None = None) -> _FakeProcess:
+        argv.append(args)
+        seen.append(stderr_path)
+        if stderr_path is not None:
+            with stderr_path.open("a", encoding="utf-8") as handle:
+                handle.write("[mpegts @ 0x1] timestamp discontinuity (stream id=256): -3000000\n")
+        return _FakeProcess(pid=9001)
+
+    relay = HlsRelaySupervisor(starter=relay_starter)
+    daemon = EgressDaemon(
+        store,
+        work_dir=work_dir,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _FakeProcess(),
+        hls_relay_supervisor=relay,
+    )
+    assert daemon.process_once("gov") == 1
+
+    # U24: the child's stderr is on disk, in the channel's log directory.
+    log_path = work_dir / "gov" / "logs" / "hls-relay.Web_preview_HLS.stderr.log"
+    assert seen == [log_path]
+    assert log_path.is_file(), f"relay stderr was not captured at {log_path}"
+    # ...because the daemon handed the supervisor its work dir: the wiring itself
+    # is the assertion, so reading the private field is the point of the test.
+    assert relay._log_root == work_dir
+
+    text = log_path.read_text(encoding="utf-8")
+    header = text.splitlines()[0]
+    # The pid field is fixed-width (10) so it can be stamped in place after the
+    # spawn returns, which is why a 4-digit pid reads as ``pid=0000009001``.
+    assert header.startswith("[hls-relay] pid=0000009001 ")
+    assert " channel=gov " in header
+    assert " reason=start " in header
+    assert json.loads(header.split(" argv=", 1)[1]) == argv[0]
+    # The label is sanitized into the filename, and the child's own line is kept
+    # verbatim after the header: this is the evidence the two live incidents lacked.
+    assert "timestamp discontinuity" in text
 
 
 def test_crash_relaunch_rebinds_the_channels_hls_relay_to_the_new_worker_session(
@@ -948,7 +1014,7 @@ def test_crash_relaunch_rebinds_the_channels_hls_relay_to_the_new_worker_session
     relay_calls: list[list[str]] = []
     relay_procs: list[_FakeProcess] = []
 
-    def relay_starter(args: list[str]) -> _FakeProcess:
+    def relay_starter(args: list[str], *, stderr_path: Path | None = None) -> _FakeProcess:
         relay_calls.append(args)
         proc = _FakeProcess(pid=9000 + len(relay_calls))
         relay_procs.append(proc)
@@ -6284,7 +6350,7 @@ def test_dead_hls_relay_overrides_sink_health_to_false_on_the_next_daemon_tick(
 
     relay_procs: list[_FakeProcess] = []
 
-    def relay_starter(_args: list[str]) -> _FakeProcess:
+    def relay_starter(_args: list[str], *, stderr_path: Path | None = None) -> _FakeProcess:
         proc = _FakeProcess(pid=999)
         relay_procs.append(proc)
         return proc
@@ -6327,7 +6393,7 @@ def test_hls_relay_health_override_is_not_applied_when_relay_is_still_alive(
     )
     store.enqueue_command(_command())
 
-    hls_relay = HlsRelaySupervisor(starter=lambda _args: _FakeProcess(pid=999))
+    hls_relay = HlsRelaySupervisor(starter=lambda _args, *, stderr_path=None: _FakeProcess(pid=999))
 
     daemon = EgressDaemon(
         store,
