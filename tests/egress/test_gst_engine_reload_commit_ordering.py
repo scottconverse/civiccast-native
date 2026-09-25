@@ -3072,3 +3072,355 @@ def test_u16_packaged_runtime_resolution_matches_its_declared_root() -> None:
         f"declared {_U16_DECLARED_ROOT!r} did not resolve to a packaged runtime "
         f"(version root {_U16_VERSION_ROOT!r})"
     )
+
+
+# --- (8) U30: naming WHICH stream stopped feeding the mux ---------------------
+#
+# Both live incidents of 2026-09-25 (education 06:27, government 01:03) committed
+# a deferred program->program reload at a segment boundary and then went silent:
+# the HLS window froze, the relay self-heal rewrote nothing, and only a full
+# channel restart recovered. Read off the education worker's own stderr, the
+# TOTAL mux-src counter kept ADVANCING right through the freeze -- its
+# per-interval deltas were 332-496 before the commit and 234/281 after it, i.e.
+# the audio-only rate. So the channel was airing audio with no video at all, and
+# nothing in the log said so (the S9-5 watchdog compares that same total, so it
+# could not fire either).
+#
+# Two always-on, read-only diagnostics close that gap. Neither changes behaviour:
+# every body is exception-guarded, and every probe only counts or prints.
+
+
+class _FakeEventProbeInfo:
+    """Probe info carrying an EVENT -- the U16 fakes only ever carried a buffer."""
+
+    def __init__(self, event: Any) -> None:
+        self.type = _FakePadProbeType.EVENT_DOWNSTREAM
+        self._event = event
+
+    def get_buffer(self) -> Any:
+        return None
+
+    def get_event(self) -> Any:
+        return self._event
+
+
+class _FakeProbeEvent:
+    def __init__(self, event_type: Any) -> None:
+        self.type = event_type
+
+
+def _u30_pending_for_eos(pad: Any, *, txn_id: int = 9) -> dict[str, Any]:
+    """The subset of a pending reload that ``_on_old_leg_eos`` actually reads."""
+    return {
+        "txn_id": txn_id,
+        "outgoing_end": {},
+        "boundary_probes": [(pad, 1)],
+        "outgoing_eos_pads": set(),
+        "old_video_pad": pad,
+        "new_leg_ready": False,
+    }
+
+
+def test_u30_mux_input_counters_count_each_sink_pad_separately(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One counter per mux SINK pad, so a starved stream is a first-class signal.
+
+    The mux SRC counter can only ever say "output is still advancing"; a channel
+    whose video branch stopped feeding the mux while audio continues keeps that
+    counter advancing at exactly the audio-only rate, which is the shape both
+    live incidents had. Counting at the SINK pads is what makes video's own
+    silence visible."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    video_pad = _FakeDiagnosticPad(
+        "sink_65", recorder, caps="video/x-h264, stream-format=byte-stream"
+    )
+    audio_pad = _FakeDiagnosticPad("sink_66", recorder, caps="audio/mpeg, mpegversion=4")
+    engine.mux = _FakeMux([video_pad, audio_pad])
+
+    engine._install_mux_input_counters()
+
+    assert "add_probe:sink_65:1:_count_mux_input" in recorder.calls, recorder.calls
+    assert "add_probe:sink_66:1:_count_mux_input" in recorder.calls, recorder.calls
+    assert engine._mux_input_buffers == {"sink_65": 0, "sink_66": 0}
+    assert capsys.readouterr().err == ""
+
+    for _ in range(4):
+        _mask, callback = video_pad.probes[0]
+        assert callback(video_pad, _FakeProbeInfo(_FakeProbeBuffer(0))) == (
+            engine_module.Gst.PadProbeReturn.OK
+        )
+    _mask, callback = audio_pad.probes[0]
+    callback(audio_pad, _FakeProbeInfo(_FakeProbeBuffer(0)))
+    assert engine._mux_input_buffers == {"sink_65": 4, "sink_66": 1}
+
+
+@pytest.mark.parametrize("mux", [None, _FakeMux([]), object()])
+def test_u30_mux_input_counters_are_silent_and_safe_without_sink_pads(
+    engine_module, capsys: pytest.CaptureFixture[str], mux: Any
+) -> None:
+    """No mux, no sink pads, or a mux with no iterator: silent, and no raise."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.mux = mux
+
+    engine._install_mux_input_counters()
+
+    assert capsys.readouterr().err == ""
+    assert recorder.calls == []
+    assert engine._mux_input_buffers == {}
+
+
+def test_u30_mux_input_counters_skip_a_pad_that_cannot_take_a_probe(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A pad that cannot be probed must NOT be listed.
+
+    A stream that is listed and then reads ``+0`` forever would be read as "that
+    stream stopped flowing", which would be a lie: the truth is "we could not
+    count this stream at all", and the right rendering of that is absence."""
+    recorder = _Recorder()
+
+    class _RefusingPad(_FakeDiagnosticPad):
+        def add_probe(self, mask: Any, callback: Any) -> str:
+            raise RuntimeError("probe refused")
+
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.mux = _FakeMux(
+        [
+            _RefusingPad("sink_65", recorder, caps="video/x-h264"),
+            _FakeDiagnosticPad("sink_66", recorder, caps="audio/mpeg, mpegversion=4"),
+        ]
+    )
+
+    engine._install_mux_input_counters()
+
+    assert engine._mux_input_buffers == {"sink_66": 0}
+    assert capsys.readouterr().err == ""
+
+
+def test_u30_mux_input_deltas_report_each_stream_and_advance_the_baseline(
+    engine_module,
+) -> None:
+    """Per-interval deltas, not a running total: ``video=+0`` is the signal.
+
+    The baseline is keyed by PAD NAME, not by resolved label -- the label comes
+    from negotiated caps, and a snapshot taken before negotiation would key on
+    something the next print cannot find, which would read as ``+0`` (a lie in
+    the exact direction this diagnostic exists to detect)."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_pads = {
+        "sink_65": _FakeDiagnosticPad("sink_65", _Recorder(), caps="video/x-h264"),
+        "sink_66": _FakeDiagnosticPad("sink_66", _Recorder(), caps="audio/mpeg, mpegversion=4"),
+    }
+    engine._mux_input_buffers = {"sink_65": 100, "sink_66": 200}
+    engine._mux_input_snapshot = {"sink_65": 90, "sink_66": 190}
+    engine._mux_input_snapshot_t = 10.0
+
+    assert engine._mux_input_delta_suffix(5.0) == " [mux-in 5.0s: video=+10 audio=+10]"
+
+    # A print advances the baseline to the counters it just reported, so the NEXT
+    # line reports its own interval only.
+    engine._snapshot_mux_input(15.0)
+    assert engine._mux_input_snapshot == {"sink_65": 100, "sink_66": 200}
+    assert engine._mux_input_snapshot_t == 15.0
+
+    engine._mux_input_buffers = {"sink_65": 150, "sink_66": 400}
+    assert engine._mux_input_delta_suffix(5.0) == " [mux-in 5.0s: video=+50 audio=+200]"
+
+
+def test_u30_mux_input_deltas_show_a_stream_that_stopped_flowing(engine_module) -> None:
+    """The incident shape in one log line: video flat, audio still moving.
+
+    The numbers are the ones MEASURED off the live education worker: 234 buffers
+    per 5s is that channel's audio-only rate (461 over 6s), against 332-496 per
+    interval for healthy A/V."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_pads = {
+        "sink_65": _FakeDiagnosticPad("sink_65", _Recorder(), caps="video/x-h264"),
+        "sink_66": _FakeDiagnosticPad("sink_66", _Recorder(), caps="audio/mpeg, mpegversion=4"),
+    }
+    engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145750}
+    engine._mux_input_snapshot = {"sink_65": 138577, "sink_66": 145516}
+
+    assert engine._mux_input_delta_suffix(5.0) == " [mux-in 5.0s: video=+0 audio=+234]"
+
+
+def test_u30_mux_input_deltas_put_video_and_audio_first_then_others(engine_module) -> None:
+    """Video first, then audio, then anything else by name.
+
+    An unrecognised pad label (an unnegotiated pad falls back to its own name)
+    must still be reported rather than dropped -- the point of the line is that
+    nothing which feeds the mux is invisible."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_pads = {
+        "sink_67": _FakeDiagnosticPad("sink_67", _Recorder()),
+        "sink_66": _FakeDiagnosticPad("sink_66", _Recorder(), caps="audio/mpeg, mpegversion=4"),
+        "sink_65": _FakeDiagnosticPad("sink_65", _Recorder(), caps="video/x-h264"),
+    }
+    engine._mux_input_buffers = {"sink_65": 1, "sink_66": 2, "sink_67": 3}
+    engine._mux_input_snapshot = {"sink_65": 0, "sink_66": 0, "sink_67": 0}
+
+    assert engine._mux_input_delta_suffix(5.0) == (" [mux-in 5.0s: video=+1 audio=+2 sink_67=+3]")
+
+
+def test_u30_mux_input_deltas_are_empty_when_nothing_was_counted(engine_module) -> None:
+    """No counted pad: no suffix at all, so the existing line is byte-identical."""
+    engine = _bare_engine_for_commit(engine_module, _Recorder())
+    engine._mux_input_buffers = {}
+    engine._mux_input_pads = {}
+    engine._mux_input_snapshot = {}
+
+    assert engine._mux_input_delta_suffix(5.0) == ""
+
+
+def test_u30_a_dropped_outgoing_eos_is_named_before_it_is_dropped(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The line that tells "the outgoing leg never ended" from "it ended and we
+    dropped the event".
+
+    Until U30 the only trace of this path was the SETTLEMENT line the queued
+    callback prints later, so an EOS that was dropped and then declined by one of
+    ``_on_old_leg_eos``'s four guards left no line at all. The education incident
+    recorded ``stream=audio (1/2 stream(s))`` and never settled video; the U30
+    off-live reproduction has runs where the worker exits CLEANLY with no settle
+    line and no commit stage ever printed."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pad = _FakeDiagnosticPad("sink_65", recorder)
+    engine._pending_reload = _u30_pending_for_eos(pad)
+
+    result = engine._on_outgoing_pad_data(
+        pad, _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)), 9
+    )
+
+    assert result == engine_module.Gst.PadProbeReturn.DROP
+    err = capsys.readouterr().err
+    assert "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_65 pending_txn=9" in err
+    # The settle line that already existed still follows it (the fixture's fake
+    # ``GLib.idle_add`` runs the queued callback inline).
+    assert "CTRL reload: outgoing EOS observed stream=video (1/1 stream(s))" in err
+    assert engine._pending_reload["old_leg_eos"] is True
+
+
+def test_u30_a_dropped_eos_from_a_superseded_transaction_says_so(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Dropped with NO settle line is the state that used to be invisible.
+
+    A stale queued EOS from a superseded transaction is dropped here and then
+    declined by the transaction-id guard in ``_on_old_leg_eos``. Before U30 the
+    log showed neither event; now the drop is named, and the absence of the
+    settle line after it is the distinction."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pad = _FakeDiagnosticPad("sink_65", recorder)
+    engine._pending_reload = _u30_pending_for_eos(pad, txn_id=9)
+
+    result = engine._on_outgoing_pad_data(
+        pad, _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)), 8
+    )
+
+    assert result == engine_module.Gst.PadProbeReturn.DROP
+    err = capsys.readouterr().err
+    assert "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_65 pending_txn=9" in err
+    assert "outgoing EOS observed" not in err
+    assert not engine._pending_reload.get("old_leg_eos")
+
+
+def test_u30_a_dropped_eos_with_no_pending_transaction_is_still_named(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The retired-leg window: reload already committed, leg not yet disposed.
+
+    The probe deliberately stays installed and drops EOS unconditionally; this is
+    the line that shows an EOS arrived in that window even though there is no
+    transaction left to settle."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pad = _FakeDiagnosticPad("sink_66", recorder)
+    engine._pending_reload = None
+
+    result = engine._on_outgoing_pad_data(
+        pad, _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)), 9
+    )
+
+    assert result == engine_module.Gst.PadProbeReturn.DROP
+    assert (
+        "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_66 pending_txn=none"
+        in capsys.readouterr().err
+    )
+
+
+def test_u30_diagnostics_do_not_disturb_the_reload_preroll_log_grader() -> None:
+    """U16's guard, applied to the U30 lines.
+
+    ``scripts/ops/check_reload_preroll.py`` grades reload commits from worker
+    logs by regex; an unrelated line containing "preroll"/"rebased" in the wrong
+    shape would corrupt that verdict. The new lines must neither create, hide,
+    nor fake a commit proof."""
+    log = "\n".join(
+        [
+            "CTRL reload: new leg stream held at its first buffer "
+            "(0 stream(s) still to preroll) (reload_id=4)",
+            "CTRL reload: new leg preroll verified (reload_id=4) held_streams=2 "
+            "timing=finite mode=deferred",
+            "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_65 pending_txn=4",
+            "CTRL output: 138577 buffers (+138576) since PLAYING "
+            "[mux-in 5.0s: video=+0 audio=+234]",
+            "CTRL reload: finite switch rebased to running time 1799.402s mode=deferred "
+            "streams=2 reload_id=4",
+            "CTRL reload: firing (reload_id=4)",
+            "CTRL reload committed (elements=52)",
+        ]
+    )
+
+    assert check_log(log) == (1, [])
+
+
+def test_u30_a_pipeline_eos_names_itself_before_it_quits_the_worker(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The line that tells "the output ENDED" from "the output stopped".
+
+    A bus EOS quits the run loop, so the worker exits and the daemon sees a
+    clean teardown -- with no line anywhere saying the channel's output had
+    ended. The U30 off-live reproduction has runs in which an immediate reload
+    committed and then the mux reached the OUTGOING leg's own end 2.2 s later:
+    the tail file stops growing at exactly that PTS and the worker leaves with
+    ``{'error': None, 'teardown_clean': True}``. In a log with no EOS line that
+    is indistinguishable from an operator's ``stop``."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+
+    class _QuitCounter:
+        def __init__(self) -> None:
+            self.quits = 0
+
+        def quit(self) -> None:
+            self.quits += 1
+
+    class _EosMessage:
+        type = engine_module.Gst.MessageType.EOS
+        src = _FakeDiagnosticPad("mpegtsmux_3", recorder)
+
+    loop = _QuitCounter()
+    engine._loop = loop
+    engine._mux_input_pads = {
+        "sink_65": _FakeDiagnosticPad("sink_65", recorder, caps="video/x-h264"),
+        "sink_66": _FakeDiagnosticPad("sink_66", recorder, caps="audio/mpeg, mpegversion=4"),
+    }
+    engine._mux_input_buffers = {"sink_65": 40, "sink_66": 274}
+    engine._mux_input_snapshot = {"sink_65": 40, "sink_66": 40}
+    engine._mux_input_snapshot_t = 10.0
+
+    assert engine._on_bus(None, _EosMessage()) is True
+
+    err = capsys.readouterr().err
+    assert "CTRL output: pipeline EOS from mpegtsmux_3" in err
+    # The interval counters ride along, so the line says what was still flowing
+    # when the output ended -- video silent, audio at its full rate here.
+    assert "video=+0 audio=+234]" in err
+    assert loop.quits == 1

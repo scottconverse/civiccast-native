@@ -731,6 +731,24 @@ class GstPlayoutEngine:
         # ``now - self._last_output_progress_print_t`` comparison is a plain
         # float subtraction with no None-guard needed.
         self._last_output_progress_print_t = 0.0
+        # U30: one BUFFER counter per mux SINK pad -- the always-on answer to
+        # "which stream is still feeding the mux?". The counter above reads the
+        # mux SRC, so it keeps advancing (at the audio-only rate, measured 234
+        # buffers/5s against 332-496 for healthy A/V) while video is starving;
+        # both live 2026-09-25 freezes read as healthy output in that line. The
+        # U16 first-buffer reporters cannot answer it either -- they REMOVE
+        # themselves after one buffer, and the freeze happened long after that.
+        #
+        # Keyed by pad NAME, never by resolved stream label: a label resolved
+        # before caps negotiation would key on something the next print cannot
+        # find and render as ``video=+0`` -- a lie in the exact direction this
+        # diagnostic exists to detect. Single writer per key (one probe per pad,
+        # one streaming thread each), read only on the GLib loop -- the same
+        # lock-free contract as ``_output_buffers`` above.
+        self._mux_input_pads: dict[str, Any] = {}
+        self._mux_input_buffers: dict[str, int] = {}
+        self._mux_input_snapshot: dict[str, int] = {}
+        self._mux_input_snapshot_t = 0.0
         # Per-leg element lists (index-aligned with ``selector_sink_pads``) so a
         # content-reload can dispose the leg it replaces. ``_collecting`` captures the
         # elements built for the current leg; ``_pending_reload`` holds the in-flight
@@ -1678,9 +1696,39 @@ class GstPlayoutEngine:
             if self._loop is not None:
                 self._loop.quit()
         elif message.type == Gst.MessageType.EOS:
+            self._announce_pipeline_eos(message.src)
             if self._loop is not None:
                 self._loop.quit()
         return True
+
+    def _announce_pipeline_eos(self, src: Any) -> None:
+        """Name the pipeline-level EOS that is about to quit this worker.
+
+        A bus EOS quits the run loop, so the worker exits and the daemon sees a
+        CLEAN teardown -- and until U30 no line anywhere said the channel's
+        output had ended. An off-live U30 run reproduced exactly that shape: an
+        immediate reload committed, the mux then reached the OUTGOING leg's own
+        end 2.2 s later, the file stopped growing at that PTS, and the worker
+        left with ``{'error': None, 'teardown_clean': True}``. Without this line
+        that is indistinguishable in the log from an operator's ``stop``.
+
+        Cheap and always-on: at most one line per worker lifetime, because it
+        quits the loop immediately after. The ``[mux-in ...]`` suffix is the
+        same interval counter the progress line carries, so the line also says
+        what was still feeding the mux when the output ended -- which is what
+        separates "video went silent first" from "everything stopped at once"."""
+        name = "unknown"
+        with contextlib.suppress(Exception):
+            if src is not None:
+                name = src.get_name()
+        suffix = ""
+        with contextlib.suppress(Exception):
+            suffix = self._mux_input_delta_suffix(time.monotonic() - self._mux_input_snapshot_t)
+        print(
+            f"CTRL output: pipeline EOS from {name} -- quitting the worker{suffix}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     # -- S9-5 pipeline supervision: stall watchdog --------------------------------
 
@@ -1781,6 +1829,132 @@ class GstPlayoutEngine:
                     Gst.PadProbeType.BUFFER, self._make_mux_first_buffer_reporter(pad_name)
                 )
 
+    # -- U30 input-side diagnostic: which stream is still feeding the mux --------
+    #
+    # The mux SRC counter says "output is advancing"; it cannot say WHAT is
+    # advancing. Both 2026-09-25 incidents froze with the worker alive and the
+    # output total still climbing at the audio-only rate, and the reload commit
+    # path gave no line that distinguished "the outgoing leg never ended" from
+    # "it ended and the settlement was declined". These two additions close
+    # exactly those two gaps, and both are always-on and cheap: one int
+    # increment per buffer per pad (no allocation, no locking, no logging) and
+    # one already-existing log line that gains a suffix.
+
+    def _install_mux_input_counters(self) -> None:
+        """Arm one BUFFER counter per mux sink pad, and record the pad set.
+
+        Called once at worker start, beside ``_install_mux_input_diagnostics``,
+        and deliberately NOT self-removing (unlike the U16 first-buffer
+        reporters): the failure both incidents showed came long after the first
+        buffer, so a one-shot probe has nothing left to say about it.
+
+        A pad whose probe cannot be installed is NOT registered. A registered
+        pad that can never be probed would read ``+0`` forever and accuse a
+        healthy stream of having stopped -- the honest rendering of "we could
+        not count this stream" is absence from the line.
+
+        The mux is part of the persistent output half (it never restarts across
+        swaps), so its sink pads are the same objects for the whole worker
+        lifetime; counting them once covers every later reload.
+
+        Silent and safe with no mux, no sink pads, or an un-iterable pad set --
+        same contract as ``_install_mux_input_diagnostics``."""
+        # Fresh dicts, not ``clear()``: this method's contract is that it is
+        # silent and safe whatever it finds, and a re-arm must not accumulate
+        # the previous pad set.
+        self._mux_input_pads = {}
+        self._mux_input_buffers = {}
+        mux = getattr(self, "mux", None)
+        if mux is None:
+            return
+        try:
+            iterator = mux.iterate_sink_pads()
+        except Exception:
+            return
+        if iterator is None:
+            return
+        while True:
+            try:
+                result, pad = iterator.next()
+            except Exception:
+                return
+            if result != Gst.IteratorResult.OK or pad is None:
+                return
+            try:
+                pad_name = pad.get_name()
+            except Exception:
+                pad_name = "unknown"
+            self._mux_input_pads[pad_name] = pad
+            self._mux_input_buffers[pad_name] = 0
+            try:
+                pad.add_probe(Gst.PadProbeType.BUFFER, self._make_mux_input_counter(pad_name))
+            except Exception:
+                # Could not be counted -> must not be listed (see docstring).
+                self._mux_input_pads.pop(pad_name, None)
+                self._mux_input_buffers.pop(pad_name, None)
+
+    def _make_mux_input_counter(self, pad_name: str) -> Any:
+        """A per-pad BUFFER counter closing over ITS OWN pad name.
+
+        A factory rather than a def-in-loop, for the same two reasons as
+        ``_make_mux_first_buffer_reporter``: the closure must key on its own
+        pad, and ``__name__`` stays stable for logs and tests."""
+
+        def _count_mux_input(_pad: Gst.Pad, _info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+            # Guarded end to end -- this runs on a streaming thread, and a
+            # diagnostic must never be able to take a channel off air. OK, never
+            # DROP: this probe observes, it does not police the data path.
+            with contextlib.suppress(Exception):
+                self._mux_input_buffers[pad_name] = self._mux_input_buffers.get(pad_name, 0) + 1
+            return Gst.PadProbeReturn.OK
+
+        return _count_mux_input
+
+    def _snapshot_mux_input(self, now: float) -> None:
+        """Move the mux-input baseline to ``now``.
+
+        Called at arm time and after every progress print, so each line reports
+        the interval since the previous one rather than a cumulative total --
+        ``video=+0`` on one interval is the signal, and a cumulative total would
+        hide a stream that stopped ten minutes ago behind everything it sent
+        before that."""
+        with contextlib.suppress(Exception):
+            self._mux_input_snapshot = dict(self._mux_input_buffers)
+            self._mux_input_snapshot_t = now
+
+    def _mux_input_delta_suffix(self, elapsed: float) -> str:
+        """``" [mux-in <elapsed>s: video=+N audio=+M ...]"``, or ``""``.
+
+        A pure read of the counters against the last snapshot. Returns exactly
+        ``""`` when nothing was counted, so the existing progress line is
+        byte-identical on any graph without a countable mux; and it is guarded
+        throughout, because it runs inside the progress path and must never be
+        able to raise into it.
+
+        Video first, then audio, then anything else by pad name: those two are
+        the streams whose silence changes what the channel is airing."""
+        pads = getattr(self, "_mux_input_pads", None) or {}
+        counters = getattr(self, "_mux_input_buffers", None) or {}
+        snapshot = getattr(self, "_mux_input_snapshot", None) or {}
+        if not pads or not counters:
+            return ""
+        try:
+            parts: list[tuple[int, str, int]] = []
+            for pad_name, pad in pads.items():
+                current = counters.get(pad_name, 0)
+                # A pad missing from the snapshot has no interval baseline yet
+                # (it was registered after the last print): report ``+0`` rather
+                # than invent a delta from a baseline we never took.
+                previous = snapshot.get(pad_name, current)
+                label = self._mux_pad_stream_label(pad)
+                rank = 0 if label == "video" else 1 if label == "audio" else 2
+                parts.append((rank, str(label), current - previous))
+            parts.sort(key=lambda item: (item[0], item[1]))
+            rendered = " ".join(f"{label}=+{delta}" for _rank, label, delta in parts)
+        except Exception:
+            return ""
+        return f" [mux-in {elapsed:.1f}s: {rendered}]"
+
     def _arm_stall_watchdog(self) -> None:
         # Item 84: arm unconditionally as long as EITHER budget is active --
         # before this fix a ``stall_timeout_s <= 0`` (an operator disabling the
@@ -1804,6 +1978,10 @@ class GstPlayoutEngine:
         self._output_buffers_at_arm = self._output_buffers
         self._first_output_seen = False
         self._last_output_progress_print_t = self._stall_last_advance_t
+        # U30: the per-stream counters' baseline must start here too -- the
+        # progress line's ``[mux-in ...]`` delta is measured from arm time (and
+        # from each later print), never from a cumulative total.
+        self._snapshot_mux_input(self._stall_last_advance_t)
         GLib.timeout_add_seconds(1, self._check_stall)
 
     def _maybe_print_first_output_marker(self) -> None:
@@ -1857,11 +2035,17 @@ class GstPlayoutEngine:
             return
         self._last_output_progress_print_t = now
         delta = self._output_buffers - self._output_buffers_at_arm
+        # U30: the total above cannot say WHICH stream is advancing -- it kept
+        # climbing at the audio-only rate through both 2026-09-25 freezes. The
+        # suffix names each counted mux sink pad's delta over THIS interval, and
+        # is "" (line byte-identical) whenever nothing was counted.
+        mux_in = self._mux_input_delta_suffix(now - self._mux_input_snapshot_t)
         print(
-            f"CTRL output: {self._output_buffers} buffers (+{delta}) since PLAYING",
+            f"CTRL output: {self._output_buffers} buffers (+{delta}) since PLAYING{mux_in}",
             file=sys.stderr,
             flush=True,
         )
+        self._snapshot_mux_input(now)
 
     def _check_stall(self) -> bool:
         """Quit the run loop on either of two DISTINCT budgets, measured from
@@ -2200,6 +2384,12 @@ class GstPlayoutEngine:
         # than per-reload because the start of a worker's timeline is the other
         # end of the same question the reload diagnostic asks.
         self._install_mux_input_diagnostics()
+        # U30: the always-on per-sink-pad counters behind the progress line's
+        # ``[mux-in ...]`` suffix -- armed here (the mux is part of the
+        # persistent output half, so its sink pads outlive every reload) so the
+        # next freeze says WHICH stream stopped, in the same line the live
+        # incidents already had and misread as healthy.
+        self._install_mux_input_counters()
         loop = GLib.MainLoop()  # before PLAYING so a startup bus ERROR isn't swallowed
         self._loop = loop
         self._prime_live_caption_stream()
@@ -2790,6 +2980,22 @@ class GstPlayoutEngine:
         if event is None:
             return Gst.PadProbeReturn.OK
         if event.type == Gst.EventType.EOS:
+            # U30: name the drop before it happens. Until now the ONLY trace of
+            # this path was the settlement line the queued callback prints
+            # later, so an EOS dropped and then declined by one of
+            # ``_on_old_leg_eos``'s guards left no line at all -- and a leg that
+            # never delivered EOS to a probed pad left no line either. Those two
+            # are the same sight (a frozen channel, a live worker) but opposite
+            # diagnoses, and the 2026-09-25 logs could not tell them apart:
+            # a drop line followed by no settle line is the first; no line at
+            # all is the second.
+            with contextlib.suppress(Exception):
+                print(
+                    f"CTRL reload diagnostic: outgoing-EOS-dropped pad={pad.get_name()} "
+                    f"pending_txn={pending['txn_id'] if pending is not None else 'none'}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             GLib.idle_add(self._on_old_leg_eos, pad, txn_id)
             return Gst.PadProbeReturn.DROP
         if event.type == Gst.EventType.SEGMENT and pending is not None:

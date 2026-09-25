@@ -102,6 +102,13 @@ def _bare_engine(
     # ``_check_stall`` reads the pending transaction and the commit bound too.
     engine._pending_reload = None
     engine.commit_timeout_s = 15.0
+    # U30 additions -- the progress line now also carries each stream's OWN mux
+    # sink-pad delta, and ``_arm_stall_watchdog`` snapshots that counter set at
+    # arm time exactly as it does for ``_output_buffers``.
+    engine._mux_input_pads = {}
+    engine._mux_input_buffers = {}
+    engine._mux_input_snapshot = {}
+    engine._mux_input_snapshot_t = 0.0
     return engine
 
 
@@ -646,6 +653,67 @@ def test_output_progress_line_delta_is_relative_to_the_arm_time_snapshot(
     assert engine._check_stall() is True
     err = capsys.readouterr().err
     assert "CTRL output: 1003 buffers (+3) since PLAYING" in err
+
+
+class _CapsPadStub:
+    """A mux sink pad with negotiated caps, as the label resolver sees it."""
+
+    def __init__(self, name: str, caps: str) -> None:
+        self._name = name
+        self._caps = caps
+
+    def get_name(self) -> str:
+        return self._name
+
+    def get_current_caps(self) -> Any:
+        return types.SimpleNamespace(to_string=lambda: self._caps)
+
+
+def test_output_progress_line_names_each_streams_mux_input_delta(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """U30: the 5s breadcrumb says WHICH stream is feeding the mux.
+
+    Two live incidents of 2026-09-25 aired audio with no video after a deferred
+    reload committed, and the total in this very line kept advancing throughout
+    (at the audio-only rate, measured: 234/281 per interval against 332-496 for
+    healthy A/V), so it read as healthy. The per-stream delta makes ``video=+0``
+    a thing the log says out loud."""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(engine_module.GLib, "timeout_add_seconds", lambda *a, **k: None)
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine._mux_input_pads = {
+        "sink_65": _CapsPadStub("sink_65", "video/x-h264, stream-format=byte-stream"),
+        "sink_66": _CapsPadStub("sink_66", "audio/mpeg, mpegversion=4"),
+    }
+    # The arm-time baseline (both streams feeding the mux), then the incident
+    # shape over the next interval: video flat, audio advancing at its own rate.
+    engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145516}
+    engine._output_buffers = 100
+    engine._arm_stall_watchdog()
+    engine._loop = _FakeLoop()
+
+    clock["t"] = 5.0
+    engine._output_buffers = 112
+    engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145750}
+    assert engine._check_stall() is True
+
+    err = capsys.readouterr().err
+    assert (
+        "CTRL output: 112 buffers (+12) since PLAYING [mux-in 5.0s: video=+0 audio=+234]" in err
+    ), err
+
+    # ... and the baseline ADVANCES with the print, so the next line reports the
+    # NEXT interval rather than re-reporting the same cumulative numbers.
+    clock["t"] = 10.0
+    engine._output_buffers = 120
+    engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145984}
+    assert engine._check_stall() is True
+    assert (
+        "CTRL output: 120 buffers (+20) since PLAYING [mux-in 5.0s: video=+0 audio=+234]"
+        in capsys.readouterr().err
+    )
 
 
 # --- round-2 finding 2: the stall bound yields to the commit watchdog ---------------
