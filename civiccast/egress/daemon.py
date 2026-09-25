@@ -2858,7 +2858,7 @@ class EgressDaemon:
 
         guard.streak += 1
         guard.offsets.append((offset, segment))
-        del guard.offsets[: -_OUTPUT_AV_GUARD_CONSECUTIVE_PROBES]
+        del guard.offsets[:-_OUTPUT_AV_GUARD_CONSECUTIVE_PROBES]
         if guard.streak < _OUTPUT_AV_GUARD_CONSECUTIVE_PROBES:
             return
         self._restart_desynced_output(channel_id, guard, process, now=now)

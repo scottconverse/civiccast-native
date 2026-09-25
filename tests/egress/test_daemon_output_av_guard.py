@@ -138,9 +138,7 @@ class _GuardFixture(NamedTuple):
     hls_dir: Path
 
 
-def _write_playlist(
-    directory: Path, *, segments: tuple[str, ...], closed: bool = False
-) -> Path:
+def _write_playlist(directory: Path, *, segments: tuple[str, ...], closed: bool = False) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     playlist = directory / "playlist.m3u8"
     body = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n"
