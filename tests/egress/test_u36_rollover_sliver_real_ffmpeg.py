@@ -40,9 +40,12 @@ Two things are pinned here:
 
 Skipped when ffmpeg/ffprobe are not on PATH, matching
 ``test_preparer_conform_cache_real_ffmpeg.py``. The GStreamer half of the
-reproduction (a real worker reaching EOS and exiting) needs the packaged
-GStreamer runtime and a ``gi`` build, neither of which exists in this
-environment -- see ``reports/U36.md`` section 2 for that environmental gap.
+reproduction -- test 6, a real worker across the boundary -- runs whenever the
+packaged GStreamer runtime is reachable from THIS interpreter: point
+``CIVICCAST_GSTREAMER_RUNTIME_ROOT`` at the install's ``runtime`` directory
+(the recipe is ``tests/egress/test_gst_engine_wsl.py``'s module docstring, and
+that module's own availability probe decides) and it runs instead of skipping.
+Without it test 6 skips; the plan and artifact tests still run.
 """
 
 from __future__ import annotations
@@ -50,6 +53,7 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -76,6 +80,13 @@ from civiccast.stream._ffmpeg import (
     run_ffmpeg,
 )
 from civiccast.stream.loudness import check_streaming_loudness
+
+# The live-worker half imports the native line's own live suite rather than copying
+# its harness -- worker launch, the D2 named-pipe control channel, the TS analyzer --
+# exactly as ``test_gst_engine_caption_flow_native.py`` already imports it.
+from tests.egress import test_gst_engine_wsl as native
+
+_LIVE_WORKER_AVAILABLE = native._wsl_gi_available()
 
 pytestmark = pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
@@ -397,3 +408,134 @@ def test_u36_the_fixed_plan_and_the_artifact_it_produces_agree(tmp_path: Path) -
                 f"but the artifact measures {measured}s"
             )
             assert measured > 0.5
+
+
+# A 6s settle window: the deferred switch is armed early and fires at the outgoing
+# leg's own end, so a reload that never settles must abort rather than hold here
+# forever. Production's own default is higher; this is only about the test's bound.
+_RELOAD_SETTLE_ENV = {"CIVICCAST_RELOAD_TIMEOUT_S": "6"}
+
+
+@pytest.mark.skipif(
+    not _LIVE_WORKER_AVAILABLE,
+    reason="no packaged GStreamer runtime reachable from this interpreter — the real "
+    "worker cannot run here (set CIVICCAST_GSTREAMER_RUNTIME_ROOT).",
+)
+def test_u36_a_real_boundary_does_not_kill_the_worker(tmp_path: Path) -> None:
+    """The whole chain, on real media, with a real GStreamer worker.
+
+    Tests 1-5 stop at the plan and the artifact. This one runs the boundary end to
+    end the way the station does: the production ``ScheduleSourcePlanProvider``
+    resolves both legs, the production ``SourcePreparer`` prepares both, the
+    production ``bridge.graph_from_config`` builds both graphs, and a REAL worker
+    plays the outgoing program and switches to the boundary's payload through the
+    engine's own deferred rollover.
+
+    What is asserted is the operator-visible outcome the defect destroyed: after
+    the boundary the worker is STILL ALIVE and TS is still being written, with both
+    elementary PIDs, and the channel tears down cleanly.
+
+    What each revision does with that chain:
+
+      * At ``1fdeaae6`` the outgoing leg's plan is the ROW's 14.0s against an 8.0s
+        file, so the engine arms the switch ~6s past the leg's real end; the leg
+        EOSes first and the pipeline goes with it. The boundary's payload on that
+        revision is the sliver itself (``inpoint=12.0``/``duration=2.0``), which
+        the preparer emits as a zero-byte file -- nothing a leg can preroll from.
+      * At HEAD the planner measures the media, so the outgoing leg's plan IS its
+        real length and the armed switch lands on it; the boundary resolves the
+        NEXT program (test 2) and prepares a real artifact (test 5), which the new
+        leg plays.
+
+    Not covered here: the daemon that decides when to arm the reload, and the
+    station's own encoder/sinks (this uses the harness's paced filesink). The
+    engine's deferred switch itself is ``test_deferred_rollover_switches_at_the_
+    boundary_without_eos``'s subject; this test's job is the PAYLOAD and the plan
+    behind it.
+    """
+
+    from civiccast.egress.gst import graph as product_graph
+    from civiccast.egress.gst.bridge import graph_from_config
+
+    items, assets = _two_programs(tmp_path)
+    provider = _provider(items, assets)
+    preparer = _sliver_preparer(tmp_path)
+    config = _config()
+
+    # The outgoing program, prepared from its own start -- what the worker is
+    # handed when the program begins.
+    outgoing = preparer.prepare(provider.plan_at("gov", _START), config)
+
+    # The boundary's resolution, prepared -- what the daemon would reload with.
+    boundary = preparer.prepare(
+        provider.plan_at("gov", _START + timedelta(seconds=_BOUNDARY_S)), config
+    )
+    payload_segment = boundary.source_plan.segments[0]
+    payload_bytes = Path(payload_segment.path).stat().st_size
+
+    out_ts = tmp_path / "out.ts"
+    reload_path = tmp_path / f"rollover{native.reloadpolicy.DEFERRED_SWITCH_SUFFIX}"
+
+    # The harness loads ``graph.py`` a SECOND time -- by path and under the bare name
+    # ``graph`` (test_gst_engine_wsl.py:213-217, so it runs under a python without the
+    # package) -- so its ``PlaylistLeg`` is a different class object from the one
+    # ``graph_from_config`` builds. ``graph_to_json``'s ``isinstance(source,
+    # PlaylistLeg)`` is class-identity, so a production graph handed straight to the
+    # harness' serializer takes the SourceLeg branch and dies with "AttributeError:
+    # 'PlaylistLeg' object has no attribute 'elements'" before any worker starts. Both
+    # module objects are the same stdlib-only file and every other type the serializer
+    # touches is duck-typed (``_elem_to_dict`` reads ``spec.factory`` and friends), so
+    # serializing with the module the graph actually came from is the whole fix. It is
+    # scoped to the build-and-launch below -- nothing after it reads ``graphmod`` --
+    # and restored, so no other test in the session sees a rebound harness global.
+    harness_graphmod = native.graphmod
+    native.graphmod = product_graph
+    try:
+        graph = native._paced_filesink_graph(
+            graph_from_config(config, outgoing.source_plan), out_ts
+        )
+        reload_path.write_text(
+            native.graphmod.graph_to_json(
+                native._filesink_graph(
+                    graph_from_config(config, boundary.source_plan), tmp_path / "payload-out.ts"
+                )
+            ),
+            encoding="utf-8",
+        )
+        assert native.reloadpolicy.reload_switch_is_deferred(str(reload_path)), (
+            "the harness must request the DEFERRED switch mode, else this proves a "
+            "different path than the boundary rollover"
+        )
+        proc, control, log = native._launch_worker(tmp_path, graph, out_ts, _RELOAD_SETTLE_ENV)
+    finally:
+        native.graphmod = harness_graphmod
+    try:
+        time.sleep(1.0)  # arm early, well before the outgoing leg's end
+        native._send(control, f"reload {reload_path}")
+        native._wait_for_log(log, "CTRL reload committed", timeout=45.0)
+        committed_at_size = out_ts.stat().st_size
+        time.sleep(2.0)
+        assert proc.poll() is None, (
+            f"the worker exited at the boundary rollover: the outgoing leg ran out "
+            f"before the switch the plan armed (boundary payload {payload_segment.label!r} "
+            f"= {payload_bytes} bytes); log:\n"
+            f"{log.read_text(encoding='utf-8', errors='replace')}"
+        )
+        time.sleep(1.0)
+        native._send(control, "stop")
+        returncode = proc.wait(timeout=25)
+    finally:
+        native._reap(proc)
+
+    text = log.read_text(encoding="utf-8", errors="replace")
+    assert returncode == 0, (
+        f"unclean teardown after the boundary rollover (rc={returncode});\n{text}"
+    )
+    native._assert_reload_committed(text)
+    assert out_ts.stat().st_size > committed_at_size, (
+        "no TS was written after the boundary -- the channel went dark at the handover;\n" + text
+    )
+    native._assert_continuous(out_ts, text, require_audio_pid=True)
+    assert {"video", "audio"} <= native._ffprobe_codec_types(out_ts), (
+        f"ffprobe did not report both a video and an audio stream after the rollover;\n{text}"
+    )
