@@ -101,13 +101,15 @@ producing.
 
 ### A channel whose HLS window stayed frozen after a failed relay self-heal is now restarted (U30, 2026-09-25)
 
-Four live freezes were reported on 2026-09-25 across all three channels
-(`education` 06:27, `government` 01:04 and 08:39, `public` 10:04; the last two
-are the cases whose logs were captured) with one shape: a deferred
-program-to-program reload commits (`stage=committed elements=52`) and the
-channel's **video** output stops while the worker stays alive and keeps printing
-`CTRL output` lines -- at the audio-only rate, 244 buffers per 5 s measured on
-the two captured cases against ~390 healthy. The relay's live window
+Four live freezes of the same post-commit class were reported on 2026-09-25
+across all three channels (`education` 06:27, `government` 01:04 and 08:38,
+`public` 10:04) with one shape: a deferred program-to-program reload commits
+(`stage=committed elements=52`) and the channel's **video** output stops while
+the worker stays alive and keeps printing `CTRL output` lines. The rate is
+measured in all four captures -- the worker's own `CTRL output:` interval deltas
+fall from ~392 to ~245 per 5 s, a **1.59-1.61x** step that matches the
+audio-alone share of the mux's ~77 buffers per second -- so the video branch
+stopped feeding the mux while audio carried on. The relay's live window
 stops advancing, the relay's own self-heal cannot help, and only a whole-channel
 restart brings the channel back. The engine survives its own stall because its
 stall watchdog watches an **aggregate** mux-output counter that the audio leg

@@ -704,22 +704,21 @@ a bounced channel is the same failure mode as any other:
   treats any advance of that single integer as healthy output, so a freeze
   that stops one stream while another keeps flowing never trips it. All four
   2026-09-25 live freezes had that shape: the video branch stopped delivering
-  buffers while audio carried on. The rate was measured on the two whose logs
-  were captured -- the worker's own `CTRL output:` totals fall to ~244 buffers
-  per 5s interval against ~390 on the healthy intervals before the freeze --
-  and the other two were reported in the same shape (both are recorded in the
-  CHANGELOG's U30 section, where the same rate is attributed to the two
-  captured cases only). A dark channel whose worker stderr holds no `CTRL
-  stall` line is therefore NOT evidence that residents are still being fed.
-  Since U30 the progress line also names the streams that
-  aggregate cannot separate -- `CTRL output: <total> buffers (+<delta>) since
-  PLAYING [mux-in 5.0s: video=+0 audio=+235]` -- where `(+<delta>)` is still
-  cumulative since PLAYING while each `[mux-in ...]` value is that stream's
-  count over the interval since the previous line (always armed, not an
-  opt-in diagnostic). `video=+0` against a climbing `audio` is the marker for
-  a video-only freeze. A pad the worker could not count is omitted from the
-  clause rather than shown as `+0`, so absence means "not counted", not
-  "stopped".
+  buffers while audio carried on. The worker's own `CTRL output:` interval
+  deltas fall from ~392 to ~245 buffers per 5s in all four captures, and that
+  step matches the audio-alone share of the mux's ~77 buffers per second. A
+  dark channel whose worker stderr holds no `CTRL stall` line is therefore NOT
+  evidence that residents are still being fed. Since U30 the progress line also
+  names the streams that aggregate cannot separate --
+  `CTRL output: <total> buffers (+<delta>) since PLAYING [mux-in 5.0s: video=+0 audio=+235]`
+  -- where `(+<delta>)` is still cumulative since PLAYING while each
+  `[mux-in ...]` value is that stream's count over the interval since the
+  previous line (always armed, not an opt-in diagnostic). `video=+0` against a
+  climbing `audio` is the marker for a video-only freeze. Two readings of the
+  clause are worth knowing: a pad the worker could not count at all is omitted
+  rather than shown as `+0`, so absence means "not counted", not "stopped"; and
+  a pad registered after the previous line renders `+0` for that one interval,
+  so it is a *run* of `+0`s that is the freeze, not a single one.
 - **A channel restarted while its worker was still ALIVE (U30 freeze
   escalation).** The one daemon-driven restart here that is not a worker
   failure: when the HLS live window measures as still frozen 30s after the
