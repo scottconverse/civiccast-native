@@ -181,7 +181,9 @@ def _two_programs(tmp_path: Path) -> tuple[list[ScheduleItemResponse], dict[str,
         _item(_SECOND, title="City Council", start_offset_s=_SECOND_START_S),
     ]
     assets = {
-        _FIRST: _row(first_media, asset_id=_FIRST, title="Weather Report", recorded_seconds=_RECORDED_S),
+        _FIRST: _row(
+            first_media, asset_id=_FIRST, title="Weather Report", recorded_seconds=_RECORDED_S
+        ),
         _SECOND: _row(
             second_media,
             asset_id=_SECOND,

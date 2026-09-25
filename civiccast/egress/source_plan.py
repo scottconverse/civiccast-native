@@ -974,9 +974,7 @@ def _segment_from_item(
         )
     inpoint = asset.trim_in_seconds
     outpoint = asset.trim_out_seconds
-    media_end = (
-        media_duration_resolver(media_path) if media_duration_resolver is not None else None
-    )
+    media_end = media_duration_resolver(media_path) if media_duration_resolver is not None else None
     duration = _segment_duration(
         item, asset, inpoint=inpoint, outpoint=outpoint, media_end=media_end
     )

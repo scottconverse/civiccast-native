@@ -1778,9 +1778,10 @@ def test_u36_a_rollover_past_the_media_end_never_ends_its_plan_past_that_end(
     # 3.5s past the end of media that had already played.
     for segment in plan.segments:
         start_seconds = segment.inpoint_seconds or 0.0
-        assert start_seconds + segment.duration_seconds <= _U36_REAL_MEDIA[
-            Path(segment.path).name
-        ] + 0.05, (
+        assert (
+            start_seconds + segment.duration_seconds
+            <= _U36_REAL_MEDIA[Path(segment.path).name] + 0.05
+        ), (
             f"segment {segment.label!r} airs to "
             f"{start_seconds + segment.duration_seconds}s of a "
             f"{_U36_REAL_MEDIA[Path(segment.path).name]}s file"
