@@ -168,6 +168,13 @@ from threading import Lock, RLock, Thread
 from typing import IO, Protocol
 
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
+from civiccast.egress.relay_reclaim import (
+    PortOwnerApi,
+    PsutilPortOwnerApi,
+    decide_reclaim,
+    relay_log_shows_bind_failure,
+    udp_port_of,
+)
 from civiccast.egress.sinks import HlsSink
 from civiccast.stream._ffmpeg import FfmpegNotFoundError, FfmpegProcessHandle, start_ffmpeg
 
@@ -960,6 +967,15 @@ class _Relay:
     #: cap trim is the writer's, and the trim can never leave the child
     #: appending past a rewrite into a zero-filled hole.
     log_writer: _RelayLogWriter | None = None
+    #: U31 orphan reclaim. ``orphan_reclaim_attempted`` is the one-shot latch for
+    #: THIS child: a child's log is probed for a bind failure once and never
+    #: again, so a poll tick cannot re-read and re-kill in a loop.
+    #: ``orphan_reclaim_attempts`` is the episode counter (carried onto the
+    #: replacement exactly like ``stream_fault_attempts``) that bounds how many
+    #: reclaims may jump the restart backoff; see
+    #: :meth:`HlsRelaySupervisor._maybe_reclaim_orphan`.
+    orphan_reclaim_attempted: bool = False
+    orphan_reclaim_attempts: int = 0
 
 
 class HlsRelaySupervisor:
@@ -986,12 +1002,17 @@ class HlsRelaySupervisor:
         stream_retry_delay_s: float | None = None,
         stream_retry_slow_delay_s: float | None = None,
         log_root: Path | str | None = None,
+        port_owner: PortOwnerApi | None = None,
     ) -> None:
         self._starter = starter or _default_starter
         self._base_port = base_port
         self._guard = Lock()
         self._relays: dict[str, _Relay] = {}
         self._unavailable_logged = False
+        # U31: who holds a UDP port, and how to kill them safely. Injected the
+        # same way ``starter`` is; the production implementation reads the OS
+        # UDP connection table and kills through ``verify_and_kill_process``.
+        self._port_owner_api: PortOwnerApi = port_owner or PsutilPortOwnerApi()
         # U24: where per-(channel, sink) relay stderr logs live. ``None`` keeps
         # the pre-U24 behaviour (child stderr discarded). The daemon passes its
         # authoritative ``work_dir`` per ``apply`` call -- see ``apply``.
@@ -1489,6 +1510,126 @@ class HlsRelaySupervisor:
         replacement.stream_retry_not_before = now + delay
         return True
 
+    # --- U31: reclaim a port an orphaned relay ffmpeg still holds ----------------------
+
+    def _live_relay_pids(self, *, exclude: _Relay) -> set[int]:
+        """Pids of the relay children this supervisor is currently running.
+
+        Never kill targets: two sinks whose source URIs collide on one relay
+        port (``_PORT_RANGE`` is 500, so a station with many HLS sinks can
+        collide) would otherwise have this supervisor kill its OWN healthy
+        child to make room for the other -- turning a port collision into a
+        restart loop. ``exclude`` is the already-dead relay being replaced,
+        whose stale pid must not protect anything.
+        """
+        pids: set[int] = set()
+        for relay in self._relays.values():
+            if relay is exclude:
+                continue
+            pid = getattr(relay.process, "pid", None)
+            if isinstance(pid, int):
+                pids.add(pid)
+        return pids
+
+    def _maybe_reclaim_orphan(
+        self, key: str, channel_id: str, relay: _Relay, *, now: float
+    ) -> bool:
+        """Kill the orphaned relay ffmpeg holding this relay's port, then respawn.
+
+        Caller MUST hold ``self._guard``. Reached only from the EXITED branch of
+        :meth:`maybe_restore_missing_streams`, for a child that has already
+        died with a bind failure in its own log. Returns True when an orphan
+        was killed AND a replacement was spawned.
+
+        THE BOUND. This is the one restart path allowed to jump the backoff:
+        waiting 60 s to rebind a port held by a process that will never release
+        it is precisely the ~11-minute outage this fixes (the station,
+        2026-09-25). It therefore carries its own bound --
+        ``orphan_reclaim_attempts`` is copied onto each replacement (the
+        counter belongs to the (channel, sink) fault episode, not to one
+        child), and once it reaches ``_STREAM_FAST_ATTEMPTS`` the ordinary
+        cadence governs and a reclaim waits its turn like any other restart. A
+        port held by a process :func:`decide_reclaim` refuses to kill therefore
+        converges on one probe per backoff window rather than a spawn storm.
+        """
+        if relay.orphan_reclaim_attempted:
+            return False
+        attempts = relay.orphan_reclaim_attempts
+        if attempts >= _STREAM_FAST_ATTEMPTS and self._stream_retry_blocked(relay, now=now):
+            return False
+        port = udp_port_of(relay.relay_uri)
+        if port is None:
+            return False
+        sink_label = key.split("|", 1)[1]
+        if not relay_log_shows_bind_failure(self._relay_log_path(channel_id, sink_label)):
+            return False
+        # The probe has happened; latch it before acting on it. A refusal below
+        # must not be re-probed every tick -- that would re-scan the OS
+        # connection table for the life of the channel.
+        relay.orphan_reclaim_attempted = True
+        owner = self._port_owner_api.find_owner(port)
+        verdict = decide_reclaim(
+            owner,
+            relay_uri=relay.relay_uri,
+            excluded_pids=self._live_relay_pids(exclude=relay),
+        )
+        if not verdict.reclaim:
+            if owner is not None:
+                # Only worth a log line when there really is a holder: "nothing
+                # owns that port" is the ordinary case of a relay that died for
+                # some other reason.
+                _LOG.warning(
+                    "HLS relay for %s (sink %r) cannot bind %s and its port holder "
+                    "may not be reaped: %s.",
+                    channel_id,
+                    sink_label,
+                    relay.relay_uri,
+                    verdict.reason,
+                )
+            return False
+        if owner is None:
+            # Unreachable: decide_reclaim refuses a None owner. Kept so the
+            # narrowing below is explicit rather than an assertion in product
+            # code.
+            return False
+        if not self._port_owner_api.kill(owner):
+            _LOG.warning(
+                "HLS relay for %s (sink %r): %s could not be killed (it may have "
+                "exited first, or it is owned by another user); the relay keeps its "
+                "existing retry cadence.",
+                channel_id,
+                sink_label,
+                verdict.reason,
+            )
+            return False
+        _LOG.warning(
+            "HLS relay for %s (sink %r): reaped orphaned relay ffmpeg pid %d (%s) "
+            "holding %s; restarting the relay now (U31).",
+            channel_id,
+            sink_label,
+            owner.pid,
+            owner.name,
+            relay.relay_uri,
+        )
+        replacement = self._respawn_locked(key, channel_id, relay, reason="orphan-reclaim")
+        if replacement is None:
+            _LOG.error(
+                "HLS relay for %s (sink %r) could not be restarted after reaping pid %d; "
+                "the hls sink has no live window until the next start/reload succeeds.",
+                channel_id,
+                sink_label,
+                owner.pid,
+            )
+            return False
+        replacement.orphan_reclaim_attempts = attempts + 1
+        delay = (
+            self._stream_retry_delay_s
+            if attempts + 1 <= _STREAM_FAST_ATTEMPTS
+            else self._stream_retry_slow_delay_s
+        )
+        replacement.stream_retry_not_before = now + delay
+        return True
+
     def maybe_restore_missing_streams(
         self,
         channel_id: str,
@@ -1545,6 +1686,16 @@ class HlsRelaySupervisor:
             for key, relay in targets:
                 playlist = _playlist_path_for(relay.source_uri)
                 if relay.process.poll() is not None:
+                    # U31 first: if this child died because an ORPHANED relay
+                    # ffmpeg of a previous control plane still holds its UDP
+                    # port, the restart below would fail the same way forever.
+                    # Reaping the holder is the only thing that can bring the
+                    # sink back, so it is attempted before the ordinary restart
+                    # -- and only for a child whose own log shows the bind
+                    # failure, never on suspicion.
+                    if self._maybe_reclaim_orphan(key, channel_id, relay, now=now):
+                        restored = True
+                        continue
                     if self._stream_retry_blocked(relay, now=now):
                         continue
                     restored |= self._attempt_stream_restart(
