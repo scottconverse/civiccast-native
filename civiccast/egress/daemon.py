@@ -4412,9 +4412,10 @@ class EgressDaemon:
         ``_SCHEDULE_TAIL_FLOOR_SECONDS``) that the channel airs to its end and
         then EOSes on, costing a whole second restart to reach the program that
         was due all along. U36's incident is the same defect on the two paths
-        the U26 guard skipped: the 14:06:50 horizon-bound rollover (a 9.2s tail
-        whose new leg delivered 1.6s) and the 14:17:52 crash relaunch (a single
-        sub-floor segment).
+        the U26 guard skipped: the 14:06:50 horizon-bound rollover (whose new
+        leg delivered 1.6s before EOS -- ``mux-in 1.6s: video=+24 audio=+37``
+        -- on a horizon the plan recorded 3.65s past the outgoing leg's real
+        end) and the 14:17:52 crash relaunch (a single sub-floor segment).
 
         So resolve the schedule where that tail ENDS instead -- the next item --
         and use it when it is a strict improvement. Everything else keeps the
