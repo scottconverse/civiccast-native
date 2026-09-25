@@ -146,10 +146,10 @@ _RETENTION_FIRST_VERDICT_WAIT_SECONDS = 1.0
 #: ``max_backlog_segments`` of 2 -- the smallest overshoot the gate can see --
 #: while the ASR pool was idle with no lock waits at trip time.  Per-batch ASR
 #: elapsed on that station was p50 1.95 s, p90 5.73 s, MAX 19.08 s, so the
-#: transient behind a worst-case batch is a ~20 s stretch with the queue over
-#: the limit, i.e. ~10 scans at the shipped 2 s poll.  This window is 15 scans
-#: = 30 s: 50% margin over the worst measured tail, while still shedding a
-#: genuine collapse in a quarter of the 120 s first pause.
+#: transient behind a worst-case batch is a ~19 s stretch with the queue over
+#: the limit, i.e. ~9.5 scans at the shipped 2 s poll.  This window is 15 scans
+#: = 30 s: 1.57x that tail, while still shedding a genuine collapse in a quarter
+#: of the 120 s first pause.
 #:
 #: EPISTEMIC LIMIT, stated so this number is not overclaimed: the log cannot
 #: measure how long an over-limit episode would have lasted unfixed, because
