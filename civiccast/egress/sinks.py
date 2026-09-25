@@ -32,6 +32,20 @@ def _file_uri_path(uri: str) -> Path:
 class EgressSink:
     """Base class for FFmpeg output-side sink adapters."""
 
+    #: Whether this sink's program carries the channel's video stream.
+    #:
+    #: Declared rather than inferred because the HLS relay's argv REQUIRES
+    #: video (``-map 0:v:0``) for a video-carrying sink -- a relay child that
+    #: probes an input with no video then fails fast instead of silently
+    #: emitting audio-only HLS forever (beta.10 U12: the live government relay
+    #: locked to audio-only after an 18:46:32 mid-stream restart) -- and
+    #: requiring video is wrong for an audio-only sink. Every sink shipped
+    #: today carries video (there is no audio-only egress sink mode, and
+    #: ``extra_output_args`` cannot express ``-vn``), so this defaults True; an
+    #: audio-only variant overrides it False and gets the relay's historical
+    #: argv byte-for-byte.
+    carries_video: bool = True
+
     def __init__(
         self,
         spec: EgressSinkSpec,

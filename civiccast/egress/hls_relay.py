@@ -59,6 +59,26 @@ half below adds an mtime+segment-identity check and a bounded, opt-in
 self-heal. It deliberately does NOT diagnose the upstream UDP starvation that
 stops ffmpeg writing; it only makes a stalled-but-alive relay truthful and
 recoverable.
+
+**Beta.10 live finding (2026-09-24, U12): a (re)start can lock the sink to
+audio-only.** The government relay was restarted mid-stream by the bounded
+stall self-heal above (18:46:32, right after the channel cut to its fallback
+slate for a schedule gap). From then on its newest segments probed as AUDIO
+ONLY while the public/education relays stayed H264+AAC -- for hours, until the
+channel itself was restarted; the same shape hit education at 13:39:35 and
+government at 15:49:21 that day. Mechanism (reproduced with real ffmpeg
+against a live UDP input): ffmpeg fixes its OUTPUT stream set at probe time,
+so a child that starts while its input carries no video inside the probe
+window builds an audio-only output and never adds video when video arrives.
+The widened 6M probe only narrows the window in which that can happen; it
+cannot remove it, and it does not notice that the result is unwatchable. The
+video half below therefore (1) REQUIRES video in the relay's output mapping
+for a sink that carries video, so such a child fails fast instead of silently
+serving audio-only HLS, and (2) restarts a child that cannot satisfy that
+requirement -- exited, or alive with a video-less newest segment -- on a
+bounded, backed-off cadence until video is there. A sink that does not carry
+video (``EgressSink.carries_video`` False) keeps its historical argv and is
+never judged on video at all.
 """
 
 from __future__ import annotations
@@ -66,6 +86,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import shutil
+import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -80,6 +102,10 @@ from civiccast.stream._ffmpeg import FfmpegNotFoundError, FfmpegProcessHandle, s
 _LOG = logging.getLogger(__name__)
 
 _PORT_BASE_ENV = "CIVICCAST_HLS_RELAY_BASE_PORT"
+#: ffprobe binary name, resolved from PATH at probe time. Declared locally
+#: rather than importing ``civiccast.stream._ffmpeg``'s private
+#: ``_FFPROBE_EXECUTABLE``: this module already owns its own ffmpeg argv.
+_FFPROBE_EXECUTABLE = "ffprobe"
 _DEFAULT_PORT_BASE = 18_000
 _PORT_RANGE = 500
 _UDP_INPUT_ARGS = (
@@ -104,6 +130,37 @@ _UDP_INPUT_ARGS = (
 #: symptom was minutes, so 30s is far above a healthy 2s segment cadence and
 #: every real muxer hiccup, while still bounding a visible freeze.
 _DEFAULT_STALL_BOUND_S = 30.0
+
+#: Output-stream mapping for a sink that CARRIES the channel's video (U12).
+#:
+#: ``-map 0:v:0`` is deliberately NOT optional: ffmpeg fixes its output stream
+#: set at probe time, so a child that starts while the loopback input carries
+#: no video builds an audio-only HLS output and never adds video when it
+#: arrives (the live government symptom). Requiring the map turns that silent
+#: audio-only window into a prompt child failure -- measured against real
+#: ffmpeg 8.1.1: ``Stream map '0:v:0' matches no streams`` + "Error opening
+#: output files", exit -22, no window written -- which the supervisor's
+#: bounded restore below then retries until video is genuinely present.
+#:
+#: ``-map 0:a:0?`` is optional on purpose: with ANY ``-map`` present ffmpeg's
+#: default stream selection is disabled, so audio must be named explicitly;
+#: the trailing ``?`` keeps a video-only input (no audio PID) relay-able
+#: instead of fatal. Both halves are proven with real ffmpeg in
+#: ``tests/egress/test_hls_relay_video_lock.py``.
+_VIDEO_SINK_MAP_ARGS = ("-map", "0:v:0", "-map", "0:a:0?")
+
+#: U12 restart cadence for a relay that cannot carry video. The first
+#: ``_VIDEO_FAST_ATTEMPTS`` restarts are prompt (the input's video is usually
+#: a slate transition away), then the cadence drops to
+#: ``_DEFAULT_VIDEO_RETRY_SLOW_DELAY_S`` and each further attempt logs at
+#: ERROR -- a sink that can never satisfy the requirement must not
+#: restart-storm, but must keep trying and keep saying so.
+_DEFAULT_VIDEO_RETRY_DELAY_S = 5.0
+_DEFAULT_VIDEO_RETRY_SLOW_DELAY_S = 60.0
+_VIDEO_FAST_ATTEMPTS = 3
+#: Bound on one segment's ffprobe (U12 verification). A served 2s segment is
+#: read locally, so this only ever bounds a hung probe.
+_SEGMENT_PROBE_TIMEOUT_S = 10.0
 
 
 def hls_relay_uri_for(sink_uri: str, *, base_port: int | None = None) -> str:
@@ -156,6 +213,55 @@ def _last_segment(path: Path) -> str | None:
     return last_segment or None
 
 
+def _segment_has_video(path: Path) -> bool | None:
+    """Does THIS served segment carry a video stream? Tri-state (U12).
+
+    ``True``/``False`` are the answers ffprobe actually gave; ``None`` means
+    "no answer" -- the segment is not on disk yet (a window can name a segment
+    ffmpeg is still closing), ffprobe is absent, or it failed/timed out.
+    ``None`` never counts as a fault: the supervisor only restarts a relay on
+    POSITIVE evidence that its output has no video, so a broken or missing
+    probe tool cannot itself become a restart source.
+
+    Tri-state rather than the module-local reuse of
+    ``civiccast.stream._ffmpeg.probe_video_dimensions`` (which answers ``None``
+    for both "no video" and "could not tell") because the two must not be
+    conflated here: one is the live fault, the other is ignorance.
+    """
+    if not path.is_file():
+        return None
+    if shutil.which(_FFPROBE_EXECUTABLE) is None:
+        return None
+    try:
+        completed = subprocess.run(  # noqa: S603
+            [
+                _FFPROBE_EXECUTABLE,
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=_SEGMENT_PROBE_TIMEOUT_S,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return any(line.strip() == "video" for line in completed.stdout.splitlines())
+
+
+def _sink_carries_video(source_uri: str) -> bool:
+    """Whether this ``hls`` sink's program carries video (see ``EgressSink``)."""
+    return HlsSink(EgressSinkSpec(kind="hls", label="_video", uri=source_uri)).carries_video
+
+
 class _Ffmpeg(Protocol):
     def poll(self) -> int | None: ...
     def terminate(self, *, grace_seconds: float = 5.0) -> int | None: ...
@@ -192,6 +298,17 @@ class _Relay:
     #: never-emitted path (audit finding 3): a producing channel whose relay has
     #: never written a window past its startup grace must be reported unhealthy.
     first_seen_at: float | None = None
+    #: U12 video-carry watch. ``video_verified`` latches once THIS child's
+    #: newest served segment is measured to carry video -- the check then stops
+    #: (one ffprobe per child, not one per tick). ``video_probed_segment``
+    #: remembers which segment name that probe looked at, so a static window is
+    #: not re-probed every tick. ``video_fault_attempts`` counts this (channel,
+    #: sink)'s failed restarts across children; ``video_retry_not_before`` is
+    #: the monotonic time the next attempt may run (the backoff).
+    video_verified: bool = False
+    video_probed_segment: str | None = None
+    video_fault_attempts: int = 0
+    video_retry_not_before: float | None = None
 
 
 class HlsRelaySupervisor:
@@ -214,6 +331,9 @@ class HlsRelaySupervisor:
         starter: Callable[..., _Ffmpeg] | None = None,
         base_port: int | None = None,
         stall_bound_s: float | None = None,
+        segment_probe: Callable[[Path], bool | None] | None = None,
+        video_retry_delay_s: float | None = None,
+        video_retry_slow_delay_s: float | None = None,
     ) -> None:
         self._starter = starter or _default_starter
         self._base_port = base_port
@@ -221,6 +341,17 @@ class HlsRelaySupervisor:
         self._relays: dict[str, _Relay] = {}
         self._unavailable_logged = False
         self._stall_bound_s = stall_bound_s if stall_bound_s is not None else _DEFAULT_STALL_BOUND_S
+        # U12 seams, injected the same way ``starter`` is: the probe is a real
+        # ffprobe by default, and the two delays default to the shipped cadence.
+        self._segment_probe = segment_probe or _segment_has_video
+        self._video_retry_delay_s = (
+            video_retry_delay_s if video_retry_delay_s is not None else _DEFAULT_VIDEO_RETRY_DELAY_S
+        )
+        self._video_retry_slow_delay_s = (
+            video_retry_slow_delay_s
+            if video_retry_slow_delay_s is not None
+            else _DEFAULT_VIDEO_RETRY_SLOW_DELAY_S
+        )
         # Monotonic clock, injectable for tests. Must be the SAME clock domain
         # the caller passes as ``now`` to note_progress/progress_stale/self-heal;
         # the daemon uses its own ``_monotonic`` for exactly that reason.
@@ -280,6 +411,10 @@ class HlsRelaySupervisor:
             *_UDP_INPUT_ARGS,
             "-i",
             f"{relay_uri}?overrun_nonfatal=1&fifo_size=50000000",
+            # U12: a video-carrying sink's relay REQUIRES video, so a child that
+            # probes a video-less loopback input fails fast instead of emitting
+            # audio-only HLS forever. An audio-only sink keeps today's argv.
+            *(_VIDEO_SINK_MAP_ARGS if HlsSink(sink).carries_video else ()),
             *HlsSink(sink).output_args(),
         ]
         try:
@@ -325,6 +460,168 @@ class HlsRelaySupervisor:
             sink.uri,
         )
         return relay_uri
+
+    def _respawn_locked(self, key: str, channel_id: str, relay: _Relay) -> _Relay | None:
+        """Terminate one relay child and spawn its single replacement.
+
+        Caller MUST hold ``self._guard``. Every restart path (the stall heal
+        and the U12 video restore) funnels through here so the one-child-per-
+        (channel, sink) invariant is structurally preserved. Returns the new
+        :class:`_Relay`, or ``None`` when the replacement could not be spawned
+        (ffmpeg gone) -- in which case the key is left untracked and the sink
+        falls to the existing dead-relay/health path.
+        """
+        sink = EgressSinkSpec(kind="hls", label=key.split("|", 1)[1], uri=relay.source_uri)
+        relay.process.terminate()
+        self._relays.pop(key, None)
+        relay_uri = hls_relay_uri_for(relay.source_uri, base_port=self._base_port)
+        if self._start_relay_locked(key, channel_id, sink, relay_uri) is None:
+            return None
+        return self._relays.get(key)
+
+    def _video_retry_blocked(self, relay: _Relay, *, now: float) -> bool:
+        """Is this relay inside the backoff window of its last video attempt?"""
+        return relay.video_retry_not_before is not None and now < relay.video_retry_not_before
+
+    def _attempt_video_restart(
+        self, key: str, channel_id: str, relay: _Relay, *, now: float, reason: str
+    ) -> bool:
+        """Restart a child that cannot carry video, on the bounded cadence.
+
+        Caller MUST hold ``self._guard``. Returns True when a replacement was
+        spawned. The attempt count and the next-allowed time are carried onto
+        the replacement (the counters belong to the (channel, sink) fault
+        episode, not to one child), so a sink whose input never carries video
+        converges on one attempt per ``video_retry_slow_delay_s`` -- logged at
+        ERROR -- rather than a restart storm. The child that cannot carry video
+        is never left to serve: this is the "restart it again promptly (bounded,
+        logged) until video is present" half of U12.
+        """
+        attempts = relay.video_fault_attempts + 1
+        delay = (
+            self._video_retry_delay_s
+            if attempts <= _VIDEO_FAST_ATTEMPTS
+            else self._video_retry_slow_delay_s
+        )
+        log = _LOG.warning if attempts <= _VIDEO_FAST_ATTEMPTS else _LOG.error
+        log(
+            "HLS relay for %s (sink %r) %s; restarting the relay child to restore "
+            "its video stream (attempt %d; if it fails again the next attempt is in "
+            "%.0fs).",
+            channel_id,
+            key.split("|", 1)[1],
+            reason,
+            attempts,
+            delay,
+        )
+        replacement = self._respawn_locked(key, channel_id, relay)
+        if replacement is None:
+            _LOG.error(
+                "HLS relay for %s (sink %r) could not be restarted after %s; the "
+                "hls sink has no live window until the next start/reload succeeds.",
+                channel_id,
+                key.split("|", 1)[1],
+                reason,
+            )
+            return False
+        replacement.video_fault_attempts = attempts
+        replacement.video_retry_not_before = now + delay
+        return True
+
+    def maybe_restore_missing_video(
+        self,
+        channel_id: str,
+        *,
+        now: float,
+        producing: bool,
+        startup_grace_s: float,
+    ) -> bool:
+        """U12: make a relay that cannot carry video carry it, or restart it.
+
+        Two fault shapes, one bounded recovery:
+
+        * **the child exited.** The relay argv requires video (``-map 0:v:0``)
+          for a video-carrying sink, so a child that probed a video-less input
+          exits immediately instead of serving audio-only HLS (measured: real
+          ffmpeg 8.1.1, "Stream map '0:v:0' matches no streams", no window
+          written). Before this method, nothing respawned it: a dead relay was
+          only recovered by the channel's next full encoder start/reload, which
+          for an ON_AIR channel can be hours -- the live government relay sat
+          audio-only/dead from 18:46:32 until the channel was restarted.
+        * **the child is alive but its newest served segment has no video.**
+          The belt to that braces (a child can in principle still be emitting
+          audio-only if its argv did not require video, or if a mapped stream's
+          packets never arrive): the segment is probed once per child, and a
+          positive audio-only verdict restarts the child.
+
+        Gating, deliberately asymmetric:
+
+        * the EXITED shape is recovered regardless of ``producing`` -- there is
+          no healthy child to protect, and a channel that is still starting is
+          exactly when a video-less probe is most likely;
+        * the ALIVE shape requires ``producing`` (the caller's own on-air
+          evidence latch), the child's own ``startup_grace_s``, and a video
+          carrying sink, mirroring :meth:`maybe_self_heal_stalled`: a
+          STARTING/no-source channel legitimately has no window yet and must
+          never be restarted for it.
+
+        A sink that does not carry video is never judged here: it keeps its
+        audio-only output, and only the EXITED shape (an ordinary relay death)
+        applies to it. Returns True when at least one replacement was spawned.
+        """
+        with self._guard:
+            targets = [
+                (key, relay)
+                for key, relay in self._relays.items()
+                if key.startswith(f"{channel_id}|")
+            ]
+            if not targets:
+                return False
+            restored = False
+            for key, relay in targets:
+                playlist = _playlist_path_for(relay.source_uri)
+                if relay.process.poll() is not None:
+                    if self._video_retry_blocked(relay, now=now):
+                        continue
+                    restored |= self._attempt_video_restart(
+                        key,
+                        channel_id,
+                        relay,
+                        now=now,
+                        reason="exited without a live window",
+                    )
+                    continue
+                if not producing or relay.video_verified:
+                    continue
+                if not _sink_carries_video(relay.source_uri):
+                    continue
+                anchor = relay.started_at if relay.started_at is not None else relay.first_seen_at
+                if anchor is not None and now - anchor < startup_grace_s:
+                    continue
+                segment = _last_segment(playlist)
+                if segment is None or segment == relay.video_probed_segment:
+                    continue
+                verdict = self._segment_probe(playlist.parent / segment)
+                relay.video_probed_segment = segment
+                if verdict is None:
+                    # Cannot tell (segment still being written, ffprobe absent or
+                    # unhappy): claim nothing and never restart on ignorance.
+                    continue
+                if verdict:
+                    relay.video_verified = True
+                    relay.video_fault_attempts = 0
+                    relay.video_retry_not_before = None
+                    continue
+                if self._video_retry_blocked(relay, now=now):
+                    continue
+                restored |= self._attempt_video_restart(
+                    key,
+                    channel_id,
+                    relay,
+                    now=now,
+                    reason=f"is serving a video-less window ({segment} has no video stream)",
+                )
+            return restored
 
     def is_alive(self, channel_id: str) -> bool | None:
         """Liveness of this channel's relay child(ren) (MAJOR M1).
@@ -518,19 +815,15 @@ class HlsRelaySupervisor:
                     reason = f"has served no new segment for {now - relay.progress_at:.1f}s"
                 else:
                     continue
-                sink = EgressSinkSpec(kind="hls", label=key.split("|", 1)[1], uri=relay.source_uri)
-                relay.process.terminate()
-                self._relays.pop(key, None)
-                relay_uri = hls_relay_uri_for(relay.source_uri, base_port=self._base_port)
                 _LOG.warning(
                     "HLS relay for %s (sink %r) %s; restarting the relay child to "
                     "re-establish its window (viewer discontinuity possible).",
                     channel_id,
-                    sink.label,
+                    key.split("|", 1)[1],
                     reason,
                 )
-                replacement = self._start_relay_locked(key, channel_id, sink, relay_uri)
-                if replacement is None:
+                new_relay = self._respawn_locked(key, channel_id, relay)
+                if new_relay is None:
                     # Could not respawn (ffmpeg gone): report no heal and leave
                     # the sink to the existing dead-relay/health path.
                     healed = False
@@ -538,12 +831,10 @@ class HlsRelaySupervisor:
                 # Keep the episode latched on the NEW relay (audit finding 4):
                 # until the served window advances past the pre-heal baseline,
                 # a frozen playlist left on disk must not clear the latch.
-                new_relay = self._relays.get(key)
-                if new_relay is not None:
-                    new_relay.heal_attempted = True
-                    new_relay.heal_baseline_segment = baseline_segment
-                    new_relay.progress_segment = baseline_segment
-                    new_relay.progress_at = now
+                new_relay.heal_attempted = True
+                new_relay.heal_baseline_segment = baseline_segment
+                new_relay.progress_segment = baseline_segment
+                new_relay.progress_at = now
                 healed = True
             return healed
 
