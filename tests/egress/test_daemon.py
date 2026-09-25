@@ -458,6 +458,9 @@ def test_start_does_not_hold_the_pass_on_caption_retention_discovery(tmp_path: P
     finally:
         release.set()
         provider.wait_for_sweep(10.0)
+        # U08: the first start arms the provider's own refresh timer, so this
+        # test must end it -- an armed timer outlives the test otherwise.
+        provider.stop(10.0)
 
     assert elapsed < 1.0, f"the automation pass waited {elapsed:.2f}s on retention discovery"
     assert started, "the program never started"
