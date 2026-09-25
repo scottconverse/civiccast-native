@@ -1137,6 +1137,7 @@ def _build_egress_source_plan_provider() -> ScheduleSourcePlanProvider:
     from civiccast.egress import ScheduleSourcePlanProvider
     from civiccast.egress.engine_select import gstreamer_engine_selected
     from civiccast.egress.source_plan import (
+        SCHEDULE_GAP_ABSORB_SECONDS,
         gstreamer_source_segment_seconds_from_env,
         schedule_loop_enabled_from_env,
     )
@@ -1157,6 +1158,10 @@ def _build_egress_source_plan_provider() -> ScheduleSourcePlanProvider:
         max_segment_seconds=(
             gstreamer_source_segment_seconds_from_env() if gstreamer_engine_selected() else None
         ),
+        # U26: same gap absorb as the supervised path (egress/automation.py's
+        # production wiring) -- a CLI-owned worker must not go to slate for a
+        # small gap between two scheduled items either.
+        gap_absorb_seconds=SCHEDULE_GAP_ABSORB_SECONDS,
     )
 
 

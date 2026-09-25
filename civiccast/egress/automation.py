@@ -2571,6 +2571,7 @@ def build_channel_automation(
     from civiccast.egress.hls_relay import HlsRelaySupervisor
     from civiccast.egress.preparer import SourcePreparer
     from civiccast.egress.source_plan import (
+        SCHEDULE_GAP_ABSORB_SECONDS,
         ScheduleSourcePlanProvider,
         gstreamer_source_segment_seconds_from_env,
         schedule_loop_enabled_from_env,
@@ -2635,6 +2636,13 @@ def build_channel_automation(
         max_segment_seconds=(
             gstreamer_source_segment_seconds_from_env() if gstreamer_engine_selected() else None
         ),
+        # U26: absorb a small schedule gap at the rollover boundary instead of
+        # resolving it to filler. The boundary between two items is where this
+        # provider's answer decides whether the channel leaves its program at
+        # all -- a filler answer there is what puts it on slate and into F3(b)'s
+        # exit-and-restart detour (reports/U26.md). See
+        # SCHEDULE_GAP_ABSORB_SECONDS for the size and the reasoning.
+        gap_absorb_seconds=SCHEDULE_GAP_ABSORB_SECONDS,
     )
     # #156: the persistent conform cache emits playout-time trims when the
     # engine honors them — the legacy ffmpeg-concat engine does (ffconcat
