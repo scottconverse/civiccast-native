@@ -526,6 +526,7 @@ def _bare_engine_for_commit(module: types.ModuleType, recorder: _Recorder) -> An
     engine.pipeline = _FakePipeline(recorder)
     engine._pending_reload = None
     engine._abort_retire_threads = []
+    engine._abort_retire_legs = []
     engine._reload_commit_thread = None
     engine._stopping = False
     engine._error = None
@@ -2416,6 +2417,185 @@ def test_abort_settles_the_caller_without_waiting_for_retirement(engine_module) 
         thread.join(timeout=5.0)
 
     assert results == [(False, "timeout")]
+
+
+# --- (5b) item 3: an aborted leg's own errors must not exit the worker ----------
+#
+# ``_abort_pending_reload`` clears ``self._pending_reload`` the instant it decides
+# not to use the new leg -- but the leg is NOT gone: its disposal runs on a worker
+# thread. In that window both attributing predicates early-out on
+# ``_pending_reload is None``, so a second bus ERROR from the aborted leg's own
+# elements matched no containment branch and fell through to the fatal tail.
+# Observed on the education channel, ``gst-worker.stdout.log`` lines 2649-2650:
+# the pre-commit abort on ``source=decodebin14`` is contained, and the very next
+# line is the worker's ``WORKER_RESULT`` carrying that same decodebin's GError --
+# a producing channel taken off air by the teardown of the leg the engine had just
+# rejected. The leg is DROP-fenced at its own src pads before the holds are lifted
+# (``_detach_leg_from_selectors``), so nothing it emits can reach the on-air path.
+
+
+def _engine_aborting_a_wedged_leg(
+    engine_module, recorder: _Recorder, *, name: str = "decodebin14"
+) -> tuple[Any, Any, threading.Event]:
+    """Abort a pre-commit reload whose leg wedges in ``set_state(NULL)``.
+
+    A wedged disposal is the deterministic way to hold the window open: the
+    retirement thread is inside ``_dispose_source_leg`` while the aborted leg's
+    elements are still live on the bus, which is exactly the state item 3 found.
+    Returns ``(engine, aborted_leg_element, release)``; the caller MUST set
+    ``release`` (and join) so no test leaves a thread parked in ``set_state``."""
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    entered = threading.Event()
+    release = threading.Event()
+
+    class _WedgedElement(_FakeOldElement):
+        def set_state(self, state: Any) -> str:
+            entered.set()
+            release.wait(timeout=5.0)
+            return super().set_state(state)
+
+    element = _WedgedElement(name, recorder)
+    engine._pending_reload = _abort_pending(recorder, [], [element])
+    engine._abort_pending_reload("error")
+    assert entered.wait(timeout=5.0), "the aborted leg's retirement never started"
+    assert engine._pending_reload is None
+    return engine, element, release
+
+
+def test_second_error_from_the_just_aborted_leg_is_contained(engine_module, capsys) -> None:
+    """Item 3, the observed shape: the abort is contained (line 2649) and then the
+    SAME element's second error decides the worker's fate (line 2650)."""
+    recorder = _Recorder()
+    engine, element, release = _engine_aborting_a_wedged_leg(engine_module, recorder)
+
+    class _Loop:
+        quit_called = False
+
+        def quit(self) -> None:
+            self.quit_called = True
+
+    class _Message:
+        type = _FakeMessageType.ERROR
+        src = element
+
+        @staticmethod
+        def parse_error() -> tuple[str, str]:
+            return (
+                "GStreamer encountered a general stream error.",
+                "all streams without buffers",
+            )
+
+    engine._loop = _Loop()
+    try:
+        assert engine._on_bus(None, _Message()) is True
+        assert engine._error is None, "an aborted leg's error took the channel off air"
+        assert engine._loop.quit_called is False
+        assert "contained error from an already-aborted reload leg" in capsys.readouterr().out
+    finally:
+        release.set()
+        for thread in engine._abort_retire_threads:
+            thread.join(timeout=5.0)
+
+
+def test_second_error_from_inside_the_just_aborted_leg_is_contained(engine_module) -> None:
+    """A decodebin-internal decoder posts with the INNER element as its source, so
+    attribution has to walk parents -- the same walk the two pre-existing
+    predicates do."""
+    recorder = _Recorder()
+    engine, element, release = _engine_aborting_a_wedged_leg(engine_module, recorder)
+
+    class _AbortedLegDescendant:
+        @staticmethod
+        def get_name() -> str:
+            return "avdec_h264-inside-the-aborted-leg"
+
+        @staticmethod
+        def get_parent() -> Any:
+            return element
+
+    class _Loop:
+        quit_called = False
+
+        def quit(self) -> None:
+            self.quit_called = True
+
+    class _Message:
+        type = _FakeMessageType.ERROR
+        src = _AbortedLegDescendant()
+
+        @staticmethod
+        def parse_error() -> tuple[str, str]:
+            return "decoder failure inside the aborted leg", "debug"
+
+    engine._loop = _Loop()
+    try:
+        assert engine._on_bus(None, _Message()) is True
+        assert engine._error is None
+        assert engine._loop.quit_called is False
+    finally:
+        release.set()
+        for thread in engine._abort_retire_threads:
+            thread.join(timeout=5.0)
+
+
+def test_error_from_an_unrelated_element_is_still_fatal_while_an_abort_retires(
+    engine_module,
+) -> None:
+    """The containment is attributed, not blanket: an error that is NOT the aborted
+    leg's still follows the ordinary fatal path, so supervisor recovery stays
+    truthful for a channel that has genuinely failed."""
+    recorder = _Recorder()
+    engine, _element, release = _engine_aborting_a_wedged_leg(engine_module, recorder)
+
+    class _Loop:
+        quit_called = False
+
+        def quit(self) -> None:
+            self.quit_called = True
+
+    class _Message:
+        type = _FakeMessageType.ERROR
+        src = _FakeOldElement("shared-mux", recorder)
+
+        @staticmethod
+        def parse_error() -> tuple[str, str]:
+            return "fatal stream error", "debug"
+
+    engine._loop = _Loop()
+    try:
+        assert engine._on_bus(None, _Message()) is True
+        assert engine._error == ("fatal stream error", "debug")
+        assert engine._loop.quit_called is True
+    finally:
+        release.set()
+        for thread in engine._abort_retire_threads:
+            thread.join(timeout=5.0)
+
+
+def test_a_fully_retired_aborted_leg_stops_being_attributed(engine_module) -> None:
+    """The record is reaped once the leg is provably gone -- thread finished AND
+    disposal reported complete -- so the containment never becomes permanent."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    first_leg = _FakeOldElement("aborted-program", recorder)
+    engine._pending_reload = _abort_pending(recorder, [], [first_leg])
+    engine._abort_pending_reload("error")
+    for thread in engine._abort_retire_threads:
+        thread.join(timeout=5.0)
+    assert engine._belongs_to_aborted_leg(first_leg) is True, (
+        "a leg still retiring was already dropped"
+    )
+
+    # A later abort reaps the first leg (finished + fully disposed) and attributes
+    # only its own.
+    second_leg = _FakeOldElement("next-aborted-program", recorder)
+    engine._pending_reload = _abort_pending(recorder, [], [second_leg])
+    engine._abort_pending_reload("error")
+    for thread in engine._abort_retire_threads:
+        thread.join(timeout=5.0)
+
+    assert engine._belongs_to_aborted_leg(second_leg) is True
+    assert engine._belongs_to_aborted_leg(first_leg) is False
 
 
 # --- (6) U16: the rebase reference and the first-buffer observations ------------
