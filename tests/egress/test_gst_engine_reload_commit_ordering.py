@@ -3747,6 +3747,164 @@ def test_u30_a_pipeline_eos_names_itself_before_it_quits_the_worker(
     assert loop.quits == 1
 
 
+# -- U30 EOS-origin diagnostic: WHERE the EOS that ends output entered --------
+#
+# The U30 off-live campaigns produce a shape no other line explains: the outgoing
+# leg streamed its whole 4.05 s through ``sel``/``queue`` into the mux, the worker
+# then quit cleanly on a bus EOS, and not one of the reload's own guards printed
+# -- no ``outgoing-EOS-dropped``, no ``firing``, no commit. Either the EOS crossed
+# a selector sink pad the boundary probe was not on, or it was generated
+# downstream of every probe. Those are opposite fixes. One report-only observer on
+# each already-counted pad answers it: the arrival labels render in data order on
+# the EOS line, and ``none`` is itself a finding.
+
+
+def test_u30_eos_observers_arm_after_the_counters_never_instead_of_them(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The observer must never take the counter's place on a pad.
+
+    Same-priority pad probes run in installation order, and every other U30
+    reader assumes ``probes[0]`` is the flow counter (the stall watchdog reads
+    the mux src counter's pad, the ladder reads its rungs). An observer armed
+    FIRST would make those reads return an observer, which silently reports
+    nothing instead of failing -- the worst possible failure mode for a
+    diagnostic. So: counter at index 0, observer at index 1, on every pad."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = _u30_armed_chain(engine, recorder)
+
+    for key, pad in pads.items():
+        assert len(pad.probes) == 2, (key, pad.probes)
+        assert pad.probes[0][1].__name__ == "_count_chain_input", (key, pad.probes)
+        assert pad.probes[1][0] == engine_module.Gst.PadProbeType.EVENT_DOWNSTREAM
+        assert pad.probes[1][1].__name__ == "_observe_eos", (key, pad.probes)
+    assert capsys.readouterr().err == ""
+
+    # The mux src pad carries the stall watchdog's progress signal, so the same
+    # ordering rule applies there.
+    class _MuxWithSrc:
+        """``_install_output_counter`` reads only ``get_static_pad("src")``."""
+
+        def __init__(self, src: Any) -> None:
+            self._src = src
+
+        def get_static_pad(self, pad_name: str) -> Any:
+            return self._src if pad_name == "src" else None
+
+    mux_src = _FakeDiagnosticPad("mux_src", recorder)
+    engine.mux = _MuxWithSrc(mux_src)
+    engine._install_output_counter()
+
+    assert [callback.__name__ for _mask, callback in mux_src.probes] == [
+        "_count",
+        "_observe_eos",
+    ], mux_src.probes
+
+
+def test_u30_an_eos_observer_records_where_the_eos_came_from(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Firing one observer appends ITS label -- and only that one.
+
+    The observer is report-only: it returns OK, it never DROPs, and it never
+    prints a line of its own. The EOS it watches for is the one about to quit
+    the worker anyway, so a diagnostic that could alter the data path here would
+    be able to take a channel off air to watch it die."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = _u30_armed_chain(engine, recorder)
+    observer = pads[("queue", "audio")].probes[1][1]
+    engine._eos_arrivals = []
+    engine._eos_arrivals_overflow = 0
+
+    assert engine._eos_arrivals == []
+    assert observer(None, None) == engine_module.Gst.PadProbeReturn.OK
+    assert engine._eos_arrivals == ["queue:audio"]
+    assert engine._eos_arrival_suffix() == " [eos-arrivals: queue:audio]"
+
+    # A pad that is observed but never fired must not appear: absence on this
+    # line is "we watched and saw nothing", which is what makes ``none`` mean
+    # something when EVERY observer is silent.
+    assert "sel:video" not in engine._eos_arrival_suffix()
+    assert capsys.readouterr().err == ""
+
+
+def test_u30_eos_arrivals_fold_a_repeat_and_stay_bounded(engine_module) -> None:
+    """Two observers on one pad see ONE arrival, and the list cannot grow forever.
+
+    A superseded reload re-arms the observer on the same outgoing selector sink
+    pad, so a single EOS there is observed twice -- reporting it twice would read
+    as two arrivals. And a channel that emits many EOSes over a long run must not
+    be able to grow an unbounded list in the worker's memory."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine._eos_arrivals = []
+    engine._eos_arrivals_overflow = 0
+
+    engine._record_eos_arrival("out:video")
+    engine._record_eos_arrival("out:video")
+    engine._record_eos_arrival("sel:video")
+    engine._record_eos_arrival("sel:video")
+
+    assert engine._eos_arrivals == ["out:video", "sel:video"]
+    assert engine._eos_arrivals_overflow == 0
+
+    for index in range(engine._EOS_ARRIVAL_MAX + 5):
+        engine._record_eos_arrival(f"mux-sink:{index}")
+
+    # Two labels are already in the list, so of the 17 more arrivals only the
+    # first 10 fit: 12 on the line, 7 counted as overflow.
+    assert len(engine._eos_arrivals) == engine._EOS_ARRIVAL_MAX
+    assert engine._eos_arrivals_overflow == 7
+    assert engine._eos_arrival_suffix().endswith(", +7 more]")
+
+
+def test_u30_the_eos_line_says_where_the_eos_entered_or_that_nothing_did(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``none`` is the finding, not a missing line.
+
+    The two shapes the U30 campaigns cannot tell apart -- "the outgoing leg's own
+    end escaped a guard that was not watching it" and "something inside the
+    output half emitted EOS on its own" -- are separated by exactly this: a
+    rendered label names the furthest downstream pad the EOS reached, and
+    ``none`` says every observed pad watched and saw nothing, so the EOS was born
+    below all of them."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+
+    class _QuitCounter:
+        def __init__(self) -> None:
+            self.quits = 0
+
+        def quit(self) -> None:
+            self.quits += 1
+
+    class _EosMessage:
+        type = engine_module.Gst.MessageType.EOS
+        src = _FakeDiagnosticPad("mpegtsmux_3", recorder)
+
+    engine._loop = _QuitCounter()
+    assert engine._on_bus(None, _EosMessage()) is True
+    assert "[eos-arrivals: none]" in capsys.readouterr().err
+
+    engine._record_eos_arrival("out:video")
+    engine._record_eos_arrival("sel:video")
+    engine._record_eos_arrival("queue:video")
+    engine._record_eos_arrival("mux-sink:video")
+    engine._record_eos_arrival("mux-src")
+    engine._loop = _QuitCounter()
+    assert engine._on_bus(None, _EosMessage()) is True
+
+    err = capsys.readouterr().err
+    assert (
+        "[eos-arrivals: out:video, sel:video, queue:video, mux-sink:video, mux-src]" in err
+    ), err
+    # The U16/U30 clauses still ride the same line, unchanged.
+    assert "CTRL output: pipeline EOS from mpegtsmux_3 -- quitting the worker [" in err
+
+
 def test_u30_inbound_counters_count_the_new_leg_at_its_selector_sink_pad(
     engine_module, capsys: pytest.CaptureFixture[str]
 ) -> None:
