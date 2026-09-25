@@ -570,23 +570,38 @@ def start_ffmpeg(
     """Start ffmpeg without waiting for it to exit.
 
     Job Object containment (spec D3) needs NO explicit per-child
-    ``AssignProcessToJobObject`` here, and deliberately does none. This child is
-    spawned by a plain ``subprocess.Popen`` from whatever process calls
-    ``start_ffmpeg`` — in a supervised deployment that is always the control
-    plane, which the supervisor assigns to its Job Object at startup
-    (``civiccast.native.supervisor.core.Supervisor.start_child``). The job
-    disables breakaway (``JOB_OBJECT_LIMIT_BREAKAWAY_OK`` /
-    ``_SILENT_BREAKAWAY_OK`` are cleared —
-    ``supervisor.job_object.Win32JobObjectApi.configure_kill_on_close_no_breakaway``),
-    so Windows is expected to capture every process an in-job parent spawns
-    into the same job automatically. The hosted Windows test runner is itself
-    wrapped in a foreign Job Object whose breakaway policy changes that
-    topology, so this inheritance claim is not treated as hosted-CI or field
-    proof. Direct-child assignment, limits, and kill-on-close remain covered by
-    the real-Win32 tests; the installed SCM topology still requires separate
-    clean-machine evidence.
-    (Outside the supervisor — a bare ``uvicorn`` dev run, or a unit test — there
-    is no Job Object at all, so there is nothing to assign to and nothing an
+    ``AssignProcessToJobObject`` here, and deliberately does none.
+
+    In a supervised deployment the caller is the control plane, which owns an
+    anonymous kill-on-close Job Object of its own and assigned ITSELF to it at
+    startup (``civiccast.platform.child_containment``, called from the top of
+    ``civiccast.app.create_app``, U31). Windows captures a child spawned by an
+    in-job parent into that parent's job, and this spawn asks for no breakaway
+    (``creationflags`` below is ``CREATE_NO_WINDOW`` alone), so this ffmpeg
+    inherits the control plane's job and the kernel reaps it when the control
+    plane dies — by any means, including ``TerminateProcess``. That is what
+    stops a killed control plane from leaving relay ffmpegs behind holding
+    their UDP ports: on the station on 2026-09-25 exactly that happened, and
+    every supervised relay after it failed with ``bind failed: Error number
+    -10048`` for eleven minutes.
+
+    Inheriting the SUPERVISOR's job alone does not do that. The supervisor does
+    assign the control plane to its own job at spawn
+    (``civiccast.native.supervisor.core``, ``self._job.assign_child(handle.pid)``),
+    but ``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`` fires when the last HANDLE to a
+    job closes, not when one member process dies, and the supervisor holds its
+    handle for its whole lifetime — terminating one member reaps nothing.
+
+    The hosted Windows test runner is itself wrapped in a foreign Job Object
+    whose breakaway policy changes this topology, so neither inheritance claim
+    is treated as hosted-CI or field proof. Direct-child assignment, limits, and
+    kill-on-close remain covered by the real-Win32 tests; the end-to-end claim
+    above (the child is gone within 2 s of its parent's ``TerminateProcess``,
+    with the uncontained control case shown surviving the same kill) is covered
+    by ``tests/native/test_child_containment_win.py``. The installed SCM
+    topology still requires separate clean-machine evidence.
+    (Outside the supervisor — a bare ``uvicorn`` dev run, or a unit test — the
+    containment guard never fires, so there is no job to inherit and nothing an
     explicit assign here could do.)
 
     ``stderr_path`` and ``stderr_pipe`` are alternatives, not companions. The
