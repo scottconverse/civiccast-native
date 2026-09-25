@@ -8241,16 +8241,16 @@ def _u36_rollover_daemon(
     return EgressDaemon(
         store,
         work_dir=tmp_path,
-        source_plan_provider=lambda _channel_id: _plan_with_seconds(
-            tmp_path, "Unused", 600.0
-        ),
+        source_plan_provider=lambda _channel_id: _plan_with_seconds(tmp_path, "Unused", 600.0),
         boundary_source_plan_provider=boundary,
         fallback_source_provider=fallback,
         encoder_strategy=strategy,
     )
 
 
-def _u36_on_air(daemon: EgressDaemon, *, pid: int = 111, label: str = "Longmont Weather :16") -> _FakeProcess:
+def _u36_on_air(
+    daemon: EgressDaemon, *, pid: int = 111, label: str = "Longmont Weather :16"
+) -> _FakeProcess:
     process = _FakeProcess(pid=pid)
     daemon._processes["gov"] = process
     daemon._store.write_state(
@@ -8328,9 +8328,7 @@ def test_relaunch_onto_a_sub_floor_schedule_tail_starts_the_next_program(
     sliver that immediately EOSes the replacement worker -- the 14:17:52 case,
     where reload 5's single segment was seconds of the program about to end."""
     started: list[_FakeProcess] = []
-    strategy = _PlanLabelRecordingStrategy(
-        [_FakeProcess(pid=111), _FakeProcess(pid=222)], started
-    )
+    strategy = _PlanLabelRecordingStrategy([_FakeProcess(pid=111), _FakeProcess(pid=222)], started)
     boundary_args: list[datetime] = []
     plans = [
         _plan_with_seconds(tmp_path, "Longmont Weather :16", 600.0),
@@ -8379,9 +8377,7 @@ def test_relaunch_keeps_a_tail_with_more_than_the_floor_left(tmp_path: Path) -> 
     """45s of program is worth airing: the relaunch airs it and never consults
     the boundary, so the floor cannot skip a program with real remainder."""
     started: list[_FakeProcess] = []
-    strategy = _PlanLabelRecordingStrategy(
-        [_FakeProcess(pid=111), _FakeProcess(pid=222)], started
-    )
+    strategy = _PlanLabelRecordingStrategy([_FakeProcess(pid=111), _FakeProcess(pid=222)], started)
     boundary_args: list[datetime] = []
     plans = [
         _plan_with_seconds(tmp_path, "Longmont Weather :16", 600.0),

@@ -325,6 +325,15 @@ _SCHEDULE_TAIL_FLOOR_SECONDS = 30.0
 # durations were floored), so the margin keeps the resolution inside the next
 # item rather than on a boundary instant.
 _SCHEDULE_TAIL_BOUNDARY_MARGIN_S = 1.0
+# U36 item 7: how many times a boundary reload the worker ABORTED pre-commit is
+# re-resolved and re-armed before the channel gives up on the seamless path and
+# arms the fallback slate at the boundary instead. Two, because the abort's
+# observed causes are transient (a decodebin stream error on one prepared
+# segment, a source that was not ready) and every retry costs only a re-resolve
+# plus a prepare while the outgoing leg keeps airing -- whereas giving up
+# leaves the boundary unprepared, which is what cost the public channel ~80s of
+# dead air on 2026-09-25 (10s aggregate stall watchdog -> exit 1 -> relaunch).
+_RELOAD_RETRY_LIMIT = 2
 # BETA.10 live finding: after a relay child is (re)spawned it needs a moment to
 # receive the UDP feed and cut its first segment before its window is judged.
 # Self-heal is suppressed inside this window so a fresh child is never killed.
@@ -439,6 +448,22 @@ class _PendingReloadSettlement(NamedTuple):
     previous_source_label: str | None
     target_state: EgressState
     plan_dir: Path | None
+    #: U36 item 7: the rollover horizon this reload was armed for, or ``None``
+    #: for a reload with no recorded horizon. Carried into the settlement so
+    #: ``_poll_reload_settlement`` can re-arm an aborted boundary reload against
+    #: the SAME boundary (``_retry_aborted_boundary_reload``) and key its bounded
+    #: retry budget on it.
+    rollover_plan_end_at: datetime | None = None
+
+
+class _TailFloorOutcome(NamedTuple):
+    """U36 decision 2: what ``_resolve_schedule_tail`` decided. ``plan`` is the
+    plan the caller should air -- the original tail, the item due where that
+    tail ends, or (``slate`` True) the fallback slate. ``slate`` tells the
+    caller to publish ``FALLBACK_SLATE`` for it rather than ``ON_AIR``."""
+
+    plan: EgressSourcePlan
+    slate: bool
 
 
 def _ascii_safe(text: str) -> str:
@@ -1043,6 +1068,13 @@ class EgressDaemon:
         # channel that gets stopped, so it did not even close the gap it was
         # written for. Reverted to a plain reload_id with no expiry.)
         self._discarded_reload_ids: dict[str, str] = {}
+
+        # U36 item 7: bounded retry budget for a boundary reload the worker
+        # aborted pre-commit, keyed by channel. The value is
+        # ``(rollover_plan_end_at, attempts_used)``; the horizon is part of the
+        # key so a NEW boundary's budget starts at zero without anything having
+        # to clear the entry (see ``_retry_aborted_boundary_reload``).
+        self._reload_retries: dict[str, tuple[datetime | None, int]] = {}
 
     def enable_async_preparation(self) -> None:
         """Keep media conformance off the shared automation thread."""
@@ -1995,6 +2027,36 @@ class EgressDaemon:
                 )
                 else None
             )
+            if first_program_remaining_seconds is not None and prepared_reload is None:
+                # ``prepared_reload`` is excluded because that plan was already
+                # resolved through ``_reload_steps`` -- which applies this same
+                # floor -- and the reuse branch below re-binds the report's own
+                # plan, so consulting the boundary here would be a wasted call
+                # whose answer is discarded.
+                #
+                # U36 decision 2(ii): the relaunch path is never handed a
+                # sub-floor schedule tail either. It was the same defect as the
+                # rollover: on 2026-09-25 the public channel's 14:17:52 crash
+                # relaunch re-resolved the July 23 program with the drifted
+                # schedule clock and armed its single segment as the last few
+                # seconds of media that had already fully aired -- the leg EOSed
+                # immediately and the worker exited. The precondition above is
+                # exactly the set of cases where a program plan was resolved
+                # against a schedule boundary provider (not a slate, not an
+                # operator override), which is where "the schedule is nearly
+                # over" is a meaningful question at all -- and where the plan
+                # about to be PREPARED is still swappable. ``_resolve_schedule_tail``
+                # returns the plan unchanged, by identity, at or above the floor,
+                # so an ordinary start never consults the boundary a second time.
+                tail_outcome = self._resolve_schedule_tail(
+                    channel_id, source_plan, config, slate_when_no_next=True
+                )
+                if tail_outcome.plan is not source_plan:
+                    source_plan = tail_outcome.plan
+                    using_fallback_slate = tail_outcome.slate
+                    first_program_remaining_seconds = (
+                        None if tail_outcome.slate else source_plan.segments[0].duration_seconds
+                    )
             if not using_fallback_slate:
                 # Clean-machine walkthrough of beta.5 (2026-09-09 MDT): an
                 # operator Start at 22:00:39 still read Stopped at 22:00:41
@@ -4330,28 +4392,61 @@ class EgressDaemon:
             return self._fall_back_to_restart_for_reused_plan(channel_id, result)
         return result if result is not None else False
 
-    def _avoid_schedule_tail_plan(
-        self, channel_id: str, source_plan: EgressSourcePlan
-    ) -> EgressSourcePlan:
+    def _resolve_schedule_tail(
+        self,
+        channel_id: str,
+        source_plan: EgressSourcePlan,
+        config: EgressConfig,
+        *,
+        resolved_at: datetime | None = None,
+        slate_when_no_next: bool = False,
+    ) -> _TailFloorOutcome:
         """Refuse to install a schedule tail shorter than the switch that does it.
 
-        U26 defect 2. A reload with no recorded rollover horizon -- automation's
-        slate gap replan (automation.py's ``_check_slate_replan``), an operator
-        reload, the F3(b) reused-plan restart -- resolves the item due at
-        wall-clock NOW. When that item's slot is nearly over the resolver hands
-        back a legal but degenerate plan (see ``_SCHEDULE_TAIL_FLOOR_SECONDS``)
-        that the channel airs to its end and then EOSes on, costing a whole
-        second restart to reach the program that was due all along.
+        U26 defect 2, generalized by U36 decision 2. A plan that resolves the
+        item due at some instant I -- wall-clock now (automation's slate gap
+        replan in automation.py's ``_check_slate_replan``, an operator reload,
+        the F3(b) reused-plan restart), a recorded rollover horizon, or a crash
+        relaunch -- can land on an item whose slot is nearly over. The resolver
+        then hands back a legal but degenerate plan (see
+        ``_SCHEDULE_TAIL_FLOOR_SECONDS``) that the channel airs to its end and
+        then EOSes on, costing a whole second restart to reach the program that
+        was due all along. U36's incident is the same defect on the two paths
+        the U26 guard skipped: the 14:06:50 horizon-bound rollover (a 9.2s tail
+        whose new leg delivered 1.6s) and the 14:17:52 crash relaunch (a single
+        sub-floor segment).
 
         So resolve the schedule where that tail ENDS instead -- the next item --
         and use it when it is a strict improvement. Everything else keeps the
         tail plan untouched, because in every one of those cases airing the tail
         is the honest behavior: a media-shorter-than-slot tail, a gap the fill
         policy owns, the end of the schedule, or a boundary that fails to
-        prepare all resolve to ``None`` or to the same/short plan. ``None`` is
-        deliberately never returned: a declined plan would send the caller to
-        ``_request_reload``'s terminate+restart fallback, which is what the tail
-        plan is already about to get anyway.
+        prepare all resolve to ``None`` or to the same/short plan.
+
+        It cannot skip a program that genuinely has more than the floor left:
+        the body returns ``source_plan`` unchanged (identity, not a copy) before
+        any boundary call whenever the tail is at or above
+        ``_SCHEDULE_TAIL_FLOOR_SECONDS``, and even below the floor the
+        replacement is only taken when the plan due where the tail ends is
+        STRICTLY longer than the tail it replaces. A tail of 30s or more is
+        therefore never even measured against the schedule, and a shorter one is
+        only ever exchanged for more media than it had.
+
+        ``resolved_at`` is the instant the plan was resolved for. Callers that
+        resolved at a known instant (a recorded rollover horizon) pass it, so
+        the second look lands where THAT tail ends rather than where
+        wall-clock now happens to be; callers that resolved at wall-clock now
+        pass nothing.
+
+        ``slate_when_no_next`` (U36 decision 2: "the leg starts the NEXT program
+        instead (slate only if there is no next program)") arms the fallback
+        slate for the two paths where a sub-floor tail is otherwise aired to an
+        EOS that takes the worker down -- the horizon-bound rollover and the
+        crash relaunch. The U26 no-horizon call site leaves it False and keeps
+        its documented contract: ``None`` is never returned there, because a
+        declined plan would send the caller to ``_request_reload``'s
+        terminate+restart fallback, which is what the tail plan is already
+        about to get anyway.
         """
 
         boundary_provider = self._boundary_source_plan_provider
@@ -4359,30 +4454,60 @@ class EgressDaemon:
             # An operator override owns plan resolution and resolves at
             # wall-clock now by its own contract (see the head of
             # ``_reload_steps``): never reach past it for a later boundary.
-            return source_plan
+            return _TailFloorOutcome(source_plan, False)
         tail_seconds = sum(segment.duration_seconds for segment in source_plan.segments)
         if tail_seconds <= 0.0 or tail_seconds >= _SCHEDULE_TAIL_FLOOR_SECONDS:
-            return source_plan
-        boundary_at = datetime.now(UTC) + timedelta(
-            seconds=tail_seconds + _SCHEDULE_TAIL_BOUNDARY_MARGIN_S
-        )
+            return _TailFloorOutcome(source_plan, False)
+        base_at = datetime.now(UTC) if resolved_at is None else resolved_at
+        boundary_at = base_at + timedelta(seconds=tail_seconds + _SCHEDULE_TAIL_BOUNDARY_MARGIN_S)
         try:
             next_plan = boundary_provider(channel_id, boundary_at)
         except SourcePrepareError:
-            return source_plan
+            next_plan = None
         if next_plan is None or next_plan.channel_id != channel_id:
-            return source_plan
+            if slate_when_no_next and self._fallback_source_provider is not None:
+                # Nothing is scheduled where this tail ends. Airing the tail
+                # would EOS the leg and take the worker down; slate at the
+                # boundary instead.
+                try:
+                    slate = self._fallback_source_provider(config)
+                except SourcePrepareError:
+                    return _TailFloorOutcome(source_plan, False)
+                if slate.channel_id != channel_id:
+                    return _TailFloorOutcome(source_plan, False)
+                _LOG.info(
+                    "Plan for %s resolved to a %.1fs tail of the closing scheduled item "
+                    "and nothing is scheduled where that tail ends; airing the fallback "
+                    "slate at the boundary instead.",
+                    channel_id,
+                    tail_seconds,
+                )
+                return _TailFloorOutcome(slate, True)
+            return _TailFloorOutcome(source_plan, False)
         next_seconds = sum(segment.duration_seconds for segment in next_plan.segments)
         if next_seconds <= tail_seconds:
-            return source_plan
+            return _TailFloorOutcome(source_plan, False)
         _LOG.info(
-            "Reload plan for %s resolved to a %.1fs tail of the closing scheduled item; "
+            "Plan for %s resolved to a %.1fs tail of the closing scheduled item; "
             "using the plan due where that tail ends instead (%.1fs).",
             channel_id,
             tail_seconds,
             next_seconds,
         )
-        return next_plan
+        return _TailFloorOutcome(next_plan, False)
+
+    def _avoid_schedule_tail_plan(
+        self, channel_id: str, source_plan: EgressSourcePlan
+    ) -> EgressSourcePlan:
+        """The U26 no-horizon call site's view of ``_resolve_schedule_tail``:
+        the replacement plan, or the tail plan untouched. Kept as a named
+        method because that contract -- a plan is ALWAYS returned, never
+        ``None`` -- is what the U26 tests pin."""
+
+        config = self._store.get_config(channel_id)
+        if config is None:
+            return source_plan
+        return self._resolve_schedule_tail(channel_id, source_plan, config).plan
 
     def _reload_steps(
         self,
@@ -4508,16 +4633,37 @@ class EgressDaemon:
                 target_state = "FALLBACK_SLATE"
         if source_plan is None or source_plan.channel_id != channel_id:
             return False
-        if not force_fallback and boundary_at is None:
-            # U26 defect 2: no recorded horizon means this plan was resolved at
-            # wall-clock now, which is exactly when a closing slot hands back a
-            # degenerate tail -- see ``_avoid_schedule_tail_plan``. A
-            # horizon-bound rollover resolves at the OUTGOING plan's end, where
-            # that reasoning does not apply (the boundary is the tail's own end
-            # and the plan due there is the one the rollover already chose), so
-            # it is left exactly as it was. A force-fallback filler rollover is
-            # the slate fill by design and is likewise left alone.
-            source_plan = self._avoid_schedule_tail_plan(channel_id, source_plan)
+        if not force_fallback:
+            # U26 defect 2 applied where U26 deliberately skipped it.
+            #
+            # U26 reasoned that a horizon-bound rollover resolves at the
+            # OUTGOING plan's end, so the boundary IS the tail's own end and the
+            # plan due there is the one the rollover already chose. U36 measured
+            # that false on the live station: the recorded horizon comes from the
+            # SCHEDULE clock while the outgoing leg started at the ON_AIR
+            # instant, so the two disagree by seconds. On 2026-09-25 the 14:06:50
+            # rollover resolved the July 23 program 664s into a 667s item, armed
+            # its single segment as "the last ~3s", and the new leg delivered
+            # 1.6s (`mux-in 1.6s: video=+24 audio=+37`) before EOS. On this
+            # engine ``max_segments=1`` makes that leg the WHOLE pipeline, so the
+            # EOS took the worker down. Decision 2(i) of the coordinator's
+            # answer: the floor applies here too, measured from the instant the
+            # plan was actually resolved for (`resolved_at=boundary_at`), and if
+            # nothing is scheduled where the tail ends the slate is armed at the
+            # boundary instead of airing the sliver.
+            #
+            # A force-fallback filler rollover is still the slate fill by design
+            # and keeps skipping the floor entirely.
+            tail_outcome = self._resolve_schedule_tail(
+                channel_id,
+                source_plan,
+                config,
+                resolved_at=boundary_at,
+                slate_when_no_next=True,
+            )
+            source_plan = tail_outcome.plan
+            if tail_outcome.slate:
+                target_state = "FALLBACK_SLATE"
         # F3: None unless the preparer actually reports a discrete per-plan
         # directory (see SourcePreparationReport.plan_dir) -- tracked into the
         # pending settlement below so _commit_reload_settlement can release the
@@ -4746,6 +4892,7 @@ class EgressDaemon:
             previous_source_label=state.current_source_label if state else None,
             target_state=target_state,
             plan_dir=prepared_plan_dir,
+            rollover_plan_end_at=rollover_plan_end_at,
         )
         _LOG.info(
             "Seamless content-reload accepted for %s (reload_id=%s, switch_at_end_of_current=%s); "
@@ -4821,6 +4968,85 @@ class EgressDaemon:
         if pending.plan_dir is not None:
             self._active_prepared_plan_dir[channel_id] = pending.plan_dir
 
+    def _retry_aborted_boundary_reload(
+        self, channel_id: str, pending: _PendingReloadSettlement, *, reason: str
+    ) -> bool:
+        """U36 item 7: re-resolve and re-arm a boundary reload the worker ABORTED
+        pre-commit, instead of discarding it and leaving the boundary unprepared.
+
+        Returns True when this method has already decided what happens next --
+        either a retry is armed, or (retries exhausted) the fallback slate is
+        armed AT the boundary. The caller must then do nothing further; the
+        terminate+restart fallback it would otherwise run never happens, which is
+        the point: the outgoing leg keeps airing while the retry is armed.
+        False means "not an aborted BOUNDARY reload" -- carry on with the
+        pre-U36 behavior (log, discard, restart fallback).
+
+        Only a rollover-armed reload gets this treatment: the retry re-resolves
+        through ``_request_reload``/``_reload_steps`` with the SAME horizon, so
+        it goes through the U36 tail floor again (decision 2(i)). A reload with
+        no horizon has no boundary to protect and no measured failure mode, so
+        it keeps the plain restart fallback.
+
+        Bounded by ``_RELOAD_RETRY_LIMIT``; the budget is keyed by horizon, so a
+        NEW boundary starts at zero without anything having to clear the entry
+        (see ``_reload_retries``). Once the slate arm itself has been tried and
+        aborted too (``used > _RELOAD_RETRY_LIMIT``), this returns False and the
+        channel takes the ordinary restart fallback rather than re-arming the
+        slate forever.
+
+        Evidence: on 2026-09-25 the public channel's 14:44 boundary reload was
+        ``aborted:error``, discarded with no retry (``_fall_back_to_restart_
+        reload`` does not terminate an ON_AIR worker, so nothing even restarted),
+        and the next boundary then arrived with nothing prepared -- 10s aggregate
+        stall watchdog, exit 1, ~80s of dead air.
+        """
+        horizon = pending.rollover_plan_end_at
+        if horizon is None:
+            return False
+        recorded = self._reload_retries.get(channel_id)
+        used = recorded[1] if recorded is not None and recorded[0] == horizon else 0
+        if used > _RELOAD_RETRY_LIMIT:
+            # The slate arm (below) has already been tried for THIS horizon and
+            # the worker aborted that too. Stop re-arming; let the caller take
+            # the restart fallback.
+            return False
+        # Discard BEFORE re-arming: _try_content_reload treats a still-pending
+        # previous attempt as superseded, and this attempt is not a supersession
+        # -- it is the successor to a failed one. This also releases the aborted
+        # attempt's plan_dir now rather than at the 960s deadline.
+        self._discard_pending_reload_settlement(channel_id, reason=f"worker reported {reason}")
+        self._reload_retries[channel_id] = (horizon, used + 1)
+        if used >= _RELOAD_RETRY_LIMIT:
+            _LOG.warning(
+                "Boundary reload for %s did not land (%s) and %d retries were spent; "
+                "arming the fallback slate at the boundary so the outgoing leg is not "
+                "left to run out unprepared.",
+                channel_id,
+                reason,
+                _RELOAD_RETRY_LIMIT,
+            )
+            # ``force_fallback`` skips the resolver entirely and takes the slate
+            # (``_fallback_source_provider``) -- the same arm automation uses for
+            # a filler rollover -- carrying the horizon so the switch still lands
+            # AT the boundary rather than immediately.
+            self.record_rollover_plan_end(channel_id, horizon, command_id=None, force_fallback=True)
+        else:
+            _LOG.warning(
+                "Boundary reload for %s did not land (%s); re-resolving and re-arming "
+                "(retry %d of %d) while the outgoing leg keeps airing.",
+                channel_id,
+                reason,
+                used + 1,
+                _RELOAD_RETRY_LIMIT,
+            )
+            self.record_rollover_plan_end(channel_id, horizon, command_id=None)
+        # _request_reload routes itself: seamless reload when the strategy
+        # accepts it, terminate+restart otherwise -- so a retry that cannot even
+        # be armed still ends somewhere sensible rather than nowhere.
+        self._request_reload(channel_id)
+        return True
+
     def _poll_reload_settlement(self, channel_id: str) -> None:
         """F1 redesign: poll ``reload-status.json`` for a channel with an
         armed-but-not-yet-settled content-reload (``_try_content_reload``).
@@ -4834,9 +5060,13 @@ class EgressDaemon:
           entry.
         * status matches and ``"result"`` starts with ``"aborted:"`` -- the
           reload did not land (build error, timeout, supersession downstream of
-          this specific attempt): log the reason and fall back to restart
-          (``_fall_back_to_restart_reload``), same path a synchronously-declined
-          reload always took.
+          this specific attempt). U36 item 7: if this was a BOUNDARY reload
+          (``pending.rollover_plan_end_at``), it is re-resolved and re-armed,
+          bounded, before the horizon (``_retry_aborted_boundary_reload``) --
+          discarding it outright left the boundary unprepared, which is what
+          cost the public channel ~80s of dead air on 2026-09-25. Otherwise, log
+          the reason and fall back to restart (``_fall_back_to_restart_reload``),
+          the same path a synchronously-declined reload always took.
         * no status yet, or an id that does not match (a superseded attempt's
           own settlement arriving late) -- keep waiting, UNLESS
           ``_PENDING_RELOAD_SETTLE_DEADLINE_S`` has elapsed since this reload
@@ -4905,6 +5135,11 @@ class EgressDaemon:
                 self._commit_reload_settlement(channel_id, pending)
                 return
             if isinstance(result, str) and result.startswith("aborted:"):
+                # U36 item 7: a boundary reload gets a bounded retry (and, when
+                # that is exhausted, the slate AT the boundary) before this
+                # channel is handed the restart fallback.
+                if self._retry_aborted_boundary_reload(channel_id, pending, reason=result):
+                    return
                 _LOG.warning(
                     "Seamless content-reload for %s did not land (%s); falling back to restart.",
                     channel_id,
