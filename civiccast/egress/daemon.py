@@ -2824,12 +2824,21 @@ class EgressDaemon:
         * Worker pid changed -> the previous worker's measurements are void
           (streak reset), but the probe CADENCE is left alone: a relaunch must
           not make the guard probe faster than once per interval.
-        * Not ON_AIR -> not judged. FALLBACK_SLATE/STARTING have no settled
-          program of their own, DRAINING is deliberately leaving air, and
-          TRANSITIONING is what ``_poll_process`` publishes for a channel with a
-          content reload in flight -- exactly the moment the U16 rebase step
-          happens, and a legitimate reason for A/V to move against each other
-          for a moment. This guard judges the settled output, never the switch.
+        * Not ON_AIR/FALLBACK_SLATE -> not judged. STARTING has no output yet,
+          DRAINING is deliberately leaving air, and TRANSITIONING is what
+          ``_poll_process`` publishes for a channel with a content reload in
+          flight -- exactly the moment the U16 rebase step happens, and a
+          legitimate reason for A/V to move against each other for a moment.
+          This guard judges the settled output, never the switch.
+        * FALLBACK_SLATE IS judged (U21 item B2). The slate leg runs through the
+          same mux, the same udpsink and the same relay child as a program leg,
+          so it can carry - and strand - the same output A/V offset; the U21
+          slate-entry incident was measured on a slate leg. Excluding it left
+          the desync shape with no net at all, because B1's rebind cannot cure
+          an offset born on a slate the worker never restarts out of. Judging a
+          slate leg is safe for the same reason judging a program leg is: the
+          guard reads the worker's own settled output, and a slate leg that
+          cannot settle is exactly what a restart repairs.
         * Inside the probe interval -> not yet time (the tick rate is 2s).
         * Probe could not measure -> neither advances nor resets the streak, and
           can never restart anything by itself.
@@ -2859,7 +2868,11 @@ class EgressDaemon:
             del guard.offsets[:]
 
         state = self._store.read_state(channel_id)
-        if state is None or state.state != "ON_AIR" or channel_id in self._draining_channels:
+        if (
+            state is None
+            or state.state not in {"ON_AIR", "FALLBACK_SLATE"}
+            or channel_id in self._draining_channels
+        ):
             return
 
         now = self._monotonic()
