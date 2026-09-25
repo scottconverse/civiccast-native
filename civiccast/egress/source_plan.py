@@ -70,6 +70,31 @@ SLATE_RENDER_VERSION = 1
 # not create a large multi-chain pipeline.
 DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS = 1800.0
 
+#: U26 (2026-09-25): the size of schedule gap this provider will absorb.
+#:
+#: Measured on the live station (2026-09-25; reports/U26.md items 1-2): the
+#: ending item's media runs out a few seconds before its own slot does, the
+#: next item is due 0-7s later, and a plan resolved at that instant used to
+#: come back empty -- the instant falls in the hole between two items. The
+#: rollover then resolved the boundary to filler, the channel left its program
+#: for a slate epoch, and the switch back went through FALLBACK_SLATE's
+#: immediate-reload path (daemon F3(b): worker exit, relay replacement, and the
+#: restart that landed on a stub). Resolving the boundary straight to the item
+#: due within this window removes the slate epoch entirely: the deferred switch
+#: is then program -> program, in-worker, with no exit.
+#:
+#: ``30.0`` matches ``daemon._SCHEDULE_TAIL_FLOOR_SECONDS``, which refuses to
+#: build a separate leg for a sub-30s remainder at all -- below that size a
+#: slate epoch plus an exit/restart costs the station more than starting the
+#: next item early by the gap. The two constants are complementary, not
+#: duplicates: this one acts at plan BUILD time, before the channel ever leaves
+#: its program, and only when the plan has nothing to air; the daemon floor
+#: acts at RELOAD time for a plan resolved at the wall clock (slate replan,
+#: operator reload), where only the daemon knows the channel is already on
+#: slate and no live item can be cut short. A real gap (beyond this window)
+#: keeps the old behavior: filler, then F3(b)'s restart detour for the cut.
+SCHEDULE_GAP_ABSORB_SECONDS = 30.0
+
 #: BETA.10 U03: the spelling the station's service registry actually sets (the
 #: ``Environment`` REG_MULTI_SZ under
 #: ``HKLM\SYSTEM\CurrentControlSet\Services\CivicCastSupervisor``, written by
@@ -247,6 +272,7 @@ class ScheduleSourcePlanProvider:
         gap_tolerance_seconds: float = 1.0,
         loop_schedule: bool = False,
         max_segment_seconds: float | None = None,
+        gap_absorb_seconds: float = 0.0,
     ) -> None:
         if max_segments <= 0:
             raise ValueError("max_segments must be greater than zero.")
@@ -254,6 +280,8 @@ class ScheduleSourcePlanProvider:
             raise ValueError("gap_tolerance_seconds must be zero or greater.")
         if max_segment_seconds is not None and max_segment_seconds <= 0:
             raise ValueError("max_segment_seconds must be greater than zero when set.")
+        if gap_absorb_seconds < 0:
+            raise ValueError("gap_absorb_seconds must be zero or greater.")
         self._schedule_items_provider = schedule_items_provider
         self._asset_resolver = asset_resolver
         self._now_provider = now_provider or (lambda: datetime.now(UTC))
@@ -263,6 +291,7 @@ class ScheduleSourcePlanProvider:
         self._gap_tolerance = timedelta(seconds=gap_tolerance_seconds)
         self._loop_schedule = loop_schedule
         self._max_segment_seconds = max_segment_seconds
+        self._gap_absorb_seconds = gap_absorb_seconds
 
     def __call__(self, channel_id: str) -> EgressSourcePlan | None:
         return self.plan_at(channel_id, self._now_provider())
@@ -273,6 +302,10 @@ class ScheduleSourcePlanProvider:
         Automation uses this separate entry point to prepare the item due at a
         future rollover boundary. Ordinary starts continue through ``__call__``
         and therefore retain wall-clock join-in-progress behavior.
+
+        With ``gap_absorb_seconds`` set (U26), a boundary that lands in a small
+        gap between two items resolves to the item due within that window
+        rather than to None/filler -- see ``build_source_plan_from_schedule``.
         """
 
         return build_source_plan_from_schedule(
@@ -286,6 +319,7 @@ class ScheduleSourcePlanProvider:
             gap_tolerance=self._gap_tolerance,
             loop_schedule=self._loop_schedule,
             max_segment_seconds=self._max_segment_seconds,
+            gap_absorb_seconds=self._gap_absorb_seconds,
         )
 
 
@@ -301,6 +335,7 @@ def build_source_plan_from_schedule(
     gap_tolerance: timedelta = timedelta(seconds=1),
     loop_schedule: bool = False,
     max_segment_seconds: float | None = None,
+    gap_absorb_seconds: float = 0.0,
 ) -> EgressSourcePlan | None:
     """Return the currently playable egress source plan, or None for slate fallback.
 
@@ -323,7 +358,23 @@ def build_source_plan_from_schedule(
     bulletins or slate), reached through the daemon's FALLBACK_SLATE
     gap-replan path, exactly as an already-aired current item does below.
     Nothing here loops or stretches media to cover a slot, and no following
-    item is ever started early.
+    item is ever started early -- the one exception is ``gap_absorb_seconds``
+    below, which only applies when there is nothing at all to air.
+
+    ``gap_absorb_seconds`` (U26, 2026-09-25; off by default) absorbs a small
+    schedule gap. When the instant this plan is built for has NOTHING to air --
+    it falls between two items, or the item covering it has already aired all
+    of its media -- and the next item is due within this many seconds, the plan
+    is built from that next item instead: the caller starts it at this instant,
+    early by at most the gap. It exists because automation's own rollover
+    resolves a boundary in such a gap to ``None``, rolls the channel onto
+    filler, and must then take F3(b)'s exit-and-restart detour to get back to a
+    program; absorbing the gap keeps the channel on its program and makes the
+    switch an ordinary deferred in-worker reload. A gap LARGER than this window
+    still returns None (filler is the honest answer there), and a plan that has
+    anything to air is never replaced: a join-in-progress resume of a live item
+    is content, not a stub, so it is never cut short to start the next item
+    early. ``SCHEDULE_GAP_ABSORB_SECONDS`` is the value the station wires in.
 
     ``max_segment_seconds`` is an optional preparation horizon.  The
     GStreamer path uses it because that engine must pre-conform a source that
@@ -341,6 +392,8 @@ def build_source_plan_from_schedule(
         raise ValueError("gap_tolerance must be zero or greater.")
     if max_segment_seconds is not None and max_segment_seconds <= 0:
         raise ValueError("max_segment_seconds must be greater than zero when set.")
+    if gap_absorb_seconds < 0:
+        raise ValueError("gap_absorb_seconds must be zero or greater.")
     # Hostile-review fix (2026-09-05): validate the CALLER's raw pair first,
     # before either is touched by the pipeline-shape clamp below. A caller
     # that explicitly asks for an inconsistent pair (e.g. max_segments=20,
@@ -405,63 +458,138 @@ def build_source_plan_from_schedule(
     playable_items.sort(key=lambda item: (item.scheduled_at, str(item.id)))
     if loop_schedule and playable_items:
         playable_items = _repeat_schedule_cycle(playable_items, current_time)
+
+    def _plan_from(start_index: int, start_elapsed: float) -> list[EgressSourceSegment]:
+        """Build the contiguous plan starting at ``start_index``.
+
+        ``start_elapsed`` is the offset already aired of the item at
+        ``start_index`` (CA-2 join-in-progress); it is 0.0 for an item taken at
+        its own start by the gap-absorb path below. An empty result means the
+        item at ``start_index`` has none of its own media left to air.
+        """
+
+        start_item = playable_items[start_index]
+        built: list[EgressSourceSegment] = []
+        built_seconds = 0.0
+        cursor_end = _as_utc(start_item.scheduled_at) + timedelta(
+            seconds=start_item.duration_seconds or 0
+        )
+        for item in playable_items[start_index:]:
+            starts_at = _as_utc(item.scheduled_at)
+            if built and starts_at > cursor_end + gap_tolerance:
+                break
+            item_elapsed = start_elapsed if item is start_item else 0.0
+            segment = _segment_from_item(
+                item,
+                asset_resolver,
+                elapsed_seconds=item_elapsed,
+                max_duration_seconds=max_segment_seconds,
+            )
+            if segment is None:
+                # The item's media has fully aired (media shorter than its
+                # slot, or a late rejoin past the end). Honest behavior is
+                # slate until the next item is due — never an early start.
+                # ``_segment_from_item`` only answers None for an item that
+                # has already aired part of itself (elapsed > 0), so in
+                # practice this is always the FIRST iteration and ``built``
+                # is empty; a later item's media is resolved whole, and a
+                # broken or missing one raises SourcePrepareError instead.
+                break
+            built.append(segment)
+            built_seconds += segment.duration_seconds
+            cursor_end = max(
+                cursor_end,
+                starts_at + timedelta(seconds=item.duration_seconds or segment.duration_seconds),
+            )
+            if len(built) >= segment_cap:
+                break
+            if not _covers_slot(
+                item,
+                segment,
+                elapsed_seconds=item_elapsed,
+                tolerance_seconds=gap_tolerance.total_seconds(),
+            ):
+                # D42: this item's media runs out before its slot does. The
+                # rest of the slot is the fill policy's (bulletins/slate) —
+                # stop the plan here rather than starting the NEXT item early,
+                # the same honest answer the fully-aired branch above gives.
+                break
+            if len(built) >= max_segments and built_seconds >= min_plan_seconds:
+                break
+        return built
+
     current_index = _current_item_index(playable_items, current_time)
-    if current_index is None:
-        return None
-
-    current_item = playable_items[current_index]
-    # CA-2 join-in-progress: a (re)start mid-program resumes the CURRENT
-    # item at the wall-clock offset so the channel stays on its published
-    # log instead of replaying the program from the top.
-    elapsed_seconds = max(0.0, (current_time - _as_utc(current_item.scheduled_at)).total_seconds())
-
     segments: list[EgressSourceSegment] = []
-    planned_seconds = 0.0
-    cursor_end = _as_utc(current_item.scheduled_at) + timedelta(
-        seconds=current_item.duration_seconds or 0
+    if current_index is not None:
+        current_item = playable_items[current_index]
+        # CA-2 join-in-progress: a (re)start mid-program resumes the CURRENT
+        # item at the wall-clock offset so the channel stays on its published
+        # log instead of replaying the program from the top.
+        elapsed_seconds = max(
+            0.0, (current_time - _as_utc(current_item.scheduled_at)).total_seconds()
+        )
+        segments = _plan_from(current_index, elapsed_seconds)
+
+    # U26 gap absorb: when there is nothing to air at this instant -- it falls
+    # in the gap between two scheduled items, or the item covering it has
+    # already aired all of its media -- and the next item is due within
+    # ``gap_absorb_seconds``, take that item now instead of going to slate for
+    # the gap. The caller starts it at this instant, early by at most the gap;
+    # automation's rollover then prepares a PROGRAM for the boundary rather
+    # than filler, so the channel never leaves its program and its deferred
+    # switch stays an ordinary in-worker reload. A real gap (beyond the window)
+    # still returns None: filler is the honest answer there.
+    absorb_index = _gap_absorb_candidate_index(
+        playable_items,
+        current_time,
+        current_index=current_index,
+        gap_absorb_seconds=gap_absorb_seconds,
     )
-    for item in playable_items[current_index:]:
-        starts_at = _as_utc(item.scheduled_at)
-        if segments and starts_at > cursor_end + gap_tolerance:
-            break
-        is_current = item is current_item
-        item_elapsed = elapsed_seconds if is_current else 0.0
-        segment = _segment_from_item(
-            item,
-            asset_resolver,
-            elapsed_seconds=item_elapsed,
-            max_duration_seconds=max_segment_seconds,
-        )
-        if segment is None:
-            # The current item's media has fully aired (media shorter than
-            # its slot, or a late rejoin past the end). Honest behavior is
-            # slate until the next item is due — never an early start.
-            return None
-        segments.append(segment)
-        planned_seconds += segment.duration_seconds
-        cursor_end = max(
-            cursor_end,
-            starts_at + timedelta(seconds=item.duration_seconds or segment.duration_seconds),
-        )
-        if len(segments) >= segment_cap:
-            break
-        if not _covers_slot(
-            item,
-            segment,
-            elapsed_seconds=item_elapsed,
-            tolerance_seconds=gap_tolerance.total_seconds(),
-        ):
-            # D42: this item's media runs out before its slot does. The rest
-            # of the slot is the fill policy's (bulletins/slate) — stop the
-            # plan here rather than starting the NEXT item early, the same
-            # honest answer the fully-aired branch above already gives.
-            break
-        if len(segments) >= max_segments and planned_seconds >= min_plan_seconds:
-            break
+    if absorb_index is not None and not segments:
+        absorbed = _plan_from(absorb_index, 0.0)
+        if absorbed:
+            segments = absorbed
 
     if not segments:
         return None
     return EgressSourcePlan(channel_id=channel_id, segments=segments)
+
+
+def _gap_absorb_candidate_index(
+    items: Sequence[ScheduleItemResponse],
+    current_time: datetime,
+    *,
+    current_index: int | None,
+    gap_absorb_seconds: float,
+) -> int | None:
+    """Return the index of the next item due within the absorb window.
+
+    ``items`` is the sorted (and, when looping, repeated) playable list;
+    ``current_index`` is ``_current_item_index``'s answer for ``current_time``,
+    or None when that instant falls in a gap between two items.
+
+    None is returned when the absorb is disabled, when the instant is BEFORE
+    the published log begins (a station that came up early waits for its
+    schedule's first item rather than airing it early -- there is no ending
+    item whose end it is at), or when the next item is further out than
+    ``gap_absorb_seconds``.
+    """
+
+    if gap_absorb_seconds <= 0.0:
+        return None
+    if not any(_as_utc(item.scheduled_at) <= current_time for item in items):
+        return None
+    start_index = 0 if current_index is None else current_index + 1
+    for index in range(start_index, len(items)):
+        starts_at = _as_utc(items[index].scheduled_at)
+        if starts_at < current_time:
+            continue
+        if (starts_at - current_time).total_seconds() <= gap_absorb_seconds:
+            return index
+        # Sorted by start time: the first item still ahead of ``current_time``
+        # is the next one due, and it is already too far out.
+        return None
+    return None
 
 
 def _contiguous_schedule_run(
