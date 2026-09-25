@@ -3213,40 +3213,37 @@ class GstPlayoutEngine:
         self._install_eos_observer(old_video_pad, self._make_chain_eos_label("out", "video"))
         self._install_eos_observer(old_audio_pad, self._make_chain_eos_label("out", "audio"))
 
-        # Build + link the new leg. A failure here has committed no state, so the
-        # current program keeps playing — just propagate (the caller logs it).
-        # F2 fix: ``_instantiate_source_leg`` already disposes ITS OWN partial
-        # build on a raise (its own try/except); this second layer covers the
-        # remaining leak window -- ``_link_leg_to_selectors`` raising AFTER
-        # instantiate already succeeded, which would otherwise leave a fully
-        # built, still-in-the-pipeline (but never-linked-anywhere) leg behind
-        # with nothing left holding a reference to it.
-        new_elements: list[Gst.Element] = []
-        try:
-            out_pad, audio_out_pad, new_elements = self._instantiate_source_leg(new_leg)
-            new_video_pad, new_audio_pad = self._link_leg_to_selectors(
-                "program(reload)", out_pad, audio_out_pad
-            )
-        except Exception:
-            self._dispose_elements_best_effort(new_elements)
-            raise
-        # U30 EOS-origin diagnostic, second half: name EVERY selector sink pad,
-        # including the one this reload just linked the new leg to. The ``out:*``
-        # observers above can only name the pad the outgoing leg is expected to
-        # deliver on; ten of the eleven deferred deaths recorded an EOS at the
-        # selector's own src pad with no arrival on either of them, and an
-        # ``input-selector`` only forwards an EOS that reached a sink pad. The
-        # new leg's pads are named here because NOTHING else watches them before
-        # the commit -- the ``in`` rung and its observer are armed at commit time
-        # -- so an EOS arriving from the leg being switched in is otherwise
-        # unobservable, which is the one hypothesis this reload can act on.
-        self._install_selector_sink_eos_observers(
-            extra=(("video", new_video_pad), ("audio", new_audio_pad)),
-            skip=(old_video_pad, old_audio_pad),
-        )
+        # U30 Work 2 -- TRANSACTION OWNERSHIP BEGINS BEFORE THE BUILD.
+        #
+        # OBSERVED (2026-09-25 off-live reproduction, GST_DEBUG=input-selector:7,
+        # concat:7): the deferred boundary EOS crosses the selector's ACTIVE sink
+        # pad WHILE the new leg is still being built. On the reproducer the EOS
+        # crossed at 0:00:02.195 and this reload's first arming line printed at
+        # 0:00:02.441 -- 0.25s later -- because ``self._pending_reload`` and its
+        # boundary DROP probes used to be installed only after
+        # ``_instantiate_source_leg``/``_link_leg_to_selectors`` returned. An EOS
+        # arriving in that window was forwarded by the selector, reached
+        # ``mpegtsmux``, and quit the worker: ``teardown_clean=True``, no commit
+        # stage, ``reload-status.json`` ``aborted:stopped``, output stopped for
+        # good. The same graph ending at the same instant COMMITS when the probes
+        # are armed in time -- one race, two outcomes.
+        #
+        # So: transaction identity, the pending slot and the DROP probes are
+        # established first; only the fields that describe the NEW leg are filled
+        # in when the build returns. Nothing on the EOS path reads a new-leg field
+        # -- ``_on_old_leg_eos`` merely records the boundary, and
+        # ``_on_new_leg_ready`` commits at once when the boundary was already seen
+        # -- so an EOS caught during the build becomes the ordinary healthy
+        # deferred switch instead of a dead channel.
+        #
+        # ``rebase_new_leg`` comes from the leg object alone, so the arming
+        # condition is exactly the one this method always used
+        # (``switch_at_end_of_current or rebase_new_leg``) with the widest
+        # possible window. It also cannot leak a built leg any more: an exception
+        # here now precedes the build rather than following it.
+        rebase_new_leg = not source_leg_is_clock_timed(new_leg)
+
         pending: dict[str, Any] = {
-            "new_video_pad": new_video_pad,
-            "new_audio_pad": new_audio_pad,
             # Round-2 finding 5: identifies THIS reload transaction. The boundary
             # probes live on the OUTGOING pads, which are the same pad objects
             # across successive transactions (``selector_sink_pads[0]`` until a
@@ -3258,7 +3255,13 @@ class GstPlayoutEngine:
             "old_video_pad": old_video_pad,
             "old_audio_pad": old_audio_pad,
             "old_elements": old_elements,
-            "new_elements": new_elements,
+            # The NEW-leg fields, filled in below once the build returns. They are
+            # present from the start because this dict is reachable before then --
+            # the boundary probes below run on streaming threads while the build
+            # is still in progress.
+            "new_video_pad": None,
+            "new_audio_pad": None,
+            "new_elements": [],
             "probe_id": None,
             "readiness_probes": [],
             "ready_pads": set(),
@@ -3300,38 +3303,73 @@ class GstPlayoutEngine:
             #                     last buffer, and the pad's cached segment.
             #   outgoing_eos_pads -- outgoing pads whose EOS callback has reached
             #                     the main loop (deduplicates queued callbacks).
-            "new_src_pads": [pad for pad in (out_pad, audio_out_pad) if pad is not None],
+            "new_src_pads": [],
             "hold_probes": [],
             "holds_awaited": 0,
             "held_pads": set(),
             "boundary_probes": [],
             "outgoing_end": {},
             "outgoing_eos_pads": set(),
+            "selector_notify_handlers": [],
+            # A finite/segment-timed leg starts near running time zero even during
+            # an immediate slate-to-programme switch. Hold and rebase it before
+            # selection. A clock-timed live leg is already on the pipeline
+            # running-time base and cannot be paused without going stale, so it
+            # remains unheld/unrebased.
+            "rebase_new_leg": rebase_new_leg,
         }
-        # A finite/segment-timed leg starts near running time zero even during an
-        # immediate slate-to-programme switch. Hold and rebase it before selection.
-        # A clock-timed live leg is already on the pipeline running-time base and
-        # cannot be paused without going stale, so it remains unheld/unrebased.
-        pending["rebase_new_leg"] = not source_leg_is_clock_timed(new_leg)
         self._pending_reload = pending
+        if switch_at_end_of_current or rebase_new_leg:
+            self._arm_boundary_probes(pending)
+
+        # Build + link the new leg. A failure here has committed no state, so the
+        # current program keeps playing — just propagate (the caller logs it).
+        # F2 fix: ``_instantiate_source_leg`` already disposes ITS OWN partial
+        # build on a raise (its own try/except); this second layer covers the
+        # remaining leak window -- ``_link_leg_to_selectors`` raising AFTER
+        # instantiate already succeeded, which would otherwise leave a fully
+        # built, still-in-the-pipeline (but never-linked-anywhere) leg behind
+        # with nothing left holding a reference to it.
+        #
+        # U30 Work 2: the probes armed above sit on the LIVE outgoing pads and
+        # DROP that leg's EOS, so this unwind must take them off again. A
+        # survivor would swallow the channel's next real boundary EOS forever --
+        # worse than the race it closes.
+        new_elements: list[Gst.Element] = []
         try:
-            if switch_at_end_of_current or pending["rebase_new_leg"]:
-                # Watch BOTH outgoing pads (video AND audio -- an unhandled audio
-                # EOS latches the mux's audio pad just as fatally as a video one
-                # takes the whole pipeline down): track each pad's last-buffer end
-                # running time (the rebase reference) and DROP its EOS, so no
-                # pipeline-level EOS is ever produced at the boundary. Armed for
-                # EVERY deferred switch, plus an immediate finite switch so its
-                # replacement can be rebased to the actual outgoing A/V edge.
-                for pad in (old_video_pad, old_audio_pad):
-                    if pad is None:
-                        continue
-                    probe_id = pad.add_probe(
-                        Gst.PadProbeType.BUFFER | Gst.PadProbeType.EVENT_DOWNSTREAM,
-                        self._on_outgoing_pad_data,
-                        pending["txn_id"],
-                    )
-                    pending["boundary_probes"].append((pad, probe_id))
+            out_pad, audio_out_pad, new_elements = self._instantiate_source_leg(new_leg)
+            new_video_pad, new_audio_pad = self._link_leg_to_selectors(
+                "program(reload)", out_pad, audio_out_pad
+            )
+        except Exception:
+            self._remove_boundary_probes(pending)
+            if self._pending_reload is pending:
+                self._pending_reload = None
+            self._dispose_elements_best_effort(new_elements)
+            raise
+        # The build is done; the transaction can now describe what it built. The
+        # boundary probes have been watching throughout, so any EOS they dropped
+        # is already recorded in ``pending["old_leg_eos"]`` (and any buffer ends
+        # in ``pending["outgoing_end"]``).
+        pending["new_video_pad"] = new_video_pad
+        pending["new_audio_pad"] = new_audio_pad
+        pending["new_elements"] = new_elements
+        pending["new_src_pads"] = [pad for pad in (out_pad, audio_out_pad) if pad is not None]
+        # U30 EOS-origin diagnostic, second half: name EVERY selector sink pad,
+        # including the one this reload just linked the new leg to. The ``out:*``
+        # observers above can only name the pad the outgoing leg is expected to
+        # deliver on; ten of the eleven deferred deaths recorded an EOS at the
+        # selector's own src pad with no arrival on either of them, and an
+        # ``input-selector`` only forwards an EOS that reached a sink pad. The
+        # new leg's pads are named here because NOTHING else watches them before
+        # the commit -- the ``in`` rung and its observer are armed at commit time
+        # -- so an EOS arriving from the leg being switched in is otherwise
+        # unobservable, which is the one hypothesis this reload can act on.
+        self._install_selector_sink_eos_observers(
+            extra=(("video", new_video_pad), ("audio", new_audio_pad)),
+            skip=(old_video_pad, old_audio_pad),
+        )
+        try:
             if pending["rebase_new_leg"]:
                 # ENG-002: hold a finite new leg AT its first buffer.
                 # BLOCK|BUFFER lets the sticky STREAM_START/CAPS/SEGMENT through
@@ -3527,9 +3565,16 @@ class GstPlayoutEngine:
             # diagnoses, and the 2026-09-25 logs could not tell them apart:
             # a drop line followed by no settle line is the first; no line at
             # all is the second.
+            # The pad name is resolved with a fallback rather than inside the
+            # blanket guard: this line's ABSENCE is itself evidence (see above), so
+            # nothing but the write may be allowed to eat the whole line.
+            try:
+                pad_name = pad.get_name()
+            except Exception:
+                pad_name = "<unknown>"
             with contextlib.suppress(Exception):
                 print(
-                    f"CTRL reload diagnostic: outgoing-EOS-dropped pad={pad.get_name()} "
+                    f"CTRL reload diagnostic: outgoing-EOS-dropped pad={pad_name} "
                     f"pending_txn={pending['txn_id'] if pending is not None else 'none'}",
                     file=sys.stderr,
                     flush=True,
@@ -4458,6 +4503,41 @@ class GstPlayoutEngine:
         self._abort_pending_reload("timeout")
         return False  # one-shot
 
+    def _arm_boundary_probes(self, pending: dict[str, Any]) -> None:
+        """Watch BOTH outgoing pads (video AND audio -- an unhandled audio EOS
+        latches the mux's audio pad just as fatally as a video one takes the whole
+        pipeline down): track each pad's last-buffer end running time (the rebase
+        reference) and DROP its EOS, so no pipeline-level EOS is ever produced at
+        the boundary. Armed for EVERY deferred switch, plus an immediate finite
+        switch so its replacement can be rebased to the actual outgoing A/V edge.
+
+        U30 Work 2: armed BEFORE the new leg is built, because the boundary EOS
+        arrives while that build is still running (see ``reload_program``). An EOS
+        that crosses the selector in that window is forwarded, reaches
+        ``mpegtsmux``, and quits the worker -- output stops with no commit. The
+        probe is the only thing that can decline it, so it has to exist first."""
+        for pad in (pending["old_video_pad"], pending["old_audio_pad"]):
+            if pad is None:
+                continue
+            probe_id = pad.add_probe(
+                Gst.PadProbeType.BUFFER | Gst.PadProbeType.EVENT_DOWNSTREAM,
+                self._on_outgoing_pad_data,
+                pending["txn_id"],
+            )
+            pending["boundary_probes"].append((pad, probe_id))
+
+    @staticmethod
+    def _remove_boundary_probes(pending: dict[str, Any]) -> None:
+        """Take this transaction's outgoing-side probes off the live pads.
+
+        Every exit from an uncommitted transaction must run this. These probes
+        DROP the outgoing leg's EOS and are installed on pads that outlive the
+        transaction (``selector_sink_pads[0]`` is only replaced by a commit), so a
+        survivor would swallow the channel's real boundary EOS forever."""
+        for pad, probe_id in pending.get("boundary_probes", ()):
+            with contextlib.suppress(Exception):
+                pad.remove_probe(probe_id)
+
     def _abort_pending_reload(self, reason: str) -> None:
         """Tear down the in-flight (uncommitted) reload leg and clear the pending slot.
         The currently-active program is untouched. Used by supersede, build-error,
@@ -4477,9 +4557,7 @@ class GstPlayoutEngine:
         for pad, probe_id in pending.get("readiness_probes", ()):
             with contextlib.suppress(Exception):  # first-buffer probes remove themselves
                 pad.remove_probe(probe_id)
-        for pad, probe_id in pending["boundary_probes"]:
-            with contextlib.suppress(Exception):
-                pad.remove_probe(probe_id)
+        self._remove_boundary_probes(pending)
         # MUST run before _dispose_source_leg below: a held pad has a GStreamer
         # streaming thread parked inside the blocking probe, and tearing the leg
         # down around a still-installed block is how a "disposal" turns into a

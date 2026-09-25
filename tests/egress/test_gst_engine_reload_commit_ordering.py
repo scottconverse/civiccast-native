@@ -27,6 +27,7 @@ import subprocess
 import sys
 import threading
 import types
+from itertools import count
 from pathlib import Path
 from typing import Any
 
@@ -254,13 +255,23 @@ class _FakeOldPad:
         self.name = name
         self.recorder = recorder
         self._peer = peer
+        # U30: (probe_id, mask, callback, args) for every probe this pad took, so
+        # a test can fire the callback the way the streaming thread would -- the
+        # same contract ``_FakeDiagnosticPad.probes`` provides, one user_data
+        # argument richer (the boundary probes carry the transaction id).
+        self.probes: list[tuple[Any, Any, Any, tuple[Any, ...]]] = []
 
     def get_peer(self) -> _FakePeer | None:
         return self._peer
 
+    def get_name(self) -> str:
+        return self.name
+
     def add_probe(self, mask: Any, callback: Any, *_args: Any) -> str:
         self.recorder.calls.append(f"add_probe:{self.name}:{mask}:{callback.__name__}")
-        return f"{self.name}-probe-{mask}"
+        probe_id = f"{self.name}-probe-{mask}"
+        self.probes.append((probe_id, mask, callback, _args))
+        return probe_id
 
     def remove_probe(self, probe_id: Any) -> None:
         self.recorder.calls.append(f"remove_probe:{self.name}:{probe_id}")
@@ -4210,3 +4221,170 @@ def test_u30_reset_stall_reference_rebaselines_the_flow_ladder(engine_module) ->
         " [mux-in 0.5s: video=+0] [chain-in 0.5s: in video=+0 | sel video=+0 | queue video=+0]"
     )
     assert engine._stall_last_advance_t > 0.0
+
+
+# ---------------------------------------------------------------------------
+# U30 / Work 2 -- the outgoing leg's EOS must be caught DURING the build
+# ---------------------------------------------------------------------------
+#
+# OBSERVED, ``%TEMP%\u30\campaign11\run00\worker.log`` (GST_DEBUG=
+# input-selector:7,concat:7): the concat sub-chain boundary EOS crossed the
+# selector's ACTIVE sink pad while ``reload_program`` was still building the new
+# leg, because the pending transaction and its boundary DROP probes used to be
+# installed only AFTER ``_instantiate_source_leg``/``_link_leg_to_selectors``
+# returned:
+#
+#   0:00:02.193483700 gst_concat_sink_event:<vconcat_program_1:sink_1> received eos
+#   0:00:02.194962100 gst_concat_switch_pad:<vconcat_program_1> Switching
+#   0:00:02.195077700 gst_selector_pad_event:<sel:sink_0> received EOS
+#   0:00:02.196030700 gst_input_selector_eos_wait:<sel:sink_0> send EOS event
+#   0:00:02.441608800 CTRL reload: new leg stream held at its first buffer ...
+#   0:00:02.449068400 CTRL reload: new leg preroll verified ...
+#   0:00:02.452308800 CTRL output: pipeline EOS ... quitting the worker
+#
+# The EOS crossed 0.25 s BEFORE the reload armed anything that would have
+# dropped it. It reached mpegtsmux, then the bus, then ``_announce_pipeline_eos``
+# -- and the worker quit with ``teardown_clean=True``, ``reload-status.json``
+# ``aborted:stopped``, and no commit stage ever printed: output stops for good.
+# ``run01`` of the same campaign ends its leg at the same wall instant and
+# commits, because there the probes were armed in time. One race, two outcomes.
+#
+# The repair is ordering, not new machinery: transaction identity, the pending
+# slot and the boundary DROP probes are installed BEFORE the build, so no EOS
+# can cross unguarded; the new-leg fields are filled in afterwards. Nothing in
+# ``_on_old_leg_eos`` touches a new-leg field and ``_on_new_leg_ready`` commits
+# immediately when the boundary was already seen, so an EOS recorded during the
+# build turns this shape into the ordinary healthy deferred switch.
+
+
+class _StopBuild(Exception):
+    """Freeze ``reload_program`` at the instant it is inside the build."""
+
+
+class _StubLeg:
+    """A replacement program good enough for ``source_leg_is_clock_timed``.
+
+    Empty ``elements``/``audio`` make that helper answer "segment-timed" without
+    touching GStreamer, so the reload takes the finite/held path -- the path
+    every deferred death in the off-live campaign was on."""
+
+    label = "program"
+    elements: tuple[Any, ...] = ()
+    audio: tuple[Any, ...] = ()
+
+
+def test_u30_outgoing_eos_is_dropped_while_the_reload_is_still_building(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The boundary EOS is this transaction's to drop from the moment the build
+    starts -- not from the moment the build finishes.
+
+    A build is not instantaneous (0.25 s measured off-live on the reproducer),
+    and the outgoing leg keeps streaming throughout it. An EOS that arrives in
+    that window and is not dropped is forwarded by the selector, reaches the
+    mux, and quits the worker: the exact ``teardown_clean`` death the campaign
+    recorded. It must be dropped AND recorded, so the reload commits on the
+    boundary it just observed instead of waiting for a boundary already past."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine._reload_txn_counter = count(1)
+    old_video = _FakeOldPad("sink_0", recorder, None)
+    old_audio = _FakeOldPad("sink_1", recorder, None)
+    engine.selector_sink_pads = [old_video]
+    engine.audio_sink_pads = [old_audio]
+    # The boundary probes are the BUFFER|EVENT_DOWNSTREAM ones -- distinct from
+    # the plain EVENT_DOWNSTREAM ``out:*`` observers armed just above them.
+    boundary_mask = (
+        engine_module.Gst.PadProbeType.BUFFER | engine_module.Gst.PadProbeType.EVENT_DOWNSTREAM
+    )
+
+    observed: dict[str, Any] = {}
+
+    def _build(leg: Any) -> Any:
+        pending = engine._pending_reload
+        observed["pending_during_build"] = pending is not None
+        observed["armed_during_build"] = (
+            None if pending is None else len(pending["boundary_probes"])
+        )
+        observed["txn_during_build"] = None if pending is None else pending["txn_id"]
+        armed = [probe for probe in old_video.probes if probe[1] == boundary_mask]
+        observed["video_boundary_probes"] = len(armed)
+        for _probe_id, _mask, callback, args in armed:
+            # Fired the way the streaming thread fires it, from inside the build.
+            observed["probe_return"] = callback(
+                old_video, _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)), *args
+            )
+        observed["old_leg_eos_during_build"] = None if pending is None else pending["old_leg_eos"]
+        raise _StopBuild
+
+    engine._instantiate_source_leg = _build  # type: ignore[method-assign]
+
+    with pytest.raises(_StopBuild):
+        engine.reload_program(_StubLeg(), switch_at_end_of_current=True)
+
+    # While the build was still running, this transaction already owned the
+    # outgoing pads: two boundary probes armed, and the EOS dropped + recorded.
+    assert observed["pending_during_build"] is True, observed
+    assert observed["armed_during_build"] == 2, observed
+    assert observed["video_boundary_probes"] == 1, observed
+    assert observed["probe_return"] == engine_module.Gst.PadProbeReturn.DROP, observed
+    assert observed["old_leg_eos_during_build"] is True, observed
+    err = capsys.readouterr().err
+    assert "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_0 pending_txn=1" in err
+    assert "CTRL reload: outgoing EOS observed stream=video (1/2 stream(s))" in err
+
+    # A build that RAISES must leave nothing behind. A DROP probe left installed
+    # on the live outgoing pad would swallow that leg's real EOS forever -- the
+    # channel would never switch at a boundary again.
+    assert engine._pending_reload is None
+    assert f"remove_probe:sink_0:sink_0-probe-{boundary_mask}" in recorder.calls, recorder.calls
+    assert f"remove_probe:sink_1:sink_1-probe-{boundary_mask}" in recorder.calls, recorder.calls
+
+
+def test_u30_a_failed_build_removes_the_probes_it_armed(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The unwind is an unwind, not a half-started transaction.
+
+    Hoisting the pending slot above the build is only safe if a build that
+    raises restores the pre-call state exactly: no pending reload, and every
+    boundary probe that was armed is removed again -- a DROP probe left on the
+    live outgoing pad swallows that leg's real EOS forever. The caller still
+    gets the original exception (its contract), so the failure is reported once
+    and honestly, and the settle callback does not fire."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine._reload_txn_counter = count(1)
+    old_video = _FakeOldPad("sink_0", recorder, None)
+    old_audio = _FakeOldPad("sink_1", recorder, None)
+    engine.selector_sink_pads = [old_video]
+    engine.audio_sink_pads = [old_audio]
+    boundary_mask = (
+        engine_module.Gst.PadProbeType.BUFFER | engine_module.Gst.PadProbeType.EVENT_DOWNSTREAM
+    )
+    settled: list[tuple[bool, str | None]] = []
+
+    def _build(_leg: Any) -> Any:
+        raise RuntimeError("instantiate failed")
+
+    engine._instantiate_source_leg = _build  # type: ignore[method-assign]
+
+    def _on_settled(committed: bool, reason: str | None) -> None:
+        settled.append((committed, reason))
+
+    with pytest.raises(RuntimeError, match="instantiate failed"):
+        engine.reload_program(_StubLeg(), switch_at_end_of_current=True, on_settled=_on_settled)
+
+    armed = [
+        (pad, probe_id)
+        for pad in (old_video, old_audio)
+        for probe_id, mask, _callback, _args in pad.probes
+        if mask == boundary_mask
+    ]
+    assert len(armed) == 2, recorder.calls
+    for pad, probe_id in armed:
+        assert f"remove_probe:{pad.name}:{probe_id}" in recorder.calls, recorder.calls
+    assert engine._pending_reload is None
+    assert settled == []
+    assert capsys.readouterr().err == ""
+
