@@ -129,8 +129,8 @@ periodic storage check is pending, processed and unreadable audio is discarded
 instead of retained; review text can still be created without an audio clip.
 With verified storage, unreadable segments go to `quarantine/`.
 
-Two rules keep the tap from pausing over audio it never had a chance to
-transcribe (U11, 2026-09-24):
+Three rules keep the tap from pausing over audio it never had a chance to
+transcribe (U11, 2026-09-24; U23, 2026-09-25):
 
 - **A restarted worker discards the previous broadcast's leftovers.** Audio
   already in `<channel_id>/` when the worker starts belongs to the session that
@@ -139,16 +139,24 @@ transcribe (U11, 2026-09-24):
   this discard only ran on an explicit `START`, so after a service restart the
   tap counted the last session's segments as live backlog and paused captions
   for the full backoff window before a single new segment existed.
-- **An overload must persist before it pauses.** The gate counts over-limit
-  scans and pauses only after `CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS`
-  in a row (default `15` = 30 s at the default 2 s poll). While the overshoot is
-  still new, the tap transcribes the **oldest** `MAX_BACKLOG_SEGMENTS` segments
-  on that scan — the same ASR call size as a legal batch — leaves the remainder
-  queued, keeps live captions flowing, and logs one INFO line per episode
-  (`Caption tap is behind for channel ...`). A backlog dropping back to the
-  limit clears the count. A deferred scan does not count as recovery evidence
-  for the escalation ladder, so a sustained collapse still pauses and still
-  escalates exactly as before.
+- **An overload must persist before it does anything.** The gate counts
+  over-limit scans and acts only after
+  `CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS` in a row (default `15` =
+  30 s at the default 2 s poll). While the overshoot is still new, the tap
+  transcribes the **oldest** `MAX_BACKLOG_SEGMENTS` segments on that scan — the
+  same ASR call size as a legal batch — leaves the remainder queued, keeps live
+  captions flowing, and logs one INFO line per episode (`Caption tap is behind
+  for channel ...`). A backlog dropping back to the limit clears the count. A
+  deferred scan does not count as recovery evidence for the escalation ladder.
+- **A persistent overshoot catches up; it does not pause (U23).** When the
+  overshoot survives the whole persistence window, the channel keeps captioning
+  from the **newest** audio and discards only the oldest settled segments that
+  can no longer be transcribed in time — it sheds down to the newest
+  `MAX_BACKLOG_SEGMENTS` and submits them on that same scan, so a channel is
+  never silent for longer than the audio it shed. Nothing about this is a new
+  threshold: the trigger is still the U11 persistence window, and a single
+  over-limit scan still does nothing. The reason this replaced the pause is
+  measured, not theoretical — see *Captions are best effort* below.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -157,8 +165,10 @@ transcribe (U11, 2026-09-24):
 | `CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS` | `5` | Segment length — the floor of the caption latency budget (tap → transcribe → stabilize → review queue). |
 | `CIVICCAST_CAPTION_TAP_POLL_SECONDS` | `2` | Worker scan interval. |
 | `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | hardware-selected: `1` CPU, up to `3` CUDA | How many channels' ASR calls may be in flight **at the same time**. CPU remains serialized so playout keeps the machine. CUDA follows the faster-whisper runtime's worker capacity (up to three) so the station's three five-second audio streams do not queue behind one another. An explicit value remains authoritative. |
-| `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` | `2` | Settled segments a channel may be behind before a scan counts as over-limit. Reaching this bound on a single scan no longer pauses the channel — see `..._OVERLOAD_PERSISTENCE_SCANS`. |
-| `CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS` | `15` | Consecutive over-limit scans required before the tap pauses a channel (U11, 2026-09-24). Must be at least `1`; `1` restores the pre-U11 "pause on the first over-limit scan" behaviour. `15` is ~30 s at the default 2 s poll, chosen to clear the measured worst-case slow batch (19 s) with margin while staying short enough to shed load during a real ASR collapse. |
+| `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` | `2` | Settled segments a channel may be behind before a scan counts as over-limit. Reaching this bound on a single scan no longer pauses the channel, and neither does a persistent overshoot — see `..._OVERLOAD_PERSISTENCE_SCANS` and `..._CATCH_UP_SHED_LIMIT`. It is also the number of newest segments a catch-up keeps and submits, so a shed never issues a larger ASR call than a legal batch. |
+| `CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS` | `15` | Consecutive over-limit scans required before the tap acts on a channel (U11, 2026-09-24). Must be at least `1`. `15` is ~30 s at the default 2 s poll, chosen to clear the measured worst-case slow batch (19 s) with margin while staying short enough to react during a real ASR collapse. Under U23 the action at this trigger is a **catch-up shed**, not a pause; `1` therefore restores the pre-U11 trigger *timing*, not the pre-U11 behaviour. For the pre-U23 pause, use `..._CATCH_UP_SHED_LIMIT=0`. |
+| `CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_LIMIT` | `3` | How many catch-up sheds a channel may take inside `..._CATCH_UP_SHED_WINDOW_SECONDS` before the tap concludes the box genuinely cannot keep up and falls back to the retained pause ladder (U23, 2026-09-25). Three sheds in five minutes needs at least ~90 s of over-limit scans in that span — three whole persistence windows — which no transient produces. `1` escalates on the second episode; `0` disables catch-up entirely and restores the pre-U23 rule (pause on the first persistent overshoot). A negative value, or anything unparseable, is **refused with a WARNING and the default `3` is used** — it is not read as "catch-up off" (the value is discarded, not clamped to the minimum), so switch catch-up off with an explicit `0`. |
+| `CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_WINDOW_SECONDS` | `300` | Window over which catch-up sheds are counted. Long enough to contain a real under-capacity episode and short enough that a station which recovers — the operator lowers the caption tier, a channel goes off air — returns to catch-up behaviour instead of carrying a stale verdict. Must be at least `1`; an unparseable or smaller value is refused with a WARNING and the default `300` is used. |
 | `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS` | `120` | First pause after an overload; each consecutive overload doubles it. Item 79 (2026-09): doubled from `60` — a struggling station needs real recovery room before ASR is attempted again. |
 | `CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS` | `900` | Ceiling on that doubling. |
 | `CIVICCAST_CAPTION_TAP_CPU_THREADS` | one per 8 CPUs, max 2 | CTranslate2 intra-op threads for the **live tap only** (item 79, 2026-09). "One per 8 CPUs, max 2" is the *default* — an operator override is honoured up to `2` (`LIVE_TAP_CPU_THREADS_CEILING`); asking for more is refused, not silently clamped: the value is capped at `2` and a WARNING is logged naming the rejected value. Recorded-meeting transcription is unaffected. |
@@ -290,19 +300,33 @@ negotiable at runtime by the caption feature itself:
   a three-channel station process each five-second audio cycle concurrently
   on a suitable GPU. Within a scan, channels beyond the selected concurrency
   bound queue on the worker pool. If any channel's settled backlog exceeds
-  `..._MAX_BACKLOG_SEGMENTS`, its stale audio is dropped by the overload path
-  below rather than queued indefinitely. An explicit
+  `..._MAX_BACKLOG_SEGMENTS`, its oldest settled audio is discarded by the
+  catch-up path below rather than queued indefinitely. An explicit
   `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` value remains authoritative.
-- **Overload backs off.** When a channel falls further behind than
-  `..._MAX_BACKLOG_SEGMENTS`, its live captions are **paused** for an
-  exponentially growing window (120s, 240s, 480s … capped at 15 minutes), its
-  active caption file is blanked, and its stale audio is **discarded**. During
-  the pause the station spends *nothing* on transcribing that channel, and
-  keeps nothing: audio that was never transcribed cannot be reviewed, so
-  retaining it would only grow an unpruned directory of raw broadcast audio
-  for as long as the station could not keep up. Captions resume automatically once the window
-  expires and the backlog is clear; a channel has to stay healthy for several
-  scans before its escalation is forgiven.
+- **A persistent overload catches up; only a hopeless one pauses.** When a
+  channel's backlog stays over `..._MAX_BACKLOG_SEGMENTS` for the whole
+  persistence window, the tap **sheds** the oldest settled segments down to the
+  newest `..._MAX_BACKLOG_SEGMENTS` and keeps captioning from there — one
+  `WARNING` per episode, no blanked caption file, no pause. This is the shape
+  the live station actually produces: measured (U22, 2026-09-25) ASR keeps up
+  on the **mean** — 2.8–3.4 s per 10 s window against a 5 s cadence, 1.86×
+  headroom — and fails at the **tail**, where a single window takes 10.6–19.5 s
+  because the three channel callers share one GPU model. A ~16 s stall used to
+  cost **2–8 minutes** of no captions at all, which the station acceptance
+  verifier samples as "no embedded cues". Shedding costs the seconds the box
+  genuinely could not transcribe and nothing more.
+  A channel that sheds `..._CATCH_UP_SHED_LIMIT` times inside
+  `..._CATCH_UP_SHED_WINDOW_SECONDS` is a different animal — it is shedding as
+  fast as the persistence window allows and still not holding the cadence — and
+  *that* channel is **paused** on the retained ladder: an exponentially growing
+  window (120 s, 240 s, 480 s … capped at 15 minutes), its active caption file
+  blanked, and its stale audio **discarded**. During the pause the station
+  spends *nothing* on transcribing that channel, and keeps nothing: audio that
+  was never transcribed cannot be reviewed, so retaining it would only grow an
+  unpruned directory of raw broadcast audio for as long as the station could
+  not keep up. Captions resume automatically once the window expires and the
+  backlog is clear; a channel has to stay healthy for several scans before its
+  escalation is forgiven.
 - **Playout outranks captions in the scheduler.** On Windows the playout
   workers are spawned at `ABOVE_NORMAL` priority class. The caption side
   lowers only its own Python ASR threads to `BELOW_NORMAL`, *not* CTranslate2's
@@ -310,10 +334,24 @@ negotiable at runtime by the caption feature itself:
   this as a nudge, not a guarantee, and rely on the two bullets above. Neither
   priority change has been measured on a station yet.
 
-**What you will see in the log.** One `WARNING` line per pause, naming the
-channel, the backlog, the pause length and how many times that channel has
-overloaded — *not* a `CRITICAL` line every scan. Repeated escalations on the
-same channel mean the station cannot transcribe that channel in real time.
+**What you will see in the log.** Two different `WARNING` lines, deliberately
+worded so a grep for one does not find the other:
+
+- One per **catch-up**, naming the channel, how many settled segments stayed
+  over the maximum for the whole persistence window, how many oldest segments
+  were discarded with the seconds of audio they carried, and that captions are
+  still running — e.g. `Caption tap catch-up for channel education: 4 settled
+  segments stayed over the maximum 2 for the whole 15-scan window. Discarded
+  the oldest 2 segment(s) (10.0s of audio, indices 118-119) and resumed at the
+  newest 2. Live captions continue; the pause is not engaged (shed 1 of 3 in
+  300s).` The seconds come from each segment's own WAV header, so they are the
+  real audio skipped. Occasional catch-ups on a loaded station are expected and
+  need no action: that audio could not have been transcribed in time.
+- One per **pause**, naming the channel, the backlog, the pause length and how
+  many times that channel has overloaded — *not* a `CRITICAL` line every scan.
+  A pause now means the channel shed its full budget inside one window and
+  still could not hold the cadence. Repeated escalations on the same channel
+  mean the station cannot transcribe that channel in real time.
 
 **What you will see in the status file.** Each channel publishes
 `<egress work dir>/<channel_id>/captions/runtime-status.json`:
@@ -331,7 +369,11 @@ same channel mean the station cannot transcribe that channel in real time.
 ```
 
 `state` is `within-capacity`, `paused`, `overloaded`, `storage-refused`, or
-`disabled` (the operator switch above).
+`disabled` (the operator switch above). **A catch-up is not an overload**: a
+shedding channel keeps publishing `within-capacity` with its
+`consecutive_overloads` at `0`, so this file still means what it always meant —
+only the pause ladder appends to `overloaded_channels`/`paused_channels`. Use
+the log to see catch-ups; use this file to see a channel in trouble.
 
 **If a station is permanently paused,** the fix is to reduce the caption work,
 not to raise the CPU limits: move to a lower caption tier, caption fewer

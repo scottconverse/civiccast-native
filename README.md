@@ -191,6 +191,13 @@ is coming soon that addresses the caption interruptions on program changes, the
 escalation behaviour, the end-of-schedule stop, and the playout worker stalls.
 **If you are running a station where captions must stay up unattended, wait for beta.10.**
 
+The escalation change is the caption-tap **catch-up** below: a channel whose
+backlog no longer clears now keeps captioning from the newest audio and discards
+only the oldest settled segments it could not have transcribed in time, instead
+of pausing for 2–8 minutes after a GPU stall. The pause ladder is retained for a
+channel that genuinely cannot hold the cadence. See
+[docs/ops/background-workers.md](docs/ops/background-workers.md#live-caption-tap).
+
 **Caption reliability — two channels are clean, three are not.**
 - Captions run on the GPU (`cuda`/`float16`), and caption text reaches the
   emitted output.
