@@ -237,12 +237,13 @@ def test_graph_from_config_fails_closed_on_a_bypassed_program_plan() -> None:
 def test_graph_from_config_caps_an_oversized_slate_plan_and_only_warns(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The counterpart to the test above: ``source_plan.SlateSourceGenerator``
-    intentionally repeats one pre-conformed file well past
-    ``MAX_PLAYLIST_SUBCHAINS`` to span an hour of slate fill (CA-8 -- a short
-    single-segment plan relaunched the encoder, resetting the TS session,
-    every few seconds). That is NOT a bypass, so truncating it here is only
-    a WARNING, not an ERROR."""
+    """The counterpart to the test above: filler plans (slate and CG) are
+    truncated with a WARNING instead of raising, because a degraded fill that
+    still airs beats a worker that refuses to build. U27 removed the slate
+    leg from this path -- ``source_plan.SlateSourceGenerator`` now emits ONE
+    stream-copied fill file (a multi-segment slate plan was the a/v desync
+    defect) -- but the tolerance policy still governs any oversized filler
+    plan the bridge is handed."""
     config = EgressConfig(
         channel_id="ch1",
         enabled=True,

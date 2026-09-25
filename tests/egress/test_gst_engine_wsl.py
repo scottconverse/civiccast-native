@@ -2364,9 +2364,12 @@ def test_immediate_finite_playlist_reload_holds_rebases_and_stays_on_air(
     out_ts = tmp_path / "immediate-finite.ts"
     finite_slate = tmp_path / "finite-slate.ts"
     _write_short_av_ts_clip(finite_slate, seconds=10.0, pattern=2, video_caps=_PRODUCTION_CAPS)
-    # Production's SlateSourceGenerator repeats one rendered finite slate up to
-    # MAX_PLAYLIST_SUBCHAINS (12); the Sandbox error came from one of those
-    # retiring decodebin/tsdemux children, not from an endless synthetic slate.
+    # The Sandbox error came from one of the retiring decodebin/tsdemux
+    # children of a multi-segment finite reload, not from an endless synthetic
+    # slate. The graph shape is built here explicitly: since U27 the slate
+    # producer no longer emits a 12-subchain plan of one repeated file (that
+    # plan was the a/v desync defect), so this test pins the retirement
+    # transaction for the multi-segment shape on its own terms.
     old_clip_paths = [finite_slate] * 12
     source_graph = _multi_segment_playlist_reload_graph(old_clip_paths, video_caps=_PRODUCTION_CAPS)
     graph = graphmod.PlayoutGraph(

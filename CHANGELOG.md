@@ -108,6 +108,42 @@ or validate the final public installer. Startup overload remains a monitored
 risk; see `work/BLACKWELL-CAPTION-FIX-REPORT-v9.md` for exact run identities and
 the investigation's corrected conclusions.
 
+### Slate fill desynced audio from video until a restart (U27, 2026-09-25)
+
+On 2026-09-25 the public channel went on air on the fallback slate with its audio
+about 19.7 s ahead of its video (measured +19.742567 / +19.747878 / +19.753189 s on
+three consecutive segments at 03:41-03:43) and stayed there; only restarting the
+channel cleared it. The slate fill plan was **12 copies of one pre-conformed 30 s
+file**, and the playout engine builds one decoder sub-chain per plan segment feeding
+two independent concat aggregators (a video one and an audio one) with nothing
+coupling a video seam to an audio seam. At a sub-chain hand-off one branch could
+stall for about a plan-segment duration while the other kept flowing.
+
+- The slate generator now renders **one fill file spanning the whole fill horizon**
+  and emits it as a **single** plan segment. The fill is built by the copy-concat
+  path `bulletin_filler._render_rotation` already used (one `file '<path>'` manifest
+  line per copy, `ffmpeg -f concat -safe 0 -i <manifest> -c copy`, atomic replace),
+  and is cached on the rendered slate's cache key plus the fill length and the source
+  size, so it is reused until the rendered slate actually changes.
+- One segment means one decoder sub-chain: there is no hand-off left to desync, the
+  12-sub-chain teardown (the shape U13 wedged on) never runs for slate, and the
+  encoder is not relaunched inside the fill every 30 s (the CA-8 constraint that
+  ruled out simply emitting one 30 s segment).
+- A failed fill raises `SourcePrepareError`. It deliberately does **not** fall back
+  to the repeated-segment plan, which would put the desync back on air.
+- Measured off-live through the real relay argv (U21's captured wire arguments),
+  same generator: 113 segments over a 3600 s fill with max |a-v| of 0.018666 s, 0
+  a-v steps over 50 ms, 0 relay `timestamp discontinuity` lines. The pre-fix plan
+  shape measured 20.001122 s, 2 steps and 1717 discontinuities, and plateaued at
+  about +19.75 s exactly as the live station did. The reproduction needs the live
+  caption embed and the channel's other live sink branches, not the sub-chain count
+  alone; it fired at roughly one boundary in four, and modes that use it are only
+  reproducible against pre-fix sources.
+- Not addressed here: a non-slate leg with more than one plan segment still hands
+  off between sub-chains the same way. No evidence was produced that a real program
+  leg desyncs; it is recorded as a latent risk in the unit report rather than
+  changed here.
+
 ### Caption-tap false-alarm pauses (U11, 2026-09-24)
 
 - Discard audio left in a channel's tap directory by the previous broadcast when
