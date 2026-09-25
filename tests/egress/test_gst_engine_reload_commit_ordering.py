@@ -4387,4 +4387,3 @@ def test_u30_a_failed_build_removes_the_probes_it_armed(
     assert engine._pending_reload is None
     assert settled == []
     assert capsys.readouterr().err == ""
-
