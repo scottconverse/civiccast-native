@@ -71,14 +71,30 @@ against a live UDP input): ffmpeg fixes its OUTPUT stream set at probe time,
 so a child that starts while its input carries no video inside the probe
 window builds an audio-only output and never adds video when video arrives.
 The widened 6M probe only narrows the window in which that can happen; it
-cannot remove it, and it does not notice that the result is unwatchable. The
-video half below therefore (1) REQUIRES video in the relay's output mapping
-for a sink that carries video, so such a child fails fast instead of silently
-serving audio-only HLS, and (2) restarts a child that cannot satisfy that
-requirement -- exited, or alive with a video-less newest segment -- on a
-bounded, backed-off cadence until video is there. A sink that does not carry
-video (``EgressSink.carries_video`` False) keeps its historical argv and is
-never judged on video at all.
+cannot remove it, and it does not notice that the result is unwatchable.
+
+**The same lock runs the other way (coordinator audit, U12 fix).** An output
+whose stream set is fixed at probe time can just as easily be fixed to
+video-only: U13 measured the government relay's post-self-heal segments at
+18:47:44-18:47:56 carrying TS PID 256 (video) and no PID 257 (audio) at all.
+A municipal channel with picture and no sound fails acceptance exactly like
+one with sound and no picture, so the rule below is symmetric over the stream
+kinds the sink is configured to carry:
+
+1. the relay's output mapping REQUIRES every kind the sink carries
+   (:func:`_relay_map_args`), so a child that probes an input missing any of
+   them fails fast instead of silently serving a half-program window -- and the
+   supervisor's bounded restart then retries until the program is whole;
+2. the post-(re)start verification (:meth:`HlsRelaySupervisor.
+   maybe_restore_missing_streams`) requires BOTH a video and an audio stream in
+   the newest served segment for a sink that carries both, and judges each kind
+   it actually requires.
+
+A sink that carries only one kind is judged only on that kind, and an
+audio-only sink (``EgressSink.carries_video`` False) keeps its historical argv
+and is never judged at all. Today every shipped sink carries both; the
+``carries_video``/``carries_audio`` flags exist so a future one can say
+otherwise (see ``civiccast/egress/sinks.py``).
 """
 
 from __future__ import annotations
@@ -131,33 +147,48 @@ _UDP_INPUT_ARGS = (
 #: every real muxer hiccup, while still bounding a visible freeze.
 _DEFAULT_STALL_BOUND_S = 30.0
 
-#: Output-stream mapping for a sink that CARRIES the channel's video (U12).
+
+#: Output-stream mapping for a relay child (U12).
 #:
-#: ``-map 0:v:0`` is deliberately NOT optional: ffmpeg fixes its output stream
-#: set at probe time, so a child that starts while the loopback input carries
-#: no video builds an audio-only HLS output and never adds video when it
-#: arrives (the live government symptom). Requiring the map turns that silent
-#: audio-only window into a prompt child failure -- measured against real
+#: ``-map 0:v:0`` (and ``-map 0:a:0`` for a sink that carries audio) is
+#: deliberately NOT optional: ffmpeg fixes its output stream set at probe
+#: time, so a child that starts while the loopback input is missing a kind
+#: builds a half-program HLS output and never adds the missing kind when it
+#: arrives (the live government symptom in both directions -- audio-only at
+#: 18:46:32, video-only at 18:47:44-18:47:56). Requiring the map turns that
+#: silent half-window into a prompt child failure -- measured against real
 #: ffmpeg 8.1.1: ``Stream map '0:v:0' matches no streams`` + "Error opening
 #: output files", exit -22, no window written -- which the supervisor's
-#: bounded restore below then retries until video is genuinely present.
+#: bounded restore below then retries until the program is whole.
 #:
-#: ``-map 0:a:0?`` is optional on purpose: with ANY ``-map`` present ffmpeg's
-#: default stream selection is disabled, so audio must be named explicitly;
-#: the trailing ``?`` keeps a video-only input (no audio PID) relay-able
-#: instead of fatal. Both halves are proven with real ffmpeg in
+#: With ANY ``-map`` present ffmpeg's default stream selection is disabled, so
+#: every kind the sink carries must be named explicitly. A kind the sink does
+#: not carry is left optional (``?``) so a one-kind input stays relay-able
+#: instead of fatal, and an audio-only sink keeps the historical mapping-less
+#: argv byte-for-byte. Proven with real ffmpeg in
 #: ``tests/egress/test_hls_relay_video_lock.py``.
-_VIDEO_SINK_MAP_ARGS = ("-map", "0:v:0", "-map", "0:a:0?")
+def _relay_map_args(*, carries_video: bool, carries_audio: bool) -> tuple[str, ...]:
+    """The ``-map`` arguments that force this sink's required stream kinds."""
+    if not carries_video:
+        # Audio-only sink: the historical argv, no -map at all (and ffmpeg's
+        # default selection still picks the audio stream).
+        return ()
+    if not carries_audio:
+        # Video-only sink: audio stays optional so an audio-less input is
+        # relay-able rather than fatal.
+        return ("-map", "0:v:0", "-map", "0:a:0?")
+    return ("-map", "0:v:0", "-map", "0:a:0")
 
-#: U12 restart cadence for a relay that cannot carry video. The first
-#: ``_VIDEO_FAST_ATTEMPTS`` restarts are prompt (the input's video is usually
-#: a slate transition away), then the cadence drops to
-#: ``_DEFAULT_VIDEO_RETRY_SLOW_DELAY_S`` and each further attempt logs at
-#: ERROR -- a sink that can never satisfy the requirement must not
+
+#: U12 restart cadence for a relay that cannot carry the program's required
+#: stream kinds. The first ``_STREAM_FAST_ATTEMPTS`` restarts are prompt (the
+#: missing kind is usually a slate/source transition away), then the cadence
+#: drops to ``_DEFAULT_STREAM_RETRY_SLOW_DELAY_S`` and each further attempt
+#: logs at ERROR -- a sink that can never satisfy the requirement must not
 #: restart-storm, but must keep trying and keep saying so.
-_DEFAULT_VIDEO_RETRY_DELAY_S = 5.0
-_DEFAULT_VIDEO_RETRY_SLOW_DELAY_S = 60.0
-_VIDEO_FAST_ATTEMPTS = 3
+_DEFAULT_STREAM_RETRY_DELAY_S = 5.0
+_DEFAULT_STREAM_RETRY_SLOW_DELAY_S = 60.0
+_STREAM_FAST_ATTEMPTS = 3
 #: Bound on one segment's ffprobe (U12 verification). A served 2s segment is
 #: read locally, so this only ever bounds a hung probe.
 _SEGMENT_PROBE_TIMEOUT_S = 10.0
@@ -213,17 +244,23 @@ def _last_segment(path: Path) -> str | None:
     return last_segment or None
 
 
-def _segment_has_video(path: Path) -> bool | None:
-    """Does THIS served segment carry a video stream? Tri-state (U12).
+def _segment_stream_kinds(path: Path) -> frozenset[str] | None:
+    """Which stream kinds (``video``/``audio``) does THIS served segment carry?
 
-    ``True``/``False`` are the answers ffprobe actually gave; ``None`` means
-    "no answer" -- the segment is not on disk yet (a window can name a segment
-    ffmpeg is still closing), ffprobe is absent, or it failed/timed out.
-    ``None`` never counts as a fault: the supervisor only restarts a relay on
-    POSITIVE evidence that its output has no video, so a broken or missing
-    probe tool cannot itself become a restart source.
+    Tri-state by presence (U12): a set is the answer ffprobe actually gave --
+    possibly the empty set, which is itself a positive finding -- and ``None``
+    means "no answer": the segment is not on disk yet (a window can name a
+    segment ffmpeg is still closing), ffprobe is absent, or it failed/timed
+    out. ``None`` never counts as a fault: the supervisor only restarts a
+    relay on POSITIVE evidence that its output is missing a kind, so a broken
+    or missing probe tool cannot itself become a restart source.
 
-    Tri-state rather than the module-local reuse of
+    A set rather than a bool because the requirement is symmetric over the
+    kinds the sink carries: U13 measured a live relay serving video-only
+    segments (TS PID 256, no PID 257), the mirror image of the audio-only
+    lock, and a bool would have to be asked twice and conjoined.
+
+    Set rather than the module-local reuse of
     ``civiccast.stream._ffmpeg.probe_video_dimensions`` (which answers ``None``
     for both "no video" and "could not tell") because the two must not be
     conflated here: one is the live fault, the other is ignorance.
@@ -254,12 +291,30 @@ def _segment_has_video(path: Path) -> bool | None:
         return None
     if completed.returncode != 0:
         return None
-    return any(line.strip() == "video" for line in completed.stdout.splitlines())
+    return frozenset(line.strip() for line in completed.stdout.splitlines() if line.strip())
 
 
-def _sink_carries_video(source_uri: str) -> bool:
-    """Whether this ``hls`` sink's program carries video (see ``EgressSink``)."""
-    return HlsSink(EgressSinkSpec(kind="hls", label="_video", uri=source_uri)).carries_video
+def _sink_required_kinds(source_uri: str) -> frozenset[str]:
+    """The stream kinds this ``hls`` sink's program must carry (U12).
+
+    Empty means "never judged": an audio-only sink (``carries_video`` False)
+    keeps its historical argv and the supervisor must not restart it for a
+    stream it was never configured to carry. Otherwise the requirement is
+    every kind the sink is declared to carry -- both video AND audio for every
+    sink shipped today (see ``EgressSink`` in ``civiccast/egress/sinks.py``).
+    """
+    sink = HlsSink(EgressSinkSpec(kind="hls", label="_kinds", uri=source_uri))
+    if not sink.carries_video:
+        return frozenset()
+    required = {"video"}
+    if sink.carries_audio:
+        required.add("audio")
+    return frozenset(required)
+
+
+def _describe_kinds(kinds: frozenset[str]) -> str:
+    """Stable operator-facing wording for a kind set (``video+audio``, ``audio``)."""
+    return "+".join(sorted(kinds))
 
 
 class _Ffmpeg(Protocol):
@@ -298,17 +353,18 @@ class _Relay:
     #: never-emitted path (audit finding 3): a producing channel whose relay has
     #: never written a window past its startup grace must be reported unhealthy.
     first_seen_at: float | None = None
-    #: U12 video-carry watch. ``video_verified`` latches once THIS child's
-    #: newest served segment is measured to carry video -- the check then stops
-    #: (one ffprobe per child, not one per tick). ``video_probed_segment``
-    #: remembers which segment name that probe looked at, so a static window is
-    #: not re-probed every tick. ``video_fault_attempts`` counts this (channel,
-    #: sink)'s failed restarts across children; ``video_retry_not_before`` is
-    #: the monotonic time the next attempt may run (the backoff).
-    video_verified: bool = False
-    video_probed_segment: str | None = None
-    video_fault_attempts: int = 0
-    video_retry_not_before: float | None = None
+    #: U12 stream-carry watch. ``streams_verified`` latches once THIS child's
+    #: newest served segment is measured to carry every kind its sink requires
+    #: -- the check then stops (one ffprobe per child, not one per tick).
+    #: ``streams_probed_segment`` remembers which segment name that probe
+    #: looked at, so a static window is not re-probed every tick.
+    #: ``stream_fault_attempts`` counts this (channel, sink)'s failed restarts
+    #: across children; ``stream_retry_not_before`` is the monotonic time the
+    #: next attempt may run (the backoff).
+    streams_verified: bool = False
+    streams_probed_segment: str | None = None
+    stream_fault_attempts: int = 0
+    stream_retry_not_before: float | None = None
 
 
 class HlsRelaySupervisor:
@@ -331,9 +387,9 @@ class HlsRelaySupervisor:
         starter: Callable[..., _Ffmpeg] | None = None,
         base_port: int | None = None,
         stall_bound_s: float | None = None,
-        segment_probe: Callable[[Path], bool | None] | None = None,
-        video_retry_delay_s: float | None = None,
-        video_retry_slow_delay_s: float | None = None,
+        segment_probe: Callable[[Path], frozenset[str] | None] | None = None,
+        stream_retry_delay_s: float | None = None,
+        stream_retry_slow_delay_s: float | None = None,
     ) -> None:
         self._starter = starter or _default_starter
         self._base_port = base_port
@@ -343,14 +399,16 @@ class HlsRelaySupervisor:
         self._stall_bound_s = stall_bound_s if stall_bound_s is not None else _DEFAULT_STALL_BOUND_S
         # U12 seams, injected the same way ``starter`` is: the probe is a real
         # ffprobe by default, and the two delays default to the shipped cadence.
-        self._segment_probe = segment_probe or _segment_has_video
-        self._video_retry_delay_s = (
-            video_retry_delay_s if video_retry_delay_s is not None else _DEFAULT_VIDEO_RETRY_DELAY_S
+        self._segment_probe = segment_probe or _segment_stream_kinds
+        self._stream_retry_delay_s = (
+            stream_retry_delay_s
+            if stream_retry_delay_s is not None
+            else _DEFAULT_STREAM_RETRY_DELAY_S
         )
-        self._video_retry_slow_delay_s = (
-            video_retry_slow_delay_s
-            if video_retry_slow_delay_s is not None
-            else _DEFAULT_VIDEO_RETRY_SLOW_DELAY_S
+        self._stream_retry_slow_delay_s = (
+            stream_retry_slow_delay_s
+            if stream_retry_slow_delay_s is not None
+            else _DEFAULT_STREAM_RETRY_SLOW_DELAY_S
         )
         # Monotonic clock, injectable for tests. Must be the SAME clock domain
         # the caller passes as ``now`` to note_progress/progress_stale/self-heal;
@@ -407,15 +465,20 @@ class HlsRelaySupervisor:
         (channel, sink) key is structurally bounded at one: the caller has
         already terminated any predecessor before reaching this helper.
         """
+        hls_sink = HlsSink(sink)
         args = [
             *_UDP_INPUT_ARGS,
             "-i",
             f"{relay_uri}?overrun_nonfatal=1&fifo_size=50000000",
-            # U12: a video-carrying sink's relay REQUIRES video, so a child that
-            # probes a video-less loopback input fails fast instead of emitting
-            # audio-only HLS forever. An audio-only sink keeps today's argv.
-            *(_VIDEO_SINK_MAP_ARGS if HlsSink(sink).carries_video else ()),
-            *HlsSink(sink).output_args(),
+            # U12: the relay REQUIRES every stream kind this sink carries, so a
+            # child that probes a loopback input missing any of them fails fast
+            # instead of emitting a half-program (audio-only OR video-only) HLS
+            # window forever. A one-kind or audio-only sink keeps today's argv.
+            *_relay_map_args(
+                carries_video=hls_sink.carries_video,
+                carries_audio=hls_sink.carries_audio,
+            ),
+            *hls_sink.output_args(),
         ]
         try:
             process = self._starter(args)
@@ -479,35 +542,36 @@ class HlsRelaySupervisor:
             return None
         return self._relays.get(key)
 
-    def _video_retry_blocked(self, relay: _Relay, *, now: float) -> bool:
-        """Is this relay inside the backoff window of its last video attempt?"""
-        return relay.video_retry_not_before is not None and now < relay.video_retry_not_before
+    def _stream_retry_blocked(self, relay: _Relay, *, now: float) -> bool:
+        """Is this relay inside the backoff window of its last stream attempt?"""
+        return relay.stream_retry_not_before is not None and now < relay.stream_retry_not_before
 
-    def _attempt_video_restart(
+    def _attempt_stream_restart(
         self, key: str, channel_id: str, relay: _Relay, *, now: float, reason: str
     ) -> bool:
-        """Restart a child that cannot carry video, on the bounded cadence.
+        """Restart a child that cannot carry a required stream kind, bounded.
 
         Caller MUST hold ``self._guard``. Returns True when a replacement was
         spawned. The attempt count and the next-allowed time are carried onto
         the replacement (the counters belong to the (channel, sink) fault
-        episode, not to one child), so a sink whose input never carries video
-        converges on one attempt per ``video_retry_slow_delay_s`` -- logged at
-        ERROR -- rather than a restart storm. The child that cannot carry video
-        is never left to serve: this is the "restart it again promptly (bounded,
-        logged) until video is present" half of U12.
+        episode, not to one child), so a sink whose input never carries a
+        required kind converges on one attempt per
+        ``stream_retry_slow_delay_s`` -- logged at ERROR -- rather than a
+        restart storm. The child that cannot carry the program is never left to
+        serve: this is the "restart it again promptly (bounded, logged) until
+        the program is whole" half of U12.
         """
-        attempts = relay.video_fault_attempts + 1
+        attempts = relay.stream_fault_attempts + 1
         delay = (
-            self._video_retry_delay_s
-            if attempts <= _VIDEO_FAST_ATTEMPTS
-            else self._video_retry_slow_delay_s
+            self._stream_retry_delay_s
+            if attempts <= _STREAM_FAST_ATTEMPTS
+            else self._stream_retry_slow_delay_s
         )
-        log = _LOG.warning if attempts <= _VIDEO_FAST_ATTEMPTS else _LOG.error
+        log = _LOG.warning if attempts <= _STREAM_FAST_ATTEMPTS else _LOG.error
         log(
             "HLS relay for %s (sink %r) %s; restarting the relay child to restore "
-            "its video stream (attempt %d; if it fails again the next attempt is in "
-            "%.0fs).",
+            "the missing stream (attempt %d; if it fails again the next attempt is "
+            "in %.0fs).",
             channel_id,
             key.split("|", 1)[1],
             reason,
@@ -524,11 +588,11 @@ class HlsRelaySupervisor:
                 reason,
             )
             return False
-        replacement.video_fault_attempts = attempts
-        replacement.video_retry_not_before = now + delay
+        replacement.stream_fault_attempts = attempts
+        replacement.stream_retry_not_before = now + delay
         return True
 
-    def maybe_restore_missing_video(
+    def maybe_restore_missing_streams(
         self,
         channel_id: str,
         *,
@@ -536,38 +600,41 @@ class HlsRelaySupervisor:
         producing: bool,
         startup_grace_s: float,
     ) -> bool:
-        """U12: make a relay that cannot carry video carry it, or restart it.
+        """U12: make a relay carry every kind its sink requires, or restart it.
 
         Two fault shapes, one bounded recovery:
 
-        * **the child exited.** The relay argv requires video (``-map 0:v:0``)
-          for a video-carrying sink, so a child that probed a video-less input
-          exits immediately instead of serving audio-only HLS (measured: real
-          ffmpeg 8.1.1, "Stream map '0:v:0' matches no streams", no window
-          written). Before this method, nothing respawned it: a dead relay was
-          only recovered by the channel's next full encoder start/reload, which
-          for an ON_AIR channel can be hours -- the live government relay sat
-          audio-only/dead from 18:46:32 until the channel was restarted.
-        * **the child is alive but its newest served segment has no video.**
-          The belt to that braces (a child can in principle still be emitting
-          audio-only if its argv did not require video, or if a mapped stream's
-          packets never arrive): the segment is probed once per child, and a
-          positive audio-only verdict restarts the child.
+        * **the child exited.** The relay argv requires each kind the sink
+          carries (:func:`_relay_map_args`), so a child that probed an input
+          missing any of them exits immediately instead of serving a
+          half-program window (measured: real ffmpeg 8.1.1, "Stream map
+          '0:v:0' matches no streams", no window written). Before this method,
+          nothing respawned it: a dead relay was only recovered by the
+          channel's next full encoder start/reload, which for an ON_AIR
+          channel can be hours -- the live government relay sat audio-only/
+          dead from 18:46:32 until the channel was restarted.
+        * **the child is alive but its newest served segment is missing a
+          required kind.** The belt to that braces (a child can in principle
+          still be emitting a half-program window if its argv did not require
+          the kind, or if a mapped stream's packets never arrive): the segment
+          is probed once per child, and a positive verdict -- no video, or no
+          audio for a sink that carries audio -- restarts the child.
 
         Gating, deliberately asymmetric:
 
         * the EXITED shape is recovered regardless of ``producing`` -- there is
           no healthy child to protect, and a channel that is still starting is
-          exactly when a video-less probe is most likely;
+          exactly when a half-program probe is most likely;
         * the ALIVE shape requires ``producing`` (the caller's own on-air
-          evidence latch), the child's own ``startup_grace_s``, and a video
-          carrying sink, mirroring :meth:`maybe_self_heal_stalled`: a
-          STARTING/no-source channel legitimately has no window yet and must
+          evidence latch), the child's own ``startup_grace_s``, and a sink that
+          requires at least one kind, mirroring :meth:`maybe_self_heal_stalled`:
+          a STARTING/no-source channel legitimately has no window yet and must
           never be restarted for it.
 
-        A sink that does not carry video is never judged here: it keeps its
-        audio-only output, and only the EXITED shape (an ordinary relay death)
-        applies to it. Returns True when at least one replacement was spawned.
+        A sink that requires no kind (the audio-only historic argv) is never
+        judged here: it keeps its output, and only the EXITED shape (an
+        ordinary relay death) applies to it. Returns True when at least one
+        replacement was spawned.
         """
         with self._guard:
             targets = [
@@ -581,9 +648,9 @@ class HlsRelaySupervisor:
             for key, relay in targets:
                 playlist = _playlist_path_for(relay.source_uri)
                 if relay.process.poll() is not None:
-                    if self._video_retry_blocked(relay, now=now):
+                    if self._stream_retry_blocked(relay, now=now):
                         continue
-                    restored |= self._attempt_video_restart(
+                    restored |= self._attempt_stream_restart(
                         key,
                         channel_id,
                         relay,
@@ -591,35 +658,40 @@ class HlsRelaySupervisor:
                         reason="exited without a live window",
                     )
                     continue
-                if not producing or relay.video_verified:
+                if not producing or relay.streams_verified:
                     continue
-                if not _sink_carries_video(relay.source_uri):
+                required = _sink_required_kinds(relay.source_uri)
+                if not required:
                     continue
                 anchor = relay.started_at if relay.started_at is not None else relay.first_seen_at
                 if anchor is not None and now - anchor < startup_grace_s:
                     continue
                 segment = _last_segment(playlist)
-                if segment is None or segment == relay.video_probed_segment:
+                if segment is None or segment == relay.streams_probed_segment:
                     continue
-                verdict = self._segment_probe(playlist.parent / segment)
-                relay.video_probed_segment = segment
-                if verdict is None:
+                kinds = self._segment_probe(playlist.parent / segment)
+                relay.streams_probed_segment = segment
+                if kinds is None:
                     # Cannot tell (segment still being written, ffprobe absent or
                     # unhappy): claim nothing and never restart on ignorance.
                     continue
-                if verdict:
-                    relay.video_verified = True
-                    relay.video_fault_attempts = 0
-                    relay.video_retry_not_before = None
+                missing = required - kinds
+                if not missing:
+                    relay.streams_verified = True
+                    relay.stream_fault_attempts = 0
+                    relay.stream_retry_not_before = None
                     continue
-                if self._video_retry_blocked(relay, now=now):
+                if self._stream_retry_blocked(relay, now=now):
                     continue
-                restored |= self._attempt_video_restart(
+                restored |= self._attempt_stream_restart(
                     key,
                     channel_id,
                     relay,
                     now=now,
-                    reason=f"is serving a video-less window ({segment} has no video stream)",
+                    reason=(
+                        f"is serving a window missing its {_describe_kinds(missing)} "
+                        f"stream ({segment} carries only {_describe_kinds(kinds) or 'nothing'})"
+                    ),
                 )
             return restored
 

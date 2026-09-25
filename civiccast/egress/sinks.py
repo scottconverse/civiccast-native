@@ -30,21 +30,41 @@ def _file_uri_path(uri: str) -> Path:
 
 
 class EgressSink:
-    """Base class for FFmpeg output-side sink adapters."""
+    """Base class for FFmpeg output-side sink adapters.
+
+    ``carries_video``/``carries_audio`` declare which stream kinds this sink's
+    program is expected to carry. The HLS relay consumes both
+    (``civiccast.egress.hls_relay``): its argv REQUIRES every declared kind in
+    the output mapping, and its post-(re)start verification requires every
+    declared kind in the newest served segment. A half-program window is a
+    fault in either direction -- U13 measured the government relay serving
+    VIDEO-ONLY segments (TS PID 256, no PID 257) at 18:47:44-18:47:56, the
+    mirror image of the audio-only lock U12 fixed, and a municipal channel with
+    picture and no sound fails acceptance exactly like one with sound and no
+    picture.
+    """
 
     #: Whether this sink's program carries the channel's video stream.
     #:
-    #: Declared rather than inferred because the HLS relay's argv REQUIRES
-    #: video (``-map 0:v:0``) for a video-carrying sink -- a relay child that
-    #: probes an input with no video then fails fast instead of silently
-    #: emitting audio-only HLS forever (beta.10 U12: the live government relay
-    #: locked to audio-only after an 18:46:32 mid-stream restart) -- and
-    #: requiring video is wrong for an audio-only sink. Every sink shipped
-    #: today carries video (there is no audio-only egress sink mode, and
-    #: ``extra_output_args`` cannot express ``-vn``), so this defaults True; an
-    #: audio-only variant overrides it False and gets the relay's historical
-    #: argv byte-for-byte.
+    #: Declared rather than inferred because the relay's argv REQUIRES video
+    #: (``-map 0:v:0``) for a video-carrying sink -- a relay child that probes
+    #: an input with no video then fails fast instead of silently emitting
+    #: audio-only HLS forever (beta.10 U12: the live government relay locked to
+    #: audio-only after an 18:46:32 mid-stream restart) -- and requiring video
+    #: is wrong for an audio-only sink. Every sink shipped today carries video
+    #: (there is no audio-only egress sink mode, and ``extra_output_args``
+    #: cannot express ``-vn``), so this defaults True; an audio-only variant
+    #: overrides it False and gets the relay's historical argv byte-for-byte.
     carries_video: bool = True
+
+    #: Whether this sink's program carries the channel's audio stream. Read
+    #: only for a sink that also carries video (an audio-only sink is never
+    #: judged on video, and needs no map to keep its audio). True for every
+    #: sink shipped today; there is no video-only egress sink mode either, and
+    #: ``extra_output_args`` cannot express ``-an``. A video-only variant
+    #: overrides it False: the relay then leaves audio optional rather than
+    #: fatal, and never restarts it for a missing audio stream.
+    carries_audio: bool = True
 
     def __init__(
         self,

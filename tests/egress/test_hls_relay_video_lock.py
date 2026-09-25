@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""U12 — an HLS relay (re)start must never lock a video channel to audio-only.
+"""U12 — an HLS relay (re)start must never lock a channel to a half program.
 
 LIVE EVIDENCE (2026-09-24, coordinator): the government relay was restarted
 mid-stream by the bounded stall self-heal (18:46:32, after the channel cut to
@@ -9,24 +9,31 @@ probed as AUDIO ONLY while the public/education relays stayed H264+AAC, and it
 stayed that way for hours until the channel itself was restarted. The same
 shape happened earlier the same day (education 13:39:35, government 15:49:21).
 
-MECHANISM (reproduced with real ffmpeg against a live UDP input, see
-``tests/egress/test_hls_relay_video_lock.py``'s real-ffmpeg tests): ffmpeg
-fixes its OUTPUT stream set at probe time. A relay child that starts while its
-input carries no video inside the probe window builds an audio-only HLS output
-and never adds video when video arrives later -- the widened 6M
-``-analyzeduration``/``-probesize`` only narrows the window in which that can
-happen; it cannot remove it.
+THE OTHER DIRECTION (U13 measurement, coordinator audit): the same relay's
+post-self-heal segments at 18:47:44-18:47:56 carried TS PID 256 (video) and no
+PID 257 (audio) at all -- video-only, the mirror image of the same lock. A
+municipal channel with picture and no sound fails acceptance exactly like one
+with sound and no picture, so the rule below is symmetric over the stream
+kinds a sink is configured to carry.
+
+MECHANISM (reproduced with real ffmpeg against a live UDP input, see this
+file's real-ffmpeg tests): ffmpeg fixes its OUTPUT stream set at probe time. A
+relay child that starts while its input is missing a required kind inside the
+probe window builds a half-program HLS output and never adds the missing kind
+when it arrives later -- the widened 6M ``-analyzeduration``/``-probesize``
+only narrows the window in which that can happen; it cannot remove it.
 
 GOAL THIS FILE PINS: for a sink that carries video+audio, a relay either
-produces video+audio or is restarted again promptly (bounded, logged) until
-video is present. Two halves:
+produces video+audio or is restarted again promptly (bounded, logged) until it
+does. Two halves:
 
-* the relay's argv REQUIRES video (``-map 0:v:0``), so a video-less probe
-  fails the child fast instead of silently serving audio-only HLS;
+* the relay's argv REQUIRES every kind the sink carries (``-map 0:v:0 -map
+  0:a:0`` for a video+audio sink), so a probe missing one fails the child fast
+  instead of silently serving a half-program window;
 * the supervisor notices a child that cannot satisfy that requirement --
-  exited, or alive with a video-less newest segment -- and restarts it on a
-  bounded, backed-off cadence: a few prompt attempts, then a low rate that
-  logs an ERROR per attempt.
+  exited, or alive with a newest segment missing a required kind -- and
+  restarts it on a bounded, backed-off cadence: a few prompt attempts, then a
+  low rate that logs an ERROR per attempt.
 
 ``tests/egress/test_hls_relay.py`` still owns the wiring/idempotency contract
 and ``test_hls_relay_progress.py`` the served-window progress contract.
@@ -51,7 +58,9 @@ from civiccast.egress.daemon import EgressDaemon
 from civiccast.egress.hls_relay import (
     HlsRelaySupervisor,
     _Relay,
-    _segment_has_video,
+    _relay_map_args,
+    _segment_stream_kinds,
+    _sink_required_kinds,
     hls_relay_uri_for,
 )
 from civiccast.egress.models import EgressCommand, EgressConfig, EgressSinkSpec
@@ -110,7 +119,7 @@ def _write_playlist(directory: Path, *, last_segment: str) -> Path:
 def _supervisor(
     *,
     clock: _FakeClock,
-    probe: Callable[[Path], bool | None] | None = None,
+    probe: Callable[[Path], frozenset[str] | None] | None = None,
     retry_delay_s: float = 1.0,
     slow_delay_s: float = 10.0,
     stall_bound_s: float = 30.0,
@@ -127,8 +136,8 @@ def _supervisor(
         starter=starter,
         stall_bound_s=stall_bound_s,
         segment_probe=probe,
-        video_retry_delay_s=retry_delay_s,
-        video_retry_slow_delay_s=slow_delay_s,
+        stream_retry_delay_s=retry_delay_s,
+        stream_retry_slow_delay_s=slow_delay_s,
     )
     sup._clock = clock
     return sup, calls, procs
@@ -146,14 +155,14 @@ def _expire_startup_grace(sup: HlsRelaySupervisor) -> None:
     relay.started_at -= 100.0
 
 
-# --- the relay's argv must REQUIRE video -----------------------------------------
+# --- the relay's argv must REQUIRE every kind the sink carries --------------------
 
 
-def test_relay_argv_requires_video_for_a_video_sink(tmp_path: Path) -> None:
-    """A video carrying sink's relay argv must require a video stream, so a
-    video-less probe fails the child fast instead of locking the HLS output to
-    audio-only. Audio stays OPTIONAL (``?``): a video-only input must not kill
-    the relay either."""
+def test_relay_argv_requires_video_and_audio_for_a_video_sink(tmp_path: Path) -> None:
+    """A sink that carries video AND audio must have BOTH required in the relay
+    argv, so a probe missing either fails the child fast instead of locking the
+    HLS output to a half program -- audio-only (the 18:46:32 symptom) or
+    video-only (U13's 18:47:44 measurement)."""
     sup, calls, _procs = _supervisor(clock=_FakeClock())
     sink = _hls_sink(str(tmp_path / "gov"))
     sup.apply(_config(sink))
@@ -161,7 +170,8 @@ def test_relay_argv_requires_video_for_a_video_sink(tmp_path: Path) -> None:
     args = calls[0]
     maps = [args[index + 1] for index, item in enumerate(args) if item == "-map"]
     assert "0:v:0" in maps, f"relay argv must require video; maps={maps}"
-    assert "0:a:0?" in maps, f"audio must be mapped optionally; maps={maps}"
+    assert "0:a:0" in maps, f"relay argv must require audio; maps={maps}"
+    assert "0:a:0?" not in maps, f"audio must not be optional for a video+audio sink; maps={maps}"
     # -map is an OUTPUT option: after -i, before the muxer args HlsSink owns.
     assert args.index("-map") > args.index("-i")
     output_args = HlsSink(sink).output_args()
@@ -180,20 +190,65 @@ def test_relay_argv_leaves_an_audio_only_sink_unchanged(
     assert "-map" not in calls[0]
 
 
-def test_shipped_video_retry_cadence_and_mapping_are_the_documented_ones() -> None:
+def test_relay_argv_leaves_audio_optional_for_a_video_only_sink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The video-without-audio case, kept optional rather than fatal: video is
+    still required, audio is mapped with ``?`` so an audio-less input stays
+    relay-able. No sink shipped today declares this (see ``EgressSink``), so
+    this pins the behaviour of a variant that one day sets
+    ``carries_audio = False``."""
+    monkeypatch.setattr(HlsSink, "carries_audio", False)
+    sup, calls, _procs = _supervisor(clock=_FakeClock())
+    sup.apply(_config(_hls_sink(str(tmp_path / "gov"))))
+
+    args = calls[0]
+    maps = [args[index + 1] for index, item in enumerate(args) if item == "-map"]
+    assert maps == ["0:v:0", "0:a:0?"], maps
+
+
+def test_shipped_stream_retry_cadence_and_mapping_are_the_documented_ones() -> None:
     """The SHIPPED cadence, not a test-tuned one: three prompt attempts at 5s,
-    then one attempt per 60s, plus the exact required-video mapping. The other
+    then one attempt per 60s, plus the exact required-kind mapping. The other
     tests tighten the delays to fit a test-scale wall clock, so this is the only
     place the values an operator actually gets are pinned."""
-    assert hls_relay_mod._VIDEO_SINK_MAP_ARGS == ("-map", "0:v:0", "-map", "0:a:0?")
-    assert hls_relay_mod._DEFAULT_VIDEO_RETRY_DELAY_S == 5.0
-    assert hls_relay_mod._DEFAULT_VIDEO_RETRY_SLOW_DELAY_S == 60.0
-    assert hls_relay_mod._VIDEO_FAST_ATTEMPTS == 3
+    assert _relay_map_args(carries_video=True, carries_audio=True) == (
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0",
+    )
+    assert _relay_map_args(carries_video=True, carries_audio=False) == (
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0?",
+    )
+    assert _relay_map_args(carries_video=False, carries_audio=True) == ()
+    assert hls_relay_mod._DEFAULT_STREAM_RETRY_DELAY_S == 5.0
+    assert hls_relay_mod._DEFAULT_STREAM_RETRY_SLOW_DELAY_S == 60.0
+    assert hls_relay_mod._STREAM_FAST_ATTEMPTS == 3
 
     default = HlsRelaySupervisor()
-    assert default._video_retry_delay_s == 5.0
-    assert default._video_retry_slow_delay_s == 60.0
-    assert default._segment_probe is _segment_has_video
+    assert default._stream_retry_delay_s == 5.0
+    assert default._stream_retry_slow_delay_s == 60.0
+    assert default._segment_probe is _segment_stream_kinds
+
+
+def test_required_kinds_follow_the_sink_flags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """What the supervisor judges a sink's window against: both kinds for a
+    video+audio sink, video only for a video-only sink, and NOTHING for an
+    audio-only sink (never judged -- it keeps its audio-only output)."""
+    uri = str(tmp_path / "gov")
+    assert _sink_required_kinds(uri) == frozenset({"video", "audio"})
+
+    monkeypatch.setattr(HlsSink, "carries_audio", False)
+    assert _sink_required_kinds(uri) == frozenset({"video"})
+
+    monkeypatch.setattr(HlsSink, "carries_video", False)
+    assert _sink_required_kinds(uri) == frozenset()
 
 
 # --- bounded, backed-off restart of a child that cannot carry video --------------
@@ -209,7 +264,7 @@ def test_exited_relay_is_restarted(tmp_path: Path) -> None:
     procs[0].returncode = 1  # ffmpeg exited: probed input had no video stream
 
     assert (
-        sup.maybe_restore_missing_video("gov", now=1000.0, producing=True, startup_grace_s=20.0)
+        sup.maybe_restore_missing_streams("gov", now=1000.0, producing=True, startup_grace_s=20.0)
         is True
     )
     assert len(calls) == 2
@@ -227,7 +282,7 @@ def test_restart_cadence_is_backed_off_not_a_tight_loop(tmp_path: Path) -> None:
     procs[0].returncode = 1
 
     assert (
-        sup.maybe_restore_missing_video("gov", now=1000.0, producing=True, startup_grace_s=20.0)
+        sup.maybe_restore_missing_streams("gov", now=1000.0, producing=True, startup_grace_s=20.0)
         is True
     )
     assert len(calls) == 2
@@ -236,7 +291,7 @@ def test_restart_cadence_is_backed_off_not_a_tight_loop(tmp_path: Path) -> None:
     for step in range(1, 20):  # 19 ticks inside the 5s retry delay
         clock.value = 1000.0 + step * 0.25
         assert (
-            sup.maybe_restore_missing_video(
+            sup.maybe_restore_missing_streams(
                 "gov", now=clock.value, producing=True, startup_grace_s=20.0
             )
             is False
@@ -245,7 +300,7 @@ def test_restart_cadence_is_backed_off_not_a_tight_loop(tmp_path: Path) -> None:
 
     clock.value = 1000.0 + 5.0  # the retry delay has elapsed
     assert (
-        sup.maybe_restore_missing_video(
+        sup.maybe_restore_missing_streams(
             "gov", now=clock.value, producing=True, startup_grace_s=20.0
         )
         is True
@@ -281,7 +336,7 @@ def test_restarts_slow_to_a_low_rate_after_the_fast_attempts(
             procs[-1].returncode = 1  # the input still has no video: it keeps failing
             clock.value = at
             before = len(calls)
-            result = sup.maybe_restore_missing_video(
+            result = sup.maybe_restore_missing_streams(
                 "gov", now=at, producing=True, startup_grace_s=20.0
             )
             assert result is expected, f"tick at {at} restarted={result}, want {expected}"
@@ -293,7 +348,8 @@ def test_restarts_slow_to_a_low_rate_after_the_fast_attempts(
     # The RATE is the bound: three prompt attempts, then one per 30s.
     errors = [record for record in caplog.records if record.levelname == "ERROR"]
     assert len(errors) == 2, [record.getMessage() for record in caplog.records]
-    assert all("video" in record.getMessage() for record in errors)
+    # An ERROR an operator cannot act on is noise: it must name the fault.
+    assert all("exited without a live window" in record.getMessage() for record in errors)
 
 
 def test_alive_relay_serving_audio_only_segments_is_restarted(tmp_path: Path) -> None:
@@ -306,9 +362,9 @@ def test_alive_relay_serving_audio_only_segments_is_restarted(tmp_path: Path) ->
 
     probed: list[Path] = []
 
-    def probe(path: Path) -> bool | None:
+    def probe(path: Path) -> frozenset[str] | None:
         probed.append(path)
-        return False  # audio only -- the live government relay's probe result
+        return frozenset({"audio"})  # audio only -- the 18:46:32 probe result
 
     clock = _FakeClock(1000.0)
     sup, calls, procs = _supervisor(clock=clock, probe=probe)
@@ -316,7 +372,7 @@ def test_alive_relay_serving_audio_only_segments_is_restarted(tmp_path: Path) ->
     _expire_startup_grace(sup)  # well past its startup grace
 
     assert (
-        sup.maybe_restore_missing_video("gov", now=1000.0, producing=True, startup_grace_s=20.0)
+        sup.maybe_restore_missing_streams("gov", now=1000.0, producing=True, startup_grace_s=20.0)
         is True
     )
     assert probed == [playlist.parent / "seg000000002.ts"]
@@ -324,19 +380,58 @@ def test_alive_relay_serving_audio_only_segments_is_restarted(tmp_path: Path) ->
     assert procs[0].terminated
 
 
-def test_a_video_carrying_segment_is_verified_once_and_not_reprobed(tmp_path: Path) -> None:
-    """Positive counterpart: a probe that FINDS video ends the fault episode --
-    no restart, no further probes for that child (one ffprobe per child, not
-    one per tick)."""
+def test_alive_relay_serving_video_only_segments_is_restarted(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """NEGATIVE, the MIRROR image (coordinator audit / U13): an ALIVE relay
+    whose newest served segment carries video but NO audio -- the government
+    relay's 18:47:44-18:47:56 shape, PID 256 and no PID 257 -- must be
+    restarted too, and the operator must be told which stream is missing."""
+    hls_dir = tmp_path / "gov"
+    _write_playlist(hls_dir, last_segment="seg000000002.ts")
+    (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
+
+    def probe(_path: Path) -> frozenset[str] | None:
+        return frozenset({"video"})  # video only -- U13's measurement
+
+    clock = _FakeClock(1000.0)
+    sup, calls, procs = _supervisor(clock=clock, probe=probe)
+    sup.apply(_config(_hls_sink(str(hls_dir))))
+    _expire_startup_grace(sup)
+
+    with caplog.at_level("WARNING", logger="civiccast.egress.hls_relay"):
+        assert (
+            sup.maybe_restore_missing_streams(
+                "gov", now=1000.0, producing=True, startup_grace_s=20.0
+            )
+            is True
+        )
+    assert len(calls) == 2
+    assert procs[0].terminated
+    restarts = [
+        record for record in caplog.records if "restarting the relay child" in record.getMessage()
+    ]
+    assert len(restarts) == 1, [record.getMessage() for record in caplog.records]
+    message = restarts[0].getMessage()
+    # The operator must be told WHICH stream is missing, not just that the
+    # window is bad -- the two directions need different fixes upstream.
+    assert "missing its audio stream" in message, message
+    assert "carries only video" in message, message
+
+
+def test_a_video_audio_segment_is_verified_once_and_not_reprobed(tmp_path: Path) -> None:
+    """Positive counterpart: a probe that FINDS every required kind ends the
+    fault episode -- no restart, no further probes for that child (one ffprobe
+    per child, not one per tick)."""
     hls_dir = tmp_path / "gov"
     _write_playlist(hls_dir, last_segment="seg000000002.ts")
     (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
 
     probed: list[Path] = []
 
-    def probe(path: Path) -> bool | None:
+    def probe(path: Path) -> frozenset[str] | None:
         probed.append(path)
-        return True
+        return frozenset({"video", "audio"})
 
     clock = _FakeClock(1000.0)
     sup, calls, _procs = _supervisor(clock=clock, probe=probe)
@@ -346,13 +441,39 @@ def test_a_video_carrying_segment_is_verified_once_and_not_reprobed(tmp_path: Pa
     for step in range(4):
         clock.value = 1000.0 + step * 5.0
         assert (
-            sup.maybe_restore_missing_video(
+            sup.maybe_restore_missing_streams(
                 "gov", now=clock.value, producing=True, startup_grace_s=20.0
             )
             is False
         )
     assert len(calls) == 1
     assert len(probed) == 1  # verified once, then latched off
+
+
+def test_video_only_sink_is_never_restored_for_missing_audio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sink that carries video but NOT audio is judged on video only: a
+    video-only window is exactly its correct output, so it must not be
+    restarted for the audio it was never configured to carry."""
+    hls_dir = tmp_path / "gov-video"
+    _write_playlist(hls_dir, last_segment="seg000000002.ts")
+    (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
+    monkeypatch.setattr(HlsSink, "carries_audio", False)
+
+    def probe(_path: Path) -> frozenset[str] | None:
+        return frozenset({"video"})
+
+    clock = _FakeClock(1000.0)
+    sup, calls, _procs = _supervisor(clock=clock, probe=probe)
+    sup.apply(_config(_hls_sink(str(hls_dir))))
+    _expire_startup_grace(sup)
+
+    assert (
+        sup.maybe_restore_missing_streams("gov", now=1000.0, producing=True, startup_grace_s=20.0)
+        is False
+    )
+    assert len(calls) == 1
 
 
 def test_probe_waits_for_the_startup_grace(tmp_path: Path) -> None:
@@ -362,7 +483,7 @@ def test_probe_waits_for_the_startup_grace(tmp_path: Path) -> None:
     _write_playlist(hls_dir, last_segment="seg000000002.ts")
     (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
 
-    def probe(_path: Path) -> bool | None:
+    def probe(_path: Path) -> frozenset[str] | None:
         raise AssertionError("must not probe inside the startup grace")
 
     clock = _FakeClock(1000.0)
@@ -370,7 +491,7 @@ def test_probe_waits_for_the_startup_grace(tmp_path: Path) -> None:
     sup.apply(_config(_hls_sink(str(hls_dir))))
 
     assert (
-        sup.maybe_restore_missing_video(
+        sup.maybe_restore_missing_streams(
             "gov", now=1000.0 + 5.0, producing=True, startup_grace_s=20.0
         )
         is False
@@ -388,8 +509,8 @@ def test_audio_only_sink_is_never_restored_for_missing_video(
     (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
     monkeypatch.setattr(HlsSink, "carries_video", False)
 
-    def probe(_path: Path) -> bool | None:
-        raise AssertionError("an audio-only sink must never be probed for video")
+    def probe(_path: Path) -> frozenset[str] | None:
+        raise AssertionError("an audio-only sink must never be probed for a stream kind")
 
     clock = _FakeClock(1000.0)
     sup, calls, _procs = _supervisor(clock=clock, probe=probe)
@@ -397,7 +518,7 @@ def test_audio_only_sink_is_never_restored_for_missing_video(
     _expire_startup_grace(sup)
 
     assert (
-        sup.maybe_restore_missing_video("gov", now=1000.0, producing=True, startup_grace_s=20.0)
+        sup.maybe_restore_missing_streams("gov", now=1000.0, producing=True, startup_grace_s=20.0)
         is False
     )
     assert len(calls) == 1
@@ -408,7 +529,7 @@ def test_restore_does_not_fire_without_a_tracked_relay() -> None:
     sup, calls, _procs = _supervisor(clock=clock)
 
     assert (
-        sup.maybe_restore_missing_video("gov", now=1000.0, producing=True, startup_grace_s=20.0)
+        sup.maybe_restore_missing_streams("gov", now=1000.0, producing=True, startup_grace_s=20.0)
         is False
     )
     assert calls == []
@@ -421,7 +542,7 @@ def test_alive_probe_does_not_fire_while_the_channel_is_not_producing(tmp_path: 
     _write_playlist(hls_dir, last_segment="seg000000002.ts")
     (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
 
-    def probe(_path: Path) -> bool | None:
+    def probe(_path: Path) -> frozenset[str] | None:
         raise AssertionError("must not probe a channel that is not producing")
 
     clock = _FakeClock(1000.0)
@@ -430,7 +551,7 @@ def test_alive_probe_does_not_fire_while_the_channel_is_not_producing(tmp_path: 
     _expire_startup_grace(sup)
 
     assert (
-        sup.maybe_restore_missing_video("gov", now=1000.0, producing=False, startup_grace_s=20.0)
+        sup.maybe_restore_missing_streams("gov", now=1000.0, producing=False, startup_grace_s=20.0)
         is False
     )
     assert len(calls) == 1
@@ -484,7 +605,7 @@ def _relay_daemon(
     # arithmetic on the attempt cadence); the real-ffmpeg test needs the REAL
     # monotonic clock, because the supervisor's backoff and startup grace are
     # wall-clock quantities -- with a frozen clock the first restart pins
-    # ``video_retry_not_before`` ahead of every later tick and the bounded
+    # ``stream_retry_not_before`` ahead of every later tick and the bounded
     # cadence can never advance (measured: the relay stayed dead and the
     # served window stayed empty).
     resolved_clock: Callable[[], float] = clock if clock is not None else _FakeClock(50_000.0)
@@ -640,6 +761,95 @@ def _newest_segment(directory: Path) -> str | None:
     return last
 
 
+def _video_only_producer(port: int) -> subprocess.Popen[str]:
+    """Streams a VIDEO-ONLY MPEG-TS to ``port`` in real time until terminated.
+
+    One stream only, so the mpegts muxer puts H.264 on PID 0x100 -- the same
+    PID the video-then-audio producer below keeps its VIDEO on (see
+    ``_video_then_audio_producer``), which is what keeps the two consecutive
+    producers' PID layout stable across the swap.
+    """
+    return subprocess.Popen(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-re",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=640x360:rate=30",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-g",
+            "30",
+            "-pix_fmt",
+            "yuv420p",
+            "-f",
+            "mpegts",
+            f"udp://127.0.0.1:{port}",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+
+
+def _video_then_audio_producer(port: int) -> subprocess.Popen[str]:
+    """Same port, now carrying AAC as well -- the "audio arrives late" half.
+
+    VIDEO IS MAPPED FIRST deliberately, so the mpegts muxer keeps H.264 on PID
+    0x100 and adds AAC on PID 0x101. The predecessor
+    (``_video_only_producer``) already has H.264 on 0x100, so the swap never
+    re-uses a PID for a different codec -- with audio first it would, and
+    ffmpeg's demuxer rejects the stream ("h264 bitstream malformed, no
+    startcode found" -- measured), which would make this test measure a PID
+    collision instead of the relay's stream selection.
+    """
+    return subprocess.Popen(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-re",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=640x360:rate=30",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=48000:cl=stereo",
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-g",
+            "30",
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-f",
+            "mpegts",
+            f"udp://127.0.0.1:{port}",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+
+
 def _probe_stream_kinds(path: Path) -> set[str]:
     completed = subprocess.run(
         [
@@ -675,11 +885,12 @@ def _probe_stream_kinds(path: Path) -> set[str]:
 def test_segment_probe_verdicts_are_tri_state(tmp_path: Path) -> None:
     """The probe the alive-shape recovery judges on, against real files.
 
-    ``True`` when the segment carries video, ``False`` when it demonstrably does
-    not, and ``None`` -- claim nothing, never restart -- for anything ffprobe
-    cannot read (a missing file, or bytes that are not a transport stream). The
-    tri-state is the safety property: a restart must never be triggered by the
-    supervisor failing to tell rather than by it seeing audio-only.
+    The set of kinds the segment actually carries -- ``{"video"}``,
+    ``{"audio"}``, or both -- and ``None`` -- claim nothing, never restart --
+    for anything ffprobe cannot read (a missing file, or bytes that are not a
+    transport stream). The ``None`` arm is the safety property: a restart must
+    never be triggered by the supervisor failing to tell rather than by it
+    seeing a kind genuinely missing from the window.
     """
     encoded = tmp_path / "with-video.ts"
     audio_only = tmp_path / "audio-only.ts"
@@ -725,10 +936,10 @@ def test_segment_probe_verdicts_are_tri_state(tmp_path: Path) -> None:
     garbage = tmp_path / "garbage.ts"
     garbage.write_bytes(b"this is not a transport stream")
 
-    assert _segment_has_video(encoded) is True
-    assert _segment_has_video(audio_only) is False
-    assert _segment_has_video(tmp_path / "missing.ts") is None
-    assert _segment_has_video(garbage) is None
+    assert _segment_stream_kinds(encoded) == frozenset({"video"})
+    assert _segment_stream_kinds(audio_only) == frozenset({"audio"})
+    assert _segment_stream_kinds(tmp_path / "missing.ts") is None
+    assert _segment_stream_kinds(garbage) is None
 
 
 @pytestmark_real
@@ -758,7 +969,7 @@ def test_relay_restarted_mid_stream_ends_up_with_video(tmp_path: Path) -> None:
     late_video = None
     # A prompt retry so the proof fits a test-scale wall clock; the SHIPPED
     # defaults (5s / 60s) are asserted separately at the unit layer.
-    supervisor = HlsRelaySupervisor(video_retry_delay_s=2.0, video_retry_slow_delay_s=4.0)
+    supervisor = HlsRelaySupervisor(stream_retry_delay_s=2.0, stream_retry_slow_delay_s=4.0)
     daemon, _store, relay, _procs, _clock = _relay_daemon(
         tmp_path, hls_dir, supervisor=supervisor, clock=time.monotonic
     )
@@ -815,6 +1026,87 @@ def test_relay_restarted_mid_stream_ends_up_with_video(tmp_path: Path) -> None:
             if process is not None and process.poll() is None:
                 process.terminate()
         for process in (dead_air, late_video):
+            if process is not None:
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:  # pragma: no cover - teardown
+                    process.kill()
+        relay.stop_channel("gov")
+
+
+@pytestmark_real
+def test_relay_restarted_mid_stream_ends_up_with_audio(tmp_path: Path) -> None:
+    """THE MIRROR GOAL, end to end with real ffmpeg (RED on the video-only code).
+
+    A relay child starts while its UDP input carries VIDEO only; audio joins
+    ~8s later -- LATER than the child's own probe window, so the child has
+    already committed to its output stream set when audio arrives. With audio
+    mapped merely OPTIONALLY (``-map 0:a:0?``, this repository before the
+    coordinator's audit) the child locks to a video-only HLS output and NEVER
+    recovers -- the government relay's 18:47:44-18:47:56 shape, and the
+    assertion below fails on that code. With audio required the child fails
+    fast, the daemon's bounded restore restarts it, and the replacement's
+    output carries AAC again.
+    """
+    hls_dir = tmp_path / "gov-live-audio"
+    hls_dir.mkdir(parents=True, exist_ok=True)
+    relay_port = int(urlsplit(hls_relay_uri_for(str(hls_dir))).port or 0)
+    assert relay_port > 0
+
+    silent_motion = None
+    late_audio = None
+    supervisor = HlsRelaySupervisor(stream_retry_delay_s=2.0, stream_retry_slow_delay_s=4.0)
+    daemon, _store, relay, _procs, _clock = _relay_daemon(
+        tmp_path, hls_dir, supervisor=supervisor, clock=time.monotonic
+    )
+    try:
+        silent_motion = _video_only_producer(relay_port)
+        time.sleep(0.5)
+        assert daemon.process_once("gov") == 1
+        daemon._on_air_confirmed_at["gov"] = time.monotonic()
+
+        started = time.monotonic()
+        swapped_to_audio = False
+        newest: str | None = None
+        kinds: set[str] = set()
+        while time.monotonic() - started < 30.0:
+            time.sleep(0.25)
+            daemon.process_once("gov")
+            if not swapped_to_audio and time.monotonic() - started >= 8.0:
+                swapped_to_audio = True
+                # One producer per port, exactly as in the video case: the
+                # video-only feed stops and is waited for BEFORE audio joins.
+                silent_motion.terminate()
+                silent_motion.wait(timeout=5)
+                late_audio = _video_then_audio_producer(relay_port)
+            newest = _newest_segment(hls_dir)
+            if newest is not None and (hls_dir / newest).exists():
+                kinds = _probe_stream_kinds(hls_dir / newest)
+                if {"video", "audio"} <= kinds:
+                    break
+
+        assert newest is not None and (hls_dir / newest).exists(), (
+            "the relay served no readable HLS window at all within 30s"
+        )
+        if "audio" not in kinds:
+            # The newest segment may still be mid-write; re-probe once it has
+            # settled rather than judging a partial file.
+            time.sleep(1.5)
+            newest = _newest_segment(hls_dir) or newest
+            kinds = _probe_stream_kinds(hls_dir / newest)
+        size = (hls_dir / newest).stat().st_size
+        assert "audio" in kinds, (
+            f"relay output stayed video-only after the restore: newest={newest} "
+            f"({size} bytes) streams={sorted(kinds)} (U13's 18:47:44 symptom)"
+        )
+        assert "video" in kinds, (
+            f"relay output lost video: newest={newest} ({size} bytes) kinds={kinds}"
+        )
+    finally:
+        for process in (silent_motion, late_audio):
+            if process is not None and process.poll() is None:
+                process.terminate()
+        for process in (silent_motion, late_audio):
             if process is not None:
                 try:
                     process.wait(timeout=5)

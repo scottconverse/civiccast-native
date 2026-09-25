@@ -2367,7 +2367,7 @@ class EgressDaemon:
                 channel_id,
             )
 
-    def _restore_relay_video(
+    def _restore_relay_streams(
         self,
         channel_id: str,
         *,
@@ -2376,11 +2376,12 @@ class EgressDaemon:
         startup_grace_s: float,
     ) -> None:
         """BETA.10 U12: give the relay supervisor one bounded chance to
-        restore a relay that cannot carry video.
+        restore a relay that cannot carry every stream kind its sink requires.
 
         Called on both relay states -- a child that exited (the relay argv
-        requires video, so a video-less probe is a prompt, deliberate exit) and
-        a live child whose served window is video-less -- and also covers an
+        requires each kind the sink carries, so a probe missing one is a
+        prompt, deliberate exit) and a live child whose served window is
+        missing a kind (audio-only OR video-only) -- and also covers an
         ordinary relay death, which nothing respawned before this. The
         supervisor owns the gating (``producing``/startup grace for the live
         case, a backoff for both) and the attempt bound, so this is a thin,
@@ -2390,7 +2391,7 @@ class EgressDaemon:
         """
         if self._hls_relay is None:
             return
-        restore = getattr(self._hls_relay, "maybe_restore_missing_video", None)
+        restore = getattr(self._hls_relay, "maybe_restore_missing_streams", None)
         if not callable(restore):
             return
         try:
@@ -2401,7 +2402,7 @@ class EgressDaemon:
                 startup_grace_s=startup_grace_s,
             )
         except Exception:
-            _LOG.exception("channel %s: HLS relay video-restore attempt failed.", channel_id)
+            _LOG.exception("channel %s: HLS relay stream-restore attempt failed.", channel_id)
 
     def _poll_hls_relay(self, channel_id: str) -> None:
         """MAJOR M1: poll this channel's supervised HLS relay child liveness.
@@ -2434,20 +2435,21 @@ class EgressDaemon:
                 _LOG.error(
                     "HLS relay child for channel %s is no longer running (disk full, "
                     "ffmpeg missing, or OOM are the known causes; a relay child whose "
-                    "probing found no video exits by design -- see hls_relay's "
-                    "required video mapping). The main encoder is unaffected. The "
-                    "relay is recovered on a bounded, backed-off cadence, so it may "
-                    "briefly have no live window while that cadence runs.",
+                    "probing found a required stream missing exits by design -- see "
+                    "hls_relay's required stream mapping). The main encoder is "
+                    "unaffected. The relay is recovered on a bounded, backed-off "
+                    "cadence, so it may briefly have no live window while that cadence "
+                    "runs.",
                     channel_id,
                 )
             # BETA.10 U12: recover a dead relay child on THIS tick instead of
             # waiting for the channel's next encoder start/reload. That gap is
             # what left the live government channel serving audio-only HLS for
             # hours after its 18:46:32 mid-stream restart: the child had exited
-            # (or was locked to an audio-only window) and nothing respawned it.
-            # ``maybe_restore_missing_video`` is bounded and backed off, so a
+            # (or was locked to a half-program window) and nothing respawned it.
+            # ``maybe_restore_missing_streams`` is bounded and backed off, so a
             # relay that cannot be recovered cannot become a restart storm.
-            self._restore_relay_video(
+            self._restore_relay_streams(
                 channel_id,
                 now=now,
                 producing=channel_id in self._on_air_confirmed_at,
@@ -2456,9 +2458,11 @@ class EgressDaemon:
             return
         # BETA.10 U12, checked BEFORE the served-window machinery below because
         # it is a different fault: an ALIVE relay can be advancing its window
-        # perfectly while every segment in it is audio-only (the live
-        # government symptom), so no amount of progress monitoring sees it.
-        self._restore_relay_video(
+        # perfectly while every segment in it is missing a required stream --
+        # audio-only (the live government symptom at 18:46:32) or video-only
+        # (U13's measurement at 18:47:44-18:47:56) -- so no amount of progress
+        # monitoring sees it.
+        self._restore_relay_streams(
             channel_id,
             now=now,
             producing=channel_id in self._on_air_confirmed_at,
