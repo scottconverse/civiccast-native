@@ -24,7 +24,7 @@ import signal
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from itertools import count, pairwise
 from pathlib import Path
 from typing import Any, ClassVar
@@ -2054,15 +2054,34 @@ class GstPlayoutEngine:
                 return lookup(self._CHAIN_INPUT_ISOLATION_QUEUES[stream])
             return None
 
-        candidates: list[tuple[str, str, Any]] = [
-            ("sel", "video", _src_pad(getattr(self, "selector", None))),
-            ("sel", "audio", _src_pad(getattr(self, "audio_selector", None))),
+        video_selector = getattr(self, "selector", None)
+        audio_selector = getattr(self, "audio_selector", None)
+        candidates: list[tuple[str, str, Any, Callable[[], str]]] = [
+            # U30: the ``sel`` label carries the selector's active sink pad as it
+            # stood when the EOS arrived -- see ``_make_selector_src_eos_label``.
+            (
+                "sel",
+                "video",
+                _src_pad(video_selector),
+                self._make_selector_src_eos_label(video_selector, "video"),
+            ),
+            (
+                "sel",
+                "audio",
+                _src_pad(audio_selector),
+                self._make_selector_src_eos_label(audio_selector, "audio"),
+            ),
         ]
         candidates += [
-            ("queue", stream, _src_pad(_isolation_queue(stream)))
+            (
+                "queue",
+                stream,
+                _src_pad(_isolation_queue(stream)),
+                self._make_chain_eos_label("queue", stream),
+            )
             for stream in self._CHAIN_INPUT_ISOLATION_QUEUES
         ]
-        for rung, stream, pad in candidates:
+        for rung, stream, pad, label in candidates:
             if pad is None:
                 continue
             key = (rung, stream)
@@ -2075,8 +2094,8 @@ class GstPlayoutEngine:
                 self._chain_input_pads.pop(key, None)
                 self._chain_input_buffers.pop(key, None)
             # U30: armed after the counter, so ``probes[0]`` stays the counter.
-            # A rung label is a plain constant -- no caps needed.
-            self._install_eos_observer(pad, self._make_chain_eos_label(rung, stream))
+            # A rung label is a constant (or one property read) -- no caps needed.
+            self._install_eos_observer(pad, label)
 
     def _install_new_leg_inbound_counters(self, pending: dict[str, Any]) -> None:
         """Arm rung ``in``: the new leg's buffers arriving at its selector sink pad.
@@ -2202,6 +2221,25 @@ class GstPlayoutEngine:
     # ``[eos-arrivals: none]`` is itself the finding: nothing in the observed
     # output half ever saw an EOS, so it was generated below every one of them.
     #
+    # The first campaign to run with those labels back was NOT that clean, and
+    # the reason was the labels, not the pipeline: ten of its eleven dead runs
+    # read ``[eos-arrivals: sel:video, sel:audio, queue:video, mux-sink:video,
+    # queue:audio, mux-sink:audio, mux-src]`` -- an EOS on the selector's own src
+    # pad, with NO ``out:*`` arrival before it, and no boundary-probe guard line
+    # either. An ``input-selector`` cannot put an EOS on its src pad unless one
+    # arrived on a sink pad, so that EOS crossed a selector sink pad that carries
+    # no label -- the one stretch the labelled set did not cover. Two additions
+    # close it, both still one observer per pad and one int per reload:
+    #
+    # * ``sink-pad:<padname>:<stream>`` -- one observer on EVERY sink pad of both
+    #   selectors, including the pads of the leg being switched in
+    #   (``_install_selector_sink_eos_observers``, called by ``reload_program``).
+    #   The next occurrence names the pad instead of leaving "somewhere".
+    # * ``sel:<stream>[active=<padname>]`` -- the selector's ``active-pad`` read
+    #   at EOS time (``_make_selector_src_eos_label``), which says whether the
+    #   selector was still pointed at the leg that had been airing when it
+    #   emitted that EOS.
+    #
     # Report-only, always: never DROP, never REMOVE, never a line of its own --
     # the EOS it watches for is the one about to quit the worker anyway, so this
     # cannot change what the channel airs. The observers on the OUTGOING selector
@@ -2289,6 +2327,93 @@ class GstPlayoutEngine:
             return f"mux-sink:{self._mux_pad_stream_label(pad)}"
 
         return _label
+
+    def _make_selector_src_eos_label(self, selector: Any, stream: str) -> Callable[[], str]:
+        """``"sel:video[active=sink_0]"`` -- the selector's own EOS, plus where
+        the selector was pointed when it emitted it.
+
+        ``sel:video`` alone says the selector's src pad emitted an EOS, not which
+        input was feeding it when it did. The deferred deaths record that arrival
+        while the pad the outgoing leg delivers on records nothing, and the
+        reading turns on exactly this: the selector was still pointed at the
+        outgoing leg (so the EOS came out of the leg that had been airing) or it
+        had already been pointed elsewhere. One property read at EOS time buys
+        that separation; no new probe, no per-buffer cost.
+
+        Read lazily and guarded: a selector whose ``active-pad`` cannot be read
+        renders the bare ``sel:video`` the line rendered before -- silence about
+        the pad, never a guess at it."""
+
+        def _label() -> str:
+            with contextlib.suppress(Exception):
+                active = selector.get_property("active-pad") if selector is not None else None
+                if active is not None:
+                    return f"sel:{stream}[active={active.get_name()}]"
+            return f"sel:{stream}"
+
+        return _label
+
+    def _make_selector_sink_eos_label(self, pad: Any, stream: str) -> Callable[[], str]:
+        """Lazy label for one selector SINK pad: the pad's own name.
+
+        ``out:video``/``out:audio`` can only name the pad the outgoing leg is
+        EXPECTED to deliver on. An ``input-selector`` puts an EOS on its src pad
+        only after one reached a sink pad, so a ``sel:video`` arrival with no
+        ``out:video`` arrival means the EOS crossed a sink pad that carries no
+        label -- and this label names it, whatever it turns out to be
+        (``sink-pad:sink_1:video``). Lazy because the name is read at EOS time,
+        after a commit may already have replaced the leg on that pad."""
+
+        def _label() -> str:
+            with contextlib.suppress(Exception):
+                return f"sink-pad:{pad.get_name()}:{stream}"
+            return f"sink-pad:?:{stream}"
+
+        return _label
+
+    def _selector_sink_pad_pairs(self) -> list[tuple[str, Any]]:
+        """``(stream, pad)`` for every sink pad of both program selectors.
+
+        The engine's own link-order record of which legs feed which selector:
+        index 0 is the leg that has been airing, the rest are the legs a reload
+        left attached. Read at arm time, so a pad added to the selector by a
+        LATER reload is not covered -- ``reload_program`` passes those in
+        explicitly."""
+        pairs: list[tuple[str, Any]] = []
+        for stream, pads in (
+            ("video", getattr(self, "selector_sink_pads", [])),
+            ("audio", getattr(self, "audio_sink_pads", [])),
+        ):
+            for pad in list(pads):
+                if pad is not None:
+                    pairs.append((stream, pad))
+        return pairs
+
+    def _install_selector_sink_eos_observers(
+        self,
+        extra: Sequence[tuple[str, Any]] = (),
+        skip: Sequence[Any] = (),
+    ) -> None:
+        """Name EVERY selector sink pad, so an EOS crossing one is named.
+
+        ``out:video``/``out:audio`` are armed on the pads the outgoing leg is
+        expected to deliver on; ten of the eleven deferred deaths of the
+        2026-09-25 off-live campaign recorded an EOS at the selector's own src
+        pad with no arrival on either of them, and the EOS must have reached a
+        sink pad to get there. These observers close that hole with the pad's own
+        name, and ``extra`` covers the pads of the leg being switched IN -- which
+        is held at its first buffer and carries no observer at all until the
+        commit arms the ``in`` rung, so an arrival from the NEW leg is otherwise
+        unobservable no matter what it does.
+
+        ``skip`` is the pads that already carry ``out:*``: one EOS must not
+        render under two labels. Report-only and best-effort per pad, exactly
+        like ``_install_eos_observer`` -- a pad that refuses a probe stays
+        unobserved rather than being reported as silent."""
+        for stream, pad in list(self._selector_sink_pad_pairs()) + list(extra):
+            if any(pad is skipped for skipped in skip):
+                continue
+            self._install_eos_observer(pad, self._make_selector_sink_eos_label(pad, stream))
 
     def _install_eos_observer(self, pad: Any, label: Callable[[], str]) -> None:
         """Arm one observer if the pad can take it; silent and safe otherwise.
@@ -3105,6 +3230,20 @@ class GstPlayoutEngine:
         except Exception:
             self._dispose_elements_best_effort(new_elements)
             raise
+        # U30 EOS-origin diagnostic, second half: name EVERY selector sink pad,
+        # including the one this reload just linked the new leg to. The ``out:*``
+        # observers above can only name the pad the outgoing leg is expected to
+        # deliver on; ten of the eleven deferred deaths recorded an EOS at the
+        # selector's own src pad with no arrival on either of them, and an
+        # ``input-selector`` only forwards an EOS that reached a sink pad. The
+        # new leg's pads are named here because NOTHING else watches them before
+        # the commit -- the ``in`` rung and its observer are armed at commit time
+        # -- so an EOS arriving from the leg being switched in is otherwise
+        # unobservable, which is the one hypothesis this reload can act on.
+        self._install_selector_sink_eos_observers(
+            extra=(("video", new_video_pad), ("audio", new_audio_pad)),
+            skip=(old_video_pad, old_audio_pad),
+        )
         pending: dict[str, Any] = {
             "new_video_pad": new_video_pad,
             "new_audio_pad": new_audio_pad,

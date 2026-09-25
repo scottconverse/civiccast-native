@@ -3385,16 +3385,31 @@ class _FakeChainElement:
 
     ``get_static_pad`` is the only method the arming path calls; it returns the
     src pad by name and ``None`` for anything else, exactly like
-    ``Gst.Element.get_static_pad`` on a pad that does not exist."""
+    ``Gst.Element.get_static_pad`` on a pad that does not exist.
 
-    def __init__(self, name: str, recorder: _Recorder, src_pad: Any = None) -> None:
+    ``get_property`` answers ``active-pad`` with whatever the test set (``None``
+    by default) -- the read the ``sel`` EOS label makes lazily, at EOS time."""
+
+    def __init__(
+        self,
+        name: str,
+        recorder: _Recorder,
+        src_pad: Any = None,
+        *,
+        active_pad: Any = None,
+    ) -> None:
         self.name = name
         self.recorder = recorder
         self.src_pad = src_pad
+        self.active_pad = active_pad
 
     def get_static_pad(self, pad_name: str) -> Any:
         self.recorder.calls.append(f"get_static_pad:{self.name}:{pad_name}")
         return self.src_pad if pad_name == "src" else None
+
+    def get_property(self, prop_name: str) -> Any:
+        self.recorder.calls.append(f"get_property:{self.name}:{prop_name}")
+        return self.active_pad
 
 
 class _FakeNamedPipeline(_FakePipeline):
@@ -3946,6 +3961,130 @@ def test_u30_the_eos_line_says_where_the_eos_entered_or_that_nothing_did(
     assert "[eos-arrivals: out:video, sel:video, queue:video, mux-sink:video, mux-src]" in err, err
     # The U16/U30 clauses still ride the same line, unchanged.
     assert "CTRL output: pipeline EOS from mpegtsmux_3 -- quitting the worker [" in err
+
+
+def test_u30_each_selector_sink_pad_is_named_by_its_own_eos_observer(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The EOS crossed a sink pad the ``out:*`` labels cannot name -- so name them ALL.
+
+    ``out:video``/``out:audio`` are armed on ``selector_sink_pads[0]`` /
+    ``audio_sink_pads[0]``, the pads the outgoing leg is EXPECTED to deliver on.
+    Ten of the eleven deferred deaths of the 2026-09-25 off-live campaign (see
+    the ``eos-arrivals`` clause) recorded an EOS at the selector's OWN src pad
+    with no arrival on either of them -- and an ``input-selector`` only pushes an
+    EOS downstream after one reached a sink pad, so the EOS crossed a sink pad
+    that carries no label. A label that cannot name the pad cannot name the
+    cause: this observer names each pad after itself.
+
+    The two pads that already carry ``out:*`` are skipped, so one EOS never
+    renders under two labels and the existing clause keeps its shape."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = {
+        "out_video": _FakeDiagnosticPad("sink_0v", recorder),
+        "other_video": _FakeDiagnosticPad("sink_1v", recorder),
+        "new_video": _FakeDiagnosticPad("sink_2v", recorder),
+        "out_audio": _FakeDiagnosticPad("sink_0a", recorder),
+        "other_audio": _FakeDiagnosticPad("sink_1a", recorder),
+        "new_audio": _FakeDiagnosticPad("sink_2a", recorder),
+    }
+    engine.selector_sink_pads = [pads["out_video"], pads["other_video"], None]
+    engine.audio_sink_pads = [pads["out_audio"], pads["other_audio"]]
+    engine._eos_arrivals = []
+    engine._eos_arrivals_overflow = 0
+
+    engine._install_selector_sink_eos_observers(
+        extra=(("video", pads["new_video"]), ("audio", pads["new_audio"])),
+        skip=(pads["out_video"], pads["out_audio"]),
+    )
+
+    for key in ("other_video", "other_audio", "new_video", "new_audio"):
+        pad = pads[key]
+        assert f"add_probe:{pad.name}:4:_observe_eos" in recorder.calls, recorder.calls
+    for key in ("out_video", "out_audio"):
+        pad = pads[key]
+        assert f"add_probe:{pad.name}:4:_observe_eos" not in recorder.calls, recorder.calls
+
+    observer = pads["other_video"].probes[0][1]
+    assert (
+        observer(pads["other_video"], _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)))
+        == engine_module.Gst.PadProbeReturn.OK
+    )
+    assert engine._eos_arrivals == ["sink-pad:sink_1v:video"]
+    assert engine._eos_arrival_suffix() == " [eos-arrivals: sink-pad:sink_1v:video]"
+
+    # Same filter as every other observer: a segment crossing the pad is not an
+    # arrival, so a named sink pad cannot manufacture one either.
+    observer = pads["new_audio"].probes[0][1]
+    assert (
+        observer(pads["new_audio"], _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.SEGMENT)))
+        == engine_module.Gst.PadProbeReturn.OK
+    )
+    assert engine._eos_arrivals == ["sink-pad:sink_1v:video"]
+    assert capsys.readouterr().err == ""
+
+
+def test_u30_a_selector_src_arrival_names_the_active_sink_pad(engine_module) -> None:
+    """``sel:video`` says the selector emitted an EOS; ``active`` says from where.
+
+    Which input the selector was pointed at when it forwarded that EOS is what
+    separates the two readings of a deferred death -- the EOS came out of the
+    leg that was still selected, or the selector had already been pointed
+    elsewhere -- and it is one property read at EOS time, not a new probe.
+
+    A selector whose ``active-pad`` cannot be read renders the bare ``sel:video``
+    the line rendered before: silence about the pad, never a guess at it."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = _u30_armed_chain(engine, recorder)
+    engine._eos_arrivals = []
+    engine._eos_arrivals_overflow = 0
+    engine.selector.active_pad = _FakeDiagnosticPad("sink_0v", recorder)
+
+    observer = pads[("sel", "video")].probes[1][1]
+    assert (
+        observer(pads[("sel", "video")], _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)))
+        == engine_module.Gst.PadProbeReturn.OK
+    )
+    assert engine._eos_arrivals == ["sel:video[active=sink_0v]"]
+
+    # Unreadable active pad -> the un-annotated label, not an invented one.
+    engine.selector.active_pad = None
+    assert (
+        observer(pads[("sel", "video")], _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)))
+        == engine_module.Gst.PadProbeReturn.OK
+    )
+    assert engine._eos_arrivals == ["sel:video[active=sink_0v]", "sel:video"]
+
+    # A selector that cannot answer at all is the same case, and the OTHER rungs
+    # keep their plain labels.
+    class _NoProperties:
+        def get_static_pad(self, pad_name: str) -> Any:
+            return pads[("sel", "video")]
+
+    engine.selector = _NoProperties()
+    engine._chain_input_pads = {}
+    engine._chain_input_buffers = {}
+    engine._install_chain_input_counters()
+    assert engine._chain_input_pads[("sel", "video")] is pads[("sel", "video")]
+    engine._eos_arrivals = []
+    observer = pads[("sel", "video")].probes[-1][1]
+    assert (
+        observer(pads[("sel", "video")], _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)))
+        == engine_module.Gst.PadProbeReturn.OK
+    )
+    assert engine._eos_arrivals == ["sel:video"]
+    # The re-armed ladder still observes the OTHER rungs -- this selector losing
+    # its property read did not disarm anything else.
+    queue_observer = pads[("queue", "audio")].probes[-1][1]
+    assert (
+        queue_observer(
+            pads[("queue", "audio")], _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS))
+        )
+        == engine_module.Gst.PadProbeReturn.OK
+    )
+    assert engine._eos_arrivals == ["sel:video", "queue:audio"]
 
 
 def test_u30_inbound_counters_count_the_new_leg_at_its_selector_sink_pad(
