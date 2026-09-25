@@ -26,10 +26,12 @@ from types import SimpleNamespace
 import pytest
 
 from civiccast.captions import runtime as caption_runtime_module
+from civiccast.captions import tap_batch_diagnostic as tbd
 from civiccast.captions.models import (
     AudioChunk,
     CaptionCue,
     CaptionHypothesis,
+    CaptionWord,
     CustomVocabulary,
 )
 from civiccast.captions.review import InMemoryCaptionReviewStore
@@ -147,6 +149,23 @@ def _write_wav(path: Path, *, seconds: float = 1.0) -> None:
         handle.writeframes(b"\x01\x00" * frame_count)
 
 
+#: Mirrors the shipped ``tap_worker.DEFAULT_OVERLOAD_PERSISTENCE_SCANS``. It is a
+#: literal here, not an import, so the U11 behaviour tests can be run against the
+#: PRE-U11 module (that is what makes their red real rather than a collection
+#: error). ``test_the_persistence_window_defaults_and_parses_from_the_environment``
+#: imports the shipped constant and asserts the two are equal, so this copy
+#: cannot drift.
+_OVERLOAD_PERSISTENCE_WINDOW = 15
+
+#: Mirror the shipped U23 catch-up knobs, by the same rule as the window above:
+#: literals, so these tests can run against a module that has no catch-up at all
+#: (their red is then an assertion, not a collection error). The defaults test in
+#: ``TestCaptionTapCatchUp`` imports the shipped constants and asserts equality,
+#: so the mirrors cannot drift.
+_CATCH_UP_SHED_LIMIT = 3
+_CATCH_UP_SHED_WINDOW_SECONDS = 300.0
+
+
 def _worker(  # type: ignore[no-untyped-def]
     tap_root: Path,
     runtime: _ScriptedRuntime,
@@ -158,6 +177,10 @@ def _worker(  # type: ignore[no-untyped-def]
     backoff_policy: CaptionBackoffPolicy | None = None,
     is_enabled: Callable[[], bool] | None = None,
     monotonic: Callable[[], float] | None = None,
+    overload_persistence_scans: int = _OVERLOAD_PERSISTENCE_WINDOW,
+    catch_up_shed_limit: int = _CATCH_UP_SHED_LIMIT,
+    catch_up_shed_window_seconds: float = _CATCH_UP_SHED_WINDOW_SECONDS,
+    batch_diagnostic: object | None = None,
 ):
     return CaptionTapWorker(
         tap_root=tap_root,
@@ -170,20 +193,15 @@ def _worker(  # type: ignore[no-untyped-def]
         backoff_policy=backoff_policy,
         is_enabled=is_enabled,
         monotonic=monotonic,
+        overload_persistence_scans=overload_persistence_scans,
+        catch_up_shed_limit=catch_up_shed_limit,
+        catch_up_shed_window_seconds=catch_up_shed_window_seconds,
+        batch_diagnostic=batch_diagnostic,  # type: ignore[arg-type]
     )
 
 
 def _active_vtt(tap_root: Path, channel_id: str) -> Path:
     return tap_root.parent / "egress" / channel_id / "captions" / "active.vtt"
-
-
-#: Mirrors the shipped ``tap_worker.DEFAULT_OVERLOAD_PERSISTENCE_SCANS``. It is a
-#: literal here, not an import, so the U11 behaviour tests can be run against the
-#: PRE-U11 module (that is what makes their red real rather than a collection
-#: error). ``test_the_persistence_window_defaults_and_parses_from_the_environment``
-#: imports the shipped constant and asserts the two are equal, so this copy
-#: cannot drift.
-_OVERLOAD_PERSISTENCE_WINDOW = 15
 
 
 def _runtime_status(tap_root: Path, channel_id: str) -> dict:
@@ -225,7 +243,7 @@ def _drive_to_the_edge_of_the_overload_window(
     return index
 
 
-def _trip_overload(
+def _drive_sustained_episode(
     worker,  # type: ignore[no-untyped-def]
     tap_root: Path,
     channel_id: str,
@@ -234,16 +252,18 @@ def _trip_overload(
     per_scan: int = 4,
     final_files: int = 4,
 ) -> tuple[CaptionTapScanResult, int]:
-    """Drive one channel into its pause state through a sustained overshoot.
+    """Drive ONE sustained over-limit episode to the scan the gate acts on.
 
-    Returns ``(tripping_scan_result, next_free_chunk_index)``.
+    Returns ``(acting_scan_result, next_free_chunk_index)``.
 
-    ``final_files`` sets the queue the TRIPPING scan actually sees: the pile the
-    window accumulated is dropped first, so a caller asserting exact
-    ``dropped_overload_segments``/``backlog_segments`` numbers is asserting the
-    gate's behaviour at the trip, not how much audio the window happened to pile
-    up. The over-limit STREAK -- which is all the gate keys on -- is untouched by
-    that cleanup, because it is only ever updated inside ``run_once``.
+    The shape is the one the gate keys on -- over ``max_backlog_segments`` on
+    every scan of the whole persistence window -- and it is the shape a stalled
+    ASR produces on a live station: audio keeps arriving at the cadence while
+    transcription is not retiring it, so the settled backlog stays over the
+    limit scan after scan.
+
+    Under U23 the acting scan SHEDS (catch-up) unless the channel has already
+    spent its shed budget; the caller reads ``paused_channels`` to tell which.
     """
 
     index = _drive_to_the_edge_of_the_overload_window(
@@ -254,9 +274,80 @@ def _trip_overload(
     for _ in range(final_files):
         _write_wav(tap_root / channel_id / f"chunk-{index:06d}.wav")
         index += 1
-    result = worker.run_once()
+    return worker.run_once(), index
+
+
+def _trip_overload(
+    worker,  # type: ignore[no-untyped-def]
+    tap_root: Path,
+    channel_id: str,
+    *,
+    first_index: int = 0,
+    per_scan: int = 4,
+    final_files: int = 4,
+    shed_limit: int = _CATCH_UP_SHED_LIMIT,
+) -> tuple[CaptionTapScanResult, int]:
+    """Drive one channel all the way into its PAUSE state.
+
+    Returns ``(tripping_scan_result, next_free_chunk_index)``.
+
+    U23 changed how a pause is earned. A channel that stays over the limit for
+    one whole persistence window no longer pauses -- it SHEDS its oldest settled
+    audio and keeps captioning, so that a GPU stall costs seconds of audio
+    instead of minutes of no captions. The pause is now reserved for a channel
+    that does that ``shed_limit`` times inside the shed window, i.e. one that has
+    been over the limit for whole persistence windows over and over. This helper
+    therefore drives whole EPISODES and asserts that every episode before the
+    last one shed instead of pausing -- a trip that skipped the shedding would
+    be a real defect, not a shortcut.
+
+    ``shed_limit`` must match the worker's own ``catch_up_shed_limit``;
+    ``shed_limit=0`` (catch-up off) reproduces the pre-U23 "pause on the first
+    persistent overshoot" behaviour the ladder tests are written against.
+
+    ``final_files`` sets the queue the ACTING scan actually sees: the pile the
+    window accumulated is dropped first, so a caller asserting exact
+    ``dropped_overload_segments``/``backlog_segments`` numbers is asserting the
+    gate's behaviour at the trip, not how much audio the window happened to pile
+    up. The over-limit STREAK -- which is all the gate keys on -- is untouched by
+    that cleanup, because it is only ever updated inside ``run_once``.
+    """
+
+    index = first_index
+    for episode in range(shed_limit):
+        shed, index = _drive_sustained_episode(
+            worker,
+            tap_root,
+            channel_id,
+            first_index=index,
+            per_scan=per_scan,
+            final_files=final_files,
+        )
+        assert shed.paused_channels == (), (
+            f"episode {episode} paused the channel; inside its {shed_limit}-shed "
+            "budget a sustained overshoot must CATCH UP instead"
+        )
+        assert shed.overloaded_channels == (), f"episode {episode} paused the channel"
+        assert shed.dropped_overload_segments > 0, (
+            f"episode {episode} neither paused nor shed: the over-limit audio vanished "
+            "without being reported"
+        )
+        assert shed.consumed_segments > 0, (
+            f"episode {episode} shed without resuming: catch-up must keep captioning "
+            "from the newest audio"
+        )
+
+    result, index = _drive_sustained_episode(
+        worker,
+        tap_root,
+        channel_id,
+        first_index=index,
+        per_scan=per_scan,
+        final_files=final_files,
+    )
     assert result.overloaded_channels == (channel_id,), (
-        "a sustained overshoot for the whole persistence window did not trip the gate"
+        "a channel that spent its whole shed budget without holding the cadence did "
+        "not trip the retained pause ladder"
     )
     return result, index
 
@@ -1119,6 +1210,12 @@ class TestCaptionTapWorker:
             segment_seconds=5.0,
             atomic_segments=True,
             retention_policy=_SlowRetentionPolicy(delay_seconds=0.0),
+            # Catch-up OFF (the documented U23 escape hatch): this test is about
+            # the fail-closed pause path itself surviving the cleanup fix, so it
+            # must exercise that path on the very first persistent overshoot
+            # rather than shedding first. Catch-up's own behaviour is covered by
+            # ``TestCaptionTapCatchUp``.
+            catch_up_shed_limit=0,
         )
         active = _active_vtt(tap_root, channel)
         active.parent.mkdir(parents=True, exist_ok=True)
@@ -3023,6 +3120,11 @@ class TestCaptionTapBacklogPersistence:
             review_store=InMemoryCaptionReviewStore(),
             segment_seconds=5.0,
             overload_persistence_scans=1,
+            # The pre-U11 single-scan contract also needs catch-up off: with a
+            # shed budget the one-scan overshoot would shed rather than pause,
+            # which is a different question from the one this test asks (does
+            # OVERLOAD_PERSISTENCE_SCANS=1 still restore the old rule?).
+            catch_up_shed_limit=0,
         )
         for index in range(4):
             _write_wav(tap_root / channel / f"chunk-{index:06d}.wav", seconds=5.0)
@@ -3051,3 +3153,624 @@ class TestCaptionTapBacklogPersistence:
         monkeypatch.setenv("CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS", "0")
         with pytest.raises(ValueError, match="OVERLOAD_PERSISTENCE_SCANS"):
             CaptionTapWorkerSettings.from_env()
+
+
+#: The three ON_AIR channels of the measured station (U22).
+_CATCH_UP_CHANNELS = ("public", "government", "education")
+
+
+class _TimedToneRuntime(_ScriptedRuntime):
+    """One distinct word per whole second of audio, named by its audio second.
+
+    The stabilizer commits only words that TWO windows agree on and matches them
+    by exact token equality over overlapping word spans, so a fake runtime has to
+    emit the SAME token for the same audio second every time it hears it -- the
+    tap's 5 s overlap re-hears five of them on the next window. Naming a word
+    ``s<second>`` for the ABSOLUTE audio second makes the seam assertable
+    directly: a cue naming a second the catch-up discarded is a broken seam.
+
+    Word timestamps come from the chunk the worker actually handed to ASR,
+    including the overlap it prepended, so a window's words follow its real
+    geometry rather than a guess about it.
+    """
+
+    def transcribe(
+        self,
+        chunks: Iterable[AudioChunk],
+        vocabulary: CustomVocabulary | None = None,
+    ) -> Iterable[CaptionHypothesis]:
+        for chunk in chunks:
+            self.seen_chunks.append(chunk)
+            words = [
+                CaptionWord(
+                    text=f"s{second}",
+                    start_seconds=float(second),
+                    end_seconds=float(second + 1),
+                    confidence=0.95,
+                )
+                for second in range(int(chunk.start_seconds), int(chunk.end_seconds))
+            ]
+            yield CaptionHypothesis(
+                source_id=f"{chunk.chunk_id}-tap",
+                start_seconds=chunk.start_seconds,
+                end_seconds=chunk.end_seconds,
+                text=" ".join(word.text for word in words),
+                confidence=0.9,
+                audio_window_start_seconds=chunk.start_seconds,
+                audio_window_end_seconds=chunk.end_seconds,
+                words=words,
+            )
+
+
+def _spoken_seconds(cues: Iterable[CaptionCue]) -> set[int]:
+    """Absolute audio seconds that reached the ACTIVE (on-air) caption set."""
+
+    return {
+        int(token[1:])
+        for cue in cues
+        for token in cue.text.split()
+        if token.startswith("s") and token[1:].isdigit()
+    }
+
+
+class TestCaptionTapCatchUp:
+    """U23: a stalled channel CATCHES UP; it does not go quiet for minutes.
+
+    U22 OBSERVED the live failure on the station: single ASR windows of
+    10.6-19.5 s against a 5 s audio cadence, often on two or three channels
+    within milliseconds of each other (one shared GPU), on a box whose MEAN
+    throughput was still 1.86x the cadence. A ~16 s stall therefore tripped the
+    tap's persistence gate and PAUSED three channels for 120 s at a time, 240 s
+    and 480 s after the ladder escalated -- 19 overloads in 67.5 minutes of live
+    audio where captions simply stopped. The acceptance verifier samples those
+    minutes as "no embedded cues" and fails the station.
+
+    The decision under test: when a channel's overshoot PERSISTS for the whole
+    U11 window, keep captioning from the NEWEST audio and discard only the oldest
+    settled segments that can no longer be captioned in time. The channel never
+    stops for longer than the backlog it sheds. The exponential pause ladder is
+    retained, unchanged, for the case this cannot fix.
+    """
+
+    def test_a_stall_on_three_channels_sheds_and_keeps_captioning(self, tmp_path: Path) -> None:
+        """The measured failure itself: 3 channels, ~15 s of stalled audio each.
+
+        The contract this asserts, in one scan: no pause, no cleared captions,
+        ASR resumed on the newest audio, the discarded audio airs nothing, and
+        the window handed to ASR after the shed is contiguous -- its OWN
+        segment, never a join across the seconds that were thrown away.
+        """
+
+        tap_root = tmp_path / "tap"
+        segment_seconds = 5.0
+        runtime = _TimedToneRuntime()
+        clock = _FakeClock()
+        worker = _worker(
+            tap_root,
+            runtime,
+            InMemoryCaptionReviewStore(),
+            segment_seconds=segment_seconds,
+            max_channel_workers=3,
+            monotonic=clock,
+        )
+        next_index = dict.fromkeys(_CATCH_UP_CHANNELS, 0)
+
+        def arrivals(channel: str, count: int) -> None:
+            for _ in range(count):
+                _write_wav(
+                    tap_root / channel / f"chunk-{next_index[channel]:06d}.wav",
+                    seconds=segment_seconds,
+                )
+                next_index[channel] += 1
+
+        # The persistence window: every scan is over the limit AND the tap keeps
+        # up -- each scan transcribes the two oldest settled segments and leaves
+        # the rest queued. That is the U10 shape the gate keys on: a sustained
+        # overshoot on a box whose ASR pool is working, not idle.
+        for scan in range(_OVERLOAD_PERSISTENCE_WINDOW - 1):
+            for channel in _CATCH_UP_CHANNELS:
+                arrivals(channel, 4)
+            window_scan = worker.run_once()
+            assert window_scan.paused_channels == (), f"scan {scan} paused a channel"
+            assert window_scan.overloaded_channels == (), f"scan {scan} paused a channel"
+            assert window_scan.dropped_overload_segments == 0, (
+                f"scan {scan} deleted live audio inside the persistence window"
+            )
+        assert runtime.seen_chunks, "no ASR work happened during the window"
+
+        # The stall. Clear the pile those scans accumulated so the acting scan
+        # sees exactly the stalled backlog: six fresh segments per channel, of
+        # which the newest is held back by the settle guard and the oldest three
+        # can no longer be captioned in time.
+        for path in tap_root.glob("*/chunk-*.wav"):
+            path.unlink()
+        transcribed_before = len(runtime.seen_chunks)
+        shed_indices: dict[str, range] = {}
+        resumed_at: dict[str, int] = {}
+        for channel in _CATCH_UP_CHANNELS:
+            arrivals(channel, 6)
+            settled = list(range(next_index[channel] - 6, next_index[channel] - 1))
+            shed = settled[:-2]
+            assert len(shed) == 3, shed
+            shed_indices[channel] = range(shed[0], shed[-1] + 1)
+            resumed_at[channel] = settled[-2]
+
+        acting = worker.run_once()
+
+        assert acting.paused_channels == (), (
+            "a transient GPU stall paused the channel: that is the U23 defect"
+        )
+        assert acting.overloaded_channels == ()
+        # Reported, never silent: three channels x three shed segments.
+        assert acting.dropped_overload_segments == 3 * 3, acting
+        # ...and captioning RESUMED on the newest audio, in the same scan.
+        assert acting.consumed_segments == 2 * len(_CATCH_UP_CHANNELS), acting
+        # Discarded means DISCARDED, not filed: the shed audio is gone from disk,
+        # including out of processed/, collision/ and quarantine/ (there is no
+        # ``overload/`` holding pen to check any more -- that directory was
+        # retired as an unbounded disk leak, so asserting its absence would pass
+        # vacuously on every path). The kept segments, by contrast, are gone
+        # because they were really transcribed, which the ASR windows below also
+        # prove by name.
+        for channel in _CATCH_UP_CHANNELS:
+            for index in shed_indices[channel]:
+                leftovers = sorted((tap_root / channel).rglob(f"chunk-{index:06d}.wav"))
+                assert not leftovers, f"{channel}: discarded audio is still on disk: {leftovers}"
+            for index in (resumed_at[channel], resumed_at[channel] + 1):
+                assert not (tap_root / channel / f"chunk-{index:06d}.wav").exists(), (
+                    f"{channel}: kept segment {index} is still queued -- it was not transcribed"
+                )
+        for channel in _CATCH_UP_CHANNELS:
+            status = _runtime_status(tap_root, channel)
+            assert status["state"] == "within-capacity", status
+            assert status.get("consecutive_overloads", 0) == 0, status
+            assert status["backlog_segments"] <= status["max_backlog_segments"], status
+
+        # THE SEAM. A window handed to ASR must be contiguous audio, so the first
+        # window after a shed is its OWN segment: one cadence of audio starting
+        # exactly at its own index -- not 5 s earlier, which is the geometry a
+        # join across the discarded gap would carry.
+        new_chunks = runtime.seen_chunks[transcribed_before:]
+        assert len(new_chunks) == 2 * len(_CATCH_UP_CHANNELS), new_chunks
+        for channel in _CATCH_UP_CHANNELS:
+            windows = [
+                chunk for chunk in new_chunks if chunk.chunk_id.startswith(f"{channel}-tap-")
+            ]
+            assert len(windows) == 2, [chunk.chunk_id for chunk in windows]
+            head, tail = windows
+            first = resumed_at[channel]
+            assert head.chunk_id == f"{channel}-tap-{first:06d}", head.chunk_id
+            assert head.start_seconds == first * segment_seconds, head.start_seconds
+            assert len(head.pcm_s16le) == 2 * int(TAP_SAMPLE_RATE_HZ * segment_seconds), (
+                "the resume window carried more audio than its own segment: the "
+                "seam joined across the discarded seconds"
+            )
+            # The break is exactly one window wide: the next kept segment still
+            # joins its own immediate predecessor, so overlap resumes at once.
+            assert tail.chunk_id == f"{channel}-tap-{first + 1:06d}-overlap", tail.chunk_id
+            assert tail.start_seconds == first * segment_seconds, tail.start_seconds
+            assert tail.end_seconds - tail.start_seconds == 2 * segment_seconds, tail
+
+        for channel in _CATCH_UP_CHANNELS:
+            cues = load_caption_cues_from_timed_text(
+                _active_vtt(tap_root, channel), source_id=channel
+            )
+            spoken = _spoken_seconds(cues)
+            discarded = {
+                second
+                for index in shed_indices[channel]
+                for second in range(
+                    int(index * segment_seconds), int((index + 1) * segment_seconds)
+                )
+            }
+            assert discarded, shed_indices[channel]
+            assert not (spoken & discarded), (
+                f"{channel}: a caption aired audio from a discarded second "
+                f"({sorted(spoken & discarded)}); the seam joined across the shed"
+            )
+            gap_start = shed_indices[channel].start * segment_seconds
+            gap_end = shed_indices[channel].stop * segment_seconds
+            for cue in cues:
+                assert cue.end_seconds <= gap_start or cue.start_seconds >= gap_end, (
+                    f"{channel}: cue {cue.text!r} spans the discarded gap "
+                    f"[{gap_start}, {gap_end}): ({cue.start_seconds}, {cue.end_seconds})"
+                )
+            # Neither side of the gap may be vacuous: the channel really did
+            # caption before the stall, and really did resume after it.
+            assert any(second < gap_start for second in spoken), (
+                f"{channel}: nothing before the gap aired, so the assertions above "
+                f"could pass vacuously (spoken={sorted(spoken)})"
+            )
+            assert any(second >= gap_end for second in spoken), (
+                f"{channel}: captions did not resume after the shed (spoken={sorted(spoken)})"
+            )
+
+    def test_a_shed_is_recorded_in_the_batch_diagnostic(self, tmp_path: Path) -> None:
+        """Catch-up must not bypass the U18 per-batch record: a shed IS a drop.
+
+        The diagnostic is how an operator explains missing captions after the
+        fact, so a catch-up shed has to appear there with its own reason, the
+        segments actually thrown away, and the depth the gate saw. This is also
+        what keeps the diagnostic contract covered once the four tests in
+        ``test_caption_tap_batch_diagnostic.py`` pin the FAIL-CLOSED record with
+        catch-up explicitly switched off.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "public"
+        collector = tbd.BatchDiagnosticCollector()
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            atomic_segments=True,
+            overload_persistence_scans=1,
+            batch_diagnostic=collector,
+        )
+        worker._sweep_retention()
+        assert worker.wait_for_retention_sweep(timeout=5.0)
+
+        # Written AFTER construction: audio already on disk at construction
+        # belongs to a previous session and is discarded at startup (U11 B1).
+        for index in range(4):
+            _write_wav(tap_root / channel / f"chunk-{index:06d}.wav")
+
+        result = worker.run_once()
+
+        assert result.paused_channels == ()
+        assert result.dropped_overload_segments == 2, result
+        records = [
+            record
+            for record in collector._records
+            if record.get("reason") == "max-backlog-catch-up-shed"
+        ]
+        assert len(records) == 1, collector._records
+        record = records[0]
+        assert record["channel"] == channel
+        assert record["outcome"] == "overloaded"
+        assert record["queue_depth"] == 4
+        assert record["segment_indices"] == [0, 1]
+
+    def test_sustained_under_capacity_still_earns_the_retained_pause(self, tmp_path: Path) -> None:
+        """The ladder is retained for a box that sheds and STILL cannot cope.
+
+        One shed means "a stall happened". Shedding on every persistence window
+        for minutes means the box cannot transcribe this channel at all, and that
+        is the case the pause exists for (playout is the product). With a budget
+        of one this drives the escalation boundary exactly: the first sustained
+        episode sheds, the second pauses at the shipped base rung, and the budget
+        is then reset so a released channel is judged afresh.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "government"
+        clock = _FakeClock()
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            catch_up_shed_limit=1,
+            monotonic=clock,
+            backoff_policy=CaptionBackoffPolicy(monotonic=clock),
+        )
+
+        shed_scan, next_index = _drive_sustained_episode(worker, tap_root, channel)
+        assert shed_scan.paused_channels == (), "the first sustained overshoot paused the channel"
+        assert shed_scan.dropped_overload_segments > 0
+        assert shed_scan.consumed_segments > 0
+        assert _runtime_status(tap_root, channel)["state"] == "within-capacity"
+
+        paused_scan, next_index = _drive_sustained_episode(
+            worker, tap_root, channel, first_index=next_index
+        )
+        assert paused_scan.overloaded_channels == (channel,)
+        assert paused_scan.paused_channels == (channel,)
+        status = _runtime_status(tap_root, channel)
+        assert status["state"] == "paused"
+        assert status["consecutive_overloads"] == 1
+        assert status["resume_in_seconds"] == DEFAULT_BASE_BACKOFF_SECONDS
+        assert load_caption_cues_from_timed_text(_active_vtt(tap_root, channel)) == []
+
+        # The ladder took over, so the shed budget was cleared with it: a
+        # released channel is judged afresh rather than escalating instantly.
+        clock.advance(DEFAULT_BASE_BACKOFF_SECONDS + 1.0)
+        released, _ = _drive_sustained_episode(worker, tap_root, channel, first_index=next_index)
+        assert released.paused_channels == (), (
+            "the shed budget survived the pause: a released channel escalated on its first new shed"
+        )
+        assert released.dropped_overload_segments > 0
+
+    def test_a_single_over_limit_scan_spends_no_shed_budget(self, tmp_path: Path) -> None:
+        """The U11 contract survives, and it costs nothing from the budget.
+
+        U10 measured 128 of 182 live trips firing at exactly one segment over the
+        limit against a max of 2. A single over-limit scan must neither pause a
+        channel (U11) nor count against catch-up, so the budget of one below is
+        still unspent for the sustained episode that follows.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "public"
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            catch_up_shed_limit=1,
+        )
+        for index in range(4):
+            _write_wav(tap_root / channel / f"chunk-{index:06d}.wav", seconds=5.0)
+
+        single = worker.run_once()
+
+        assert single.paused_channels == ()
+        assert single.overloaded_channels == ()
+        assert single.dropped_overload_segments == 0, (
+            "a single over-limit scan deleted live audio instead of transcribing it"
+        )
+        assert single.consumed_segments == 2
+        assert _runtime_status(tap_root, channel)["state"] == "within-capacity"
+
+        # The station catches up, so the over-limit streak clears -- and nothing
+        # about the single overshoot is remembered.
+        for path in (tap_root / channel).glob("chunk-*.wav"):
+            path.unlink()
+        assert worker.run_once().dropped_overload_segments == 0
+
+        shed_scan, _ = _drive_sustained_episode(worker, tap_root, channel, first_index=4)
+        assert shed_scan.paused_channels == (), (
+            "the single over-limit scan had already spent the channel's shed budget"
+        )
+        assert shed_scan.dropped_overload_segments > 0
+
+    def test_a_shed_is_not_a_session_change_and_the_pause_still_invalidates(
+        self, tmp_path: Path
+    ) -> None:
+        """Catch-up must not black out a live channel -- nor break the guard.
+
+        A shed is not a session boundary: nothing is cleared, the generation does
+        not move, and a result still in flight from this broadcast may still
+        publish. The retained PAUSE keeps the opposite behaviour, unchanged: it
+        invalidates in-flight work so a stale result cannot repaint captions the
+        pause has cleared.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "public"
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            catch_up_shed_limit=1,
+        )
+        worker.begin_channel_session(channel)
+        generation = worker._session_generation[channel]
+
+        shed_scan, next_index = _drive_sustained_episode(worker, tap_root, channel)
+        assert shed_scan.paused_channels == ()
+        assert shed_scan.dropped_overload_segments > 0
+        assert worker._session_generation[channel] == generation, (
+            "the shed bumped the session generation: catch-up is not a new session "
+            "and must not invalidate a live channel's own in-flight results"
+        )
+
+        current = [
+            CaptionCue(
+                cue_id="cue-CURRENT",
+                start_seconds=100.0,
+                end_seconds=104.0,
+                text="CURRENT SESSION CAPTION",
+                confidence=0.9,
+                low_confidence=False,
+            )
+        ]
+        assert worker.publish_for_current_session(channel, generation, current) is True
+        assert "CURRENT SESSION CAPTION" in _active_vtt(tap_root, channel).read_text(
+            encoding="utf-8"
+        )
+
+        paused_scan, _ = _drive_sustained_episode(worker, tap_root, channel, first_index=next_index)
+        assert paused_scan.overloaded_channels == (channel,)
+        assert worker._session_generation[channel] > generation, (
+            "the fail-closed pause no longer invalidates the channel's in-flight work"
+        )
+
+        stale = [
+            CaptionCue(
+                cue_id="cue-STALE",
+                start_seconds=100.0,
+                end_seconds=104.0,
+                text="STALE IN FLIGHT CAPTION",
+                confidence=0.9,
+                low_confidence=False,
+            )
+        ]
+        assert worker.publish_for_current_session(channel, generation, stale) is False
+        after = _active_vtt(tap_root, channel).read_text(encoding="utf-8")
+        assert "STALE IN FLIGHT CAPTION" not in after, (
+            "a pre-pause in-flight result repainted captions the pause had cleared"
+        )
+        assert "CURRENT SESSION CAPTION" not in after, "the pause did not clear the live captions"
+
+    def test_the_shed_budget_renews_after_its_window(self, tmp_path: Path) -> None:
+        """The budget is a RATE, not a lifetime allowance.
+
+        A station that sheds once and then keeps up for the rest of the window
+        has earned another shed. It has to: otherwise a single GPU stall early in
+        the shift would leave every later stall unprotected until the process
+        restarted.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "education"
+        clock = _FakeClock()
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            catch_up_shed_limit=1,
+            catch_up_shed_window_seconds=60.0,
+            monotonic=clock,
+        )
+
+        first, next_index = _drive_sustained_episode(worker, tap_root, channel)
+        assert first.paused_channels == (), "the first sustained overshoot paused the channel"
+        assert first.dropped_overload_segments > 0
+
+        clock.advance(61.0)
+        second, next_index = _drive_sustained_episode(
+            worker, tap_root, channel, first_index=next_index
+        )
+        assert second.paused_channels == (), (
+            "a shed older than the shed window still counted against the channel"
+        )
+        assert second.dropped_overload_segments > 0
+
+        # ...and the budget really is a budget: the shed inside the window now
+        # counts, so a third episode with no time passing pauses instead.
+        third, _ = _drive_sustained_episode(worker, tap_root, channel, first_index=next_index)
+        assert third.overloaded_channels == (channel,)
+
+    def test_the_catch_up_warning_names_what_an_operator_has_to_correlate(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """ONE WARNING per episode, and it is not the pause line.
+
+        An operator has to be able to correlate a gap in the captions with the
+        log: which channel, how many segments, how many seconds of audio, which
+        indices, and that captions are still running. A grep for a pause must not
+        match it -- a working tap must not look like a broken one.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "government"
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            segment_seconds=5.0,
+            catch_up_shed_limit=1,
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="civiccast.captions.tap_worker"):
+            result, _ = _drive_sustained_episode(
+                worker, tap_root, channel, per_scan=4, final_files=6
+            )
+
+        assert result.paused_channels == ()
+        assert result.dropped_overload_segments == 3
+        shed_lines = [record for record in caplog.records if "catch-up" in record.getMessage()]
+        assert len(shed_lines) == 1, [record.getMessage() for record in shed_lines]
+        assert shed_lines[0].levelno == logging.WARNING
+        message = shed_lines[0].getMessage()
+        # 14 scans x 4 files, so the acting scan sees indices 56-61: 56, 57 and
+        # 58 are what it sheds.
+        assert channel in message, message
+        assert "3 segment(s)" in message, message
+        assert "indices 56-58" in message, message
+        # The seconds reported are the audio ACTUALLY discarded, read from each
+        # WAV's own header -- not the nominal cadence multiplied by the count.
+        # This worker is deliberately configured with a 5s cadence while the
+        # helper writes 1s WAVs, so a report that trusted `segment_seconds` would
+        # say 15.0s here and this assertion is what would catch it.
+        assert "3.0s of audio" in message, message
+        assert "15.0s of audio" not in message, message
+        assert not [
+            record for record in caplog.records if "Caption tap overload" in record.getMessage()
+        ]
+        assert not [record for record in caplog.records if "PAUSED" in record.getMessage()]
+
+    def test_catch_up_can_be_switched_off_with_a_zero_shed_limit(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """``0`` is the documented escape hatch back to the pre-U23 rule.
+
+        Not ``1``: a limit of one still sheds once before the second over-limit
+        episode trips the ladder. Zero is the only value that restores "a
+        persistent overshoot pauses, and nothing is shed".
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "public"
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            catch_up_shed_limit=0,
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="civiccast.captions.tap_worker"):
+            result, _ = _drive_sustained_episode(worker, tap_root, channel)
+
+        assert result.overloaded_channels == (channel,)
+        assert result.paused_channels == (channel,)
+        assert _runtime_status(tap_root, channel)["state"] == "paused"
+        assert not [record for record in caplog.records if "catch-up" in record.getMessage()], (
+            "catch-up ran with a shed limit of zero"
+        )
+
+    def test_the_shipped_catch_up_defaults_and_their_environment_parsing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from civiccast.captions.tap_worker import (
+            DEFAULT_CATCH_UP_SHED_LIMIT,
+            DEFAULT_CATCH_UP_SHED_WINDOW_SECONDS,
+        )
+
+        # The mirrors this test file is written against must equal the shipped
+        # defaults, so the copy cannot drift.
+        assert DEFAULT_CATCH_UP_SHED_LIMIT == _CATCH_UP_SHED_LIMIT
+        assert DEFAULT_CATCH_UP_SHED_WINDOW_SECONDS == _CATCH_UP_SHED_WINDOW_SECONDS
+
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "off")
+        monkeypatch.delenv("CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_LIMIT", raising=False)
+        monkeypatch.delenv("CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_WINDOW_SECONDS", raising=False)
+        defaults = CaptionTapWorkerSettings.from_env()
+        assert defaults.catch_up_shed_limit == DEFAULT_CATCH_UP_SHED_LIMIT
+        assert defaults.catch_up_shed_window_seconds == DEFAULT_CATCH_UP_SHED_WINDOW_SECONDS
+
+        # 0 is the escape hatch back to the pre-U23 rule, not a typo.
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_LIMIT", "0")
+        assert CaptionTapWorkerSettings.from_env().catch_up_shed_limit == 0
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_LIMIT", "2")
+        assert CaptionTapWorkerSettings.from_env().catch_up_shed_limit == 2
+        # A NEGATIVE (or non-numeric) limit is nonsense, but this knob is parsed
+        # with the CLAMPING parser: it warns and uses the shipped default rather
+        # than refusing to start. That split is deliberate -- a station that will
+        # not boot over an optional caption-tuning variable is a worse failure
+        # than one that logs and carries on. The CONSTRUCTOR still refuses it (the
+        # injected-worker assertions below), so an in-process caller cannot get a
+        # silently wrong value.
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_LIMIT", "-1")
+        assert (
+            CaptionTapWorkerSettings.from_env().catch_up_shed_limit == DEFAULT_CATCH_UP_SHED_LIMIT
+        )
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_LIMIT", "not-a-number")
+        assert (
+            CaptionTapWorkerSettings.from_env().catch_up_shed_limit == DEFAULT_CATCH_UP_SHED_LIMIT
+        )
+
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_WINDOW_SECONDS", "90")
+        assert CaptionTapWorkerSettings.from_env().catch_up_shed_window_seconds == 90.0
+        # A zero-length window would mean "no shed ever counts as recent", so it
+        # is clamped to the shipped default as well: accepted, defaulted, warned.
+        monkeypatch.setenv("CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_WINDOW_SECONDS", "0")
+        assert (
+            CaptionTapWorkerSettings.from_env().catch_up_shed_window_seconds
+            == DEFAULT_CATCH_UP_SHED_WINDOW_SECONDS
+        )
+
+        # The constructor validates the same two knobs for an injected worker.
+        with pytest.raises(ValueError, match="catch_up_shed_limit"):
+            _worker(
+                tmp_path / "tap",
+                _ScriptedRuntime(),
+                InMemoryCaptionReviewStore(),
+                catch_up_shed_limit=-1,
+            )
+        with pytest.raises(ValueError, match="catch_up_shed_window_seconds"):
+            _worker(
+                tmp_path / "tap",
+                _ScriptedRuntime(),
+                InMemoryCaptionReviewStore(),
+                catch_up_shed_window_seconds=0.0,
+            )

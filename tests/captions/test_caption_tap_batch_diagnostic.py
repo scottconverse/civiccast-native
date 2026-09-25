@@ -253,6 +253,9 @@ def test_worker_records_overload_outcome_with_queue_and_reason(tmp_path: Path, c
         # that window to 15 scans and covers it in test_caption_tap_worker.py).
         # 1 restores the single-scan discard so the record under test exists.
         overload_persistence_scans=1,
+        # This test pins what the pre-U23 FAIL-CLOSED discard records, so U23's
+        # catch-up is switched off explicitly with its documented 0 setting.
+        catch_up_shed_limit=0,
         batch_diagnostic=collector,
     )
     worker._sweep_retention()
@@ -754,6 +757,12 @@ class TestOverloadCarriesPrecedingBatchDuration:
             # discard so this test's overload actually happens; the shipped
             # window is covered in test_caption_tap_worker.py.
             overload_persistence_scans=1,
+            # This test pins the pre-U23 FAIL-CLOSED discard record itself, so
+            # U23's catch-up is switched off explicitly with its documented 0
+            # setting: the first persistent overshoot pauses, exactly as before
+            # this unit. U23's shed record is covered in
+            # test_caption_tap_worker.py::TestCaptionTapCatchUp.
+            catch_up_shed_limit=0,
             batch_diagnostic=collector,
         )
         worker._sweep_retention()
@@ -846,6 +855,12 @@ class TestOverloadCarriesPrecedingBatchDuration:
             # The subject is the recorded 0.0, not the persistence window
             # (U11 B2); 1 restores the single-scan discard.
             overload_persistence_scans=1,
+            # This test pins the pre-U23 FAIL-CLOSED discard record itself, so
+            # U23's catch-up is switched off explicitly with its documented 0
+            # setting: the first persistent overshoot pauses, exactly as before
+            # this unit. U23's shed record is covered in
+            # test_caption_tap_worker.py::TestCaptionTapCatchUp.
+            catch_up_shed_limit=0,
             batch_diagnostic=collector,
         )
         worker._sweep_retention()
@@ -1008,6 +1023,12 @@ class TestPrecedingBatchSessionScoping:
             # Session 2's COLD overload is the subject, not the persistence
             # window (U11 B2); 1 restores the single-scan discard.
             overload_persistence_scans=1,
+            # This test pins the pre-U23 FAIL-CLOSED discard record itself, so
+            # U23's catch-up is switched off explicitly with its documented 0
+            # setting: the first persistent overshoot pauses, exactly as before
+            # this unit. U23's shed record is covered in
+            # test_caption_tap_worker.py::TestCaptionTapCatchUp.
+            catch_up_shed_limit=0,
             batch_diagnostic=collector,
         )
         worker._sweep_retention()

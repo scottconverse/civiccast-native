@@ -24,6 +24,42 @@ came across and what deliberately did not.
 
 Candidate identity: `v1.0.0-beta.9` (unpublished).
 
+### Live captions catch up after an ASR stall instead of pausing (U23, 2026-09-25)
+
+A channel whose settled backlog stayed over `max_backlog_segments` for the whole
+U11 persistence window (15 scans, ~30 s at the shipped 2 s poll) used to have its
+recognizer PAUSED under exponential backoff — 120 s, then 240 s, up to 480 s
+observed. U22 measured why that tripped so often live: recognition keeps up on
+the mean (per-channel 2.8–3.4 s per 10 s window against a 5 s cadence, 1.86×
+headroom) but not at the tail, where single windows of 10.6–19.5 s occur and
+often hit two or three channels within milliseconds because the channel callers
+share one GPU model. Nineteen overloads in 67.5 minutes of live operation, each
+costing 2–8 minutes with no captions at all, which the acceptance verifier
+samples as "no embedded cues".
+
+- A persistent overshoot is now answered by CATCHING UP. The channel keeps
+  captioning from the newest audio and discards only the oldest settled segments
+  that can no longer be transcribed in time, so it never stops for longer than
+  the backlog it sheds. The trigger is unchanged — still the U11 persistence
+  window — and a single over-limit scan still does nothing.
+- The newest `max_backlog_segments` are kept, which is exactly the size of the
+  legal deferred batch the tap already submits, so catching up never issues a
+  larger recognition call than the station was already making.
+- The seam stays correct: the first window after a shed is its own contiguous
+  segment and never overlap-joins across the discarded seconds. Both the shed's
+  previous-segment reset and the overlap join's own adjacency/continuity guards
+  enforce that, and each alone is sufficient.
+- The exponential pause ladder is retained, redefined: it now applies to a
+  channel that sheds three times inside five minutes — one that is shedding as
+  fast as the persistence window allows and still not holding the cadence, which
+  no transient produces. `CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_LIMIT=0` restores
+  the previous behaviour (pause on the first persistent overshoot).
+- An operator sees one WARNING per episode naming the channel, the segments
+  discarded and the seconds of audio they carried, and that captions continue.
+  A catch-up is not an overload: the channel's published state stays
+  `within-capacity`, and a shed is recorded in the per-batch diagnostic with the
+  reason `max-backlog-catch-up-shed`.
+
 ### Live-caption GPU throughput (candidate gates outstanding)
 
 - Size the live faster-whisper runtime for three concurrent workers on CUDA
