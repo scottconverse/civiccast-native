@@ -138,6 +138,29 @@ _RETENTION_SWEEP_SECONDS = RETENTION_SWEEP_SECONDS
 #: first sweep against a 13,550-candidate archive, i.e. >3x the cadence.
 _RETENTION_FIRST_VERDICT_WAIT_SECONDS = 1.0
 
+#: Consecutive over-limit scans required before the backlog gate PAUSES a
+#: channel (U11 B2).  A one-scan overshoot is a transient, not a collapse.
+#:
+#: Chosen from the U10 field measurement (2026-09-24, live station): 182
+#: overload trips in a day, 70% of them at EXACTLY 3 settled segments against a
+#: ``max_backlog_segments`` of 2 -- the smallest overshoot the gate can see --
+#: while the ASR pool was idle with no lock waits at trip time.  Per-batch ASR
+#: elapsed on that station was p50 1.95 s, p90 5.73 s, MAX 19.08 s, so the
+#: transient behind a worst-case batch is a ~20 s stretch with the queue over
+#: the limit, i.e. ~10 scans at the shipped 2 s poll.  This window is 15 scans
+#: = 30 s: 50% margin over the worst measured tail, while still shedding a
+#: genuine collapse in a quarter of the 120 s first pause.
+#:
+#: EPISTEMIC LIMIT, stated so this number is not overclaimed: the log cannot
+#: measure how long an over-limit episode would have lasted unfixed, because
+#: every trip today TRUNCATES the episode (it drops the audio and pauses).  This
+#: is therefore a bounded engineering judgement on a measured tail, not a
+#: measured distribution -- see reports/U11.md.
+#:
+#: ``1`` restores the pre-U11 contract (pause on the first over-limit scan) and
+#: is the operator's escape hatch if the deferred path is ever wrong.
+DEFAULT_OVERLOAD_PERSISTENCE_SCANS = 15
+
 
 def default_max_channel_workers(runtime: CaptionRuntime | None = None) -> int:
     """How many channels' ASR calls may be IN FLIGHT at once by default.
@@ -274,6 +297,7 @@ class CaptionTapWorkerSettings:
     # up to three on CUDA.  An environment value remains an exact override.
     max_channel_workers: int | None = None
     max_backlog_segments: int = 2
+    overload_persistence_scans: int = DEFAULT_OVERLOAD_PERSISTENCE_SCANS
     overload_backoff_seconds: float = DEFAULT_BASE_BACKOFF_SECONDS
     max_overload_backoff_seconds: float = DEFAULT_MAX_BACKOFF_SECONDS
 
@@ -310,6 +334,14 @@ class CaptionTapWorkerSettings:
             max_backlog_segments=_env_int(
                 "CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS",
                 defaults.max_backlog_segments,
+            ),
+            # Same fail-fast family as MAX_BACKLOG_SEGMENTS: both are gate
+            # thresholds, and both are meaningless below 1. A value of 1 is a
+            # LEGAL choice, not a mistake -- it restores the pre-U11 rule of
+            # pausing on the first over-limit scan.
+            overload_persistence_scans=_env_int(
+                "CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS",
+                defaults.overload_persistence_scans,
             ),
             **_backoff_settings_from_env(
                 base_default=defaults.overload_backoff_seconds,
@@ -463,6 +495,7 @@ class CaptionTapWorker:
         overlap_seconds: float = 5.0,
         max_channel_workers: int | None = None,
         max_backlog_segments: int = 2,
+        overload_persistence_scans: int = DEFAULT_OVERLOAD_PERSISTENCE_SCANS,
         reviewer_note: str = "Auto-generated from the live broadcast audio tap.",
         translation_provider: TranslationProvider | None = None,
         retention_policy: CaptionEvidenceRetentionPolicy | None = None,
@@ -554,6 +587,17 @@ class CaptionTapWorker:
         #: emitted once per distinct identity rather than on every pending scan.
         self._logged_runtime_identity: tuple[object, ...] | None = None
         self._max_backlog_segments = max_backlog_segments
+        if overload_persistence_scans < 1:
+            raise ValueError("Caption tap overload_persistence_scans must be at least 1.")
+        self._overload_persistence_scans = overload_persistence_scans
+        #: channel -> consecutive scans whose queued backlog was OVER the limit.
+        #: Only this count decides the pause (see the scan loop): a transient
+        #: overshoot must be drained, not punished. Touched only from the scan
+        #: thread, under the per-channel session lock.
+        self._overload_scan_streak: dict[str, int] = {}
+        #: Channels already told (once per episode, INFO) that this scan is
+        #: behind and is transcribing the oldest segments rather than pausing.
+        self._overload_deferral_announced: set[str] = set()
         self._reviewer_note = reviewer_note
         # S13 (T3/M4): the operator-selected translation model, injected at the same
         # DI seam summary/captions use. Threaded into each per-channel LiveCaptionWorker
@@ -589,6 +633,10 @@ class CaptionTapWorker:
         self._session_locks: dict[str, threading.RLock] = {}
         self._session_locks_guard = threading.Lock()
         reset_existing_live_sidecars(self._caption_work_dir)
+        # Same reasoning as the sidecar reset above, one level down: a worker
+        # process can start while the channel directories still hold the audio
+        # of the broadcast that just ended. See ``_discard_pre_existing_segments``.
+        self._discard_pre_existing_segments()
         # One line, logged once at tap start, so a field report or a sandbox
         # run records what box it ran on and what the tap actually sized
         # itself to -- without cross-referencing two separate log lines from
@@ -673,11 +721,11 @@ class CaptionTapWorker:
 
     def _submit_channel(
         self,
-        args: tuple[str, Path, list[tuple[int, Path]], int, str],
+        args: tuple[str, Path, list[tuple[int, Path]], int, str, bool],
     ) -> concurrent.futures.Future[_ChannelScanResult]:
         """Submit one channel batch and mark its settled files in-flight."""
 
-        channel_id, _channel_dir, segments, generation, _batch_id = args
+        channel_id, _channel_dir, segments, generation, _batch_id, _deferred = args
         names = frozenset(path.name for _index, path in segments)
         future = self._ensure_channel_executor().submit(
             self._isolated_process_channel,
@@ -773,6 +821,52 @@ class CaptionTapWorker:
         with self._channel_executor_lock:
             return bool(self._channel_inflight.get(channel_id))
 
+    def _note_backlog_depth(self, channel_id: str, depth: int) -> bool:
+        """Count this scan for/against the overload persistence window.
+
+        Returns True when the backlog has been over ``max_backlog_segments`` on
+        this many CONSECUTIVE scans -- i.e. when the overshoot has persisted long
+        enough to be a collapse rather than a transient (U11 B2). Any scan at or
+        under the limit clears the streak, so a single overshoot followed by a
+        drained queue never pauses a channel.
+        """
+
+        if depth <= self._max_backlog_segments:
+            self._reset_overload_persistence(channel_id)
+            return False
+        streak = self._overload_scan_streak.get(channel_id, 0) + 1
+        self._overload_scan_streak[channel_id] = streak
+        return streak >= self._overload_persistence_scans
+
+    def _reset_overload_persistence(self, channel_id: str) -> None:
+        """Forget a channel's over-limit streak and its once-per-episode notice."""
+
+        self._overload_scan_streak.pop(channel_id, None)
+        self._overload_deferral_announced.discard(channel_id)
+
+    def _announce_deferred_backlog(self, channel_id: str, depth: int) -> None:
+        """Say ONCE per episode that this scan is behind but still captioning.
+
+        Deliberately INFO, and deliberately not the overload line: this is the
+        tap working as designed under a transient, and an operator grepping the
+        log for a pause must not find one here.
+        """
+
+        if channel_id in self._overload_deferral_announced:
+            return
+        self._overload_deferral_announced.add(channel_id)
+        _LOG.info(
+            "Caption tap is behind for channel %s: %d settled segments is over the "
+            "maximum %d on scan %d of %d. Transcribing the oldest %d now and leaving "
+            "the rest queued; live captions continue.",
+            channel_id,
+            depth,
+            self._max_backlog_segments,
+            self._overload_scan_streak.get(channel_id, 0),
+            self._overload_persistence_scans,
+            self._max_backlog_segments,
+        )
+
     def _invalidate_inflight_for_overload(self, channel_id: str) -> None:
         """Refuse stale ASR publication when a queued backlog trips fail-closed."""
 
@@ -867,6 +961,9 @@ class CaptionTapWorker:
         # a cold new session must not inherit it as its own overload cause.
         self._forget_last_batch_duration(channel_id)
         self._backoff.forget(channel_id)
+        # The over-limit streak belongs to the session that just ended, exactly
+        # like the backoff state above it.
+        self._reset_overload_persistence(channel_id)
         LiveWebVttPublisher(active_caption_sidecar(self._caption_work_dir, channel_id)).reset()
         # Discard the channel's leftover segments: they belong to the PREVIOUS
         # session and can never air in this one.  This is the session-scoped
@@ -987,7 +1084,10 @@ class CaptionTapWorker:
                         # the other channels' newly arriving raw audio.
                         _LOG.exception("Cannot clear refused captions for channel %s", channel_id)
             return CaptionTapScanResult(channels=tuple(channels))
-        pending: list[tuple[str, Path, list[tuple[int, Path]], int]] = []
+        # (channel, dir, batch segments, generation, batch_id, deferred) -- the
+        # last flag marks a batch submitted from an OVER-limit queue, which must
+        # not be counted as recovery evidence by the backoff ladder.
+        pending: list[tuple[str, Path, list[tuple[int, Path]], int, str, bool]] = []
         for channel_dir in sorted(p for p in self._tap_root.iterdir() if p.is_dir()):
             channel_id = channel_dir.name
             with self._session_lock(channel_id):
@@ -1000,18 +1100,39 @@ class CaptionTapWorker:
                 with self._phase_timing.phase("scan_settle_and_backlog_gate", channel=channel_id):
                     segments = self._settled_segments(channel_dir)
                 if not segments:
+                    # No settled audio at all means nothing is queued, which is
+                    # under the limit -- and the streak must be CONSECUTIVE, so
+                    # a healthy gap clears it rather than merely failing to
+                    # advance it.  (A genuinely behind channel never reaches
+                    # here: the deferral below leaves the excess queued and the
+                    # settle guard leaves the newest file, so only a channel
+                    # that has caught up can have an empty scan.)
+                    self._reset_overload_persistence(channel_id)
                     continue
                 channels.append(channel_id)
+                inflight_names = self._inflight_names(channel_id)
+                queued_segments = [item for item in segments if item[1].name not in inflight_names]
                 if self._channel_has_inflight(channel_id):
+                    # Count the depth even while a batch runs.  "Has this
+                    # station been behind for the whole persistence window" is
+                    # just as true mid-batch as between batches -- and a slow
+                    # batch IS the measured shape of the U10 defect (p90 5.7 s,
+                    # max 19.08 s), so ignoring in-flight scans would blind the
+                    # window to the case it exists for.  The trip itself is only
+                    # ever taken on an idle scan, below.
+                    #
                     # Preserve per-channel ordering and the stateful
                     # stabilizer.  The current batch owns its paths; new
                     # arrivals remain queued for the next scan after it ends.
+                    self._note_backlog_depth(channel_id, len(queued_segments))
                     continue
-                inflight_names = self._inflight_names(channel_id)
-                queued_segments = [item for item in segments if item[1].name not in inflight_names]
                 if not queued_segments:
+                    self._note_backlog_depth(channel_id, 0)
                     continue
                 if self._backoff.is_paused(channel_id):
+                    # A paused channel is draining, not over-limit: it must not
+                    # carry a streak into the scan where it is released.
+                    self._reset_overload_persistence(channel_id)
                     self._record_discarded_batch(
                         channel_id,
                         queued_segments,
@@ -1023,6 +1144,32 @@ class CaptionTapWorker:
                     paused_channels.append(channel_id)
                     continue
                 if len(queued_segments) > self._max_backlog_segments:
+                    if not self._note_backlog_depth(channel_id, len(queued_segments)):
+                        # TRANSIENT, not a collapse (U11 B2): the overshoot has
+                        # not persisted for the whole window, so captions keep
+                        # flowing.  Only the OLDEST ``max_backlog_segments`` are
+                        # transcribed, so the ASR call size is exactly what a
+                        # legal batch would be -- the deferral spends no more
+                        # CPU per cycle than the station already spends, and the
+                        # excess stays queued instead of being deleted.
+                        self._announce_deferred_backlog(channel_id, len(queued_segments))
+                        deferred = queued_segments[: self._max_backlog_segments]
+                        batch_id = self._begin_batch(
+                            channel_id,
+                            self._session_generation.get(channel_id, 0),
+                            deferred,
+                        )
+                        pending.append(
+                            (
+                                channel_id,
+                                channel_dir,
+                                deferred,
+                                self._session_generation.get(channel_id, 0),
+                                batch_id,
+                                True,
+                            )
+                        )
+                        continue
                     # A currently-running batch is not queued backlog.  Keep
                     # the generation invalidation as a defensive race guard
                     # for a session/reset that becomes visible between the
@@ -1037,6 +1184,9 @@ class CaptionTapWorker:
                     )
                     self._invalidate_inflight_for_overload(channel_id)
                     dropped += self._fail_closed_overload(channel_id, channel_dir, queued_segments)
+                    # The episode is over: the channel is paused and its audio is
+                    # gone, so a later release starts counting from zero.
+                    self._reset_overload_persistence(channel_id)
                     overloaded_channels.append(channel_id)
                     paused_channels.append(channel_id)
                     continue
@@ -1053,6 +1203,7 @@ class CaptionTapWorker:
                         queued_segments,
                         self._session_generation.get(channel_id, 0),
                         batch_id,
+                        False,
                     )
                 )
 
@@ -1136,6 +1287,7 @@ class CaptionTapWorker:
         segments: list[tuple[int, Path]],
         generation: int | None = None,
         batch_id: str | None = None,
+        deferred_over_limit: bool = False,
     ) -> _ChannelScanResult:
         """Run one channel's scan pass without letting its failure abort the pass.
 
@@ -1150,7 +1302,13 @@ class CaptionTapWorker:
 
         started = time.monotonic()
         try:
-            result = self._process_channel(channel_id, channel_dir, segments, generation)
+            result = self._process_channel(
+                channel_id,
+                channel_dir,
+                segments,
+                generation,
+                deferred_over_limit=deferred_over_limit,
+            )
             if batch_id is not None:
                 # Outcome reflects whether cues were COMMITTED, not merely
                 # whether a segment was consumed: a consumed segment whose
@@ -1198,6 +1356,7 @@ class CaptionTapWorker:
         channel_dir: Path,
         segments: list[tuple[int, Path]],
         generation: int | None = None,
+        deferred_over_limit: bool = False,
     ) -> _ChannelScanResult:
         # This thread is about to run ASR. Hint the scheduler that it must
         # yield to the playout workers when the box is saturated.
@@ -1297,24 +1456,40 @@ class CaptionTapWorker:
         # reset itself to the base delay every other scan.
         with self._session_lock(channel_id):
             if generation == self._session_generation.get(channel_id, 0):
-                transition = self._backoff.record_within_capacity(channel_id)
-                if transition:
-                    # Field instrumentation (beta.9 ladder, 2026-09-19): the
-                    # shipped log only recorded the overload OPEN, so a live
-                    # second trip could not show whether the sustained recovery
-                    # bar was ever reached. INFO on transition only (bounded by
-                    # the rare recovery events, not per scan), metadata only.
-                    _LOG.info(
-                        "Caption tap backoff for channel %s: %s (rung=%d).",
+                if deferred_over_limit:
+                    # A scan whose QUEUE was over the backlog limit is not
+                    # evidence that the channel is within capacity, whatever its
+                    # batch managed to finish (U11 B2). Counting it as recovery
+                    # would let a station that is still behind walk its
+                    # escalation ladder back down -- and then trip again at the
+                    # base window, the exact flap the ladder exists to prevent.
+                    # The operator-visible status is unchanged (still
+                    # "within-capacity": this unit adds no new state), and the
+                    # deferral is reported in the log and the batch diagnostic.
+                    self._publish_status(
                         channel_id,
-                        transition,
-                        self._backoff.state(channel_id).consecutive_overloads,
+                        state="within-capacity",
+                        backlog_segments=len(segments),
                     )
-                self._publish_status(
-                    channel_id,
-                    state="within-capacity",
-                    backlog_segments=len(segments),
-                )
+                else:
+                    transition = self._backoff.record_within_capacity(channel_id)
+                    if transition:
+                        # Field instrumentation (beta.9 ladder, 2026-09-19): the
+                        # shipped log only recorded the overload OPEN, so a live
+                        # second trip could not show whether the sustained recovery
+                        # bar was ever reached. INFO on transition only (bounded by
+                        # the rare recovery events, not per scan), metadata only.
+                        _LOG.info(
+                            "Caption tap backoff for channel %s: %s (rung=%d).",
+                            channel_id,
+                            transition,
+                            self._backoff.state(channel_id).consecutive_overloads,
+                        )
+                    self._publish_status(
+                        channel_id,
+                        state="within-capacity",
+                        backlog_segments=len(segments),
+                    )
         return _ChannelScanResult(
             consumed_segments=consumed,
             quarantined_segments=quarantined,
@@ -1322,13 +1497,58 @@ class CaptionTapWorker:
             expired_unconfirmed_cues=expired,
         )
 
-    def _discard_settled_segments(self, channel_id: str) -> int:
-        """Discard a channel's leftover settled segments at session start.
+    def _discard_pre_existing_segments(self) -> int:
+        """Discard segments already on disk when this worker is constructed.
+
+        THE STARTUP GAP (U11 B1).  ``_discard_settled_segments`` runs only on an
+        explicit START, i.e. from the daemon's ``channel_start_hook``. A
+        restart of the control plane does not issue one, so a worker could come
+        up over a directory still holding the previous broadcast's audio and
+        count it as backlog. MEASURED on the live station (U10, 2026-09-24): the
+        17:17:41 and 17:17:43 trips followed a service restart at ~17:17:2x,
+        with the oldest queued segment 50.9-56.5 s old at trip time -- audio
+        from BEFORE the restart, discarded only when someone pressed START.
+
+        Why a construction-time watermark is sound here, and mtime is not: every
+        chunk present at construction was produced by something other than this
+        worker -- a previous process or a finished session -- so no writer's
+        ownership has to be inferred from the filesystem. (The SCOPE LIMIT note
+        on ``_begin_channel_session_locked`` records why file mtime cannot
+        establish that, and that reasoning still holds.)
+
+        Deliberately scoped to what exists NOW: a segment the tap writes after
+        construction is this session's audio and is processed normally, even if
+        the first scan has not run yet.
+
+        Never fatal: the tap directory is an operator-managed surface, and a
+        worker that cannot be constructed would take the control plane -- and
+        the station -- down over a caption-tap cleanup.
+        """
+
+        try:
+            channel_dirs = sorted(path for path in self._tap_root.iterdir() if path.is_dir())
+        except OSError:
+            _LOG.debug(
+                "Caption tap could not list %s at startup; no leftover audio was "
+                "discarded. Live captions continue.",
+                self._tap_root,
+                exc_info=True,
+            )
+            return 0
+        removed = 0
+        for channel_dir in channel_dirs:
+            removed += self._discard_settled_segments(channel_dir.name, context="worker startup")
+        return removed
+
+    def _discard_settled_segments(self, channel_id: str, *, context: str = "session start") -> int:
+        """Discard a channel's leftover settled segments at a session boundary.
 
         Segments left in ``<channel>/`` by a previous broadcast belong to a
         session that has already ended, so they can never air.  Removing them
-        keeps a new session from inheriting the old one's backlog, which would
+        keeps a new session from starting on the old one's backlog, which would
         otherwise trip the max-backlog fail-closed before any new audio existed.
+        ``context`` names the boundary in the log line -- "session start" for an
+        explicit START, "worker startup" for the construction-time sweep.
         """
 
         channel_dir = self._tap_root / channel_id
@@ -1359,9 +1579,10 @@ class CaptionTapWorker:
         if removed:
             _LOG.info(
                 "Caption tap discarded %d leftover segment(s) for channel %s at "
-                "session start; they belonged to a finished broadcast",
+                "%s; they belonged to a finished broadcast",
                 removed,
                 channel_id,
+                context,
             )
         return removed
 
@@ -1676,6 +1897,7 @@ class CaptionTapWorker:
             ):
                 self._clear_channel_captions(channel_id)
                 self._backoff.forget(channel_id)
+                self._reset_overload_persistence(channel_id)
 
         channels: list[str] = []
         discarded = 0
@@ -1694,6 +1916,7 @@ class CaptionTapWorker:
                 if not self._disabled_announced:
                     self._clear_channel_captions(channel_id)
                     self._backoff.forget(channel_id)
+                self._reset_overload_persistence(channel_id)
                 # Throttle unchanged status, as in the enabled scan path.
                 self._publish_status(channel_id, state="disabled", backlog_segments=0)
                 for _index, segment in self._settled_segments(channel_dir):
@@ -2142,6 +2365,7 @@ def build_tap_worker(
         overlap_seconds=settings.overlap_seconds,
         max_channel_workers=settings.max_channel_workers,
         max_backlog_segments=settings.max_backlog_segments,
+        overload_persistence_scans=settings.overload_persistence_scans,
         translation_provider=translation_provider,
         backoff_policy=CaptionBackoffPolicy(
             base_seconds=settings.overload_backoff_seconds,

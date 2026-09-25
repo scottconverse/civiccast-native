@@ -238,8 +238,6 @@ def test_worker_records_overload_outcome_with_queue_and_reason(tmp_path: Path, c
             handle.writeframes(b"\x01\x00" * int(TAP_SAMPLE_RATE_HZ * seconds))
 
     tap_root = tmp_path / "tap"
-    for index in range(4):
-        write_wav(tap_root / "public" / f"chunk-{index:06d}.wav")
 
     collector = tbd.BatchDiagnosticCollector()
     worker = CaptionTapWorker(
@@ -250,10 +248,20 @@ def test_worker_records_overload_outcome_with_queue_and_reason(tmp_path: Path, c
         segment_seconds=5.0,
         atomic_segments=True,
         max_backlog_segments=2,
+        # This test is about what the OVERLOAD DISCARD records, not about how
+        # long an overshoot must persist before the gate discards (U11 B2 sets
+        # that window to 15 scans and covers it in test_caption_tap_worker.py).
+        # 1 restores the single-scan discard so the record under test exists.
+        overload_persistence_scans=1,
         batch_diagnostic=collector,
     )
     worker._sweep_retention()
     assert worker.wait_for_retention_sweep(timeout=5.0)
+
+    # Written AFTER construction: audio that already exists when the worker
+    # starts belongs to a previous session and is discarded at startup (U11 B1).
+    for index in range(4):
+        write_wav(tap_root / "public" / f"chunk-{index:06d}.wav")
 
     caplog.set_level(logging.INFO)
     result = worker.run_once()
@@ -267,6 +275,7 @@ def test_worker_records_overload_outcome_with_queue_and_reason(tmp_path: Path, c
     assert record["reason"] == "max-backlog-exceeded"
     assert record["queue_depth"] == 4
     assert record["segment_indices"] == [0, 1, 2, 3]
+
 
 def test_default_off_never_stats_segments(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Finding 1: the off path must not stat files or compute queue age.
@@ -303,8 +312,6 @@ def test_default_off_never_stats_segments(tmp_path: Path, monkeypatch: pytest.Mo
             handle.writeframes(b"\x01\x00" * int(TAP_SAMPLE_RATE_HZ * seconds))
 
     tap_root = tmp_path / "tap"
-    for index in range(4):
-        write_wav(tap_root / "public" / f"chunk-{index:06d}.wav")
 
     worker = CaptionTapWorker(
         tap_root=tap_root,
@@ -318,6 +325,13 @@ def test_default_off_never_stats_segments(tmp_path: Path, monkeypatch: pytest.Mo
     )
     worker._sweep_retention()
     assert worker.wait_for_retention_sweep(timeout=5.0)
+
+    # Written AFTER construction: audio that already exists when the worker
+    # starts belongs to a previous session and is discarded at startup (U11 B1).
+    # Without this the scan below would examine nothing and the "no stat on the
+    # off path" assertion would pass for the wrong reason.
+    for index in range(4):
+        write_wav(tap_root / "public" / f"chunk-{index:06d}.wav")
 
     # Direct seam assertion: on the off path the queue-age helper must not run,
     # so no Path.stat (and no clock read) can happen for the diagnostic.
@@ -438,7 +452,6 @@ def test_empty_asr_is_not_reported_as_committed(tmp_path: Path) -> None:
             handle.writeframes(b"\x01\x00" * int(TAP_SAMPLE_RATE_HZ * seconds))
 
     tap_root = tmp_path / "tap"
-    write_wav(tap_root / "public" / "chunk-000000.wav")
 
     collector = tbd.BatchDiagnosticCollector()
     worker = CaptionTapWorker(
@@ -452,6 +465,10 @@ def test_empty_asr_is_not_reported_as_committed(tmp_path: Path) -> None:
     )
     worker._sweep_retention()
     assert worker.wait_for_retention_sweep(timeout=5.0)
+
+    # Written AFTER construction: audio that already exists when the worker
+    # starts belongs to a previous session and is discarded at startup (U11 B1).
+    write_wav(tap_root / "public" / "chunk-000000.wav")
     worker.run_once()
 
     records = collector.summarise(force=True).get("batches", [])
@@ -503,6 +520,7 @@ def test_inflight_summary_preserves_real_batch_id(monkeypatch: pytest.MonkeyPatc
     finished = collector.summarise(force=True)["batches"][-1]
     assert finished["batch_id"] == "education-g2-b000042-n1"
     assert finished["outcome"] == "committed"
+
 
 def _make_record(collector: tbd.BatchDiagnosticCollector, index: int, clock) -> str:
     batch_id = f"public-g1-b{index:06d}-n1"
@@ -629,6 +647,7 @@ def test_no_emission_after_final_post_window_report(
     assert len(lines) == 1, f"emitted after final report: {len(lines)}"
     assert collector.enabled is False
 
+
 def test_hung_inflight_batch_does_not_reemit_after_window_closing_report(
     monkeypatch: pytest.MonkeyPatch, caplog
 ) -> None:
@@ -719,8 +738,6 @@ class TestOverloadCarriesPrecedingBatchDuration:
 
         tap_root = tmp_path / "tap"
         channel = tap_root / "public"
-        for index in range(2):
-            write_wav(channel / f"chunk-{index:06d}.wav")
 
         runtime = _HeldRuntime()
         collector = tbd.BatchDiagnosticCollector()
@@ -732,10 +749,21 @@ class TestOverloadCarriesPrecedingBatchDuration:
             segment_seconds=5.0,
             atomic_segments=True,
             max_backlog_segments=2,
+            # What the DISCARD records is the subject here, not how long an
+            # overshoot must persist first (U11 B2). 1 restores the single-scan
+            # discard so this test's overload actually happens; the shipped
+            # window is covered in test_caption_tap_worker.py.
+            overload_persistence_scans=1,
             batch_diagnostic=collector,
         )
         worker._sweep_retention()
         assert worker.wait_for_retention_sweep(timeout=5.0)
+
+        # Written AFTER construction: audio that already exists when the worker
+        # starts belongs to a previous session and is discarded at startup
+        # (U11 B1).
+        for index in range(2):
+            write_wav(channel / f"chunk-{index:06d}.wav")
 
         first = worker.run_once(wait_for_results=False)
         assert first.overloaded_channels == ()
@@ -805,10 +833,6 @@ class TestOverloadCarriesPrecedingBatchDuration:
 
         tap_root = tmp_path / "tap"
         channel = tap_root / "public"
-        # Four settled segments on a COLD channel: the very first scan overloads
-        # before any batch has ever run.
-        for index in range(4):
-            write_wav(channel / f"chunk-{index:06d}.wav")
 
         collector = tbd.BatchDiagnosticCollector()
         worker = CaptionTapWorker(
@@ -819,10 +843,20 @@ class TestOverloadCarriesPrecedingBatchDuration:
             segment_seconds=5.0,
             atomic_segments=True,
             max_backlog_segments=2,
+            # The subject is the recorded 0.0, not the persistence window
+            # (U11 B2); 1 restores the single-scan discard.
+            overload_persistence_scans=1,
             batch_diagnostic=collector,
         )
         worker._sweep_retention()
         assert worker.wait_for_retention_sweep(timeout=5.0)
+
+        # Written AFTER construction: audio that already exists when the worker
+        # starts belongs to a previous session and is discarded at startup
+        # (U11 B1). Four settled segments on a COLD channel: the very first scan
+        # overloads before any batch has ever run.
+        for index in range(4):
+            write_wav(channel / f"chunk-{index:06d}.wav")
 
         result = worker.run_once()
         assert result.overloaded_channels == ("public",), result
@@ -865,8 +899,6 @@ class TestOverloadCarriesPrecedingBatchDuration:
 
         tap_root = tmp_path / "tap"
         channel = tap_root / "public"
-        for index in range(2):
-            write_wav(channel / f"chunk-{index:06d}.wav")
 
         # Default: no batch_diagnostic injected -> NullBatchDiagnostic.
         worker = CaptionTapWorker(
@@ -881,6 +913,13 @@ class TestOverloadCarriesPrecedingBatchDuration:
         worker._sweep_retention()
         assert worker.wait_for_retention_sweep(timeout=5.0)
         assert worker._batch_diagnostic.enabled is False
+
+        # Written AFTER construction: audio that already exists when the worker
+        # starts belongs to a previous session and is discarded at startup (U11
+        # B1). Without this the scan below would find nothing to dispatch and the
+        # inert-clock assertion would pass for the wrong reason.
+        for index in range(2):
+            write_wav(channel / f"chunk-{index:06d}.wav")
 
         worker.run_once()
 
@@ -955,8 +994,6 @@ class TestPrecedingBatchSessionScoping:
 
         tap_root = tmp_path / "tap"
         channel = tap_root / "public"
-        for index in range(2):
-            write_wav(channel / f"chunk-{index:06d}.wav")
 
         runtime = _HeldRuntime()
         collector = tbd.BatchDiagnosticCollector()
@@ -968,10 +1005,19 @@ class TestPrecedingBatchSessionScoping:
             segment_seconds=5.0,
             atomic_segments=True,
             max_backlog_segments=2,
+            # Session 2's COLD overload is the subject, not the persistence
+            # window (U11 B2); 1 restores the single-scan discard.
+            overload_persistence_scans=1,
             batch_diagnostic=collector,
         )
         worker._sweep_retention()
         assert worker.wait_for_retention_sweep(timeout=5.0)
+
+        # Written AFTER construction: audio that already exists when the worker
+        # starts belongs to a previous session and is discarded at startup
+        # (U11 B1).
+        for index in range(2):
+            write_wav(channel / f"chunk-{index:06d}.wav")
 
         # Session 1: a real held batch runs ~0.5 s and completes, so the
         # last-batch duration is a meaningful nonzero number.
@@ -1038,8 +1084,6 @@ class TestPrecedingBatchSessionScoping:
 
         tap_root = tmp_path / "tap"
         channel = tap_root / "public"
-        for index in range(2):
-            write_wav(channel / f"chunk-{index:06d}.wav")
 
         runtime = _HeldRuntime()
         collector = tbd.BatchDiagnosticCollector()
@@ -1055,6 +1099,12 @@ class TestPrecedingBatchSessionScoping:
         )
         worker._sweep_retention()
         assert worker.wait_for_retention_sweep(timeout=5.0)
+
+        # Written AFTER construction: audio that already exists when the worker
+        # starts belongs to a previous session and is discarded at startup
+        # (U11 B1).
+        for index in range(2):
+            write_wav(channel / f"chunk-{index:06d}.wav")
 
         assert worker.run_once(wait_for_results=False).overloaded_channels == ()
         assert runtime.started.wait(timeout=2.0)
