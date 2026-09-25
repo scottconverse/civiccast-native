@@ -114,7 +114,25 @@ CIVICCAST_SUPERVISED_ENV_VAR = "CIVICCAST_SUPERVISED"
 # spec-fixed budget number -- this is a WS5-chosen, disclosed default
 # (overridable by every caller).
 POSTGRES_READY_BUDGET_SECONDS = 60.0
-DEFAULT_CONTROL_PLANE_READY_BUDGET_SECONDS = 30.0
+# U31 (2026-09-25): 30.0 was too small for a cold start on a loaded box, and it
+# cost the station ~11 minutes of dead air. MEASURED on this box (three idle
+# runs, `%TEMP%\u31\startup_measurements.json`): a cold control-plane start cost
+# 15462.6 / 10883.3 / 11207.9 ms of wall time, of which the interpreter import
+# alone was 12669.9 / 8304.3 / 8559.3 ms and `create_app` only 1066.8 / 1302.3 /
+# 1331.8 ms -- and on the LOADED station (two other units running ffmpeg/
+# GStreamer work) it exceeded 30 s outright, three times in a row. 180.0 is the
+# absolute cap, and it is only safe because the same spec carries a no-progress
+# window (DEFAULT_CONTROL_PLANE_STALL_SECONDS): a child that has stopped doing
+# work fails at 60 s regardless of this number, so the raise cannot make a
+# wedge slower to detect than it was.
+DEFAULT_CONTROL_PLANE_READY_BUDGET_SECONDS = 180.0
+# U31: how long the control plane may make NO CPU progress at all before it is
+# read as wedged rather than slow -- sampled by `process_cpu_seconds` and
+# applied by `poll_until_ready(progress=..., stall_seconds=...)`. 60.0 s is 4x
+# the worst measured idle start (15.5 s) and ~13x the create_app half of it, so
+# a merely slow import cannot trip it; a deadlock, a blocking socket read, or a
+# thread that will never be scheduled does.
+DEFAULT_CONTROL_PLANE_STALL_SECONDS = 60.0
 # Task #57 D2: matches the ONE in-repo authority for bringing the staged
 # ollama runtime up -- the installer's production self-test
 # (apps/installer/src-tauri/src/main.rs, NativeOllamaSelfTestServer::
@@ -167,6 +185,18 @@ class ChildSpec(BaseModel):
     graceful_stop_deadline_seconds: float = Field(gt=0)
 
     readiness_budget_seconds: float = Field(gt=0)
+
+    # U31 (2026-09-25): how long this child may make NO CPU progress while its
+    # readiness gate is polling, before the poll stops reading it as slow and
+    # starts reading it as wedged. None (the default, and every child but the
+    # control plane) means the budget above is the only rule -- the exact
+    # pre-U31 behaviour, correct for a child whose readiness probe is a
+    # one-shot statement (postgres' `SELECT 1`, ollama's `GET /api/version`)
+    # rather than a process that must import an application first. Only
+    # meaningful together with `poll_until_ready`'s `progress` seam, which
+    # `core.start_child` supplies from `process_cpu_seconds` exactly when this
+    # is set.
+    readiness_stall_seconds: float | None = Field(default=None, gt=0)
 
     # Gate A run #4 fix (2026-08-21): the file name (minus ``.log``, fed to
     # ``child_log_path``) that ``_file_backed_popen_factory`` uses for THIS
@@ -440,6 +470,7 @@ def control_plane_child_spec(
     extra_env: Mapping[str, str] | None = None,
     graceful_stop_deadline_seconds: float = DEFAULT_GRACEFUL_STOP_DEADLINE_SECONDS,
     readiness_budget_seconds: float = DEFAULT_CONTROL_PLANE_READY_BUDGET_SECONDS,
+    readiness_stall_seconds: float | None = DEFAULT_CONTROL_PLANE_STALL_SECONDS,
 ) -> ChildSpec:
     """D6/D5 control-plane child. Launch argv is the production uvicorn
     ``--factory`` invocation, r2-children's exact string
@@ -481,6 +512,17 @@ def control_plane_child_spec(
     ``CIVICCAST_SUPERVISOR_MODE_CONTRACT=1`` (RAT-001) -- the INPUT half of
     the maintenance contract. The readiness HALF is a separate, fail-closed
     gate: :func:`check_control_plane_maintenance_ready`.
+
+    U31 (2026-09-25): this is the ONLY child that carries a
+    ``readiness_stall_seconds`` window, because it is the only one whose
+    readiness depends on a cold Python start -- measured at 10.9-15.5 s of wall
+    time IDLE on this box (8.3-12.7 s of it the interpreter import) and past
+    30 s on the loaded station, where a 30 s budget killed it three times and
+    cost ~11 minutes of dead air (see
+    :data:`DEFAULT_CONTROL_PLANE_READY_BUDGET_SECONDS`). An operator who wants
+    the old wall-clock-only rule back passes
+    ``readiness_stall_seconds=None`` (and, presumably, the old budget), which
+    restores :func:`poll_until_ready`'s pre-U31 behaviour exactly.
     """
 
     argv = [
@@ -513,6 +555,7 @@ def control_plane_child_spec(
         graceful_stop_argv_template=[],
         graceful_stop_deadline_seconds=graceful_stop_deadline_seconds,
         readiness_budget_seconds=readiness_budget_seconds,
+        readiness_stall_seconds=readiness_stall_seconds,
     )
 
 
@@ -697,6 +740,53 @@ AbortFn = Callable[[], bool]
 :func:`poll_until_ready` (and threaded down from ``core.Supervisor``) so a
 long readiness budget cannot hold the stop chain hostage; see F1 below."""
 
+ProgressFn = Callable[[], float | None]
+"""``() -> float | None`` -- this child's cumulative CPU seconds so far (see
+:func:`process_cpu_seconds`), or ``None`` when it cannot be sampled. Injected
+into :func:`poll_until_ready` together with ``stall_seconds`` so a slow start
+can be told from a wedged one; see U31 below."""
+
+AliveFn = Callable[[], bool]
+"""``() -> bool`` -- "is this child's process still alive?". Injected into
+:func:`poll_until_ready` so a child that has already exited fails its gate at
+once instead of holding the budget; see U31 below."""
+
+
+def process_cpu_seconds(pid: int) -> float | None:
+    """The process's cumulative CPU time in seconds (user + system), or ``None``
+    when it cannot be read. U31's progress signal for :func:`poll_until_ready`.
+
+    Why this and not something cheaper: it is monotone for a live process, and
+    unlike wall time it cannot be advanced by anything except the child's own
+    threads doing work -- a log file's mtime moves when a watchdog touches it,
+    a heartbeat on disk moves when the parent writes it, and neither says the
+    child is doing anything. It is also the exact discriminator the station
+    needed on 2026-09-25: the control plane was burning CPU on three channels'
+    start preparation while its readiness gate kept answering "not ready".
+
+    ``psutil`` is imported lazily (the same posture as
+    ``egress.relay_reclaim.PsutilPortOwnerApi`` -- it is a platform dependency
+    of process handling, not of importing this module). EVERY failure returns
+    ``None``: no such process, access denied, a platform without the call, a
+    pid that is not an int. Silently -- the caller's readiness detail line is
+    where the outcome is reported, and a poll ticks this once a second.
+
+    ``cpu_times()`` rather than ``cpu_percent()``: a percent is a delta over a
+    window this function does not own, and the poll already owns the sampling
+    cadence. ``None`` is "cannot be sampled", NEVER 0.0 -- "we could not look"
+    and "it used no CPU" are different facts, and conflating them would
+    stall-fail a healthy child (see :func:`poll_until_ready`).
+    """
+    if pid <= 0:
+        return None
+    try:
+        import psutil
+
+        times = psutil.Process(pid).cpu_times()
+    except Exception:
+        return None
+    return float(times.user + times.system)
+
 
 def poll_until_ready(
     check: ReadinessCheckFn,
@@ -706,6 +796,9 @@ def poll_until_ready(
     sleep: SleepFn,
     poll_interval_seconds: float = 1.0,
     should_abort: AbortFn | None = None,
+    progress: ProgressFn | None = None,
+    stall_seconds: float | None = None,
+    liveness: AliveFn | None = None,
 ) -> ReadinessResult:
     """Call ``check()`` until it reports ``ready`` or ``budget_seconds`` has
     elapsed (per ``clock``), sleeping ``poll_interval_seconds`` between
@@ -722,17 +815,43 @@ def poll_until_ready(
     F1 (BLOCKER, 2026-07-31): the ``should_abort`` seam ends the poll EARLY,
     with the distinct ``aborted`` outcome, when a service stop has been
     requested. Without it the budget is the only exit, and one supervisor
-    iteration could chain THREE of them (postgres 60s +
-    control_plane 30s + ollama 60s) while ``SvcStop`` waited -- long enough for
-    the 150s stop watchdog to fire MID-CHAIN and hard-kill an unclean postgres
-    cluster. It is checked (a) at the top of each iteration, so an
+    iteration could chain THREE of them (60s + 30s + 60s when F1 was written;
+    the control plane's own budget is 180s as of U31, so the same chain is now
+    300s) while ``SvcStop`` waited -- long enough for the 150s stop watchdog to
+    fire MID-CHAIN and hard-kill an unclean postgres cluster. It is checked (a)
+    at the top of each iteration, so an
     already-requested stop costs zero probe attempts, and (b) immediately after
     ``check()`` returns, so a stop that arrives DURING a probe costs at most
     that one in-flight attempt and never the following sleep. ``None`` (the
     default) preserves the old budget-only behaviour exactly.
+
+    U31 (2026-09-25): ``budget_seconds`` alone cannot tell a SLOW child from a
+    WEDGED one, and the station paid for that -- the control plane was alive
+    and running all three channels' start preparation when its 30 s budget
+    expired, so the supervisor killed it (and each restart re-queued the same
+    preparation: ~11 minutes of dead air, ``supervisor.log`` 07:20:32-07:31:45).
+    Two further OPTIONAL seams split the question; both are inert unless
+    supplied, so every existing caller is byte-for-byte unaffected:
+
+    * ``progress`` + ``stall_seconds``: the child's cumulative CPU seconds,
+      sampled once per iteration. An increase restarts a ``stall_seconds``
+      window measured from that sample; a sample that does NOT advance for a
+      whole window means the child has done no work in ``stall_seconds`` and
+      the poll ends. ``progress()`` returning ``None`` (cannot be sampled) is
+      treated as no evidence either way and restarts the window -- failing a
+      child on evidence we do not have is the same mistake as the defect. The
+      outcome stays ``timeout`` (the caller's handling -- backoff, WARNING,
+      restart -- is identical) but the detail says which rule fired, so the log
+      distinguishes "stalled" from "still working".
+    * ``liveness``: ``False`` ends the poll at once with ``not_ready`` -- the
+      child is gone, there is nothing left to wait for, and the restart path
+      owns it. It is consulted only AFTER a failed check, so a ``ready`` verdict
+      is never second-guessed, and after the abort seam, so a stop still wins.
     """
 
     deadline = clock() + budget_seconds
+    last_progress = progress() if progress is not None else None
+    last_progress_at = clock()
     while True:
         if should_abort is not None and should_abort():
             return ReadinessResult(
@@ -747,7 +866,29 @@ def poll_until_ready(
                 outcome="aborted",
                 detail=f"readiness poll aborted by stop request; last result: {result.detail}",
             )
-        if clock() >= deadline:
+        if liveness is not None and not liveness():
+            return ReadinessResult(
+                outcome="not_ready",
+                detail=(
+                    "child process exited while waiting for readiness; "
+                    f"last result: {result.detail}"
+                ),
+            )
+        now = clock()
+        if progress is not None and stall_seconds is not None:
+            current = progress()
+            if current is None or last_progress is None or current > last_progress:
+                last_progress = current
+                last_progress_at = now
+            elif now - last_progress_at >= stall_seconds:
+                return ReadinessResult(
+                    outcome="timeout",
+                    detail=(
+                        f"readiness stalled: no CPU progress for {stall_seconds}s; "
+                        f"last result: {result.detail}"
+                    ),
+                )
+        if now >= deadline:
             return ReadinessResult(
                 outcome="timeout",
                 detail=f"readiness budget ({budget_seconds}s) exhausted; last result: {result.detail}",
@@ -810,12 +951,14 @@ def restart_storm_check(
 __all__ = [
     "CIVICCAST_SUPERVISED_ENV_VAR",
     "DEFAULT_CONTROL_PLANE_READY_BUDGET_SECONDS",
+    "DEFAULT_CONTROL_PLANE_STALL_SECONDS",
     "DEFAULT_GRACEFUL_STOP_DEADLINE_SECONDS",
     "DEFAULT_OLLAMA_HOST",
     "DEFAULT_OLLAMA_PORT",
     "DEFAULT_OLLAMA_READY_BUDGET_SECONDS",
     "POSTGRES_READY_BUDGET_SECONDS",
     "AbortFn",
+    "AliveFn",
     "ChildName",
     "ChildSpec",
     "ControlPlaneHealthProbe",
@@ -823,6 +966,7 @@ __all__ = [
     "GracefulStopAction",
     "GracefulStopKind",
     "OllamaChildDecision",
+    "ProgressFn",
     "ReadinessOutcome",
     "ReadinessResult",
     "backoff_with_jitter",
@@ -837,6 +981,7 @@ __all__ = [
     "ollama_child_spec",
     "poll_until_ready",
     "postgres_child_spec",
+    "process_cpu_seconds",
     "read_postmaster_pid",
     "restart_storm_check",
 ]
