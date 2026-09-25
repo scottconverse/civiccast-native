@@ -24,7 +24,7 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
-from typing import Final
+from typing import IO, Final
 
 from civiccast.stream.config import FFMPEG_MIN_VERSION
 
@@ -102,6 +102,14 @@ class FfmpegProcessHandle:
     process: subprocess.Popen[str]
     _stdout_file: object | None = None
     _stderr_file: object | None = None
+    #: The read end of the child's stderr pipe, present only when the caller
+    #: asked for ``stderr_pipe=True``. Whoever asked must drain it and close it:
+    #: an undrained pipe fills at the OS buffer size (~64 KiB) and then blocks
+    #: ffmpeg forever. ``terminate`` and ``close`` deliberately do NOT touch it
+    #: -- closing a pipe out from under the thread reading it is how you lose
+    #: the last lines of the incident you are capturing. U24.1: the HLS relay
+    #: hands this to the drain thread that owns its per-channel stderr log.
+    stderr_pipe: IO[str] | None = None
 
     @property
     def pid(self) -> int:
@@ -557,6 +565,7 @@ def start_ffmpeg(
     *,
     stdout_path: Path | None = None,
     stderr_path: Path | None = None,
+    stderr_pipe: bool = False,
 ) -> FfmpegProcessHandle:
     """Start ffmpeg without waiting for it to exit.
 
@@ -579,6 +588,18 @@ def start_ffmpeg(
     (Outside the supervisor — a bare ``uvicorn`` dev run, or a unit test — there
     is no Job Object at all, so there is nothing to assign to and nothing an
     explicit assign here could do.)
+
+    ``stderr_path`` and ``stderr_pipe`` are alternatives, not companions. The
+    default is the file: this process opens ``stderr_path`` in append mode and
+    hands that handle to the child, so the child's own writes land in the file
+    and nothing here has to drain anything. ``stderr_pipe=True`` instead asks
+    for ``subprocess.PIPE``. That is ONLY correct for a caller that immediately
+    attaches a drain thread and reads the pipe continuously: an undrained pipe
+    fills at the OS buffer size (~64 KiB) and then blocks ffmpeg forever, which
+    is worse than discarding the output. It exists because an inherited file
+    handle keeps its OWN file position (U24.1: a parent-side rewrite of the file
+    leaves the child appending at its old offset, zero-filling the gap), so a
+    parent that needs to bound a live child's log must own both ends.
     """
 
     ffmpeg_path = _ffmpeg_path()
@@ -589,12 +610,14 @@ def start_ffmpeg(
     if stderr_path is not None:
         stderr_path.parent.mkdir(parents=True, exist_ok=True)
     stdout_file = stdout_path.open("a", encoding="utf-8") if stdout_path else None
-    stderr_file = stderr_path.open("a", encoding="utf-8") if stderr_path else None
+    stderr_file = (
+        stderr_path.open("a", encoding="utf-8") if stderr_path and not stderr_pipe else None
+    )
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     process = subprocess.Popen(  # noqa: S603
         [ffmpeg_path, "-y", *resolved_args],
         stdout=stdout_file or subprocess.DEVNULL,
-        stderr=stderr_file or subprocess.DEVNULL,
+        stderr=subprocess.PIPE if stderr_pipe else (stderr_file or subprocess.DEVNULL),
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -604,6 +627,7 @@ def start_ffmpeg(
         process=process,
         _stdout_file=stdout_file,
         _stderr_file=stderr_file,
+        stderr_pipe=process.stderr if stderr_pipe else None,
     )
 
 
