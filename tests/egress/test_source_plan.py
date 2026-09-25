@@ -22,6 +22,7 @@ from civiccast.egress.models import (
 from civiccast.egress.source_plan import (
     DEFAULT_GSTREAMER_SOURCE_SEGMENT_SECONDS,
     PLAN_MIN_SECONDS,
+    SCHEDULE_GAP_ABSORB_SECONDS,
     ScheduleSourcePlanProvider,
     SlateSourceGenerator,
     _escape_drawtext,
@@ -1332,3 +1333,248 @@ def test_a_boundary_past_a_closing_slot_resolves_the_next_scheduled_item(
     assert boundary.segments[0].label == "City Council"
     # One second into the item's own slot, so one second into its media.
     assert boundary.segments[0].inpoint_seconds == pytest.approx(1.0)
+
+
+# --------------------------------------------------------------------------
+# U26 gap absorb (reports/U26.md item 2, Option D). Live evidence, 2026-09-25:
+# the ending item's media ran out a few seconds before its own slot did, the
+# next item was due 0-7s later, and every boundary in that small gap resolved
+# to no plan at all. Automation rolled the channel onto filler, the channel
+# left its program for a slate epoch, and the switch back went through
+# FALLBACK_SLATE's immediate-reload path (daemon F3(b): worker exit, relay
+# replacement, restart onto a stub). gap_absorb_seconds resolves the boundary
+# straight to the item due within the window, so the deferred switch is
+# program -> program, in-worker, with no exit.
+# --------------------------------------------------------------------------
+
+
+def _gap_absorb_provider(
+    tmp_path: Path,
+    items: list[ScheduleItemResponse],
+    media_seconds: dict[str, float],
+    *,
+    gap_absorb_seconds: float | None = SCHEDULE_GAP_ABSORB_SECONDS,
+) -> ScheduleSourcePlanProvider:
+    """Build the production-shaped provider for a gap-absorb case.
+
+    ``media_seconds`` is the playable media length per asset id; the item's own
+    ``duration_seconds`` is its SLOT. A media length shorter than the slot is
+    the live shape: the station's engine reaches EOS while the slot still has
+    time left on it.
+    """
+
+    media = tmp_path / "program.ts"
+    media.write_text("fake", encoding="utf-8")
+    assets = {
+        item.asset_id: _asset(media, asset_id=item.asset_id).model_copy(
+            update={
+                "title": item.asset_title,
+                "duration_seconds": media_seconds[item.asset_id],
+                "trim_in_seconds": None,
+                "trim_out_seconds": media_seconds[item.asset_id],
+            }
+        )
+        for item in items
+    }
+    kwargs: dict[str, float] = {}
+    if gap_absorb_seconds is not None:
+        kwargs["gap_absorb_seconds"] = gap_absorb_seconds
+    return ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _channel_id: items,
+        asset_resolver=assets.get,
+        # The production wiring with the GStreamer engine selected
+        # (automation.py's build), which is what makes a closing slot resolve
+        # to a bare tail / to nothing at all.
+        max_segments=1,
+        **kwargs,
+    )
+
+
+def test_a_boundary_at_a_closing_slot_whose_media_is_gone_resolves_the_next_item(
+    tmp_path: Path,
+) -> None:
+    """The live 02:58:19 shape: media gone, slot still open, next item 8s out.
+
+    The ending item's segment duration IS the plan horizon automation records
+    (min(slot, media) = the media length), so the boundary lands exactly where
+    its media runs out -- with the slot still open and the next item due inside
+    the absorb window. Before the fix that boundary resolved to None (filler);
+    the live consequence was the slate epoch and the F3(b) exit.
+    """
+
+    start = datetime(2026, 9, 25, 2, 58, tzinfo=UTC)
+    items = [
+        _schedule_item(
+            asset_id="weather",
+            scheduled_at=start - timedelta(seconds=300),
+            duration_seconds=300,
+        ).model_copy(update={"asset_title": "Longmont Weather :16"}),
+        _schedule_item(
+            asset_id="council",
+            scheduled_at=start + timedelta(seconds=4),
+            duration_seconds=1800,
+        ).model_copy(update={"asset_title": "City Council"}),
+    ]
+    provider = _gap_absorb_provider(tmp_path, items, {"weather": 296.0, "council": 1800.0})
+
+    plan = provider.plan_at("gov", start - timedelta(seconds=4))
+
+    assert plan is not None
+    assert [segment.label for segment in plan.segments] == ["City Council"]
+    # The next item's own media, taken whole from its beginning: the caller
+    # starts it 4s early (the gap), it does not skip 4s into it.
+    assert plan.segments[0].duration_seconds == pytest.approx(1800.0)
+    assert plan.segments[0].inpoint_seconds is None
+
+
+def test_a_boundary_inside_the_gap_resolves_the_next_item(tmp_path: Path) -> None:
+    """The bare-gap form: the instant is between two items, nothing covers it."""
+
+    start = datetime(2026, 9, 25, 3, 35, tzinfo=UTC)
+    items = [
+        _schedule_item(
+            asset_id="weather",
+            scheduled_at=start - timedelta(seconds=300),
+            duration_seconds=300,
+        ).model_copy(update={"asset_title": "Longmont Weather :16"}),
+        _schedule_item(
+            asset_id="council",
+            scheduled_at=start + timedelta(seconds=6),
+            duration_seconds=1800,
+        ).model_copy(update={"asset_title": "City Council"}),
+    ]
+    provider = _gap_absorb_provider(tmp_path, items, {"weather": 300.0, "council": 1800.0})
+
+    plan = provider.plan_at("gov", start)
+
+    assert plan is not None
+    assert [segment.label for segment in plan.segments] == ["City Council"]
+
+
+def test_a_gap_beyond_the_absorb_window_still_falls_back(tmp_path: Path) -> None:
+    """A real gap keeps the old behavior: no plan, so automation fills it."""
+
+    start = datetime(2026, 9, 25, 4, 0, tzinfo=UTC)
+    items = [
+        _schedule_item(asset_id="weather", scheduled_at=start, duration_seconds=300).model_copy(
+            update={"asset_title": "Longmont Weather :16"}
+        ),
+        _schedule_item(
+            asset_id="council",
+            scheduled_at=start + timedelta(seconds=300 + 60),
+            duration_seconds=1800,
+        ).model_copy(update={"asset_title": "City Council"}),
+    ]
+    provider = _gap_absorb_provider(tmp_path, items, {"weather": 300.0, "council": 1800.0})
+
+    # One second past the window: 60s of nothing to air is a real gap.
+    assert provider.plan_at("gov", start + timedelta(seconds=301)) is None
+    assert provider.plan_at("gov", start + timedelta(seconds=300 + 60 - 31)) is None
+
+
+def test_a_healthy_remainder_is_never_cut_short_for_the_next_item(tmp_path: Path) -> None:
+    """Content is never replaced: a live item's remaining media is not a stub.
+
+    The next item here IS inside the absorb window (14s out), but the item
+    covering the instant still has 10s of its own media left to air. A
+    join-in-progress resume of live content is what the plan is for, so the
+    absorb must leave it alone -- otherwise a mid-program (re)start would skip
+    the end of the program it was airing.
+    """
+
+    start = datetime(2026, 9, 25, 5, 0, tzinfo=UTC)
+    items = [
+        _schedule_item(asset_id="weather", scheduled_at=start, duration_seconds=300).model_copy(
+            update={"asset_title": "Longmont Weather :16"}
+        ),
+        _schedule_item(
+            asset_id="council",
+            scheduled_at=start + timedelta(seconds=304),
+            duration_seconds=1800,
+        ).model_copy(update={"asset_title": "City Council"}),
+    ]
+    provider = _gap_absorb_provider(tmp_path, items, {"weather": 300.0, "council": 1800.0})
+
+    plan = provider.plan_at("gov", start + timedelta(seconds=290))
+
+    assert plan is not None
+    assert [segment.label for segment in plan.segments] == ["Longmont Weather :16"]
+    assert plan.segments[0].duration_seconds == pytest.approx(10.0)
+
+
+def test_the_gap_absorb_is_off_unless_the_caller_asks_for_it(tmp_path: Path) -> None:
+    """Default 0.0: a direct caller keeps the documented no-early-start answer."""
+
+    start = datetime(2026, 9, 25, 6, 0, tzinfo=UTC)
+    items = [
+        _schedule_item(
+            asset_id="weather",
+            scheduled_at=start - timedelta(seconds=300),
+            duration_seconds=300,
+        ).model_copy(update={"asset_title": "Longmont Weather :16"}),
+        _schedule_item(
+            asset_id="council",
+            scheduled_at=start + timedelta(seconds=6),
+            duration_seconds=1800,
+        ).model_copy(update={"asset_title": "City Council"}),
+    ]
+    provider = _gap_absorb_provider(
+        tmp_path, items, {"weather": 300.0, "council": 1800.0}, gap_absorb_seconds=None
+    )
+
+    assert provider.plan_at("gov", start) is None
+    assert (
+        build_source_plan_from_schedule(
+            channel_id="gov",
+            schedule_items=items,
+            asset_resolver=lambda asset_id: _asset(tmp_path / "program.ts", asset_id=asset_id),
+            now=start,
+        )
+        is None
+    )
+
+
+def test_a_plan_before_the_published_log_still_waits_for_its_first_item(
+    tmp_path: Path,
+) -> None:
+    """No early start before the log begins: there is no ending item to be at.
+
+    A station that comes up early is not in a gap BETWEEN two items -- it is
+    simply early, and the first item's published start time is the contract.
+    """
+
+    start = datetime(2026, 9, 25, 7, 0, tzinfo=UTC)
+    items = [
+        _schedule_item(
+            asset_id="council",
+            scheduled_at=start + timedelta(seconds=20),
+            duration_seconds=1800,
+        ).model_copy(update={"asset_title": "City Council"}),
+    ]
+    provider = _gap_absorb_provider(tmp_path, items, {"council": 1800.0})
+
+    assert provider.plan_at("gov", start) is None
+    # And once the log has started, a later gap still absorbs.
+    assert provider.plan_at("gov", start + timedelta(seconds=20)) is not None
+
+
+def test_gap_absorb_seconds_rejects_a_negative_window(tmp_path: Path) -> None:
+    media = tmp_path / "program.ts"
+    media.write_text("fake", encoding="utf-8")
+    start = datetime(2026, 9, 25, 8, 0, tzinfo=UTC)
+
+    with pytest.raises(ValueError, match="gap_absorb_seconds"):
+        build_source_plan_from_schedule(
+            channel_id="gov",
+            schedule_items=[_schedule_item(scheduled_at=start)],
+            asset_resolver=lambda _asset_id: _asset(media),
+            now=start,
+            gap_absorb_seconds=-1.0,
+        )
+
+    with pytest.raises(ValueError, match="gap_absorb_seconds"):
+        ScheduleSourcePlanProvider(
+            schedule_items_provider=lambda _channel_id: [],
+            asset_resolver=lambda _asset_id: None,
+            gap_absorb_seconds=-1.0,
+        )
