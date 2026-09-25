@@ -129,6 +129,27 @@ periodic storage check is pending, processed and unreadable audio is discarded
 instead of retained; review text can still be created without an audio clip.
 With verified storage, unreadable segments go to `quarantine/`.
 
+Two rules keep the tap from pausing over audio it never had a chance to
+transcribe (U11, 2026-09-24):
+
+- **A restarted worker discards the previous broadcast's leftovers.** Audio
+  already in `<channel_id>/` when the worker starts belongs to the session that
+  ended, not to live backlog; it is deleted at startup (with a log line naming
+  the channel and count), before the backlog gate is ever evaluated. Previously
+  this discard only ran on an explicit `START`, so after a service restart the
+  tap counted the last session's segments as live backlog and paused captions
+  for the full backoff window before a single new segment existed.
+- **An overload must persist before it pauses.** The gate counts over-limit
+  scans and pauses only after `CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS`
+  in a row (default `15` = 30 s at the default 2 s poll). While the overshoot is
+  still new, the tap transcribes the **oldest** `MAX_BACKLOG_SEGMENTS` segments
+  on that scan — the same ASR call size as a legal batch — leaves the remainder
+  queued, keeps live captions flowing, and logs one INFO line per episode
+  (`Caption tap is behind for channel ...`). A backlog dropping back to the
+  limit clears the count. A deferred scan does not count as recovery evidence
+  for the escalation ladder, so a sustained collapse still pauses and still
+  escalates exactly as before.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `CIVICCAST_CAPTION_TAP` | `off` | `inline` runs the worker as a lifespan-supervised thread; `external` means you run `python -m civiccast.captions.tap_worker` as a separate process (same env + `DATABASE_URL`); `off` disables the worker AND the egress fork (item 91, 2026-09: `off` now wins even if a tap dir is still set -- `build_audio_tap_plan` checks the mode itself before it ever looks at the dir). |
@@ -136,7 +157,8 @@ With verified storage, unreadable segments go to `quarantine/`.
 | `CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS` | `5` | Segment length — the floor of the caption latency budget (tap → transcribe → stabilize → review queue). |
 | `CIVICCAST_CAPTION_TAP_POLL_SECONDS` | `2` | Worker scan interval. |
 | `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | hardware-selected: `1` CPU, up to `3` CUDA | How many channels' ASR calls may be in flight **at the same time**. CPU remains serialized so playout keeps the machine. CUDA follows the faster-whisper runtime's worker capacity (up to three) so the station's three five-second audio streams do not queue behind one another. An explicit value remains authoritative. |
-| `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` | `2` | Settled segments a channel may be behind before it counts as overloaded. |
+| `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` | `2` | Settled segments a channel may be behind before a scan counts as over-limit. Reaching this bound on a single scan no longer pauses the channel — see `..._OVERLOAD_PERSISTENCE_SCANS`. |
+| `CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS` | `15` | Consecutive over-limit scans required before the tap pauses a channel (U11, 2026-09-24). Must be at least `1`; `1` restores the pre-U11 "pause on the first over-limit scan" behaviour. `15` is ~30 s at the default 2 s poll, chosen to clear the measured worst-case slow batch (19 s) with margin while staying short enough to shed load during a real ASR collapse. |
 | `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS` | `120` | First pause after an overload; each consecutive overload doubles it. Item 79 (2026-09): doubled from `60` — a struggling station needs real recovery room before ASR is attempted again. |
 | `CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS` | `900` | Ceiling on that doubling. |
 | `CIVICCAST_CAPTION_TAP_CPU_THREADS` | one per 8 CPUs, max 2 | CTranslate2 intra-op threads for the **live tap only** (item 79, 2026-09). "One per 8 CPUs, max 2" is the *default* — an operator override is honoured up to `2` (`LIVE_TAP_CPU_THREADS_CEILING`); asking for more is refused, not silently clamped: the value is capped at `2` and a WARNING is logged naming the rejected value. Recorded-meeting transcription is unaffected. |

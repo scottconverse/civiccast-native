@@ -72,6 +72,24 @@ or validate the final public installer. Startup overload remains a monitored
 risk; see `work/BLACKWELL-CAPTION-FIX-REPORT-v9.md` for exact run identities and
 the investigation's corrected conclusions.
 
+### Caption-tap false-alarm pauses (U11, 2026-09-24)
+
+- Discard audio left in a channel's tap directory by the previous broadcast when
+  the tap worker is constructed, not only on an explicit `START`. A station
+  restarted mid-schedule counted the last session's segments as live backlog and
+  paused captions for the full backoff window before any new audio existed.
+- Require an overshoot to persist before pausing: the backlog gate now counts
+  consecutive over-limit scans and pauses after
+  `CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS` of them (default `15`,
+  ~30 s at the default 2 s poll). Meanwhile the oldest `MAX_BACKLOG_SEGMENTS`
+  segments of that scan are transcribed — the same ASR call size as a legal
+  batch — and the excess stays queued, so live captions keep flowing a few
+  seconds late instead of stopping.
+- Unchanged: the backlog limit (`2`), the first pause (`120 s`), the escalation
+  ladder and its ceiling, what a real pause does to the sidecar, and the
+  requirement that a sustained collapse still pauses. A deferred scan is not
+  counted as recovery evidence, so a chronically behind station still escalates.
+
 ## [1.0.0-beta.7] - 2026-09-15
 
 **PUBLISHED.** `v1.0.0-beta.7` was published as a GitHub prerelease from

@@ -41,7 +41,17 @@ Current surface:
 - `CaptionTapWorker`, the native multi-channel worker that consumes settled WAV
   segments concurrently, retains the exact reviewed audio, and atomically
   publishes committed cues to each egress channel's `captions/active.vtt`.
-  Backlog beyond the configured bound fails closed: the live sidecar is
+  Audio already in a channel directory when the worker is constructed is
+  discarded at startup with a log line: it belongs to the broadcast that just
+  ended, and counting it as live backlog is what made a restarted worker pause
+  captions before it had seen a single new segment (U11, 2026-09-24).
+  A backlog over the configured bound fails closed only when it PERSISTS
+  (`CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS` consecutive over-limit
+  scans, default 15): until then the oldest `MAX_BACKLOG_SEGMENTS` segments of
+  that scan are transcribed — the same ASR call size as a legal batch, with the
+  excess left queued — so a transient overshoot costs a few seconds of caption
+  lateness instead of a 120 s blackout, and one INFO "behind" line per episode
+  is logged instead of a pause. When it does persist: the live sidecar is
   cleared, stale segments are discarded (never transcribed, so never
   reviewable, and no retention clock would have covered them), and the channel
   is PAUSED for an exponentially growing window
@@ -96,9 +106,12 @@ Runtime notes:
   the shared model executor. `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`
   configures concurrent channel scans, and
   `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` sets the fail-closed backlog
-  bound. `CIVICCAST_WHISPER_NUM_WORKERS`,
-  `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`, and
-  `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` must be positive integers
+  bound, and `CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS` (U11,
+  2026-09-24, default `15`) sets how many consecutive over-limit scans must
+  occur before that bound fails closed. `CIVICCAST_WHISPER_NUM_WORKERS`,
+  `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`,
+  `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS`, and
+  `CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS` must be positive integers
   (minimum 1); `CIVICCAST_WHISPER_CPU_THREADS` must be a non-negative integer
   (minimum 0 -- `0` means "every core" and is the batch/VOD default, honoured
   as before). Item 79 (2026-09) adds a live-only exception: for the **live**
