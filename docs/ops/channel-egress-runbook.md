@@ -702,11 +702,13 @@ a bounced channel is the same failure mode as any other:
   progress signal is ONE aggregate count of what leaves the mux
   (`_install_output_counter`, a probe on the mux src pad), and `_check_stall`
   treats any advance of that single integer as healthy output, so a freeze
-  that stops one stream while another keeps flowing never trips it. Both
-  2026-09-25 live freezes were that shape: the video branch stopped
-  delivering buffers while audio carried on, measured over the worker's own
-  `CTRL output:` totals as ~244 buffers per 5s interval against ~390 on the
-  healthy intervals before the freeze. A dark channel whose worker stderr
+  that stops one stream while another keeps flowing never trips it. All four
+  2026-09-25 live freezes had that shape: the video branch stopped
+  delivering buffers while audio carried on. The rate was measured on the two
+  whose logs were captured -- the worker's own `CTRL output:` totals fall to
+  ~244 buffers per 5s interval against ~390 on the healthy intervals before
+  the freeze -- and the coordinator reports the same shape in the other two.
+  A dark channel whose worker stderr
   holds no `CTRL stall` line is therefore NOT evidence that residents are
   still being fed. Since U30 the progress line also names the streams that
   aggregate cannot separate -- `CTRL output: <total> buffers (+<delta>) since

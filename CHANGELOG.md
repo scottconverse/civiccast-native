@@ -101,11 +101,13 @@ producing.
 
 ### A channel whose HLS window stayed frozen after a failed relay self-heal is now restarted (U30, 2026-09-25)
 
-Two live freezes were captured on 2026-09-25 (`government` 08:39, `public`
-10:04) with one shape: a deferred program-to-program reload commits
-(`stage=committed elements=52`) and the channel's **video** output stops while the
-worker stays alive and keeps printing `CTRL output` lines -- at the audio-only
-rate, 244 buffers per 5 s measured against ~390 healthy. The relay's live window
+Four live freezes were reported on 2026-09-25 across all three channels
+(`education` 06:27, `government` 01:04 and 08:39, `public` 10:04; the last two
+are the cases whose logs were captured) with one shape: a deferred
+program-to-program reload commits (`stage=committed elements=52`) and the
+channel's **video** output stops while the worker stays alive and keeps printing
+`CTRL output` lines -- at the audio-only rate, 244 buffers per 5 s measured on
+the two captured cases against ~390 healthy. The relay's live window
 stops advancing, the relay's own self-heal cannot help, and only a whole-channel
 restart brings the channel back. The engine survives its own stall because its
 stall watchdog watches an **aggregate** mux-output counter that the audio leg
@@ -115,7 +117,10 @@ measured rate; U30's harness did not reproduce the live shape).
 - The daemon now treats the **HLS live window as ground truth**: if it is still
   frozen 30 s after a relay self-heal has run and failed,
   `civiccast/egress/daemon.py` restarts the **worker** -- the cure applied by hand
-  on 2026-09-25 was a full restart of the affected channel -- bounded to
+  to all four was a full restart of the affected channel (the coordinator's
+  `Recover-RelayStall.ps1 -Mode RestartOne`, which restarts the worker and the
+  relay; that script is not in this repository, so it cannot be cited from here
+  as a command) -- bounded to
   **3 restarts per channel per rolling hour**, after which it stops restarting and
   logs one CRITICAL per 10 minutes. Every escalation logs one ERROR naming the
   channel, how long the window has been frozen, and the budget left in the hour.
