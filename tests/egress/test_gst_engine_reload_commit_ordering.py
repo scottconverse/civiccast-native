@@ -26,6 +26,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import types
 from itertools import count
 from pathlib import Path
@@ -4421,4 +4422,407 @@ def test_u30_a_failed_build_removes_the_probes_it_armed(
         assert f"remove_probe:{pad.name}:{probe_id}" in recorder.calls, recorder.calls
     assert engine._pending_reload is None
     assert settled == []
+    assert capsys.readouterr().err == ""
+
+
+# ---------------------------------------------------------------------------
+# U37 -- a deferred rebased switch waits for the mux sink pads to drain.
+#
+# The measured defect (off-live, real LPM prepared media, 2026-09-25): a mux
+# sink pad runs about a second of chain latency behind the selector, so the
+# outgoing leg's LAST queued buffer is still sitting on that pad when the
+# rebased leg's SEGMENT arrives. ``gst_aggregator_default_sink_event`` copies
+# the new segment into the pad immediately, but ``gst_base_ts_mux_clip``
+# computes running time at POP -- under whatever segment is current THEN. One
+# stale video buffer was therefore re-dated into the new timeline: running time
+# 9.411322222s aired at 19.992322222s, and the next video frame stepped
+# BACKWARDS to 10.581322222s.
+#
+# The guard is the drain wait in ``_defer_rebase_drain``. The arrivals
+# themselves are only OBSERVED: dropping them until the segment crossed was
+# measured to cost a 1.024s hole in the aired audio (1013 audio frames against
+# the 1061 every non-dropping run airs), because an arrival that precedes the
+# segment is still clipped under the old one and is legitimate outgoing tail.
+# ---------------------------------------------------------------------------
+
+_U37_OBSERVER_MASK = (
+    _FakePadProbeType.BUFFER | _FakePadProbeType.BUFFER_LIST | _FakePadProbeType.EVENT_DOWNSTREAM
+)
+
+
+class _FakeDrainPad:
+    """A mux sink pad with the aggregator's own readable queue depth.
+
+    ``current-level-buffers`` is the predicate the production wait reads
+    (``_rebase_drain_held``), so this fake models it as the mutable value it is
+    on a live pad rather than as a call counter."""
+
+    def __init__(self, name: str, caps: str, level: int, recorder: _Recorder) -> None:
+        self.name = name
+        self.caps = caps
+        self.level = level
+        self.recorder = recorder
+        self.probes: list[tuple[str, Any, Any]] = []
+        self.removed: list[Any] = []
+        self._next_probe = 0
+
+    def get_name(self) -> str:
+        return self.name
+
+    def get_current_caps(self) -> Any:
+        return types.SimpleNamespace(to_string=lambda: self.caps)
+
+    def get_property(self, key: str) -> Any:
+        assert key == "current-level-buffers", key
+        return self.level
+
+    def add_probe(self, mask: Any, callback: Any) -> str:
+        self._next_probe += 1
+        probe_id = f"{self.name}-probe-{self._next_probe}"
+        self.probes.append((probe_id, mask, callback))
+        return probe_id
+
+    def remove_probe(self, probe_id: Any) -> None:
+        self.removed.append(probe_id)
+
+
+class _UnreadableDrainPad(_FakeDrainPad):
+    """A pad whose ``current-level-buffers`` cannot be read at all."""
+
+    def get_property(self, key: str) -> Any:
+        raise RuntimeError("no such property")
+
+
+class _FakePadProbeInfo:
+    """A ``Gst.PadProbeInfo`` as one pad's own streaming thread sees it."""
+
+    def __init__(self, probe_type: Any, event: Any = None) -> None:
+        self.type = probe_type
+        self._event = event
+
+    def get_event(self) -> Any:
+        return self._event
+
+
+class _FakeSegmentEvent:
+    def __init__(self, event_type: Any) -> None:
+        self.type = event_type
+
+
+class _RaisingProbeInfo:
+    """Probe info whose ``type`` read raises -- the streaming-thread hazard."""
+
+    @property
+    def type(self) -> Any:
+        raise RuntimeError("probe info unavailable")
+
+
+def _u37_rebase_pending(
+    recorder: _Recorder, *, txn_id: int = 41, audio_level: int = 5
+) -> tuple[dict[str, Any], _FakeDrainPad, _FakeDrainPad]:
+    """A deferred program->program rebase whose mux sink pads a test owns.
+
+    Named hold pads (not ``object()``) so the selector mutation the switch
+    performs is legible in the call recorder."""
+    pending = _unready_reload(recorder, txn_id=txn_id)
+    pending["commit_in_progress"] = True
+    pending["commit_watchdog"] = None
+    pending["commit_completed"] = None
+    pending["retirement_result"] = None
+    video = _FakeDrainPad("sink_65", "video/x-h264", 0, recorder)
+    audio = _FakeDrainPad("sink_66", "audio/mpeg", audio_level, recorder)
+    return pending, video, audio
+
+
+def _u37_timeout_adds(
+    monkeypatch: pytest.MonkeyPatch, engine_module: types.ModuleType
+) -> list[Any]:
+    """Capture ``GLib.timeout_add`` instead of running it.
+
+    These tests have no main loop, and this file's fake GLib deliberately has
+    no ``timeout_add`` at all -- so the callback is recorded here and fired by
+    hand, in the order the loop would have fired it."""
+    armed: list[tuple[int, Any, tuple[Any, ...]]] = []
+
+    def _add(interval_ms: int, callback: Any, *args: Any) -> int:
+        armed.append((interval_ms, callback, args))
+        return len(armed)
+
+    monkeypatch.setattr(engine_module.GLib, "timeout_add", _add, raising=False)
+    return armed
+
+
+def test_u37_deferred_rebase_switch_waits_for_the_mux_pad_to_drain(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The switch is held back while the audio pad still holds the outgoing
+    tail, and completes on the first tick after that pad reports empty.
+
+    RED at 5397c069: the selector was mutated inside ``_begin_reload_commit``
+    itself, with the outgoing tail still queued on the pad -- the exact state
+    that re-dated a stale frame by the rebase offset."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending, video_pad, audio_pad = _u37_rebase_pending(recorder)
+    engine._mux_input_pads = {"sink_65": video_pad, "sink_66": audio_pad}
+    engine._pending_reload = pending
+    armed = _u37_timeout_adds(monkeypatch, engine_module)
+
+    engine._prepare_reload_handoff(pending)
+    engine._begin_reload_commit(pending)
+
+    assert "video_sel.set_property:active-pad=new-video" not in recorder.calls, recorder.calls
+
+    # The observer deadline is armed FIRST, at the summed bound, and the poller
+    # only because that succeeded: an observer no timer could remove would
+    # outlive the transaction it describes.
+    assert [(ms, callback.__name__) for ms, callback, _args in armed] == [
+        (4000, "_on_rebase_observer_deadline"),
+        (20, "_resume_rebase_drain"),
+    ], armed
+    assert pending["rebase_drain_timeout_id"] == 2
+    assert pending["rebase_observer_pads"] == [
+        ("video", video_pad, "sink_65"),
+        ("audio", audio_pad, "sink_66"),
+    ]
+    assert [(mask, callback.__name__) for _id, mask, callback in video_pad.probes] == [
+        (_U37_OBSERVER_MASK, "_observe_rebase_arrivals")
+    ]
+    assert [(mask, callback.__name__) for _id, mask, callback in audio_pad.probes] == [
+        (_U37_OBSERVER_MASK, "_observe_rebase_arrivals")
+    ]
+
+    err = capsys.readouterr().err
+    assert (
+        "CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 "
+        "observed=sink_65,sink_66 reload_id=41"
+    ) in err
+    # Only the pad that is actually holding is named -- the drain set is a
+    # predicate reading, not a list of the pads this switch touches.
+    assert "CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=5 reload_id=41" in err
+
+    # A tick while the pad still holds switches nothing.
+    assert engine._resume_rebase_drain(pending) is True
+    assert "video_sel.set_property:active-pad=new-video" not in recorder.calls, recorder.calls
+
+    # The pad empties; the next tick completes the commit, in the order the
+    # U30/U34 handover tests pin: selector mutation, then hold release.
+    audio_pad.level = 0
+    assert engine._resume_rebase_drain(pending) is False
+    calls = recorder.calls
+    assert "video_sel.set_property:active-pad=new-video" in calls, calls
+    assert "audio_sel.set_property:active-pad=new-audio" in calls, calls
+    assert _index_of(calls, "video_sel.set_property:active-pad=new-video") < _index_of(
+        calls, "remove_probe:new-video:1"
+    ), calls
+
+    drained_lines = [
+        line
+        for line in capsys.readouterr().err.splitlines()
+        if line.startswith("CTRL reload diagnostic: stage=rebase-drain-drained")
+    ]
+    assert len(drained_lines) == 1, drained_lines
+    assert drained_lines[0].endswith("s reload_id=41"), drained_lines[0]
+    waited = float(drained_lines[0].split("waited=")[1].split("s ")[0])
+    assert 0.0 <= waited < 1.0, drained_lines[0]
+
+
+def test_u37_drain_deadline_switches_anyway_and_names_the_pad(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A guard whose premise has failed must say so and switch anyway.
+
+    Holding the stream off air forever is the one outcome worse than the
+    re-dating: the deadline names the pad that never emptied."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending, video_pad, audio_pad = _u37_rebase_pending(recorder, txn_id=42)
+    engine._mux_input_pads = {"sink_65": video_pad, "sink_66": audio_pad}
+    engine._pending_reload = pending
+    _u37_timeout_adds(monkeypatch, engine_module)
+
+    engine._prepare_reload_handoff(pending)
+    engine._begin_reload_commit(pending)
+    capsys.readouterr()
+
+    pending["rebase_drain_started_t"] = time.monotonic() - 3.5
+    assert engine._resume_rebase_drain(pending) is False
+
+    assert "video_sel.set_property:active-pad=new-video" in recorder.calls, recorder.calls
+    assert (
+        "WARN: rebase drain did not empty within 3.0s for reload 42 "
+        "(sink_66=5 still queued at the mux); switching anyway -- a stale buffer "
+        "may still be re-dated by the segment"
+    ) in capsys.readouterr().err
+
+
+def test_u37_an_unreadable_pad_level_is_not_proven_empty(engine_module: types.ModuleType) -> None:
+    """Treating an unreadable level as empty would reinstate the very re-dating
+    this guard exists to remove, so it waits and lets the deadline decide."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pad = _UnreadableDrainPad("sink_66", "audio/mpeg", 0, recorder)
+
+    assert engine._rebase_drain_held(
+        {"txn_id": 7, "rebase_observer_pads": [("audio", pad, "sink_66")]}
+    ) == ["sink_66=unknown"]
+
+
+def test_u37_without_a_timer_the_switch_is_unobserved_not_held(
+    engine_module: types.ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No main loop to poll on must not mean "hold the stream off air forever".
+
+    This file's fake GLib has no ``timeout_add`` at all -- exactly the
+    degradation path: the observer deadline cannot be armed, so the drain wait
+    never starts and the commit proceeds synchronously as it did before U37,
+    with a WARN saying the pads went unguarded. It is also why every other test
+    in this module still sees an immediate switch."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending, video_pad, audio_pad = _u37_rebase_pending(recorder, txn_id=43)
+    engine._mux_input_pads = {"sink_65": video_pad, "sink_66": audio_pad}
+    engine._pending_reload = pending
+
+    engine._prepare_reload_handoff(pending)
+    engine._begin_reload_commit(pending)
+
+    assert "video_sel.set_property:active-pad=new-video" in recorder.calls, recorder.calls
+    err = capsys.readouterr().err
+    assert (
+        "WARN: rebase arrival observer unavailable for reload 43: no observer "
+        "deadline timer (AttributeError("
+    ) in err
+    assert "stage=rebase-drain-wait" not in err
+    # The armer returned before it could record anything: no pad is claimed as
+    # observed, so no release path can later try to remove a probe that was
+    # never installed.
+    assert "rebase_observer_pads" not in pending
+    assert "rebase_observer_probes" not in pending
+
+
+def test_u37_arrival_observer_counts_and_never_drops(
+    engine_module: types.ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An arrival before the rebased segment is legitimate outgoing tail.
+
+    Measured cost of dropping it instead: 48 audio arrivals and a 1.024s hole
+    in the aired audio. So the observer counts, returns OK, and removes itself
+    only on the segment that closes its window -- REMOVE, never DROP, because
+    the segment itself must reach the mux."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending: dict[str, Any] = {"txn_id": 7, "rebase_observer_arrived": {}}
+    observe = engine._make_rebase_segment_observer(pending, "sink_66", "audio")
+    ok = engine_module.Gst.PadProbeReturn.OK
+
+    returns = [
+        observe(None, _FakePadProbeInfo(engine_module.Gst.PadProbeType.BUFFER)),
+        observe(None, _FakePadProbeInfo(engine_module.Gst.PadProbeType.BUFFER_LIST)),
+    ]
+    assert returns == [ok, ok], returns
+    assert pending["rebase_observer_arrived"] == {"sink_66": 2}
+
+    returns.append(
+        observe(
+            None,
+            _FakePadProbeInfo(
+                engine_module.Gst.PadProbeType.EVENT_DOWNSTREAM,
+                _FakeSegmentEvent(engine_module.Gst.EventType.SEGMENT),
+            ),
+        )
+    )
+    assert returns[-1] == engine_module.Gst.PadProbeReturn.REMOVE, returns
+    assert pending["rebase_observer_removed"] == {"sink_66"}
+    assert (
+        "CTRL reload diagnostic: stage=rebase-observer-disarmed pad=sink_66 "
+        "stream=audio arrived=2 reload_id=7"
+    ) in capsys.readouterr().err
+
+    # A callback that raises is a per-buffer stderr flood on the streaming
+    # thread: the failure mode must be "stops counting", never "takes the mux's
+    # streaming thread with it".
+    returns.append(observe(None, _RaisingProbeInfo()))
+    returns.append(observe(None, None))
+    assert returns[3:] == [ok, ok], returns
+    assert engine_module.Gst.PadProbeReturn.DROP not in returns, returns
+
+
+def test_u37_observer_release_skips_a_probe_that_removed_itself(
+    engine_module: types.ModuleType,
+) -> None:
+    """Removing a self-removed probe id again is a GStreamer-WARNING on the
+    stderr of every clean switch; the pad name it reported is the record."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    video_pad = _FakeDrainPad("sink_65", "video/x-h264", 0, recorder)
+    audio_pad = _FakeDrainPad("sink_66", "audio/mpeg", 0, recorder)
+    pending: dict[str, Any] = {
+        "txn_id": 7,
+        "rebase_observer_pads": [
+            ("video", video_pad, "sink_65"),
+            ("audio", audio_pad, "sink_66"),
+        ],
+        "rebase_observer_probes": [
+            (video_pad, "v-probe", "sink_65"),
+            (audio_pad, "a-probe", "sink_66"),
+        ],
+        "rebase_observer_removed": {"sink_65"},
+        "rebase_observer_deadline_id": 11,
+        "rebase_drain_timeout_id": 12,
+    }
+
+    engine._release_rebase_observers(pending)
+
+    assert video_pad.removed == [], video_pad.removed
+    assert audio_pad.removed == ["a-probe"], audio_pad.removed
+    assert pending["rebase_observer_probes"] == []
+    assert pending["rebase_observer_deadline_id"] is None
+    assert pending["rebase_drain_timeout_id"] is None
+
+    # Idempotent: a second release is a no-op, not a second removal.
+    engine._release_rebase_observers(pending)
+    assert audio_pad.removed == ["a-probe"], audio_pad.removed
+
+
+def test_u37_observer_window_close_reports_what_it_counted(
+    engine_module: types.ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The bound reports itself, naming each pad and its count: nothing is held
+    off air by an observer whose segment never came."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    video_pad = _FakeDrainPad("sink_65", "video/x-h264", 0, recorder)
+    audio_pad = _FakeDrainPad("sink_66", "audio/mpeg", 0, recorder)
+    pending: dict[str, Any] = {
+        "txn_id": 7,
+        "rebase_observer_pads": [
+            ("video", video_pad, "sink_65"),
+            ("audio", audio_pad, "sink_66"),
+        ],
+        "rebase_observer_probes": [
+            (video_pad, "v-probe", "sink_65"),
+            (audio_pad, "a-probe", "sink_66"),
+        ],
+        "rebase_observer_arrived": {"sink_65": 3},
+        "rebase_observer_deadline_id": 11,
+    }
+
+    assert engine._on_rebase_observer_deadline(pending) is False
+
+    assert (
+        "WARN: rebase arrival observer window closed after 4.0s for reload 7: "
+        "no rebased segment crossed the mux sink pads "
+        "(video:sink_65=3, audio:sink_66=0); removing the observers -- nothing is "
+        "held off air"
+    ) in capsys.readouterr().err
+    assert video_pad.removed == ["v-probe"], video_pad.removed
+    assert audio_pad.removed == ["a-probe"], audio_pad.removed
+
+    # Already disarmed: a second tick is silent.
+    assert engine._on_rebase_observer_deadline(pending) is False
     assert capsys.readouterr().err == ""
