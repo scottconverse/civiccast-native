@@ -1,0 +1,93 @@
+### python dts.py  (instruments/dts.py) against the captured mux output of every run
+### that regcheck-all.txt / ref-regcheck.txt classify, red first then green.
+### Captures live in the scratch tree (deleted with %TEMP%\u37 at the end of the slice);
+### their sha256 and the verdicts are in raw/ref-sha256.txt and raw/regcheck-all.txt.
+### The tail of this file is the --hex appendix: the first 24 bytes of the video PES
+### payloads around x4dbg/run3's boundary, i.e. the DTS field verbatim.
+
+== C:\Users\scott\AppData\Local\Temp\u37\x4dbg\run3\out.ts
+   video      659 PES  PTS+DTS  283  PTS-only  376  PTS backsteps 1
+      distinct DTS values: 1  min=19.992322 max=19.992322
+      DTS-carrying frames: #297.. #579 of 659  (count 283); their PTS 10.581322..19.981322
+      of those, frames whose PTS is below the frozen DTS 19.992322: 283 / 283  (DTS-PTS 0.011..9.411000s)
+      first PTS-only after: #580 PTS 20.014656 -> 79 PTS-only frames to end
+      PTS backstep #297: 19.992322 -> 10.581322  backstep=9.411000s
+   audio     1061 PES  PTS+DTS    0  PTS-only 1061  PTS backsteps 0
+== C:\Users\scott\AppData\Local\Temp\u37\x2\run8\out.ts
+   video      660 PES  PTS+DTS  284  PTS-only  376  PTS backsteps 1
+      distinct DTS values: 1  min=20.025656 max=20.025656
+      DTS-carrying frames: #298.. #581 of 660  (count 284); their PTS 10.581322..20.014656
+      of those, frames whose PTS is below the frozen DTS 20.025656: 284 / 284  (DTS-PTS 0.011..9.444334s)
+      first PTS-only after: #582 PTS 20.047989 -> 78 PTS-only frames to end
+      PTS backstep #298: 20.025656 -> 10.581322  backstep=9.444333s
+   audio     1061 PES  PTS+DTS    0  PTS-only 1061  PTS backsteps 0
+== C:\Users\scott\AppData\Local\Temp\u37\x2\run10\out.ts
+   video      659 PES  PTS+DTS  283  PTS-only  376  PTS backsteps 1
+      distinct DTS values: 1  min=19.992322 max=19.992322
+      DTS-carrying frames: #297.. #579 of 659  (count 283); their PTS 10.581322..19.981322
+      of those, frames whose PTS is below the frozen DTS 19.992322: 283 / 283  (DTS-PTS 0.011..9.411000s)
+      first PTS-only after: #580 PTS 20.014656 -> 79 PTS-only frames to end
+      PTS backstep #297: 19.992322 -> 10.581322  backstep=9.411000s
+   audio     1061 PES  PTS+DTS    0  PTS-only 1061  PTS backsteps 0
+== C:\Users\scott\AppData\Local\Temp\u37\x4dbg\run6\out.ts
+   video      659 PES  PTS+DTS  283  PTS-only  376  PTS backsteps 1
+      distinct DTS values: 1  min=19.992322 max=19.992322
+      DTS-carrying frames: #297.. #579 of 659  (count 283); their PTS 10.581322..19.981322
+      of those, frames whose PTS is below the frozen DTS 19.992322: 283 / 283  (DTS-PTS 0.011..9.411000s)
+      first PTS-only after: #580 PTS 20.014656 -> 79 PTS-only frames to end
+      PTS backstep #297: 19.992322 -> 10.581322  backstep=9.411000s
+   audio     1061 PES  PTS+DTS    0  PTS-only 1061  PTS backsteps 0
+== C:\Users\scott\AppData\Local\Temp\u37\x2\_ref\red-out.ts
+   video      659 PES  PTS+DTS  283  PTS-only  376  PTS backsteps 1
+      distinct DTS values: 1  min=19.992322 max=19.992322
+      DTS-carrying frames: #297.. #579 of 659  (count 283); their PTS 10.581322..19.981322
+      of those, frames whose PTS is below the frozen DTS 19.992322: 283 / 283  (DTS-PTS 0.011..9.411000s)
+      first PTS-only after: #580 PTS 20.014656 -> 79 PTS-only frames to end
+      PTS backstep #297: 19.992322 -> 10.581322  backstep=9.411000s
+   audio     1061 PES  PTS+DTS    0  PTS-only 1061  PTS backsteps 0
+== C:\Users\scott\AppData\Local\Temp\u37\x4base\run1\out.ts
+   video      680 PES  PTS+DTS    0  PTS-only  680  PTS backsteps 0
+   audio     1061 PES  PTS+DTS    0  PTS-only 1061  PTS backsteps 0
+== C:\Users\scott\AppData\Local\Temp\u37\x1\run1\out.ts
+   video      680 PES  PTS+DTS    0  PTS-only  680  PTS backsteps 0
+   audio     1061 PES  PTS+DTS    0  PTS-only 1061  PTS backsteps 0
+== C:\Users\scott\AppData\Local\Temp\u37\x2\_ref\h1-out.ts
+   video      659 PES  PTS+DTS    0  PTS-only  659  PTS backsteps 0
+   audio     1061 PES  PTS+DTS    0  PTS-only 1061  PTS backsteps 0
+== C:\Users\scott\AppData\Local\Temp\u37\x2\_ref\green-out.ts
+   video      653 PES  PTS+DTS    0  PTS-only  653  PTS backsteps 0
+   audio     1013 PES  PTS+DTS    0  PTS-only 1013  PTS backsteps 0
+== C:\Users\scott\AppData\Local\Temp\u37\x2\_ref\h3-out.ts
+   video      660 PES  PTS+DTS    0  PTS-only  660  PTS backsteps 0
+   audio     1061 PES  PTS+DTS    0  PTS-only 1061  PTS backsteps 0
+== C:\Users\scott\AppData\Local\Temp\u37\x2\run2\out.ts
+   video      658 PES  PTS+DTS    0  PTS-only  658  PTS backsteps 0
+   audio     1061 PES  PTS+DTS    0  PTS-only 1061  PTS backsteps 0
+== C:\Users\scott\AppData\Local\Temp\u37\x4green\run1\out.ts
+   video      658 PES  PTS+DTS    0  PTS-only  658  PTS backsteps 0
+   audio     1061 PES  PTS+DTS    0  PTS-only 1061  PTS backsteps 0
+== C:\Users\scott\AppData\Local\Temp\u37\x4green\run6\out.ts
+   video      659 PES  PTS+DTS    0  PTS-only  659  PTS backsteps 0
+   audio     1061 PES  PTS+DTS    0  PTS-only 1061  PTS backsteps 0
+== C:\Users\scott\AppData\Local\Temp\u37\x4lag\run1\out.ts
+   video      659 PES  PTS+DTS    0  PTS-only  659  PTS backsteps 0
+   audio     1061 PES  PTS+DTS    0  PTS-only 1061  PTS backsteps 0
+== C:\Users\scott\AppData\Local\Temp\u37\x4pc\run1\out.ts
+   video      659 PES  PTS+DTS    0  PTS-only  659  PTS backsteps 0
+   audio     1061 PES  PTS+DTS    0  PTS-only 1061  PTS backsteps 0
+
+== C:\Users\scott\AppData\Local\Temp\u37\x4dbg\run3\out.ts  pid video  #294..300
+   per-pid #294  PTS_DTS_flags=10  hdr_len=5
+      00 00 01 e0 01 8a 81 80 05 21 4d 75 9c a1 00 00 00 01 09 f0 00 00 00 01
+   per-pid #295  PTS_DTS_flags=10  hdr_len=5
+      00 00 01 e0 01 a6 81 80 05 21 4d 75 b4 0f 00 00 00 01 09 f0 00 00 00 01
+   per-pid #296  PTS_DTS_flags=10  hdr_len=5
+      00 00 01 e0 00 9f 81 80 05 21 4d ad 9b 1b 00 00 00 01 09 f0 00 00 00 01
+   per-pid #297  PTS_DTS_flags=11  hdr_len=10
+      00 00 01 e0 5b e4 81 c0 0a 31 4d 79 c1 ff 11 4d ad 9b 1b 00 00 00 01 09
+   per-pid #298  PTS_DTS_flags=11  hdr_len=10
+      00 00 01 e0 00 80 81 c0 0a 31 4d 79 d9 6f 11 4d ad 9b 1b 00 00 00 01 09
+   per-pid #299  PTS_DTS_flags=11  hdr_len=10
+      00 00 01 e0 01 ca 81 c0 0a 31 4d 79 f0 df 11 4d ad 9b 1b 00 00 00 01 09
+   per-pid #300  PTS_DTS_flags=11  hdr_len=10
+      00 00 01 e0 02 96 81 c0 0a 31 4d 7b 08 4f 11 4d ad 9b 1b 00 00 00 01 09

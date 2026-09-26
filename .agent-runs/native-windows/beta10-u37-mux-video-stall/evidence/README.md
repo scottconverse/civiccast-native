@@ -15,7 +15,10 @@ re-provided.
   `git archive 5397c069 | tar -x -C %TEMP%\u37\base-5397c069` and run with `PYTHONPATH` at that
   root. Base `engine.py` sha256 `9175935425ff0d8fa7f86316152d8f73166fed083ae30203b579bbd5234eea23`,
   306504 bytes.
-- Candidate = this branch's HEAD (`866703c7`), run from the worktree.
+- Candidate = this branch's HEAD when the runs were captured (`866703c7`), run from the
+  worktree. The two commits after it are `3f15ffc6` (evidence files only) and `53186ea1`
+  (comments only, in `engine.py`); neither changes behaviour, and `head2-fullsuite.txt` is a
+  full suite run at `53186ea1`.
 - Live station: read only. Nothing started, stopped, or written.
 
 ## Instruments
@@ -26,6 +29,7 @@ re-provided.
 | `regcheck.py` | per-PID PES **order regression** in the mux's own output — the red/green verdict |
 | `lag.py` | per-PID **airing lag**: at each emitted PES, the leading frontier minus the emitting stream's running time |
 | `audioonly.py` | longest unbroken **audio-only run** in emission order, plus per-PID frame counts |
+| `dts.py` | the mux output's own video **DTS**: is one emitted at all, is it one frozen value, is it non-monotone |
 | `step.py` | prints each actual backward PES step (emission index, before/after running times) |
 | `intervals.py` | the worker's own `CTRL output:` interval lines that show a collapsed src rate |
 | `x4.py` | the A/B harness that runs the real pipelines off-live (`--tree`, `--caps`, `--captions`, `--runs`, `--tag`) |
@@ -43,9 +47,16 @@ candidate engine:
 | stage string | base `5397c069` | HEAD | build |
 |--------------|-----------------|------|-------|
 | `rebase-observer-armed … observed=` | 0 | 1 | final candidate |
-| `rebase-drain-wait`, `rebase-drain-drained` | 0 | 1 | final candidate |
+| `rebase-drain-drained` | 0 | 1 | final candidate |
+| `rebase-drain-wait` | 0 | 1 | final candidate **and** the 1.0 s intermediate `h1` — not a marker on its own |
 | `rebase-fence-armed … fenced=`, `u37-drain-trace` | 0 | 0 | **discarded** intermediate (DROP fence); excluded from the green count |
 | `rebase-fence-disarmed … dropped=` | 0 | 0 | the discarded build's harm line |
+| `WARN: rebase drain did not empty within 1.0s` | 0 | 0 | the 1.0 s intermediate `h1` only — see `raw/logs/h1-1.0s-deadline.txt` |
+
+The sound final-candidate markers are `rebase-observer-armed` **and** `rebase-drain-drained`
+together: the `h1` intermediate emits `rebase-fence-armed`/`rebase-drain-wait` but never
+`rebase-observer-armed`, never `rebase-drain-drained`, and raises the 1.0 s WARN on a switch
+whose recorded output is healthy (`x2/_ref/h1-out.ts`: 659 / 1061, worst lag 0.501344 s).
 
 ## Results (raw output in `raw/`)
 
@@ -70,9 +81,38 @@ raw/step-collapses.txt:
 Consequence — the longest unbroken audio-only run (`raw/ref-audioonly.txt`): base collapse
 **478** (`x2/_ref/red-out.ts`, video 659 / audio 1061) against **26–36** on candidate runs.
 
+`raw/dts-out.txt` (`instruments/dts.py`) — the mux output's own **video DTS**. In all four
+collapses the emitted video carries **one single DTS value** in the whole file, equal to the
+re-dated stale frame's PTS, on exactly the frames whose PTS lies below it — and no other frame:
+
+```
+x4dbg/run3  video 659 PES  PTS+DTS 283  PTS-only 376  PTS backsteps 1
+   distinct DTS values: 1  min=19.992322 max=19.992322
+   DTS-carrying frames: #297..#579 of 659  (count 283); their PTS 10.581322..19.981322
+   of those, frames whose PTS is below the frozen DTS 19.992322: 283 / 283  (DTS-PTS 0.011..9.411000s)
+   first PTS-only after: #580 PTS 20.014656 -> 79 PTS-only frames to end
+```
+
+The `x2/run8` collapse is the same law with its own value (284 frames, DTS 20.025656, PTS
+10.581322..20.014656). The `--hex` appendix at the end of the same file is the field verbatim
+for `x4dbg/run3` (#294..#300): the stale frame `#296` is `PTS_DTS_flags=10 hdr_len=5` with PTS
+bytes `21 4d ad 9b 1b`, and every DTS-carrying frame from `#297` on is
+`PTS_DTS_flags=11 hdr_len=10` whose DTS bytes are `11 4d ad 9b 1b` — **byte-identical to `#296`'s
+PTS apart from the PTS/DTS marker nibble**, so the frozen DTS is literally the re-dated stale
+frame's stamp. **Every one of the 11 healthy recordings checked** — base `x4base/run1`
+and `x1/run1`, the fence build `x2/run2`, `x2/_ref/h1-out.ts`, `x2/_ref/green-out.ts`,
+`x2/_ref/h3-out.ts`, and candidate `x4green/run1`, `x4green/run6`, `x4lag/run1`, `x4pc/run1` —
+emits **zero** PTS+DTS video headers and zero backsteps.
+
 `raw/logs/base-x4dbg-run3-intervals.txt` — the collapsing base run's own interval line
 (`src_d=+282` while its video still arrives at `+180`), with the ordinary commit ladder and no
-U37 stage (`raw/logs/base-x4dbg-run3-stages.txt`).
+U37 stage, followed by that run's own reload lines (`raw/logs/base-x4dbg-run3-stages.txt`):
+`ends=[video=9.867,audio=10.581] switch_running_time=10.581`, i.e. the outgoing video's declared
+tail ends 0.714 s short of the switch instant while the audio's ends exactly on it.
+
+The five files under `raw/logs/` are committed with `git add -f`: the repo's `.gitignore:119`
+carries a blanket `logs/` rule that would otherwise silently swallow them, and the paragraphs
+above cite them.
 
 Bound (`raw/ref-lag.txt`, `raw/lag-all.txt`): worst healthy airing lag **0.726678 s**; no healthy
 stream-recording ever emitted a PES more than 1.0 s behind; the four collapses sit at
@@ -93,6 +133,7 @@ All four are `python -m pytest tests/egress -q -p no:randomly`.
 | `wt-fullsuite2.txt` | candidate engine, before the two per-stream-judge tests landed | `1 failed, 1820 passed, 46 skipped` |
 | `wt-fullsuite3.txt` | same, a second run | `1 failed, 1820 passed, 46 skipped` |
 | `head-fullsuite.txt` | HEAD `866703c7` | `1 failed, 1822 passed, 46 skipped` |
+| `head2-fullsuite.txt` | HEAD `53186ea1` (comments only past `866703c7`) | `1 failed, 1822 passed, 46 skipped` |
 
 The accounting is exact: 1813 (base, U37 red) + the 7 U37 tests = 1820, + the 2 per-stream-judge
 tests = 1822. The one failure throughout — and the *only* one at HEAD — is
@@ -107,6 +148,7 @@ python regcheck.py <tag>/run<N>/out.ts ...     # red/green verdicts
 python lag.py      <tag>/run<N>/out.ts ...     # the airing-lag bound's figures
 python audioonly.py <tag>/run<N>/out.ts ...    # audio-only run + frame counts
 python step.py     <tag>/run<N>/out.ts         # the exact backward steps
+python dts.py      <tag>/run<N>/out.ts ...     # is a video DTS emitted, and is it frozen
 ```
 
 The `out.ts` files themselves are deleted with the scratch tree (`%TEMP%\u37`) at the end of the

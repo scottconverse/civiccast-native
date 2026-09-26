@@ -1,0 +1,13 @@
+### x4green/run1 (FINAL CANDIDATE HEAD) -- reload diagnostics with the drain gate
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=6 reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-drained waited=1.187s reload_id=1
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload diagnostic: stage=holds-released
+CTRL reload diagnostic: stage=selector-handoff-confirmed
+CTRL reload diagnostic: stage=retiring-tail-release-entered streams=video,audio
+CTRL reload diagnostic: stage=retiring-tail-released stream=video
+CTRL reload diagnostic: stage=retiring-tail-released stream=audio
+CTRL reload diagnostic: stage=old-tail-detached
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload diagnostic: stage=committed elements=44
