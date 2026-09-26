@@ -32,6 +32,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -45,7 +46,19 @@ _SCRIPT = (
 )
 
 
-def _load() -> object:
+def _load(*, race_sleep: bool = False) -> object:
+    """Load the tool as a fresh module object.
+
+    Unless ``race_sleep`` asks for the real thing, the module's ``time`` is
+    stubbed to a no-op sleep: the shipped U48 retry budget (20 x 100 ms) is
+    charged by every test in this file that reads a genuinely absent playlist
+    or segment, and that is wall clock, not a contract.  The budget itself is
+    pinned by ``test_playlist_read_gives_up_after_the_retry_budget``, which
+    loads with ``race_sleep=True`` and asserts the shipped constants and the
+    recorded delays.  Only ``time.sleep`` is reached at runtime here; the
+    injectable ``monotonic``/``sleep`` defaults were bound at import.
+    """
+
     if not _SCRIPT.is_file():
         pytest.fail(
             "capture_emitted_hls_audio_proof.py is absent: the approved continuous "
@@ -57,6 +70,8 @@ def _load() -> object:
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    if not race_sleep:
+        module.time = SimpleNamespace(sleep=lambda _seconds: None)
     return module
 
 
@@ -1740,3 +1755,182 @@ def test_scratch_directory_is_removed_after_capture(tmp_path: Path) -> None:
     # Snapshot copies live inside the supplied scratch dir, never in the HLS root.
     for record in snapshot["segments"]:
         assert root not in Path(record["snapshot_path"]).parents
+
+
+# --- U48: a live read that races the relay's atomic replace ----------------
+
+
+def _no_sleeps(mod: object, monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Stub the module's ``time`` so a retry budget costs no wall clock.
+
+    Returns the recorded delays, so a test can assert the retry spacing as well
+    as the attempt count.  Only this module's ``time`` attribute is replaced;
+    the real ``time`` module (used by every injected default) is untouched.
+    """
+
+    slept: list[float] = []
+    monkeypatch.setattr(mod, "time", SimpleNamespace(sleep=slept.append))
+    return slept
+
+
+def _racing_open(monkeypatch: pytest.MonkeyPatch, target: Path, failures: int) -> dict[str, int]:
+    """Make the first ``failures`` opens of ``target`` raise EACCES, then work.
+
+    A real Windows EACCES cannot be staged from one process against a file it
+    may also read, so the race is injected at the syscall boundary: the relay's
+    atomic replace is exactly this -- the name exists, the open fails.
+    """
+
+    real_open = Path.open
+    calls = {"n": 0}
+
+    def flaky(self, *args, **kwargs):
+        if self == target and calls["n"] < failures:
+            calls["n"] += 1
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", flaky)
+    return calls
+
+
+def test_playlist_read_survives_a_racing_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Three EACCES reads in a row are a race, not a verdict: the read wins."""
+
+    mod = _load()
+    slept = _no_sleeps(mod, monkeypatch)
+    channel = _hls_root(tmp_path) / "public"
+    names = _write_playlist(channel, media_sequence=100, count=3)
+    calls = _racing_open(monkeypatch, channel / "playlist.m3u8", 3)
+
+    playlist = mod.parse_playlist(channel / "playlist.m3u8")
+
+    assert calls["n"] == 3, "the raced read was not retried"
+    assert playlist.parse_error is None
+    assert playlist.segments == names
+    assert slept == [mod.RACE_RETRY_DELAY_SECONDS] * 3
+
+
+def test_playlist_read_gives_up_after_the_retry_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A read that never succeeds still fails closed, as before, after the budget."""
+
+    # This is the test that pins the shipped budget, so it loads the module
+    # with its real ``time``; ``_no_sleeps`` then records the delays instead of
+    # sleeping them.
+    mod = _load(race_sleep=True)
+    slept = _no_sleeps(mod, monkeypatch)
+    channel = _hls_root(tmp_path) / "public"
+    _write_playlist(channel, media_sequence=100, count=3)
+    calls = _racing_open(monkeypatch, channel / "playlist.m3u8", 25)
+
+    playlist = mod.parse_playlist(channel / "playlist.m3u8")
+
+    assert mod.RACE_RETRY_ATTEMPTS == 20
+    assert mod.RACE_RETRY_DELAY_SECONDS == 0.1
+    assert calls["n"] == mod.RACE_RETRY_ATTEMPTS
+    assert len(slept) == mod.RACE_RETRY_ATTEMPTS - 1
+    assert set(slept) == {0.1}
+    assert playlist.parse_error is not None
+    assert "Permission denied" in playlist.parse_error
+    assert playlist.segments == []
+
+
+def test_absent_playlist_still_reports_missing_after_the_retry_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuinely absent playlist keeps today's word -- and pays the budget once."""
+
+    mod = _load()
+    slept = _no_sleeps(mod, monkeypatch)
+
+    playlist = mod.parse_playlist(tmp_path / "absent.m3u8")
+
+    assert playlist.parse_error == "playlist missing"
+    assert playlist.segments == []
+    assert len(slept) == mod.RACE_RETRY_ATTEMPTS - 1
+
+
+def test_segment_copy_survives_a_racing_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The segment read is retried too: a raced copy is not a lost segment."""
+
+    mod = _load()
+    slept = _no_sleeps(mod, monkeypatch)
+    channel = _hls_root(tmp_path) / "public"
+    names = _write_playlist(channel, media_sequence=100, count=1)
+    evidence: dict[str, Any] = {"blocking_reasons": []}
+    snapshot = tmp_path / "scratch" / names[0]
+    snapshot.parent.mkdir()
+    calls = _racing_open(monkeypatch, channel / names[0], 3)
+
+    record = mod._copy_segment(channel / names[0], snapshot, 100, 2.0, evidence)
+
+    assert calls["n"] == 3, "the raced segment read was not retried"
+    assert record is not None
+    assert record["capture_status"] == "complete"
+    assert record["bytes"] == 188 * 10
+    assert snapshot.read_bytes() == b"\x47" * 188 * 10
+    assert evidence["blocking_reasons"] == []
+    assert slept == [mod.RACE_RETRY_DELAY_SECONDS] * 3
+
+
+def test_segment_copy_gives_up_after_the_retry_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A segment read that never succeeds is still an incomplete capture."""
+
+    mod = _load()
+    _no_sleeps(mod, monkeypatch)
+    channel = _hls_root(tmp_path) / "public"
+    names = _write_playlist(channel, media_sequence=100, count=1)
+    evidence: dict[str, Any] = {"blocking_reasons": []}
+    snapshot = tmp_path / "scratch" / names[0]
+    snapshot.parent.mkdir()
+    calls = _racing_open(monkeypatch, channel / names[0], 25)
+
+    record = mod._copy_segment(channel / names[0], snapshot, 100, 2.0, evidence)
+
+    assert calls["n"] == mod.RACE_RETRY_ATTEMPTS
+    assert record is None
+    assert len(evidence["blocking_reasons"]) == 1
+    assert f"incomplete capture for {names[0]}" in evidence["blocking_reasons"][0]
+    assert "Permission denied" in evidence["blocking_reasons"][0]
+    assert not snapshot.exists()
+
+
+def test_missing_segment_check_survives_a_racing_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``is_file()`` swallows the race too, so it must be retried as well."""
+
+    mod = _load()
+    slept = _no_sleeps(mod, monkeypatch)
+    channel = _hls_root(tmp_path) / "public"
+    names = _write_playlist(channel, media_sequence=100, count=1)
+    real_is_file = Path.is_file
+    seen = {"n": 0}
+
+    def flaky(self):
+        if self.name == names[0] and seen["n"] < 3:
+            seen["n"] += 1
+            return False
+        return real_is_file(self)
+
+    monkeypatch.setattr(Path, "is_file", flaky)
+    evidence: dict[str, Any] = {"blocking_reasons": []}
+    snapshot = tmp_path / "scratch" / names[0]
+    snapshot.parent.mkdir()
+
+    record = mod._copy_segment(channel / names[0], snapshot, 100, 2.0, evidence)
+
+    assert seen["n"] == 3, "a raced is_file() was taken as a missing segment"
+    assert record is not None
+    assert record["present"] is True
+    assert record["capture_status"] == "complete"
+    assert evidence["blocking_reasons"] == []
+    assert slept == [mod.RACE_RETRY_DELAY_SECONDS] * 3

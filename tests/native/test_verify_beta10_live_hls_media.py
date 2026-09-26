@@ -10,11 +10,13 @@ positive control so the assertion can actually fail (test sensitivity).
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1581,3 +1583,166 @@ def test_make_scratch_dir_resolve_failure_leaves_nonempty_dir_untouched(
 
     assert rmtree_calls == [], "recursive delete used"
     assert (foreign / "keep").is_file(), "unexpectedly non-empty dir was not preserved"
+
+
+# --- U48: a live read that races the relay's atomic replace ----------------
+
+
+@pytest.fixture(autouse=True)
+def _never_pay_the_race_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the shipped retry budget out of this file's wall clock.
+
+    Several fixtures in this file intentionally reference a playlist or segment
+    that does not exist, and the shipped budget (20 x 100 ms) would charge each
+    of them about two seconds.  The budget itself is pinned by
+    ``test_parse_playlist_gives_up_after_the_retry_budget`` -- exact constants
+    and recorded delays -- so no contract is left unproven by not sleeping
+    here.  A test that needs the recorded delays re-stubs ``verify.time``
+    through ``_no_sleeps``.
+    """
+
+    monkeypatch.setattr(verify, "time", SimpleNamespace(sleep=lambda _seconds: None))
+
+
+def _no_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Stub the module's ``time`` so a retry budget costs no wall clock.
+
+    Returns the recorded delays so a test can assert the spacing as well as the
+    attempt count.  Only this module's ``time`` attribute is replaced.
+    """
+
+    slept: list[float] = []
+    monkeypatch.setattr(verify, "time", SimpleNamespace(sleep=slept.append))
+    return slept
+
+
+def _racing_open(monkeypatch: pytest.MonkeyPatch, target: Path, failures: int) -> dict[str, int]:
+    """Make the first ``failures`` opens of ``target`` raise EACCES, then work."""
+
+    real_open = Path.open
+    calls = {"n": 0}
+
+    def flaky(self, *args, **kwargs):
+        if self == target and calls["n"] < failures:
+            calls["n"] += 1
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", flaky)
+    return calls
+
+
+def test_parse_playlist_read_survives_a_racing_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Three EACCES reads in a row are a race, not a verdict: the read wins."""
+
+    slept = _no_sleeps(monkeypatch)
+    pl = tmp_path / "playlist.m3u8"
+    names = _write_playlist(pl, media_sequence=927, count=3)
+    calls = _racing_open(monkeypatch, pl, 3)
+
+    parsed = verify.parse_playlist(pl)
+
+    assert calls["n"] == 3, "the raced read was not retried"
+    assert parsed.parse_error is None
+    assert parsed.segments == names
+    assert parsed.media_sequence == 927
+    assert slept == [verify.RACE_RETRY_DELAY_SECONDS] * 3
+
+
+def test_parse_playlist_gives_up_after_the_retry_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A read that never succeeds still fails closed, as before, after the budget."""
+
+    slept = _no_sleeps(monkeypatch)
+    pl = tmp_path / "playlist.m3u8"
+    _write_playlist(pl, media_sequence=927, count=3)
+    calls = _racing_open(monkeypatch, pl, 25)
+
+    parsed = verify.parse_playlist(pl)
+
+    assert verify.RACE_RETRY_ATTEMPTS == 20
+    assert verify.RACE_RETRY_DELAY_SECONDS == 0.1
+    assert calls["n"] == verify.RACE_RETRY_ATTEMPTS
+    assert len(slept) == verify.RACE_RETRY_ATTEMPTS - 1
+    assert set(slept) == {0.1}
+    assert parsed.parse_error is not None
+    assert "Permission denied" in parsed.parse_error
+    assert parsed.segments == []
+
+
+def test_absent_playlist_still_reports_missing_after_the_retry_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A genuinely absent playlist keeps today's word -- and pays the budget once."""
+
+    slept = _no_sleeps(monkeypatch)
+
+    parsed = verify.parse_playlist(tmp_path / "absent.m3u8")
+
+    assert parsed.parse_error == "playlist missing"
+    assert parsed.segments == []
+    assert len(slept) == verify.RACE_RETRY_ATTEMPTS - 1
+
+
+def _racing_fd_open(failures: int, monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Make the first ``failures`` read-only opens raise EACCES, then work."""
+
+    real = verify._open_live_fd
+    calls = {"n": 0}
+
+    def flaky(src):
+        if calls["n"] < failures:
+            calls["n"] += 1
+            raise PermissionError(13, "Permission denied", str(src))
+        return real(src)
+
+    monkeypatch.setattr(verify, "_open_live_fd", flaky)
+    return calls
+
+
+def test_snapshot_segment_read_survives_a_racing_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """EACCES on the open is the relay's replace racing us, not a station fault."""
+
+    slept = _no_sleeps(monkeypatch)
+    channel = tmp_path / "live" / "public"
+    channel.mkdir(parents=True)
+    names = _write_playlist(channel / "playlist.m3u8", media_sequence=927, count=3)
+    _touch_segments(channel, names)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    calls = _racing_fd_open(3, monkeypatch)
+
+    path, digest = verify._snapshot_segment(channel / names[0], scratch)
+
+    assert calls["n"] == 3, "the raced segment read was not retried"
+    assert path is not None
+    assert path.read_bytes() == b"\x47" * 1024
+    assert digest == hashlib.sha256(b"\x47" * 1024).hexdigest()
+    assert slept == [verify.RACE_RETRY_DELAY_SECONDS] * 3
+
+
+def test_snapshot_segment_gives_up_after_the_retry_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A segment read that never succeeds is still fail-closed, as before."""
+
+    _no_sleeps(monkeypatch)
+    channel = tmp_path / "live" / "public"
+    channel.mkdir(parents=True)
+    names = _write_playlist(channel / "playlist.m3u8", media_sequence=927, count=3)
+    _touch_segments(channel, names)
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    calls = _racing_fd_open(25, monkeypatch)
+
+    path, digest = verify._snapshot_segment(channel / names[0], scratch)
+
+    assert calls["n"] == verify.RACE_RETRY_ATTEMPTS
+    assert path is None
+    assert digest is None
+    assert not (scratch / names[0]).exists()
