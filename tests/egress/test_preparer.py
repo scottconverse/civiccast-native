@@ -18,6 +18,15 @@ import pytest
 
 import civiccast.egress.preparer as preparer_module
 from civiccast.egress.errors import SourcePrepareError
+from civiccast.egress.loudness_ride import (
+    LeveledAttempt,
+    LeveledSelection,
+    LeveledWindow,
+    LoudnessRideCancelledError,
+    LoudnessRideError,
+    RideCurve,
+    RideParams,
+)
 from civiccast.egress.models import (
     CanonicalProfile,
     EgressConfig,
@@ -823,6 +832,117 @@ def _counting_runner(calls: list[list[str]]):
         return FfmpegResult(returncode=0, stdout="", stderr="")
 
     return runner
+
+
+# ---------------------------------------------------------------------------
+# U25 -- the preparer's conform paths ride first, and fall back to loudnorm
+# ---------------------------------------------------------------------------
+
+
+def _no_ride(**_kwargs: object) -> LeveledWindow:
+    """A ``level_window`` stand-in that is never available.
+
+    Pre-U25 tests that assert on the loudnorm shapes use this: the preparer's
+    ride is a real subprocess spawner, so a test that only cares about the
+    loudnorm path must take the documented degradation path explicitly rather
+    than shelling out to FFmpeg against a ``"fake media"`` file.
+    """
+    raise LoudnessRideError("test: the ride is not available")
+
+
+class _StubLeveler:
+    """A ``level_window`` stand-in that records its call and writes the artifact.
+
+    The signature is spelled out rather than ``**kwargs`` so a test asserting on
+    what the preparer passed also pins the interface the preparer calls it with.
+    """
+
+    def __init__(
+        self,
+        *,
+        warning: str | None = None,
+        hard_tp_met: bool = True,
+        rides: int | None = None,
+        cancel_on_call: int | None = None,
+        write_audio: bool = True,
+    ) -> None:
+        self.calls: list[dict[str, object]] = []
+        self._warning = warning
+        self._hard_tp_met = hard_tp_met
+        self._rides = rides
+        self._cancel_on_call = cancel_on_call
+        self._write_audio = write_audio
+
+    def __call__(
+        self,
+        *,
+        source_path: Path,
+        audio_path: Path,
+        params: RideParams,
+        profile: CanonicalProfile,
+        duration_s: float | None = None,
+        segment: EgressSourceSegment | None = None,
+        pcm_path: Path | None = None,
+        threads: int | None = None,
+        ride_runner: object = None,
+        reencode_runner: object = None,
+        cancel_event: threading.Event | None = None,
+        timeout_s: float | None = None,
+    ) -> LeveledWindow:
+        index = len(self.calls)
+        self.calls.append(
+            {
+                "source_path": source_path,
+                "audio_path": audio_path,
+                "params": params,
+                "profile": profile,
+                "duration_s": duration_s,
+                "segment": segment,
+                "pcm_path": pcm_path,
+                "threads": threads,
+                "ride_runner": ride_runner,
+                "reencode_runner": reencode_runner,
+                "cancel_event": cancel_event,
+                "timeout_s": timeout_s,
+            }
+        )
+        if self._write_audio:
+            audio_path.parent.mkdir(parents=True, exist_ok=True)
+            audio_path.write_bytes(b"ride audio")
+        if self._cancel_on_call == index:
+            raise LoudnessRideCancelledError("test: cancelled mid-ride")
+        if self._rides is not None and index >= self._rides:
+            raise LoudnessRideError("test: the ride is not available")
+        attempt = LeveledAttempt(
+            round_index=0,
+            limit_dbtp=-1.5,
+            emitted_dbtp=-1.4,
+            emitted_lufs=-24.1,
+            worst_window_err_lu=0.2,
+            whole_err_lu=-0.1,
+            wall_s=0.5,
+            decoded_peak_dbfs=-0.6,
+        )
+        return LeveledWindow(
+            selection=LeveledSelection(
+                kept=attempt,
+                attempts=[attempt],
+                target_met=True,
+                hard_tp_met=self._hard_tp_met,
+                warning=self._warning,
+            ),
+            curve=RideCurve(
+                curve=[],
+                trim_db=-2.2,
+                iterations=2,
+                converged=True,
+                stop_reason="stop_lu",
+                diagnostics=[],
+            ),
+            audio_path=audio_path,
+            wall_s=0.5,
+            tee_path=audio_path.with_name(audio_path.name + ".pcm"),
+        )
 
 
 def test_aired_before_asset_prepares_with_zero_ffmpeg_work(tmp_path: Path) -> None:
@@ -2932,9 +3052,12 @@ def test_two_pass_cache_key_includes_method(
     monkeypatch.setattr(preparer_module, "_LOUDNORM_METHOD_VERSION", method)
     assert preparer._cache_key(src, config) == baseline
 
-    # The shipped method version is the two-pass one: a one-pass build would
-    # leave a single-pass conform reachable under the same key.
-    assert method == "loudnorm-v2-twopass"
+    # The shipped method version is the U25 ride one.  An older build's entry
+    # must stay unreachable: a v2 two-pass conform and a v3 ridden one are
+    # different bytes for the same window, and so are the two v3 shapes
+    # themselves (ride vs the loudnorm fallback), which is why this bump
+    # accompanies the wiring rather than a change to ``loudnorm``'s own args.
+    assert method == "loudnorm-v3-ride"
 
 
 def test_probe_args_carry_foreground_thread_cap(tmp_path: Path) -> None:
@@ -3280,3 +3403,186 @@ def test_conform_failure_after_a_successful_measurement_still_raises(tmp_path: P
 
     with pytest.raises(SourcePrepareError, match="could not be conformed"):
         preparer.prepare(_source_plan(tmp_path), _config())
+
+
+# ---------------------------------------------------------------------------
+# U25 -- the ride is the conform, and loudnorm is the documented fallback
+# ---------------------------------------------------------------------------
+
+
+def test_trimmed_conform_rides_and_records_the_method(tmp_path: Path) -> None:
+    """U25: a normalized window is leveled by the ride and muxed onto the source
+    video, and the record says so.  The ride replaces the loudnorm pair
+    entirely -- no measurement probe runs, and the only FFmpeg invocation is
+    the program mux (source video + the ride's own audio, stream-copied)."""
+
+    leveler = _StubLeveler()
+    calls: list[list[str]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda _job: None,
+        window_leveler=leveler,
+    )
+
+    report = preparer.prepare(_source_plan(tmp_path), _config())
+
+    assert report.records[0].loudness_method == "ride"
+    assert report.records[0].normalized is True
+
+    # One ride, called with this window's own terms.
+    assert len(leveler.calls) == 1
+    ride = leveler.calls[0]
+    assert ride["source_path"] == tmp_path / "raw-source.mp4"
+    assert ride["params"] == RideParams(target_lufs=-24.0)
+    assert ride["duration_s"] == 12.5
+    assert ride["segment"] is not None
+    assert ride["segment"].label == "Council meeting"  # type: ignore[union-attr]
+    assert ride["profile"] == _config().canonical_profile
+    assert str(ride["audio_path"]).endswith(".ride-audio.ts")
+
+    # One FFmpeg call: the program mux.  No loudnorm anywhere on this path.
+    assert len(calls) == 1
+    mux = calls[0]
+    joined = " ".join(mux)
+    assert "loudnorm" not in joined
+    assert "print_format=json" not in joined
+    assert mux[mux.index("-map") : mux.index("-map") + 4] == ["-map", "0:v:0", "-map", "1:a:0"]
+    assert mux[mux.index("-c:a") + 1] == "copy"
+    prepared = Path(report.records[0].prepared_path)
+    assert Path(mux[-1]).name == prepared.name + ".tmp"
+    assert prepared.is_file()
+
+    # Neither the ride's audio nor the atomic-write tmp survives.
+    assert list(tmp_path.rglob("*.ride-audio.ts")) == []
+    assert list(tmp_path.rglob("*.tmp")) == []
+
+
+def test_trimmed_conform_falls_back_to_loudnorm_when_the_ride_is_unavailable(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """U25: the ride failing is a degradation, never a failure.  ONE warning
+    names the source and the reason, and the window is conformed exactly as it
+    was before U25 -- measure, then two-pass loudnorm."""
+
+    calls: list[list[str]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda _job: None,
+        window_leveler=_no_ride,
+    )
+
+    with caplog.at_level(logging.WARNING, logger=preparer_module.__name__):
+        report = preparer.prepare(_source_plan(tmp_path), _config())
+
+    assert report.records[0].loudness_method == "two-pass"
+    assert any("print_format=json" in " ".join(args) for args in calls), "the probe must run"
+    assert "loudnorm=I=-24" in " ".join(calls[-1])
+
+    degradations = [
+        record
+        for record in caplog.records
+        if record.levelno >= logging.WARNING and "ride" in record.getMessage().lower()
+    ]
+    assert len(degradations) == 1, [r.getMessage() for r in caplog.records]
+    message = degradations[0].getMessage()
+    assert "raw-source.mp4" in message
+    assert "test: the ride is not available" in message
+
+
+def test_failed_ride_mux_leaves_no_tmp_for_the_fallback(tmp_path: Path) -> None:
+    """U25: ``build_video_from_source_args`` carries no ``-y``, so a leftover
+    tmp makes the fallback's own encode fail with "File exists".  A mux that
+    exits non-zero must unlink its tmp, and its ride audio, before the loudnorm
+    fallback starts."""
+
+    state: dict[str, object] = {"mux_calls": 0, "tmps_at_probe": None}
+
+    def runner(args: list[str]) -> FfmpegResult:
+        joined = " ".join(args)
+        if "print_format=json" in joined:
+            state["tmps_at_probe"] = sorted(p.name for p in tmp_path.rglob("*.tmp"))
+            return FfmpegResult(returncode=0, stdout="", stderr=_loudnorm_probe_stderr())
+        if "-map" in args:
+            state["mux_calls"] = int(state["mux_calls"]) + 1  # type: ignore[call-overload]
+            return FfmpegResult(returncode=1, stdout="", stderr="boom")
+        _write_fake_output(args)
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=runner,
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda _job: None,
+        window_leveler=_StubLeveler(),
+    )
+
+    report = preparer.prepare(_source_plan(tmp_path), _config())
+
+    assert state["mux_calls"] == 1
+    assert state["tmps_at_probe"] == [], "the ride's tmp must be gone before the fallback encodes"
+    assert report.records[0].loudness_method == "two-pass"
+    assert list(tmp_path.rglob("*.ride-audio.ts")) == []
+
+
+def test_cancelled_ride_cancels_the_prepare_and_cleans_up(tmp_path: Path) -> None:
+    """U25: a cancelled ride is not a degradation -- it must stop the prepare,
+    exactly like a cancelled measurement or encode, and leave no audio behind."""
+
+    leveler = _StubLeveler(cancel_on_call=0)
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda _job: None,
+        window_leveler=leveler,
+    )
+
+    with pytest.raises(SourcePreparationCancelledError):
+        preparer.prepare(
+            _source_plan(tmp_path),
+            _config(),
+            cancel_event=threading.Event(),
+            protected_plan_dirs=frozenset(),
+        )
+
+    assert len(leveler.calls) == 1
+    assert list(tmp_path.rglob("*.ride-audio.ts")) == []
+
+
+def test_full_asset_conform_rides_and_the_cache_meta_says_ride(tmp_path: Path) -> None:
+    """U25: the whole-asset conform (the untrimmed path an engine that cannot
+    trim at playout takes) rides too, over the WHOLE file -- no segment, no
+    duration limit -- and both the record and the cache sidecar it leaves
+    behind say ``ride`` rather than borrowing the loudnorm label."""
+
+    leveler = _StubLeveler()
+    calls: list[list[str]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda _job: None,
+        playout_trim_supported=True,
+        window_leveler=leveler,
+    )
+
+    report = preparer.prepare(_untrimmed_plan(tmp_path), _config())
+
+    assert report.records[0].loudness_method == "ride"
+    assert len(leveler.calls) == 1
+    assert leveler.calls[0]["segment"] is None
+    assert leveler.calls[0]["duration_s"] is None
+    assert "loudnorm" not in " ".join(calls[0])
+
+    metas = [
+        json.loads(path.read_text(encoding="utf-8"))
+        for path in tmp_path.rglob("*.json")
+        if "full_asset_conform" in path.read_text(encoding="utf-8")
+    ]
+    assert len(metas) == 1
+    assert metas[0]["loudness_method"] == "ride"
+    assert metas[0]["full_asset_conform"] is True

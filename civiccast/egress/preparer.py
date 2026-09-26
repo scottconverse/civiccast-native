@@ -45,6 +45,18 @@ from typing import Any
 
 from civiccast.egress.env_vars import resolve_renamed_env
 from civiccast.egress.errors import SourcePrepareError
+from civiccast.egress.loudness_ride import (
+    LOUDNESS_WHOLE_TOL_LU,
+    LOUDNESS_WINDOW_TOL_LU,
+    LeveledWindow,
+    LoudnessRideCancelledError,
+    LoudnessRideError,
+    RideParams,
+    build_video_from_source_args,
+    canonical_video_filter,
+    level_window,
+    ride_audio_path,
+)
 from civiccast.egress.models import (
     CanonicalProfile,
     EgressConfig,
@@ -54,6 +66,7 @@ from civiccast.egress.models import (
 from civiccast.egress.runtime import FfmpegRunner
 from civiccast.stream._ffmpeg import (
     FfmpegCancelledError,
+    FfmpegNotFoundError,
     FfmpegResult,
     probe_media_duration_seconds,
     run_ffmpeg,
@@ -67,6 +80,10 @@ from civiccast.stream.loudness import (
 LoudnessChecker = Callable[..., LoudnessGateResult]
 _LOG = logging.getLogger(__name__)
 WarmScheduler = Callable[[Callable[[], None]], None]
+#: The U25 ride, injected so tests (and a host without numpy) can substitute a
+#: stand-in.  Keyword-only in the same shape as :func:`level_window`, which is
+#: the real default.
+WindowLeveler = Callable[..., LeveledWindow]
 
 _CACHE_DIR_NAME = "conform-cache"
 _DEFAULT_CACHE_GB = 20.0
@@ -315,6 +332,22 @@ def _describe_segment_window(segment: EgressSourceSegment | None) -> str:
     )
 
 
+def _fmt_measure(value: float | None, unit: str = "") -> str:
+    """Render one measured number for an operator-facing log line.
+
+    ``None`` is ``"unmeasurable"``, never ``0``: the ride reports a measurement
+    it could not take (an unscanned peak, a window family with no measured
+    block) as ``None``, and a log line that printed ``0.00`` for that would tell
+    an operator the opposite of what happened.  ``unit`` is appended bare, so
+    callers pass ``"LU"``/``"dBFS"`` with the spacing they want in the format
+    string.
+    """
+
+    if value is None:
+        return "unmeasurable"
+    return f"{value:.2f}{unit}"
+
+
 @dataclass(frozen=True)
 class PreparedSegmentRecord:
     """Trace of one source segment preparation decision."""
@@ -325,11 +358,11 @@ class PreparedSegmentRecord:
     loudness_status: str
     measured_lufs: float | None
     normalized: bool
-    #: Which loudnorm shape produced ``prepared_path``: ``"two-pass"``,
-    #: ``"single-pass-fallback"``, or ``None`` when no loudnorm filter ran at
-    #: all (an unnormalized/passthrough segment, or a live passthrough emitted
-    #: without entering the preparer's conform paths).  See the
-    #: ``_LOUDNESS_METHOD_*`` constants for what each value means.
+    #: Which shape produced ``prepared_path``: ``"ride"``, ``"two-pass"``,
+    #: ``"single-pass-fallback"``, or ``None`` when neither ran (an
+    #: unnormalized/passthrough segment, or a live passthrough emitted without
+    #: entering the preparer's conform paths).  See the ``_LOUDNESS_METHOD_*``
+    #: constants for what each value means.
     loudness_method: str | None = None
 
 
@@ -366,6 +399,7 @@ class SourcePreparer:
         warm_scheduler: WarmScheduler = _default_warm_scheduler,
         playout_trim_supported: bool = False,
         preparation_timeout_seconds: float | None = None,
+        window_leveler: WindowLeveler = level_window,
     ) -> None:
         """``playout_trim_supported``: the consuming encoder honors per-segment
         ``inpoint``/``outpoint`` on prepared segments (true for the legacy
@@ -378,6 +412,7 @@ class SourcePreparer:
         self._ffmpeg_runner = ffmpeg_runner
         self._loudness_checker = loudness_checker
         self._warm_scheduler = warm_scheduler
+        self._window_leveler = window_leveler
         self._playout_trim_supported = playout_trim_supported
         if preparation_timeout_seconds is not None and preparation_timeout_seconds <= 0:
             raise ValueError("preparation_timeout_seconds must be greater than zero when set.")
@@ -622,6 +657,167 @@ class SourcePreparer:
         )
         return None, _LOUDNESS_METHOD_SINGLE_PASS_FALLBACK
 
+    def _ride_conform_tmp(
+        self,
+        *,
+        source_path: Path,
+        tmp_path: Path,
+        config: EgressConfig,
+        segment: EgressSourceSegment | None,
+        threads: int | None,
+        cancel_event: threading.Event | None,
+    ) -> str | None:
+        """U25: level this window with the ride, mux it onto the source video,
+        and leave the program at ``tmp_path``.
+
+        The ride is tried FIRST on every normalized conform, because it is the
+        only shape that holds the level across every 4-minute stretch of the
+        window rather than only in the whole-program average.  It is attempted,
+        never assumed: ``None`` means the ride could not run for this window
+        (no numpy, no FFmpeg, no soxr in the build, a decode/encode failure, a
+        failed program mux) and the caller must conform the window with
+        ``loudnorm`` exactly as it did before U25 -- after ONE warning naming
+        the source, the window and the reason.  A degradation is never a
+        failure: a station whose host cannot ride still airs leveled audio.
+
+        Cancellation is the one thing that is NOT a degradation.  A cancelled
+        ride and a cancelled mux both re-raise as
+        ``SourcePreparationCancelledError`` so a shutdown or pause stops this
+        prepare the same way it stops a cancelled measurement or encode.
+
+        Both intermediates are the ride's own to clean up: the ride's audio-only
+        TS is unlinked in the ``finally`` (the mux stream-copies it, so nothing
+        downstream needs it), and the caller's ``tmp_path`` is unlinked before a
+        degradation return -- ``build_video_from_source_args`` carries no
+        ``-y``, so a leftover file would make the fallback's own encode fail
+        with "File exists" instead of airing the segment.
+
+        Returns ``_LOUDNESS_METHOD_RIDE`` when ``tmp_path`` holds the muxed
+        program, or ``None`` to fall back.
+        """
+        target_lufs = config.loudness_target_lufs
+        assert target_lufs is not None  # both callers gate on this
+        window = _describe_segment_window(segment)
+        audio_path = ride_audio_path(tmp_path)
+        try:
+            try:
+                window_result = self._window_leveler(
+                    source_path=source_path,
+                    audio_path=audio_path,
+                    params=RideParams(target_lufs=target_lufs),
+                    profile=config.canonical_profile,
+                    duration_s=None if segment is None else segment.duration_seconds,
+                    segment=segment,
+                    threads=threads,
+                    cancel_event=cancel_event,
+                    timeout_s=self._preparation_timeout_seconds,
+                )
+            except LoudnessRideCancelledError as exc:
+                # Checked first: a cancellation IS a LoudnessRideError, and it
+                # must never degrade into a fallback conform on a shutdown.
+                raise SourcePreparationCancelledError(
+                    f"Egress source {source_path.name!r} speech leveling ride was cancelled."
+                ) from exc
+            except (LoudnessRideError, FfmpegNotFoundError, OSError) as exc:
+                self._log_ride_degraded(source_path, window, str(exc))
+                return None
+            self._log_ride_selection(source_path, window, window_result)
+            try:
+                result = self._run_ffmpeg(
+                    build_video_from_source_args(
+                        source_path=source_path,
+                        audio_path=audio_path,
+                        output_path=tmp_path,
+                        segment=segment,
+                        profile=config.canonical_profile,
+                        threads=threads,
+                    ),
+                    cancel_event,
+                )
+            except SourcePreparationCancelledError:
+                tmp_path.unlink(missing_ok=True)
+                raise
+            except SourcePrepareError as exc:
+                # A runner timeout (or any other runner failure) can leave a
+                # partial program behind; remove it before propagating so the
+                # fallback's own encode does not land on "File exists".
+                tmp_path.unlink(missing_ok=True)
+                self._log_ride_degraded(source_path, window, str(exc))
+                return None
+            if result.returncode != 0:
+                tmp_path.unlink(missing_ok=True)
+                self._log_ride_degraded(
+                    source_path, window, f"the program mux exited {result.returncode}"
+                )
+                return None
+            return _LOUDNESS_METHOD_RIDE
+        finally:
+            audio_path.unlink(missing_ok=True)
+
+    @staticmethod
+    def _log_ride_degraded(source_path: Path, window: str, reason: str) -> None:
+        """ONE warning for a ride that could not run -- then loudnorm conforms."""
+
+        _LOG.warning(
+            "Speech leveling ride failed for %r (window: %s): %s. Conforming with "
+            "loudnorm instead, which does not hold the level across every 4-minute "
+            "stretch.",
+            source_path.name,
+            window,
+            reason,
+        )
+
+    @staticmethod
+    def _log_ride_selection(source_path: Path, window: str, result: LeveledWindow) -> None:
+        """Report what the ride shipped: its warning, its round error, and -- on
+        the caller's side of the contract -- the kept attempt's own gate verdicts.
+
+        The module never logs, so this is where the ride's one WARNING and its
+        (rarer) ERROR become operator-visible, phrased with the window's terms.
+        """
+
+        selection = result.selection
+        kept = selection.kept
+        if selection.warning is not None:
+            _LOG.warning(
+                "Speech leveling for %r (window: %s): %s",
+                source_path.name,
+                window,
+                selection.warning,
+            )
+        if result.round_error is not None:
+            _LOG.warning(
+                "Speech leveling for %r (window: %s): the re-encode round failed (%s); "
+                "airing the nominal artifact.",
+                source_path.name,
+                window,
+                result.round_error,
+            )
+        if not kept.loudness_ok(
+            window_tol_lu=LOUDNESS_WINDOW_TOL_LU, whole_tol_lu=LOUDNESS_WHOLE_TOL_LU
+        ):
+            _LOG.warning(
+                "Speech leveling for %r (window: %s): the kept attempt misses the loudness "
+                "gate (worst 4-minute stretch %s LU, whole program %s LU).",
+                source_path.name,
+                window,
+                _fmt_measure(kept.worst_window_err_lu),
+                _fmt_measure(kept.whole_err_lu),
+            )
+        if not selection.hard_tp_met:
+            # The artifact airs anyway -- a hot artifact beats a silent channel
+            # -- but the hard true-peak bound did not hold, and that is an
+            # operator's problem, not a footnote.
+            _LOG.error(
+                "Speech leveling for %r (window: %s): the kept attempt is above the hard "
+                "true-peak bound (%s dBFS sample peak; %s dBTP emitted, ceiling %s dBTP).",
+                source_path.name,
+                window,
+                _fmt_measure(kept.decoded_peak_dbfs),
+                _fmt_measure(kept.emitted_dbtp),
+                _fmt_measure(kept.limit_dbtp),
+            )
+
     def _conform_full_asset_into_cache(
         self,
         key: str,
@@ -677,6 +873,13 @@ class SourcePreparer:
         through to its bounded per-segment conform exactly as it does for lock
         contention. Both ``None`` cases mean the same thing to every caller
         ("this call did not populate ``{key}``"); neither is an error.
+
+        U25 puts the speech leveling ride FIRST here too, with ``segment=None``
+        (the whole asset) and the same ``tmp``/promote tail: a ridden window is
+        promoted through ``loudness_method="ride"`` exactly as a two-pass one
+        is promoted through ``"two-pass"``, and a ride that could not run
+        degrades to the loudnorm path below it with ONE warning
+        (``_ride_conform_tmp``), never to a ``None`` return.
         """
         lock = self._conform_lock(key)
         if not lock.acquire(blocking=False):
@@ -693,13 +896,22 @@ class SourcePreparer:
             loudness_method: str | None = None
             measured_loudness: dict[str, str] | None = None
             if normalized and config.loudness_target_lufs is not None:
-                measured_loudness, loudness_method = self._measure_loudnorm_metadata(
+                loudness_method = self._ride_conform_tmp(
                     source_path=source_path,
+                    tmp_path=tmp,
+                    config=config,
                     segment=None,
-                    loudness_target_lufs=config.loudness_target_lufs,
                     threads=threads,
                     cancel_event=cancel_event,
                 )
+                if loudness_method != _LOUDNESS_METHOD_RIDE:
+                    measured_loudness, loudness_method = self._measure_loudnorm_metadata(
+                        source_path=source_path,
+                        segment=None,
+                        loudness_target_lufs=config.loudness_target_lufs,
+                        threads=threads,
+                        cancel_event=cancel_event,
+                    )
                 if loudness_method == _LOUDNESS_METHOD_SINGLE_PASS_FALLBACK:
                     # U20: the measurement pass measured nothing usable, so we
                     # degrade instead of failing -- but NOT here.  A conform
@@ -721,31 +933,41 @@ class SourcePreparer:
                     # created, a later run whose probe succeeds populates the
                     # genuine two-pass entry with nothing to replace.
                     return None
-                assert measured_loudness is not None  # two-pass -> validated metadata
-            args = build_conform_source_args(
-                source_path=source_path,
-                output_path=tmp,
-                segment=None,
-                profile=config.canonical_profile,
-                loudness_target_lufs=config.loudness_target_lufs if normalized else None,
-                threads=threads,
-                measured_loudness=measured_loudness,
-            )
-            try:
-                result = self._run_ffmpeg(args, cancel_event)
-            except Exception:
-                # A timeout or any other runner failure can leave a partial
-                # multi-gigabyte output behind.  Remove it before propagating
-                # the error so a failed warm cannot silently consume the
-                # conform-cache budget.
-                with contextlib.suppress(OSError):
-                    tmp.unlink(missing_ok=True)
-                raise
-            if result.returncode != 0:
-                tmp.unlink(missing_ok=True)
-                raise SourcePrepareError(
-                    f"Full-asset conform for cache failed for {source_path.name!r}."
+                # ``ride`` needs no measured metadata -- it levels the window
+                # itself, so ``measured_loudness`` stays ``None`` on that path
+                # by design.  Anything else reaching this line went through
+                # ``_measure_loudnorm_metadata`` and must carry its validated
+                # metadata, which is what ``build_conform_source_args`` is
+                # about to consume.
+                assert loudness_method == _LOUDNESS_METHOD_RIDE or measured_loudness is not None
+            if loudness_method != _LOUDNESS_METHOD_RIDE:
+                # U25: a ridden window is already the program at ``tmp`` -- the
+                # ride muxed its own audio onto the source video -- so the only
+                # work left is the promotion below.
+                args = build_conform_source_args(
+                    source_path=source_path,
+                    output_path=tmp,
+                    segment=None,
+                    profile=config.canonical_profile,
+                    loudness_target_lufs=config.loudness_target_lufs if normalized else None,
+                    threads=threads,
+                    measured_loudness=measured_loudness,
                 )
+                try:
+                    result = self._run_ffmpeg(args, cancel_event)
+                except Exception:
+                    # A timeout or any other runner failure can leave a partial
+                    # multi-gigabyte output behind.  Remove it before propagating
+                    # the error so a failed warm cannot silently consume the
+                    # conform-cache budget.
+                    with contextlib.suppress(OSError):
+                        tmp.unlink(missing_ok=True)
+                    raise
+                if result.returncode != 0:
+                    tmp.unlink(missing_ok=True)
+                    raise SourcePrepareError(
+                        f"Full-asset conform for cache failed for {source_path.name!r}."
+                    )
             return self._promote_conform_into_cache(
                 key,
                 tmp,
@@ -1671,11 +1893,7 @@ class SourcePreparer:
                         # shape ran. A meta written before U20 (or by the
                         # probe-only write, which has no conform behind it yet)
                         # carries no such key -> ``None``, the honest answer.
-                        loudness_method=(
-                            method
-                            if isinstance(method := meta.get("loudness_method"), str)
-                            else None
-                        ),
+                        loudness_method=_meta_loudness_method(meta),
                     )
 
         # Item 66 round-6 (point 3): declared here, before the reuse/probe
@@ -2010,16 +2228,16 @@ class SourcePreparer:
                     measured_lufs=loudness.measured_lufs,
                     normalized=normalized,
                     cancel_event=cancel_event,
-                    # U20: reaching here means ``_conform_full_asset_into_cache``
+                    # U20/U25: reaching here means ``_conform_full_asset_into_cache``
                     # returned a path, and the ONLY way it does that is a
-                    # successful two-pass conform (its single-pass fallback
-                    # returns ``None`` before writing anything). So the shape
-                    # is two-pass exactly when a loudnorm filter ran at all.
-                    loudness_method=(
-                        _LOUDNESS_METHOD_TWO_PASS
-                        if (normalized and config.loudness_target_lufs is not None)
-                        else None
-                    ),
+                    # successful conform that got promoted (its single-pass
+                    # fallback returns ``None`` before writing anything). Which
+                    # shape that was -- ``"ride"`` or ``"two-pass"`` -- is
+                    # decided inside that call, so read it back from the meta
+                    # sidecar the promotion wrote, rather than assuming. That
+                    # meta is written synchronously before the promotion can
+                    # return, so it describes THIS artifact.
+                    loudness_method=_meta_loudness_method(self._read_cache_meta(key)),
                 )
             # Item 66 round-4 BLOCKER fix (Opus review, point 1): ``None``
             # means a background warm already holds this exact asset's
@@ -2066,36 +2284,53 @@ class SourcePreparer:
         # keep a degraded artifact out of the whole-asset cache entry.
         measured_loudness: dict[str, str] | None = None
         if normalized and config.loudness_target_lufs is not None:
-            measured_loudness, loudness_method = self._measure_loudnorm_metadata(
+            # U25: the ride first, exactly as on the full-asset path above --
+            # but here it levels only this window (``segment``), which is the
+            # point: a join-in-progress start is the airing whose 4-minute
+            # stretches the whole-program loudnorm average gets most wrong.
+            # ``_ride_conform_tmp`` writes the finished program to
+            # ``tmp_output_path`` or degrades (ONE warning) to the loudnorm
+            # path below.
+            loudness_method = self._ride_conform_tmp(
                 source_path=source_path,
+                tmp_path=tmp_output_path,
+                config=config,
                 segment=segment,
-                loudness_target_lufs=config.loudness_target_lufs,
                 threads=_foreground_thread_cap(),
                 cancel_event=cancel_event,
             )
+            if loudness_method != _LOUDNESS_METHOD_RIDE:
+                measured_loudness, loudness_method = self._measure_loudnorm_metadata(
+                    source_path=source_path,
+                    segment=segment,
+                    loudness_target_lufs=config.loudness_target_lufs,
+                    threads=_foreground_thread_cap(),
+                    cancel_event=cancel_event,
+                )
 
-        args = build_conform_source_args(
-            source_path=source_path,
-            output_path=tmp_output_path,
-            segment=segment,
-            profile=config.canonical_profile,
-            loudness_target_lufs=config.loudness_target_lufs if normalized else None,
-            threads=_foreground_thread_cap(),
-            measured_loudness=measured_loudness,
-        )
-        try:
-            result = self._run_ffmpeg(args, cancel_event)
-        except SourcePreparationCancelledError:
-            tmp_output_path.unlink(missing_ok=True)
-            raise
-        except SourcePrepareError:
-            tmp_output_path.unlink(missing_ok=True)
-            raise
-        if result.returncode != 0:
-            tmp_output_path.unlink(missing_ok=True)
-            raise SourcePrepareError(
-                f"Egress source {segment.label!r} could not be conformed; inspect FFmpeg output."
+        if loudness_method != _LOUDNESS_METHOD_RIDE:
+            args = build_conform_source_args(
+                source_path=source_path,
+                output_path=tmp_output_path,
+                segment=segment,
+                profile=config.canonical_profile,
+                loudness_target_lufs=config.loudness_target_lufs if normalized else None,
+                threads=_foreground_thread_cap(),
+                measured_loudness=measured_loudness,
             )
+            try:
+                result = self._run_ffmpeg(args, cancel_event)
+            except SourcePreparationCancelledError:
+                tmp_output_path.unlink(missing_ok=True)
+                raise
+            except SourcePrepareError:
+                tmp_output_path.unlink(missing_ok=True)
+                raise
+            if result.returncode != 0:
+                tmp_output_path.unlink(missing_ok=True)
+                raise SourcePrepareError(
+                    f"Egress source {segment.label!r} could not be conformed; inspect FFmpeg output."
+                )
         # Item 66 round-3 BLOCKER fix (Opus review): the per-plan file is
         # finished FIRST, unconditionally, before anything else touches the
         # cache. The previous round moved this same tmp file INTO the cache
@@ -2250,20 +2485,41 @@ _LOUDNORM_MEASURED_KEYS = ("input_i", "input_tp", "input_lra", "input_thresh", "
 
 #: Bump when the loudness normalization method changes so the conform
 #: cache cannot serve a stale artifact produced by an older method.
-_LOUDNORM_METHOD_VERSION = "loudnorm-v2-twopass"
+_LOUDNORM_METHOD_VERSION = "loudnorm-v3-ride"
 
 #: ``loudness_method`` recorded on every ``PreparedSegmentRecord`` and in the
-#: conform cache's sidecar meta: which loudnorm shape actually produced the
-#: audio.  ``two-pass`` = pass 1 measured the window and the encode ran with
-#: its measured_* parameters.  ``single-pass-fallback`` = the measurement pass
-#: failed or returned unusable metadata, so the window was conformed with the
-#: plain single-pass ``loudnorm`` filter -- byte-for-byte what the installed
-#: station ships today -- and the failure was logged as ONE warning instead of
-#: being raised (U20).  ``None`` means no loudnorm filter ran at all (an
+#: conform cache's sidecar meta: which shape actually produced the audio.
+#: ``ride`` = the U25 speech leveling ride leveled the window and its program
+#: was muxed onto the source video -- the only shape that holds the level across
+#: every 4-minute stretch, not just the whole-program average.  ``two-pass`` =
+#: pass 1 measured the window and the encode ran with its measured_*
+#: parameters.  ``single-pass-fallback`` = the measurement pass failed or
+#: returned unusable metadata, so the window was conformed with the plain
+#: single-pass ``loudnorm`` filter -- byte-for-byte what the installed station
+#: ships today -- and the failure was logged as ONE warning instead of being
+#: raised (U20).  ``None`` means no loudnorm filter ran at all (an
 #: unnormalized/passthrough segment, or a meta sidecar written before the
 #: conform landed).
+_LOUDNESS_METHOD_RIDE = "ride"
 _LOUDNESS_METHOD_TWO_PASS = "two-pass"  # noqa: S105 - label, not a secret
 _LOUDNESS_METHOD_SINGLE_PASS_FALLBACK = "single-pass-fallback"  # noqa: S105 - label, not a secret
+
+
+def _meta_loudness_method(meta: dict[str, Any] | None) -> str | None:
+    """Read ``loudness_method`` back out of a conform cache sidecar.
+
+    A cache HIT is the one place the preparer reports a method it did not
+    choose in this process, so it must report what the ARTIFACT was actually
+    made with rather than a constant.  ``_promote_conform_into_cache`` writes
+    the meta before it can return successfully and only a successful promotion
+    leaves the artifact at the key, so an entry with no readable method is
+    unnormalized (or older than the sidecar): ``None`` is the honest answer.
+    """
+
+    if not isinstance(meta, dict):
+        return None
+    value = meta.get("loudness_method")
+    return value if isinstance(value, str) else None
 
 
 def parse_loudnorm_measurement(stderr: str) -> dict[str, str] | None:
@@ -2402,14 +2658,11 @@ def build_conform_source_args(
     args.extend(["-i", str(source_path)])
     if segment is not None:
         args.extend(["-t", f"{segment.duration_seconds:g}"])
-    filters = [
-        (
-            f"scale={profile.width}:{profile.height}:force_original_aspect_ratio=decrease,"
-            f"pad={profile.width}:{profile.height}:(ow-iw)/2:(oh-ih)/2,"
-            f"fps={profile.fps},format=yuv420p"
-        )
-    ]
-    args.extend(["-vf", ",".join(filters)])
+    # U25: this used to build the identical string inline.  It is now the one
+    # shared definition (``loudness_ride.canonical_video_filter``), which the
+    # ride's program mux calls too -- so a ridden conform and a loudnorm
+    # conform of the same window cannot drift apart in geometry.
+    args.extend(["-vf", canonical_video_filter(profile)])
     if loudness_target_lufs is not None:
         if measured_loudness is None:
             args.extend(["-af", f"loudnorm=I={loudness_target_lufs:g}:LRA=11:TP=-1.5"])
