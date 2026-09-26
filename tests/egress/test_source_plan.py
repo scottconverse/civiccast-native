@@ -655,6 +655,75 @@ def test_one_item_provider_restart_now_keeps_join_in_progress_trim(tmp_path: Pat
     assert plan.segments[0].duration_seconds == 225
 
 
+def test_deferred_rollover_plan_at_honors_a_per_call_horizon(tmp_path: Path) -> None:
+    """U41 item 2, live incident 2026-09-25 (education 23:53:17 -> 23:54:41).
+
+    A rollover whose switch is DEFERRED is prepared at dispatch but takes air
+    only at the outgoing item's own end, so the runway its plan was built with
+    is consumed while it waits. In the incident the daemon logged ``the live
+    plan ends in 689s`` when it dispatched, the deferred plan resolved to ONE
+    83-second item (``took 8.4s for 1 segment(s)``), and when the switch finally
+    landed the plan it had switched onto ran out ~80s later, EOSing the worker
+    and leaving the channel dark for ~3 minutes.
+
+    ``plan_at`` therefore accepts a per-call ``min_plan_seconds``: the horizon
+    the caller needs measured from THIS boundary (the switch), not from
+    dispatch. Here the item due at the switch is a 90-second one and the item
+    after it runs 900 seconds; a 690-second lead must produce a plan whose
+    remaining life at take-over -- the sum of its segments, which IS its life --
+    is at least that lead, without splitting either item.
+    """
+    media = tmp_path / "program.ts"
+    media.write_text("fake", encoding="utf-8")
+    switch_at = datetime(2026, 6, 5, 23, 20, tzinfo=UTC) + timedelta(minutes=11)
+    items = [
+        _schedule_item(
+            asset_id="outgoing",
+            scheduled_at=switch_at - timedelta(minutes=11),
+            duration_seconds=660,
+        ),
+        _schedule_item(asset_id="short", scheduled_at=switch_at, duration_seconds=90),
+        _schedule_item(
+            asset_id="long",
+            scheduled_at=switch_at + timedelta(seconds=90),
+            duration_seconds=900,
+        ),
+    ]
+    assets = {
+        item.asset_id: _asset_of(
+            media,
+            duration_seconds=item.duration_seconds or 0,
+            asset_id=item.asset_id,
+            trim_in=0,
+            trim_out=float(item.duration_seconds or 0),
+        )
+        for item in items
+    }
+    provider = ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _channel_id: items,
+        asset_resolver=assets.get,
+        max_segments=1,
+    )
+    lead_seconds = 690.0
+
+    # The shipped shape: the horizon is measured from the instant the PLAN was
+    # resolved for (``boundary_at``), so a one-item plan has exactly that item's
+    # remaining life at take-over.
+    unextended = provider.plan_at("gov", switch_at)
+    assert unextended is not None
+    assert [segment.source_ref for segment in unextended.segments] == ["short"]
+    assert sum(segment.duration_seconds for segment in unextended.segments) == 90.0
+
+    extended = provider.plan_at("gov", switch_at, min_plan_seconds=lead_seconds)
+
+    assert extended is not None
+    # Whole items only -- the lead extends the horizon, it does not split or
+    # shorten the item due at the switch.
+    assert [segment.source_ref for segment in extended.segments] == ["short", "long"]
+    remaining = sum(segment.duration_seconds for segment in extended.segments)
+    assert remaining >= lead_seconds
+
+
 def test_one_item_provider_future_gap_returns_none(tmp_path: Path) -> None:
     media = tmp_path / "program.ts"
     media.write_text("fake", encoding="utf-8")

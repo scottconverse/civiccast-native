@@ -36,8 +36,10 @@ from civiccast.egress.models import (
     EgressStateRow,
 )
 from civiccast.egress.preparer import PreparedSegmentRecord, SourcePreparationReport
+from civiccast.egress.source_plan import ScheduleSourcePlanProvider
 from civiccast.egress.store import InMemoryEgressStore
 from civiccast.egress.supervisor import PlayoutSupervisor
+from civiccast.schedule.models import ScheduleItemResponse, StaffAssetRow
 
 
 def _write_fake_reload_status(
@@ -1749,6 +1751,187 @@ def test_horizon_rollover_honors_schedule_published_before_command_drain(tmp_pat
     assert len(started) == 1
 
 
+def _rollover_schedule(
+    tmp_path: Path, *, switch_at: datetime
+) -> tuple[list[ScheduleItemResponse], dict[str, StaffAssetRow]]:
+    """U41 item 2's incident shape as schedule rows: a 660-second item ending at
+    ``switch_at``, then the 90-second item due there (the incident's 83-second
+    one), then a 900-second item behind it. Every row's media covers its slot,
+    so the D42 media-shorter-than-slot stop never applies."""
+
+    media = tmp_path / "runway-program.ts"
+    media.write_text("fake", encoding="utf-8")
+    items = [
+        ScheduleItemResponse(
+            id=uuid.uuid4(),
+            asset_id="outgoing",
+            asset_title="Outgoing programme",
+            channel_id="gov",
+            mode="premiere",
+            state="published",
+            scheduled_at=switch_at - timedelta(seconds=660),
+            duration_seconds=660,
+            notes=None,
+            created_at=switch_at - timedelta(days=1),
+        ),
+        ScheduleItemResponse(
+            id=uuid.uuid4(),
+            asset_id="short",
+            asset_title="Short item",
+            channel_id="gov",
+            mode="premiere",
+            state="published",
+            scheduled_at=switch_at,
+            duration_seconds=90,
+            notes=None,
+            created_at=switch_at - timedelta(days=1),
+        ),
+        ScheduleItemResponse(
+            id=uuid.uuid4(),
+            asset_id="long",
+            asset_title="Long item",
+            channel_id="gov",
+            mode="premiere",
+            state="published",
+            scheduled_at=switch_at + timedelta(seconds=90),
+            duration_seconds=900,
+            notes=None,
+            created_at=switch_at - timedelta(days=1),
+        ),
+    ]
+    assets = {
+        item.asset_id: StaffAssetRow(
+            asset_id=item.asset_id,
+            title=item.asset_title,
+            state="validated",
+            file_path=str(media),
+            duration_seconds=item.duration_seconds,
+            trim_in_seconds=0,
+            trim_out_seconds=float(item.duration_seconds or 0),
+        )
+        for item in items
+    }
+    return items, assets
+
+
+def test_deferred_rollover_reload_plan_carries_the_recorded_lead_horizon(
+    tmp_path: Path,
+) -> None:
+    """U41 item 2, live incident 2026-09-25 (education 23:53:17 -> 23:54:41).
+
+    The rollover reload is prepared at dispatch and takes air only at the
+    outgoing item's own end, so its plan must be built with its horizon
+    measured from the SWITCH, not from dispatch. The daemon is told the lead
+    to use by ``record_rollover_plan_end(..., min_plan_seconds=...)`` -- the
+    same call automation makes with the boundary -- and the plan it hands the
+    engine must last the switch plus that lead. Without the horizon the reload
+    resolves to the single 90-second item due at the boundary (the incident's
+    ``1 segment(s)``), which is what EOSed the worker 3 minutes later.
+    """
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    requests: list[EncoderStartRequest] = []
+
+    class _RecordingStrategy(_FakeContentReloadStrategy):
+        def reload_content(self, channel_id, work_dir, request, *, command_id=None):
+            requests.append(request)
+            return super().reload_content(channel_id, work_dir, request, command_id=command_id)
+
+    switch_at = datetime.now(UTC) + timedelta(minutes=11)
+    items, assets = _rollover_schedule(tmp_path, switch_at=switch_at)
+    provider = ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _channel_id: items,
+        asset_resolver=assets.get,
+        # The station's shape with the GStreamer engine selected: one item per
+        # plan, and the horizon comes from the caller, not from the provider.
+        max_segments=1,
+    )
+    lead_seconds = 690.0
+    strategy = _RecordingStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan_with_label(
+            tmp_path, "Outgoing programme"
+        ),
+        boundary_source_plan_provider=provider.plan_at,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    daemon.record_rollover_plan_end(
+        "gov",
+        switch_at,
+        command_id="cmd-reload",
+        min_plan_seconds=lead_seconds,
+    )
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    # The rollover still defers (ON_AIR, no override) -- that is exactly the
+    # case whose runway is consumed while the worker waits.
+    assert strategy.switch_at_end_of_current_calls == [True]
+    assert len(requests) == 1
+    planned = requests[0].source_plan
+    assert [segment.source_ref for segment in planned.segments] == ["short", "long"]
+    remaining = sum(segment.duration_seconds for segment in planned.segments)
+    assert remaining >= lead_seconds, (
+        f"the deferred reload's plan has {remaining}s of life at the switch, less than "
+        f"the {lead_seconds}s lead it was dispatched with"
+    )
+
+
+def test_rollover_without_a_recorded_horizon_keeps_the_plan_unwidened(
+    tmp_path: Path,
+) -> None:
+    """The lead is per-rollover, not a new plan policy: a reload whose recorded
+    entry carries no horizon (an operator reload, or an automation dispatch that
+    never measured a lead) builds exactly the plan it builds today."""
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    requests: list[EncoderStartRequest] = []
+
+    class _RecordingStrategy(_FakeContentReloadStrategy):
+        def reload_content(self, channel_id, work_dir, request, *, command_id=None):
+            requests.append(request)
+            return super().reload_content(channel_id, work_dir, request, command_id=command_id)
+
+    switch_at = datetime.now(UTC) + timedelta(minutes=11)
+    items, assets = _rollover_schedule(tmp_path, switch_at=switch_at)
+    provider = ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _channel_id: items,
+        asset_resolver=assets.get,
+        max_segments=1,
+    )
+    strategy = _RecordingStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan_with_label(
+            tmp_path, "Outgoing programme"
+        ),
+        boundary_source_plan_provider=provider.plan_at,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    daemon.record_rollover_plan_end("gov", switch_at, command_id="cmd-reload")
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert strategy.switch_at_end_of_current_calls == [True]
+    assert len(requests) == 1
+    assert [segment.source_ref for segment in requests[0].source_plan.segments] == ["short"]
+
+
 def test_horizon_rollover_does_not_treat_provider_clock_jitter_as_extension(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2309,7 +2492,9 @@ def test_stop_clears_the_recorded_rollover_plan_end(tmp_path: Path) -> None:
     # ``_request_reload``'s) is unconditional regardless of any command_id,
     # so the matching rule under test elsewhere is irrelevant here.
     daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
-    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False)}
+    assert daemon._rollover_plan_end_at == {
+        "gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False, None)
+    }
 
     store.enqueue_command(_command("stop"))
     daemon.process_once("gov")
@@ -2445,7 +2630,9 @@ def test_drain_with_no_live_process_clears_the_recorded_rollover_plan_end(
     # command_id=None: unscoped -- ``_drain``'s process-is-None pop is
     # unconditional, so no id needs to match here.
     daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
-    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False)}
+    assert daemon._rollover_plan_end_at == {
+        "gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False, None)
+    }
 
     store.enqueue_command(_command("drain"))
     daemon.process_once("gov")  # _drain: process is None -> STOPPED
@@ -2774,7 +2961,9 @@ def test_unscoped_record_never_matches_a_real_queued_reload_and_needs_an_off_air
     # the unscoped entry is still sitting there, untouched, for lack of a
     # match; it did NOT wrongly bind to whichever reload drained first.
     assert strategy.switch_at_end_of_current_calls == [True, True]
-    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False)}
+    assert daemon._rollover_plan_end_at == {
+        "gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False, None)
+    }
 
     # Only a genuine off-air transition clears it -- an operator stop, here.
     store.enqueue_command(
@@ -2846,7 +3035,7 @@ def test_command_id_scoping_closes_the_immediate_crash_relaunch_leak(tmp_path: P
     assert len(started) == 2  # the immediate relaunch really did happen
     # Untouched by the relaunch -- _start must never pop this (round 4).
     assert daemon._rollover_plan_end_at == {
-        "gov": ("auto-reload-scoped", datetime(2020, 1, 1, tzinfo=UTC), False)
+        "gov": ("auto-reload-scoped", datetime(2020, 1, 1, tzinfo=UTC), False, None)
     }
 
     # A wholly unrelated operator reload, drained afterward -- mismatches
@@ -2859,7 +3048,7 @@ def test_command_id_scoping_closes_the_immediate_crash_relaunch_leak(tmp_path: P
     assert strategy.reload_calls == ["Mayor interview"]
     assert strategy.switch_at_end_of_current_calls == [True]  # deferred, not wrongly cut
     assert daemon._rollover_plan_end_at == {
-        "gov": ("auto-reload-scoped", datetime(2020, 1, 1, tzinfo=UTC), False)
+        "gov": ("auto-reload-scoped", datetime(2020, 1, 1, tzinfo=UTC), False, None)
     }
 
     # The rollover's own command_id never actually arrives (dropped, or
@@ -3016,7 +3205,7 @@ def test_retry_collision_a_stalled_retry_that_overwrites_the_recorded_value_stil
         )
     )
     assert daemon._rollover_plan_end_at == {
-        "gov": ("auto-reload-B", datetime(2020, 1, 1, tzinfo=UTC), False)
+        "gov": ("auto-reload-B", datetime(2020, 1, 1, tzinfo=UTC), False, None)
     }
 
     current_label = "Mayor interview"

@@ -916,6 +916,7 @@ class TestPlanRollover:
                 *,
                 command_id: str | None,
                 force_fallback: bool = False,
+                min_plan_seconds: float | None = None,
             ) -> None:
                 assert command_id is not None
                 self.force_fallback.append(force_fallback)
@@ -1012,6 +1013,7 @@ class TestPlanRollover:
                 *,
                 command_id: str | None,
                 force_fallback: bool = False,
+                min_plan_seconds: float | None = None,
             ) -> None:
                 self.recorded.append((channel_id, plan_end_at, command_id))
 
@@ -1057,6 +1059,7 @@ class TestPlanRollover:
                 *,
                 command_id: str | None,
                 force_fallback: bool = False,
+                min_plan_seconds: float | None = None,
             ) -> None:
                 assert command_id is not None
                 self.force_fallback.append(force_fallback)
@@ -2609,6 +2612,7 @@ class TestStaleRolloverHorizonDispatchesImmediateRecovery:
                 *,
                 command_id: str | None,
                 force_fallback: bool = False,
+                min_plan_seconds: float | None = None,
             ) -> None:
                 self.recorded.append((plan_end_at, command_id))
 
@@ -2662,7 +2666,7 @@ class TestStaleRolloverHorizonDispatchesImmediateRecovery:
                 super().__init__(live_channels={"education"})
                 self.dispatched["education"] = ("ev-1", (30.0,), False)
                 self.control_ready = False
-                self.recorded: list[tuple[datetime, str | None]] = []
+                self.recorded: list[tuple[datetime, str | None, float | None]] = []
 
             def worker_initial_control_connection_observed(self, _channel_id: str) -> bool:
                 return self.control_ready
@@ -2674,8 +2678,9 @@ class TestStaleRolloverHorizonDispatchesImmediateRecovery:
                 *,
                 command_id: str | None,
                 force_fallback: bool = False,
+                min_plan_seconds: float | None = None,
             ) -> None:
-                self.recorded.append((plan_end_at, command_id))
+                self.recorded.append((plan_end_at, command_id, min_plan_seconds))
 
         daemon = _ConnectingDaemon()
         provider_boundaries: list[datetime] = []
@@ -2709,7 +2714,14 @@ class TestStaleRolloverHorizonDispatchesImmediateRecovery:
         pending = store.peek_pending_commands("education")
         assert [command.action for command in pending] == ["reload"]
         assert provider_boundaries == [ready_at]
-        assert daemon.recorded == [(_NOW + timedelta(seconds=30), pending[0].command_id)]
+        assert len(daemon.recorded) == 1
+        recorded_plan_end_at, recorded_command_id, recorded_lead = daemon.recorded[0]
+        assert recorded_plan_end_at == _NOW + timedelta(seconds=30)
+        assert recorded_command_id == pending[0].command_id
+        # U41: the boundary record carries the horizon THIS dispatch measured,
+        # from the service's own lead method -- the single source of truth the
+        # daemon would otherwise have to duplicate to widen a deferred plan.
+        assert recorded_lead == service._rollover_lead_seconds()
         assert "education" in service._rollover_issued
 
         service.run_once(now=ready_at + timedelta(seconds=2))
