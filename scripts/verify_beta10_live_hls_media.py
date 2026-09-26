@@ -2185,7 +2185,10 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "folder of plain copies of finished segments kept by "
-            r"bin\segment_keeper.py (default: %TEMP%\cc-caption-keep when its heartbeat is fresh)"
+            # `%%`, not `%`: argparse runs every help string through `%`
+            # formatting, so a bare `%TEMP%` here makes --help raise
+            # "ValueError: unsupported format character 'T'".
+            r"bin\segment_keeper.py (default: %%TEMP%%\cc-caption-keep when its heartbeat is fresh)"
         ),
     )
     return parser

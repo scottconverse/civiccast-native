@@ -1540,6 +1540,20 @@ def test_cli_defaults_to_the_full_required_channel_set() -> None:
     assert tuple(args.channels) == verify.REQUIRED_CHANNELS
 
 
+def test_cli_help_does_not_crash(capsys: pytest.CaptureFixture[str]) -> None:
+    # argparse formats every help string with `%`, so a bare `%TEMP%` in an
+    # option's help raises "ValueError: unsupported format character" and --help
+    # tracebacks instead of printing. The tool's own instructions name that
+    # folder, so the help has to be able to say it.
+    with pytest.raises(SystemExit) as excinfo:
+        verify.main(["--help"])
+
+    assert excinfo.value.code == 0
+    printed = capsys.readouterr().out
+    assert "--caption-keep-dir" in printed
+    assert "%TEMP%" in printed
+
+
 def test_cli_accepts_subset_but_marked_non_release(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
