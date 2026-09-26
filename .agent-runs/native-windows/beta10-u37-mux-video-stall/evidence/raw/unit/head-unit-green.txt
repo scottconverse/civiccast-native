@@ -1,0 +1,20 @@
+### U37 focused GREEN -- the same two test files, same selection, at HEAD.
+###
+### Command (cwd = the worktree root):
+###   python -m pytest tests/egress/test_gst_engine_reload_commit_ordering.py \
+###       tests/egress/test_gst_engine_first_output_timeout.py -q -p no:randomly
+###
+### HEAD at the time of this run: ffbc88de (engine.py unchanged since 53186ea1, which is
+### comments only past the captured candidate 866703c7).
+###
+### Exact accounting against raw/unit/base-unit-red.txt: 146 passed + 9 failed there
+### = 155 passed here; the 2 skips are the same two runtime-undeclared skips in both runs.
+###
+### Output (tail):
+
+........................................................................ [ 91%]
+.............                                                            [100%]
+=========================== short test summary info ===========================
+SKIPPED [1] tests\egress\test_gst_engine_reload_commit_ordering.py:3022: packaged GStreamer runtime not declared, so the real-pipeline half of the U16 diagnostics is NOT verified here -- set CIVICAST_GSTREAMER_RUNTIME_ROOT to the install root (e.g. C:\Program Files\CivicCast (Native)) to run it against the bundled runtime
+SKIPPED [1] tests\egress\test_gst_engine_reload_commit_ordering.py:3087: CIVICAST_GSTREAMER_RUNTIME_ROOT not declared, so the real-runtime half of these diagnostics is unverified on this host
+155 passed, 2 skipped in 4.26s

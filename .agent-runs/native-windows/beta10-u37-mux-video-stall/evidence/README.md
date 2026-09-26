@@ -12,9 +12,17 @@ re-provided.
   `C:\Program Files\CivicCast (Native)\runtime` (double `C`); staged python at
   `<root>\dependencies\gstreamer\python`.
 - Base revision `5397c069`, extracted with
-  `git archive 5397c069 | tar -x -C %TEMP%\u37\base-5397c069` and run with `PYTHONPATH` at that
-  root. Base `engine.py` sha256 `9175935425ff0d8fa7f86316152d8f73166fed083ae30203b579bbd5234eea23`,
-  306504 bytes.
+  `git archive 5397c069 | tar -x -C %TEMP%\u37\base-5397c069`. Base `engine.py` sha256
+  `9175935425ff0d8fa7f86316152d8f73166fed083ae30203b579bbd5234eea23`, 306504 bytes.
+  - **Off-live capture runs** select the base engine with `PYTHONPATH` (the harness sets it,
+    `instruments/x4.py:53`) — sound there only because the harness's cwd is `%TEMP%\u37`,
+    which holds no `civiccast` package. `raw/harness/x4base.txt` is one base batch's own
+    stdout, and its header prints the resolved `engine_src` sha256 and byte count.
+  - **pytest runs do not work that way.** `python -m pytest` puts the invocation cwd at
+    `sys.path[0]`, ahead of `PYTHONPATH`; a base-engine unit run made from the worktree
+    therefore imports the *worktree* engine and is green for the wrong reason (observed:
+    `41 passed in 1.80s`). The unit runs are made from inside the extracted base tree with
+    the HEAD test files copied in — see `raw/unit/`.
 - Candidate = this branch's HEAD when the runs were captured (`866703c7`), run from the
   worktree. The two commits after it are `3f15ffc6` (evidence files only) and `53186ea1`
   (comments only, in `engine.py`); neither changes behaviour, and `head2-fullsuite.txt` is a
@@ -158,16 +166,42 @@ tests = 1822. The one failure throughout — and the *only* one at HEAD — is
 `test_hls_sink_captions.py::test_packaged_gstreamer_to_hls_sink_preserves_captions_and_cadence`,
 which is therefore pre-existing rather than introduced.
 
+### Focused gate pair (`raw/unit/`)
+
+The two touched files, same selection on both sides, run twice — once against each engine:
+
+| log | engine | result |
+|-----|--------|--------|
+| `raw/unit/base-unit-red.txt` | base `5397c069` with the HEAD test files copied into the extracted tree, pytest run from inside that tree | `9 failed, 146 passed, 2 skipped in 4.89s` |
+| `raw/unit/head-unit-green.txt` | HEAD `ffbc88de`, run from the worktree | `155 passed, 2 skipped in 4.26s` |
+
+146 + 9 = 155, and the 2 skips are the same two runtime-undeclared skips in both runs. The red
+file quotes pytest's own rendering of the imported module —
+`...\base-5397c069\civiccast\egress\gst\engine.py` — which is the engine-identity proof here,
+because `PYTHONPATH` is exactly what does *not* select the engine for pytest.
+
+### Harness identity (`raw/harness/`)
+
+`raw/harness/x4base.txt` — one base batch's full stdout, header included:
+`# engine_src=base-5397c069\civiccast\egress\gst\engine.py sha256=9175935425ff0d8f bytes=306504`,
+`# verdicts(x4base): ['ok', 'ok', 'ok']`, `# src-collapse runs: 0/3`. It also carries that run's
+whole switch ladder, which is what a *healthy* base switch looks like.
+
+**Gap, stated rather than papered over:** the other batches' harness stdout was not captured, so
+per-run engine byte-identity exists for this batch only. For every other run, base-vs-candidate
+is carried by the behavioural markers in the table above (the U37 stages exist only in the
+candidate engine) plus the pinned base-tree hash. The captured trees are deleted with
+`%TEMP%\u37`, so this cannot be re-derived from here afterwards.
+
 ## Reproducing
 
-```
-cd %TEMP%\u37
-python regcheck.py <tag>/run<N>/out.ts ...     # red/green verdicts
-python lag.py      <tag>/run<N>/out.ts ...     # the airing-lag bound's figures
-python audioonly.py <tag>/run<N>/out.ts ...    # audio-only run + frame counts
-python step.py     <tag>/run<N>/out.ts         # the exact backward steps
-python dts.py      <tag>/run<N>/out.ts ...     # is a video DTS emitted, and is it frozen
-```
+The instruments are `instruments/*.py`; they read a captured `out.ts` (a raw 188-byte TS) and
+print, respectively: the red/green verdict (`regcheck.py`), the airing-lag figures (`lag.py`),
+the longest audio-only run (`audioonly.py`), the exact backward steps (`step.py`), the emitted
+video DTS (`dts.py`). `endsshapes.py` additionally reads a run's `worker.log` for its declared
+`ends=[video=,audio=]`; `sumlag.py` and `toplag.py` summarise the committed `raw/lag-all.txt`.
 
-The `out.ts` files themselves are deleted with the scratch tree (`%TEMP%\u37`) at the end of the
-unit; `raw/ref-sha256.txt` records the hashes of the ones quoted above.
+The `out.ts` files themselves are public-record meeting media and are not committed; they are
+deleted with the scratch tree (`%TEMP%\u37`) at the end of the unit, and `raw/ref-sha256.txt`
+records the hashes of the ones quoted above so provenance can be re-checked if the media is
+re-provided.

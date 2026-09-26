@@ -1,0 +1,98 @@
+# tree=base-5397c069
+# engine_src=base-5397c069\civiccast\egress\gst\engine.py sha256=9175935425ff0d8f bytes=306504
+# PYTHONPATH=base-5397c069 (the worker inherits this)
+# outgoing=out_tail.ts incoming=in_head.ts runs=3 tag=x4base
+  # worker had already exited on its own (rc=0); no stop ack expected
+===== run 1 rc=0 committed=True out=out.ts size=928720
+  CTRL start diagnostic: mux-first-buffer stream=audio pad=sink_66 pts=0.085 running_time=0.000 segment_base=0.000
+  CTRL start diagnostic: mux-first-buffer stream=video pad=sink_65 pts=0.085 running_time=0.000 segment_base=0.000
+  CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=1)
+  CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=1)
+  CTRL reload: new leg preroll verified (reload_id=1) held_streams=2 timing=finite mode=deferred
+  CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_0 pending_txn=1
+  CTRL reload: outgoing EOS observed stream=audio (1/2 stream(s))
+  CTRL reload: firing (reload_id=1)
+  CTRL reload: finite switch rebased to running time 10.581s mode=deferred streams=2 reload_id=1
+  CTRL reload diagnostic: rebase-reference reload_id=1 mode=deferred streams=2 fallback=no ends=[video=10.567,audio=10.581] pipeline_running_time=none switch_running_time=10.581
+  CTRL reload: switching selector
+  CTRL reload diagnostic: stage=switching-selector
+  CTRL reload: holds released
+  CTRL reload diagnostic: stage=holds-released
+  CTRL reload diagnostic: new-leg-first-buffer stream=audio reload_id=1 applied_offset=10.581 pts=0.541 running_time=0.000 segment_base=0.000
+  CTRL reload diagnostic: new-leg-selector-first-buffer stream=audio pad=sink_2 reload_id=1 applied_offset=10.581 pts=0.541 running_time=10.581 segment_base=10.581
+  CTRL reload diagnostic: stage=selector-handoff-confirmed
+  CTRL reload diagnostic: stage=retiring-tail-release-entered streams=video,audio
+  CTRL reload diagnostic: stage=retiring-tail-released stream=video
+  CTRL reload diagnostic: stage=retiring-tail-released stream=audio
+  CTRL reload diagnostic: stage=old-tail-detached
+  CTRL reload diagnostic: new-leg-first-buffer stream=video reload_id=1 applied_offset=10.581 pts=0.541 running_time=0.000 segment_base=0.000
+  CTRL reload diagnostic: new-leg-selector-first-buffer stream=video pad=sink_2 reload_id=1 applied_offset=10.581 pts=0.541 running_time=10.581 segment_base=10.581
+  CTRL reload: old leg disposed
+  CTRL reload diagnostic: stage=old-leg-disposed
+  CTRL reload diagnostic: stage=committed elements=36
+  GT video n=680   uniq=680   regress=0   first=3600.000000000 last=3622.614655556 maxstep=0.033344s  3610.466655556 -> 3610.500000000
+  GT audio n=1061  uniq=1060  regress=0   first=3600.000000000 last=3622.591988889 maxstep=0.021344s  3610.538655556 -> 3610.560000000
+  # worker had already exited on its own (rc=0); no stop ack expected
+===== run 2 rc=0 committed=True out=out.ts size=939436
+  CTRL start diagnostic: mux-first-buffer stream=audio pad=sink_66 pts=0.085 running_time=0.000 segment_base=0.000
+  CTRL start diagnostic: mux-first-buffer stream=video pad=sink_65 pts=0.085 running_time=0.000 segment_base=0.000
+  CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=1)
+  CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=1)
+  CTRL reload: new leg preroll verified (reload_id=1) held_streams=2 timing=finite mode=deferred
+  CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_0 pending_txn=1
+  CTRL reload: outgoing EOS observed stream=audio (1/2 stream(s))
+  CTRL reload: firing (reload_id=1)
+  CTRL reload: finite switch rebased to running time 10.581s mode=deferred streams=2 reload_id=1
+  CTRL reload diagnostic: rebase-reference reload_id=1 mode=deferred streams=2 fallback=no ends=[video=10.567,audio=10.581] pipeline_running_time=none switch_running_time=10.581
+  CTRL reload: switching selector
+  CTRL reload diagnostic: stage=switching-selector
+  CTRL reload: holds released
+  CTRL reload diagnostic: stage=holds-released
+  CTRL reload diagnostic: new-leg-first-buffer stream=audio reload_id=1 applied_offset=10.581 pts=0.541 running_time=0.000 segment_base=0.000
+  CTRL reload diagnostic: new-leg-selector-first-buffer stream=audio pad=sink_2 reload_id=1 applied_offset=10.581 pts=0.541 running_time=10.581 segment_base=10.581
+  CTRL reload diagnostic: stage=selector-handoff-confirmed
+  CTRL reload diagnostic: stage=retiring-tail-release-entered streams=video,audio
+  CTRL reload diagnostic: stage=retiring-tail-released stream=video
+  CTRL reload diagnostic: new-leg-first-buffer stream=video reload_id=1 applied_offset=10.581 pts=0.541 running_time=0.000 segment_base=0.000
+  CTRL reload diagnostic: new-leg-selector-first-buffer stream=video pad=sink_2 reload_id=1 applied_offset=10.581 pts=0.541 running_time=10.581 segment_base=10.581
+  CTRL reload diagnostic: stage=retiring-tail-released stream=audio
+  CTRL reload diagnostic: stage=old-tail-detached
+  CTRL reload: old leg disposed
+  CTRL reload diagnostic: stage=old-leg-disposed
+  CTRL reload diagnostic: stage=committed elements=36
+  GT video n=680   uniq=680   regress=0   first=3600.000000000 last=3622.614655556 maxstep=0.033344s  3610.466655556 -> 3610.500000000
+  GT audio n=1061  uniq=1060  regress=0   first=3600.000000000 last=3622.591988889 maxstep=0.021344s  3610.538655556 -> 3610.560000000
+  # worker had already exited on its own (rc=0); no stop ack expected
+===== run 3 rc=0 committed=True out=out.ts size=939060
+  CTRL start diagnostic: mux-first-buffer stream=audio pad=sink_66 pts=0.085 running_time=0.000 segment_base=0.000
+  CTRL start diagnostic: mux-first-buffer stream=video pad=sink_65 pts=0.085 running_time=0.000 segment_base=0.000
+  CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=1)
+  CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=1)
+  CTRL reload: new leg preroll verified (reload_id=1) held_streams=2 timing=finite mode=deferred
+  CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_0 pending_txn=1
+  CTRL reload: outgoing EOS observed stream=audio (1/2 stream(s))
+  CTRL reload: firing (reload_id=1)
+  CTRL reload: finite switch rebased to running time 10.600s mode=deferred streams=2 reload_id=1
+  CTRL reload diagnostic: rebase-reference reload_id=1 mode=deferred streams=2 fallback=no ends=[video=10.600,audio=10.581] pipeline_running_time=none switch_running_time=10.600
+  CTRL reload: switching selector
+  CTRL reload diagnostic: stage=switching-selector
+  CTRL reload: holds released
+  CTRL reload diagnostic: stage=holds-released
+  CTRL reload diagnostic: new-leg-first-buffer stream=audio reload_id=1 applied_offset=10.600 pts=0.541 running_time=0.000 segment_base=0.000
+  CTRL reload diagnostic: new-leg-selector-first-buffer stream=audio pad=sink_2 reload_id=1 applied_offset=10.600 pts=0.541 running_time=10.600 segment_base=10.600
+  CTRL reload diagnostic: stage=selector-handoff-confirmed
+  CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_0 pending_txn=1
+  CTRL reload: outgoing EOS observed stream=video (2/2 stream(s))
+  CTRL reload diagnostic: stage=retiring-tail-release-entered streams=video,audio
+  CTRL reload diagnostic: stage=retiring-tail-released stream=video
+  CTRL reload diagnostic: new-leg-first-buffer stream=video reload_id=1 applied_offset=10.600 pts=0.541 running_time=0.000 segment_base=0.000
+  CTRL reload diagnostic: new-leg-selector-first-buffer stream=video pad=sink_2 reload_id=1 applied_offset=10.600 pts=0.541 running_time=10.600 segment_base=10.600
+  CTRL reload diagnostic: stage=retiring-tail-released stream=audio
+  CTRL reload diagnostic: stage=old-tail-detached
+  CTRL reload: old leg disposed
+  CTRL reload diagnostic: stage=old-leg-disposed
+  CTRL reload diagnostic: stage=committed elements=36
+  GT video n=681   uniq=680   regress=0   first=3600.000000000 last=3622.633322222 maxstep=0.033344s  3622.566655556 -> 3622.600000000
+  GT audio n=1061  uniq=1061  regress=0   first=3600.000000000 last=3622.610655556 maxstep=0.021344s  3622.546655556 -> 3622.568000000
+# verdicts(x4base): ['ok', 'ok', 'ok']
+# src-collapse runs: 0/3
