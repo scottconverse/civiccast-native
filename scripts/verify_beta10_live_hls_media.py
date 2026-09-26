@@ -173,6 +173,41 @@ ANALYZER_TIMEOUT_SECONDS: Final[float] = 90.0
 RACE_RETRY_ATTEMPTS: Final[int] = 20
 RACE_RETRY_DELAY_SECONDS: Final[float] = 0.1
 
+#: Caption decode-back spans the newest ~60 s of FINISHED segments (U48
+#: follow-on).  The old 4-segment (~8 s) window failed on any speech pause: on
+#: 2026-09-26 verify #4 it failed government (its sidecar reading "take a
+#: five-minute break" -- a recess) and education while BOTH workers had injected
+#: 14-17 captions in the preceding minute.  One cue anywhere in the span is a
+#: pass; a clean span with no cue at all is still a FAIL.
+CAPTION_WINDOW_SECONDS: Final[float] = 60.0
+#: The newest two segments are excluded: the relay may still be writing them.
+CAPTION_WINDOW_EXCLUDE_NEWEST: Final[int] = 2
+#: Hard cap on copied/decoded segments, so the window stays bounded even if the
+#: segment duration is misreported.
+CAPTION_WINDOW_MAX_SEGMENTS: Final[int] = 40
+#: A candidate emitted this much longer ago than the newest candidate belongs to
+#: a previous run, not this window.  The live channel dir keeps fossils from
+#: earlier runs -- public `seg000018677.ts` (Sep 19) beside `seg000001284.ts` --
+#: and a fossil's cues would be a false PASS, so the walk stops at this floor.
+CAPTION_WINDOW_STALENESS_SECONDS: Final[float] = 900.0
+
+#: The playout worker prints one ``CTRL caption <ch>: received=... in 60s`` line
+#: per 60 s window that carried caption activity, and one WARNING after ten
+#: silent windows.  The receipt is read from the tail of that log (bounded: the
+#: log runs for the life of the station) and a log older than this floor no
+#: longer speaks for the window under judgement -- a dead worker's last line is
+#: not evidence about the last 60 s.
+CAPTION_RECEIPT_TAIL_BYTES: Final[int] = 65536
+CAPTION_RECEIPT_FRESH_SECONDS: Final[float] = 180.0
+CAPTION_RECEIPT_RE: Final[re.Pattern[str]] = re.compile(
+    r"CTRL caption (?P<channel>\S+): received=(?P<received>\d+) injected=(?P<injected>\d+) "
+    r"replayed=(?P<replayed>\d+) rejected=(?P<rejected>\d+) in (?P<window>\d+(?:\.\d+)?)s"
+)
+CAPTION_SILENT_RE: Final[re.Pattern[str]] = re.compile(
+    r"CTRL caption (?P<channel>\S+): WARNING no caption command received for "
+    r"(?P<seconds>\d+(?:\.\d+)?)s"
+)
+
 #: The two errnos an atomic replace produces, and only those two: a retry here
 #: must never absorb a real permission failure or a real absence past the
 #: budget.
@@ -647,6 +682,190 @@ def _decode_captions(segment: Path) -> dict[str, Any]:
         f"({decoded_text_bytes} bytes, sha256={decoded_text_sha256[:16]}...)"
     )
     return result
+
+
+# --- Caption decode-back window --------------------------------------------
+
+
+def _read_log_tail(path: Path, limit: int) -> tuple[str, int]:
+    """The last ``limit`` bytes of a live log, and that file's mtime (ns).
+
+    The worker log is appended to for the life of the station, so only the tail
+    is ever read.  One short-lived handle, with the same atomic-replace retry as
+    every other live read.
+    """
+
+    last: OSError | None = None
+    for attempt in range(RACE_RETRY_ATTEMPTS):
+        try:
+            with path.open("rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                handle.seek(max(0, size - limit))
+                data = handle.read()
+            mtime_ns = path.stat().st_mtime_ns
+            return data.decode("utf-8", errors="replace"), mtime_ns
+        except _RACE_ERRORS as exc:
+            last = exc
+            if attempt + 1 < RACE_RETRY_ATTEMPTS:
+                time.sleep(RACE_RETRY_DELAY_SECONDS)
+    if last is None:  # pragma: no cover - the budget is at least one attempt
+        raise RuntimeError(f"unreadable live log: {path}")
+    raise last
+
+
+def caption_window(channel_dir: Path, *, segment_seconds: float = HLS_TARGET_SEGMENT_SECONDS) -> dict[str, Any]:
+    """The newest ~60 s of FINISHED segments in a channel dir, oldest first.
+
+    Selection is by EMISSION TIME (mtime), never by name or sequence number: a
+    live channel dir also holds segments left by PREVIOUS runs whose sequence
+    numbers are far higher than the current run's newest, and a name-ordered
+    window would decode those fossils instead of the stream.  The newest
+    `CAPTION_WINDOW_EXCLUDE_NEWEST` segments are never touched -- the relay may
+    still be writing them -- and the walk stops at `CAPTION_WINDOW_STALENESS_SECONDS`
+    behind the newest candidate so it can never walk back into a previous run.
+    """
+
+    candidates: list[tuple[int, int, str]] = []
+    try:
+        entries = list(channel_dir.glob("seg*.ts"))
+    except OSError:  # pragma: no cover - an unreadable dir is reported upstream
+        return {"segments": [], "span_seconds": 0.0, "newest_excluded": [], "older_excluded": 0}
+    for path in entries:
+        sequence = _sequence_number(path.name)
+        if sequence is None:
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            # A segment the relay rotated away mid-enumeration is simply not
+            # part of the window; it is not evidence of anything.
+            continue
+        candidates.append((stat.st_mtime_ns, sequence, path.name))
+    if not candidates:
+        return {"segments": [], "span_seconds": 0.0, "newest_excluded": [], "older_excluded": 0}
+    candidates.sort(key=lambda item: (item[0], item[1], item[2]))
+
+    if CAPTION_WINDOW_EXCLUDE_NEWEST > 0:
+        finished = candidates[:-CAPTION_WINDOW_EXCLUDE_NEWEST]
+        newest_excluded = [item[2] for item in candidates[-CAPTION_WINDOW_EXCLUDE_NEWEST :]]
+    else:  # pragma: no cover - the shipped floor is 2, and 0 is not a window
+        finished, newest_excluded = candidates, []
+    newest_ns = candidates[-1][0]
+    stale_ns = int(CAPTION_WINDOW_STALENESS_SECONDS * 1_000_000_000)
+
+    chosen: list[tuple[int, int, str]] = []
+    span = 0.0
+    for item in reversed(finished):
+        if newest_ns - item[0] > stale_ns:
+            break  # this and everything older belongs to a previous run
+        if chosen and span + segment_seconds > CAPTION_WINDOW_SECONDS:
+            break
+        chosen.append(item)
+        span += segment_seconds
+        if len(chosen) >= CAPTION_WINDOW_MAX_SEGMENTS:
+            break
+    chosen.reverse()
+
+    chosen_names = [item[2] for item in chosen]
+    return {
+        "segments": [
+            {
+                "segment": name,
+                "mtime_ns": mtime_ns,
+                "emitted_utc": datetime.fromtimestamp(mtime_ns / 1e9, tz=UTC).isoformat(),
+            }
+            for mtime_ns, _sequence, name in chosen
+        ],
+        "span_seconds": round(span, 3),
+        "newest_excluded": newest_excluded,
+        "older_excluded": len(finished) - len(chosen_names),
+    }
+
+
+def caption_receipt(channel_id: str, hls_root: Path, *, now: float | None = None) -> dict[str, Any]:
+    """What the playout worker itself reported receiving, for this channel.
+
+    Read from ``<egress>/<channel>/logs/gst-worker.stdout.log`` -- the worker's
+    own stdout, which is where ``_CaptionReceiptCounter`` prints.  The verdict
+    is about the LAST line that names this channel: a receipt with
+    ``received>0`` means captions reached the worker; ``received=0`` means the
+    window closed with nothing; and the worker's own WARNING (ten silent
+    windows, ~600 s) is as strong as a zero receipt.  A log that has not been
+    written for longer than ``CAPTION_RECEIPT_FRESH_SECONDS`` cannot speak for
+    the window being judged, so it is UNAVAILABLE rather than ZERO -- a quiet
+    channel is not an outage.  No caption TEXT is ever read or returned.
+    """
+
+    path = Path(hls_root).parent / channel_id / "logs" / "gst-worker.stdout.log"
+    moment = time.time() if now is None else now
+    receipt: dict[str, Any] = {
+        "status": "UNAVAILABLE",
+        "channel": channel_id,
+        "log": str(path),
+        "age_seconds": None,
+        "received": None,
+        "window_s": None,
+        "silent_seconds": None,
+        "line": None,
+        "detail": f"no worker caption log at {path}",
+    }
+    try:
+        text, mtime_ns = _read_log_tail(path, CAPTION_RECEIPT_TAIL_BYTES)
+    except OSError as exc:
+        receipt["detail"] = f"the worker caption log could not be read ({exc.__class__.__name__})"
+        return receipt
+    receipt["age_seconds"] = round(moment - mtime_ns / 1e9, 3)
+
+    last_receipt: re.Match[str] | None = None
+    last_silence: re.Match[str] | None = None
+    receipt_line_no = 0
+    silence_line_no = 0
+    for index, line in enumerate(text.splitlines(), start=1):
+        got = CAPTION_RECEIPT_RE.search(line)
+        if got is not None and got.group("channel") == channel_id:
+            last_receipt, receipt_line_no = got, index
+            continue
+        silent = CAPTION_SILENT_RE.search(line)
+        if silent is not None and silent.group("channel") == channel_id:
+            last_silence, silence_line_no = silent, index
+    if last_silence is not None and silence_line_no > receipt_line_no:
+        # The warning is the last word this channel got: the worker has been
+        # receiving nothing for ~600 s and says so itself.
+        receipt["status"] = "ZERO"
+        receipt["silent_seconds"] = float(last_silence.group("seconds"))
+        receipt["detail"] = (
+            f"the worker reported no caption command received for "
+            f"{receipt['silent_seconds']:g}s; the last thing it sent for {channel_id}"
+        )
+        return receipt
+    if last_receipt is None:
+        receipt["detail"] = (
+            f"no caption receipt for {channel_id} in the last "
+            f"{CAPTION_RECEIPT_TAIL_BYTES // 1024} KiB of the worker log"
+        )
+        return receipt
+
+    received = int(last_receipt.group("received"))
+    receipt["line"] = last_receipt.group(0)
+    receipt["received"] = received
+    receipt["window_s"] = float(last_receipt.group("window"))
+    fresh = bool(receipt["age_seconds"] is not None and receipt["age_seconds"] <= CAPTION_RECEIPT_FRESH_SECONDS)
+    if received == 0:
+        receipt["status"] = "ZERO" if fresh else "UNAVAILABLE"
+        receipt["detail"] = (
+            f"the worker's last receipt for {channel_id} reported received=0 in "
+            f"{receipt['window_s']:g}s, {receipt['age_seconds']:g}s ago"
+            + ("" if fresh else " -- too old to speak for the window under judgement")
+        )
+        return receipt
+    receipt["status"] = "OK" if fresh else "UNAVAILABLE"
+    receipt["detail"] = (
+        f"the worker reported received={received} in {receipt['window_s']:g}s, "
+        f"{receipt['age_seconds']:g}s ago"
+        + ("" if fresh else " -- too old to speak for the window under judgement")
+    )
+    return receipt
 
 
 # --- Playlist parsing ------------------------------------------------------
@@ -1486,64 +1705,102 @@ def _verify_channel_body(
 
     decoder = caption_decoder_available()
     evidence["caption_decoder"] = decoder
-    present_segments = [r["segment"] for r in chosen_records if _analysis_path(r) is not None]
+    # What the playout worker ITSELF reported receiving on this channel's caption
+    # pipe.  Captions are sparse and a healthy channel pauses (a recess), so a
+    # decode-back FAIL alone cannot tell a quiet channel from an outage; the
+    # worker's own receipt is the second opinion rung_check needs (U48 follow-on).
+    evidence["caption_receipt"] = caption_receipt(channel_id, hls_root)
+
+    # The caption window is the newest ~60 s of FINISHED segments, chosen by
+    # emission time (U48 follow-on: 4 segments / ~8 s failed on any speech pause).
+    durations = [d for d in playlist.segment_infos if d and d > 0]
+    caption_seconds = sorted(durations)[len(durations) // 2] if durations else HLS_TARGET_SEGMENT_SECONDS
+    window = caption_window(channel_dir, segment_seconds=caption_seconds)
+    window_names = [item["segment"] for item in window["segments"]]
+    evidence["caption_window"] = {
+        "span_seconds": window["span_seconds"],
+        "segment_count": len(window_names),
+        "emitted_first_utc": window["segments"][0]["emitted_utc"] if window["segments"] else None,
+        "emitted_last_utc": window["segments"][-1]["emitted_utc"] if window["segments"] else None,
+        "newest_excluded": window["newest_excluded"],
+        "older_excluded": window["older_excluded"],
+    }
     per_segment_captions: list[dict[str, Any]] = []
     if not decoder["available"]:
         evidence["caption_decode_back"] = {
             "status": Verdict.NOT_PROVEN,
             "detail": "no proven local caption decoder path -- caption decode-back is NOT_PROVEN",
+            "cue_count": None,
+            "span_seconds": window["span_seconds"],
             "per_segment": [],
         }
-    elif not present_segments:
+    elif not window_names:
         evidence["caption_decode_back"] = {
             "status": Verdict.NOT_PROVEN,
-            "detail": "no present segment to decode captions from",
+            "detail": (
+                "no finished segment in the caption window (every emitted segment is "
+                f"newer than the newest {CAPTION_WINDOW_EXCLUDE_NEWEST} or older than "
+                f"{CAPTION_WINDOW_STALENESS_SECONDS:g}s)"
+            ),
+            "cue_count": None,
+            "span_seconds": window["span_seconds"],
             "per_segment": [],
         }
     else:
-        # Decode-back EVERY chosen (present) segment, not just the newest one:
-        # a window whose newest segment carries cues but whose remaining
-        # segments are captionless must NOT be treated as a caption pass.
-        for record in chosen_records:
-            snap = _analysis_path(record)
-            if snap is None or not snap.is_file():
+        # Copy each finished segment into private scratch FIRST (the live path is
+        # read-once and may be rotated away), then decode the copy.  Every segment
+        # in the span is decoded: one cue anywhere is a pass, and a segment that
+        # could not be captured keeps the span UNVERIFIED rather than silently
+        # dropping out of it.
+        caption_dir = scratch / "caption"
+        caption_dir.mkdir(parents=True, exist_ok=True)
+        for item in window["segments"]:
+            snapshot, _digest = _snapshot_segment(channel_dir / item["segment"], caption_dir)
+            if snapshot is None:
+                per_segment_captions.append(
+                    {
+                        "segment": item["segment"],
+                        "status": Verdict.UNVERIFIED,
+                        "detail": "segment could not be copied out of the live window (copy race)",
+                        "decoded_cue_count": None,
+                    }
+                )
                 continue
-            decoded = _decode_captions(snap)
-            per_segment_captions.append({"segment": record["segment"], **decoded})
-        statuses_seen = [item["status"] for item in per_segment_captions]
-        # Window-level semantics (corrected 2026-09-24): embedded CEA-708/608
-        # captions are SPARSE across 2s segments -- stable-TS diagnostics decoded
-        # cues in only 4 of 9 sampled segments across three healthy channels.
-        # Requiring caption text in EVERY segment would fail a healthy stream.
-        # Defensible rule:
-        #   * UNVERIFIED if ANY chosen segment could not be decoded cleanly
-        #     (decode error / race) -- we cannot claim a window PASS on partial
-        #     evidence, and a vanished/undecodable segment must stay UNVERIFIED.
-        #   * FAIL only when EVERY chosen segment decoded cleanly AND NONE
-        #     carried any cue (a genuinely captionless window).
-        #   * PASS when every chosen segment decoded cleanly AND at least one
-        #     carried a cue.
-        # This does NOT flip a no-cue window to PASS and does not weaken the
-        # release gate: absence of cues still fails, and partial evidence is
-        # still unverified.
-        pass_count = sum(1 for s in statuses_seen if s == Verdict.PASS)
-        unverified_count = sum(1 for s in statuses_seen if s == Verdict.UNVERIFIED)
+            decoded = _decode_captions(snapshot)
+            per_segment_captions.append({"segment": item["segment"], **decoded})
+        cue_count = sum(int(item.get("decoded_cue_count") or 0) for item in per_segment_captions)
+        unverified_count = sum(
+            1 for item in per_segment_captions if item["status"] == Verdict.UNVERIFIED
+        )
+        # Window-level semantics (corrected 2026-09-24, span widened 2026-09-26):
+        # embedded CEA-708/608 captions are SPARSE, and a station legitimately
+        # stops speaking (a recess, a pause between agenda items).  A ~60 s span
+        # may therefore hold cues in only a few segments -- or, rarely, none.  The
+        # rules:
+        #   * UNVERIFIED if ANY segment in the span could not be decoded cleanly
+        #     (decode error / copy race): partial evidence proves nothing.
+        #   * PASS when every segment decoded cleanly AND at least one cue is in
+        #     the span.
+        #   * FAIL only when the span decoded cleanly AND carried no cue at all.
+        # This still refuses to call a captionless span a pass; the widening is in
+        # the SPAN, not in the verdict.
         if unverified_count > 0:
             aggregate_status = Verdict.UNVERIFIED
-        elif pass_count > 0:
+        elif cue_count > 0:
             aggregate_status = Verdict.PASS
         else:
-            # every segment decoded cleanly but carried no cue
             aggregate_status = Verdict.FAIL
         evidence["caption_decode_back"] = {
             "status": aggregate_status,
             "detail": (
-                f"caption decode-back across {len(per_segment_captions)} emitted "
-                f"segment(s): pass={sum(1 for i in per_segment_captions if i['status'] == Verdict.PASS)}, "
-                f"fail={sum(1 for i in per_segment_captions if i['status'] == Verdict.FAIL)}, "
-                f"unverified={sum(1 for i in per_segment_captions if i['status'] == Verdict.UNVERIFIED)}; "
-                "PASS requires at least one decoded cue with NO unverified segment; no cues across a clean window is FAIL"
+                f"caption decode-back over the newest {window['span_seconds']:.1f} s of "
+                f"finished segments: {len(per_segment_captions)} segment(s) decoded, "
+                f"{unverified_count} unverified, {cue_count} cue(s) total; "
+                "PASS needs at least one cue in the span with NO unverified segment; "
+                "a clean span with no cue is FAIL"
             ),
+            "cue_count": cue_count,
+            "span_seconds": window["span_seconds"],
             "per_segment": per_segment_captions,
         }
 
@@ -1664,6 +1921,9 @@ def verify_all(
             "continuity_tolerance": CONTINUITY_TOLERANCE,
             "hls_target_segment_seconds": HLS_TARGET_SEGMENT_SECONDS,
             "hls_playlist_size": HLS_PLAYLIST_SIZE,
+            "caption_window_seconds": CAPTION_WINDOW_SECONDS,
+            "caption_window_exclude_newest": CAPTION_WINDOW_EXCLUDE_NEWEST,
+            "caption_receipt_fresh_seconds": CAPTION_RECEIPT_FRESH_SECONDS,
             "source": (
                 "civiccast.stream.loudness / civiccast.egress.compliance / "
                 "civiccast.egress.preparer / civiccast.egress.sinks.HlsSink"
