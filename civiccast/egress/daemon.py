@@ -1682,7 +1682,11 @@ class EgressDaemon:
         after the first advertised the PREVIOUS broadcast's playlist at t=0
         (review round 3 delta, MINOR 3). Called on an operator ``stop`` (the
         writer is gone with the channel) and on a start that finds no live
-        relay. Segments are left for the next writer's own rolling window.
+        relay. This function removes ONLY the manifest: the segments are the
+        writer's to clear, and since U51 the relay child wipes ``seg*.ts`` and
+        any stale playlist from the channel's HLS directory as it spawns --
+        which is why this call matters most on the ``stop`` path, where no
+        child is spawned to do it.
         Folders that fail containment are skipped: the API never advertises
         those anyway. This is the one consumer of the resolver that WRITES,
         so it bypasses the resolver's memo: a folder swapped for a junction
@@ -1932,12 +1936,16 @@ class EgressDaemon:
                 # HlsSink worker that is gone): whatever playlist.m3u8 is on
                 # disk belongs to a previous broadcast. Remove it before the
                 # new writer produces anything so /api/public/live/current does
-                # not advertise it. A relay that WAS already alive leaves a
-                # window its replacement continues across the U21 rebind
-                # (``apply(..., new_session=True)`` above), so that window is
-                # carried forward rather than deleted -- the manifest survives
-                # an encoder crash-relaunch. Uses the STORED config: ``apply``
-                # above rewrote hls sinks to their relay's local-ts uri.
+                # not advertise it. U51: the relay child now clears the
+                # channel's HLS directory itself as it spawns, so on the
+                # ordinary path above (``apply(..., new_session=True)`` -- a
+                # genuine new worker session, which is always the case by the
+                # time control reaches here, since a live worker short-circuits
+                # earlier) the window is already gone by now. This call is the
+                # backstop for the starts that spawn nothing: no supervisor
+                # configured, or a relay that could not be started at all.
+                # Uses the STORED config: ``apply`` above rewrote hls sinks to
+                # their relay's local-ts uri.
                 self._discard_stale_hls_playlists(channel_id, config=stored_config)
             using_fallback_slate = False
             fallback_reason: str | None = None

@@ -895,11 +895,21 @@ def test_stale_playlist_removal_never_acts_on_a_cached_resolution(
     assert not (folder / "playlist.m3u8").exists()
 
 
-def test_start_leaves_the_playlist_alone_while_the_hls_relay_is_still_alive(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_start_while_the_hls_relay_is_alive_leaves_the_removal_to_the_relay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # A crash-relaunch of the encoder alone: the relay child keeps writing the
-    # same rolling window, so residents' players must not lose the manifest.
+    # U51 REVERSED U21 here. U21's rule was "a live relay's window is carried
+    # forward across an encoder crash-relaunch, so the manifest survives it".
+    # It does not any more: a new worker session replaces the relay CHILD
+    # (``new_session=not worker_already_live``), and the child clears the
+    # channel's HLS directory as it spawns -- measured: the directory holds
+    # playlist.m3u8 + seg000000007.ts before the relaunch and [] after it.
+    #
+    # What survives, and what this pins, is the DAEMON's half: it still does
+    # not unlink the manifest itself while a relay was alive (the
+    # ``hls_relay_was_alive`` gate around ``_discard_stale_hls_playlists``), so
+    # the absence below is the relay's doing -- and the operator log names the
+    # mechanism that actually took the window instead of blaming the daemon.
     from civiccast.egress.hls_relay import HlsRelaySupervisor
 
     root = tmp_path / "hls-root"
@@ -912,7 +922,13 @@ def test_start_leaves_the_playlist_alone_while_the_hls_relay_is_still_alive(
     # U24: the daemon now hands the supervisor its work dir, so a starter
     # double must accept the per-child stderr capture path. This one ignores
     # it: the child is a fake, so there is no child stderr to capture.
-    relay = HlsRelaySupervisor(starter=lambda _args, *, stderr_path=None: _FakeProcess(pid=9001))
+    relay_calls: list[list[str]] = []
+
+    def relay_starter(args: list[str], *, stderr_path: Path | None = None) -> _FakeProcess:
+        relay_calls.append(args)
+        return _FakeProcess(pid=9000 + len(relay_calls))
+
+    relay = HlsRelaySupervisor(starter=relay_starter)
     daemon = EgressDaemon(
         store,
         work_dir=tmp_path / "work",
@@ -926,9 +942,20 @@ def test_start_leaves_the_playlist_alone_while_the_hls_relay_is_still_alive(
 
     # The encoder is gone but the relay is not: an in-place relaunch.
     daemon._processes["gov"].returncode = 1  # type: ignore[attr-defined]
-    daemon.process_once("gov")
+    with caplog.at_level("INFO", logger="civiccast.egress.daemon"):
+        daemon.process_once("gov")
 
-    assert (folder / "playlist.m3u8").exists()
+    assert len(relay_calls) == 2, "the relaunch did not replace the relay child"
+    removals = [
+        record
+        for record in caplog.records
+        if "removed the previous broadcast's" in record.getMessage()
+    ]
+    assert removals == [], [record.getMessage() for record in removals]
+    # U51: the replaced child cleared the window, and the fake child never
+    # publishes a replacement -- so the channel has no advertised manifest
+    # until a real muxer writes one.
+    assert not (folder / "playlist.m3u8").exists()
 
 
 def test_daemon_gives_the_relay_its_work_dir_so_child_stderr_lands_beside_the_worker_log(
@@ -999,9 +1026,11 @@ def test_crash_relaunch_rebinds_the_channels_hls_relay_to_the_new_worker_session
 ) -> None:
     # U21: the relay child corrects input PTS discontinuities itself and keeps the
     # resulting per-stream offset for the rest of its life, so a relaunched worker
-    # must not inherit the previous worker's relay. The window on disk is still
-    # carried forward (the manifest must survive the relaunch), but the CHILD
-    # writing it from here on is a new one.
+    # must not inherit the previous worker's relay. U51 changed what happens to
+    # the window: the new CHILD clears the channel's HLS directory as it spawns,
+    # so the previous session's manifest and segments do not survive the relaunch
+    # (they are the fossils that misled viewers and readers). The manifest returns
+    # only when the replacement child publishes one of its own.
     from civiccast.egress.hls_relay import HlsRelaySupervisor
 
     root = tmp_path / "hls-root"
@@ -1048,7 +1077,9 @@ def test_crash_relaunch_rebinds_the_channels_hls_relay_to_the_new_worker_session
     assert relay_calls[0] == relay_calls[1], "the rebound relay must keep the same udp port"
     assert relay_procs[0].terminated
     assert not relay_procs[1].terminated
-    assert (folder / "playlist.m3u8").exists()
+    assert not (folder / "playlist.m3u8").exists(), (
+        "the replacement child must clear the previous session's window as it spawns (U51)"
+    )
 
 
 def test_daemon_clears_active_cg_overlay_when_encoder_exits(tmp_path: Path) -> None:

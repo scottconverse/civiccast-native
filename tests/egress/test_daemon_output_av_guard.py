@@ -547,6 +547,11 @@ def test_u16_guard_slate_restart_rebinds_the_hls_relay_to_the_new_worker_session
 
     assert fixture.daemon.process_once("gov") == 1
     assert len(relay_calls) == 1, "the first worker session did not start a relay"
+    # U51: the relay spawn cleared the channel's HLS directory, so the window the
+    # guard measures has to be written after it -- the fixture's own pre-spawn
+    # seed is gone, and without a complete segment the guard never reaches the
+    # probe (it would report "no measurement", not a desync).
+    _write_playlist(fixture.hls_dir, segments=("seg000000001.ts", "seg000000002.ts"))
     fixture.daemon._write_state("gov", "FALLBACK_SLATE")
 
     for _ in range(_OUTPUT_AV_GUARD_CONSECUTIVE_PROBES):

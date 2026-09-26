@@ -151,7 +151,36 @@ sink) file next to the channel's other egress logs:
   the log file: the drain thread discards on any write error rather than
   stalling the child.
 
+**Beta.10 live finding (2026-09-26, U51): a reader holding the manifest froze
+every channel, and every start inherited the previous session's window.** Two
+robustness defects, one commit each.
 
+*Item 1 — fossil segments.* Nothing ever cleared a channel's HLS directory, and
+because the muxer is spawned with ``append_list`` the next child CONTINUES the
+sequence and playlist it finds there. Measured on the live station: 35-43 stale
+``seg*.ts`` per channel, accumulated since 09-19 across every restart, all of
+them sitting in front of the fresh window. The fix is a wipe at SPAWN, before
+the child exists (see :func:`_clear_hls_window`); locked files are skipped and
+logged, never fatal.
+
+*Item 2 — a held manifest froze publishing, silently.* ffmpeg's hls muxer
+publishes ``playlist.m3u8`` temp-file-then-RENAME on every update, and a rename
+needs DELETE access to the existing file. At 10:36:53 one reader holding ONE
+channel's manifest denied that rename and ALL THREE channels' manifests stopped
+advancing for viewers for ~50 s, while every relay child stayed a live pid and
+every segment kept advancing and not one stderr line mentioned error, fail or
+denied. Measured on a replay with the station's own ffmpeg (commands and raw
+output in ``civiccast-ds-oversight/reports/U51.md``): the rename is blocked
+46 of 47 attempts against the reader shape that blocks it, ``+temp_file``
+cannot avoid a rename that already happens unconditionally on this build, a
+FRESH child pointed at the held directory stalls identically (so no relay-side
+watchdog that restarts only the child could end it), and an IN-PLACE rewrite of
+the held file succeeds 47 of 47 -- the operation needs write access, not delete
+access. So the
+muxer is given a private staging name no reader knows
+(``HlsSink.mux_playlist_name``) and :class:`_ManifestPublisher` republishes the
+advertised name from it in place. The served name did not change: readers, the
+router and the daemon's stale-playlist discard still see ``playlist.m3u8``.
 """
 
 from __future__ import annotations
@@ -329,6 +358,67 @@ def _playlist_path_for(sink_uri: str) -> Path:
     """
     sink = HlsSink(EgressSinkSpec(kind="hls", label="_progress", uri=sink_uri))
     return Path(sink.manifest_target())
+
+
+def _clear_hls_window(hls_sink: HlsSink) -> None:
+    """Remove the previous session's window from one sink's HLS directory.
+
+    U51 item 1. Nothing ever cleared that directory: the muxer's own
+    ``delete_segments`` only prunes behind ITS OWN window, so every relay start
+    left its final window on disk, and a station restarted a dozen times since
+    09-19 carried 35-43 stale ``seg*.ts`` per channel. Worse than wasted disk,
+    the next child is spawned with ``append_list`` -- it CONTINUES the sequence
+    and the playlist it finds there, so the fossils are what a fresh session
+    appends behind.
+
+    So the wipe is deliberately blunt and happens at the SPAWN, before the child
+    exists (never at ``apply`` time, which is idempotent and re-entered for a
+    live relay). It takes the window itself -- ``seg*.ts`` -- plus both playlist
+    names (the advertised one; the muxer's private staging one) and any
+    ``*.tmp`` debris (a torn temp file from a killed muxer).
+
+    A file locked by a reader can NEVER fail the start: on Windows a held file
+    blocks its unlink (``WinError 32``) exactly as it blocks the muxer's
+    playlist rename, and a relay that refused to start because a viewer held a
+    segment would trade a leaked file for a dead channel. Locked files are
+    skipped, the rest are still cleared, and the skip is logged -- a silent
+    skip would leave an operator with a fossil and no way to know why.
+    """
+    directory = Path(hls_sink.manifest_target()).parent
+    candidates: list[Path] = []
+    for pattern in ("seg*.ts", "*.tmp", hls_sink.manifest_name, hls_sink.mux_playlist_name):
+        try:
+            candidates.extend(sorted(directory.glob(pattern)))
+        except OSError:
+            continue
+    removed = 0
+    locked: list[Path] = []
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            locked.append(path)
+        else:
+            removed += 1
+    if removed:
+        _LOG.info(
+            "HLS relay start: cleared %d stale file(s) from %s before launching the relay child.",
+            removed,
+            directory,
+        )
+    if locked:
+        _LOG.warning(
+            "HLS relay start: could not remove %d file(s) from %s (held by another "
+            "process; they are left in place and the relay starts anyway): %s. "
+            "The next session appends behind whatever survives here.",
+            len(locked),
+            directory,
+            ", ".join(str(path) for path in locked),
+        )
 
 
 def _last_segment(path: Path) -> str | None:
@@ -1415,7 +1505,13 @@ class HlsRelaySupervisor:
             ),
             *hls_sink.output_args(),
         ]
-
+        # U51 item 1: the previous session's window goes BEFORE the child that
+        # would otherwise continue it. ``output_args`` above has already created
+        # the directory (``HlsSink.container_args`` does the mkdir), and the
+        # predecessor's handles are provably closed by now -- every caller
+        # terminated it before reaching this helper. Never fatal: see
+        # :func:`_clear_hls_window`.
+        _clear_hls_window(hls_sink)
         log_path = self._relay_log_path(channel_id, sink.label)
         pid_offset: int | None = None
         if log_path is not None:

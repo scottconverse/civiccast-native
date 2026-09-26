@@ -18,8 +18,9 @@ Audit-repaired semantics under test:
   * A live relay that never writes a window past its startup grace is reported
     unhealthy/recoverable once the daemon has confirmed production -- distinct
     from legitimate STARTING/no-source (finding 3).
-  * The one-shot heal latch survives the frozen on-disk playlist left behind by
-    the replaced child, so a heal cannot re-arm every bound into a restart
+  * The one-shot heal latch survives the window it had to replace -- which,
+    since U51's spawn wipe, is no window at all rather than the replaced child's
+    frozen playlist -- so a heal cannot re-arm every bound into a restart
     storm (finding 4). Scope matters: the latch is per relay INCARNATION, and a
     U21 ``new_session=True`` rebind discards it -- see
     ``test_daemon_tick_sequence_with_escalation_is_bounded_not_a_storm``, which
@@ -109,6 +110,19 @@ def _write_playlist(
     last_segment: str,
     media_sequence: int = 0,
 ) -> Path:
+    """Model the window a relay child has written: the ADVERTISED manifest.
+
+    Ordering matters since U51: a (re)start clears the channel's HLS directory
+    BEFORE the child is launched, so a window written before ``sup.apply`` /
+    the daemon's first ``process_once`` is deleted and the test would be seeding
+    nothing. Every call below therefore comes after the spawn.
+
+    The advertised file is the one the progress reader watches. The muxer
+    itself writes a private staging playlist and the relay's publisher thread
+    mirrors it to this name; these fake-starter tests do not run a muxer, so
+    writing the advertised name directly is how a test says "this window is
+    what viewers are being served".
+    """
     directory.mkdir(parents=True, exist_ok=True)
     playlist = directory / "playlist.m3u8"
     playlist.write_text(
@@ -127,10 +141,10 @@ def test_manifest_size_change_with_same_last_segment_is_not_progress(tmp_path: P
     """NEGATIVE (audit finding 1): metadata churn with the SAME last ``.ts`` must
     NOT reset freshness. Only the segment name counts."""
     hls_dir = tmp_path / "gov-live"
-    playlist = _write_playlist(hls_dir, last_segment="seg000000010.ts", media_sequence=0)
     clock = _FakeClock(1000.0)
     sup, _calls, _procs = _supervisor(clock=clock)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    playlist = _write_playlist(hls_dir, last_segment="seg000000010.ts", media_sequence=0)
 
     sup.note_progress("gov", now=1000.0)
     # Same final segment, but the manifest body/size changed (tag churn).
@@ -150,10 +164,10 @@ def test_manifest_size_change_with_same_last_segment_is_not_progress(tmp_path: P
 def test_last_segment_change_is_progress(tmp_path: Path) -> None:
     """POSITIVE counterpart: a genuinely new final segment is progress."""
     hls_dir = tmp_path / "gov-live"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     clock = _FakeClock(1000.0)
     sup, _calls, _procs = _supervisor(clock=clock)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")
 
     sup.note_progress("gov", now=1000.0)
     _write_playlist(hls_dir, last_segment="seg000000011.ts")
@@ -171,8 +185,6 @@ def test_one_stalled_sink_among_two_is_reported(tmp_path: Path) -> None:
     advancing sibling. Two HLS sinks -> two relays."""
     stalled_dir = tmp_path / "gov-stalled"
     live_dir = tmp_path / "gov-live"
-    _write_playlist(stalled_dir, last_segment="seg000000010.ts")
-    _write_playlist(live_dir, last_segment="seg000000020.ts")
 
     clock = _FakeClock(1000.0)
     sup, _calls, procs = _supervisor(clock=clock)
@@ -183,6 +195,8 @@ def test_one_stalled_sink_among_two_is_reported(tmp_path: Path) -> None:
         )
     )
     assert len(procs) == 2  # one child per sink, keyed channel|label
+    _write_playlist(stalled_dir, last_segment="seg000000010.ts")
+    _write_playlist(live_dir, last_segment="seg000000020.ts")
 
     sup.note_progress("gov", now=1000.0)
     # Only the LIVE sink advances; the stalled one keeps its segment.
@@ -197,12 +211,12 @@ def test_both_sinks_advancing_is_not_stale(tmp_path: Path) -> None:
     """Positive counterpart for the any-sink semantics."""
     a_dir = tmp_path / "gov-a"
     b_dir = tmp_path / "gov-b"
-    _write_playlist(a_dir, last_segment="seg000000010.ts")
-    _write_playlist(b_dir, last_segment="seg000000020.ts")
 
     clock = _FakeClock(1000.0)
     sup, _calls, _procs = _supervisor(clock=clock)
     sup.apply(_config(_hls_sink(str(a_dir), label="A"), _hls_sink(str(b_dir), label="B")))
+    _write_playlist(a_dir, last_segment="seg000000010.ts")
+    _write_playlist(b_dir, last_segment="seg000000020.ts")
     sup.note_progress("gov", now=1000.0)
     _write_playlist(a_dir, last_segment="seg000000011.ts")
     _write_playlist(b_dir, last_segment="seg000000021.ts")
@@ -243,19 +257,26 @@ def test_never_emitted_is_none_without_a_tracked_relay() -> None:
     assert sup.never_emitted("gov", now=1000.0, startup_grace_s=20.0) is None
 
 
-# --- finding 4: heal latch survives the frozen on-disk playlist -----------------
+# --- finding 4: the heal latch survives the window it had to replace ------------
 
 
-def test_heal_latch_survives_the_frozen_on_disk_playlist(tmp_path: Path) -> None:
-    """NEGATIVE (audit finding 4): after a heal, the OLD playlist is still on
-    disk. Its unchanged segment must NOT clear the latch, or the heal would
-    re-arm every bound and become a restart storm."""
+def test_heal_latch_survives_the_window_the_heal_had_to_replace(tmp_path: Path) -> None:
+    """NEGATIVE (audit finding 4): after a heal, the window that provoked it must
+    not clear the latch, or the heal would re-arm every bound into a restart
+    storm.
+
+    U51 sharpened this case rather than removing it: the heal's respawn now
+    clears the channel directory, so what is on disk afterwards is not the old
+    frozen playlist but NOTHING (the replacement child has not had time to cut
+    a segment). Absence is the stronger form of the same hazard -- no evidence
+    of production must never count as progress -- and it is the state every
+    replacement child starts in."""
     hls_dir = tmp_path / "gov-live"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")  # frozen window
 
     clock = _FakeClock(1000.0)
     sup, calls, procs = _supervisor(clock=clock)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")  # frozen window
     sup.note_progress("gov", now=1000.0)
 
     clock.value = 1000.0 + 600.0
@@ -264,9 +285,10 @@ def test_heal_latch_survives_the_frozen_on_disk_playlist(tmp_path: Path) -> None
         is True
     )
     assert len(calls) == 2
+    assert not (hls_dir / "playlist.m3u8").exists()  # the respawn's wipe took it
 
-    # The replacement child has NOT written anything; the OLD playlist (same
-    # last segment) is still on disk. Several ticks later, no second restart.
+    # The replacement child has NOT written anything. Several ticks later, no
+    # second restart.
     for step in (1.0, 2.0, 3.0, 4.0):
         clock.value = 1000.0 + 600.0 + step * 100.0
         sup.note_progress("gov", now=clock.value)
@@ -284,10 +306,10 @@ def test_heal_latch_clears_once_the_window_really_advances(tmp_path: Path) -> No
     """Positive counterpart: a genuinely NEW segment past the pre-heal baseline
     ends the episode, so a later, separate stall may heal again."""
     hls_dir = tmp_path / "gov-live"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     clock = _FakeClock(1000.0)
     sup, calls, _procs = _supervisor(clock=clock)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     sup.note_progress("gov", now=1000.0)
 
     clock.value = 1000.0 + 600.0
@@ -315,10 +337,10 @@ def test_heal_latch_clears_once_the_window_really_advances(tmp_path: Path) -> No
 def test_self_heal_does_not_fire_without_actual_output(tmp_path: Path) -> None:
     """Not 'producing' (STARTING / no source yet) must never self-heal."""
     hls_dir = tmp_path / "gov-live"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     clock = _FakeClock(1000.0)
     sup, calls, _procs = _supervisor(clock=clock)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     sup.note_progress("gov", now=1000.0)
 
     clock.value = 1000.0 + 600.0
@@ -331,10 +353,10 @@ def test_self_heal_does_not_fire_without_actual_output(tmp_path: Path) -> None:
 
 def test_self_heal_does_not_fire_inside_the_startup_grace(tmp_path: Path) -> None:
     hls_dir = tmp_path / "gov-live"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     clock = _FakeClock(1000.0)
     sup, calls, _procs = _supervisor(clock=clock)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     sup.note_progress("gov", now=1000.0)
 
     clock.value = 1000.0 + 5.0
@@ -382,9 +404,15 @@ def _daemon_source_plan(tmp_path: Path) -> EgressSourcePlan:
 
 
 def _stalled_daemon(tmp_path: Path, *, sink_label: str = "Web"):
-    """A daemon whose alive hls relay serves a frozen (or absent) window."""
+    """A daemon whose alive hls relay serves a frozen (or absent) window.
+
+    The window is deliberately NOT seeded here: the relay is spawned by the
+    daemon's first ``process_once``, and since U51 that spawn clears the
+    channel directory first. A caller that wants a frozen window on disk writes
+    it after that first tick (the helper returns the directory) and before the
+    tick that anchors the segment baseline.
+    """
     hls_dir = tmp_path / f"gov-live-{sink_label}"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")
 
     relay_procs: list[_FakeProcess] = []
 
@@ -504,9 +532,10 @@ def test_daemon_reports_stalled_but_alive_relay_unhealthy_behavioral(tmp_path: P
     because no progress check existed to flip it. The relay process stays alive
     throughout.
     """
-    daemon, store, _relay, _hls_dir, procs, clock, label = _stalled_daemon(tmp_path)
+    daemon, store, _relay, hls_dir, procs, clock, label = _stalled_daemon(tmp_path)
 
-    assert daemon.process_once("gov") == 1
+    assert daemon.process_once("gov") == 1  # spawns the relay (and clears the directory)
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")  # the window it leaves frozen
     daemon._on_air_confirmed_at["gov"] = clock()
     daemon.process_once("gov")  # anchors the segment baseline
     clock.value += 1.0
@@ -691,7 +720,6 @@ def test_one_good_one_missing_sink_reports_never_emitted(tmp_path: Path) -> None
     having written a window past its grace, the missing sink must be reported --
     it must NOT be masked by the healthy sibling."""
     good_dir = tmp_path / "gov-good"
-    _write_playlist(good_dir, last_segment="seg000000020.ts")
     missing_dir = tmp_path / "gov-missing"  # never created
 
     clock = _FakeClock(1000.0)
@@ -703,6 +731,7 @@ def test_one_good_one_missing_sink_reports_never_emitted(tmp_path: Path) -> None
         )
     )
     assert len(procs) == 2
+    _write_playlist(good_dir, last_segment="seg000000020.ts")
 
     clock.value = 1000.0 + 600.0
     sup.note_progress("gov", now=clock.value)
@@ -714,7 +743,6 @@ def test_one_good_one_missing_stays_unknown_inside_grace(tmp_path: Path) -> None
     """Positive counterpart: the young missing sink is inside its grace, so no
     fault is claimed yet."""
     good_dir = tmp_path / "gov-good"
-    _write_playlist(good_dir, last_segment="seg000000020.ts")
     missing_dir = tmp_path / "gov-missing"
 
     clock = _FakeClock(1000.0)
@@ -725,6 +753,7 @@ def test_one_good_one_missing_stays_unknown_inside_grace(tmp_path: Path) -> None
             _hls_sink(str(missing_dir), label="Missing"),
         )
     )
+    _write_playlist(good_dir, last_segment="seg000000020.ts")
 
     assert sup.never_emitted("gov", now=1000.0 + 5.0, startup_grace_s=20.0) is None
 
@@ -774,7 +803,6 @@ def test_daemon_never_emitted_path_actually_self_heals(tmp_path: Path) -> None:
 def test_old_api_alive_relay_with_frozen_window_reads_unhealthy(tmp_path: Path) -> None:
     """BEHAVIORAL RED (audit finding 5), old-API-only construction."""
     hls_dir = tmp_path / "gov-live"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")
 
     relay = HlsRelaySupervisor(starter=lambda _args, *, stderr_path=None: _FakeProcess(pid=900))
     # Keep construction old-API-only (so OLD code raises nothing here), but
@@ -796,7 +824,8 @@ def test_old_api_alive_relay_with_frozen_window_reads_unhealthy(tmp_path: Path) 
         sink_health_provider=lambda _c, _cfg, _m: {"Web": True},
     )
 
-    assert daemon.process_once("gov") == 1
+    assert daemon.process_once("gov") == 1  # spawns the relay (and clears the directory)
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     daemon._on_air_confirmed_at["gov"] = daemon._monotonic()
     daemon.process_once("gov")  # anchor the segment baseline
     # Backdate the observed progress so the unchanged window is unambiguously

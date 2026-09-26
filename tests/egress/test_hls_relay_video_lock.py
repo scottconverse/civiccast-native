@@ -116,6 +116,19 @@ def _write_playlist(directory: Path, *, last_segment: str) -> Path:
     return playlist
 
 
+def _seed_window(directory: Path, *, last_segment: str = "seg000000002.ts") -> Path:
+    """Write the window a RUNNING relay child is serving.
+
+    Call this AFTER the supervisor spawns the child. U51 clears the channel's
+    HLS directory at every relay (re)start, so a window written before the
+    spawn is deleted before any probe can see it -- the assertions below would
+    then pass while measuring nothing.
+    """
+    playlist = _write_playlist(directory, last_segment=last_segment)
+    (directory / last_segment).write_bytes(b"not-really-a-segment")
+    return playlist
+
+
 def _supervisor(
     *,
     clock: _FakeClock,
@@ -357,9 +370,6 @@ def test_alive_relay_serving_audio_only_segments_is_restarted(tmp_path: Path) ->
     served segment carries no video is the live symptom -- it must be
     restarted, not merely reported."""
     hls_dir = tmp_path / "gov"
-    playlist = _write_playlist(hls_dir, last_segment="seg000000002.ts")
-    (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
-
     probed: list[Path] = []
 
     def probe(path: Path) -> frozenset[str] | None:
@@ -369,6 +379,7 @@ def test_alive_relay_serving_audio_only_segments_is_restarted(tmp_path: Path) ->
     clock = _FakeClock(1000.0)
     sup, calls, procs = _supervisor(clock=clock, probe=probe)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    playlist = _seed_window(hls_dir)
     _expire_startup_grace(sup)  # well past its startup grace
 
     assert (
@@ -388,8 +399,6 @@ def test_alive_relay_serving_video_only_segments_is_restarted(
     relay's 18:47:44-18:47:56 shape, PID 256 and no PID 257 -- must be
     restarted too, and the operator must be told which stream is missing."""
     hls_dir = tmp_path / "gov"
-    _write_playlist(hls_dir, last_segment="seg000000002.ts")
-    (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
 
     def probe(_path: Path) -> frozenset[str] | None:
         return frozenset({"video"})  # video only -- U13's measurement
@@ -397,6 +406,7 @@ def test_alive_relay_serving_video_only_segments_is_restarted(
     clock = _FakeClock(1000.0)
     sup, calls, procs = _supervisor(clock=clock, probe=probe)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _seed_window(hls_dir)
     _expire_startup_grace(sup)
 
     with caplog.at_level("WARNING", logger="civiccast.egress.hls_relay"):
@@ -424,9 +434,6 @@ def test_a_video_audio_segment_is_verified_once_and_not_reprobed(tmp_path: Path)
     fault episode -- no restart, no further probes for that child (one ffprobe
     per child, not one per tick)."""
     hls_dir = tmp_path / "gov"
-    _write_playlist(hls_dir, last_segment="seg000000002.ts")
-    (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
-
     probed: list[Path] = []
 
     def probe(path: Path) -> frozenset[str] | None:
@@ -436,6 +443,7 @@ def test_a_video_audio_segment_is_verified_once_and_not_reprobed(tmp_path: Path)
     clock = _FakeClock(1000.0)
     sup, calls, _procs = _supervisor(clock=clock, probe=probe)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _seed_window(hls_dir)
     _expire_startup_grace(sup)
 
     for step in range(4):
@@ -457,16 +465,18 @@ def test_video_only_sink_is_never_restored_for_missing_audio(
     video-only window is exactly its correct output, so it must not be
     restarted for the audio it was never configured to carry."""
     hls_dir = tmp_path / "gov-video"
-    _write_playlist(hls_dir, last_segment="seg000000002.ts")
-    (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
     monkeypatch.setattr(HlsSink, "carries_audio", False)
 
-    def probe(_path: Path) -> frozenset[str] | None:
+    probed: list[Path] = []
+
+    def probe(path: Path) -> frozenset[str] | None:
+        probed.append(path)
         return frozenset({"video"})
 
     clock = _FakeClock(1000.0)
     sup, calls, _procs = _supervisor(clock=clock, probe=probe)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _seed_window(hls_dir)
     _expire_startup_grace(sup)
 
     assert (
@@ -474,14 +484,15 @@ def test_video_only_sink_is_never_restored_for_missing_audio(
         is False
     )
     assert len(calls) == 1
+    # The judgement really ran on the seeded window, so "no restart" above is a
+    # verdict on a video-only segment -- not the silence of a deleted window.
+    assert len(probed) == 1, probed
 
 
 def test_probe_waits_for_the_startup_grace(tmp_path: Path) -> None:
     """A just-(re)started child must not be judged before it can write: no
     probe, no restart, inside its startup grace."""
     hls_dir = tmp_path / "gov"
-    _write_playlist(hls_dir, last_segment="seg000000002.ts")
-    (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
 
     def probe(_path: Path) -> frozenset[str] | None:
         raise AssertionError("must not probe inside the startup grace")
@@ -489,6 +500,7 @@ def test_probe_waits_for_the_startup_grace(tmp_path: Path) -> None:
     clock = _FakeClock(1000.0)
     sup, calls, _procs = _supervisor(clock=clock, probe=probe)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _seed_window(hls_dir)  # a judgeable window exists; the grace is the only reason not to
 
     assert (
         sup.maybe_restore_missing_streams(
@@ -505,8 +517,6 @@ def test_audio_only_sink_is_never_restored_for_missing_video(
     """An audio-only sink keeps its audio-only output: the video requirement
     (and the audio-only fault) does not apply to it at all."""
     hls_dir = tmp_path / "gov-audio"
-    _write_playlist(hls_dir, last_segment="seg000000002.ts")
-    (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
     monkeypatch.setattr(HlsSink, "carries_video", False)
 
     def probe(_path: Path) -> frozenset[str] | None:
@@ -515,6 +525,7 @@ def test_audio_only_sink_is_never_restored_for_missing_video(
     clock = _FakeClock(1000.0)
     sup, calls, _procs = _supervisor(clock=clock, probe=probe)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _seed_window(hls_dir)  # a full window exists, so only the required-kind gate can stop the probe
     _expire_startup_grace(sup)
 
     assert (
@@ -539,8 +550,6 @@ def test_alive_probe_does_not_fire_while_the_channel_is_not_producing(tmp_path: 
     """STARTING / no-source: a channel that is not producing has no business
     being restarted for a video-less window it has not yet had time to fill."""
     hls_dir = tmp_path / "gov"
-    _write_playlist(hls_dir, last_segment="seg000000002.ts")
-    (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
 
     def probe(_path: Path) -> frozenset[str] | None:
         raise AssertionError("must not probe a channel that is not producing")
@@ -548,6 +557,9 @@ def test_alive_probe_does_not_fire_while_the_channel_is_not_producing(tmp_path: 
     clock = _FakeClock(1000.0)
     sup, calls, _procs = _supervisor(clock=clock, probe=probe)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _seed_window(
+        hls_dir
+    )  # a judgeable window exists; "not producing" is the only reason not to judge it
     _expire_startup_grace(sup)
 
     assert (
@@ -639,12 +651,14 @@ def test_daemon_tick_respawns_a_dead_relay(tmp_path: Path) -> None:
     spawned nothing and the assertion failed. The daemon's own poll must
     restart it (the live fix for a relay that exited on a video-less probe)."""
     hls_dir = tmp_path / "gov-live"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     clock = _FakeClock(50_000.0)
     daemon, _store, _relay, procs, _clock = _relay_daemon(tmp_path, hls_dir, clock=clock)
 
     assert daemon.process_once("gov") == 1
     assert len(procs) == 1
+    # U51: the spawn clears the channel's HLS directory first, so the window is
+    # written after it -- a pre-spawn seed would never survive to be served.
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     procs[0].returncode = 1  # ffmpeg exited: probed input had no video stream
 
     daemon._on_air_confirmed_at["gov"] = clock()
