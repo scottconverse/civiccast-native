@@ -800,21 +800,28 @@ def _encode_sink_tail(
     *,
     params: RideParams,
     profile: CanonicalProfile,
+    variant: EncoderVariant | None = None,
 ) -> list[str]:
     """Everything the emitted-audio sink does after its input, in one place.
 
     Factored so the guard's re-encode round IS this encode, option for option: a
     change to the codec, bitrate, rate, channel count or container reaches both
-    shapes or neither.
+    shapes or neither.  ``variant`` is the guard's *second* lever (U42): it may
+    move the bitrate and append the encoder's own options, and nothing else --
+    the filter chain, the sample rate, the channel count and the container are
+    the profile's, not a variant's.
     """
     parts = [f"volume={trim_db:.3f}dB", limiter_filter(params)]
+    bitrate_kbps = profile.audio_bitrate_kbps if variant is None else variant.bitrate_kbps
+    encoder_args = [] if variant is None else list(variant.extra_args)
     return [
         "-af",
         ",".join(parts),
         "-c:a",
         profile.audio_codec,
         "-b:a",
-        f"{profile.audio_bitrate_kbps}k",
+        f"{bitrate_kbps}k",
+        *encoder_args,
         "-ar",
         str(profile.audio_sample_rate),
         "-ac",
@@ -860,7 +867,9 @@ def build_encode_sink_args(
     The audio parameters come from the canonical profile, because the video pass
     later stream-copies this stream into the final program: whatever bitrate,
     rate or channel count is written here IS what the program carries, and
-    re-encoding it there would be a second lossy generation.
+    re-encoding it there would be a second lossy generation.  This is the nominal
+    emit and takes no variant -- a guard round is a *re-encode*, not a second
+    nominal.
     """
     return [
         "-hide_banner",
@@ -879,13 +888,18 @@ def build_reencode_args(
     trim_db: float,
     params: RideParams,
     profile: CanonicalProfile,
+    variant: EncoderVariant | None = None,
 ) -> list[str]:
     """The guard's re-encode round: the emitted-audio sink, fed from a PCM file.
 
     Answer 11's guard round is not a re-convergence -- the ride PCM is already
     correct -- so it is the nominal encode with a file for an input and nothing
     else different.  ``params.limit_dbtp`` is the ceiling this round pulls the
-    only available lever to: the limiter's ``limit`` (:func:`limiter_filter`).
+    limiter lever to (:func:`limiter_filter`); ``variant`` is the *other* lever
+    U42 added, and it moves only the audio encoder (:func:`_encode_sink_tail`).
+    A caller passes one or the other: a round that lowers the ceiling and swaps
+    the encoder at once would leave the keep-best selector unable to say which
+    of the two bought the result.
     """
     return [
         "-hide_banner",
@@ -893,7 +907,9 @@ def build_reencode_args(
         "warning",
         "-y",
         *_pcm_input_args(params=params, from_file=pcm_path),
-        *_encode_sink_tail(output_path, trim_db, params=params, profile=profile),
+        *_encode_sink_tail(
+            output_path, trim_db, params=params, profile=profile, variant=variant
+        ),
     ]
 
 
@@ -1362,6 +1378,7 @@ def run_reencode(
     params: RideParams,
     profile: CanonicalProfile,
     timeout_s: float | None = None,
+    variant: EncoderVariant | None = None,
 ) -> RideRender:
     """Re-encode retained ride PCM once: limiter, codec, mux -- no ride, no curve.
 
@@ -1369,8 +1386,9 @@ def run_reencode(
     nominal emit already consumed, so this pass cannot move the loudness the
     convergence settled on; the only thing it changes is what the limiter and the
     codec do to a hot signal, which is exactly the lever answer 11 asks it to
-    pull.  One input, one output, no pipe and no chunk loop -- FFmpeg reads the
-    file itself.
+    pull -- and ``variant`` is the same argument applied to the codec rather than
+    the limiter (U42), still one input, one output, no pipe, no chunk loop.
+    FFmpeg reads the file itself.
 
     ``frames`` and ``audio_seconds`` are zero: the caller measures the artifact it
     just wrote (that measurement is the guard's input), and this function reports
@@ -1383,7 +1401,12 @@ def run_reencode(
     argv = [
         ffmpeg,
         *build_reencode_args(
-            pcm_path, output_path, trim_db=trim_db, params=params, profile=profile
+            pcm_path,
+            output_path,
+            trim_db=trim_db,
+            params=params,
+            profile=profile,
+            variant=variant,
         ),
     ]
     t_start = time.perf_counter()
@@ -1546,12 +1569,17 @@ def scan_peak_dbfs(
 
 
 class ReencodeRunner(Protocol):
-    """How the guard's one re-encode round runs (the installed station:
+    """How the guard's re-encode rounds run (the installed station:
     :func:`run_reencode`).
 
-    Takes no ``cancel_event``: the round is one short FFmpeg pass over a file,
+    Takes no ``cancel_event``: each round is one short FFmpeg pass over a file,
     so it is bounded by its input rather than by a stream, and the round's
     timeout is its whole cancellation story.
+
+    The guard may run more than one round -- a ceiling round, then up to one
+    round per :data:`TP_GUARD_ENCODER_VARIANTS` entry (U42) -- and every round
+    goes through this one callable, so the module has exactly one place that
+    spends an encode on a fix.
     """
 
     def __call__(
@@ -1563,6 +1591,7 @@ class ReencodeRunner(Protocol):
         params: RideParams,
         profile: CanonicalProfile,
         timeout_s: float | None = None,
+        variant: EncoderVariant | None = None,
     ) -> RideRender: ...
 
 
@@ -1810,6 +1839,79 @@ TP_GUARD_MAX_ROUNDS = 1
 
 
 @dataclass(frozen=True)
+class EncoderVariant:
+    """One encoder configuration the guard may re-emit an artifact with.
+
+    The guard's first lever is the limiter ceiling -- :func:`build_reencode_args`
+    at a lower ``params.limit_dbtp``.  U42's live full-asset artifact showed that
+    the ceiling is not always a lever at all: the emitted peak was the AAC round
+    trip's own, so lowering the ceiling moved the loudness gate off target while
+    leaving the peak hot (log line 18797: round 0 hot at the nominal ceiling,
+    round 1 quiet *and* still over the bound).  This is the second lever -- the
+    same PCM, the same limiter, the same mux, a different encoder.
+
+    ``extra_args`` are the encoder's own options, appended verbatim beside
+    ``-c:a``.  A variant therefore cannot move the input, the filter chain, the
+    rate, the channels or the container; it may only say more about the encoder.
+    """
+
+    bitrate_kbps: int
+    extra_args: tuple[str, ...] = ()
+
+
+#: The encoder variants the guard spends, in order, when the attempt it would
+#: keep is measurably over the hard bound.  Both rows are measured on the live
+#: defect's own already-limited PCM (``evidence/u42-aac-overshoot/out-lever-table.txt``,
+#: one input, one -1.50 dBTP ceiling, only the encoder options differing): the
+#: nominal 192 kbps emit peaked at +0.783 dBFS, 256 kbps at -1.064 dBFS and
+#: 192 kbps with the fast coder at -0.387 dBFS -- all three at I = -16.0 LUFS,
+#: so a variant is judged on the same loudness gates as the attempt it beats.
+#: The order is a cost contract: the guard stops at the first variant that meets
+#: the bound, and each one is a whole extra encode.
+TP_GUARD_ENCODER_VARIANTS: tuple[EncoderVariant, ...] = (
+    EncoderVariant(bitrate_kbps=256),
+    EncoderVariant(bitrate_kbps=256, extra_args=("-aac_coder", "fast")),
+)
+
+
+def encoder_variants_for(profile: CanonicalProfile) -> tuple[EncoderVariant, ...]:
+    """The variants worth spending on this profile's encoder, in order.
+
+    Empty for anything but AAC: :data:`TP_GUARD_ENCODER_VARIANTS`' rows are the
+    native AAC encoder's options, and the headend's profiles carry
+    ``audio_codec="ac3"``, where ``-aac_coder`` beside ``-c:a ac3`` is an FFmpeg
+    parse error rather than a lever.
+
+    A variant a profile already emits is dropped too: re-emitting exactly the
+    nominal's settings buys a whole encode and changes only the encoder's
+    internal state, which is not what the guard measures.
+    """
+    if profile.audio_codec != "aac":
+        return ()
+    return tuple(
+        variant
+        for variant in TP_GUARD_ENCODER_VARIANTS
+        if variant.extra_args or variant.bitrate_kbps != profile.audio_bitrate_kbps
+    )
+
+
+def encoder_settings_label(
+    profile: CanonicalProfile, variant: EncoderVariant | None = None
+) -> str:
+    """Name one encode's encoder settings, for the operator's log line.
+
+    U42: the guard's WARNING and the caller's ERROR name what each attempt
+    actually ran, so a kept artifact can be traced to the encoder configuration
+    that produced it without knowing which profile was in force at the time.
+    """
+    bitrate = profile.audio_bitrate_kbps if variant is None else variant.bitrate_kbps
+    label = f"{profile.audio_codec} {bitrate}k"
+    if variant is not None and variant.extra_args:
+        label += f" ({' '.join(variant.extra_args)})"
+    return label
+
+
+@dataclass(frozen=True)
 class LeveledAttempt:
     """One emitted attempt: the ceiling it ran at, and what it emitted.
 
@@ -1824,6 +1926,11 @@ class LeveledAttempt:
     and it is the hard gate's whole evidence.  It is ``None`` when the artifact
     was not scanned, which -- like a missing loudness measurement -- cannot clear
     the gate it cannot evidence.
+
+    ``encoder`` is the encoder configuration this attempt was emitted with, named
+    by :func:`encoder_settings_label` (U42).  It decides nothing -- it is what
+    lets the guard's WARNING and the caller's ERROR say which lever produced the
+    artifact that airs.
     """
 
     round_index: int
@@ -1834,6 +1941,7 @@ class LeveledAttempt:
     whole_err_lu: float | None
     wall_s: float
     decoded_peak_dbfs: float | None = None
+    encoder: str = ""
 
     def loudness_ok(self, *, window_tol_lu: float, whole_tol_lu: float) -> bool:
         """Whether both loudness gates hold for this attempt's own artifact."""
@@ -1857,6 +1965,19 @@ class LeveledAttempt:
         """
         return (
             self.decoded_peak_dbfs is not None and self.decoded_peak_dbfs <= TP_GUARD_MAX_PEAK_DBFS
+        )
+
+    def over_hard_bound(self) -> bool:
+        """Whether a *measured* peak is over the hard bound, with margin to spare.
+
+        Not the same question as ``not hard_tp_ok()``, and U42 is why: that is
+        also true of an attempt nobody scanned, and another encode of the same
+        samples cannot fix a measurement that never ran.  This predicate is the
+        guard's cue to spend an encoder variant, so it asks the narrower thing --
+        a peak was measured, and it is above the bound.
+        """
+        return (
+            self.decoded_peak_dbfs is not None and self.decoded_peak_dbfs > TP_GUARD_MAX_PEAK_DBFS
         )
 
 
@@ -1905,6 +2026,17 @@ def guard_next_ceiling(
     return guard_ceiling_dbtp(latest.limit_dbtp, latest.emitted_dbtp)
 
 
+def _encoder_suffix(attempt: LeveledAttempt) -> str:
+    """`` (aac 256k)`` when the attempt names its encoder, else nothing.
+
+    Optional because an attempt need not come from the guard's loop: a
+    hand-built one, or one from a caller that does not track encoders, has no
+    label, and an empty bracket pair in the operator's line reads worse than no
+    bracket at all.
+    """
+    return "" if not attempt.encoder else f" ({attempt.encoder})"
+
+
 def select_leveled_attempt(
     attempts: Sequence[LeveledAttempt],
     *,
@@ -1934,6 +2066,14 @@ def select_leveled_attempt(
     at all -- nothing measured -- the *nominal* attempt is kept, because a program
     that cannot be measured still airs.  Ties go to the earlier round, so the
     nominal ceiling keeps its claim whenever a lowered one is no better.
+
+    U42 adds no axis here.  An encoder variant enters this function as one more
+    attempt and is judged by these same three levels -- which is the whole point
+    of the ordering: the variant round is not privileged, and it wins only by
+    being lawful on loudness and colder on peak.  What U42 does add is the label
+    in ``warning``: every attempt names its own encoder settings
+    (:attr:`LeveledAttempt.encoder`), so the operator can see which lever bought
+    the artifact that airs.
     """
     nominal = attempts[0]
     kept = min(
@@ -1959,7 +2099,7 @@ def select_leveled_attempt(
             "unmeasurable" if nominal.emitted_dbtp is None else f"{nominal.emitted_dbtp:+.2f} dBTP"
         )
         tried = "; ".join(
-            f"round {a.round_index} at a {a.limit_dbtp:+.2f} dBTP ceiling -> "
+            f"round {a.round_index}{_encoder_suffix(a)} at a {a.limit_dbtp:+.2f} dBTP ceiling -> "
             + ("unmeasurable" if a.emitted_dbtp is None else f"{a.emitted_dbtp:+.2f} dBTP emitted")
             + ", "
             + (
@@ -1980,7 +2120,8 @@ def select_leveled_attempt(
             f"the emitted true peak is {kept_tp}, above the {target_dbtp:+.1f} dBTP "
             f"target and this is best effort only -- the hard true-peak gate is "
             f"what must hold; the nominal attempt emitted {nominal_tp}; attempts: "
-            f"{tried}; keeping round {kept.round_index} at a {kept.limit_dbtp:+.2f} "
+            f"{tried}; keeping round {kept.round_index}{_encoder_suffix(kept)} at a "
+            f"{kept.limit_dbtp:+.2f} "
             f"dBTP ceiling, peak {kept_peak} (hard gate "
             f"{'met' if kept.hard_tp_ok() else 'NOT met'})"
         )
@@ -2002,6 +2143,7 @@ def attempt_from_measurement(
     duration_s: float | None = None,
     decoded_peak_dbfs: float | None = None,
     wall_s: float = 0.0,
+    encoder: str = "",
 ) -> LeveledAttempt:
     """Score one measured artifact, by the acceptance gate's own arithmetic.
 
@@ -2019,6 +2161,10 @@ def attempt_from_measurement(
     ``decoded_peak_dbfs`` is measured by the caller (:func:`scan_peak_dbfs`) and
     passed through; a ``None`` here means the hard gate cannot be cleared, not
     that it passed.
+
+    ``encoder`` is the settings label of the attempt's own encode
+    (:func:`encoder_settings_label`), carried through untouched: this function
+    scores a measurement and does not claim to know what produced it.
     """
     series = parse_ebur128_series(stderr)
     span = series_duration_s(series) if duration_s is None else duration_s
@@ -2032,6 +2178,7 @@ def attempt_from_measurement(
         whole_err_lu=whole_program_err_lu(series, target_lufs=target_lufs),
         wall_s=wall_s,
         decoded_peak_dbfs=decoded_peak_dbfs,
+        encoder=encoder,
     )
 
 
@@ -2046,6 +2193,7 @@ def measure_artifact(
     wall_s: float = 0.0,
     timeout_s: float | None = None,
     cancel_event: threading.Event | None = None,
+    encoder: str = "",
 ) -> LeveledAttempt:
     """Measure one emitted artifact: its loudness series, and its decoded peak.
 
@@ -2056,6 +2204,10 @@ def measure_artifact(
     costs the hard gate, which is exactly what an unmeasurable artifact should
     lose.  Cancellation is neither: it is the caller shutting down, and it is
     re-raised.
+
+    ``encoder`` is the caller's label for the encode that produced this file and
+    is passed to the attempt unread (:func:`attempt_from_measurement`); the
+    measurement is of the file, not of the settings that wrote it.
     """
     try:
         text = run_capture(
@@ -2086,6 +2238,7 @@ def measure_artifact(
         duration_s=duration_s,
         decoded_peak_dbfs=peak,
         wall_s=wall_s,
+        encoder=encoder,
     )
 
 
@@ -2096,8 +2249,10 @@ class LeveledWindow:
     ``audio_path`` is the artifact that airs -- the nominal emit's file, or the
     guard's round moved onto it.  ``round_error`` is set only when a round was
     wanted and failed; it is a report for the caller to log, not a failure of
-    the window, because the nominal artifact is still there and still the best
-    attempt the guard has.  ``tee_path`` records where the post-curve PCM went;
+    the window, because the attempts that did survive are still there and the
+    selector still keeps the best of them.  When more than one round fails the
+    *first* failure is reported: it is the one that explains why the rounds
+    after it ran at all.  ``tee_path`` records where the post-curve PCM went;
     it is a *record*, not a promise -- :func:`level_window` has already unlinked
     it when the module made it, and when the caller supplied it the caller owns
     it and does with it as it likes.
@@ -2130,13 +2285,18 @@ def level_window(
     ``audio_path``.
 
     The whole of answer 12, in order: measure the source, converge the ride,
-    emit once through the profile's codec, measure what was emitted, and -- only
-    if the emitted true peak is still above target -- spend ONE re-encode round
-    against the retained ride PCM at the ceiling the guard asks for.  Then keep
-    the best attempt (see :func:`select_leveled_attempt`) and make
-    ``audio_path`` be it: the round is moved onto the caller's path when it wins,
-    deleted when it does not, so the caller has one file to publish and no
-    choice left to make.
+    emit once through the profile's codec, measure what was emitted, and then --
+    only while the attempt that would be kept is still over the hard bound --
+    spend re-encode rounds against the retained ride PCM.  The ceiling round
+    comes first (answer 11's lever); if the kept attempt is *still* hot after it,
+    the encoder variants (:data:`TP_GUARD_ENCODER_VARIANTS`, U42) follow in their
+    fixed order, and the loop stops at the first attempt that is not over the
+    bound.  All rounds read the same PCM and re-encode only the codec and the
+    mux: no re-render, no re-convergence, so no round can move the loudness the
+    convergence settled on.  Then keep the best attempt (see
+    :func:`select_leveled_attempt`) and make ``audio_path`` be it: the winning
+    round is moved onto the caller's path, every losing one deleted, so the
+    caller has one file to publish and no choice left to make.
 
     ``pcm_path`` is the tee of post-curve PCM the emit writes and the round
     reads.  The caller may supply one (it then owns the file and it outlives the
@@ -2203,7 +2363,7 @@ def level_window(
         tee_path = pcm_path
 
     t_start = time.perf_counter()
-    round_path: Path | None = None
+    round_paths: dict[int, Path] = {}
     round_error: str | None = None
     try:
         emit = ride(
@@ -2237,57 +2397,112 @@ def level_window(
                 wall_s=emit.wall_s,
                 timeout_s=timeout_s,
                 cancel_event=cancel_event,
+                encoder=encoder_settings_label(profile),
             )
         ]
 
-        ceiling = guard_next_ceiling(attempts)
-        if ceiling is not None:
-            round_path = audio_path.with_name(f"{audio_path.name}.round{len(attempts)}.ts")
+        def keep_best() -> LeveledAttempt:
+            """The attempt :func:`select_leveled_attempt` would ship right now.
+
+            The guard's stop condition is a property of the *selection*, not of
+            the latest round: a round can be colder on peak and still lose on
+            loudness (the live case, log line 18797), and spending an encoder
+            variant to beat an attempt nobody would keep would be spending it on
+            the wrong artifact.  Reusing the selector itself -- rather than
+            re-stating its ordering here -- is what keeps the two in step.
+            """
+            return select_leveled_attempt(
+                attempts,
+                window_tol_lu=LOUDNESS_WINDOW_TOL_LU,
+                whole_tol_lu=LOUDNESS_WHOLE_TOL_LU,
+            ).kept
+
+        def reemit(*, limit_dbtp: float, variant: EncoderVariant | None) -> None:
+            """Spend one re-encode round on the retained PCM, and measure it.
+
+            Both of the guard's levers arrive here: a lowered ``limit_dbtp``
+            (answer 11) or an ``EncoderVariant`` (U42).  The input is
+            ``tee_path`` in both cases -- the very samples the nominal emit
+            consumed -- so a round is always "the same audio, one setting
+            different", which is what lets the selector compare the attempts at
+            all.
+
+            A failed round is not raised: it is recorded in ``round_error`` and
+            the attempts that did survive are what the selector sees.  The first
+            failure wins the report, because it is the one that explains why the
+            rounds after it ran.  Cancellation is not a failure -- it is the
+            caller shutting down, so the file this round was writing is removed
+            and the error propagates.
+            """
+            nonlocal round_error
+            index = len(attempts)
+            path = audio_path.with_name(f"{audio_path.name}.round{index}.ts")
+            round_paths[index] = path
             try:
-                round_render = reencode(
+                render = reencode(
                     pcm_path=tee_path,
-                    output_path=round_path,
+                    output_path=path,
                     trim_db=curve.trim_db,
-                    params=replace(params, limit_dbtp=ceiling),
+                    params=replace(params, limit_dbtp=limit_dbtp),
                     profile=profile,
                     timeout_s=timeout_s,
+                    variant=variant,
                 )
             except LoudnessRideCancelledError:
-                round_path.unlink(missing_ok=True)
-                round_path = None
+                del round_paths[index]
+                path.unlink(missing_ok=True)
                 raise
             except LoudnessRideError as exc:
-                round_error = str(exc)
-                round_path.unlink(missing_ok=True)
-                round_path = None
-            else:
-                attempts.append(
-                    measure_artifact(
-                        round_path,
-                        params=params,
-                        round_index=len(attempts),
-                        limit_dbtp=ceiling,
-                        target_lufs=params.target_lufs,
-                        duration_s=duration_s,
-                        wall_s=round_render.wall_s,
-                        timeout_s=timeout_s,
-                        cancel_event=cancel_event,
-                    )
+                round_error = round_error or str(exc)
+                del round_paths[index]
+                path.unlink(missing_ok=True)
+                return
+            attempts.append(
+                measure_artifact(
+                    path,
+                    params=params,
+                    round_index=index,
+                    limit_dbtp=limit_dbtp,
+                    target_lufs=params.target_lufs,
+                    duration_s=duration_s,
+                    wall_s=render.wall_s,
+                    timeout_s=timeout_s,
+                    cancel_event=cancel_event,
+                    encoder=encoder_settings_label(profile, variant),
                 )
+            )
+
+        ceiling = guard_next_ceiling(attempts)
+        if ceiling is not None:
+            reemit(limit_dbtp=ceiling, variant=None)
+
+        # U42: the ceiling is spent, so if the attempt that would ship is still
+        # hot, the encoder is the lever that is left.  Each variant re-emits at
+        # the *kept* attempt's own ceiling -- the encoder is then the single
+        # varying axis, and the variant's result is comparable with the attempt
+        # it is trying to beat.  Stop at the first attempt that is not over the
+        # bound; if every variant misses it, the best attempt ships anyway and
+        # the caller's ERROR line says so.
+        for variant in encoder_variants_for(profile):
+            kept_now = keep_best()
+            if not kept_now.over_hard_bound():
+                break
+            reemit(limit_dbtp=kept_now.limit_dbtp, variant=variant)
 
         selection = select_leveled_attempt(
             attempts,
             window_tol_lu=LOUDNESS_WINDOW_TOL_LU,
             whole_tol_lu=LOUDNESS_WHOLE_TOL_LU,
         )
-        # One file airs, and it is the kept attempt's.  A losing round is deleted
-        # rather than left beside the artifact: a second, hotter file in the
-        # same cache directory is a file something can pick up by accident.
-        if round_path is not None:
-            if selection.kept is attempts[0]:
-                round_path.unlink(missing_ok=True)
-            else:
-                round_path.replace(audio_path)
+        # One file airs, and it is the kept attempt's.  Every losing round is
+        # deleted rather than left beside the artifact: a second, hotter file in
+        # the same cache directory is a file something can pick up by accident.
+        kept_path = round_paths.get(selection.kept.round_index)
+        for path in round_paths.values():
+            if path is not kept_path:
+                path.unlink(missing_ok=True)
+        if kept_path is not None:
+            kept_path.replace(audio_path)
     finally:
         if owned_tee:
             with contextlib.suppress(OSError):

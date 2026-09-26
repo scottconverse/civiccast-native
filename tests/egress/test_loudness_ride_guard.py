@@ -75,6 +75,7 @@ def _attempt(
     worst: float | None = 0.2,
     whole: float | None = 0.05,
     decoded_peak_dbfs: float | None = None,
+    encoder: str = "",
 ) -> lr.LeveledAttempt:
     """One attempt as the driver reports it; loudness-lawful unless told otherwise."""
     return lr.LeveledAttempt(
@@ -86,6 +87,7 @@ def _attempt(
         whole_err_lu=whole,
         wall_s=0.0,
         decoded_peak_dbfs=decoded_peak_dbfs,
+        encoder=encoder,
     )
 
 
@@ -502,3 +504,175 @@ def test_run_reencode_raises_the_module_error_on_a_non_zero_exit(
             profile=CanonicalProfile(video_codec="h264_mf"),
         )
     assert "Invalid data found" in str(caught.value)
+
+
+# ---------------------------------------------------------------------------
+# U42: the guard's second lever is the ENCODER, not only the ceiling
+# ---------------------------------------------------------------------------
+
+#: The measured lever table behind the variant list, all three rows from the
+#: same ``stage.s5.pcm`` and the same -1.50 dBTP ceiling, with only the encoder
+#: options changed (``evidence/u42-aac-overshoot/out-lever-table.txt``):
+#: 192 kbps (the live setting) +0.783 dBFS peak / +2.6 dBTP; 256 kbps
+#: -1.064 dBFS / -1.1 dBTP; 192 kbps ``-aac_coder fast`` -0.387 dBFS /
+#: -0.4 dBTP.  All three at I = -16.0 LUFS: the codec is loudness-transparent,
+#: so the variant round can be judged on the same gates as the attempt it is
+#: trying to beat.
+
+
+def _variant(bitrate_kbps: int, extra_args: tuple[str, ...] = ()) -> lr.EncoderVariant:
+    return lr.EncoderVariant(bitrate_kbps=bitrate_kbps, extra_args=extra_args)
+
+
+def test_the_encoder_variants_are_the_ordered_pair_the_guard_may_spend() -> None:
+    """U42's order is the coordinator's: 256 kbps, then 256 kbps + fast coder.
+
+    It is a tuple, so the order is the contract: the guard stops at the first
+    variant that meets the bound, and the cheaper lever must be tried first.
+    """
+    assert lr.TP_GUARD_ENCODER_VARIANTS == (
+        _variant(256),
+        _variant(256, ("-aac_coder", "fast")),
+    )
+
+
+def test_the_encoder_variants_are_offered_only_to_an_aac_profile() -> None:
+    """``-aac_coder`` is the native AAC encoder's option, so the list is gated.
+
+    The headend's profiles carry ``audio_codec="ac3"`` (``headend.py``); an
+    ``-aac_coder`` beside ``-c:a ac3`` is an FFmpeg parse error, and a variant
+    list that cannot be emitted is not a lever.
+    """
+    assert lr.encoder_variants_for(CanonicalProfile()) == (
+        _variant(256),
+        _variant(256, ("-aac_coder", "fast")),
+    )
+    assert lr.encoder_variants_for(CanonicalProfile(audio_codec="ac3")) == ()
+    # A variant that would re-emit exactly what the nominal emit already wrote
+    # is not a lever either: it buys a whole re-encode and can only change the
+    # encoder's state, not its settings.  At 256 kbps the first variant is that
+    # variant and drops out; the fast-coder one still differs and stays.
+    assert lr.encoder_variants_for(CanonicalProfile(audio_bitrate_kbps=256)) == (
+        _variant(256, ("-aac_coder", "fast")),
+    )
+
+
+def test_the_variant_re_encode_changes_only_the_encoder() -> None:
+    """The round's grammar is unchanged: same input, same limiter, new encoder.
+
+    U42 is explicit that the variant re-encodes ONLY the AAC and the mux from
+    the same already-limited PCM -- no re-render, no re-convergence -- so the
+    only options that may differ from the nominal round are the encoder's.
+    """
+    profile = CanonicalProfile(video_codec="h264_mf")
+    params = lr.RideParams(target_lufs=-16.0, limit_dbtp=-1.5)
+    pcm = Path("C:/tmp/ride.pcm")
+    out = Path("C:/tmp/guard.ts")
+
+    nominal = lr.build_reencode_args(pcm, out, trim_db=1.25, params=params, profile=profile)
+    plain = lr.build_reencode_args(
+        pcm, out, trim_db=1.25, params=params, profile=profile, variant=_variant(256)
+    )
+    fast = lr.build_reencode_args(
+        pcm,
+        out,
+        trim_db=1.25,
+        params=params,
+        profile=profile,
+        variant=_variant(256, ("-aac_coder", "fast")),
+    )
+
+    def _encoder_block(argv: list[str]) -> tuple[str, str, list[str]]:
+        coder: list[str] = []
+        if "-aac_coder" in argv:
+            index = argv.index("-aac_coder")
+            coder = argv[index : index + 2]
+        return (argv[argv.index("-c:a") + 1], argv[argv.index("-b:a") + 1], coder)
+
+    def _without_the_encoder_block(argv: list[str]) -> list[str]:
+        rest = list(argv)
+        del rest[rest.index("-b:a") : rest.index("-b:a") + 2]
+        if "-aac_coder" in rest:
+            index = rest.index("-aac_coder")
+            del rest[index : index + 2]
+        return rest
+
+    assert _encoder_block(nominal) == ("aac", "192k", [])
+    assert _encoder_block(plain) == ("aac", "256k", [])
+    assert _encoder_block(fast) == ("aac", "256k", ["-aac_coder", "fast"])
+    # Everything else -- the file input, the trim, the limiter, the rate, the
+    # channels, the container -- is byte for byte the nominal round's.
+    assert _without_the_encoder_block(nominal) == _without_the_encoder_block(plain)
+    assert _without_the_encoder_block(nominal) == _without_the_encoder_block(fast)
+    assert f"limit={lr.limit_value(-1.5):.6f}" in ",".join(fast)
+
+
+def test_the_settings_label_names_the_codec_the_bitrate_and_the_coder() -> None:
+    """One label per attempt, so the operator's error line says what ran."""
+    profile = CanonicalProfile()
+    assert lr.encoder_settings_label(profile) == "aac 192k"
+    assert lr.encoder_settings_label(profile, _variant(256)) == "aac 256k"
+    assert (
+        lr.encoder_settings_label(profile, _variant(256, ("-aac_coder", "fast")))
+        == "aac 256k (-aac_coder fast)"
+    )
+
+
+def test_an_attempt_over_the_bound_is_not_an_unscanned_one() -> None:
+    """U42 keys the variant round on a *measured* peak that is over the bound.
+
+    ``hard_tp_ok`` is false for both, and for the same reason -- the gate is a
+    guarantee and neither attempt can evidence it.  They are not the same input
+    to the guard's decision to spend a re-encode: a hot artifact is what the
+    encoder is a lever on, and an unscanned one is a measurement failure another
+    encode of the same samples will not fix.
+    """
+    assert _attempt(decoded_peak_dbfs=0.4018).over_hard_bound() is True
+    assert _attempt(decoded_peak_dbfs=0.1001).over_hard_bound() is True
+    assert _attempt(decoded_peak_dbfs=0.1).over_hard_bound() is False
+    assert _attempt(decoded_peak_dbfs=-1.064).over_hard_bound() is False
+    assert _attempt(decoded_peak_dbfs=None).over_hard_bound() is False
+    assert _attempt(decoded_peak_dbfs=None).hard_tp_ok() is False
+
+
+def test_the_warning_names_every_attempts_encoder_settings() -> None:
+    """U42: each attempt's encoder settings are named, and so is the kept one.
+
+    The shape is the live one -- the nominal at 192 kbps hot, the ceiling round
+    lawful on peak but over the bound, the 256 kbps variant clearing it -- with
+    the variant's emitted true peak still short of the best-effort target, which
+    is the only case that produces a warning at all.
+    """
+    hot_nominal = _attempt(
+        round_index=0,
+        limit_dbtp=-1.5,
+        emitted_dbtp=+2.60,
+        decoded_peak_dbfs=0.783,
+        encoder="aac 192k",
+    )
+    ceiling_round = _attempt(
+        round_index=1,
+        limit_dbtp=-5.4,
+        emitted_dbtp=-1.90,
+        worst=1.4,
+        decoded_peak_dbfs=-1.89,
+        encoder="aac 192k",
+    )
+    variant = _attempt(
+        round_index=2,
+        limit_dbtp=-1.5,
+        emitted_dbtp=-0.85,
+        decoded_peak_dbfs=-1.064,
+        encoder="aac 256k",
+    )
+    sel = _select([hot_nominal, ceiling_round, variant])
+    assert sel.kept.round_index == 2, "the variant is loudness-lawful and coldest"
+    assert sel.hard_tp_met is True
+    assert sel.target_met is False
+    assert sel.warning is not None
+    assert "aac 192k" in sel.warning
+    assert "aac 256k" in sel.warning
+    assert "round 2" in sel.warning
+    # The label is the kept attempt's own, not the nominal's relabelled.
+    assert "keeping round 2" in sel.warning
+    assert "-1.06 dBFS" in sel.warning

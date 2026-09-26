@@ -932,8 +932,8 @@ class SourcePreparer:
             )
         if result.round_error is not None:
             _LOG.warning(
-                "Speech leveling for %r (window: %s): the re-encode round failed (%s); "
-                "airing the nominal artifact.",
+                "Speech leveling for %r (window: %s): a re-encode round failed (%s); "
+                "airing the best attempt the guard kept.",
                 source_path.name,
                 window,
                 result.round_error,
@@ -952,15 +952,19 @@ class SourcePreparer:
         if not selection.hard_tp_met:
             # The artifact airs anyway -- a hot artifact beats a silent channel
             # -- but the hard true-peak bound did not hold, and that is an
-            # operator's problem, not a footnote.
+            # operator's problem, not a footnote.  U42: the encoder settings
+            # name which lever produced this artifact, because the two levers
+            # are not equally cheap and the next reader will want to know.
             _LOG.error(
                 "Speech leveling for %r (window: %s): the kept attempt is above the hard "
-                "true-peak bound (%s dBFS sample peak; %s dBTP emitted, ceiling %s dBTP).",
+                "true-peak bound (%s dBFS sample peak; %s dBTP emitted, ceiling %s dBTP; "
+                "encoder %s).",
                 source_path.name,
                 window,
                 _fmt_measure(kept.decoded_peak_dbfs),
                 _fmt_measure(kept.emitted_dbtp),
                 _fmt_measure(kept.limit_dbtp),
+                kept.encoder or "not recorded",
             )
 
     def _conform_full_asset_into_cache(

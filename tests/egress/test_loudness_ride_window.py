@@ -55,7 +55,11 @@ def _stderr(
     if integrated_lufs is not None:
         lines.append(f"    I:         {integrated_lufs:.2f} LUFS")
     if peak_dbtp is not None:
-        lines.append(f"    Peak:       {peak_dbtp:+.2f} dBFS")
+        # FFmpeg prints a positive peak with no leading '+': "Peak:       11.9
+        # dBFS" (measured, station ffmpeg 2026-09-26), and the module's parser
+        # reads FFmpeg's format, not a signed one.  A fixture that wrote "+2.60"
+        # here would be a stderr no FFmpeg ever produces.
+        lines.append(f"    Peak:       {peak_dbtp:.2f} dBFS")
     return "\n".join(lines) + "\n"
 
 
@@ -334,6 +338,9 @@ _ROUND = b"round-artifact"
 #: 240 s of blocks, so both window families exist (starts 0 and 120).
 _WINDOW_S = 240.0
 _FLAT = _flat(-16.0, seconds=_WINDOW_S)
+#: A round that came back 4 LU quiet: lawful on the hard bound, and over the
+#: window gate, which is how the live ceiling round failed.
+_QUIET = _flat(-20.0, seconds=_WINDOW_S)
 
 
 class _Recorder:
@@ -341,6 +348,13 @@ class _Recorder:
 
     One object because the round's artifact path is only known once the round
     runs, and the measurement fakes have to key on it.
+
+    ``round_stderr``/``round_peak`` are the *ceiling* round's (``variant=None``,
+    the one answer 12 spends).  ``variant_results`` are the U42 variant rounds'
+    -- ``(stderr, decoded peak)`` per variant call, in call order, so a test can
+    give the 256 kbps round a different artifact from the fast-coder one.  A
+    variant call with no entry left falls back to the ceiling round's, which is
+    what a test that does not care about the variants wants.
     """
 
     def __init__(
@@ -350,6 +364,7 @@ class _Recorder:
         nominal_peak: float | None,
         round_stderr: str = "",
         round_peak: float | None = None,
+        variant_results: list[tuple[str, float | None]] | None = None,
         round_error: Exception | None = None,
         capture_error: Exception | None = None,
         source_stderr: str = "",
@@ -358,6 +373,7 @@ class _Recorder:
         self.nominal_peak = nominal_peak
         self.round_stderr = round_stderr
         self.round_peak = round_peak
+        self.variant_results = list(variant_results or [])
         self.round_error = round_error
         self.capture_error = capture_error
         self.source_stderr = source_stderr or _stderr(_flat(-25.0, seconds=60.0), step_s=0.1)
@@ -367,6 +383,10 @@ class _Recorder:
         self.round_calls: list[SimpleNamespace] = []
         self.measured: list[Path] = []
         self.scanned: list[Path] = []
+        #: Per-artifact measurement, keyed by the path the round wrote, so more
+        #: than one round can be measured in the same run.
+        self.artifact_text: dict[Path, str] = {}
+        self.artifact_peak: dict[Path, float | None] = {}
 
     # -- the renderers ----------------------------------------------------
     def ride(
@@ -405,20 +425,32 @@ class _Recorder:
         self.emitted_path = target
         return lr.RideRender(frames=0, audio_seconds=0.0, wall_s=1.5, stderr="")
 
-    def reencode(self, *, pcm_path, output_path, trim_db, params, profile, timeout_s=None):
+    def reencode(
+        self, *, pcm_path, output_path, trim_db, params, profile, timeout_s=None, variant=None
+    ):
         self.round_calls.append(
             SimpleNamespace(
                 pcm_path=pcm_path,
                 output_path=output_path,
                 trim_db=trim_db,
                 params=params,
+                variant=variant,
                 timeout_s=timeout_s,
             )
         )
         if self.round_error is not None:
             raise self.round_error
-        Path(output_path).write_bytes(_ROUND)
-        self.round_path = Path(output_path)
+        if variant is None:
+            text, peak = self.round_stderr, self.round_peak
+        elif self.variant_results:
+            text, peak = self.variant_results.pop(0)
+        else:
+            text, peak = self.round_stderr, self.round_peak
+        path = Path(output_path)
+        path.write_bytes(_ROUND)
+        self.artifact_text[path] = text
+        self.artifact_peak[path] = peak
+        self.round_path = path
         return lr.RideRender(frames=0, audio_seconds=0.0, wall_s=0.5, stderr="")
 
     # -- the probes -------------------------------------------------------
@@ -433,19 +465,19 @@ class _Recorder:
             return self.source_stderr
         if path.name == "x.capture":
             raise AssertionError(f"the run measured an unexpected path: {path}")
+        if path in self.artifact_text:
+            return self.artifact_text[path]
         if self.emitted_path is not None and path == self.emitted_path:
             if self.round_path is not None and self.round_path.exists() is False:
                 raise AssertionError("the nominal artifact was overwritten before it was judged")
             return self.nominal_stderr
-        if self.round_path is not None and path == self.round_path:
-            return self.round_stderr
         return self.source_stderr
 
     def scan(self, artifact_path, *, params, timeout_s=None, cancel_event=None):
         path = Path(artifact_path)
         self.scanned.append(path)
-        if self.round_path is not None and path == self.round_path:
-            return self.round_peak
+        if path in self.artifact_peak:
+            return self.artifact_peak[path]
         return self.nominal_peak
 
 
@@ -501,7 +533,8 @@ def test_level_window_keeps_the_round_that_clears_the_gates_with_the_lower_peak(
     assert result.audio_path.read_bytes() == _ROUND
     # The round re-encodes the PCM the nominal emit consumed -- the tee the run
     # was handed -- at the ceiling the guard asked for, and it is spent once.
-    assert len(rec.round_calls) == 1
+    assert len(rec.round_calls) == 1, "the round met the bound, so no variant is spent"
+    assert rec.round_calls[0].variant is None
     assert rec.round_calls[0].pcm_path is not None
     assert rec.round_calls[0].params.limit_dbtp == pytest.approx(-2.2)
     assert rec.round_calls[0].trim_db == pytest.approx(result.curve.trim_db)
@@ -549,7 +582,13 @@ def test_level_window_ships_the_artifact_when_its_peak_cannot_be_measured(
 def test_level_window_warns_when_the_kept_attempt_missed_the_tp_target(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """A hot artifact with no round left: it ships, with the guard's warning."""
+    """Every round spent and still hot: it ships, with the guard's warning.
+
+    The ceiling round is hot (+0.35 dBFS) and so are both U42 encoder variants
+    (this recorder hands every variant the ceiling round's own numbers, which is
+    the honest stand-in for "the encoder did not help either"), so the selector
+    has nothing better to keep than round 1 and the warning says so.
+    """
     rec = _Recorder(
         nominal_stderr=_stderr(_FLAT, peak_dbtp=-0.60, integrated_lufs=-16.0),
         nominal_peak=0.40,
@@ -558,7 +597,8 @@ def test_level_window_warns_when_the_kept_attempt_missed_the_tp_target(
     )
     result = _run(tmp_path, monkeypatch, rec)
     selection = result.selection
-    assert len(rec.round_calls) == 1
+    assert len(rec.round_calls) == 3, "the ceiling round and both encoder variants"
+    assert [c.variant is None for c in rec.round_calls] == [True, False, False]
     assert selection.kept.round_index == 1
     assert selection.target_met is False
     assert selection.hard_tp_met is False
@@ -697,6 +737,11 @@ def test_level_window_spends_no_round_when_the_round_fails(tmp_path: Path, monke
 
     The round's failure leaves the nominal artifact in place -- the bytes that
     air are the bytes the nominal emit wrote -- and the guard keeps round 0.
+
+    The nominal is still hot (+0.40 dBFS), so U42's encoder variants *are*
+    spent against that same hot attempt: a variant is the guard's response to a
+    measured over-bound peak, and a round that never rendered does not change
+    what the guard knows.  They fail too, so the nominal still airs.
     """
     rec = _Recorder(
         nominal_stderr=_stderr(_FLAT, peak_dbtp=-0.60, integrated_lufs=-16.0),
@@ -704,7 +749,7 @@ def test_level_window_spends_no_round_when_the_round_fails(tmp_path: Path, monke
         round_error=lr.LoudnessRideError("the guard's re-encode exited 1"),
     )
     result = _run(tmp_path, monkeypatch, rec)
-    assert len(rec.round_calls) == 1
+    assert len(rec.round_calls) == 3, "the ceiling round and both encoder variants"
     assert result.selection.kept.round_index == 0
     assert result.audio_path.read_bytes() == _NOMINAL
     # The failure is reported, not swallowed: the caller logs it beside the
@@ -723,6 +768,11 @@ def test_level_window_keeps_the_nominal_when_the_round_peaks_higher(
     peak -- and the nominal's +0.40 dBFS beats the round's +0.55, even though the
     round emitted the better true peak (-1.60 against -0.60).  The artifact that
     airs is the nominal's, and the round's file does not outlive the decision.
+
+    That kept nominal is over the hard bound, so U42 spends both encoder
+    variants too -- and this recorder hands them the ceiling round's own hot
+    numbers, which is the honest stand-in for "the encoder did not help".  All
+    three rounds lose to the nominal, and all three files are deleted.
     """
     rec = _Recorder(
         nominal_stderr=_stderr(_FLAT, peak_dbtp=-0.60, integrated_lufs=-16.0),
@@ -732,7 +782,7 @@ def test_level_window_keeps_the_nominal_when_the_round_peaks_higher(
     )
     result = _run(tmp_path, monkeypatch, rec)
     selection = result.selection
-    assert len(rec.round_calls) == 1
+    assert len(rec.round_calls) == 3
     assert selection.kept.round_index == 0
     assert selection.kept.decoded_peak_dbfs == pytest.approx(0.40)
     assert selection.target_met is False
@@ -741,3 +791,89 @@ def test_level_window_keeps_the_nominal_when_the_round_peaks_higher(
     assert rec.round_path is not None
     assert rec.round_path != result.audio_path
     assert not rec.round_path.exists()
+
+
+def test_level_window_variants_the_encoder_when_the_kept_attempt_is_hot(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """U42's live shape: the ceiling is not the lever, the encoder is.
+
+    This is log line 18797 reproduced as a decision.  The nominal emits +2.60
+    dBTP / +0.783 dBFS at the -1.50 dBTP ceiling; the ceiling round the guard
+    asks for (-5.40) is lawful on peak but 4 LU quiet, so it fails the loudness
+    gate and cannot be kept -- the attempt the selector would still ship is the
+    nominal, and it is over the bound.  The guard's remaining lever is the
+    encoder, so it re-encodes the same retained PCM at the *kept attempt's own*
+    ceiling with the profile's first variant (256 kbps), which comes back at
+    -1.064 dBFS and is kept.  The second variant is never spent: the first one
+    met the bound, and the order is a cost contract.
+    """
+    rec = _Recorder(
+        nominal_stderr=_stderr(_FLAT, peak_dbtp=+2.60, integrated_lufs=-16.0),
+        nominal_peak=0.783,
+        round_stderr=_stderr(_QUIET, peak_dbtp=-1.90, integrated_lufs=-20.0),
+        round_peak=-1.89,
+        variant_results=[(_stderr(_FLAT, peak_dbtp=-0.60, integrated_lufs=-16.0), -1.064)],
+    )
+    result = _run(tmp_path, monkeypatch, rec)
+    selection = result.selection
+
+    assert [c.variant for c in rec.round_calls] == [None, lr.EncoderVariant(256)]
+    # The variant re-encodes the SAME retained PCM, at the kept attempt's own
+    # ceiling: no re-render, no re-convergence, and the ceiling is not a second
+    # variable moving at the same time as the encoder.
+    assert rec.round_calls[1].pcm_path == rec.round_calls[0].pcm_path
+    assert rec.round_calls[1].params.limit_dbtp == pytest.approx(-1.5)
+    assert rec.round_calls[1].trim_db == pytest.approx(rec.round_calls[0].trim_db)
+
+    assert [a.round_index for a in selection.attempts] == [0, 1, 2]
+    assert [a.encoder for a in selection.attempts] == ["aac 192k", "aac 192k", "aac 256k"]
+    assert selection.kept.round_index == 2
+    assert selection.kept.decoded_peak_dbfs == pytest.approx(-1.064)
+    assert selection.hard_tp_met is True
+    assert result.audio_path.read_bytes() == _ROUND
+    # One file airs: the loser is deleted rather than left beside it.
+    assert not (tmp_path / "audio.ts.round1.ts").exists()
+    assert not (tmp_path / "audio.ts.round2.ts").exists()
+
+
+def test_level_window_spends_every_variant_until_one_meets_the_bound(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The variants are an ordered list, and the guard walks it in order.
+
+    The ceiling round fails its loudness gate and the 256 kbps variant comes
+    back hot too (+0.35 dBFS), so the guard cannot stop there: it spends the
+    second variant, the fast coder, which clears the bound at -0.387 dBFS.
+    Round 3 is kept and its bytes are what airs.
+    """
+    rec = _Recorder(
+        nominal_stderr=_stderr(_FLAT, peak_dbtp=+2.60, integrated_lufs=-16.0),
+        nominal_peak=0.783,
+        round_stderr=_stderr(_QUIET, peak_dbtp=-1.90, integrated_lufs=-20.0),
+        round_peak=-1.89,
+        variant_results=[
+            (_stderr(_FLAT, peak_dbtp=-0.60, integrated_lufs=-16.0), 0.35),
+            (_stderr(_FLAT, peak_dbtp=-0.40, integrated_lufs=-16.0), -0.387),
+        ],
+    )
+    result = _run(tmp_path, monkeypatch, rec)
+    selection = result.selection
+
+    assert [c.variant for c in rec.round_calls] == [
+        None,
+        lr.EncoderVariant(256),
+        lr.EncoderVariant(256, ("-aac_coder", "fast")),
+    ]
+    assert [a.encoder for a in selection.attempts] == [
+        "aac 192k",
+        "aac 192k",
+        "aac 256k",
+        "aac 256k (-aac_coder fast)",
+    ]
+    assert selection.kept.round_index == 3
+    assert selection.kept.decoded_peak_dbfs == pytest.approx(-0.387)
+    assert selection.hard_tp_met is True
+    assert result.audio_path.read_bytes() == _ROUND
+    for index in (1, 2, 3):
+        assert not (tmp_path / f"audio.ts.round{index}.ts").exists()
