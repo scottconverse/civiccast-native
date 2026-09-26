@@ -38,7 +38,10 @@ of reinventing the muxer:
         --> udp://127.0.0.1:<relay-port>            (an ordinary local-ts sink)
     HlsRelaySupervisor's supervised ffmpeg child
         -i udp://127.0.0.1:<relay-port> ! HlsSink.output_args()
-        --> <hls sink's configured directory>/playlist.m3u8 + seg%09d.ts
+        --> <hls sink's configured directory>/seg%09d.ts
+                                              + /playlist.mux.m3u8   (private)
+    HlsRelaySupervisor's manifest publisher thread (U51)
+        playlist.mux.m3u8 --in-place rewrite--> <dir>/playlist.m3u8   (advertised)
 
 ``civiccast.stream.media_router`` needs no changes: it already reads the
 channel's *configured* ``hls`` sink URI (the directory), not the internal
@@ -147,6 +150,8 @@ sink) file next to the channel's other egress logs:
   Neither the live child's own logging nor the relay's replaceability depends on
   the log file: the drain thread discards on any write error rather than
   stalling the child.
+
+
 """
 
 from __future__ import annotations
@@ -164,7 +169,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from threading import Lock, RLock, Thread
+from threading import Event, Lock, RLock, Thread
 from typing import IO, Protocol
 
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
@@ -314,9 +319,16 @@ def hls_relay_uri_for(sink_uri: str, *, base_port: int | None = None) -> str:
 
 
 def _playlist_path_for(sink_uri: str) -> Path:
-    """The manifest path this sink's relay writes (mirrors ``HlsSink``)."""
+    """The manifest path this sink's relay serves (mirrors ``HlsSink``).
+
+    U51: the ADVERTISED manifest -- the one viewers, the router and the CDN
+    publisher read -- not the muxer's private staging playlist. Progress and
+    health must be judged on what residents actually get: watching the staging
+    file instead would report a healthy relay while a wedged publisher served
+    a frozen window.
+    """
     sink = HlsSink(EgressSinkSpec(kind="hls", label="_progress", uri=sink_uri))
-    return Path(sink.connect_target())
+    return Path(sink.manifest_target())
 
 
 def _last_segment(path: Path) -> str | None:
@@ -635,6 +647,21 @@ _RELAY_LOG_READ_CHARS = 64 * 1024
 #: wedged disk write can never hold a channel's stop (or its next spawn) open.
 _RELAY_LOG_DRAIN_JOIN_S = 2.0
 
+#: U51: how often a relay checks its muxer's private staging playlist for a new
+#: window and republishes the advertised one. The muxer cuts a 2 s segment, so
+#: this is ~8 checks per published window: low enough to cost a station nothing
+#: (one ``stat`` per tick, one small read+write only when the window changed)
+#: and fast enough that the served manifest is never more than a fraction of a
+#: segment behind the muxer. Captured by :class:`_ManifestPublisher` at
+#: construction, so a test can shrink it (the ``HLS_RELAY_LOG_CAP_BYTES`` seam).
+_MANIFEST_PUBLISH_INTERVAL_S = 0.25
+
+#: U51: how long a teardown waits for that publisher thread. It sleeps in
+#: ``Event.wait``, so a stop is prompt; the bound exists so a wedged disk write
+#: can never hold a channel's stop -- or its next spawn -- open, exactly like
+#: ``_RELAY_LOG_DRAIN_JOIN_S`` above.
+_MANIFEST_PUBLISH_JOIN_S = 2.0
+
 
 def _relay_log_header_line(path: Path) -> bytes:
     """The log's first line, as bytes: the spawn header a trim must preserve.
@@ -912,6 +939,197 @@ def _close_quietly(handle: IO[str] | None) -> None:
         handle.close()
 
 
+class _ManifestPublisher:
+    """Mirrors a relay's private staging playlist onto the advertised manifest.
+
+    U51 item 2. FFmpeg's hls muxer publishes ``playlist.m3u8`` temp-file-then
+    **rename** on every update on this build, and a rename needs DELETE access
+    to the existing file. A reader holding the advertised manifest therefore
+    denies it (``WinError 5`` / ``WinError 32``) and the muxer silently stops
+    updating the manifest -- measured live on 2026-09-26 (10:36:53-10:37:48):
+    one reader holding one channel's ``playlist.m3u8`` froze ALL THREE
+    channels for viewers for ~50 s while every relay child stayed alive and
+    every segment kept advancing. The child never reported an error, so
+    nothing downstream could see it.
+
+    No flag can fix that (``+temp_file`` cannot avoid a rename it already
+    performs -- measured) and no watchdog can fix it either (a FRESH child
+    pointed at a directory whose manifest is held stalls identically -- M4), so
+    the relay stops asking the muxer to publish the advertised name at all. The
+    muxer writes :attr:`HlsSink.mux_playlist_name`, which no reader knows, and
+    this thread republishes :attr:`HlsSink.manifest_name` from it.
+
+    "Republish" is the whole point: the advertised file is rewritten **in
+    place** (``r+b`` + write + truncate), which needs only write access, not
+    delete access, and is therefore immune to a held handle -- the same
+    operation measured at 47 of 47 against the reader that blocked 46 of 47
+    renames.
+    In-place is also the only torn-read-free option: a plain truncate-then-write
+    exposed 32 empty reads in 275,011; the ``r+b`` shape exposed 0 in 290,508.
+    The temp-then-rename fallback is kept for the two cases in-place cannot
+    serve (no advertised file yet, or a share mode that denies write), and it
+    is no worse than the pre-U51 behaviour it replaces.
+
+    Reading the staging file costs this design nothing, because ffmpeg's write
+    of it is atomic on this build -- measured over one 14 s replay: 7 file ids
+    for 7 updates, the size never shrinking under a single id, and the file
+    never absent between updates -- so what this thread reads is always a WHOLE
+    window, never a half-written one.
+
+    Contract, modeled on :class:`_RelayLogWriter`:
+
+    * it publishes on CHANGE, never on a timer -- a quiet muxer means no disk
+      traffic (a rewrite nobody asked for is also a needless window on the
+      served file);
+    * it never UN-publishes: a staging file that vanishes (a wipe, a sibling
+      session) leaves the last window served, because blanking the manifest
+      would turn a transient gap into a viewer-visible 404;
+    * it never raises and never stops for a failed tick -- a failed read or
+      write is retried next tick, warned once per episode;
+    * the thread references only this object -- never the supervisor, never the
+      relay record -- so it keeps no channel state alive.
+    """
+
+    def __init__(
+        self,
+        *,
+        manifest_path: Path,
+        staging_path: Path,
+        interval_s: float = _MANIFEST_PUBLISH_INTERVAL_S,
+    ) -> None:
+        self._manifest_path = manifest_path
+        self._staging_path = staging_path
+        self._interval_s = interval_s
+        self._stop = Event()
+        self._thread: Thread | None = None
+        #: What the staging file looked like when this publisher started. A
+        #: fossil left by a predecessor the spawn wipe could not remove (a
+        #: reader held it) is captured HERE, so it is never advertised as if it
+        #: were the new session's window -- only what changes from now on is.
+        self._last = self._signature()
+        self._failing = False
+
+    # --- lifecycle -------------------------------------------------------------------
+
+    def start(self) -> None:
+        """Begin publishing. One thread per relay, daemon for the same reason
+        the log drain is: a wedged disk must never hold interpreter shutdown."""
+        thread = Thread(
+            target=self._run,
+            name=f"hls-manifest-publish:{self._manifest_path.parent.name}",
+            daemon=True,
+        )
+        self._thread = thread
+        thread.start()
+
+    def close(self, *, timeout: float = _MANIFEST_PUBLISH_JOIN_S) -> None:
+        """Stop publishing. Safe to call twice."""
+        self._stop.set()
+        thread, self._thread = self._thread, None
+        if thread is None:
+            return
+        thread.join(timeout)
+        if thread.is_alive():
+            _LOG.warning(
+                "HLS manifest publisher for %s did not stop within %.1fs; the relay is "
+                "NOT affected and the thread is abandoned (daemon).",
+                self._manifest_path,
+                timeout,
+            )
+
+    # --- the loop --------------------------------------------------------------------
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval_s):
+            try:
+                self._publish_once()
+            except Exception:  # a publisher must never die
+                self._warn_once()
+
+    def _publish_once(self) -> None:
+        signature = self._signature()
+        if signature is None or signature == self._last:
+            # No staging window yet (the muxer's first cut is a segment away) or
+            # nothing changed -- publish NOTHING, and never un-publish.
+            return
+        try:
+            data = self._staging_path.read_bytes()
+        except OSError:
+            # The muxer replaced it between the stat and the read, or the file
+            # is not readable right now. Retried next tick; never fatal.
+            return
+        if not self._write_manifest(data):
+            self._warn_once()
+            return
+        self._last = signature
+        self._failing = False
+
+    # --- the write -------------------------------------------------------------------
+
+    def _signature(self) -> tuple[int, int] | None:
+        """The staging file's identity, or None when it is absent/unreadable."""
+        try:
+            stat = self._staging_path.stat()
+        except OSError:
+            return None
+        return (stat.st_mtime_ns, stat.st_size)
+
+    def _write_manifest(self, data: bytes) -> bool:
+        """Publish ``data`` as the advertised manifest. False means it did not land."""
+        try:
+            # In place: needs write access only, so a reader holding this file
+            # cannot block it (the whole point of U51), and a reader never sees
+            # a truncated or zero-length manifest.
+            with self._manifest_path.open("r+b") as handle:
+                handle.write(data)
+                handle.truncate()
+            return True
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return self._replace_manifest(data)
+        try:
+            # Nothing published yet, so there is no old file to preserve and no
+            # reader mid-read of one.
+            with self._manifest_path.open("wb") as handle:
+                handle.write(data)
+            return True
+        except OSError:
+            return self._replace_manifest(data)
+
+    def _replace_manifest(self, data: bytes) -> bool:
+        """The pre-U51 shape: write a temp file, then rename it over the target.
+
+        Only reached when in-place cannot work -- no delete access on the
+        target, or no write access to it. It has the pre-U51 failure mode (a
+        held target blocks the rename) but never the new one, so it is a floor,
+        not a regression.
+        """
+        temp_path = self._manifest_path.with_name(self._manifest_path.name + ".publish.tmp")
+        try:
+            temp_path.write_bytes(data)
+            temp_path.replace(self._manifest_path)
+            return True
+        except OSError:
+            with contextlib.suppress(OSError):
+                temp_path.unlink()
+            return False
+
+    def _warn_once(self) -> None:
+        """Warn once per failure episode: the loop retries, so a per-tick warning
+        would be a log storm for a condition (a hostile reader) that persists."""
+        if self._failing:
+            return
+        self._failing = True
+        _LOG.warning(
+            "HLS manifest publisher for %s could not publish the muxer's staging "
+            "window to %s; the relay keeps running and this is retried every tick. "
+            "Players may be serving a stale window until it succeeds.",
+            self._staging_path,
+            self._manifest_path,
+        )
+
+
 class _Ffmpeg(Protocol):
     def poll(self) -> int | None: ...
     def terminate(self, *, grace_seconds: float = 5.0) -> int | None: ...
@@ -975,6 +1193,10 @@ class _Relay:
     #: cap trim is the writer's, and the trim can never leave the child
     #: appending past a rewrite into a zero-filled hole.
     log_writer: _RelayLogWriter | None = None
+    #: U51: this child's manifest publisher -- the thread that mirrors the
+    #: muxer's private staging playlist onto the advertised ``playlist.m3u8``.
+    #: ``None`` only for a relay that never started (the record does not exist).
+    publisher: _ManifestPublisher | None = None
     #: U31 orphan reclaim. ``orphan_reclaim_attempted`` is the one-shot latch for
     #: THIS child: a child's log is probed for a bind failure once and never
     #: again, so a poll tick cannot re-read and re-kill in a loop.
@@ -1031,6 +1253,10 @@ class HlsRelaySupervisor:
         # megabytes; production never widens them.
         self._log_cap_bytes = HLS_RELAY_LOG_CAP_BYTES
         self._log_tail_bytes = HLS_RELAY_LOG_TAIL_BYTES
+        # U51: captured at construction, same seam and same reason as the two
+        # above -- a test drives the real publish loop in tens of milliseconds
+        # instead of waiting out the production cadence.
+        self._manifest_publish_interval_s = _MANIFEST_PUBLISH_INTERVAL_S
         # Per-(channel, sink) spawn ordinal, the session identity this layer
         # can honestly stamp in the header (the relay is (re)bound BEFORE the
         # worker that will feed it exists, so no worker pid is knowable here).
@@ -1189,6 +1415,7 @@ class HlsRelaySupervisor:
             ),
             *hls_sink.output_args(),
         ]
+
         log_path = self._relay_log_path(channel_id, sink.label)
         pid_offset: int | None = None
         if log_path is not None:
@@ -1256,6 +1483,18 @@ class HlsRelaySupervisor:
                     tail_bytes=self._log_tail_bytes,
                 )
                 writer.start(stream)
+        # U51 item 2: the muxer above was handed the PRIVATE staging playlist, so
+        # from here on this thread is the one thing that publishes the file
+        # viewers read. Started only after a child really exists -- a degraded
+        # start (no ffmpeg) must not leave a publisher running for a channel
+        # that is not publishing anything. Its baseline is captured HERE, after
+        # the wipe: a fossil the wipe could not remove is never advertised.
+        publisher = _ManifestPublisher(
+            manifest_path=Path(hls_sink.manifest_target()),
+            staging_path=Path(hls_sink.connect_target()),
+            interval_s=self._manifest_publish_interval_s,
+        )
+        publisher.start()
         now = self._clock()
         self._relays[key] = _Relay(
             source_uri=sink.uri,
@@ -1268,6 +1507,7 @@ class HlsRelaySupervisor:
             started_at=now,
             first_seen_at=now,
             log_writer=writer,
+            publisher=publisher,
         )
         _LOG.info(
             "HLS relay up for %s (sink %r): %s -> %s.",
@@ -1451,7 +1691,7 @@ class HlsRelaySupervisor:
         return sum(1 for writer in writers if writer.trim_if_over_cap())
 
     def _terminate_relay(self, relay: _Relay) -> None:
-        """Terminate one relay child, then release its stderr log.
+        """Terminate one relay child, then release its stderr log and publisher.
 
         Both halves of the order are load-bearing. The child must be dead before
         the drain thread is joined, or the join waits on a pipe that is still
@@ -1462,11 +1702,21 @@ class HlsRelaySupervisor:
         ``close`` is bounded (``_RELAY_LOG_DRAIN_JOIN_S``), and the child is
         already reaped by the time it runs, so the drain thread sees EOF at once
         and this costs nothing on the hot restart path.
+
+        The U51 publisher goes last, for the same reason as the writer: its
+        ``close`` is a prompt ``Event`` wake, and the child -- whose staging
+        playlist it mirrors -- is already dead, so there is nothing left to
+        publish. Ordering it before the child would leave the last window the
+        muxer wrote unpublished; ordering it after costs one bounded join on the
+        hot path and keeps the teardown a mirror of the spawn.
         """
         relay.process.terminate()
         writer, relay.log_writer = relay.log_writer, None
         if writer is not None:
             writer.close()
+        publisher, relay.publisher = relay.publisher, None
+        if publisher is not None:
+            publisher.close()
 
     def _stream_retry_blocked(self, relay: _Relay, *, now: float) -> bool:
         """Is this relay inside the backoff window of its last stream attempt?"""

@@ -24,11 +24,13 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
 
 from civiccast.egress.caption_proof import decode_embedded_captions
+from civiccast.egress.hls_relay import _ManifestPublisher
 from civiccast.egress.models import EgressSinkSpec
 from civiccast.egress.sinks import HlsSink, build_sink
 from civiccast.stream._ffmpeg import resolve_h264_encoder
@@ -92,27 +94,93 @@ _POSITIVE = _FIXTURES / "cea708_test_caption.mpegts"
 _NEGATIVE = _FIXTURES / "cea708_no_captions.mpegts"
 
 
+#: The relay's publisher publishes on CHANGE, so a test that drives it around a
+#: bare ffmpeg run must poll faster than the shipped 0.25 s to keep the wait
+#: bounded. The interval is an explicit constructor argument (the same seam
+#: ``HLS_RELAY_LOG_CAP_BYTES`` uses for the log drain), so passing it here still
+#: drives the REAL publish loop, not a re-implementation of it.
+_PUBLISH_INTERVAL_S = 0.05
+_PUBLISH_WAIT_S = 10.0
+
+
+def _start_manifest_publisher(hls_dir: Path) -> _ManifestPublisher:
+    """Run the PRODUCTION publisher over a bare ffmpeg run.
+
+    U51 (see ``test_hls_relay_manifest_publish.py``) split the HLS contract in
+    two names: ffmpeg's hls muxer writes only the sink's private staging
+    playlist (``connect_target()``), and the advertised ``playlist.m3u8`` that
+    viewers, ``media_router`` and every assertion in this file read is written
+    by the relay's :class:`_ManifestPublisher`. The tests here run ffmpeg
+    directly -- there is no supervisor to start a publisher -- so they must run
+    one too, or the advertised manifest would be missing for a reason that has
+    nothing to do with the captions under test. Driving the real object rather
+    than copying the file by hand keeps the staging->advertised mapping part of
+    what these tests actually exercise.
+    """
+    sink = build_sink(EgressSinkSpec(kind="hls", label="Web", uri=str(hls_dir)))
+    assert isinstance(sink, HlsSink)
+    publisher = _ManifestPublisher(
+        manifest_path=Path(sink.manifest_target()),
+        staging_path=Path(sink.connect_target()),
+        interval_s=_PUBLISH_INTERVAL_S,
+    )
+    publisher.start()
+    return publisher
+
+
+def _wait_for_published_manifest(hls_dir: Path) -> None:
+    """Wait until the advertised manifest matches the muxer's final window.
+
+    ffmpeg writes its last playlist immediately before it exits, so the
+    publisher may not have observed it yet when ``subprocess.run`` returns. Its
+    baseline was captured at construction, when the staging file did not exist,
+    so the publish that lands here is a full copy of that final window -- and
+    every segment the window names is already on disk, because the muxer wrote
+    them first.
+    """
+    sink = build_sink(EgressSinkSpec(kind="hls", label="Web", uri=str(hls_dir)))
+    assert isinstance(sink, HlsSink)
+    staging = Path(sink.connect_target())
+    manifest = Path(sink.manifest_target())
+    deadline = time.monotonic() + _PUBLISH_WAIT_S
+    while time.monotonic() < deadline:
+        try:
+            if manifest.read_bytes() == staging.read_bytes():
+                return
+        except OSError:
+            pass
+        time.sleep(_PUBLISH_INTERVAL_S)
+    raise AssertionError(
+        f"the manifest publisher never mirrored {staging} to {manifest} within {_PUBLISH_WAIT_S}s"
+    )
+
+
 def _hls_via_sink(input_ts: Path, out_dir: Path) -> Path:
     """Run ffmpeg with the sink's real output_args() and return the HLS dir."""
     sink = build_sink(EgressSinkSpec(kind="hls", label="Web", uri=str(out_dir)))
     assert isinstance(sink, HlsSink)
-    result = subprocess.run(
-        [
-            _selected_ffmpeg(),
-            "-hide_banner",
-            "-nostats",
-            "-v",
-            "error",
-            "-y",
-            "-i",
-            str(input_ts),
-            *sink.output_args(),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    assert result.returncode == 0, result.stderr
+    publisher = _start_manifest_publisher(out_dir)
+    try:
+        result = subprocess.run(
+            [
+                _selected_ffmpeg(),
+                "-hide_banner",
+                "-nostats",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(input_ts),
+                *sink.output_args(),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        _wait_for_published_manifest(out_dir)
+    finally:
+        publisher.close()
     return out_dir
 
 

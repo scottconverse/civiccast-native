@@ -37,4 +37,7 @@ def test_file_sink_resolves_windows_file_uri() -> None:
 
 def test_hls_sink_resolves_windows_file_uri() -> None:
     sink = HlsSink(EgressSinkSpec(kind="hls", label="h", uri="file:///C:/CivicCast/live"))
-    assert sink.connect_target().replace("\\", "/") == "C:/CivicCast/live/playlist.m3u8"
+    # U51: the drive-letter fix must hold on BOTH manifest names -- the
+    # advertised one the router serves and the private staging one ffmpeg writes.
+    assert sink.manifest_target().replace("\\", "/") == "C:/CivicCast/live/playlist.m3u8"
+    assert sink.connect_target().replace("\\", "/") == "C:/CivicCast/live/playlist.mux.m3u8"

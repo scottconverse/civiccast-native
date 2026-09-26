@@ -275,10 +275,33 @@ class HlsSink(EgressSink):
     ``self.spec.uri`` is a local directory (validated in
     ``EgressSinkSpec._kind_matches_uri``); ``civiccast.stream.media_router``
     serves it at ``/media/live/{channel_id}/...``.
+
+    U51: the manifest has TWO names, because one of them is a file a reader can
+    hold open and the other must not be. ``connect_target()`` -- what the ffmpeg
+    child's ``-f hls`` muxer writes -- is the relay-private
+    :attr:`mux_playlist_name`; the advertised :attr:`manifest_name` that
+    ``media_router`` serves, ``civiccast.live.cdn_publisher`` republishes, and
+    every player fetches is :meth:`manifest_target`, which the relay publishes
+    from the muxer's staging window by in-place rewrite (a held handle blocks
+    the muxer's own rename, and no reader of the served name holds the staging
+    one). The served name itself did not change: readers, the router and the
+    daemon's stale-playlist discard all still see ``playlist.m3u8``.
     """
 
     segment_seconds = 2
     playlist_size = 6  # 6 x 2s segments = 12s sliding window
+
+    #: The advertised manifest: what the media router serves, what players
+    #: fetch, and what ``civiccast.live.cdn_publisher`` republishes. Named here
+    #: so the relay and the router cannot drift apart.
+    manifest_name = "playlist.m3u8"
+    #: The muxer's private staging manifest. Deliberately NOT the served name:
+    #: FFmpeg's hls muxer publishes temp-file-then-rename on every update, so
+    #: giving it the served name means a reader holding that file blocks the
+    #: muxer's rename (``WinError 5``/``32``) and freezes the manifest silently
+    #: for as long as the handle lives. Nothing outside the relay reads this
+    #: name; the relay mirrors it to :meth:`manifest_target` in place.
+    mux_playlist_name = "playlist.mux.m3u8"
 
     def _directory(self) -> Path:
         parsed = urlsplit(self.spec.uri)
@@ -286,8 +309,18 @@ class HlsSink(EgressSink):
             return Path(self.spec.uri)
         return _file_uri_path(self.spec.uri)
 
+    def manifest_target(self) -> str:
+        """The ADVERTISED manifest -- the file viewers, the router and the CDN
+        publisher read. Written by the relay, never by the muxer (U51)."""
+        return str(self._directory() / self.manifest_name)
+
     def connect_target(self) -> str:
-        return str(self._directory() / "playlist.m3u8")
+        """The file the muxer writes: the relay-private staging playlist.
+
+        Not the served name -- see the class docstring's U51 note. A caller that
+        means "the manifest viewers read" wants :meth:`manifest_target`.
+        """
+        return str(self._directory() / self.mux_playlist_name)
 
     def output_args(self) -> list[str]:
         # Stream-copy BOTH streams instead of re-encoding them.
@@ -350,7 +383,9 @@ class HlsSink(EgressSink):
         ]
 
     def describe(self) -> str:
-        return f"hls sink {self.spec.label} -> {self.connect_target()}"
+        # The ADVERTISED manifest: this string is what an operator reads to
+        # find the file a viewer is being served (U51).
+        return f"hls sink {self.spec.label} -> {self.manifest_target()}"
 
 
 class SdiSink(EgressSink):

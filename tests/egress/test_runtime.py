@@ -461,10 +461,13 @@ def test_build_persistent_encoder_args_divergent_hls_sink_keeps_the_callers_code
     # re-encode -- not a second, sink-imposed one that would win by position.
     assert args.count("-c:a") == 1, args
     assert args[args.index("-c:a") + 1] == "aac"
-    # The sink still supplies its container: the HLS muxer and the playlist.
-    # (``_has_subseq``, because the group's first -f is the input's "concat".)
+    # The sink still supplies its container: the HLS muxer and the playlist it
+    # writes. (``_has_subseq``, because the group's first -f is the input's
+    # "concat".) U51: that playlist is the relay-private staging name; the
+    # advertised ``playlist.m3u8`` viewers fetch is published from it by the
+    # relay, so this argv must NOT name the file a reader can hold open.
     assert _has_subseq(args, "-f", "hls")
-    assert args[-1] == str(out_dir / "playlist.m3u8")
+    assert args[-1] == str(out_dir / "playlist.mux.m3u8")
 
 
 def _has_subseq(seq: list[str], a: str, b: str) -> bool:

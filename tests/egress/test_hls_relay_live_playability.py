@@ -390,7 +390,11 @@ def test_relay_writes_to_the_channels_unchanged_configured_directory(tmp_path: P
     # The relay's own -hls_segment_filename/output target must land in the
     # EXACT directory media_router._live_dir_for_channel() would resolve
     # from the stored config's (unrewritten) hls sink uri.
-    expected_manifest_target = HlsSink(hls_sink).connect_target()
-    assert captured_args[0][-1] == expected_manifest_target
-    assert urlsplit(expected_manifest_target).path or True  # sanity: a real path, not a URI
-    assert Path(expected_manifest_target).parent == live_dir
+    # U51: the argv's tail is the muxer's target, which is the sink's PRIVATE
+    # staging playlist -- the advertised `playlist.m3u8` viewers fetch is
+    # published from it by the relay's `_ManifestPublisher`. The directory is
+    # the same either way; the name is not.
+    expected_mux_target = HlsSink(hls_sink).connect_target()
+    assert captured_args[0][-1] == expected_mux_target
+    assert urlsplit(expected_mux_target).path or True  # sanity: a real path, not a URI
+    assert Path(expected_mux_target).parent == live_dir

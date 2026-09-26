@@ -207,7 +207,14 @@ def test_hls_sink_builds_rolling_live_manifest_output_args(tmp_path: Path) -> No
     flags = args[args.index("-hls_flags") + 1]
     assert "delete_segments" in flags
     assert "append_list" in flags
-    assert args[-1] == str(out_dir / "playlist.m3u8")
+    # U51: the muxer's own target is the relay-private staging playlist, NOT the
+    # advertised one -- a reader holding the advertised name blocks the muxer's
+    # temp-then-rename publish (WinError 5/32) and froze all three channels live
+    # at 10:36:53. The relay mirrors the staging window to the advertised name
+    # by in-place rewrite; ``manifest_target`` is the file viewers get.
+    assert args[-1] == sink.connect_target()
+    assert args[-1] == str(out_dir / "playlist.mux.m3u8")
+    assert sink.manifest_target() == str(out_dir / "playlist.m3u8")
 
     # Caption-preservation contract (see test_hls_sink_captions.py): the sink
     # must stream-copy the encoded video. Re-encoding through the bundled H.264
@@ -257,7 +264,11 @@ def test_hls_sink_container_args_leave_the_codec_choice_to_the_caller(tmp_path: 
     # It is the sink's real tail: the container, the segment pattern, the
     # playlist target -- and it still creates the directory.
     assert container[container.index("-f") + 1] == "hls"
-    assert container[-1] == str(out_dir / "playlist.m3u8")
+    # U51: the container's tail is the MUXER's target (the relay-private staging
+    # playlist); the advertised manifest is written by the relay, not by ffmpeg.
+    assert container[-1] == sink.connect_target()
+    assert container[-1] == str(out_dir / "playlist.mux.m3u8")
+    assert sink.manifest_target() == str(out_dir / "playlist.m3u8")
     assert out_dir.is_dir()
     # A sink with no codec choice of its own is unaffected: its container args
     # ARE its output args, so the per-sink path loses nothing by calling this.
@@ -269,7 +280,12 @@ def test_hls_sink_accepts_file_uri_directory(tmp_path: Path) -> None:
     out_dir = tmp_path / "live-hls"
     sink = build_sink(EgressSinkSpec(kind="hls", label="Web", uri=out_dir.as_uri()))
 
-    assert sink.connect_target() == str(out_dir / "playlist.m3u8")
+    assert isinstance(sink, HlsSink)
+    # Both names resolve inside the file:// directory. The advertised one is
+    # what the router serves and what a reader holds; the muxer's staging one is
+    # the only name ffmpeg writes (U51).
+    assert sink.manifest_target() == str(out_dir / "playlist.m3u8")
+    assert sink.connect_target() == str(out_dir / "playlist.mux.m3u8")
 
 
 def test_hls_sink_requires_local_directory_uri() -> None:

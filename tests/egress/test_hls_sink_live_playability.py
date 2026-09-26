@@ -42,6 +42,7 @@ import pytest
 import uvicorn
 from fastapi import FastAPI
 
+from civiccast.egress.hls_relay import _ManifestPublisher
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.sinks import HlsSink, build_sink
@@ -215,6 +216,35 @@ def _start_live_hls_encoder(live_dir: Path, encoded_source: Path) -> FfmpegProce
     return start_ffmpeg([*input_args, *sink.output_args()])
 
 
+#: The publisher publishes on CHANGE, so waiting for the first advertised
+#: manifest through it needs a cadence faster than the shipped 0.25 s. The
+#: interval is an explicit constructor argument, so this still drives the REAL
+#: publish loop rather than a re-implementation of it.
+_PUBLISH_INTERVAL_S = 0.05
+
+
+def _start_manifest_publisher(hls_dir: Path) -> _ManifestPublisher:
+    """Run the PRODUCTION publisher alongside this test's live ffmpeg process.
+
+    U51 (see ``test_hls_relay_manifest_publish.py``) split the HLS contract in
+    two names: ffmpeg's hls muxer writes only the sink's private staging
+    playlist (``connect_target()``), and the advertised ``playlist.m3u8`` the
+    router serves and ffprobe reads is written by the relay's
+    :class:`_ManifestPublisher`. There is no supervisor in this test, so
+    without this the advertised manifest would never appear and the failure
+    would say nothing about live playability.
+    """
+    sink = build_sink(EgressSinkSpec(kind="hls", label="Web", uri=str(hls_dir)))
+    assert isinstance(sink, HlsSink)
+    publisher = _ManifestPublisher(
+        manifest_path=Path(sink.manifest_target()),
+        staging_path=Path(sink.connect_target()),
+        interval_s=_PUBLISH_INTERVAL_S,
+    )
+    publisher.start()
+    return publisher
+
+
 def _read_segment_names(manifest_text: str) -> set[str]:
     return {line.strip() for line in manifest_text.splitlines() if line.strip().endswith(".ts")}
 
@@ -248,6 +278,13 @@ def test_hls_sink_produces_rolling_playable_live_manifest(
     encoded_source = tmp_path / "encoded-source.mkv"
     _write_encoded_test_source(encoded_source)
     handle = _start_live_hls_encoder(live_dir, encoded_source)
+    # U51: the muxer writes only the sink's private staging playlist; the
+    # advertised `playlist.m3u8` that the router serves and ffprobe reads is
+    # written by the relay's publisher. Production order is child first, then
+    # publisher (see `HlsRelaySupervisor._start_relay_locked`), and the
+    # publisher is closed LAST on teardown (`_terminate_relay`) so the final
+    # window stays served while the child winds down.
+    publisher = _start_manifest_publisher(live_dir)
     try:
         manifest_path = live_dir / "playlist.m3u8"
         deadline = time.monotonic() + 30.0
@@ -374,3 +411,4 @@ def test_hls_sink_produces_rolling_playable_live_manifest(
                 )
     finally:
         handle.terminate(grace_seconds=5.0)
+        publisher.close()
