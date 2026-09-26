@@ -35,6 +35,7 @@ import importlib.util
 import json
 import shutil
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -283,6 +284,10 @@ _GUARD_MATERIAL_SEED = 20_260_926
 #: The ride's own true-peak ceiling, the one ``_config``'s loudness target implies.
 _GUARD_LIMIT_DBTP = -1.0
 _GUARD_TIMEOUT_S = 300.0
+#: The headroom answer 11's ceiling rule left under the target it was aiming at.
+#: Deleted from the module with the rule U43 replaced; kept here as the number
+#: this module's pad test compares the pad against.
+_OLD_CEILING_MARGIN_DB = 0.3
 
 
 def _guard_params() -> lr.RideParams:
@@ -477,6 +482,186 @@ def test_the_guard_walks_its_encoder_variants_until_one_meets_the_bound(
         assert [label for label, _ in walk] == [arms[0][0], arms[1][0]], walk
     else:
         assert len(walk) == len(arms), walk
+
+
+def _guard_arm(
+    pcm: Path,
+    artifact: Path,
+    *,
+    trim_db: float,
+    limit_dbtp: float,
+    params: lr.RideParams,
+    profile: CanonicalProfile,
+) -> lr.LeveledAttempt:
+    """One guard arm, measured: the guard's own re-encode, then its own scoring.
+
+    Both calls are the production ones, in the production order -- ``run_reencode``
+    at the ceiling this arm is trying, then ``measure_artifact`` on the file that
+    came out.  ``params`` reaches the measurement unmodified, as ``level_window``
+    passes it: an attempt *carries* the ceiling it ran at (``limit_dbtp``) rather
+    than carrying a mutated copy of the ride's parameters.
+    """
+    lr.run_reencode(
+        pcm_path=pcm,
+        output_path=artifact,
+        trim_db=trim_db,
+        params=replace(params, limit_dbtp=limit_dbtp),
+        profile=profile,
+        timeout_s=_GUARD_TIMEOUT_S,
+    )
+    return lr.measure_artifact(
+        artifact,
+        params=params,
+        round_index=0,
+        limit_dbtp=limit_dbtp,
+        target_lufs=params.target_lufs,
+        duration_s=_GUARD_MATERIAL_SECONDS,
+        timeout_s=_GUARD_TIMEOUT_S,
+    )
+
+
+def test_the_pad_round_pays_the_peak_bound_in_drive_not_in_level(tmp_path: Path) -> None:
+    """U43: the round that fixes the hard bound hands the drive back what it takes.
+
+    The nominal emit is hot -- white noise at this amplitude is what this host's
+    AAC encoder overshoots on -- so the guard owes a round.  What U42 measured on
+    the live feed is that paying for the bound out of the ceiling *alone* also
+    pays for it out of the audience's level: at the lowered ceiling the artifact
+    was quiet and still over the bound.  U43 spends the round on the *decoded
+    sample peak* -- which is what the bound is about -- and returns the same
+    number of dB to the drive:
+
+        pad         = decoded_peak_dbfs - TP_GUARD_MAX_PEAK_DBFS + margin (capped)
+        new ceiling = the kept attempt's ceiling - pad
+        new drive   = the kept attempt's drive   + pad
+
+    That drive is the pad round's first *guess*.  Answer 2's round measures the
+    settings it is about to spend -- one limited pass at (ceiling - pad, drive +
+    pad), no encode -- and corrects the drive by the loudness error it measured,
+    because a harder limit hands back less loudness than the pad spends (the live
+    sweep measured +0.53 LU and -0.28 LU on two cells).  The arms below are built
+    by hand, so this test measures the pad's arithmetic; the *corrected* drive is
+    ``level_window``'s and is measured on the live cells, not here.
+
+    Three arms on one hermetic material, all re-encoded from the same PCM:
+
+    * **nominal** -- over the bound, so the round is owed;
+    * **pad** -- drive + pad, ceiling - pad: inside the bound, with the drive and
+      the ceiling moved by exactly the pad, read off the argv that ran rather
+      than off the arithmetic that asked for it;
+    * **uncompensated** -- the ceiling moves and the drive does not, which is
+      what the round would be without the compensation.
+
+    The round this replaces is measured on the same three arms, not asserted: on
+    this material answer 11's emitted-true-peak rule would have pulled the ceiling
+    2.6 dB -- more than twice the pad -- because the AAC overshoot it reads is
+    larger than the sample-peak overshoot the bound is actually about.  That rule
+    also missed the bound where the artifact was live (U42's log line 18797: hot
+    at the nominal ceiling, quiet *and* still over at the lowered one), which is
+    the case no hermetic material here reproduces; the live three-cell sweep is
+    what measures it.
+
+    The loudness claim here is a *direction*, and the magnitude is material-
+    dependent: uniform noise sits deep in the limiter, so most of the returned
+    drive is absorbed and the compensated arm keeps only ~0.1 LU more of the
+    nominal's loudness than the uncompensated one.  Where the programme sits on
+    the limiter's knee -- the live feed -- U43's sweep is what measures the
+    magnitude.  The peak claim is not material-dependent: it is the decoded
+    sample peak of the artifact that runs, against the bound the selector judges
+    the attempt by.
+    """
+    profile = _config().canonical_profile
+    params = _guard_params()
+    bound = lr.TP_GUARD_MAX_PEAK_DBFS
+    pcm = _guard_material(tmp_path, amplitude=1.0)
+    trim_db = 0.0
+
+    nominal = _guard_arm(
+        pcm,
+        tmp_path / "nominal.ts",
+        trim_db=trim_db,
+        limit_dbtp=params.limit_dbtp,
+        params=params,
+        profile=profile,
+    )
+    if not nominal.over_hard_bound():
+        pytest.skip(
+            f"this host's AAC encoder keeps {trim_db:g} dB-trimmed white noise inside the "
+            f"+{bound:g} dBFS bound ({nominal.decoded_peak_dbfs!r} dBFS), so the pad round "
+            "cannot be exercised on it"
+        )
+    assert nominal.decoded_peak_dbfs is not None
+    assert nominal.emitted_dbtp is not None
+    assert nominal.whole_err_lu is not None
+
+    pad = lr.guard_pad_db(nominal)
+    assert pad is not None, nominal
+    assert pad == pytest.approx(
+        nominal.decoded_peak_dbfs - bound + lr.TP_GUARD_PAD_MARGIN_DB, abs=1e-3
+    ), pad
+    assert 0 < pad <= lr.TP_GUARD_MAX_PAD_DB, pad
+
+    pad_ceiling = nominal.limit_dbtp - pad
+    # Answer 11's rule paid for the same overshoot out of the ceiling, measured
+    # from the *emitted true peak* -- on this material a deeper drop than the pad,
+    # which is the trade U43 exists to stop making.
+    old_ceiling = round(
+        nominal.limit_dbtp
+        - (nominal.emitted_dbtp - lr.TP_GUARD_TARGET_DBTP + _OLD_CEILING_MARGIN_DB),
+        3,
+    )
+    assert old_ceiling < pad_ceiling, (old_ceiling, pad_ceiling)
+
+    padded = _guard_arm(
+        pcm,
+        tmp_path / "padded.ts",
+        trim_db=trim_db + pad,
+        limit_dbtp=pad_ceiling,
+        params=params,
+        profile=profile,
+    )
+    assert not padded.over_hard_bound(), padded
+    assert padded.decoded_peak_dbfs is not None
+    assert padded.decoded_peak_dbfs <= bound, padded
+
+    # The encode that ran moved the drive by exactly the pad and the ceiling by
+    # exactly the pad: one token in the filter chain each, and nothing else.
+    argv = lr.build_reencode_args(
+        pcm,
+        tmp_path / "padded.ts",
+        trim_db=trim_db + pad,
+        params=replace(params, limit_dbtp=pad_ceiling),
+        profile=profile,
+    )
+    chain = argv[argv.index("-af") + 1]
+    assert chain.startswith(f"volume={trim_db + pad:.3f}dB,"), chain
+    assert f"limit={lr.limit_value(pad_ceiling):.6f}" in chain, chain
+    nominal_chain = lr.build_reencode_args(
+        pcm,
+        tmp_path / "nominal.ts",
+        trim_db=trim_db,
+        params=params,
+        profile=profile,
+    )
+    nominal_chain = nominal_chain[nominal_chain.index("-af") + 1]
+    assert f"volume={trim_db:.3f}dB," in nominal_chain, nominal_chain
+
+    uncompensated = _guard_arm(
+        pcm,
+        tmp_path / "uncompensated.ts",
+        trim_db=trim_db,
+        limit_dbtp=pad_ceiling,
+        params=params,
+        profile=profile,
+    )
+    assert uncompensated.whole_err_lu is not None
+
+    # Same ceiling, drive returned or not.  The returned drive keeps more of the
+    # nominal's loudness: measured 0.1 LU of the 1.205 dB pad on this host, and
+    # the sign is the claim -- see the docstring for the magnitude.
+    held = padded.whole_err_lu - nominal.whole_err_lu
+    lost = uncompensated.whole_err_lu - nominal.whole_err_lu
+    assert abs(held) < abs(lost), (held, lost)
 
 
 def test_a_variant_bitrate_artifact_airs_like_a_nominal_one(
