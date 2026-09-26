@@ -1,0 +1,117 @@
+== x1\run1\out.ts  emissions=1741
+   video    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x1\run2\out.ts  emissions=1741
+   video    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x2\run1\out.ts  emissions=1720
+   video    max_lag=0.693344s at emission #792   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x2\run10\out.ts  emissions=1720
+   video    max_lag=9.408000s at emission #1236   >1.0:253 >1.5:238 >2.0:223 >3.0:193 >5.0:133
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x2\run11\out.ts  emissions=1721
+   video    max_lag=0.042656s at emission #3   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x2\run12\out.ts  emissions=1720
+   video    max_lag=0.014667s at emission #870   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x2\run2\out.ts  emissions=1719
+   video    max_lag=0.726678s at emission #791   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x2\run3\out.ts  emissions=1721
+   video    max_lag=0.638656s at emission #792   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x2\run4\out.ts  emissions=1720
+   video    max_lag=0.149322s at emission #8   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x2\run5\out.ts  emissions=1719
+   video    max_lag=0.064000s at emission #4   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x2\run6\out.ts  emissions=1719
+   video    max_lag=0.085322s at emission #5   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x2\run7\out.ts  emissions=1722
+   video    max_lag=0.064000s at emission #4   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x2\run8\out.ts  emissions=1721
+   video    max_lag=9.429333s at emission #1238   >1.0:253 >1.5:238 >2.0:223 >3.0:193 >5.0:133
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x2\run9\out.ts  emissions=1720
+   video    max_lag=0.064000s at emission #4   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4base\run1\out.ts  emissions=1741
+   video    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4base\run2\out.ts  emissions=1741
+   video    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4base\run3\out.ts  emissions=1742
+   video    max_lag=0.042656s at emission #3   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4pbase\run1\out.ts  emissions=1719
+   video    max_lag=0.013333s at emission #974   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4pbase\run2\out.ts  emissions=1721
+   video    max_lag=0.042656s at emission #3   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4pbase\run3\out.ts  emissions=1720
+   video    max_lag=0.064000s at emission #4   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4dbg\run1\out.ts  emissions=1720
+   video    max_lag=0.064000s at emission #4   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4dbg\run2\out.ts  emissions=1722
+   video    max_lag=0.085322s at emission #5   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4dbg\run3\out.ts  emissions=1720
+   video    max_lag=9.408000s at emission #1236   >1.0:253 >1.5:238 >2.0:223 >3.0:193 >5.0:133
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4dbg\run4\out.ts  emissions=1721
+   video    max_lag=0.042656s at emission #3   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4dbg\run5\out.ts  emissions=1719
+   video    max_lag=0.042656s at emission #3   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4dbg\run6\out.ts  emissions=1720
+   video    max_lag=9.408000s at emission #1236   >1.0:253 >1.5:238 >2.0:223 >3.0:193 >5.0:133
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4green\run1\out.ts  emissions=1719
+   video    max_lag=0.726678s at emission #791   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4green\run2\out.ts  emissions=1721
+   video    max_lag=0.638656s at emission #792   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4green\run3\out.ts  emissions=1720
+   video    max_lag=0.693344s at emission #792   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4green\run4\out.ts  emissions=1720
+   video    max_lag=0.672000s at emission #791   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4green\run5\out.ts  emissions=1721
+   video    max_lag=0.660000s at emission #793   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4green\run6\out.ts  emissions=1720
+   video    max_lag=0.693344s at emission #792   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4lag\run1\out.ts  emissions=1720
+   video    max_lag=0.672000s at emission #791   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4lag\run2\out.ts  emissions=1720
+   video    max_lag=0.693344s at emission #792   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4lag\run3\out.ts  emissions=1721
+   video    max_lag=0.638656s at emission #792   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4lag\run4\out.ts  emissions=1719
+   video    max_lag=0.705333s at emission #790   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4lag\run5\out.ts  emissions=1721
+   video    max_lag=0.638656s at emission #792   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4lag\run6\out.ts  emissions=1721
+   video    max_lag=0.638656s at emission #792   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x4pc\run1\out.ts  emissions=1720
+   video    max_lag=0.693344s at emission #792   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0

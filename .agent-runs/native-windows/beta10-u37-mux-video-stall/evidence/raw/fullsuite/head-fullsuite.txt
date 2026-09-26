@@ -1,0 +1,126 @@
+........................................................................ [  3%]
+........................................................................ [  7%]
+........................................................................ [ 11%]
+........................................................................ [ 15%]
+.s...................................................................... [ 19%]
+........................................................................ [ 23%]
+........................................................................ [ 26%]
+........................................................................ [ 30%]
+........................................................................ [ 34%]
+........................................................................ [ 38%]
+.....................................................ss................. [ 42%]
+........................................................................ [ 46%]
+............................................ss.......................... [ 50%]
+..............................sssssssssssssssssssssssssssssss........... [ 53%]
+........................................................................ [ 57%]
+...s.....................s.s...............s..................ss........ [ 61%]
+........................................................................ [ 65%]
+........................................................................ [ 69%]
+...........ss............................................F.............. [ 73%]
+........................................................................ [ 77%]
+........................................................................ [ 80%]
+........................................................................ [ 84%]
+........................................................................ [ 88%]
+........................................................................ [ 92%]
+.....................................s.................................. [ 96%]
+............................................................s........    [100%]
+================================== FAILURES ===================================
+_____ test_packaged_gstreamer_to_hls_sink_preserves_captions_and_cadence ______
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1414/test_packaged_gstreamer_to_hls0')
+
+    def test_packaged_gstreamer_to_hls_sink_preserves_captions_and_cadence(tmp_path: Path) -> None:
+        """Real packaged GStreamer -> real HlsSink copy -> captioned, playable HLS.
+    
+        Positive: the CEA embed leg's A/53 SEI survives the sink into decodable
+        captions. Negative control: the SAME pipeline without the embed leg yields
+        none, proving the positive result is not a sink/decoder artifact.
+    
+        Cadence/playability asserted per segment (not just ">=2 files"):
+          * first segment ~2s (HlsSink.segment_seconds, tolerance-bounded);
+          * EACH segment begins on a keyframe (IDR at start);
+          * EACH segment fully decodes standalone with no errors;
+          * video PTS are strictly increasing across the segment sequence.
+    
+        Rolling-window (delete_segments rotation over time) is NOT asserted here --
+        this source is finite/short. That contract is covered by
+        tests/egress/test_hls_sink_live_playability.py
+        (``test_hls_sink_produces_rolling_playable_live_manifest``), which asserts
+        ``rotated`` (later segment set != first) and per-duration <= 1.5x target.
+        """
+        positive_src = tmp_path / "captioned.ts"
+>       _emit_captioned_gstreamer_ts(positive_src, embed_caption=True)
+
+positive_src = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1414/test_packaged_gstreamer_to_hls0/captioned.ts')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1414/test_packaged_gstreamer_to_hls0')
+
+tests\egress\test_hls_sink_captions.py:573: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+out_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1414/test_packaged_gstreamer_to_hls0/captioned.ts')
+embed_caption = True
+
+    def _emit_captioned_gstreamer_ts(out_path: Path, *, embed_caption: bool) -> None:
+        """Emit a real MPEG-TS through the packaged GStreamer openh264 encoder.
+    
+        The bundled GI bindings are CPython-3.12-only, so this runs the emit step
+        in the packaged 3.12 interpreter as a subprocess, passing this repo root
+        (and, for the positive case, the cue text) through the environment. The
+        gop-size comes from the product's own ``encode_chain_specs`` so the emitted
+        cadence is the real contracted 2s value.
+        """
+>       assert _GST_AVAILABLE, "packaged GStreamer runtime unavailable"
+E       AssertionError: packaged GStreamer runtime unavailable
+E       assert False
+
+embed_caption = True
+out_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1414/test_packaged_gstreamer_to_hls0/captioned.ts')
+
+tests\egress\test_hls_sink_captions.py:446: AssertionError
+=========================== short test summary info ===========================
+SKIPPED [1] tests\egress\test_compliance.py:245: XDG branch is non-Windows only; monkeypatching os.name='posix' breaks pathlib on Windows
+SKIPPED [1] tests\egress\test_gst_engine_caption_flow_native.py:24: caption flow proof requires the real bundled GStreamer caption runtime
+SKIPPED [1] tests\egress\test_gst_engine_caption_flow_native.py:60: caption flow proof requires the real bundled GStreamer caption runtime
+SKIPPED [1] tests\egress\test_gst_engine_reload_commit_ordering.py:3022: packaged GStreamer runtime not declared, so the real-pipeline half of the U16 diagnostics is NOT verified here -- set CIVICCAST_GSTREAMER_RUNTIME_ROOT to the install root (e.g. C:\Program Files\CivicCast (Native)) to run it against the bundled runtime
+SKIPPED [1] tests\egress\test_gst_engine_reload_commit_ordering.py:3087: CIVICCAST_GSTREAMER_RUNTIME_ROOT not declared, so the real-runtime half of these diagnostics is unverified on this host
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:836: CC embed elements (tttocea608/ccconverter/cccombiner/h264ccinserter) not installed
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:883: CC embed elements (tttocea608/ccconverter/cccombiner/h264ccinserter) not installed
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:977: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1080: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1117: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1281: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1304: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1317: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1333: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1353: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1377: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [2] tests\egress\test_gst_engine_wsl.py:1403: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1446: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1460: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1480: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1515: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1589: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1699: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [2] tests\egress\test_gst_engine_wsl.py:1715: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1836: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1922: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2046: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2168: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2287: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2474: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2724: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2865: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2944: production-pressure rollover needs the shipped caption embed elements
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:3078: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_strategy.py:177: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_gst_strategy.py:444: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_gst_strategy.py:461: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_gst_strategy.py:587: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_gst_strategy.py:1096: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_gst_strategy.py:1112: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_hls_relay_live_playability.py:204: Live-HLS-over-HTTP composition proof (a real GStreamer pipeline -> HlsRelaySupervisor's real ffmpeg relay -> civiccast.stream.media_router -> ffprobe over a real socket, with observed rotation) requires gi + the installed GStreamer runtime + ffmpeg/ffprobe on PATH. NOT covered by this skip: this is the ONLY test that proves a GStreamer-fed directory serves a genuinely advancing manifest over live HTTP -- test_hls_sink_live_playability.py separately proves the ffmpeg-lavfi-fed case, and test_media_router_live.py separately proves the router serves a static fixture; neither substitutes for this. Run with CIVICCAST_GSTREAMER_RUNTIME_ROOT set and `uv run --python 3.12 pytest tests/egress/test_hls_relay_live_playability.py` (the bundled _gi extension is CPython-3.12-specific).
+SKIPPED [1] tests\egress\test_hls_relay_live_playability.py:362: Live-HLS-over-HTTP composition proof (a real GStreamer pipeline -> HlsRelaySupervisor's real ffmpeg relay -> civiccast.stream.media_router -> ffprobe over a real socket, with observed rotation) requires gi + the installed GStreamer runtime + ffmpeg/ffprobe on PATH. NOT covered by this skip: this is the ONLY test that proves a GStreamer-fed directory serves a genuinely advancing manifest over live HTTP -- test_hls_sink_live_playability.py separately proves the ffmpeg-lavfi-fed case, and test_media_router_live.py separately proves the router serves a static fixture; neither substitutes for this. Run with CIVICCAST_GSTREAMER_RUNTIME_ROOT set and `uv run --python 3.12 pytest tests/egress/test_hls_relay_live_playability.py` (the bundled _gi extension is CPython-3.12-specific).
+SKIPPED [1] tests\egress\test_ts_relay.py:204: TSDuck tsp not installed
+SKIPPED [1] tests\egress\test_worker_pipe_seam.py:389: could not import 'gi': No module named 'gi'
+FAILED tests/egress/test_hls_sink_captions.py::test_packaged_gstreamer_to_hls_sink_preserves_captions_and_cadence
+1 failed, 1822 passed, 46 skipped in 302.28s (0:05:02)

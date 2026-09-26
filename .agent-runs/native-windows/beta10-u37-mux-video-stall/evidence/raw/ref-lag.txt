@@ -1,0 +1,12 @@
+== x2\_ref\green-out.ts  emissions=1666
+   video    max_lag=0.064000s at emission #4   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x2\_ref\h1-out.ts  emissions=1720
+   video    max_lag=0.501344s at emission #783   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x2\_ref\h3-out.ts  emissions=1721
+   video    max_lag=0.660000s at emission #793   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0
+== x2\_ref\red-out.ts  emissions=1720
+   video    max_lag=9.408000s at emission #1236   >1.0:253 >1.5:238 >2.0:223 >3.0:193 >5.0:133
+   audio    max_lag=0.000000s at emission #-1   >1.0:0 >1.5:0 >2.0:0 >3.0:0 >5.0:0

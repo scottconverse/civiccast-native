@@ -1,0 +1,117 @@
+== x1\run1\out.ts  ok
+   video    n=680   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x1\run2\out.ts  ok
+   video    n=680   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x2\run1\out.ts  ok
+   video    n=659   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x2\run10\out.ts  COLLAPSE
+   video    n=659   regress=1    worst_backstep=9.411000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x2\run11\out.ts  ok
+   video    n=660   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x2\run12\out.ts  ok
+   video    n=659   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x2\run2\out.ts  ok
+   video    n=658   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x2\run3\out.ts  ok
+   video    n=660   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x2\run4\out.ts  ok
+   video    n=659   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x2\run5\out.ts  ok
+   video    n=658   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x2\run6\out.ts  ok
+   video    n=658   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x2\run7\out.ts  ok
+   video    n=661   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x2\run8\out.ts  COLLAPSE
+   video    n=660   regress=1    worst_backstep=9.444333s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x2\run9\out.ts  ok
+   video    n=659   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4base\run1\out.ts  ok
+   video    n=680   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4base\run2\out.ts  ok
+   video    n=680   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4base\run3\out.ts  ok
+   video    n=681   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4pbase\run1\out.ts  ok
+   video    n=658   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4pbase\run2\out.ts  ok
+   video    n=660   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4pbase\run3\out.ts  ok
+   video    n=659   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4dbg\run1\out.ts  ok
+   video    n=659   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4dbg\run2\out.ts  ok
+   video    n=661   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4dbg\run3\out.ts  COLLAPSE
+   video    n=659   regress=1    worst_backstep=9.411000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4dbg\run4\out.ts  ok
+   video    n=660   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4dbg\run5\out.ts  ok
+   video    n=658   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4dbg\run6\out.ts  COLLAPSE
+   video    n=659   regress=1    worst_backstep=9.411000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4green\run1\out.ts  ok
+   video    n=658   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4green\run2\out.ts  ok
+   video    n=660   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4green\run3\out.ts  ok
+   video    n=659   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4green\run4\out.ts  ok
+   video    n=659   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4green\run5\out.ts  ok
+   video    n=660   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4green\run6\out.ts  ok
+   video    n=659   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4lag\run1\out.ts  ok
+   video    n=659   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4lag\run2\out.ts  ok
+   video    n=659   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4lag\run3\out.ts  ok
+   video    n=660   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4lag\run4\out.ts  ok
+   video    n=658   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4lag\run5\out.ts  ok
+   video    n=660   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4lag\run6\out.ts  ok
+   video    n=660   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x4pc\run1\out.ts  ok
+   video    n=659   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s

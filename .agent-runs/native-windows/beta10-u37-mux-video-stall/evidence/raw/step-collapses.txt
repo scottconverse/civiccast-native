@@ -1,0 +1,10 @@
+== x4dbg\run3\out.ts  emissions=1720
+   video: emitted #1236 (per-pid #298) 0:00:19.992322 -> 0:00:10.581322   backstep=9.411000s
+== x2\run8\out.ts  emissions=1721
+   video: emitted #1238 (per-pid #299) 0:00:20.025656 -> 0:00:10.581322   backstep=9.444333s
+== x2\run10\out.ts  emissions=1720
+   video: emitted #1236 (per-pid #298) 0:00:19.992322 -> 0:00:10.581322   backstep=9.411000s
+== x4dbg\run6\out.ts  emissions=1720
+   video: emitted #1236 (per-pid #298) 0:00:19.992322 -> 0:00:10.581322   backstep=9.411000s
+== x2\_ref\red-out.ts  emissions=1720
+   video: emitted #1236 (per-pid #298) 0:00:19.992322 -> 0:00:10.581322   backstep=9.411000s
