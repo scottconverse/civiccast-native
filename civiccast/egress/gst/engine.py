@@ -574,6 +574,29 @@ _REBASE_OBSERVER_DEADLINE_S = 1.0
 # enough not to spin.
 _REBASE_DRAIN_POLL_MS = 20
 
+# U44: how far past its OWN previous arrival a video buffer may land at a mux sink
+# pad and still be honoured, and how far ahead of the pipeline's own running time
+# it may be. An arrival that clears BOTH is one the mux could only air by WAITING
+# for it, which is the freeze ``_make_mux_pad_arrival_guard`` exists to stop.
+#
+# 2.5s: the largest legitimate forward step measured on this pad is the switch's
+# own drain-then-rebase step, 1.753s (dbg1/dbg2, 2026-09-26), and the drain wait
+# that bounds it is ``_REBASE_DRAIN_DEADLINE_S`` = 3.0s -- so this sits just under
+# the deadline that produces legitimate steps and far above the 33ms cadence of the
+# stream itself. The defect's own steps measured 10.033s (an intra-leg subchain
+# boundary) and 25.033s (the reload that took government off air).
+#
+# 1.0s: the mux airs at the pipeline clock and sleeps in
+# ``gst_aggregator_wait_and_check`` until the clock reaches its chosen head's
+# running time, so an arrival further ahead than this is a freeze of at least that
+# long; below it the mux is merely buffering ahead, which is ordinary. This arm is
+# also what keeps the guard off a legitimate arrival: a pre-rebase arrival is
+# clipped under the OLD segment (behind the clock, no wait) exactly as U37
+# measured, and a stream that simply arrived early is caught by the cadence arm
+# instead, because early arrivals are still in cadence.
+_MUX_ARRIVAL_CADENCE_BOUND_NS = 2_500_000_000
+_MUX_ARRIVAL_AHEAD_BOUND_NS = 1_000_000_000
+
 # U37: how far behind another stream's AIRING running time one required stream may
 # fall before the per-stream judge calls it stalled (``_check_stream_stalls``).
 # Chosen from measurement rather than taste, and reproducible from a run's own
@@ -837,6 +860,16 @@ class GstPlayoutEngine:
         # for the same reason the counters are, single writer per pad (the mux's
         # streaming thread), read only on the GLib loop.
         self._mux_pad_airing_rt: dict[str, int] = {}
+        # U44: the arrival guard's own state -- the running time of the last video
+        # buffer ACCEPTED at each mux sink pad, and how many arrivals the guard has
+        # dropped there. The reference is the guard's whole memory: advancing it on
+        # an accepted arrival and NOT on a dropped one is what lets two consecutive
+        # future-dated arrivals both be dropped while the next real frame re-seeds
+        # it. Keyed by pad NAME for the same reason the counters above are, single
+        # writer per pad (that pad's own streaming thread), and read only to render
+        # the diagnostic's count.
+        self._mux_pad_arrival_rt: dict[str, int] = {}
+        self._mux_pad_arrival_drops: dict[str, int] = {}
         # U34: per-stream stall state -- the watchdog above measures ONE
         # aggregate count (the mux SRC pad), so a channel whose video branch
         # stopped feeding the mux while audio kept flowing keeps "advancing"
@@ -1251,15 +1284,31 @@ class GstPlayoutEngine:
             )
         return pushed
 
-    def _pipeline_running_time_ms(self) -> int:
+    def _pipeline_running_time_ns(self) -> int | None:
+        """The pipeline's own running time in nanoseconds, or ``None`` if unreadable.
+
+        ``None`` is deliberately distinct from a measured ``0``: a pipeline that
+        has not yet reached its base time really is at zero, while one whose clock
+        cannot be read at all is not -- and the U44 guard, whose whole job is to
+        decide whether an arrival is LATE, must never act on a number it never
+        measured. ``_pipeline_running_time_ms`` renders both of those as 0 (its
+        own contract, unchanged), which is the right answer for a printed
+        diagnostic and the wrong one for a data-path decision.
+        """
         clock = self.pipeline.get_clock()
         if clock is None:
-            return 0
+            return None
         base_time = int(self.pipeline.get_base_time())
         clock_time = int(clock.get_time())
         if clock_time < base_time:
+            return None
+        return clock_time - base_time
+
+    def _pipeline_running_time_ms(self) -> int:
+        running_time_ns = self._pipeline_running_time_ns()
+        if running_time_ns is None:
             return 0
-        return max(0, round((clock_time - base_time) / int(Gst.MSECOND)))
+        return max(0, round(running_time_ns / int(Gst.MSECOND)))
 
     def _prime_live_caption_stream(self) -> None:
         """Prime the sparse caption pad with a GAP so PLAYING cannot deadlock."""
@@ -2029,6 +2078,11 @@ class GstPlayoutEngine:
         # the previous pad set.
         self._mux_input_pads = {}
         self._mux_input_buffers = {}
+        # U44: the arrival guard's reference and tally, created on the same terms
+        # -- an empty reference is the SAFE direction (the next arrival is adopted,
+        # never dropped), so a re-arm can only ever make the guard more permissive.
+        self._mux_pad_arrival_rt = {}
+        self._mux_pad_arrival_drops = {}
         mux = getattr(self, "mux", None)
         if mux is None:
             return
@@ -2065,6 +2119,11 @@ class GstPlayoutEngine:
                 # refused recorder must not un-register a counter that IS
                 # installed (the flow ladder must keep counting this pad).
                 self._install_mux_pad_airing_frontier(pad, pad_name)
+                # U44: and the data-path guard for these same pads. Inside this
+                # ``else`` on purpose: a pad whose BUFFER probe was refused is not
+                # registered, so it is neither counted, nor judged, nor guarded --
+                # and it is named by the WARN that already fired above.
+                self._install_mux_pad_arrival_guard(pad, pad_name)
             # U30: armed after the counter (never inside its try -- a refused
             # observer must not un-register a counter that IS installed), and
             # labelled lazily: this runs before caps are negotiated.
@@ -2134,6 +2193,124 @@ class GstPlayoutEngine:
             return Gst.PadProbeReturn.OK
 
         return _count_mux_input
+
+    def _install_mux_pad_arrival_guard(self, pad: Any, pad_name: str) -> None:
+        """U44: arm the drop guard for a future-dated VIDEO arrival on ``pad``.
+
+        See ``_make_mux_pad_arrival_guard`` for the mechanism and the measured
+        numbers. A pad whose probe cannot be installed is NAMED in a WARN: this
+        guard's absence is not a diagnostic gap but a live defect left in place, so
+        it must not be silent. The pad stays registered either way -- the WARN is
+        the only honest rendering of "this stream is not protected"."""
+        try:
+            pad.add_probe(Gst.PadProbeType.BUFFER, self._make_mux_pad_arrival_guard(pad_name))
+        except Exception as exc:
+            print(
+                f"WARN: mux pad {pad_name} cannot take the arrival guard ({exc!r}); a "
+                "future-dated buffer on this stream will NOT be dropped and can stall "
+                "the mux for its own full future offset",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    def _make_mux_pad_arrival_guard(self, pad_name: str) -> Any:
+        """U44: the DROP probe that keeps a future-dated video arrival off the mux.
+
+        A factory rather than a def-in-loop for the same two reasons as
+        ``_make_mux_input_counter``: the closure must key on its own pad, and
+        ``__name__`` stays stable for logs and tests.
+
+        WHAT IT PROTECTS. ``gst_base_ts_mux_find_best_pad`` picks the pad to pop
+        from on the queued heads' timestamps and ``gst_aggregator_wait_and_check``
+        then sleeps until the clock reaches the chosen head's running time, so ONE
+        video buffer whose running time lies D seconds in the future starves the
+        muxed VIDEO for ~D seconds while audio plays on -- a freeze the flow
+        ladders cannot see, because video buffers keep ARRIVING at their normal
+        rate the whole time. The live 2026-09-26 government freeze (reload id=4,
+        running time 6900.968s, off air 13s later) was 25s of it.
+
+        The producer of that buffer is measured, and it is not the reload: each
+        video subchain ends in a ``videorate``, which is forced to push one
+        closing-duplicate frame at its subchain boundary (gstvideorate.c:1063/1077,
+        on the ``count < 1`` branch no property can switch off), and the leg's
+        ``concat`` updates its base for the NEXT subchain (gstconcat.c:589) before
+        forwarding that duplicate -- so the duplicate is clipped under the new
+        segment and its running time lands one subchain-duration in the future.
+        Measured: 10.033s at a 10s subchain, 25.033s at the 25s one that took the
+        channel off air. The freeze lasts exactly as long as the subchain, which is
+        why a 10s subchain only grazes the 10s per-stream judge.
+
+        WHEN IT DROPS. Only on a pad whose stream label, resolved LAZILY inside the
+        probe (caps are not negotiated at install time), is ``video`` -- production
+        video subchains end in ``videorate``, the source of the duplicate, while the
+        audio tail has no ``audiorate``, and dropping legitimately-clipped AUDIO
+        arrivals on this same path was measured at a 1.024s hole in the aired audio.
+        Only when BOTH arms fire, so an ordinary forward step cannot be touched:
+
+        * the arrival's running time is more than
+          ``_MUX_ARRIVAL_CADENCE_BOUND_NS`` past this pad's previous ACCEPTED
+          arrival's -- far above the 33ms video cadence and above the 1.753s
+          legitimate switch step; and
+        * it is more than ``_MUX_ARRIVAL_AHEAD_BOUND_NS`` ahead of the pipeline's
+          own running time -- i.e. the mux would have to WAIT for it, which is the
+          freeze itself.
+
+        The second arm is what keeps this off legitimate media: a pre-rebase arrival
+        is clipped under the OLD segment and so sits BEHIND the clock (no wait, no
+        drop), and an arrival far past its predecessor but already behind the clock
+        -- a genuine hole the mux airs immediately -- is likewise left alone.
+
+        The reference advances only on ACCEPTED arrivals: a second future-dated
+        arrival behind the first is dropped too, and the first real frame after the
+        drop (which lands behind the dropped one) re-seeds it. A BUFFER probe sees
+        no segment events, so nothing here can be re-seeded by a segment crossing --
+        structurally, not by a check. Cost of a false positive: one frame, against
+        which the alternative is D seconds of frozen video.
+
+        Guarded end to end: this runs on a streaming thread and must never be able
+        to take a channel off air by raising."""
+
+        def _guard_mux_pad_arrival(pad: Gst.Pad, info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+            with contextlib.suppress(Exception):
+                if self._mux_pad_stream_label(pad) != "video":
+                    return Gst.PadProbeReturn.OK
+                _pts, running_time, _base = self._measure_first_buffer(pad, info)
+                if running_time is None:
+                    return Gst.PadProbeReturn.OK
+                pipeline_running_time = self._pipeline_running_time_ns()
+                previous = self._mux_pad_arrival_rt.get(pad_name)
+                if previous is None or pipeline_running_time is None:
+                    # First arrival on this pad, or no clock to compare it with:
+                    # adopt it as the reference and let it through. Never guess.
+                    self._mux_pad_arrival_rt[pad_name] = running_time
+                    return Gst.PadProbeReturn.OK
+                if (
+                    running_time - previous <= _MUX_ARRIVAL_CADENCE_BOUND_NS
+                    or running_time - pipeline_running_time <= _MUX_ARRIVAL_AHEAD_BOUND_NS
+                ):
+                    self._mux_pad_arrival_rt[pad_name] = running_time
+                    return Gst.PadProbeReturn.OK
+                # Both arms fire: honouring this arrival means sleeping until the
+                # clock reaches it, which is the whole defect. Drop it, count it,
+                # and do NOT move the reference.
+                drops = self._mux_pad_arrival_drops
+                drops[pad_name] = drops.get(pad_name, 0) + 1
+                print(
+                    f"CTRL mux diagnostic: dropped future-dated video arrival "
+                    f"pad={pad_name} "
+                    f"running_time={_seconds_or_none(running_time)} "
+                    f"last_arrival={_seconds_or_none(previous)} "
+                    f"pipeline_running_time={_seconds_or_none(pipeline_running_time)} "
+                    f"ahead={_seconds_or_none(running_time - pipeline_running_time)} "
+                    f"step={_seconds_or_none(running_time - previous)} "
+                    f"drops={drops[pad_name]}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return Gst.PadProbeReturn.DROP
+            return Gst.PadProbeReturn.OK
+
+        return _guard_mux_pad_arrival
 
     def _snapshot_mux_input(self, now: float) -> None:
         """Move the mux-input baseline to ``now``.
