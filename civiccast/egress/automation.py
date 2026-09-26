@@ -1976,6 +1976,11 @@ class ChannelAutomationService:
             min_lead_seconds=self._rollover_min_lead_seconds(planned_seconds),
         )
         inside_lead_recovery = False
+        # U41: hoisted so the boundary record can carry the horizon this
+        # dispatch measured. ``None`` when there is no boundary provider (the
+        # non-GStreamer path), which is exactly the "no horizon recorded" case
+        # the daemon treats as today's behavior.
+        lead_seconds: float | None = None
         if self._boundary_source_plan_provider is not None:
             # One scheduled item per plan: give short items their whole life
             # for preparation (the ``last_segment_start_at`` clamp below), for
@@ -2134,6 +2139,16 @@ class ChannelAutomationService:
             record_kwargs: dict[str, object] = {"command_id": reload_command_id}
             if force_fallback:
                 record_kwargs["force_fallback"] = True
+            if lead_seconds is not None:
+                # U41: carry the horizon this dispatch measured, so a DEFERRED
+                # rollover's plan can be built with its life measured from the
+                # switch rather than from this dispatch. Only the boundary-
+                # provider path measures a lead at all, and only the daemon
+                # knows whether the switch will defer (it decides that at
+                # reload time, against the live state), so the value travels
+                # unconditionally and the daemon applies it to the deferred
+                # case alone -- see ``record_rollover_plan_end``.
+                record_kwargs["min_plan_seconds"] = lead_seconds
             record_plan_end(channel_id, plan_end_at, **record_kwargs)
         self._enqueue(channel_id, "reload", now=now, command_id=reload_command_id)
         self._rollover_issued.add(channel_id)

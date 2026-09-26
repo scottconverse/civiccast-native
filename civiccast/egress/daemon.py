@@ -934,7 +934,9 @@ class EgressDaemon:
         # ordinary equality now, not a special-cased wildcard. See
         # ``record_rollover_plan_end`` and ``_request_reload``'s docstrings
         # for the exact matching rule.
-        self._rollover_plan_end_at: dict[str, tuple[str | None, datetime, bool]] = {}
+        # U41: the fourth element is the rollover's own horizon
+        # (``min_plan_seconds``) when the dispatcher measured one, else None.
+        self._rollover_plan_end_at: dict[str, tuple[str | None, datetime, bool, float | None]] = {}
         # S9-5 crash-relaunch back-off: a latch paces rapid repeat relaunches, a
         # per-channel streak counts consecutive rapid crashes (for escalation +
         # reset on healthy uptime), and _backoff_relaunch holds a deferred relaunch
@@ -4292,6 +4294,7 @@ class EgressDaemon:
         *,
         command_id: str | None,
         force_fallback: bool = False,
+        min_plan_seconds: float | None = None,
     ) -> None:
         """Public capability ``ChannelAutomationService`` calls (mirrors the
         ``dispatched_plan_horizon``/``has_manual_override`` getattr-probed
@@ -4320,8 +4323,25 @@ class EgressDaemon:
         unscoped (``command_id=None``) -- and ``None`` is no longer special:
         it matches a drain whose own ``command_id`` is also ``None`` by
         ordinary equality (see ``_request_reload``'s docstring), not by a
-        wildcard carve-out."""
-        self._rollover_plan_end_at[channel_id] = (command_id, plan_end_at, force_fallback)
+        wildcard carve-out.
+
+        U41: ``min_plan_seconds`` is the horizon the dispatcher measured for
+        this rollover (its own lead), carried alongside the boundary for the
+        same reason and under the same command scoping. It is applied only to
+        a DEFERRED switch: a deferred rollover's plan is built at dispatch but
+        takes air at the outgoing item's own end, so a horizon measured from
+        dispatch is partly spent by the time the plan is on air (live
+        2026-09-25 education: 689 s planned at 23:41:56, 83 s left at the
+        23:53:17 switch, EOS at 23:54:41). With the horizon measured from the
+        switch instead, the plan still has a full lead of life when it takes
+        air. ``None`` (every non-GStreamer deployment, and any recorder that
+        does not measure a lead) is today's behavior exactly."""
+        self._rollover_plan_end_at[channel_id] = (
+            command_id,
+            plan_end_at,
+            force_fallback,
+            min_plan_seconds,
+        )
 
     def has_pending_reload_settlement(self, channel_id: str) -> bool:
         """Public capability ``ChannelAutomationService`` probes (via
@@ -4368,6 +4388,7 @@ class EgressDaemon:
         process: object,
         *,
         rollover_plan_end_at: datetime | None,
+        rollover_plan_min_seconds: float | None = None,
         force_fallback: bool = False,
     ) -> bool | _PreparationState:
         self._cancel_preparation(channel_id)
@@ -4378,6 +4399,7 @@ class EgressDaemon:
                 state,
                 process,
                 rollover_plan_end_at=rollover_plan_end_at,
+                rollover_plan_min_seconds=rollover_plan_min_seconds,
                 force_fallback=force_fallback,
             ),
             kind="reload",
@@ -4517,6 +4539,7 @@ class EgressDaemon:
         process: object,
         *,
         rollover_plan_end_at: datetime | None,
+        rollover_plan_min_seconds: float | None = None,
         force_fallback: bool = False,
     ) -> _PreparationSteps:
         """Seamless program content-reload for a content-reload-capable strategy.
@@ -4561,7 +4584,16 @@ class EgressDaemon:
         ``self._rollover_plan_end_at`` forever, to be read by whatever
         reload attempt for this channel came next. Popping in the one
         caller that is reached on every single "reload" command, before any
-        of ITS branches run, is what actually closes all of them."""
+        of ITS branches run, is what actually closes all of them.
+
+        U41: ``rollover_plan_min_seconds`` is the horizon the dispatcher
+        measured for this rollover, threaded down from the same record as
+        ``rollover_plan_end_at`` and applied to the boundary plan of a DEFERRED
+        switch only (see the eligibility gate where the provider is called).
+        It is the difference between a plan that has a full lead of life when
+        it takes air and one that has already spent its lead waiting -- the
+        live 2026-09-25 education incident, 689 s planned, 83 s left at the
+        switch, EOS ~3 minutes later."""
         config = self._store.get_config(channel_id)
         if config is None or not config.enabled:
             return False
@@ -4581,6 +4613,40 @@ class EgressDaemon:
             if rollover_plan_end_at is not None
             else None
         )
+        # U41: the recorded horizon (``min_plan_seconds``) is applied ONLY to a
+        # switch that will defer, because only a deferred switch consumes its
+        # runway while it waits for the outgoing item's own end -- an immediate
+        # cut airs the plan the moment it is armed, so a horizon measured from
+        # the switch and one measured from dispatch are the same thing there.
+        #
+        # The decision is taken here in its ELIGIBILITY form (``now=None``: "is
+        # this reload one that defers at all"), not with the late ``now`` the
+        # value handed to the encoder below uses. That late ``now`` is item 78
+        # fix 3's stale-horizon cut and must stay late; making it early here
+        # would reintroduce exactly the defect it fixes. The two can disagree in
+        # the rare case where the boundary passes between this point and the
+        # request build; the horizon then applies to a reload that ends up
+        # cutting immediately, which costs a wider plan and nothing else.
+        #
+        # A force-fallback filler rollover is excluded: that branch is the slate
+        # fill by design (see the deliberate filler semantics below), and
+        # widening its late-plan lookup would change what that filler is allowed
+        # to select.
+        horizon_seconds: float | None = None
+        if (
+            not force_fallback
+            and rollover_plan_min_seconds is not None
+            and should_defer_switch(
+                previous_state=state.state,
+                manual_override_active=self.has_manual_override(channel_id),
+                plan_end_at=rollover_plan_end_at,
+                now=None,
+            )
+        ):
+            horizon_seconds = rollover_plan_min_seconds
+        horizon_kwargs: dict[str, float] = (
+            {"min_plan_seconds": horizon_seconds} if horizon_seconds is not None else {}
+        )
         if not force_fallback:
             try:
                 if (
@@ -4588,7 +4654,7 @@ class EgressDaemon:
                     and boundary_at is not None
                     and not self.has_manual_override(channel_id)
                 ):
-                    source_plan = boundary_provider(channel_id, boundary_at)
+                    source_plan = boundary_provider(channel_id, boundary_at, **horizon_kwargs)
                 else:
                     source_plan = self._source_plan_provider(channel_id)
             except SourcePrepareError:
@@ -5317,11 +5383,20 @@ class EgressDaemon:
         recorded = self._rollover_plan_end_at.get(channel_id)
         rollover_plan_end_at: datetime | None = None
         force_fallback = False
+        # U41: the horizon the dispatcher measured for this rollover, applied
+        # to the deferred switch only (see ``_try_content_reload``).
+        rollover_plan_min_seconds: float | None = None
         if recorded is not None:
-            recorded_command_id, recorded_plan_end_at, recorded_force_fallback = recorded
+            (
+                recorded_command_id,
+                recorded_plan_end_at,
+                recorded_force_fallback,
+                recorded_min_plan_seconds,
+            ) = recorded
             if recorded_command_id == command_id:
                 rollover_plan_end_at = recorded_plan_end_at
                 force_fallback = recorded_force_fallback
+                rollover_plan_min_seconds = recorded_min_plan_seconds
                 self._rollover_plan_end_at.pop(channel_id, None)
         state = self._store.read_state(channel_id)
         process = self._processes.get(channel_id)
@@ -5346,6 +5421,7 @@ class EgressDaemon:
                 state,
                 process,
                 rollover_plan_end_at=rollover_plan_end_at,
+                rollover_plan_min_seconds=rollover_plan_min_seconds,
                 force_fallback=force_fallback,
             )
         ):

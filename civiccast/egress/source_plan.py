@@ -421,7 +421,13 @@ class ScheduleSourcePlanProvider:
     def __call__(self, channel_id: str) -> EgressSourcePlan | None:
         return self.plan_at(channel_id, self._now_provider())
 
-    def plan_at(self, channel_id: str, boundary_at: datetime) -> EgressSourcePlan | None:
+    def plan_at(
+        self,
+        channel_id: str,
+        boundary_at: datetime,
+        *,
+        min_plan_seconds: float | None = None,
+    ) -> EgressSourcePlan | None:
         """Build the plan active at an explicit scheduled boundary.
 
         Automation uses this separate entry point to prepare the item due at a
@@ -431,6 +437,14 @@ class ScheduleSourcePlanProvider:
         With ``gap_absorb_seconds`` set (U26), a boundary that lands in a small
         gap between two items resolves to the item due within that window
         rather than to None/filler -- see ``build_source_plan_from_schedule``.
+
+        ``min_plan_seconds`` (U41) overrides the provider's own horizon for this
+        call only. A deferred rollover is prepared at dispatch but takes air at
+        the outgoing item's own end, so the daemon measures the horizon it wants
+        from the SWITCH -- the plan must still have that much life left when it
+        finally goes on air, not when it was built. The plan still ends on item
+        boundaries: the horizon widens it with whole following items, it never
+        splits one.
         """
 
         return build_source_plan_from_schedule(
@@ -439,7 +453,9 @@ class ScheduleSourcePlanProvider:
             asset_resolver=self._asset_resolver,
             now=boundary_at,
             max_segments=self._max_segments,
-            min_plan_seconds=self._min_plan_seconds,
+            min_plan_seconds=(
+                self._min_plan_seconds if min_plan_seconds is None else min_plan_seconds
+            ),
             segment_cap=self._segment_cap,
             gap_tolerance=self._gap_tolerance,
             loop_schedule=self._loop_schedule,
