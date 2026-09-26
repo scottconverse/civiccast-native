@@ -447,6 +447,61 @@ def _channel_with_segments(tmp_path: Path, count: int = 3) -> tuple[Path, list[s
     return root, names
 
 
+#: The instant this file's fixtures are pinned to: segments, logs and the
+#: stubbed module clock all read `1_700_000_000.0`, so an age is exactly the
+#: difference the test wrote and never a function of the wall clock.
+_FIXTURE_EPOCH = 1_700_000_000.0
+
+
+#: A segment left in the live channel dir by a PREVIOUS run carries a HIGHER
+#: sequence number than the current run's newest -- observed live 2026-09-26:
+#: public `seg000018677.ts` (Sep 19) sits beside the running `seg000001284.ts`.
+#: Anything that chooses a window by name or sequence chooses those fossils.
+_FOSSIL_AGE_SECONDS = 3 * 86400.0
+
+
+def _emitted_channel(
+    tmp_path: Path, *, count: int = 40, seconds: float = 2.0, playlist_count: int = 6
+) -> tuple[Path, list[str]]:
+    """A channel whose segments carry explicit EMISSION times, oldest first.
+
+    Segment names ascend with emission time and the playlist lists only the
+    newest `playlist_count`, the way the relay's own does.
+    """
+    root = tmp_path / "live-hls"
+    channel = root / "public"
+    channel.mkdir(parents=True)
+    first = 1000
+    names = [f"seg{first + index:09d}.ts" for index in range(count)]
+    _write_playlist(
+        channel / "playlist.m3u8",
+        media_sequence=first + count - playlist_count,
+        count=playlist_count,
+    )
+    _touch_segments(channel, names)
+    base = _FIXTURE_EPOCH
+    for index, name in enumerate(names):
+        stamp = base - (count - 1 - index) * seconds
+        os.utime(channel / name, (stamp, stamp))
+    return root, names
+
+
+def _write_worker_log(
+    root: Path, channel: str, lines: list[str], *, age: float = 0.0, now: float = _FIXTURE_EPOCH
+) -> Path:
+    """The playout worker's stdout log for one channel, aged by `age` seconds.
+
+    The log lives beside the live-hls root, not inside it: on the station the
+    root is `...\\egress\\live-hls` and the log is `...\\egress\\<ch>\\logs\\`.
+    """
+    path = Path(root).parent / channel / "logs" / "gst-worker.stdout.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    stamp = now - age
+    os.utime(path, (stamp, stamp))
+    return path
+
+
 def _stub_all_av(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(verify, "probe_segment", _stub_probe_ok)
     monkeypatch.setattr(verify, "decode_segment", _stub_ffmpeg_ok)
@@ -454,10 +509,10 @@ def _stub_all_av(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(verify, "extract_first_pcr", lambda *a, **k: 5_000_000_000)
 
 
-def test_window_decodes_every_chosen_segment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """The window must call the decoder once per chosen segment (not just newest)."""
+def test_window_decodes_every_finished_segment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The window must decode EVERY finished segment it covers, not just the newest."""
 
-    root, names = _channel_with_segments(tmp_path)
+    root, names = _emitted_channel(tmp_path)
     calls: list[str] = []
 
     def recording_decode(path):
@@ -479,7 +534,10 @@ def test_window_decodes_every_chosen_segment(monkeypatch: pytest.MonkeyPatch, tm
         "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
     )
 
-    assert calls == names
+    # 40 emitted segments 2 s apart -> the newest 60 s is 30 of them; the newest
+    # two are never read (they may still be open), so indices 8..37.
+    assert calls == names[8:38]
+    assert len(calls) == 30
 
 
 def test_window_sparse_captions_still_passes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -489,10 +547,10 @@ def test_window_sparse_captions_still_passes(monkeypatch: pytest.MonkeyPatch, tm
     segments across three HEALTHY channels: captions are naturally sparse in 2s
     segments. Requiring text in EVERY segment would fail a healthy stream.
     """
-    root, names = _channel_with_segments(tmp_path)
+    root, names = _emitted_channel(tmp_path)
 
     def fake_decode(path):
-        if Path(path).name == names[-1]:
+        if Path(path).name == names[20]:
             return {
                 "status": verify.Verdict.PASS,
                 "detail": "ok",
@@ -519,13 +577,13 @@ def test_window_sparse_captions_still_passes(monkeypatch: pytest.MonkeyPatch, tm
         "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
     )
 
-    assert len(result["caption_decode_back"]["per_segment"]) == 3
+    assert len(result["caption_decode_back"]["per_segment"]) == 30
     assert result["caption_decode_back"]["status"] == verify.Verdict.PASS
 
 
 def test_window_all_segments_captionless_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """No cues anywhere in a CLEAN window -> caption FAIL (no weakening)."""
-    root, _names = _channel_with_segments(tmp_path)
+    root, _names = _emitted_channel(tmp_path)
 
     monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"})
     monkeypatch.setattr(
@@ -548,14 +606,15 @@ def test_window_all_segments_captionless_fails(monkeypatch: pytest.MonkeyPatch, 
 
     assert result["caption_decode_back"]["status"] == verify.Verdict.FAIL
     assert result["status"] == verify.Verdict.FAIL
+    assert result["caption_decode_back"]["cue_count"] == 0
 
 
 def test_window_any_unverified_segment_forces_unverified(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A vanished/undecodable segment keeps the window UNVERIFIED, not PASS/FAIL."""
-    root, names = _channel_with_segments(tmp_path)
+    root, names = _emitted_channel(tmp_path)
 
     def fake_decode(path):
-        if Path(path).name == names[0]:
+        if Path(path).name == names[20]:
             return {"status": verify.Verdict.UNVERIFIED, "detail": "decode error"}
         return {
             "status": verify.Verdict.PASS,
@@ -598,6 +657,250 @@ def test_decoder_absent_fails_closed_through_verify_channel(
 
     assert result["caption_decode_back"]["status"] == verify.Verdict.NOT_PROVEN
     assert result["status"] in (verify.Verdict.UNVERIFIED, verify.Verdict.FAIL)
+
+
+# --- Caption decode-back window: the newest ~60 s of FINISHED segments -----
+#
+# U48 follow-on, from a real rung: verify #4 of rung-8h-post-u44 (2026-09-26
+# 13:10:02) failed government and education caption_decode_back over 4 segments
+# (~8 s) while both channels' workers had injected 14-17 captions/minute and
+# government's sidecar read "take a five-minute break" (a recess). An 8 s window
+# fails on any speech pause, so an 8 h rung fails on noise. The window is now
+# ~60 s of finished segments and the judgement needs ONE cue in it.
+
+
+def test_caption_window_is_the_newest_sixty_seconds_of_finished_segments(tmp_path: Path) -> None:
+    root, names = _emitted_channel(tmp_path, count=40, seconds=2.0)
+
+    window = verify.caption_window(root / "public", segment_seconds=2.0)
+
+    assert [item["segment"] for item in window["segments"]] == names[8:38]
+    assert window["span_seconds"] == 60.0
+
+
+def test_caption_window_excludes_the_two_newest_segments(tmp_path: Path) -> None:
+    """The newest two may still be open: they are never copied or decoded."""
+    root, names = _emitted_channel(tmp_path, count=6, seconds=2.0)
+
+    window = verify.caption_window(root / "public", segment_seconds=2.0)
+
+    assert [item["segment"] for item in window["segments"]] == names[:-2]
+    assert window["newest_excluded"] == names[-2:]
+    assert window["span_seconds"] == 8.0
+
+
+def test_caption_window_never_reaches_a_fossil_from_a_previous_run(tmp_path: Path) -> None:
+    """Selection is by EMISSION TIME: fossils outrank the live run by name."""
+    root, names = _emitted_channel(tmp_path, count=6, seconds=2.0)
+    channel = root / "public"
+    fossils = ["seg000018677.ts", "seg000018678.ts"]
+    for name in fossils:
+        (channel / name).write_bytes(b"\x47" * 1024)
+        stamp = 1_700_000_000.0 - _FOSSIL_AGE_SECONDS
+        os.utime(channel / name, (stamp, stamp))
+
+    window = verify.caption_window(channel, segment_seconds=2.0)
+
+    got = [item["segment"] for item in window["segments"]]
+    assert got == names[:-2]
+    assert not set(got) & set(fossils)
+    assert window["older_excluded"] == 2
+
+
+def test_caption_window_records_span_cues_and_the_worker_receipt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    root, names = _emitted_channel(tmp_path, count=40, seconds=2.0)
+    _write_worker_log(
+        root,
+        "public",
+        [
+            "CTRL caption public: received=20 injected=20 replayed=0 rejected=0 in 60s",
+            "CTRL caption public: received=18 injected=18 replayed=0 rejected=0 in 60s",
+        ],
+        age=30.0,
+    )
+
+    def fake_decode(path):
+        if Path(path).name == names[20]:
+            return {
+                "status": verify.Verdict.PASS,
+                "detail": "ok",
+                "decoded_text_present": True,
+                "decoded_text_bytes": 5,
+                "decoded_text_sha256": "deadbeef",
+                "decoded_cue_count": 2,
+            }
+        return {
+            "status": verify.Verdict.FAIL,
+            "detail": "no cues",
+            "decoded_text_present": False,
+            "decoded_text_bytes": 0,
+            "decoded_text_sha256": "",
+            "decoded_cue_count": 0,
+        }
+
+    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"})
+    monkeypatch.setattr(verify, "_decode_captions", fake_decode)
+    _stub_all_av(monkeypatch)
+
+    result = verify.verify_channel(
+        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+    )
+
+    block = result["caption_decode_back"]
+    assert block["status"] == verify.Verdict.PASS
+    assert block["cue_count"] == 2
+    assert block["span_seconds"] == 60.0
+    assert "60.0 s" in block["detail"]
+    assert "2 cue" in block["detail"]
+    # The worker's own receipt rides along, so rung_check can tell a quiet
+    # channel from a caption outage without reading the live station itself.
+    assert result["caption_receipt"]["status"] == "OK"
+    assert result["caption_receipt"]["received"] == 18
+
+
+def test_caption_window_with_no_finished_segment_is_not_proven(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Two segments or fewer: both newest are excluded, nothing is decodable."""
+    root, _names = _emitted_channel(tmp_path, count=2, seconds=2.0)
+
+    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"})
+    monkeypatch.setattr(
+        verify,
+        "_decode_captions",
+        lambda *a, **k: {"status": verify.Verdict.PASS, "decoded_cue_count": 1},
+    )
+    _stub_all_av(monkeypatch)
+
+    result = verify.verify_channel(
+        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+    )
+
+    assert result["caption_decode_back"]["status"] == verify.Verdict.NOT_PROVEN
+    assert result["caption_decode_back"]["per_segment"] == []
+
+
+# --- The playout worker's caption receipt ---------------------------------
+#
+# `civiccast/egress/gst/worker.py` prints one line per 60 s window that carried
+# caption activity, and one WARNING after ten silent windows. Silence with no
+# prior receipt is a channel with captions switched off, so it prints nothing.
+
+
+def test_caption_receipt_reads_the_newest_line_for_this_channel(tmp_path: Path) -> None:
+    root = tmp_path / "live-hls"
+    _write_worker_log(
+        root,
+        "public",
+        [
+            "CTRL caption public: received=4 injected=4 replayed=0 rejected=0 in 60s",
+            "CTRL caption public: received=18 injected=18 replayed=0 rejected=0 in 60s",
+        ],
+        age=12.0,
+    )
+
+    receipt = verify.caption_receipt("public", root, now=1_700_000_000.0)
+
+    assert receipt["status"] == "OK"
+    assert receipt["received"] == 18
+    assert receipt["window_s"] == 60.0
+    assert receipt["age_seconds"] == pytest.approx(12.0)
+
+
+def test_caption_receipt_ignores_another_channels_lines(tmp_path: Path) -> None:
+    root = tmp_path / "live-hls"
+    _write_worker_log(
+        root,
+        "public",
+        ["CTRL caption education: received=17 injected=17 replayed=0 rejected=0 in 60s"],
+        age=12.0,
+    )
+
+    receipt = verify.caption_receipt("public", root, now=1_700_000_000.0)
+
+    assert receipt["status"] == "UNAVAILABLE"
+
+
+def test_caption_receipt_received_zero_is_zero(tmp_path: Path) -> None:
+    root = tmp_path / "live-hls"
+    _write_worker_log(
+        root,
+        "public",
+        ["CTRL caption public: received=0 injected=0 replayed=3 rejected=0 in 60s"],
+        age=12.0,
+    )
+
+    receipt = verify.caption_receipt("public", root, now=1_700_000_000.0)
+
+    assert receipt["status"] == "ZERO"
+    assert receipt["received"] == 0
+
+
+def test_caption_receipt_warning_after_the_last_receipt_is_zero(tmp_path: Path) -> None:
+    root = tmp_path / "live-hls"
+    _write_worker_log(
+        root,
+        "public",
+        [
+            "CTRL caption public: received=18 injected=18 replayed=0 rejected=0 in 60s",
+            "CTRL caption public: WARNING no caption command received for 601s since the last "
+            "receipt; this channel's emitted stream is carrying no new captions",
+        ],
+        age=12.0,
+    )
+
+    receipt = verify.caption_receipt("public", root, now=1_700_000_000.0)
+
+    assert receipt["status"] == "ZERO"
+    assert receipt["silent_seconds"] == 601.0
+
+
+def test_caption_receipt_warning_before_a_later_receipt_is_not_zero(tmp_path: Path) -> None:
+    """The worker's own words: a later receipt retracts an earlier warning."""
+    root = tmp_path / "live-hls"
+    _write_worker_log(
+        root,
+        "public",
+        [
+            "CTRL caption public: WARNING no caption command received for 601s since the last "
+            "receipt; this channel's emitted stream is carrying no new captions",
+            "CTRL caption public: received=9 injected=9 replayed=0 rejected=0 in 60s",
+        ],
+        age=12.0,
+    )
+
+    receipt = verify.caption_receipt("public", root, now=1_700_000_000.0)
+
+    assert receipt["status"] == "OK"
+    assert receipt["received"] == 9
+
+
+def test_caption_receipt_without_a_log_is_unavailable(tmp_path: Path) -> None:
+    receipt = verify.caption_receipt("public", tmp_path / "live-hls", now=1_700_000_000.0)
+
+    assert receipt["status"] == "UNAVAILABLE"
+    assert receipt["received"] is None
+
+
+def test_caption_receipt_stale_log_is_unavailable_not_zero(tmp_path: Path) -> None:
+    """A dead worker's last line says nothing about the window under judgement."""
+    root = tmp_path / "live-hls"
+    _write_worker_log(
+        root,
+        "public",
+        [
+            "CTRL caption public: received=4 injected=4 replayed=0 rejected=0 in 60s",
+            "CTRL caption public: received=0 injected=0 replayed=0 rejected=0 in 60s",
+        ],
+        age=7200.0,
+    )
+
+    receipt = verify.caption_receipt("public", root, now=1_700_000_000.0)
+
+    assert receipt["status"] == "UNAVAILABLE"
+    assert receipt["age_seconds"] == pytest.approx(7200.0)
 
 
 # --- Channel-level fail-closed behavior -----------------------------------
@@ -1599,20 +1902,29 @@ def _never_pay_the_race_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     and recorded delays -- so no contract is left unproven by not sleeping
     here.  A test that needs the recorded delays re-stubs ``verify.time``
     through ``_no_sleeps``.
+
+    The module clock is frozen at ``_FIXTURE_EPOCH`` too: the fixtures write
+    their ages against that instant, so a reader that asks the module what time
+    it is must get the same answer the fixture did.
     """
 
-    monkeypatch.setattr(verify, "time", SimpleNamespace(sleep=lambda _seconds: None))
+    monkeypatch.setattr(
+        verify, "time", SimpleNamespace(sleep=lambda _seconds: None, time=lambda: _FIXTURE_EPOCH)
+    )
 
 
 def _no_sleeps(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     """Stub the module's ``time`` so a retry budget costs no wall clock.
 
     Returns the recorded delays so a test can assert the spacing as well as the
-    attempt count.  Only this module's ``time`` attribute is replaced.
+    attempt count.  Only this module's ``time`` attribute is replaced, and its
+    clock is frozen at ``_FIXTURE_EPOCH`` for the same reason as above.
     """
 
     slept: list[float] = []
-    monkeypatch.setattr(verify, "time", SimpleNamespace(sleep=slept.append))
+    monkeypatch.setattr(
+        verify, "time", SimpleNamespace(sleep=slept.append, time=lambda: _FIXTURE_EPOCH)
+    )
     return slept
 
 
