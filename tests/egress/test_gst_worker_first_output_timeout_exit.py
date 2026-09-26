@@ -97,7 +97,12 @@ class _FakeEngineInstanceReturnsResult:
     def __call__(self, *_a: object, **_kw: object) -> _FakeEngineInstanceReturnsResult:
         return self
 
-    def run_forever(self, *, control_fifo: str | None = None) -> dict[str, object]:
+    def run_forever(
+        self,
+        *,
+        control_fifo: str | None = None,
+        hold_slate_at_plan_eos: bool = False,
+    ) -> dict[str, object]:
         return self._result
 
 
