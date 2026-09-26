@@ -554,10 +554,13 @@ _MAX_COMMIT_TIMEOUT_S = 120.0
 # from the intuition that "the mux is greedy, so the queue empties in
 # milliseconds": on the real LPM media the affected pad holds a steady 5-6 buffers
 # -- ordinary backlog -- for as long as the outgoing tail's last ~1s is still
-# arriving through the chain, and only then falls 6->4->2->1->0. Measured drain
-# times over four off-live runs of the same reload: 1.141, 1.172, 1.172, 1.141s
-# (plus one 0.172s instance), so the first draft's 1.0s bound sat below the real
-# value and reported a false alarm on switches that were draining normally.
+# arriving through the chain, and only then falls 6->4->2->1->0. Measured over
+# this slice's 15 final-candidate switches: 1.125-2.141s, eleven of them inside
+# 1.125-1.203 and the two worst at 2.109 and 2.141s. An earlier draft's 1.0s
+# bound sat below that, and its own artefact records the false alarm: ``WARN:
+# rebase drain did not empty within 1.0s for reload 1 (sink_66=5 still queued at
+# the mux); switching anyway`` -- on a switch whose recorded output is
+# indistinguishable from the runs that drained inside the bound.
 # ``_REBASE_OBSERVER_DEADLINE_S`` is how long after that the arrival observers may
 # keep counting -- measured from the switch itself, so the two windows do not
 # overlap. It bounds only the observers' own bookkeeping: they no longer change
@@ -576,18 +579,19 @@ _REBASE_DRAIN_POLL_MS = 20
 # Chosen from measurement rather than taste, and reproducible from a run's own
 # recorded output: for every PES the mux emitted, take the largest airing running
 # time across the streams minus the emitting stream's own (the parser is a
-# throwaway -- any TS/PES reader gives this). Across 20 healthy off-live switches
-# of the real LPM media through the live playout shape (1280x720@30, openh264enc,
-# the caption-embed leg), every one on the same instrument, the largest lag
-# anywhere was 0.726678s, and it is the media's own A/V end offset at the boundary
-# -- the outgoing video's last frame ending ~0.7s before its audio -- i.e. the
-# same ~0.7s shape this slice exists to tolerate, not a defect of its own. Not one
-# emitted PES was more than 1.0s behind in ANY of the 39 healthy recordings this
-# slice produced, earlier harnesses included; the worst anywhere was that same
-# 0.726678s. The three collapsed captures ran their video 9.408000-9.429333s
-# behind, each with 253 of ~1720 emitted PES more than 1.0s behind and 133 more
-# than 5.0s. 2.0s sits 2.8x above every healthy value measured and 4.7x below the
-# collapse.
+# throwaway -- any TS/PES reader gives this). Across the 74 healthy stream-rows
+# (video and audio counted separately) of the 35 healthy recordings this slice
+# produced -- the real LPM media through the live playout shape (1280x720@30,
+# openh264enc, the caption-embed leg), every one on the same instrument -- the
+# largest lag anywhere was 0.726678s, in the same range as the media's own A/V
+# end offset at the boundary (0.014-0.748s across those runs; the outgoing
+# video's last frame ends ~0.7s before its audio). That is the shape this slice
+# exists to tolerate, not a defect of its own, and the same offset produced both
+# that 0.726678s and a full collapse -- which is why the judge is a bound and not
+# a prediction. Not one healthy row emitted a PES more than 1.0s behind. The four
+# collapsed captures ran their video 9.408000-9.429333s behind, each with 253 of
+# ~1720 emitted PES more than 1.0s behind and 133 more than 5.0s. 2.0s sits 2.75x
+# above every healthy value measured and 4.70x below the collapse.
 #
 # Two properties do the real work here, and both are worth keeping in mind before
 # this number is retuned. It is only reachable by a stream that is STILL
