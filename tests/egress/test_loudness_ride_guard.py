@@ -530,10 +530,12 @@ def test_the_encoder_variants_are_the_ordered_pair_the_guard_may_spend() -> None
     It is a tuple, so the order is the contract: the guard stops at the first
     variant that meets the bound, and the cheaper lever must be tried first.
     """
-    assert lr.TP_GUARD_ENCODER_VARIANTS == (
+    expected = (
         _variant(256),
         _variant(256, ("-aac_coder", "fast")),
     )
+    # ruff's SIM300 wants the expectation on the left of a module attribute.
+    assert expected == lr.TP_GUARD_ENCODER_VARIANTS
 
 
 def test_the_encoder_variants_are_offered_only_to_an_aac_profile() -> None:

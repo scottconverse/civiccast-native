@@ -907,9 +907,7 @@ def build_reencode_args(
         "warning",
         "-y",
         *_pcm_input_args(params=params, from_file=pcm_path),
-        *_encode_sink_tail(
-            output_path, trim_db, params=params, profile=profile, variant=variant
-        ),
+        *_encode_sink_tail(output_path, trim_db, params=params, profile=profile, variant=variant),
     ]
 
 
@@ -1895,9 +1893,7 @@ def encoder_variants_for(profile: CanonicalProfile) -> tuple[EncoderVariant, ...
     )
 
 
-def encoder_settings_label(
-    profile: CanonicalProfile, variant: EncoderVariant | None = None
-) -> str:
+def encoder_settings_label(profile: CanonicalProfile, variant: EncoderVariant | None = None) -> str:
     """Name one encode's encoder settings, for the operator's log line.
 
     U42: the guard's WARNING and the caller's ERROR name what each attempt
