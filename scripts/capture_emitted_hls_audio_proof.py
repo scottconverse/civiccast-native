@@ -151,6 +151,15 @@ _LOUDNESS_I_RE = re.compile(r"\bI:\s*(-?\d+(?:\.\d+)?)\s+LUFS\b")
 _LOUDNESS_LRA_RE = re.compile(r"\bLRA:\s*(-?\d+(?:\.\d+)?)\s+LU\b")
 _LOUDNESS_PEAK_RE = re.compile(r"\bPeak:\s*(-?\d+(?:\.\d+)?)\s+dBFS\b")
 
+# Per-segment true peak, for the field that asks whether any ONE segment
+# overshoots.  ``measure_window``'s ebur128 summary prints its ``Peak:`` line to
+# ONE decimal (measured on the station's ffmpeg: it printed -1.1 for a segment
+# astats resolves as -1.280067), and one decimal cannot tell a 0.04 dBFS
+# overshoot from 0.00.  ``aresample=192000`` is the same 4x oversampling ebur128
+# applies internally for true peak; astats prints six decimals.
+_SEGMENT_PEAK_RE: Final[re.Pattern[str]] = re.compile(r"Peak level dB:\s*(-?\d+(?:\.\d+)?|-inf)")
+_SEGMENT_PEAK_GRAPH: Final[str] = "aresample=192000,astats=metadata=1:reset=0"
+
 
 class Verdict:
     PASS = "PASS"
@@ -1122,6 +1131,88 @@ def measure_window(
     return result
 
 
+def measure_segment_peaks(
+    records: list[dict[str, Any]],
+    *,
+    ffmpeg: Path | None = None,
+    run: Callable[..., dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Highest true peak of any ONE captured segment, and which segment.
+
+    ``measure_window`` measures the CONCAT window.  That number is not the max
+    over the window's members: ffmpeg decodes the concat as one continuous
+    stream, so a member's own peak can be absent from the window's reported peak
+    (U49 measured both directions of that on real emitted HLS -- a window 0.5 dB
+    above one member and 0.1 dB below another).  This walks the captured
+    segments one at a time so a single overshooting segment cannot be averaged
+    away by its neighbours.
+
+    Evidence only, never a verdict input: the caller decides what an overshoot
+    means.  Unmeasurable segments are listed rather than assumed clean, and the
+    peak stays None when nothing could be measured -- an absent measurement must
+    not read as a pass.
+
+    Cost: one short analyzer run per captured segment (a release-grade 180 s
+    window at a 2 s cadence is ~90 runs, each decoding ~2 s of audio).
+    """
+
+    runner = run or _default_run
+    peaks: list[tuple[float, str]] = []
+    unmeasured: list[str] = []
+    for record in records:
+        if record.get("capture_status") != "complete":
+            continue
+        name = str(record.get("name") or record.get("snapshot_path") or "?")
+        snapshot_path = record.get("snapshot_path")
+        if not snapshot_path:
+            unmeasured.append(name)
+            continue
+        analysis = runner(
+            [
+                str(ffmpeg) if ffmpeg is not None else "ffmpeg",
+                "-hide_banner",
+                "-nostats",
+                "-i",
+                str(snapshot_path),
+                "-vn",
+                "-af",
+                _SEGMENT_PEAK_GRAPH,
+                "-f",
+                "null",
+                "-",
+            ]
+        )
+        if not analysis.get("ok"):
+            unmeasured.append(name)
+            continue
+        found = [
+            float(value)
+            for value in _SEGMENT_PEAK_RE.findall(analysis.get("stderr") or "")
+            if value != "-inf"
+        ]
+        if not found:
+            unmeasured.append(name)
+            continue
+        # astats prints a Peak level per channel and an Overall section; Overall
+        # is the max over channels, so the max over every hit IS the Overall.
+        peaks.append((max(found), name))
+
+    if not peaks:
+        return {
+            "true_peak_max_segment_dbtp": None,
+            "true_peak_max_segment": None,
+            "true_peak_segments_measured": 0,
+            "true_peak_segments_unmeasured": unmeasured,
+        }
+    peak, name = max(peaks, key=lambda item: item[0])
+    return {
+        "true_peak_max_segment_dbtp": round(peak, 6),
+        "true_peak_max_segment": name,
+        "true_peak_segments_measured": len(peaks),
+        "true_peak_segments_unmeasured": unmeasured,
+    }
+
+
 def _resolve_tsp() -> Path | None:
     candidates = [
         Path(r"C:\Program Files\CivicCast (Native)\packs\native-server-binaries\payload\tsduck\bin\tsp.exe"),
@@ -1365,6 +1456,12 @@ def verify_channel(
         min_duration_seconds=min_duration_seconds,
         ffmpeg=ffmpeg,
         run=run,
+    )
+    # ADD, do not replace: true_peak_dbfs above is the CONCAT window's peak and
+    # stays exactly as it was.  A member's own peak is not the window's peak, so
+    # the per-segment question needs its own measurement (U49).
+    snapshot["audio_window"].update(
+        measure_segment_peaks(snapshot["segments"], ffmpeg=ffmpeg, run=run)
     )
     snapshot["status"] = snapshot["audio_window"]["status"]
     return snapshot

@@ -462,6 +462,165 @@ def test_measurement_negative_control_short_in_band_is_not_a_pass() -> None:
     assert result["within_target"] is False
 
 
+
+# --- per-segment true peak (U49) -------------------------------------------
+
+
+def _astats_stderr(*per_channel_peaks: str) -> str:
+    """Shaped like real astats output: a Peak level per channel plus Overall."""
+
+    lines = [
+        f"[Parsed_astats_1 @ 0x1] Channel: {index + 1}"
+        for index, _ in enumerate(per_channel_peaks)
+    ]
+    lines += [f"[Parsed_astats_1 @ 0x1] Peak level dB: {peak}" for peak in per_channel_peaks]
+    finite = [peak for peak in per_channel_peaks if peak != "-inf"]
+    overall = max(finite, key=float) if finite else "-inf"
+    lines.append("[Parsed_astats_1 @ 0x1] Overall")
+    lines.append(f"[Parsed_astats_1 @ 0x1] Peak level dB: {overall}")
+    return "\n".join(lines) + "\n"
+
+
+def _peak_records(tmp_path: Path, *names: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": name,
+            "capture_status": "complete",
+            "snapshot_path": str(tmp_path / name),
+        }
+        for name in names
+    ]
+
+
+def test_segment_peaks_measure_each_segment_and_name_the_worst(tmp_path: Path) -> None:
+    """The concat window's peak is not the max over its members (U49)."""
+
+    mod = _load()
+    args_seen: list[list[str]] = []
+    by_name = {
+        "seg000000001.ts": _astats_stderr("-3.500000", "-1.280067"),
+        "seg000000002.ts": _astats_stderr("-1.050000", "-1.050000"),
+        "seg000000003.ts": _astats_stderr("-2.000000", "-2.000000"),
+    }
+
+    def fake_run(args, **_kwargs):
+        args_seen.append(list(args))
+        name = Path(args[args.index("-i") + 1]).name
+        return {"ok": True, "returncode": 0, "stdout": "", "stderr": by_name[name]}
+
+    records = _peak_records(tmp_path, *by_name)
+    result = mod.measure_segment_peaks(records, run=fake_run)
+
+    # -1.05 is the worst INDIVIDUAL segment; a concat window over the three
+    # would have collapsed them into one number.
+    assert result["true_peak_max_segment_dbtp"] == pytest.approx(-1.05)
+    assert result["true_peak_max_segment"] == "seg000000002.ts"
+    assert result["true_peak_segments_measured"] == 3
+    assert result["true_peak_segments_unmeasured"] == []
+    # Each measurement is its own short decode of that segment's snapshot --
+    # never the concat, and never a filter that would need the whole window.
+    assert [args[args.index("-i") + 1] for args in args_seen] == [
+        record["snapshot_path"] for record in records
+    ]
+    assert all(
+        args[args.index("-af") + 1] == mod._SEGMENT_PEAK_GRAPH for args in args_seen
+    )
+    assert all("-filter_complex" not in args for args in args_seen)
+
+
+def test_segment_peaks_list_unmeasurable_segments_instead_of_calling_them_clean(
+    tmp_path: Path,
+) -> None:
+    """An analyzer error and a silent segment are reported, not assumed clean."""
+
+    mod = _load()
+
+    def fake_run(args, **_kwargs):
+        name = Path(args[args.index("-i") + 1]).name
+        if name == "seg000000003.ts":
+            return {"ok": False, "returncode": 1, "stdout": "", "stderr": "boom"}
+        if name == "seg000000004.ts":
+            return {
+                "ok": True,
+                "returncode": 0,
+                "stdout": "",
+                "stderr": _astats_stderr("-inf", "-inf"),
+            }
+        return {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "",
+            "stderr": _astats_stderr("-1.500000", "-1.500000"),
+        }
+
+    records = _peak_records(
+        tmp_path,
+        "seg000000001.ts",
+        "seg000000002.ts",
+        "seg000000003.ts",
+        "seg000000004.ts",
+    )
+    result = mod.measure_segment_peaks(records, run=fake_run)
+
+    assert result["true_peak_max_segment_dbtp"] == pytest.approx(-1.5)
+    assert result["true_peak_max_segment"] == "seg000000001.ts"
+    assert result["true_peak_segments_measured"] == 2
+    assert result["true_peak_segments_unmeasured"] == [
+        "seg000000003.ts",
+        "seg000000004.ts",
+    ]
+
+
+def test_segment_peaks_skip_records_that_were_not_captured(tmp_path: Path) -> None:
+    """Only captured segments are measured; a missing one is not a measurement."""
+
+    mod = _load()
+    seen: list[str] = []
+
+    def fake_run(args, **_kwargs):
+        seen.append(Path(args[args.index("-i") + 1]).name)
+        return {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "",
+            "stderr": _astats_stderr("-1.900000"),
+        }
+
+    records = _peak_records(tmp_path, "seg000000001.ts")
+    records.append(
+        {
+            "name": "seg000000002.ts",
+            "capture_status": "missing",
+            "snapshot_path": str(tmp_path / "seg000000002.ts"),
+        }
+    )
+    result = mod.measure_segment_peaks(records, run=fake_run)
+
+    assert seen == ["seg000000001.ts"]
+    assert result["true_peak_max_segment"] == "seg000000001.ts"
+    assert result["true_peak_segments_measured"] == 1
+    assert result["true_peak_segments_unmeasured"] == []
+
+
+def test_segment_peaks_stay_absent_when_nothing_could_be_measured(tmp_path: Path) -> None:
+    """No measurement must not read as a pass: the peak stays None, not 0.0."""
+
+    mod = _load()
+
+    def fake_run(_args, **_kwargs):
+        return {"ok": False, "returncode": 1, "stdout": "", "stderr": "boom"}
+
+    result = mod.measure_segment_peaks(
+        _peak_records(tmp_path, "seg000000001.ts"), run=fake_run
+    )
+
+    assert result["true_peak_max_segment_dbtp"] is None
+    assert result["true_peak_max_segment"] is None
+    assert result["true_peak_segments_measured"] == 0
+    assert result["true_peak_segments_unmeasured"] == ["seg000000001.ts"]
+
+
+
 # --- no speech/cue text persisted -----------------------------------------
 
 
@@ -876,6 +1035,70 @@ def test_verify_channel_measures_only_after_continuity_passes(
     assert result["continuity"]["status"] == mod.Verdict.PASS
     assert result["audio_window"]["status"] == mod.Verdict.PASS
     assert result["audio_window"]["integrated_lufs"] == pytest.approx(-15.9)
+
+
+def test_verify_channel_adds_segment_peaks_without_replacing_the_window_peak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADD, not replace: the concat window's true_peak_dbfs must survive intact."""
+
+    mod = _load()
+    root, _channel, advance = _writer(tmp_path)
+
+    def on_poll(**_kwargs):
+        advance(1)
+
+    def good_probe(_ffprobe, path):
+        index = int(str(path).rsplit("seg", 1)[1].split(".", 1)[0])
+        return {
+            "status": mod.Verdict.PASS,
+            "video_start_pts": 90_000 + 180_000 * index,
+            "pcr_first": 5_000_000_000 + 180_000 * index,
+            "duration": 2.0,
+        }
+
+    def fake_run(args, **_kwargs):
+        if "-filter_complex" in args:
+            return {
+                "ok": True,
+                "returncode": 0,
+                "stdout": "",
+                "stderr": "I:         -15.9 LUFS\nLRA:         3.0 LU\nPeak:       -1.3 dBFS\n",
+            }
+        return {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "",
+            "stderr": _astats_stderr("-1.100000", "-1.100000"),
+        }
+
+    result = mod.verify_channel(
+        "public",
+        root,
+        scratch_dir=tmp_path / "scratch",
+        min_duration_seconds=12.0,
+        release_grade=False,
+        ffprobe=Path("ffprobe"),
+        probe=good_probe,
+        run=fake_run,
+        poll_seconds=0.0,
+        sleep=lambda _s: None,
+        monotonic=lambda: next(_clock),
+        on_poll=on_poll,
+    )
+
+    window = result["audio_window"]
+    assert window["status"] == mod.Verdict.PASS
+    # The concat window measurement is unchanged...
+    assert window["true_peak_dbfs"] == pytest.approx(-1.3)
+    assert window["integrated_lufs"] == pytest.approx(-15.9)
+    # ...and the per-segment measurement is added beside it.
+    assert window["true_peak_max_segment_dbtp"] == pytest.approx(-1.1)
+    assert window["true_peak_max_segment"].startswith("seg")
+    assert window["true_peak_segments_measured"] >= 1
+    assert window["true_peak_segments_unmeasured"] == []
+
+
 
 # --- scratch containment & safe delete (coordinator HOLD findings) ----------
 
