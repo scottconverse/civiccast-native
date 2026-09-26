@@ -343,6 +343,28 @@ _START_EXPIRED_FALLBACK_REASON = (
     "automation resolves the current schedule."
 )
 
+# BETA.10 U47: the reason recorded on an ACTIVE channel's start/relaunch while its
+# program is being prepared. The live 2026-09-26 finding (evidence/public-exit1-1119
+# and evidence/public-exit0-0159): a worker exit was followed by a relaunch that
+# resolved and conformed the scheduled program for 20-133 s with NO encoder running
+# at all -- the channel was black for the whole preparation and the relay reported
+# "live window has not advanced" (public dark ~11 min at 01:59). The rule: an ACTIVE
+# channel is never dark while its program is being prepared, so the relaunch airs
+# the fallback slate at once and hands the prepared program in afterwards.
+_SLATE_FIRST_HANDOFF_REASON = (
+    "Preparing the scheduled program; airing the fallback slate so the channel "
+    "stays up while it conforms."
+)
+
+#: The states an ACTIVE channel can be in when a start/relaunch reaches
+#: ``_start_steps``. ON_AIR and TRANSITIONING are the crash-relaunch route
+#: (``_begin_relaunch`` writes STARTING first, but the row a relaunch reads back
+#: can still be the pre-exit one); FALLBACK_SLATE is a channel already holding the
+#: slate that is being restarted for some other reason. A STOPPED/ERROR channel --
+#: an operator start of a dark channel -- is deliberately NOT here: there is no
+#: slate to keep, so the first thing that channel should air is the program.
+_SLATE_FIRST_ACTIVE_STATES = frozenset({"ON_AIR", "FALLBACK_SLATE", "TRANSITIONING"})
+
 # BETA.10 U16 item B: the OUTPUT A/V sync guard.
 #
 # The U16 finding (2026-09-24) was a one-sided rebase step -- one leg's
@@ -529,6 +551,16 @@ class OrphanInfo(NamedTuple):
 class _PreparationState(Enum):
     PENDING = "preparing"
     START_EXPIRED = "start-expired"
+    #: U47: a start/relaunch of a channel that was ALREADY ON AIR has launched
+    #: its worker on the fallback slate, so the channel is no longer dark -- but
+    #: the scheduled program it is actually there for has not been prepared yet.
+    #: The caller hands that program in through the ordinary reload path.
+    #:
+    #: A separate value rather than a bool because the two outcomes mean
+    #: different things to ``_poll_preparation``: START_EXPIRED re-enters
+    #: ``_start`` with the slate forced, whereas this one must NOT re-enter
+    #: ``_start`` at all (that would relaunch the worker it just launched).
+    SLATE_FIRST = "slate-first"
 
 
 class _PreparationRequest(NamedTuple):
@@ -1207,6 +1239,15 @@ class EgressDaemon:
                         force_fallback_slate=True,
                         force_fallback_reason=_START_EXPIRED_FALLBACK_REASON,
                     )
+                elif pending.kind == "start" and outcome is _PreparationState.SLATE_FIRST:
+                    # U47: this is where the production (async) path reaches the
+                    # hand-off. ``_start`` already returned at the slate's own
+                    # preparation being QUEUED, so -- unlike the synchronous path
+                    # -- the slate worker is only up now, as this tick's
+                    # preparation settles. Handing the program in from here is
+                    # what keeps an ON_AIR channel airing the slate for the whole
+                    # conform instead of being dark for it.
+                    self._hand_off_slate_first_program(channel_id)
                 return
             raise RuntimeError("Unexpected second media preparation in one operation")
 
@@ -1736,6 +1777,7 @@ class EgressDaemon:
         resolved_plan: EgressSourcePlan | None = None,
         plan_resolution_started_at: float | None = None,
         prepared_reload: _ReusePreparedPlan | None = None,
+        slate_first: bool = False,
     ) -> None:
         with self._preparation_guard:
             if channel_id in self._preparations:
@@ -1759,6 +1801,7 @@ class EgressDaemon:
                         force_fallback_reason=force_fallback_reason,
                         resolved_plan=resolved_plan,
                         prepared_reload=prepared_reload,
+                        slate_first=slate_first,
                         plan_resolution_started_at=(
                             self._monotonic()
                             if plan_resolution_started_at is None
@@ -1785,6 +1828,15 @@ class EgressDaemon:
                     force_fallback_slate=True,
                     force_fallback_reason=_START_EXPIRED_FALLBACK_REASON,
                 )
+            elif result is _PreparationState.SLATE_FIRST:
+                # U47: the channel is already up on the slate and only the
+                # program is outstanding. Hand it in through the ordinary reload
+                # path -- NOT through ``_start``, which would tear down the very
+                # worker this start just launched. The hand-off deliberately does
+                # not run here: ``_drive_preparation`` in the ASYNC path returns
+                # at the QUEUE, so the program's preparation belongs to a later
+                # tick and ``_poll_preparation`` dispatches it (see there).
+                self._hand_off_slate_first_program(channel_id)
 
     def _start_steps(
         self,
@@ -1796,6 +1848,7 @@ class EgressDaemon:
         force_fallback_reason: str | None = None,
         resolved_plan: EgressSourcePlan | None = None,
         prepared_reload: _ReusePreparedPlan | None = None,
+        slate_first: bool = False,
         plan_resolution_started_at: float,
     ) -> _PreparationSteps:
         # ``resolved_plan``: a program plan the caller ALREADY resolved from
@@ -1943,6 +1996,12 @@ class EgressDaemon:
                 self._discard_stale_hls_playlists(channel_id, config=stored_config)
             using_fallback_slate = False
             fallback_reason: str | None = None
+            # U47: set only by the slate-first branch below, and read once at the
+            # very end of the encoder-start block (after health is appended, so
+            # the channel's own row/health record this start the same way any
+            # other start does). It marks that the worker launched here is on the
+            # SLATE and that a program preparation is still owed.
+            slate_first_handoff = False
             if force_fallback_slate and self._fallback_source_provider is not None:
                 # BLOCKER B1: the caller (a crash-relaunch that has never once
                 # reached a healthy uptime — see _LIVE_SOURCE_FAILURE_FALLBACK_STREAK)
@@ -1988,6 +2047,37 @@ class EgressDaemon:
                 using_fallback_slate = True
             elif resolved_plan is not None:
                 source_plan = resolved_plan
+            elif (
+                slate_first
+                and previous_state in _SLATE_FIRST_ACTIVE_STATES
+                and prepared_reload is None
+                and self._fallback_source_provider is not None
+            ):
+                # U47: this channel was ALREADY ON AIR and its worker is gone or
+                # being replaced. Whatever the schedule says, the channel must
+                # not be dark for the 20-133 s a cold conform takes -- so air the
+                # slate NOW and let the program follow through the reload path
+                # (``_hand_off_slate_first_program``). The program's own plan is
+                # deliberately NOT resolved here: the hand-off resolves it at
+                # hand-off time, which is also the freshest read of the schedule
+                # (a plan resolved before the slate aired could already be stale
+                # by the time the slate is up).
+                #
+                # ``prepared_reload is None`` keeps F3(b)'s reuse restart on its
+                # own path: that one already HAS the program conformed and must
+                # not sit on the slate first.
+                #
+                # B1 (the never-healthy crash-loop) deliberately wins over this
+                # branch -- it is checked first above, and it also sets
+                # ``using_fallback_slate``; a B1 relaunch is a channel that keeps
+                # failing on its program, so it airs the slate and stops there
+                # rather than immediately re-attempting the thing that is
+                # crashing it.
+                fallback_reason = _SLATE_FIRST_HANDOFF_REASON
+                self._write_state(channel_id, "FALLBACK_SLATE", last_error=fallback_reason)
+                source_plan: EgressSourcePlan | None = self._fallback_source_provider(config)
+                using_fallback_slate = True
+                slate_first_handoff = True
             else:
                 try:
                     source_plan = self._source_plan_provider(channel_id)
@@ -2433,6 +2523,15 @@ class EgressDaemon:
                 sink_connected=self._sink_connected(channel_id, config, state=running_state),
                 seconds_on_air=0,
             )
+            if slate_first_handoff:
+                # U47: the slate is airing and the channel is no longer dark, so
+                # this operation is NOT complete -- it still owes the program its
+                # caller asked for. Returned from inside the ``try`` so the two
+                # ERROR handlers below keep their own ``return None``: a start
+                # that FAILED to launch the slate has nothing to hand off, and
+                # reporting SLATE_FIRST there would tell the caller a program is
+                # on its way when no worker exists to put it on air.
+                return _PreparationState.SLATE_FIRST
         except (ConfigInvalidError, SecretUnresolvedError, FfmpegNotFoundError) as exc:
             # FfmpegNotFoundError only reaches here when the ladder's own
             # tier-failure seam above already tried (or could not try) the
@@ -3983,6 +4082,15 @@ class EgressDaemon:
             previous_source_label=previous_source_label,
             force_fallback_slate=force_fallback_slate,
             force_fallback_reason=force_fallback_reason,
+            # U47: this is THE relaunch of a channel that was on air. It is where
+            # the live finding was observed -- a worker exit followed by the
+            # channel going dark for the whole cold conform of the next program
+            # (public-exit1-1119: dark from 11:19:40, still dark at 11:20:29;
+            # public-exit0-0159: ~11 min). Air the slate first; the program
+            # follows through the reload path. Inert when B1 forced the slate
+            # above (that branch is checked first in ``_start_steps`` and has no
+            # program to hand off).
+            slate_first=True,
         )
         # CC-WS5-006: a crash-relaunch brings up a FRESH worker on a fresh control
         # pipe. Replay the channel's desired state (reload/swap) over it so a swap
@@ -4365,6 +4473,61 @@ class EgressDaemon:
         if not callable(reader):
             return True
         return bool(reader(channel_id))
+
+    def has_pending_preparation(self, channel_id: str) -> bool:
+        """Whether a media preparation for this channel is registered right now.
+
+        U47: the reader ``ChannelAutomationService._check_slate_replan`` uses to
+        tell "this daemon is already preparing the program this channel is
+        waiting for" apart from "nobody is doing anything, so queue a reload".
+        Without it the automation's slate-replan pass fires into the middle of a
+        slate-first hand-off's OWN preparation: the queued ``reload`` command
+        reaches ``_request_reload`` -> ``_cancel_preparation``, which abandons
+        the in-flight hand-off and conforms the same program a second time
+        (measured 20-133 s per conform in the field).
+
+        Deliberately NARROWER than ``has_pending_reload_settlement`` above, which
+        also reports an armed reload still settling. Reusing that one here would
+        additionally hold the automation off for the whole settle window -- a
+        behavior change outside U47's scope, on the one path (a rollover's
+        settlement) that already has its own latch and cooldown.
+
+        Read from the automation thread, so ``_preparation_guard`` is not taken:
+        ``self._preparations`` is only ever mutated under that lock by the daemon
+        thread, and the worst a torn read can do is make this answer stale by one
+        tick -- far cheaper than blocking the automation loop on a conform."""
+        return channel_id in self._preparations
+
+    def _hand_off_slate_first_program(self, channel_id: str) -> None:
+        """U47: put the program a slate-first start owes onto the air, using the
+        reload machinery rather than another start.
+
+        Reached from ``_start`` (the synchronous path, where the slate is already
+        up and the steps returned ``SLATE_FIRST``) and from ``_poll_preparation``
+        (the async path, where the same value arrives when the slate's own
+        preparation settles).
+
+        ``_request_reload(slate_first=True)`` is what makes this safe on failure:
+        a hand-off whose program cannot be prepared keeps the live slate and
+        returns, instead of running the ordinary restart fallback -- which, out
+        of a live FALLBACK_SLATE, terminates the slate worker (issue #157) and
+        so would take a channel that is ON AIR and make it dark for a second
+        conform. That is exactly the outcome this unit exists to prevent.
+
+        The live-process guard is not redundant. ``_start`` returns SLATE_FIRST
+        after a successful launch, but the worker can be gone again by the time
+        this runs (a fast crash), and ``_request_reload``'s no-live-process
+        branch would then call ``_start`` -- which is correct, and is why this
+        method does not attempt it here itself."""
+        process = self._processes.get(channel_id)
+        if process is None or _process_poll(process) is not None:
+            return
+        _LOG.info(
+            "channel %s: fallback slate is on air; handing the prepared program in "
+            "through the reload path",
+            channel_id,
+        )
+        self._request_reload(channel_id, slate_first=True)
 
     def _fall_back_to_restart_for_reused_plan(
         self, channel_id: str, outcome: _ReusePreparedPlan
@@ -5328,7 +5491,21 @@ class EgressDaemon:
             self._reload_kills.add(channel_id)
             _process_terminate(process)
 
-    def _request_reload(self, channel_id: str, *, command_id: str | None = None) -> None:
+    def _request_reload(
+        self, channel_id: str, *, command_id: str | None = None, slate_first: bool = False
+    ) -> None:
+        """Bring the channel's next program on air.
+
+        ``slate_first`` (U47, default ``False`` = every pre-existing caller and
+        every queued ``reload`` command): this reload is the HAND-OFF half of a
+        slate-first start -- the slate is already on air and the channel must
+        stay on it if this reload cannot prepare the program. It changes exactly
+        two things, both about staying up rather than about the reload itself:
+        the no-live-process branch's ``_start`` inherits the flag (the worker
+        died between the slate's launch and this call, so that start is once
+        again "rescue a live channel"), and a declined/failed preparation keeps
+        the slate instead of running the restart fallback. See the tail below
+        and ``_hand_off_slate_first_program``."""
         self._cancel_preparation(channel_id)
         # Item 78 fix 3 (coordinator review, round 3): pop the automation-
         # recorded rollover plan_end_at HERE, at the very top of the ONE
@@ -5405,6 +5582,7 @@ class EgressDaemon:
                 channel_id,
                 previous_state=state.state if state else None,
                 previous_source_label=state.current_source_label if state else None,
+                slate_first=slate_first,
             )
             return
         # S15 (D-S1-6): if the strategy can rebuild program content in place (the
@@ -5416,20 +5594,46 @@ class EgressDaemon:
         if (
             state is not None
             and getattr(self._encoder_strategy, "supports_content_reload", False)
-            and self._try_content_reload(
+        ):
+            if self._try_content_reload(
                 channel_id,
                 state,
                 process,
                 rollover_plan_end_at=rollover_plan_end_at,
                 rollover_plan_min_seconds=rollover_plan_min_seconds,
                 force_fallback=force_fallback,
-            )
-        ):
-            # Preparing/accepted work is pending; it is not on-air proof. _poll_reload_
-            # settlement (in process_once's poll tuple) finishes the job (or
-            # falls back to restart via _fall_back_to_restart_reload below)
-            # once reload-status.json actually reports an outcome.
-            return
+            ):
+                # Preparing/accepted work is pending; it is not on-air proof.
+                # _poll_reload_settlement (in process_once's poll tuple) finishes
+                # the job (or falls back to restart via
+                # _fall_back_to_restart_reload) once reload-status.json actually
+                # reports an outcome.
+                return
+            if slate_first:
+                if channel_id in self._prepared_restart_plans:
+                    # Already routed: the F3(b) branch above stashed a plan and
+                    # queued this channel's terminate+restart, so the exit that
+                    # lands in ``_poll_process`` will air the program. Logging
+                    # "keeping the fallback slate on air" here would be false --
+                    # the slate worker has already been terminated.
+                    return
+                # U47: this reload was the hand-off half of a slate-first start
+                # and it could not produce a program -- either the reload steps
+                # declined (an unusable plan, an arming refusal) or the
+                # preparation raised. The ordinary fallback below is WRONG here:
+                # out of a live FALLBACK_SLATE it adds this channel to
+                # ``_reload_kills`` and terminates the slate worker (issue #157)
+                # and then conforms the slate again, i.e. it would take a channel
+                # that is ON AIR and make it dark -- precisely the outcome U47
+                # exists to prevent. Keep the slate; the program's retry belongs
+                # to the automation's own slate-replan policy, which is already
+                # watching a FALLBACK_SLATE channel for a due program.
+                _LOG.warning(
+                    "channel %s: slate-first hand-off could not prepare the program; keeping "
+                    "the fallback slate on air and leaving the retry to the slate-replan policy.",
+                    channel_id,
+                )
+                return
         self._fall_back_to_restart_reload(channel_id)
 
     def _drain(self, channel_id: str) -> None:
