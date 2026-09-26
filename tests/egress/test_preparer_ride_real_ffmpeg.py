@@ -10,6 +10,13 @@ module runs the whole thing -- lavfi asset in, ridden canonical program out --
 and asserts on the artifact the station would put on air: its method label, its
 length, and its own measured loudness.
 
+The second half of the module is U42's, and measures the guard's *second* lever:
+the encoder re-emit (``EncoderVariant``).  A double can prove that ``level_window``
+walks the variants in order; only a real encoder can show that a variant actually
+lands the emitted artifact inside the hard bound, and only a real mux can show that
+the artifact still airs bit-for-bit when the profile says 192 kbps and the artifact
+says 256.
+
 **The ride needs an FFmpeg with soxr.**  Its true-peak ceiling is 4x oversampled
 through ``aresample=192000:resampler=soxr:precision=28``
 (:func:`civiccast.egress.loudness_ride.resample_filter`).  A build without soxr
@@ -41,7 +48,12 @@ from civiccast.egress.models import (
     EgressSourceSegment,
 )
 from civiccast.egress.preparer import SourcePreparer
-from civiccast.stream._ffmpeg import probe_media_duration_seconds, resolve_h264_encoder, run_ffmpeg
+from civiccast.stream._ffmpeg import (
+    probe_has_decodable_stream,
+    probe_media_duration_seconds,
+    resolve_h264_encoder,
+    run_ffmpeg,
+)
 from civiccast.stream.loudness import check_streaming_loudness
 
 _TARGET_LUFS = -24.0
@@ -253,3 +265,328 @@ def test_a_windowed_conform_is_ridden_and_keeps_the_window_length(
 
     measured_lufs = _measured_loudness(prepared)
     assert abs(measured_lufs - _TARGET_LUFS) <= _TOLERANCE_LUFS, measured_lufs
+
+
+# ---------------------------------------------------------------------------
+# U42: the guard's second lever -- the encoder re-emit -- against a real encoder.
+# ---------------------------------------------------------------------------
+
+#: The guard's encoder lever is only reachable on material that is STILL over the
+#: hard bound once the limiter has done its work, so the material has to be hot.
+#: Generated rather than read from disk, so the test is hermetic: white noise at
+#: these amplitudes is what a real AAC encoder overshoots on.  The seed is pinned
+#: because ``anoisesrc`` is seed-dependent across generations -- the same
+#: amplitude without a seed does not reproduce the same peaks, and the assertions
+#: below sit on which side of the bound each arm lands.
+_GUARD_MATERIAL_SECONDS = 20.0
+_GUARD_MATERIAL_SEED = 20_260_926
+#: The ride's own true-peak ceiling, the one ``_config``'s loudness target implies.
+_GUARD_LIMIT_DBTP = -1.0
+_GUARD_TIMEOUT_S = 300.0
+
+
+def _guard_params() -> lr.RideParams:
+    return lr.RideParams(target_lufs=_TARGET_LUFS, limit_dbtp=_GUARD_LIMIT_DBTP)
+
+
+def _guard_material(tmp_path: Path, *, amplitude: float) -> Path:
+    """Seed-pinned white noise, as 48 kHz stereo float PCM -- the ride's own feed."""
+    pcm = tmp_path / f"guard-material-a{amplitude:g}.pcm"
+    result = subprocess.run(  # fixed argv on a lavfi source, into tmp_path
+        [
+            lr._ffmpeg_binary(),
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            f"anoisesrc=amplitude={amplitude:g}:color=white:seed={_GUARD_MATERIAL_SEED}",
+            "-t",
+            f"{_GUARD_MATERIAL_SECONDS:g}",
+            "-f",
+            "f32le",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            str(pcm),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    return pcm
+
+
+def _guard_arms(profile: CanonicalProfile) -> list[tuple[str, lr.EncoderVariant | None]]:
+    """The arms the guard would spend, in the guard's own order and labelling.
+
+    Round 1 is the profile's nominal emit (no variant); then every variant
+    ``encoder_variants_for`` yields, labelled by the product's own helper, so an
+    assertion on a label is an assertion on what the operator's WARNING would say.
+    """
+    arms: list[tuple[str, lr.EncoderVariant | None]] = [(lr.encoder_settings_label(profile), None)]
+    arms.extend(
+        (lr.encoder_settings_label(profile, variant), variant)
+        for variant in lr.encoder_variants_for(profile)
+    )
+    return arms
+
+
+def _audio_bit_rate_bps(path: Path) -> int:
+    """The bitrate ffprobe reports for the audio stream of ``path``.
+
+    JSON rather than the flat writer: an MPEG-TS program lists its audio stream
+    more than once, so the value-keyed writer emits the same number on several
+    lines and a plain ``int(stdout)`` cannot parse it.  Every audio stream must
+    agree -- a disagreement means the program carries audio the test does not
+    understand, which is a finding, not something to average away.
+    """
+    completed = subprocess.run(  # fixed argv
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,bit_rate",
+            "-of",
+            "json",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert completed.returncode == 0, completed.stderr
+    streams = json.loads(completed.stdout).get("streams", [])
+    rates = [s.get("bit_rate") for s in streams if s.get("codec_type") == "audio"]
+    assert rates, f"ffprobe reported no audio stream for {path}: {completed.stdout!r}"
+    assert len(set(rates)) == 1, f"ffprobe reported {rates!r} for {path}"
+    value = rates[0]
+    assert isinstance(value, str) and value.isdigit(), f"ffprobe reported {value!r} for {path}"
+    return int(value)
+
+
+def test_a_variant_re_encode_moves_the_encoder_and_nothing_else(tmp_path: Path) -> None:
+    """The variant is the encoder axis only -- same PCM, same filter, same sink.
+
+    U42's item 1 is a *re-encode*, not a re-render: the guard re-emits from the
+    already-limited PCM the nominal attempt teed, so nothing about the ride's
+    work changes.  What makes that true in code is that the nominal emit and the
+    variant emit are the same builder (``_encode_sink_tail``) called with one
+    different argument, and this pins the consequence: identical argument lists
+    up to the sink tail, and inside the tail the only tokens that move are the
+    encoder's own (the bitrate and the appended encoder options).
+    """
+    profile = _config().canonical_profile
+    params = _guard_params()
+    variants = lr.encoder_variants_for(profile)
+    assert variants, "a profile whose codec is AAC must offer the guard its encoder lever"
+    first = variants[0]
+    pcm = tmp_path / "in.pcm"
+    out = tmp_path / "out.ts"
+    trim_db = -0.5
+
+    nominal = lr.build_reencode_args(pcm, out, trim_db=trim_db, params=params, profile=profile)
+    varied = lr.build_reencode_args(
+        pcm, out, trim_db=trim_db, params=params, profile=profile, variant=first
+    )
+
+    tail = lr._encode_sink_tail(out, trim_db, params=params, profile=profile)
+    head = len(nominal) - len(tail)
+    assert nominal[:head] == varied[:head], "the input side must be the same argument list"
+    assert f"{profile.audio_bitrate_kbps}k" in nominal
+    assert f"{first.bitrate_kbps}k" in varied
+
+    encoder_tokens = {"-b:a", f"{profile.audio_bitrate_kbps}k", f"{first.bitrate_kbps}k"}
+    encoder_tokens.update(first.extra_args)
+    assert [a for a in nominal if a not in encoder_tokens] == [
+        a for a in varied if a not in encoder_tokens
+    ], (nominal, varied)
+    # ... because the only tokens that filter above removes are the encoder's:
+    assert varied.count("-b:a") == 1, varied
+    assert [a for a in varied if a in first.extra_args] == list(first.extra_args), varied
+
+
+@pytest.mark.parametrize(
+    ("amplitude", "expected_first_meeting"),
+    [
+        pytest.param(1.0, "aac 256k", id="first-variant-meets-the-bound"),
+        pytest.param(0.9, "aac 256k (-aac_coder fast)", id="guard-walks-to-the-encoder-options"),
+    ],
+)
+def test_the_guard_walks_its_encoder_variants_until_one_meets_the_bound(
+    tmp_path: Path, amplitude: float, expected_first_meeting: str
+) -> None:
+    """U42 item 1: the encoder lever, on a real encode, meeting the real bound.
+
+    Two hermetic materials, one per shape the guard has:
+
+    * amplitude 1.0 -- the nominal emit is over the bound and the FIRST variant
+      (``-b:a 256k``) lands inside it, so the guard must stop there and never
+      spend ``-aac_coder fast``;
+    * amplitude 0.9 -- the first variant is *still* over and the second
+      (``-b:a 256k -aac_coder fast``) meets the bound, so the walk has to reach
+      the end of the list.  This is the case that proves the order is the
+      product's and not a coincidence of one material.
+
+    Every arm is the guard's own two calls -- ``run_reencode`` then
+    ``scan_peak_dbfs`` on the emitted artifact.  If this host's encoder keeps the
+    nominal inside the bound the guard's encoder lever has nothing to fix, and
+    the test skips loudly rather than asserting a shape the material cannot show.
+    """
+    profile = _config().canonical_profile
+    params = _guard_params()
+    bound = lr.TP_GUARD_MAX_PEAK_DBFS
+    arms = _guard_arms(profile)
+    pcm = _guard_material(tmp_path, amplitude=amplitude)
+
+    walk: list[tuple[str, float]] = []
+    for index, (label, variant) in enumerate(arms):
+        artifact = tmp_path / f"attempt-{index}.ts"
+        lr.run_reencode(
+            pcm_path=pcm,
+            output_path=artifact,
+            trim_db=0.0,
+            params=params,
+            profile=profile,
+            variant=variant,
+            timeout_s=_GUARD_TIMEOUT_S,
+        )
+        peak = lr.scan_peak_dbfs(artifact, params=params, timeout_s=_GUARD_TIMEOUT_S)
+        assert peak is not None, f"no peak could be measured for {label}"
+        walk.append((label, peak))
+        if peak <= bound:
+            if index == 0:
+                pytest.skip(
+                    f"this host's AAC encoder already keeps {amplitude:g}-amplitude white "
+                    f"noise inside the +{bound:g} dBFS bound ({label}: {peak:+.6f} dBFS), "
+                    "so the guard's encoder lever cannot be exercised on it"
+                )
+            break
+
+    assert walk[-1][0] == expected_first_meeting, walk
+    assert walk[-1][1] <= bound, walk
+    for label, peak in walk[:-1]:
+        assert peak > bound, f"{label} was already inside the bound ({peak:+.6f} dBFS)"
+    if expected_first_meeting == arms[1][0]:
+        # The guard stops at the first attempt that meets the bound.
+        assert [label for label, _ in walk] == [arms[0][0], arms[1][0]], walk
+    else:
+        assert len(walk) == len(arms), walk
+
+
+def test_a_variant_bitrate_artifact_airs_like_a_nominal_one(
+    tmp_path: Path, real_asset: Path
+) -> None:
+    """U42 item 2: a 256 kbps artifact inside a 192 kbps profile, on the air path.
+
+    The guard reaches for the encoder only when the nominal emit missed the hard
+    bound, so the artifact the air path would really be handed is one encoded
+    from this hot, already-limited PCM.  What this asserts is that nothing
+    downstream treats that artifact differently from a nominal one:
+
+    * the program mux stream-copies it.  ``build_video_from_source_args`` emits
+      ``-c:a copy`` (loudness_ride.py:1027), so the program's audio stream
+      reports the artifact's own bitrate -- ~256k, NOT the profile's 192k, which
+      is what a re-encode would have left there.  Nothing decodes and re-encodes
+      the audio on this path.
+    * the product's own acceptance surfaces give it the same answers: the
+      decodability probe answers ``True`` and
+      ``SourcePreparer._prepared_segment_rejection`` (the U36 item 7 gate every
+      prepared segment passes) returns ``None``.
+    * the loudness gate returns the same verdict, and the same level within the
+      gate's own tolerance.
+
+    Neither program is at the -24 LUFS target: the material is hot by
+    construction, which is the only condition under which the guard reaches for
+    the encoder at all.  The claim is that the bitrate changes neither the
+    verdict nor the delivered level -- not that either artifact passes the gate.
+    """
+    profile = _config().canonical_profile
+    params = _guard_params()
+    arms = _guard_arms(profile)[:2]
+    nominal_label, variant_label = arms[0][0], arms[1][0]
+    pcm = _guard_material(tmp_path, amplitude=1.0)
+
+    artifacts: dict[str, Path] = {}
+    for label, variant in arms:
+        artifact = tmp_path / f"artifact-{label.replace(' ', '_')}.ts"
+        lr.run_reencode(
+            pcm_path=pcm,
+            output_path=artifact,
+            trim_db=0.0,
+            params=params,
+            profile=profile,
+            variant=variant,
+            timeout_s=_GUARD_TIMEOUT_S,
+        )
+        artifacts[label] = artifact
+
+    programs: dict[str, Path] = {}
+    program_bitrates: dict[str, int] = {}
+    artifact_bitrates: dict[str, int] = {}
+    for label, _ in arms:
+        artifact = artifacts[label]
+        segment = EgressSourceSegment(
+            label=f"{label} airing", path=str(real_asset), duration_seconds=_ASSET_DURATION_S
+        )
+        program = tmp_path / f"program-{label.replace(' ', '_')}.ts"
+        result = run_ffmpeg(
+            lr.build_video_from_source_args(
+                source_path=real_asset,
+                audio_path=artifact,
+                output_path=program,
+                segment=segment,
+                profile=profile,
+            ),
+            timeout=_GUARD_TIMEOUT_S,
+        )
+        assert result.returncode == 0, result.stderr
+        programs[label] = program
+        artifact_bitrates[label] = _audio_bit_rate_bps(artifact)
+        program_bitrates[label] = _audio_bit_rate_bps(program)
+
+    # The two artifacts really are two bitrates, and the nominal's is the profile's.
+    assert artifact_bitrates[variant_label] > artifact_bitrates[nominal_label] * 1.2, (
+        artifact_bitrates
+    )
+    assert artifact_bitrates[nominal_label] == pytest.approx(
+        profile.audio_bitrate_kbps * 1000, rel=0.1
+    ), artifact_bitrates
+
+    # The mux copied the artifact's audio, whatever its bitrate: the program's
+    # audio stream reports the artifact's bitrate, and for the variant that is
+    # not the profile's 192k (which is what a re-encode would have produced).
+    for label, _ in arms:
+        assert program_bitrates[label] == pytest.approx(artifact_bitrates[label], rel=0.02), (
+            label,
+            program_bitrates,
+            artifact_bitrates,
+        )
+    assert program_bitrates[variant_label] > profile.audio_bitrate_kbps * 1000 * 1.2, (
+        program_bitrates
+    )
+
+    gates = {}
+    for label, _ in arms:
+        program = programs[label]
+        assert probe_has_decodable_stream(program) is True
+        emitted = EgressSourceSegment(
+            label=f"{label} emitted", path=str(program), duration_seconds=_ASSET_DURATION_S
+        )
+        assert SourcePreparer._prepared_segment_rejection(emitted) is None
+        gates[label] = check_streaming_loudness(
+            media_path=program, target_lufs=_TARGET_LUFS, tolerance_lufs=_TOLERANCE_LUFS
+        )
+
+    assert gates[variant_label].status == gates[nominal_label].status, gates
+    assert gates[nominal_label].measured_lufs is not None, gates
+    assert gates[variant_label].measured_lufs is not None, gates
+    assert (
+        abs(gates[variant_label].measured_lufs - gates[nominal_label].measured_lufs)
+        <= _TOLERANCE_LUFS
+    ), gates
