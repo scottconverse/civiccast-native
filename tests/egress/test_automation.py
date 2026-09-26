@@ -468,6 +468,42 @@ class TestGstRolloverLeadCoversPreparationTimeout:
         assert boundaries == [end]
         assert _pending_actions(store, "public") == ["reload"]
 
+    def test_a_plan_shorter_than_the_lead_dispatches_as_soon_as_it_settles(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """BETA.10 U41 (live 2026-09-25, education 23:53:17 -> 23:54:41). The
+        plan the engine took air with at 23:53:17 had about 83s left in it --
+        the automation logged "the live plan ends in 80s" at 23:53:28 -- far
+        shorter than the 690s lead, so ``trigger_at`` clamps to
+        ``last_segment_start_at``: the next rollover is due the moment the
+        previous one SETTLED, not 690s before an EOS that is only 83s away.
+
+        The D43 cadence floor could still hold that recovery back. It is
+        sized to the plan now ON AIR and measured from the PREVIOUS dispatch,
+        so a plan that took air shortly after its predecessor's rollover was
+        issued can be throttled for up to half its own life -- here the floor
+        is ``min(300, 0.5 * 600) = 300s``, the plan has 200s of runway left,
+        and the preparation it needs is bounded at twice the 300s timeout. An
+        inside-the-lead rollover is recovery, not cadence, and must go out on
+        the tick it is due."""
+
+        monkeypatch.delenv(self._LEAD_ENV, raising=False)
+        monkeypatch.setenv(self._PREP_ENV, "300")
+        service, store, boundaries = self._service((600.0,))
+        end = _NOW + timedelta(seconds=600)
+
+        service.run_once(now=_NOW)  # establish the horizon; a fresh plan never dispatches
+        assert boundaries == []
+
+        # The previous plan's own rollover was dispatched moments ago, so the
+        # 600s plan on air is inside its cadence floor for another ~300s.
+        service._rollover_dispatched_at["public"] = service._monotonic()
+
+        service.run_once(now=end - timedelta(seconds=200))
+
+        assert boundaries == [end]
+        assert _pending_actions(store, "public") == ["reload"]
+
 
 class TestRolloverLeadDeferWatchdogCeiling:
     """BETA.10 U03: the rollover lead is bounded above by something the

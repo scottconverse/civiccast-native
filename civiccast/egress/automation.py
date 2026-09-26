@@ -1975,6 +1975,7 @@ class ChannelAutomationService:
             last_segment_start_at=last_segment_start_at,
             min_lead_seconds=self._rollover_min_lead_seconds(planned_seconds),
         )
+        inside_lead_recovery = False
         if self._boundary_source_plan_provider is not None:
             # One scheduled item per plan: give short items their whole life
             # for preparation (the ``last_segment_start_at`` clamp below), for
@@ -1984,14 +1985,28 @@ class ChannelAutomationService:
             # able to finish and settle before the outgoing pipeline reaches
             # EOS, or the channel reaches EOS with nothing armed (2026-09-24
             # 13:28:25, public). See ``_rollover_lead_seconds``.
+            lead_seconds = self._rollover_lead_seconds()
             trigger_at = max(
                 last_segment_start_at,
-                plan_end_at - timedelta(seconds=self._rollover_lead_seconds()),
+                plan_end_at - timedelta(seconds=lead_seconds),
+            )
+            # BETA.10 U41 (live 2026-09-25, education 23:53:17 -> 23:54:41):
+            # a plan whose whole life is SHORTER than the lead can never be
+            # armed ahead of its own start, so the clamp above collapses the
+            # trigger to ``last_segment_start_at`` -- the instant the previous
+            # rollover settled. That dispatch is recovery (less than a lead of
+            # runway remained the moment the plan took air), not cadence, and
+            # the D43 floor below is measured from the PREVIOUS dispatch while
+            # being sized to the plan now on air: it can hold the recovery
+            # back for up to half the remaining plan. Exempt it exactly like
+            # the B2 retry path, which is exempt for the same reason.
+            inside_lead_recovery = plan_end_at - last_segment_start_at < timedelta(
+                seconds=lead_seconds
             )
         if now < trigger_at:
             return  # not yet at the boundary-aligned trigger point
 
-        if not retrying_undelivered and not stale_horizon_recovery:
+        if not retrying_undelivered and not stale_horizon_recovery and not inside_lead_recovery:
             # D43 cadence floor, D45 fix: never dispatch rollovers for one
             # channel faster than _rollover_min_interval_seconds(planned_seconds)
             # apart -- sized to the plan actually on air, not a fixed
@@ -2151,6 +2166,21 @@ class ChannelAutomationService:
             (plan_end_at - now).total_seconds(),
             "filler" if force_fallback else "extended schedule",
         )
+        if inside_lead_recovery:
+            # BETA.10 U41: say so explicitly. The 2026-09-25 education dark
+            # window read "the live plan ends in 80s" with no indication that
+            # this was the plan's WHOLE life, not a mistimed dispatch -- the
+            # rollover was issued as early as it could be, and the remaining
+            # plan was simply shorter than the lead the preparation needs.
+            # Operators (and the next incident reader) need that distinction.
+            _LOG.info(
+                "Channel automation rollover for %s was issued as soon as the previous "
+                "plan settled: the plan on air is %.0fs long, shorter than the %.0fs "
+                "lead a preparation may need -- there is no earlier moment to dispatch.",
+                channel_id,
+                (plan_end_at - last_segment_start_at).total_seconds(),
+                lead_seconds,
+            )
 
     def _reestablish_plan_horizon(
         self,
