@@ -723,6 +723,139 @@ def test_window_any_unverified_segment_forces_unverified(monkeypatch: pytest.Mon
 
     assert result["caption_decode_back"]["status"] == verify.Verdict.UNVERIFIED
 
+
+def test_window_captures_the_whole_span_before_decoding_any_of_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The relay rotated the live tail away while ffmpeg was decoding the older ones.
+
+    Observed live 2026-09-26 (rung 8h-post-u47, verify-09 at 20:57Z): 5 of the 30
+    window segments were the newest that still lived in the channel dir
+    (`from_live: 5`), and all 5 came back "could not be copied out of the live
+    window (copy race)" -- the loop decoded the 25 older segments first, the relay
+    keeps only ~7 (~14 s), and by the time it reached the live tail they were
+    gone.  The whole 60 s span then reported UNVERIFIED on all three channels.
+    Copying the span costs about a second; decoding it does not, so the capture
+    has to finish first.
+    """
+
+    root, keep_root, names = _rotated_channel(tmp_path, emitted=40, live_segments=7)
+    _write_keep_heartbeat(keep_root, age=1.0)
+    channel = root / "public"
+    keep = verify.resolve_caption_keep(keep_root, requested=True)
+
+    def rotating_decode(path):
+        # The relay rotating its window out: whatever is still in the channel dir
+        # is deleted as soon as the first decode starts.
+        for stale in channel.glob("seg*.ts"):
+            stale.unlink()
+        return {
+            "status": verify.Verdict.PASS,
+            "detail": "ok",
+            "decoded_text_present": True,
+            "decoded_text_bytes": 5,
+            "decoded_text_sha256": "deadbeef",
+            "decoded_cue_count": 1,
+        }
+
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"}
+    )
+    monkeypatch.setattr(verify, "_decode_captions", rotating_decode)
+    _stub_all_av(monkeypatch)
+
+    result = verify.verify_channel(
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
+        caption_keep=keep,
+    )
+
+    decode_back = result["caption_decode_back"]
+    assert result["caption_window"]["from_live"] == 5
+    # every segment is still decoded, in window order, and the live tail is read
+    # from the live file (which is deleted before any of them is decoded)
+    assert len(decode_back["per_segment"]) == 30
+    assert decode_back["status"] == verify.Verdict.PASS
+    assert decode_back["per_segment"][0]["segment"] == names[8]
+    assert decode_back["per_segment"][0]["captured_from"] == "keep"
+    assert decode_back["per_segment"][-1]["captured_from"] == "live"
+
+
+def test_window_falls_back_to_the_keeper_copy_when_the_live_segment_goes_away(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A live segment that rotates away between the listing and the copy is still
+    proven from the keeper's copy of the same name.
+
+    The keeper only ever copies FINISHED segments, so its copy is the same bytes
+    the relay published; with the live file gone, decoding that copy is evidence
+    and a UNVERIFIED verdict would be a hole the tool made for itself.
+    """
+
+    root, keep_root, names = _rotated_channel(tmp_path, emitted=40, live_segments=7)
+    _write_keep_heartbeat(keep_root, age=1.0)
+    channel = root / "public"
+    keep_channel = keep_root / "public"
+    victim = names[35]
+    # The keeper had already copied this one, at the same emission time ...
+    stamp = (channel / victim).stat().st_mtime
+    _touch_segments(keep_channel, [victim])
+    os.utime(keep_channel / victim, (stamp, stamp))
+    keep = verify.resolve_caption_keep(keep_root, requested=True)
+    real_snapshot = verify._snapshot_segment
+
+    def yanking_snapshot(src: Path, scratch: Path) -> tuple[Path | None, str | None]:
+        # ... and the relay deletes the live file between the listing and the copy.
+        # Scoped to the caption capture: the tool also snapshots segments while it
+        # probes them, and a file deleted at THAT point would be gone before the
+        # window was even chosen -- which tests the window, not the fallback.
+        if (
+            Path(scratch).name == "caption"
+            and Path(src).parent == channel
+            and Path(src).name == victim
+        ):
+            (channel / victim).unlink(missing_ok=True)
+        return real_snapshot(src, scratch)
+
+    monkeypatch.setattr(verify, "_snapshot_segment", yanking_snapshot)
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"}
+    )
+    monkeypatch.setattr(
+        verify,
+        "_decode_captions",
+        lambda *a, **k: {
+            "status": verify.Verdict.PASS,
+            "detail": "ok",
+            "decoded_text_present": True,
+            "decoded_text_bytes": 5,
+            "decoded_text_sha256": "deadbeef",
+            "decoded_cue_count": 1,
+        },
+    )
+    _stub_all_av(monkeypatch)
+
+    result = verify.verify_channel(
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
+        caption_keep=keep,
+    )
+
+    decode_back = result["caption_decode_back"]
+    per_segment = {item["segment"]: item for item in decode_back["per_segment"]}
+    assert len(per_segment) == 30
+    assert decode_back["status"] == verify.Verdict.PASS
+    assert per_segment[victim]["captured_from"] == "keep"
+
+
 def test_decoder_absent_fails_closed_through_verify_channel(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

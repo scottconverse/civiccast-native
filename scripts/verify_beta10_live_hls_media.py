@@ -881,7 +881,9 @@ def caption_window(
 
     The result says where the window came from (`source`, `from_keep`, `from_live`,
     the heartbeat age), and each segment carries the `path` it was actually read
-    from, so a consumer decodes the copy rather than the live name.
+    from plus that same per-segment `source` (`live` | `keep`), so a consumer
+    decodes the copy rather than the live name -- and knows which of its segments
+    are still on air and can rotate away mid-run.
     """
 
     stale_ns = int(CAPTION_WINDOW_STALENESS_SECONDS * 1_000_000_000)
@@ -963,10 +965,11 @@ def caption_window(
             {
                 "segment": name,
                 "path": str(path),
+                "source": "keep" if kept else "live",
                 "mtime_ns": mtime_ns,
                 "emitted_utc": datetime.fromtimestamp(mtime_ns / 1e9, tz=UTC).isoformat(),
             }
-            for mtime_ns, _sequence, name, path, _kept in chosen
+            for mtime_ns, _sequence, name, path, kept in chosen
         ],
         "span_seconds": round(span, 3),
         "newest_excluded": newest_excluded,
@@ -1969,29 +1972,61 @@ def _verify_channel_body(
             "per_segment": [],
         }
     else:
-        # Copy each finished segment into private scratch FIRST (the live path is
-        # read-once and may be rotated away), then decode the copy.  Every segment
-        # in the span is decoded: one cue anywhere is a pass, and a segment that
-        # could not be captured keeps the span UNVERIFIED rather than silently
-        # dropping out of it.
+        # CAPTURE FIRST, DECODE SECOND (U50, corrected 2026-09-26).  Every finished
+        # segment in the span is copied into private scratch before any of them is
+        # decoded: the live path is read-once and may be rotated away.  The relay
+        # keeps only ~7 segments (~14 s) and rotates the tail away as it writes, so
+        # a capture interleaved with decoding loses whatever the decoder was slow
+        # to reach -- observed live on rung 8h-post-u47, every channel's 5
+        # oldest-rotated (`from_live`) segments came back "could not be copied out
+        # of the live window (copy race)", which forced the whole 60 s span to
+        # UNVERIFIED.  Copying the span costs about a second; decoding it does not.
+        # One cue anywhere is still a pass, and a segment that could not be
+        # captured at all keeps the span UNVERIFIED rather than silently dropping
+        # out of it.
         caption_dir = scratch / "caption"
         caption_dir.mkdir(parents=True, exist_ok=True)
-        for item in window["segments"]:
+        # The volatile segments (the ones still in the channel dir) are captured
+        # FIRST, newest first: they are what the relay is about to delete, and the
+        # keeper's copies are not going anywhere.
+        capture_order = sorted(
+            window["segments"], key=lambda item: (item["source"] != "live", -item["mtime_ns"])
+        )
+        window_order = {item["segment"]: index for index, item in enumerate(window["segments"])}
+        captures: list[tuple[str, Path | None, str]] = []
+        for item in capture_order:
             # The path the window actually chose: a live segment, or the keeper's
             # copy of one the relay has already deleted (U50).
+            captured_from = item["source"]
             snapshot, _digest = _snapshot_segment(Path(item["path"]), caption_dir)
+            if snapshot is None and captured_from == "live" and keep_channel_dir is not None:
+                # The live file rotated away between the listing and the copy.
+                # The keeper's copy of the SAME NAME is the same finished segment
+                # the relay published, so it is evidence of the span; without the
+                # fallback the tool would report a hole it made for itself.
+                stand_in = keep_channel_dir / item["segment"]
+                if stand_in.is_file():
+                    snapshot, _digest = _snapshot_segment(stand_in, caption_dir)
+                    if snapshot is not None:
+                        captured_from = "keep"
+            captures.append((item["segment"], snapshot, captured_from))
+        captures.sort(key=lambda row: window_order[row[0]])
+        for name, snapshot, captured_from in captures:
             if snapshot is None:
                 per_segment_captions.append(
                     {
-                        "segment": item["segment"],
+                        "segment": name,
                         "status": Verdict.UNVERIFIED,
                         "detail": "segment could not be copied out of the live window (copy race)",
                         "decoded_cue_count": None,
+                        "captured_from": captured_from,
                     }
                 )
                 continue
             decoded = _decode_captions(snapshot)
-            per_segment_captions.append({"segment": item["segment"], **decoded})
+            per_segment_captions.append(
+                {"segment": name, "captured_from": captured_from, **decoded}
+            )
         cue_count = sum(int(item.get("decoded_cue_count") or 0) for item in per_segment_captions)
         unverified_count = sum(
             1 for item in per_segment_captions if item["status"] == Verdict.UNVERIFIED
