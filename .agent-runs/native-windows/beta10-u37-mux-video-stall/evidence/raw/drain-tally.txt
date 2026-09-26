@@ -1,0 +1,73 @@
+### grep -h "rebase-observer-armed|rebase-drain-wait|rebase-drain-drained|rebase drain did not empty"
+### over every final-candidate run's own worker.log in the scratch tree, one block per run.
+### Final candidate = x1 (2 runs), x4green (6), x4lag (6), x4pc (1) = 15 runs.  The scratch
+### tree (and these logs) is deleted at the end of the slice; this file is the committed tally
+### behind reports/U37.md section 3 and evidence/README.md's classification table.
+
+-- x1/run1
+CTRL reload diagnostic: stage=rebase-drain-drained waited=2.109s reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_65=2,sink_66=4 reload_id=1
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+-- x1/run2
+CTRL reload diagnostic: stage=rebase-drain-drained waited=2.141s reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_65=2,sink_66=4 reload_id=1
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+-- x4green/run1
+CTRL reload diagnostic: stage=rebase-drain-drained waited=1.187s reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=6 reload_id=1
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+-- x4green/run2
+CTRL reload diagnostic: stage=rebase-drain-drained waited=1.157s reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=6 reload_id=1
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+-- x4green/run3
+CTRL reload diagnostic: stage=rebase-drain-drained waited=1.157s reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=5 reload_id=1
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+-- x4green/run4
+CTRL reload diagnostic: stage=rebase-drain-drained waited=1.125s reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=5 reload_id=1
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+-- x4green/run5
+CTRL reload diagnostic: stage=rebase-drain-drained waited=1.157s reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=6 reload_id=1
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+-- x4green/run6
+CTRL reload diagnostic: stage=rebase-drain-drained waited=1.141s reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=6 reload_id=1
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+-- x4lag/run1
+CTRL reload diagnostic: stage=rebase-drain-drained waited=1.156s reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=6 reload_id=1
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+-- x4lag/run2
+CTRL reload diagnostic: stage=rebase-drain-drained waited=1.203s reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=6 reload_id=1
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+-- x4lag/run3
+CTRL reload diagnostic: stage=rebase-drain-drained waited=1.141s reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=6 reload_id=1
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+-- x4lag/run4
+CTRL reload diagnostic: stage=rebase-drain-drained waited=1.172s reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=6 reload_id=1
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+-- x4lag/run5
+CTRL reload diagnostic: stage=rebase-drain-drained waited=1.140s reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=6 reload_id=1
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+-- x4lag/run6
+CTRL reload diagnostic: stage=rebase-drain-drained waited=1.125s reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=6 reload_id=1
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+-- x4pc/run1
+CTRL reload diagnostic: stage=rebase-drain-drained waited=1.188s reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=6 reload_id=1
+CTRL reload diagnostic: stage=rebase-observer-armed pads=sink_65,sink_66 observed=sink_65,sink_66 reload_id=1
+
+### totals over the 15 final-candidate runs
+###   rebase-observer-armed : 15
+###   rebase-drain-wait    : 15
+###   rebase-drain-drained : 15
+###   WARN 3.0s deadline   : 0
+###   drained times (s)    : 1.125 1.125 1.140 1.141 1.141 1.156 1.157 1.157 1.157 1.172 1.187 1.188 1.203 2.109 2.141 

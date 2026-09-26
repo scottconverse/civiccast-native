@@ -1,0 +1,21 @@
+### python sumlag.py raw/lag-all.txt   (instruments/sumlag.py)
+total pid-rows: 78
+
+x1         rows=4   worst_lag=0.000000 @x1\run1\out.ts  sum_over1.0=0
+x2         rows=24  worst_lag=9.429333 @x2\run8\out.ts  sum_over1.0=506
+x4base     rows=6   worst_lag=0.042656 @x4base\run3\out.ts  sum_over1.0=0
+x4dbg      rows=12  worst_lag=9.408000 @x4dbg\run3\out.ts  sum_over1.0=506
+x4green    rows=12  worst_lag=0.726678 @x4green\run1\out.ts  sum_over1.0=0
+x4lag      rows=12  worst_lag=0.705333 @x4lag\run4\out.ts  sum_over1.0=0
+x4pbase    rows=6   worst_lag=0.064000 @x4pbase\run3\out.ts  sum_over1.0=0
+x4pc       rows=2   worst_lag=0.693344 @x4pc\run1\out.ts  sum_over1.0=0
+
+healthy pid-rows: 74
+worst healthy: 0.726678s @ x2\run2\out.ts (video)
+healthy rows with any emission >1.0s: []
+
+rows lagging >2.0s: 4
+   x2\run8\out.ts         video    max_lag=9.429333s >1.0:253 >2.0:223 >5.0:133
+   x2\run10\out.ts        video    max_lag=9.408000s >1.0:253 >2.0:223 >5.0:133
+   x4dbg\run3\out.ts      video    max_lag=9.408000s >1.0:253 >2.0:223 >5.0:133
+   x4dbg\run6\out.ts      video    max_lag=9.408000s >1.0:253 >2.0:223 >5.0:133

@@ -114,6 +114,24 @@ The five files under `raw/logs/` are committed with `git add -f`: the repo's `.g
 carries a blanket `logs/` rule that would otherwise silently swallow them, and the paragraphs
 above cite them.
 
+`raw/drain-tally.txt` — every final-candidate run's own `worker.log` lines for the drain gate,
+one block per run plus a totals block: **15 armed, 15 waits, 15 drained, 0 deadline WARNs**,
+drained times `1.125 1.125 1.140 1.141 1.141 1.156 1.157 1.157 1.157 1.172 1.187 1.188 1.203
+2.109 2.141` s. Wait shapes: 11× `sink_66=6`, 2× `sink_66=5`, 2× `sink_65=2,sink_66=4`. (The
+scratch logs it was built from are deleted with `%TEMP%\u37`, so this file *is* the record.)
+
+`raw/ends-shapes.txt` — each run's declared outgoing-tail `ends=[video=,audio=]` crossed with
+its own `out.ts` verdict. It is the race, run by run: on the base engine the shape
+`ends=[video=9.867,audio=10.581]` occurs **8** times and collapses **3** of them, and
+`ends=[video=9.900,audio=10.581]` occurs **4** times and collapses **1**; against **0 collapses
+in 11 final-candidate runs carrying exactly those two shapes.**
+
+`raw/lag-summary.txt` — `instruments/sumlag.py` over `raw/lag-all.txt`: 78 pid-rows, **74
+healthy**, worst healthy **0.726678 s** (at the switch emission, i.e. the media's own A/V end
+offset), **no healthy row with any emission >1.0 s behind**, and 4 rows over 2.0 s — all four
+the video of a collapsed capture. By build: base-only 42 rows (worst healthy 0.149322 s),
+discarded fence 6, final candidate 30 (worst 0.726678 s).
+
 Bound (`raw/ref-lag.txt`, `raw/lag-all.txt`): worst healthy airing lag **0.726678 s**; no healthy
 stream-recording ever emitted a PES more than 1.0 s behind; the four collapses sit at
 **9.408000–9.429333 s**, each with 253 of ~1720 emissions over 1.0 s and 133 over 5.0 s.

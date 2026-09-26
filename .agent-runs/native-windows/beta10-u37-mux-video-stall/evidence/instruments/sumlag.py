@@ -1,14 +1,18 @@
-"""U37 -- summarise lag-all.txt into the report's authoritative figures."""
+"""U37 -- summarise lag-all.txt into the report's authoritative figures.
+
+Usage:  python sumlag.py [lag-all.txt]     (defaults to the sibling file)"""
 
 from __future__ import annotations
 
 import re
+import sys
 from collections import defaultdict
 from pathlib import Path
 
 SEP = chr(92)  # backslash
 
-lines = Path(__file__).with_name("lag-all.txt").read_text(encoding="utf-8").splitlines()
+src = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).with_name("lag-all.txt")
+lines = src.read_text(encoding="utf-8").splitlines()
 cur = None
 rows = []
 for ln in lines:
