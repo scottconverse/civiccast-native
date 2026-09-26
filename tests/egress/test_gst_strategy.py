@@ -17,6 +17,7 @@ import pytest
 
 from civiccast.egress.encoder_strategy import EncoderStartRequest
 from civiccast.egress.errors import EncoderUnavailableError
+from civiccast.egress.gst import reload_policy as reload_policy_module
 from civiccast.egress.gst import strategy as strategy_module
 from civiccast.egress.gst.control import (
     align_live_caption_pts_ms,
@@ -1364,6 +1365,154 @@ def test_close_channel_closes_server_and_forgets_channel(tmp_path) -> None:
     assert servers[0].closed is True
     # idempotent: closing an already-forgotten channel is a no-op.
     strategy.close_channel("ch1")
+
+
+# ---------------------------------------------------------------------------
+# U41 work item 1: the ACTIVE-channel launch declares the worker PERSISTENT.
+#
+# The U41 plan-EOS slate hold is right for a live channel and wrong for a finite
+# run whose only shutdown IS the plan ending (the beta.5 pin,
+# tests/egress/test_gst_engine_caption_flow_native.py). The worker cannot tell
+# the two apart from inside (preparation runs in the daemon; the control
+# vocabulary is a closed swap/reload/caption/stop), so the daemon's launcher --
+# the single point where the worker's environment is built, and the launcher
+# every production channel uses -- states it in the child's environment.
+# ---------------------------------------------------------------------------
+
+
+# The worker-persistent flag name, read from the product where the product defines it.
+# The fallback literal covers only the pre-change (RED) run: the constant is added
+# together with the behaviour. It can never mask a name mismatch, because as soon as
+# ``reload_policy`` defines the constant the module attribute wins -- setter
+# (``strategy._default_worker_launcher``) and reader (``worker.main()``) are then held
+# to one name by the product, not by a copy of it in this test.
+_WORKER_FLAG = getattr(reload_policy_module, "WORKER_PERSISTENT_ENV", "CIVICAST_WORKER_PERSISTENT")
+
+
+class _SpawnRecorder:
+    """Stand-in for the spawned worker process, plus the kwargs Popen got.
+
+    Records the REAL ``_default_worker_launcher``'s ``env`` (the dict the station's
+    worker actually receives) while doing no process work at all. ``terminate`` /
+    ``kill`` / ``wait`` exist because ``FfmpegProcessHandle.terminate`` walks all
+    three when a strategy channel is closed.
+    """
+
+    def __init__(self, argv: object, kwargs: dict[str, object]) -> None:
+        self.argv = argv
+        self.kwargs = kwargs
+        self.pid = 4321
+        self.returncode = 0
+
+    def poll(self) -> int | None:
+        return None
+
+    def terminate(self) -> None:
+        pass
+
+    def kill(self) -> None:
+        pass
+
+    def wait(self, timeout: float | None = None) -> int:
+        return 0
+
+
+def _recording_popen(monkeypatch: pytest.MonkeyPatch) -> list[_SpawnRecorder]:
+    spawned: list[_SpawnRecorder] = []
+
+    def fake_popen(argv, **kwargs):  # type: ignore[no-untyped-def]
+        recorder = _SpawnRecorder(argv, dict(kwargs))
+        spawned.append(recorder)
+        return recorder
+
+    monkeypatch.setattr(strategy_module.subprocess, "Popen", fake_popen)
+    return spawned
+
+
+def test_default_worker_launcher_marks_the_worker_persistent(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The launcher the daemon uses for a live channel sets CIVICAST_WORKER_PERSISTENT=1.
+
+    Asserted against the real launcher with only ``subprocess.Popen`` replaced, so
+    the env dict under test is the one the station's worker receives -- not a
+    reimplementation of it. ``SWAPS``/``INTERVAL`` are set in the parent on
+    purpose: the same dict strips them (audit M4), and the two behaviours have to
+    hold together, since an unscrubbed ``SWAPS`` would put the worker in
+    fixed-swap mode and drop the hold regardless of the persistent flag.
+
+    The constant comes from the product (``reload_policy.WORKER_PERSISTENT_ENV``,
+    the same name ``worker.main()`` reads), never a typed literal: a divergence
+    between setter and reader would disable the hold only in the field.
+    """
+    monkeypatch.setenv("SWAPS", "3")
+    monkeypatch.setenv("INTERVAL", "7")
+    spawned = _recording_popen(monkeypatch)
+
+    handle = strategy_module._default_worker_launcher(
+        ["python", "worker.py", "graph.json"], tmp_path / "out.log", tmp_path / "err.log"
+    )
+    handle.close()
+
+    assert len(spawned) == 1
+    env = cast("dict[str, str]", spawned[0].kwargs["env"])
+    assert env.get(_WORKER_FLAG) == "1"
+    assert "SWAPS" not in env
+    assert "INTERVAL" not in env
+    assert env["PATH"] == os.environ["PATH"]  # the rest of the environment is inherited
+
+
+def test_default_worker_launcher_overrides_an_inherited_persistent_flag(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The launcher MARKs the child; it does not forward the daemon's own environment.
+
+    The flag means "the process launching you runs a live channel", and this launcher
+    is that process -- so the child's value is the launcher's decision, not the
+    daemon's ambient environment. A ``setdefault``-style implementation would let a
+    station (or a service wrapper) with the variable set to ``0`` export itself into
+    every worker it spawns, arming or disarming the hold by accident.
+    """
+    monkeypatch.setenv(_WORKER_FLAG, "0")
+    spawned = _recording_popen(monkeypatch)
+
+    handle = strategy_module._default_worker_launcher(
+        ["python", "worker.py", "graph.json"], tmp_path / "out.log", tmp_path / "err.log"
+    )
+    handle.close()
+
+    env = cast("dict[str, str]", spawned[0].kwargs["env"])
+    assert env.get(_WORKER_FLAG) == "1"  # set BY the launcher, for its own child
+
+
+@_WINDOWS_PIPE_ONLY
+def test_active_channel_start_spawns_the_worker_persistent(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end through the ACTIVE-channel path: start() -> the real launcher -> "1".
+
+    ``GstPlayoutStrategy.start()`` is what the daemon calls for an ON_AIR channel, and
+    with no ``worker_launcher`` injected it uses ``_default_worker_launcher`` -- the
+    path a station actually runs. Every other test in this file injects a launcher,
+    so this is the only one that proves the production wiring carries the flag; if
+    it ever stopped, the field channel would exit at plan EOS with the hold unarmed
+    and every other test in the suite would still pass.
+    """
+    servers: list[_ImmediateAckServer] = []
+    spawned = _recording_popen(monkeypatch)
+
+    strategy = GstPlayoutStrategy(
+        python_executable="python3",
+        pipe_channel_factory=_real_channel_factory(servers),
+    )
+    result = strategy.start(_start_request(tmp_path))
+    try:
+        assert len(spawned) == 1
+        env = cast("dict[str, str]", spawned[0].kwargs["env"])
+        assert env.get(_WORKER_FLAG) == "1"
+    finally:
+        strategy.close_channel("ch1")
+        result.process.close()  # the launcher's own stdout/stderr files
 
 
 # --- Native-Windows encoder pre-flight (Story 4) -----------------------------------
