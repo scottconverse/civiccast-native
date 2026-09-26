@@ -279,3 +279,90 @@ def test_load_caption_cues_does_not_retry_a_non_sharing_read_failure(
 
     assert len(attempts) == 1
     assert sleeps == []
+
+
+def test_parse_caption_cues_reads_sidecar_clock_hours_past_one_hundred(tmp_path: Path) -> None:
+    """A station runs 24/7 and the live sidecar's program clock is an absolute,
+    unbounded second count -- ``format_webvtt_timestamp`` renders it with
+    ``divmod(total_ms, 3_600_000)``, so the hours field is only two digits wide
+    for the first 100 hours of uptime (U46, 2026-09-26).
+
+    The measured live failure: public's sidecar at 112:59:50.000 matched 0 of its
+    2088 timing windows, ``load_caption_cues_from_timed_text`` returned 0 cues,
+    and the channel emitted a caption-free stream while its sidecar grew. The
+    same defect sat one step behind on government (87 h) and education (91 h).
+    """
+    sidecar = tmp_path / "active.vtt"
+    sidecar.write_text(
+        """WEBVTT
+
+public-cue-101697
+112:59:50.000 --> 112:59:54.240
+Good evening, the public meeting is called to order.
+
+public-cue-101698
+116:14:40.310 --> 116:14:41.450
+Motion carries.
+""",
+        encoding="utf-8",
+    )
+
+    cues = load_caption_cues_from_timed_text(sidecar, source_id="public")
+
+    assert [cue.cue_id for cue in cues] == ["public-public-cue-101697", "public-public-cue-101698"]
+    assert cues[0].start_seconds == 112 * 3600 + 59 * 60 + 50.0
+    assert cues[0].end_seconds == 112 * 3600 + 59 * 60 + 54.24
+    assert cues[1].start_seconds == 116 * 3600 + 14 * 60 + 40.310
+    assert cues[1].end_seconds == 116 * 3600 + 14 * 60 + 41.450
+    assert cues[1].text == "Motion carries."
+
+
+def test_parse_caption_cues_crosses_the_hundred_hour_boundary() -> None:
+    """The cliff is exact: 99:59:59 matches, 100:00:00 did not. Ninety-nine hours
+    is the last sidecar state that produced embedded captions; one second later
+    the channel went dark for viewers with no error anywhere."""
+    cues = parse_caption_cues_from_timed_text(
+        """WEBVTT
+
+cue-3580
+99:59:59.000 --> 99:59:59.920
+Last cue before the boundary.
+
+cue-3600
+100:00:00.000 --> 100:00:00.920
+First cue past the boundary.
+""",
+        source_id="public",
+    )
+
+    assert [cue.text for cue in cues] == [
+        "Last cue before the boundary.",
+        "First cue past the boundary.",
+    ]
+    assert cues[0].start_seconds == 359999.0
+    assert cues[1].start_seconds == 360000.0
+
+
+def test_parse_caption_cues_still_reads_two_digit_hours() -> None:
+    """The unbounded hours field must not regress the ordinary two-digit form
+    (both the WebVTT ``hh:mm:ss.mmm`` and the SRT ``h:mm:ss,mmm`` spellings)."""
+    cues = parse_caption_cues_from_timed_text(
+        """WEBVTT
+
+cue-a
+87:19:25.000 --> 87:19:29.240
+Government at hour eighty-seven.
+
+2
+1:02:03,400 --> 1:02:04,500
+SRT single-digit hour.
+""",
+        source_id="decoded-captions",
+    )
+
+    assert [cue.text for cue in cues] == [
+        "Government at hour eighty-seven.",
+        "SRT single-digit hour.",
+    ]
+    assert cues[0].start_seconds == 87 * 3600 + 19 * 60 + 25.0
+    assert cues[1].start_seconds == 3723.4

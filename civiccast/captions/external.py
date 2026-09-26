@@ -20,14 +20,17 @@ from civiccast.captions.review import (
 ExternalCaptionProtocol = Literal["cea-608-708", "srt", "webvtt"]
 
 PROOF_BOUNDARY = "external-caption-appliance-to-review-queue-no-hardware-control"
+# Hours are unbounded: an appliance streaming for more than 100 hours emits a
+# three-digit hours field, and bounding it at two digits rejects the whole
+# payload (see U46, 2026-09-26, for the same defect on the egress sidecar side).
 _TIMING_RE = re.compile(
-    r"(?P<start>\d{1,2}:\d{2}(?::\d{2})?[\.,]\d{3})\s*-->\s*"
-    r"(?P<end>\d{1,2}:\d{2}(?::\d{2})?[\.,]\d{3})"
+    r"(?P<start>\d+:\d{2}(?::\d{2})?[\.,]\d{3})\s*-->\s*"
+    r"(?P<end>\d+:\d{2}(?::\d{2})?[\.,]\d{3})"
 )
 _CEA_TIMING_RE = re.compile(
-    r"^\s*(?:\[)?(?P<start>\d{1,2}:\d{2}(?::\d{2})?[\.,]\d{3})\s*"
+    r"^\s*(?:\[)?(?P<start>\d+:\d{2}(?::\d{2})?[\.,]\d{3})\s*"
     r"(?:-->|-|\|)\s*"
-    r"(?P<end>\d{1,2}:\d{2}(?::\d{2})?[\.,]\d{3})(?:\])?\s*"
+    r"(?P<end>\d+:\d{2}(?::\d{2})?[\.,]\d{3})(?:\])?\s*"
     r"(?:\||:)?\s*(?P<text>.+?)\s*$"
 )
 
