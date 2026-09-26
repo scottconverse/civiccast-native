@@ -1,0 +1,12 @@
+### DISCARDED fence variant, x2/run3 -- the DROP build
+CTRL reload diagnostic: stage=u37-drain-trace waited=0.797s held=sink_66=5 reload_id=1
+CTRL reload diagnostic: stage=u37-drain-trace waited=0.828s held=sink_66=6 reload_id=1
+CTRL reload diagnostic: stage=u37-drain-trace waited=0.953s held=sink_66=5 reload_id=1
+CTRL reload diagnostic: stage=u37-drain-trace waited=1.016s held=sink_66=6 reload_id=1
+CTRL reload diagnostic: stage=u37-drain-trace waited=1.078s held=sink_66=3 reload_id=1
+CTRL reload diagnostic: stage=u37-drain-trace waited=1.109s held=sink_66=1 reload_id=1
+CTRL reload diagnostic: stage=u37-drain-trace waited=1.141s held=empty reload_id=1
+CTRL reload diagnostic: stage=rebase-fence-disarmed pad=sink_66 stream=audio arrived=47 reload_id=1
+
+### x2/_ref/green-worker.log -- the harm line
+stage=rebase-fence-disarmed pad=sink_66 stream=audio dropped=48 reload_id=1

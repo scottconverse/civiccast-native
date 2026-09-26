@@ -1,0 +1,45 @@
+### U37 focused RED -- the two touched test files against the BASE engine 5397c069,
+### with the HEAD test files overlaid into the extracted base tree.
+###
+### Command (cwd = C:\Users\scott\AppData\Local\Temp\u37\base-5397c069):
+###   python -m pytest tests/egress/test_gst_engine_reload_commit_ordering.py \
+###       tests/egress/test_gst_engine_first_output_timeout.py -q -p no:randomly
+###
+### Base tree: `git archive 5397c069 | tar -x -C %TEMP%\u37\base-5397c069`, then
+###   cp <worktree>/tests/egress/test_gst_engine_reload_commit_ordering.py .
+###   cp <worktree>/tests/egress/test_gst_engine_first_output_timeout.py .
+### Base engine identity (verified in this tree before the run):
+###   civiccast/egress/gst/engine.py  306504 bytes
+###   sha256 9175935425ff0d8fa7f86316152d8f73166fed083ae30203b579bbd5234eea23
+###
+### WHY THE RUN IS MADE FROM INSIDE THE BASE TREE: an earlier attempt selected the base
+### engine with `PYTHONPATH=<base tree>` while running pytest from the worktree, and it did
+### NOT do that -- `python -m pytest` puts the invocation cwd at sys.path[0], ahead of
+### PYTHONPATH, so `civiccast` resolved to the worktree and the run was green for the wrong
+### reason. Running from inside the base tree makes sys.path[0] the base tree; the traceback
+### line below is the proof of which engine file was actually imported.
+###
+### Output (tail; the first line is pytest's own traceback rendering of the imported module):
+
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\AppData\\Local\\Temp\\u37\\base-5397c069\\civiccast\\egress\\gst\\engine.py'>
+t          = 9
+tick       = <function test_per_stream_lag_must_be_continuous_to_be_judged.<locals>.tick at 0x0000016A45D511C0>
+
+tests\egress\test_gst_engine_first_output_timeout.py:1014: AttributeError
+---------------------------- Captured stderr call -----------------------------
+CTRL first-output: first buffer after 0.0s pid=38172
+CTRL output: 110 buffers (+10) since PLAYING [mux-in 5.0s: video=+0 audio=+0]
+CTRL output: 120 buffers (+20) since PLAYING [mux-in 5.0s: video=+0 audio=+0]
+=========================== short test summary info ===========================
+SKIPPED [1] tests\egress\test_gst_engine_reload_commit_ordering.py:3022: packaged GStreamer runtime not declared, so the real-pipeline half of the U16 diagnostics is NOT verified here -- set CIVICAST_GSTREAMER_RUNTIME_ROOT to the install root (e.g. C:\Program Files\CivicCast (Native)) to run it against the bundled runtime
+SKIPPED [1] tests\egress\test_gst_engine_reload_commit_ordering.py:3087: CIVICAST_GSTREAMER_RUNTIME_ROOT not declared, so the real-runtime half of these diagnostics is unverified on this host
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_u37_deferred_rebase_switch_waits_for_the_mux_pad_to_drain
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_u37_drain_deadline_switches_anyway_and_names_the_pad
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_u37_an_unreadable_pad_level_is_not_proven_empty
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_u37_without_a_timer_the_switch_is_unobserved_not_held
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_u37_arrival_observer_counts_and_never_drops
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_u37_observer_release_skips_a_probe_that_removed_itself
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_u37_observer_window_close_reports_what_it_counted
+FAILED tests/egress/test_gst_engine_first_output_timeout.py::test_per_stream_stall_judges_a_stream_that_keeps_advancing_but_runs_far_behind
+FAILED tests/egress/test_gst_engine_first_output_timeout.py::test_per_stream_lag_must_be_continuous_to_be_judged
+9 failed, 146 passed, 2 skipped in 4.89s

@@ -1,0 +1,400 @@
+........................................................................ [  3%]
+........................................................................ [  7%]
+........................................................................ [ 11%]
+........................................................................ [ 15%]
+.s...................................................................... [ 19%]
+........................................................................ [ 23%]
+........................................................................ [ 26%]
+........................................................................ [ 30%]
+........................................................................ [ 34%]
+........................................................................ [ 38%]
+.....................................................ss................. [ 42%]
+........................................................................ [ 46%]
+..........................................ss............................ [ 50%]
+.........FFFFFFF............sssssssssssssssssssssssssssssss............. [ 53%]
+........................................................................ [ 57%]
+.s.....................s.s...............s..................ss.......... [ 61%]
+........................................................................ [ 65%]
+........................................................................ [ 69%]
+.........ss............................................F................ [ 73%]
+........................................................................ [ 77%]
+........................................................................ [ 80%]
+........................................................................ [ 84%]
+........................................................................ [ 88%]
+........................................................................ [ 92%]
+...................................s.................................... [ 96%]
+..........................................................s........      [100%]
+================================== FAILURES ===================================
+_______ test_u37_deferred_rebase_switch_waits_for_the_mux_pad_to_drain ________
+
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\AppData\\Local\\Temp\\u37\\base-5397c069\\civiccast\\egress\\gst\\engine.py'>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001C8E523F350>
+capsys = <_pytest.capture.CaptureFixture object at 0x000001C8E5FFBE30>
+
+    def test_u37_deferred_rebase_switch_waits_for_the_mux_pad_to_drain(
+        engine_module: types.ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The switch is held back while the audio pad still holds the outgoing
+        tail, and completes on the first tick after that pad reports empty.
+    
+        RED at 5397c069: the selector was mutated inside ``_begin_reload_commit``
+        itself, with the outgoing tail still queued on the pad -- the exact state
+        that re-dated a stale frame by the rebase offset."""
+        recorder = _Recorder()
+        engine = _bare_engine_for_commit(engine_module, recorder)
+        pending, video_pad, audio_pad = _u37_rebase_pending(recorder)
+        engine._mux_input_pads = {"sink_65": video_pad, "sink_66": audio_pad}
+        engine._pending_reload = pending
+        armed = _u37_timeout_adds(monkeypatch, engine_module)
+    
+        engine._prepare_reload_handoff(pending)
+        engine._begin_reload_commit(pending)
+    
+>       assert "video_sel.set_property:active-pad=new-video" not in recorder.calls, recorder.calls
+E       AssertionError: ['add_probe:old-video:7:_drop_everything_probe', 'set_offset:new-video:1', 'set_offset:new-audio:1', 'add_probe:new-vi...dd_probe:new-audio:1:_report_new_leg_first_buffer', 'add_probe:new-video:1:_report_new_leg_selector_first_buffer', ...]
+E       assert 'video_sel.set_property:active-pad=new-video' not in ['add_probe:old-video:7:_drop_everything_probe', 'set_offset:new-video:1', 'set_offset:new-audio:1', 'add_probe:new-vi...dd_probe:new-audio:1:_report_new_leg_first_buffer', 'add_probe:new-video:1:_report_new_leg_selector_first_buffer', ...]
+E        +  where ['add_probe:old-video:7:_drop_everything_probe', 'set_offset:new-video:1', 'set_offset:new-audio:1', 'add_probe:new-vi...dd_probe:new-audio:1:_report_new_leg_first_buffer', 'add_probe:new-video:1:_report_new_leg_selector_first_buffer', ...] = <tests.egress.test_gst_engine_reload_commit_ordering._Recorder object at 0x000001C8E6040110>.calls
+
+armed      = []
+audio_pad  = <tests.egress.test_gst_engine_reload_commit_ordering._FakeDrainPad object at 0x000001C8E6040290>
+capsys     = <_pytest.capture.CaptureFixture object at 0x000001C8E5FFBE30>
+engine     = <civiccast.egress.gst.engine.GstPlayoutEngine object at 0x000001C8E6040080>
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\AppData\\Local\\Temp\\u37\\base-5397c069\\civiccast\\egress\\gst\\engine.py'>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001C8E523F350>
+pending    = {'txn_id': 41, 'new_leg_ready': False, 'holds_awaited': 2, 'held_pads': set(), ...}
+recorder   = <tests.egress.test_gst_engine_reload_commit_ordering._Recorder object at 0x000001C8E6040110>
+video_pad  = <tests.egress.test_gst_engine_reload_commit_ordering._FakeDrainPad object at 0x000001C8E6040260>
+
+tests\egress\test_gst_engine_reload_commit_ordering.py:4576: AssertionError
+---------------------------- Captured stdout call -----------------------------
+CTRL reload: finite switch rebased to running time 0.000s mode=deferred streams=2 reload_id=41
+CTRL reload: switching selector
+CTRL reload: holds released
+---------------------------- Captured stderr call -----------------------------
+CTRL reload diagnostic: rebase-reference reload_id=41 mode=deferred streams=2 fallback=no ends=[video=none] pipeline_running_time=none switch_running_time=0.000
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload diagnostic: stage=holds-released
+CTRL reload diagnostic: stage=selector-handoff-confirmed
+__________ test_u37_drain_deadline_switches_anyway_and_names_the_pad __________
+
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\AppData\\Local\\Temp\\u37\\base-5397c069\\civiccast\\egress\\gst\\engine.py'>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001C8E5FCB530>
+capsys = <_pytest.capture.CaptureFixture object at 0x000001C8E5FCAF00>
+
+    def test_u37_drain_deadline_switches_anyway_and_names_the_pad(
+        engine_module: types.ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A guard whose premise has failed must say so and switch anyway.
+    
+        Holding the stream off air forever is the one outcome worse than the
+        re-dating: the deadline names the pad that never emptied."""
+        recorder = _Recorder()
+        engine = _bare_engine_for_commit(engine_module, recorder)
+        pending, video_pad, audio_pad = _u37_rebase_pending(recorder, txn_id=42)
+        engine._mux_input_pads = {"sink_65": video_pad, "sink_66": audio_pad}
+        engine._pending_reload = pending
+        _u37_timeout_adds(monkeypatch, engine_module)
+    
+        engine._prepare_reload_handoff(pending)
+        engine._begin_reload_commit(pending)
+        capsys.readouterr()
+    
+        pending["rebase_drain_started_t"] = time.monotonic() - 3.5
+>       assert engine._resume_rebase_drain(pending) is False
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'GstPlayoutEngine' object has no attribute '_resume_rebase_drain'
+
+audio_pad  = <tests.egress.test_gst_engine_reload_commit_ordering._FakeDrainPad object at 0x000001C8E5FFB6B0>
+capsys     = <_pytest.capture.CaptureFixture object at 0x000001C8E5FCAF00>
+engine     = <civiccast.egress.gst.engine.GstPlayoutEngine object at 0x000001C8E5FFB890>
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\AppData\\Local\\Temp\\u37\\base-5397c069\\civiccast\\egress\\gst\\engine.py'>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001C8E5FCB530>
+pending    = {'txn_id': 42, 'new_leg_ready': False, 'holds_awaited': 2, 'held_pads': set(), ...}
+recorder   = <tests.egress.test_gst_engine_reload_commit_ordering._Recorder object at 0x000001C8E5FFB3E0>
+video_pad  = <tests.egress.test_gst_engine_reload_commit_ordering._FakeDrainPad object at 0x000001C8E5FFB710>
+
+tests\egress\test_gst_engine_reload_commit_ordering.py:4653: AttributeError
+____________ test_u37_an_unreadable_pad_level_is_not_proven_empty _____________
+
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\AppData\\Local\\Temp\\u37\\base-5397c069\\civiccast\\egress\\gst\\engine.py'>
+
+    def test_u37_an_unreadable_pad_level_is_not_proven_empty(engine_module: types.ModuleType) -> None:
+        """Treating an unreadable level as empty would reinstate the very re-dating
+        this guard exists to remove, so it waits and lets the deadline decide."""
+        recorder = _Recorder()
+        engine = _bare_engine_for_commit(engine_module, recorder)
+        pad = _UnreadableDrainPad("sink_66", "audio/mpeg", 0, recorder)
+    
+>       assert engine._rebase_drain_held(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+            {"txn_id": 7, "rebase_observer_pads": [("audio", pad, "sink_66")]}
+        ) == ["sink_66=unknown"]
+E       AttributeError: 'GstPlayoutEngine' object has no attribute '_rebase_drain_held'
+
+engine     = <civiccast.egress.gst.engine.GstPlayoutEngine object at 0x000001C8E5FF9460>
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\AppData\\Local\\Temp\\u37\\base-5397c069\\civiccast\\egress\\gst\\engine.py'>
+pad        = <tests.egress.test_gst_engine_reload_commit_ordering._UnreadableDrainPad object at 0x000001C8DAB8CBF0>
+recorder   = <tests.egress.test_gst_engine_reload_commit_ordering._Recorder object at 0x000001C8E5FFADE0>
+
+tests\egress\test_gst_engine_reload_commit_ordering.py:4670: AttributeError
+_________ test_u37_without_a_timer_the_switch_is_unobserved_not_held __________
+
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\AppData\\Local\\Temp\\u37\\base-5397c069\\civiccast\\egress\\gst\\engine.py'>
+capsys = <_pytest.capture.CaptureFixture object at 0x000001C8E51E6B10>
+
+    def test_u37_without_a_timer_the_switch_is_unobserved_not_held(
+        engine_module: types.ModuleType, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """No main loop to poll on must not mean "hold the stream off air forever".
+    
+        This file's fake GLib has no ``timeout_add`` at all -- exactly the
+        degradation path: the observer deadline cannot be armed, so the drain wait
+        never starts and the commit proceeds synchronously as it did before U37,
+        with a WARN saying the pads went unguarded. It is also why every other test
+        in this module still sees an immediate switch."""
+        recorder = _Recorder()
+        engine = _bare_engine_for_commit(engine_module, recorder)
+        pending, video_pad, audio_pad = _u37_rebase_pending(recorder, txn_id=43)
+        engine._mux_input_pads = {"sink_65": video_pad, "sink_66": audio_pad}
+        engine._pending_reload = pending
+    
+        engine._prepare_reload_handoff(pending)
+        engine._begin_reload_commit(pending)
+    
+        assert "video_sel.set_property:active-pad=new-video" in recorder.calls, recorder.calls
+        err = capsys.readouterr().err
+>       assert (
+            "WARN: rebase arrival observer unavailable for reload 43: no observer "
+            "deadline timer (AttributeError("
+        ) in err
+E       AssertionError: assert 'WARN: rebase arrival observer unavailable for reload 43: no observer deadline timer (AttributeError(' in 'CTRL reload diagnostic: rebase-reference reload_id=43 mode=deferred streams=2 fallback=no ends=[video=none] pipeline_...ing-selector\nCTRL reload diagnostic: stage=holds-released\nCTRL reload diagnostic: stage=selector-handoff-confirmed\n'
+
+audio_pad  = <tests.egress.test_gst_engine_reload_commit_ordering._FakeDrainPad object at 0x000001C8E51E7AA0>
+capsys     = <_pytest.capture.CaptureFixture object at 0x000001C8E51E6B10>
+engine     = <civiccast.egress.gst.engine.GstPlayoutEngine object at 0x000001C8E51E6AB0>
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\AppData\\Local\\Temp\\u37\\base-5397c069\\civiccast\\egress\\gst\\engine.py'>
+err        = 'CTRL reload diagnostic: rebase-reference reload_id=43 mode=deferred streams=2 fallback=no ends=[video=none] pipeline_...ing-selector\nCTRL reload diagnostic: stage=holds-released\nCTRL reload diagnostic: stage=selector-handoff-confirmed\n'
+pending    = {'txn_id': 43, 'new_leg_ready': False, 'holds_awaited': 2, 'held_pads': set(), ...}
+recorder   = <tests.egress.test_gst_engine_reload_commit_ordering._Recorder object at 0x000001C8E51E7500>
+video_pad  = <tests.egress.test_gst_engine_reload_commit_ordering._FakeDrainPad object at 0x000001C8E51E7650>
+
+tests\egress\test_gst_engine_reload_commit_ordering.py:4696: AssertionError
+______________ test_u37_arrival_observer_counts_and_never_drops _______________
+
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\AppData\\Local\\Temp\\u37\\base-5397c069\\civiccast\\egress\\gst\\engine.py'>
+capsys = <_pytest.capture.CaptureFixture object at 0x000001C8E5A75310>
+
+    def test_u37_arrival_observer_counts_and_never_drops(
+        engine_module: types.ModuleType, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An arrival before the rebased segment is legitimate outgoing tail.
+    
+        Measured cost of dropping it instead: 48 audio arrivals and a 1.024s hole
+        in the aired audio. So the observer counts, returns OK, and removes itself
+        only on the segment that closes its window -- REMOVE, never DROP, because
+        the segment itself must reach the mux."""
+        recorder = _Recorder()
+        engine = _bare_engine_for_commit(engine_module, recorder)
+        pending: dict[str, Any] = {"txn_id": 7, "rebase_observer_arrived": {}}
+>       observe = engine._make_rebase_segment_observer(pending, "sink_66", "audio")
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'GstPlayoutEngine' object has no attribute '_make_rebase_segment_observer'
+
+capsys     = <_pytest.capture.CaptureFixture object at 0x000001C8E5A75310>
+engine     = <civiccast.egress.gst.engine.GstPlayoutEngine object at 0x000001C8E4D6E150>
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\AppData\\Local\\Temp\\u37\\base-5397c069\\civiccast\\egress\\gst\\engine.py'>
+pending    = {'txn_id': 7, 'rebase_observer_arrived': {}}
+recorder   = <tests.egress.test_gst_engine_reload_commit_ordering._Recorder object at 0x000001C8E4D6FB60>
+
+tests\egress\test_gst_engine_reload_commit_ordering.py:4720: AttributeError
+_________ test_u37_observer_release_skips_a_probe_that_removed_itself _________
+
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\AppData\\Local\\Temp\\u37\\base-5397c069\\civiccast\\egress\\gst\\engine.py'>
+
+    def test_u37_observer_release_skips_a_probe_that_removed_itself(
+        engine_module: types.ModuleType,
+    ) -> None:
+        """Removing a self-removed probe id again is a GStreamer-WARNING on the
+        stderr of every clean switch; the pad name it reported is the record."""
+        recorder = _Recorder()
+        engine = _bare_engine_for_commit(engine_module, recorder)
+        video_pad = _FakeDrainPad("sink_65", "video/x-h264", 0, recorder)
+        audio_pad = _FakeDrainPad("sink_66", "audio/mpeg", 0, recorder)
+        pending: dict[str, Any] = {
+            "txn_id": 7,
+            "rebase_observer_pads": [
+                ("video", video_pad, "sink_65"),
+                ("audio", audio_pad, "sink_66"),
+            ],
+            "rebase_observer_probes": [
+                (video_pad, "v-probe", "sink_65"),
+                (audio_pad, "a-probe", "sink_66"),
+            ],
+            "rebase_observer_removed": {"sink_65"},
+            "rebase_observer_deadline_id": 11,
+            "rebase_drain_timeout_id": 12,
+        }
+    
+>       engine._release_rebase_observers(pending)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'GstPlayoutEngine' object has no attribute '_release_rebase_observers'
+
+audio_pad  = <tests.egress.test_gst_engine_reload_commit_ordering._FakeDrainPad object at 0x000001C8E4D6C050>
+engine     = <civiccast.egress.gst.engine.GstPlayoutEngine object at 0x000001C8E4D6F590>
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\AppData\\Local\\Temp\\u37\\base-5397c069\\civiccast\\egress\\gst\\engine.py'>
+pending    = {'txn_id': 7, 'rebase_observer_pads': [('video', <tests.egress.test_gst_engine_reload_commit_ordering._FakeDrainPad ob...ering._FakeDrainPad object at 0x000001C8E4D6C050>, 'a-probe', 'sink_66')], 'rebase_observer_removed': {'sink_65'}, ...}
+recorder   = <tests.egress.test_gst_engine_reload_commit_ordering._Recorder object at 0x000001C8E4D6C950>
+video_pad  = <tests.egress.test_gst_engine_reload_commit_ordering._FakeDrainPad object at 0x000001C8E5DC6AE0>
+
+tests\egress\test_gst_engine_reload_commit_ordering.py:4779: AttributeError
+___________ test_u37_observer_window_close_reports_what_it_counted ____________
+
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\AppData\\Local\\Temp\\u37\\base-5397c069\\civiccast\\egress\\gst\\engine.py'>
+capsys = <_pytest.capture.CaptureFixture object at 0x000001C8E528C920>
+
+    def test_u37_observer_window_close_reports_what_it_counted(
+        engine_module: types.ModuleType, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The bound reports itself, naming each pad and its count: nothing is held
+        off air by an observer whose segment never came."""
+        recorder = _Recorder()
+        engine = _bare_engine_for_commit(engine_module, recorder)
+        video_pad = _FakeDrainPad("sink_65", "video/x-h264", 0, recorder)
+        audio_pad = _FakeDrainPad("sink_66", "audio/mpeg", 0, recorder)
+        pending: dict[str, Any] = {
+            "txn_id": 7,
+            "rebase_observer_pads": [
+                ("video", video_pad, "sink_65"),
+                ("audio", audio_pad, "sink_66"),
+            ],
+            "rebase_observer_probes": [
+                (video_pad, "v-probe", "sink_65"),
+                (audio_pad, "a-probe", "sink_66"),
+            ],
+            "rebase_observer_arrived": {"sink_65": 3},
+            "rebase_observer_deadline_id": 11,
+        }
+    
+>       assert engine._on_rebase_observer_deadline(pending) is False
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'GstPlayoutEngine' object has no attribute '_on_rebase_observer_deadline'
+
+audio_pad  = <tests.egress.test_gst_engine_reload_commit_ordering._FakeDrainPad object at 0x000001C8E5202960>
+capsys     = <_pytest.capture.CaptureFixture object at 0x000001C8E528C920>
+engine     = <civiccast.egress.gst.engine.GstPlayoutEngine object at 0x000001C8E5200F80>
+engine_module = <module 'civiccast.egress.gst.engine' from 'C:\\Users\\scott\\AppData\\Local\\Temp\\u37\\base-5397c069\\civiccast\\egress\\gst\\engine.py'>
+pending    = {'txn_id': 7, 'rebase_observer_pads': [('video', <tests.egress.test_gst_engine_reload_commit_ordering._FakeDrainPad ob...ng._FakeDrainPad object at 0x000001C8E5202960>, 'a-probe', 'sink_66')], 'rebase_observer_arrived': {'sink_65': 3}, ...}
+recorder   = <tests.egress.test_gst_engine_reload_commit_ordering._Recorder object at 0x000001C8E5202DB0>
+video_pad  = <tests.egress.test_gst_engine_reload_commit_ordering._FakeDrainPad object at 0x000001C8E5201220>
+
+tests\egress\test_gst_engine_reload_commit_ordering.py:4815: AttributeError
+_____ test_packaged_gstreamer_to_hls_sink_preserves_captions_and_cadence ______
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1393/test_packaged_gstreamer_to_hls0')
+
+    def test_packaged_gstreamer_to_hls_sink_preserves_captions_and_cadence(tmp_path: Path) -> None:
+        """Real packaged GStreamer -> real HlsSink copy -> captioned, playable HLS.
+    
+        Positive: the CEA embed leg's A/53 SEI survives the sink into decodable
+        captions. Negative control: the SAME pipeline without the embed leg yields
+        none, proving the positive result is not a sink/decoder artifact.
+    
+        Cadence/playability asserted per segment (not just ">=2 files"):
+          * first segment ~2s (HlsSink.segment_seconds, tolerance-bounded);
+          * EACH segment begins on a keyframe (IDR at start);
+          * EACH segment fully decodes standalone with no errors;
+          * video PTS are strictly increasing across the segment sequence.
+    
+        Rolling-window (delete_segments rotation over time) is NOT asserted here --
+        this source is finite/short. That contract is covered by
+        tests/egress/test_hls_sink_live_playability.py
+        (``test_hls_sink_produces_rolling_playable_live_manifest``), which asserts
+        ``rotated`` (later segment set != first) and per-duration <= 1.5x target.
+        """
+        positive_src = tmp_path / "captioned.ts"
+>       _emit_captioned_gstreamer_ts(positive_src, embed_caption=True)
+
+positive_src = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1393/test_packaged_gstreamer_to_hls0/captioned.ts')
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1393/test_packaged_gstreamer_to_hls0')
+
+tests\egress\test_hls_sink_captions.py:573: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+out_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1393/test_packaged_gstreamer_to_hls0/captioned.ts')
+embed_caption = True
+
+    def _emit_captioned_gstreamer_ts(out_path: Path, *, embed_caption: bool) -> None:
+        """Emit a real MPEG-TS through the packaged GStreamer openh264 encoder.
+    
+        The bundled GI bindings are CPython-3.12-only, so this runs the emit step
+        in the packaged 3.12 interpreter as a subprocess, passing this repo root
+        (and, for the positive case, the cue text) through the environment. The
+        gop-size comes from the product's own ``encode_chain_specs`` so the emitted
+        cadence is the real contracted 2s value.
+        """
+>       assert _GST_AVAILABLE, "packaged GStreamer runtime unavailable"
+E       AssertionError: packaged GStreamer runtime unavailable
+E       assert False
+
+embed_caption = True
+out_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1393/test_packaged_gstreamer_to_hls0/captioned.ts')
+
+tests\egress\test_hls_sink_captions.py:446: AssertionError
+=========================== short test summary info ===========================
+SKIPPED [1] tests\egress\test_compliance.py:245: XDG branch is non-Windows only; monkeypatching os.name='posix' breaks pathlib on Windows
+SKIPPED [1] tests\egress\test_gst_engine_caption_flow_native.py:24: caption flow proof requires the real bundled GStreamer caption runtime
+SKIPPED [1] tests\egress\test_gst_engine_caption_flow_native.py:60: caption flow proof requires the real bundled GStreamer caption runtime
+SKIPPED [1] tests\egress\test_gst_engine_reload_commit_ordering.py:3022: packaged GStreamer runtime not declared, so the real-pipeline half of the U16 diagnostics is NOT verified here -- set CIVICCAST_GSTREAMER_RUNTIME_ROOT to the install root (e.g. C:\Program Files\CivicCast (Native)) to run it against the bundled runtime
+SKIPPED [1] tests\egress\test_gst_engine_reload_commit_ordering.py:3087: CIVICCAST_GSTREAMER_RUNTIME_ROOT not declared, so the real-runtime half of these diagnostics is unverified on this host
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:836: CC embed elements (tttocea608/ccconverter/cccombiner/h264ccinserter) not installed
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:883: CC embed elements (tttocea608/ccconverter/cccombiner/h264ccinserter) not installed
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:977: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1080: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1117: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1281: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1304: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1317: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1333: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1353: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1377: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [2] tests\egress\test_gst_engine_wsl.py:1403: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1446: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1460: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1480: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1515: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1589: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1699: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [2] tests\egress\test_gst_engine_wsl.py:1715: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1836: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:1922: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2046: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2168: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2287: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2474: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2724: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2865: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:2944: production-pressure rollover needs the shipped caption embed elements
+SKIPPED [1] tests\egress\test_gst_engine_wsl.py:3078: live GStreamer engine tests require Linux/WSL with gi + GStreamer, or native Windows with CIVICCAST_GSTREAMER_RUNTIME_ROOT set to a bundled native GStreamer runtime that bootstraps successfully
+SKIPPED [1] tests\egress\test_gst_strategy.py:177: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_gst_strategy.py:444: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_gst_strategy.py:461: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_gst_strategy.py:587: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_gst_strategy.py:1096: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_gst_strategy.py:1112: POSIX/WSL FIFO control-path contract; the native-Windows worker-pipe path is covered by tests/egress/test_worker_pipe_seam.py and this contract runs on ubuntu CI where os.name=='posix'.
+SKIPPED [1] tests\egress\test_hls_relay_live_playability.py:204: Live-HLS-over-HTTP composition proof (a real GStreamer pipeline -> HlsRelaySupervisor's real ffmpeg relay -> civiccast.stream.media_router -> ffprobe over a real socket, with observed rotation) requires gi + the installed GStreamer runtime + ffmpeg/ffprobe on PATH. NOT covered by this skip: this is the ONLY test that proves a GStreamer-fed directory serves a genuinely advancing manifest over live HTTP -- test_hls_sink_live_playability.py separately proves the ffmpeg-lavfi-fed case, and test_media_router_live.py separately proves the router serves a static fixture; neither substitutes for this. Run with CIVICCAST_GSTREAMER_RUNTIME_ROOT set and `uv run --python 3.12 pytest tests/egress/test_hls_relay_live_playability.py` (the bundled _gi extension is CPython-3.12-specific).
+SKIPPED [1] tests\egress\test_hls_relay_live_playability.py:362: Live-HLS-over-HTTP composition proof (a real GStreamer pipeline -> HlsRelaySupervisor's real ffmpeg relay -> civiccast.stream.media_router -> ffprobe over a real socket, with observed rotation) requires gi + the installed GStreamer runtime + ffmpeg/ffprobe on PATH. NOT covered by this skip: this is the ONLY test that proves a GStreamer-fed directory serves a genuinely advancing manifest over live HTTP -- test_hls_sink_live_playability.py separately proves the ffmpeg-lavfi-fed case, and test_media_router_live.py separately proves the router serves a static fixture; neither substitutes for this. Run with CIVICCAST_GSTREAMER_RUNTIME_ROOT set and `uv run --python 3.12 pytest tests/egress/test_hls_relay_live_playability.py` (the bundled _gi extension is CPython-3.12-specific).
+SKIPPED [1] tests\egress\test_ts_relay.py:204: TSDuck tsp not installed
+SKIPPED [1] tests\egress\test_worker_pipe_seam.py:389: could not import 'gi': No module named 'gi'
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_u37_deferred_rebase_switch_waits_for_the_mux_pad_to_drain
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_u37_drain_deadline_switches_anyway_and_names_the_pad
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_u37_an_unreadable_pad_level_is_not_proven_empty
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_u37_without_a_timer_the_switch_is_unobserved_not_held
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_u37_arrival_observer_counts_and_never_drops
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_u37_observer_release_skips_a_probe_that_removed_itself
+FAILED tests/egress/test_gst_engine_reload_commit_ordering.py::test_u37_observer_window_close_reports_what_it_counted
+FAILED tests/egress/test_hls_sink_captions.py::test_packaged_gstreamer_to_hls_sink_preserves_captions_and_cadence
+8 failed, 1813 passed, 46 skipped in 211.34s (0:03:31)

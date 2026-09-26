@@ -1,0 +1,2 @@
+line 33: itv=6.0 src_d=+282 video=+180 audio=+282 sum=462 | 
+total interval lines: 4

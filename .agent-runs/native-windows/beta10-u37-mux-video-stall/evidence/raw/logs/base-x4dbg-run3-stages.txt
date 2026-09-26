@@ -1,0 +1,50 @@
+### x4dbg/run3 (BASE 5397c069) -- reload diagnostics, no U37 stage
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload diagnostic: stage=holds-released
+CTRL reload diagnostic: stage=selector-handoff-confirmed
+CTRL reload diagnostic: stage=retiring-tail-release-entered streams=video,audio
+CTRL reload diagnostic: stage=retiring-tail-released stream=video
+CTRL reload diagnostic: stage=retiring-tail-released stream=audio
+CTRL reload diagnostic: stage=old-tail-detached
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload diagnostic: stage=committed elements=44
+
+### x4dbg/run3 -- mux-in intervals
+CTRL output: 402 buffers (+401) since PLAYING [mux-in 5.3s: video=+158 audio=+250] [chain-in 5.3s: sel video=+171 audio=+250 | queue video=+162 audio=+250]
+CTRL output: 873 buffers (+872) since PLAYING [mux-in 1.8s: video=+33 audio=+133] [chain-in 1.8s: in video=+31 audio=+134 | sel video=+31 audio=+134 | queue video=+31 audio=+132]
+CTRL output: 1155 buffers (+1154) since PLAYING [mux-in 6.0s: video=+180 audio=+282] [chain-in 6.0s: in video=+181 audio=+282 | sel video=+181 audio=+282 | queue video=+181 audio=+282]
+CTRL output: 1691 buffers (+1690) since PLAYING [mux-in 5.0s: video=+150 audio=+184] [chain-in 5.0s: in video=+147 audio=+146 | sel video=+147 audio=+146 | queue video=+149 audio=+185]
+CTRL output: pipeline EOS from civiccast-playout -- quitting the worker [mux-in 0.4s: video=+12 audio=+12] [chain-in 0.4s: in video=+0 audio=+0 | sel video=+0 audio=+0 | queue video=+7 audio=+9] [eos-arrivals: out:audio, sink-pad:sink_2:audio, in:audio, sel:audio[active=sink_2], sink-pad:sink_2:video, in:video, sel:video[active=sink_2], queue:audio, mux-sink:audio, queue:video, mux-sink:video, mux-src]
+
+### x4dbg/run3 -- the same run's own rebase/diagnostic lines from the scratch worker.log
+### (the stages dump above was captured by the stages instrument; these are the engine's
+### own reload lines for the run, kept here because the scratch tree is deleted at the
+### end of the slice).  Note ends=[video=9.867,audio=10.581] against
+### switch_running_time=10.581: the outgoing video's declared tail ends 0.714s short of
+### the switch instant, the audio's ends exactly on it.
+
+CTRL reload: new leg stream held at its first buffer (1 stream(s) still to preroll) (reload_id=1)
+CTRL reload: new leg stream held at its first buffer (0 stream(s) still to preroll) (reload_id=1)
+CTRL reload: new leg preroll verified (reload_id=1) held_streams=2 timing=finite mode=deferred
+CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_0 pending_txn=1
+CTRL reload: outgoing EOS observed stream=audio (1/2 stream(s))
+CTRL reload: firing (reload_id=1)
+CTRL reload: finite switch rebased to running time 10.581s mode=deferred streams=2 reload_id=1
+CTRL reload diagnostic: rebase-reference reload_id=1 mode=deferred streams=2 fallback=no ends=[video=9.867,audio=10.581] pipeline_running_time=none switch_running_time=10.581
+CTRL reload: switching selector
+CTRL reload diagnostic: stage=switching-selector
+CTRL reload: holds released
+CTRL reload diagnostic: stage=holds-released
+CTRL reload diagnostic: new-leg-first-buffer stream=audio reload_id=1 applied_offset=10.581 pts=0.541 running_time=0.000 segment_base=0.000
+CTRL reload diagnostic: new-leg-selector-first-buffer stream=audio pad=sink_2 reload_id=1 applied_offset=10.581 pts=0.541 running_time=10.581 segment_base=10.581
+CTRL reload diagnostic: stage=selector-handoff-confirmed
+CTRL reload diagnostic: stage=retiring-tail-release-entered streams=video,audio
+CTRL reload diagnostic: stage=retiring-tail-released stream=video
+CTRL reload diagnostic: stage=retiring-tail-released stream=audio
+CTRL reload diagnostic: stage=old-tail-detached
+CTRL reload diagnostic: new-leg-first-buffer stream=video reload_id=1 applied_offset=10.581 pts=0.541 running_time=0.000 segment_base=0.000
+CTRL reload diagnostic: new-leg-selector-first-buffer stream=video pad=sink_2 reload_id=1 applied_offset=10.581 pts=0.541 running_time=10.581 segment_base=10.581
+CTRL reload: old leg disposed
+CTRL reload diagnostic: stage=old-leg-disposed
+CTRL reload committed (elements=44)
+CTRL reload diagnostic: stage=committed elements=44

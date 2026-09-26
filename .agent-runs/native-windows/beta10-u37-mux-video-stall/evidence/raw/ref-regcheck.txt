@@ -1,0 +1,12 @@
+== x2\_ref\green-out.ts  ok
+   video    n=653   regress=0    worst_backstep=0.000000s
+   audio    n=1013  regress=0    worst_backstep=0.000000s
+== x2\_ref\h1-out.ts  ok
+   video    n=659   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x2\_ref\h3-out.ts  ok
+   video    n=660   regress=0    worst_backstep=0.000000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s
+== x2\_ref\red-out.ts  COLLAPSE
+   video    n=659   regress=1    worst_backstep=9.411000s
+   audio    n=1061  regress=0    worst_backstep=0.000000s

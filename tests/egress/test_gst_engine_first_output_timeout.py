@@ -109,6 +109,12 @@ def _bare_engine(
     engine._mux_input_buffers = {}
     engine._mux_input_snapshot = {}
     engine._mux_input_snapshot_t = 0.0
+    # U37 additions -- the per-stream watchdog now judges each mux SINK pad by
+    # its AIRING running time (``buffer-consumed``), not by its arrival count:
+    # a stream can keep arriving at its normal rate while the mux emits none of
+    # it, which an arrival count reads as healthy. Tests that drive the judge
+    # feed this map; the ``mux-in`` progress line still reads the counters above.
+    engine._mux_pad_airing_rt = {}
     return engine
 
 
@@ -690,6 +696,12 @@ def test_output_progress_line_names_each_streams_mux_input_delta(
     # The arm-time baseline (both streams feeding the mux), then the incident
     # shape over the next interval: video flat, audio advancing at its own rate.
     engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145516}
+    # U37: the per-stream watchdog's own reference for the same two pads. Video
+    # flat in the airing frontier as well, but for ONE interval only -- well
+    # inside ``stall_timeout_s`` -- so this test still proves what it proved
+    # before (the line reads interval-relative deltas) without tripping the
+    # per-stream judge.
+    engine._mux_pad_airing_rt = {"sink_65": 40_000_000_000, "sink_66": 44_000_000_000}
     engine._output_buffers = 100
     engine._arm_stall_watchdog()
     engine._loop = _FakeLoop()
@@ -697,6 +709,7 @@ def test_output_progress_line_names_each_streams_mux_input_delta(
     clock["t"] = 5.0
     engine._output_buffers = 112
     engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145750}
+    engine._mux_pad_airing_rt = {"sink_65": 40_000_000_000, "sink_66": 44_234_000_000}
     assert engine._check_stall() is True
 
     err = capsys.readouterr().err
@@ -713,6 +726,7 @@ def test_output_progress_line_names_each_streams_mux_input_delta(
     clock["t"] = 10.0
     engine._output_buffers = 120
     engine._mux_input_buffers = {"sink_65": 138699, "sink_66": 145984}
+    engine._mux_pad_airing_rt = {"sink_65": 40_122_000_000, "sink_66": 44_468_000_000}
     assert engine._check_stall() is True
     assert (
         "CTRL output: 120 buffers (+20) since PLAYING [mux-in 5.0s: video=+122 audio=+234]"
@@ -730,7 +744,12 @@ def test_per_stream_stall_judges_the_stream_that_stopped_while_the_aggregate_adv
     audio-only rate while the video branch fed the mux nothing at all, so the
     aggregate check above never judged them and the worker never exited. The
     per-stream check judges the SILENT stream on the same ``stall_timeout_s``
-    budget, names it, and exits so the daemon relaunches in seconds."""
+    budget, names it, and exits so the daemon relaunches in seconds.
+
+    U37: "silent" is the stream's AIRING running time at the mux, not its
+    arrival count. This test's video pad keeps ARRIVING at its normal rate
+    throughout (``_mux_input_buffers`` climbs) while nothing it carries reaches
+    air -- the measured U37 shape, which an arrival-count judge cannot see."""
     clock = {"t": 0.0}
     monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
     monkeypatch.setattr(engine_module.GLib, "timeout_add_seconds", lambda *a, **k: None)
@@ -740,6 +759,12 @@ def test_per_stream_stall_judges_the_stream_that_stopped_while_the_aggregate_adv
         "sink_66": _CapsPadStub("sink_66", "audio/mpeg, mpegversion=4"),
     }
     engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145516}
+    # U37: the judge reads the AIRING running time, and that is exactly the
+    # shape the slice measured -- video still ARRIVING at its normal rate
+    # (``_mux_input_buffers`` above keeps climbing for both streams) while the
+    # mux emits no video at all: ``sink_65``'s airing frontier never moves off
+    # its arm-time value for the whole budget.
+    engine._mux_pad_airing_rt = {"sink_65": 40_000_000_000, "sink_66": 44_000_000_000}
     engine._output_buffers = 100
     engine._arm_stall_watchdog()
     engine._loop = _FakeLoop()
@@ -752,6 +777,10 @@ def test_per_stream_stall_judges_the_stream_that_stopped_while_the_aggregate_adv
         clock["t"] = float(tick)
         engine._output_buffers = 100 + tick * 2
         engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145516 + tick * 47}
+        engine._mux_pad_airing_rt = {
+            "sink_65": 40_000_000_000,
+            "sink_66": 44_000_000_000 + tick * 47_000_000,
+        }
         assert engine._check_stall() is True
     assert engine._error is None
     assert engine._loop.quit_calls == 0
@@ -760,6 +789,7 @@ def test_per_stream_stall_judges_the_stream_that_stopped_while_the_aggregate_adv
     clock["t"] = 10.0
     engine._output_buffers = 122
     engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145987}
+    engine._mux_pad_airing_rt = {"sink_65": 40_000_000_000, "sink_66": 44_470_000_000}
     assert engine._check_stall() is False
 
     assert engine._error == ("stall", "video stream stalled")
@@ -787,6 +817,8 @@ def test_per_stream_stall_judges_a_silent_audio_branch_when_the_graph_has_one(
         "sink_66": _CapsPadStub("sink_66", "audio/mpeg, mpegversion=4"),
     }
     engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145516}
+    # U37: audio still arriving (its counter climbs below), audio never AIRING.
+    engine._mux_pad_airing_rt = {"sink_65": 40_000_000_000, "sink_66": 44_000_000_000}
     engine._output_buffers = 100
     engine._arm_stall_watchdog()
     engine._loop = _FakeLoop()
@@ -800,6 +832,7 @@ def test_per_stream_stall_judges_a_silent_audio_branch_when_the_graph_has_one(
     clock["t"] = 10.0
     engine._output_buffers = 130
     engine._mux_input_buffers = {"sink_65": 138877, "sink_66": 145516}
+    engine._mux_pad_airing_rt = {"sink_65": 40_300_000_000, "sink_66": 44_000_000_000}
     assert engine._check_stall() is False
 
     assert engine._error == ("stall", "audio stream stalled")
@@ -832,6 +865,12 @@ def test_per_stream_stall_ignores_caption_pads_and_streams_that_never_produced(
     # sink_68 has never produced a single buffer; sink_67 is the caption pad and
     # is flat throughout; the two REQUIRED streams both keep feeding the mux.
     engine._mux_input_buffers = {"sink_65": 1000, "sink_66": 500, "sink_67": 0, "sink_68": 0}
+    # U37: sink_68 has no airing frontier at all (never emitted -- the
+    # first-output budget's question) and the caption pad's frontier is frozen
+    # at its arm-time value for the whole run. The FRONTIER is the judge's
+    # input now, so each exclusion is exercised by the rule that owns it: the
+    # caption pad by its label, sink_68 by there being nothing to judge.
+    engine._mux_pad_airing_rt = {"sink_65": 1_000_000_000, "sink_66": 500_000_000, "sink_67": 7_000}
     engine._output_buffers = 100
     engine._arm_stall_watchdog()
     engine._loop = _FakeLoop()
@@ -845,9 +884,145 @@ def test_per_stream_stall_ignores_caption_pads_and_streams_that_never_produced(
             "sink_67": 0,
             "sink_68": 0,
         }
+        engine._mux_pad_airing_rt = {
+            "sink_65": 1_000_000_000 + tick * 30_000_000,
+            "sink_66": 500_000_000 + tick * 47_000_000,
+            "sink_67": 7_000,
+        }
         assert engine._check_stall() is True, f"tick {tick}"
     assert engine._error is None
     assert engine._loop.quit_calls == 0
+
+
+def test_per_stream_stall_judges_a_stream_that_keeps_advancing_but_runs_far_behind(
+    engine_module, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """U37's second disjunct, and the shape the slice actually measured live.
+
+    Both streams keep advancing, so the flat rule above never has anything to
+    judge -- but video's airing running time sits 9.4 s behind audio's and stays
+    there for the whole budget, which is what the mux looks like while it emits
+    audio alone: a stream the mux has already passed cannot air in step, however
+    steadily it keeps arriving and advancing. 9.4 s is the lag the collapsed
+    captures measured in the mux's own recorded output (9.408-9.429 s of video
+    running time behind audio); the bound is ``_STREAM_LAG_BOUND_S`` = 2.0 s,
+    chosen because 39
+    healthy recordings off the real LPM media never showed a worst lag above
+    0.726678 s -- the media's own A/V end offset at the boundary, not a defect --
+    while the three collapses sat at 9.408-9.429 s.
+
+    The flat rule keeps the attribution when both could fire: see
+    ``test_per_stream_stall_judges_the_stream_that_stopped_while_the_aggregate_advanced``,
+    whose frozen video is ALSO 4 s behind its audio and is still named by the
+    flat wording. This test proves the lag wording is what fires when nothing
+    has stopped."""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(engine_module.GLib, "timeout_add_seconds", lambda *a, **k: None)
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine.audio_selector = object()  # audio IS a required stream in this graph
+    engine._mux_input_pads = {
+        "sink_65": _CapsPadStub("sink_65", "video/x-h264, stream-format=byte-stream"),
+        "sink_66": _CapsPadStub("sink_66", "audio/mpeg, mpegversion=4"),
+    }
+    engine._mux_input_buffers = {"sink_65": 138577, "sink_66": 145516}
+    # Both frontiers advance on every tick, at the SAME rate: the 9.4 s gap is
+    # constant, so nothing here is a stream that stopped.
+    engine._mux_pad_airing_rt = {"sink_65": 40_000_000_000, "sink_66": 49_400_000_000}
+    engine._output_buffers = 100
+    engine._arm_stall_watchdog()
+    engine._loop = _FakeLoop()
+    engine._reload_context = (7, "committed")
+
+    for tick in range(1, 11):
+        clock["t"] = float(tick)
+        engine._output_buffers = 100 + tick * 2
+        engine._mux_input_buffers = {"sink_65": 138577 + tick * 47, "sink_66": 145516 + tick * 47}
+        engine._mux_pad_airing_rt = {
+            "sink_65": 40_000_000_000 + tick * 30_000_000,
+            "sink_66": 49_400_000_000 + tick * 30_000_000,
+        }
+        assert engine._check_stall() is True, f"tick {tick}"
+    assert engine._error is None
+    assert engine._loop.quit_calls == 0
+
+    clock["t"] = 11.0
+    engine._output_buffers = 122
+    engine._mux_input_buffers = {"sink_65": 139094, "sink_66": 146033}
+    engine._mux_pad_airing_rt = {
+        "sink_65": 40_330_000_000,
+        "sink_66": 49_730_000_000,
+    }
+    assert engine._check_stall() is False
+
+    # Hostility check: the video pad advanced on THIS very tick, so the flat rule
+    # had nothing to judge and cannot be the rule that fired.
+    assert engine._stream_last_advance_t["sink_65"] == 11.0
+    assert engine._error == ("stall", "video stream lagging audio")
+    assert engine._loop.quit_calls == 1
+    err = capsys.readouterr().err
+    assert (
+        "CTRL stall: video running time 9.4s behind audio for 10s "
+        "(last reload id=7 stage=committed) - quitting for daemon restart" in err
+    ), err
+
+
+def test_per_stream_lag_must_be_continuous_to_be_judged(
+    engine_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U37: a lag that comes back within the bound starts over.
+
+    This is the property that makes the bound safe at the switch boundary itself
+    -- an A/V end offset lags the ending stream for about the length of the
+    offset, so a lag clock that kept running across a recovery would judge the
+    next boundary on the previous boundary's seconds. Video here runs 9.4 s
+    behind for nine ticks (one short of the budget), catches up across two ticks
+    while audio keeps airing, and only then falls 9.4 s behind again -- and the
+    judgement lands ten seconds after the SECOND lag began, not eleven after the
+    first. A judge whose clock never cleared would fire at tick 11, where the
+    lag is already back within the bound.
+
+    Every frontier here moves forward, as a real one does."""
+    clock = {"t": 0.0}
+    monkeypatch.setattr(engine_module.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(engine_module.GLib, "timeout_add_seconds", lambda *a, **k: None)
+    engine = _bare_engine(engine_module, first_output_timeout_s=45.0, stall_timeout_s=10.0)
+    engine.audio_selector = object()
+    engine._mux_input_pads = {
+        "sink_65": _CapsPadStub("sink_65", "video/x-h264, stream-format=byte-stream"),
+        "sink_66": _CapsPadStub("sink_66", "audio/mpeg, mpegversion=4"),
+    }
+    engine._mux_input_buffers = {"sink_65": 0, "sink_66": 0}
+    engine._mux_pad_airing_rt = {"sink_65": 40_000_000_000, "sink_66": 49_400_000_000}
+    engine._output_buffers = 100
+    engine._arm_stall_watchdog()
+    engine._loop = _FakeLoop()
+
+    def tick(t: int, video: int, audio: int, expect: bool) -> None:
+        clock["t"] = float(t)
+        engine._output_buffers = 100 + t * 2
+        engine._mux_pad_airing_rt = {"sink_65": video, "sink_66": audio}
+        assert engine._check_stall() is expect, f"tick {t}"
+
+    # 9.4 s behind, one tick short of the budget.
+    for t in range(1, 10):
+        tick(t, 40_000_000_000 + t * 30_000, 49_400_000_000 + t * 30_000, expect=True)
+    # Catching up: the gap closes from 9.4 s to 4.43 s to 0.04 s -- under the
+    # bound only on the third tick, so the clock runs through the first two.
+    tick(10, 45_270_000_000, 49_700_000_000, expect=True)
+    tick(11, 49_770_000_000, 49_730_000_000, expect=True)
+    assert "sink_65" not in engine._stream_lag_since, "the clock did not restart"
+
+    # Audio runs away again (the live shape: audio airs alone), video follows.
+    tick(12, 49_800_000_000, 59_160_000_000, expect=True)
+    for t in range(13, 22):
+        tick(t, 49_800_000_000 + (t - 12) * 30_000, 59_160_000_000 + (t - 12) * 30_000, expect=True)
+    assert engine._error is None, "fired on the FIRST lag's clock, not the second's"
+    assert engine._loop.quit_calls == 0
+
+    tick(22, 50_100_000_000, 59_460_000_000, expect=False)
+    assert engine._error == ("stall", "video stream lagging audio")
+    assert engine._loop.quit_calls == 1
 
 
 # --- round-2 finding 2: the stall bound yields to the commit watchdog ---------------

@@ -1,0 +1,19 @@
+### x2/_ref/h1-worker.log -- the intermediate build whose drain bound was still 1.0s
+### It emits rebase-fence-armed and rebase-drain-wait, never rebase-observer-armed or
+### rebase-drain-drained.  Its recorded output is x2/_ref/h1-out.ts
+### (sha256 9adb47ffbcf4a346a64bc4a0fbe183b0e6e7bb98410b2501665233b819e7bd74):
+### ok, emissions=1720, video 659 / audio 1061, worst airing lag 0.501344s
+### (raw/ref-regcheck.txt, raw/ref-audioonly.txt, raw/ref-lag.txt), i.e. indistinguishable
+### from the runs that drained inside the bound -- the 1.0s WARN below is a false alarm,
+### and it is why the shipped bound is 3.0s.
+
+CTRL reload: finite switch rebased to running time 10.581s mode=deferred streams=2 reload_id=1
+CTRL reload diagnostic: rebase-reference reload_id=1 mode=deferred streams=2 fallback=no ends=[video=9.867,audio=10.581] pipeline_running_time=none switch_running_time=10.581
+CTRL reload diagnostic: stage=rebase-fence-armed pads=sink_65,sink_66 fenced=sink_65,sink_66 reload_id=1
+CTRL reload diagnostic: stage=rebase-drain-wait pads=sink_66=6 reload_id=1
+CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_0 pending_txn=1
+CTRL reload: outgoing EOS observed stream=video (2/2 stream(s))
+CTRL output: 761 buffers (+760) since PLAYING [mux-in 5.0s: video=+147 audio=+233] [chain-in 5.0s: in video=+0 audio=+0 | sel video=+133 audio=+208 | queue video=+142 audio=+233]
+WARN: rebase drain did not empty within 1.0s for reload 1 (sink_66=5 still queued at the mux); switching anyway -- a stale buffer may still be re-dated by the segment
+CTRL reload: switching selector
+CTRL reload diagnostic: stage=switching-selector
