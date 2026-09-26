@@ -34,9 +34,10 @@ Shape of the ride
 Everything above the process boundary is a pure function of numbers, so the
 rules that decide the gain -- the two-stage gate, the window curve, the silence
 hold, the clamp, the gap cap, the slew limit, the correction, the sum, the
-converge loop -- are all unit-testable without touching FFmpeg.  The three
-process entry points (:func:`build_source_series_args`,
-:func:`build_measure_sink_args`, :func:`build_encode_sink_args`,
+converge loop -- are all unit-testable without touching FFmpeg.  The process
+entry points (:func:`build_source_series_args`, :func:`build_measure_sink_args`,
+:func:`build_encode_sink_args`, :func:`build_artifact_measure_args`,
+:func:`build_peak_scan_args`, :func:`build_reencode_args`,
 :func:`build_video_from_source_args`) are pure argument builders too, so the
 exact FFmpeg grammar is asserted in tests rather than described in prose.
 
@@ -116,9 +117,30 @@ attempt it has, and an over-bound one ships with an error line, because a channe
 that airs a slightly hot artifact beats one that airs nothing.  U25's panel is
 what settled that: BIG's nominal emit, the hottest artifact the panel produced,
 sits at +0.0036 dBFS from one sample in 9000 s, and every attempt that tried to
-fix it landed worse.  The caller owns the ride, the encode and the measurement;
-this module never spawns a process for the guard and never logs.  The trigger rate
-and the time it costs are counted in the unit report.
+fix it landed worse.  The caller owns the ride, the encode and the measurement
+*policy*: :func:`level_window` is the one entry point here that spawns the passes
+(a source series, the converge probes, one emit, the artifact's measurement and
+at most one round), and it does that only because the caller asked for a leveled
+window by calling it -- every piece it spawns is a module function the caller
+could have run itself.  It never logs: it returns a :class:`LeveledSelection`
+whose ``warning`` the caller logs, and a ``round_error`` the caller logs beside
+it.  The trigger rate and the time it costs are counted in the unit report.
+
+The acceptance gate, ported
+---------------------------
+The station scores a published artifact by its own geometry -- 240 s windows
+tiled from 0 s and from 120 s, each window's gated loudness within 0.9 LU of
+target, the whole program within 0.5 LU -- so :func:`level_window` judges its
+attempts by that same arithmetic rather than by "close enough": see
+:func:`window_levels`, :func:`worst_window_deviation_lu` and
+:func:`whole_program_err_lu`, and the ``LOUDNESS_*`` constants they are built
+from.  The port is deliberately *unrounded*, where the harness rounds each
+window's level and start to 3 dp for display, and it skips a window it cannot
+measure rather than scoring it -- an unmeasurable window is not evidence of a
+deviation.  The printed summary ``I`` is **not** the gate: it is a separate
+quantity FFmpeg computes, the panel proved the two disagree, so
+:attr:`LeveledAttempt.emitted_lufs` records it for the report while
+``loudness_ok`` reads the series.
 
 The gap cap is not a leveler for room tone
 ------------------------------------------
@@ -151,7 +173,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, BinaryIO, Protocol
 
@@ -159,21 +181,31 @@ from civiccast.egress.models import CanonicalProfile, EgressSourceSegment
 
 __all__ = [
     "DIGITAL_SILENCE",
+    "LOUDNESS_WHOLE_TOL_LU",
+    "LOUDNESS_WINDOW_MIN_TAIL_S",
+    "LOUDNESS_WINDOW_OFFSET_S",
+    "LOUDNESS_WINDOW_S",
+    "LOUDNESS_WINDOW_TOL_LU",
     "TP_GUARD_MARGIN_DB",
     "TP_GUARD_MAX_PEAK_DBFS",
     "TP_GUARD_MAX_ROUNDS",
     "TP_GUARD_TARGET_DBTP",
     "LeveledAttempt",
     "LeveledSelection",
+    "LeveledWindow",
     "LoudnessRideCancelledError",
     "LoudnessRideError",
     "LoudnessRideUnavailableError",
+    "ReencodeRunner",
     "RideCurve",
     "RideParams",
     "RideRender",
     "RideRunner",
+    "attempt_from_measurement",
+    "build_artifact_measure_args",
     "build_encode_sink_args",
     "build_measure_sink_args",
+    "build_peak_scan_args",
     "build_reencode_args",
     "build_source_series_args",
     "build_video_from_source_args",
@@ -187,17 +219,26 @@ __all__ = [
     "gated_loudness",
     "guard_ceiling_dbtp",
     "guard_next_ceiling",
+    "level_window",
     "limit_value",
     "limiter_filter",
+    "measure_artifact",
     "parse_ebur128_series",
     "parse_integrated_lufs",
+    "parse_true_peak_dbtp",
     "resample_filter",
+    "run_capture",
     "run_reencode",
     "run_ride",
+    "scan_peak_dbfs",
     "select_leveled_attempt",
+    "series_duration_s",
     "slew_limit",
     "sliding_levels",
     "to_arrays",
+    "whole_program_err_lu",
+    "window_levels",
+    "worst_window_deviation_lu",
 ]
 
 #: ebur128 emits one momentary block per 100 ms.
@@ -220,6 +261,22 @@ DIGITAL_SILENCE = -1e9
 #: ride at the same resident cost.
 CHUNK_FRAMES = 65536
 
+#: The acceptance gate's own geometry: a 240 s window, tiled from both the start
+#: of the program and from a 120 s offset, every window's gated loudness within
+#: 0.9 LU of target and the whole program's within 0.5 LU.  These are the
+#: numbers the station's acceptance harness scores a published artifact by; they
+#: are constants here rather than parameters because a ride that converged to a
+#: different gate would be optimizing for a contract nobody published.
+LOUDNESS_WINDOW_S = 240.0
+LOUDNESS_WINDOW_OFFSET_S = 120.0
+LOUDNESS_WINDOW_TOL_LU = 0.9
+LOUDNESS_WHOLE_TOL_LU = 0.5
+
+#: The harness tiles while ``start < duration - 1``: a tail shorter than this is
+#: not a window, because a fraction of a window measures a fraction of the
+#: program and would fail for arithmetic reasons rather than for level.
+LOUDNESS_WINDOW_MIN_TAIL_S = 1.0
+
 #: The children are dropped below normal priority so a ride (foreground,
 #: background warm, or a second channel's) can never outrank an on-air encoder.
 _BELOW_NORMAL_PRIORITY_CLASS = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
@@ -229,6 +286,11 @@ _RE_I = re.compile(r"^\s*I:\s*(-?[\d.]+)\s*LUFS", re.M)
 _RE_SERIES = re.compile(
     r"\]\s*t:\s*([\d.]+)\s+.*?M:\s*(-?[\d.]+|nan|-inf)\s+S:\s*(-?[\d.]+|nan|-inf)"
 )
+#: The true-peak SUMMARY line, and only that: the per-block lines carry ``TPK:``
+#: columns, which a looser pattern would read as a peak measurement.  Matched
+#: with ``.search`` -- the first ``Peak:`` line, exactly as the acceptance
+#: harness reads it, so a chatty multi-pass stderr cannot shift the reading.
+_RE_TP = re.compile(r"^\s*(?:True )?[Pp]eak:\s*(-?[\d.]+)\s*dBFS", re.M)
 
 
 class LoudnessRideError(RuntimeError):
@@ -835,6 +897,54 @@ def build_reencode_args(
     ]
 
 
+def build_artifact_measure_args(*, artifact_path: Path) -> list[str]:
+    """Measure the emitted ARTIFACT, whole: ebur128 series, peak, integrated.
+
+    The guard's input is what airs, so this pass reads the file the encode sink
+    wrote rather than the PCM it was fed -- a codec round trip is exactly the
+    part the guard exists to catch.  Seek-free on purpose (no ``-ss``/``-t``):
+    the window tiling is a function of the whole series, and a partial read
+    would silently shrink the program the gate measures.
+    """
+    return [
+        "-hide_banner",
+        "-loglevel",
+        "info",
+        "-i",
+        str(artifact_path),
+        "-vn",
+        "-af",
+        "ebur128=peak=true",
+        "-f",
+        "null",
+        "-",
+    ]
+
+
+def build_peak_scan_args(*, artifact_path: Path, params: RideParams) -> list[str]:
+    """Decode the artifact to raw float32 so the hottest sample can be found.
+
+    The hard gate is a *sample*-peak bound on a decode, not a promise: the
+    limiter enforces a true-peak ceiling on what it sees, and the codec's own
+    overshoot lands between the samples after it.  Only a decode sees those.
+    """
+    return [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(artifact_path),
+        "-vn",
+        "-f",
+        "f32le",
+        "-ar",
+        str(params.sample_rate),
+        "-ac",
+        str(params.channels),
+        "-",
+    ]
+
+
 def canonical_video_filter(profile: CanonicalProfile) -> str:
     """The canonical scale/pad/rate/format chain, in one place.
 
@@ -936,6 +1046,118 @@ def parse_ebur128_series(stderr: str) -> list[tuple[float, float]]:
     for t, m, _s in _RE_SERIES.findall(stderr):
         out.append((float(t), DIGITAL_SILENCE if m in ("nan", "-inf") else float(m)))
     return out
+
+
+def parse_true_peak_dbtp(stderr: str) -> float | None:
+    """The summary ``Peak:`` line ebur128 prints with ``peak=true``.
+
+    The FIRST such line, like the acceptance harness (``RE_TP.search``): a
+    stderr carrying more than one pass would otherwise report the last pass's
+    peak as if it were this artifact's.  ``None`` means the pass printed none.
+    """
+    match = _RE_TP.search(stderr)
+    if match is None:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:  # pragma: no cover - the pattern only admits floats
+        return None
+
+
+# ---------------------------------------------------------------------------
+# The acceptance gate, ported.  Same arithmetic the station is scored by.
+# ---------------------------------------------------------------------------
+
+
+def series_duration_s(series: Sequence[tuple[float, float]]) -> float:
+    """How far an ebur128 series reaches: the last block's own step included.
+
+    A block at ``t`` covers ``[t, t + 0.1)``, so a 240 s program's last block
+    sits at 239.9 s and the series reaches 240.0.  Reading the last ``t`` alone
+    would lose that step and, on a program that is exactly one window long,
+    take the only window in the program out of the tiling.
+    """
+    if not series:
+        return 0.0
+    return series[-1][0] + BLOCK_STEP_S
+
+
+def window_levels(
+    series: Sequence[tuple[float, float]],
+    duration_s: float,
+    *,
+    offset_s: float = 0.0,
+) -> list[tuple[float, float | None]]:
+    """Every ``LOUDNESS_WINDOW_S`` window of the tiling, as ``(start, level)``.
+
+    The harness's own geometry: windows start at ``offset_s`` and advance by one
+    window while the next start is still more than
+    :data:`LOUDNESS_WINDOW_MIN_TAIL_S` before the end, each clamped to the
+    duration, each read half-open (``start <= t < end``) so a block exactly on a
+    boundary belongs to the later window and never to both.  ``level`` is that
+    window's gated loudness, or ``None`` when nothing in it cleared the gate.
+    """
+    out: list[tuple[float, float | None]] = []
+    if duration_s <= 0.0:
+        return out
+    start = offset_s
+    while start < duration_s - LOUDNESS_WINDOW_MIN_TAIL_S:
+        end = min(start + LOUDNESS_WINDOW_S, duration_s)
+        out.append((start, gated_loudness([v for t, v in series if start <= t < end])))
+        start += LOUDNESS_WINDOW_S
+    return out
+
+
+def worst_window_deviation_lu(
+    series: Sequence[tuple[float, float]],
+    duration_s: float,
+    *,
+    target_lufs: float,
+    offset_s: float | None = None,
+) -> tuple[float | None, float | None]:
+    """The largest gated-window deviation from target, and the window's start.
+
+    Both tilings are searched by default -- the one from zero and the one from
+    :data:`LOUDNESS_WINDOW_OFFSET_S` -- because a 4-minute stretch that only one
+    of them frames is still four minutes of program the audience hears, and the
+    harness judges exactly that union.  ``offset_s`` narrows it to one tiling
+    when a caller is reading a single family.
+
+    Windows with no measurable level are skipped rather than scored: an
+    unmeasurable window is not evidence of a deviation, and scoring it as one
+    would fail a lawful program for a silent passage.  ``(None, None)`` means no
+    window was measurable at all.
+    """
+    offsets = (0.0, LOUDNESS_WINDOW_OFFSET_S) if offset_s is None else (offset_s,)
+    worst: float | None = None
+    worst_start: float | None = None
+    for off in offsets:
+        for start, level in window_levels(series, duration_s, offset_s=off):
+            if level is None:
+                continue
+            deviation = abs(level - target_lufs)
+            if worst is None or deviation > worst:
+                worst = deviation
+                worst_start = start
+    return worst, worst_start
+
+
+def whole_program_err_lu(
+    series: Sequence[tuple[float, float]],
+    *,
+    target_lufs: float,
+) -> float | None:
+    """The signed whole-program error: the gated mean of the series, minus target.
+
+    Signed on purpose -- the caller's diagnostics want to know which way a
+    program missed -- and computed off the same blocks the windows are, so the
+    two gate legs cannot disagree about what was measured.  ``None`` when
+    nothing survived the gate.
+    """
+    level = gated_loudness([v for _t, v in series])
+    if level is None:
+        return None
+    return level - target_lufs
 
 
 # ---------------------------------------------------------------------------
@@ -1174,6 +1396,164 @@ def run_reencode(
             f"last output: {stderr.strip()[-400:]!r}"
         )
     return RideRender(frames=0, audio_seconds=0.0, wall_s=wall_s, stderr=stderr)
+
+
+def run_capture(
+    args: list[str],
+    *,
+    timeout_s: float | None = None,
+    cancel_event: threading.Event | None = None,
+) -> str:
+    """Run one read-only FFmpeg pass and return its stderr.
+
+    The pass writes nothing -- it is a measurement (``build_source_series_args``,
+    :func:`build_artifact_measure_args`) -- so the only output is what it says on
+    stderr, and that goes to a file rather than a pipe: ebur128 prints a block
+    line every 100 ms, ~10 MB over a 2.5 h program, and a pipe nobody drains
+    until the end would fill and deadlock the child mid-measurement.
+
+    Raises :class:`LoudnessRideCancelledError` when the cancel event is set, and
+    :class:`LoudnessRideError` on a timeout or a non-zero exit.  The caller
+    decides what a failure means; this function only reports it.
+    """
+    ffmpeg = _ffmpeg_binary()
+    err_file = tempfile.NamedTemporaryFile(  # noqa: SIM115 - held open for the child
+        prefix="civiccast-measure-", suffix=".log", delete=False
+    )
+    err_path = Path(err_file.name)
+    t_start = time.perf_counter()
+    cancelled = False
+    timed_out = False
+    proc: subprocess.Popen[bytes] | None = None
+    try:
+        proc = subprocess.Popen(  # noqa: S603 - explicit list, resolved binary, shell=False
+            [ffmpeg, *args],
+            stdout=subprocess.DEVNULL,
+            stderr=err_file,
+            creationflags=_CREATE_NO_WINDOW | _BELOW_NORMAL_PRIORITY_CLASS,
+        )
+        while proc.poll() is None:
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                break
+            if timeout_s is not None and time.perf_counter() - t_start > timeout_s:
+                timed_out = True
+                break
+            time.sleep(0.05)
+        if cancelled or timed_out:
+            with contextlib.suppress(OSError):
+                proc.kill()
+        proc.wait()
+    finally:
+        err_file.close()
+    try:
+        err = err_path.read_text(encoding="utf-8", errors="replace")
+    finally:
+        err_path.unlink(missing_ok=True)
+
+    if cancelled:
+        raise LoudnessRideCancelledError("the speech-leveling measurement was cancelled")
+    if timed_out:
+        raise LoudnessRideError(f"the measurement pass timed out after {timeout_s:g}s")
+    assert proc is not None
+    if proc.returncode != 0:
+        raise LoudnessRideError(
+            f"the measurement pass exited {proc.returncode}; last output: {err.strip()[-400:]!r}"
+        )
+    return err
+
+
+def scan_peak_dbfs(
+    artifact_path: Path,
+    *,
+    params: RideParams,
+    timeout_s: float | None = None,
+    cancel_event: threading.Event | None = None,
+) -> float | None:
+    """The hottest sample a decode of the artifact finds, in dBFS.
+
+    The hard gate's only evidence: the artifact is decoded to raw float32 and
+    the largest absolute sample is read off, so what is measured is what the
+    codec actually produced rather than what the limiter promised.  ``None``
+    means the decode held nothing to measure (a stream with no audio, or
+    digital silence), which -- like a failed decode -- cannot clear the gate.
+
+    Raises :class:`LoudnessRideCancelledError` on cancellation and
+    :class:`LoudnessRideError` on a timeout or a non-zero exit.
+    """
+    np = _load_numpy()
+    ffmpeg = _ffmpeg_binary()
+    bytes_per_frame = params.channels * 4
+    t_start = time.perf_counter()
+    peak = 0.0
+    cancelled = False
+    timed_out = False
+    carry = b""
+    proc = subprocess.Popen(  # noqa: S603 - explicit list, resolved binary, shell=False
+        [ffmpeg, *build_peak_scan_args(artifact_path=artifact_path, params=params)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        creationflags=_CREATE_NO_WINDOW | _BELOW_NORMAL_PRIORITY_CLASS,
+    )
+    try:
+        assert proc.stdout is not None
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                break
+            if timeout_s is not None and time.perf_counter() - t_start > timeout_s:
+                timed_out = True
+                break
+            raw = proc.stdout.read(CHUNK_FRAMES * bytes_per_frame)
+            if not raw:
+                break
+            # A pipe read can land mid-sample; the remainder is carried into the
+            # next read so ``frombuffer`` never sees a truncated float.
+            chunk = carry + raw
+            usable = len(chunk) - len(chunk) % 4
+            carry = chunk[usable:]
+            if usable:
+                samples = np.frombuffer(chunk[:usable], dtype="<f4")
+                peak = max(peak, float(np.max(np.abs(samples))))
+    finally:
+        if proc.stdout is not None:
+            with contextlib.suppress(OSError):
+                proc.stdout.close()
+        if cancelled or timed_out:
+            with contextlib.suppress(OSError):
+                proc.kill()
+    rc = proc.wait()
+
+    if cancelled:
+        raise LoudnessRideCancelledError("the artifact's true-peak scan was cancelled")
+    if timed_out:
+        raise LoudnessRideError(f"the artifact's true-peak scan timed out after {timeout_s:g}s")
+    if rc != 0:
+        raise LoudnessRideError(f"the artifact's decode exited {rc}")
+    if peak <= 0.0:
+        return None
+    return 20.0 * math.log10(peak)
+
+
+class ReencodeRunner(Protocol):
+    """How the guard's one re-encode round runs (the installed station:
+    :func:`run_reencode`).
+
+    Takes no ``cancel_event``: the round is one short FFmpeg pass over a file,
+    so it is bounded by its input rather than by a stream, and the round's
+    timeout is its whole cancellation story.
+    """
+
+    def __call__(
+        self,
+        *,
+        pcm_path: Path,
+        output_path: Path,
+        trim_db: float,
+        params: RideParams,
+        profile: CanonicalProfile,
+        timeout_s: float | None = None,
+    ) -> RideRender: ...
 
 
 # ---------------------------------------------------------------------------
@@ -1600,4 +1980,314 @@ def select_leveled_attempt(
         target_met=target_met,
         hard_tp_met=kept.hard_tp_ok(),
         warning=warning,
+    )
+
+
+def attempt_from_measurement(
+    stderr: str,
+    *,
+    round_index: int,
+    limit_dbtp: float,
+    target_lufs: float,
+    duration_s: float | None = None,
+    decoded_peak_dbfs: float | None = None,
+    wall_s: float = 0.0,
+) -> LeveledAttempt:
+    """Score one measured artifact, by the acceptance gate's own arithmetic.
+
+    Two things are read off ``stderr`` and they are not the same thing:
+    ``emitted_lufs`` is the summary ``I`` FFmpeg printed, and the loudness gate
+    is computed from the per-block series instead -- the harness's own
+    computation, which U25's panel showed disagreeing with the summary.  The
+    printed value is kept for the report; it decides nothing.
+
+    ``duration_s`` is the window the caller asked for.  Without it the tiling
+    falls back to the series' own coverage (last block plus one block step),
+    which is what a whole-asset measurement has to use -- there is no requested
+    duration for a file.
+
+    ``decoded_peak_dbfs`` is measured by the caller (:func:`scan_peak_dbfs`) and
+    passed through; a ``None`` here means the hard gate cannot be cleared, not
+    that it passed.
+    """
+    series = parse_ebur128_series(stderr)
+    span = series_duration_s(series) if duration_s is None else duration_s
+    worst, _worst_start = worst_window_deviation_lu(series, span, target_lufs=target_lufs)
+    return LeveledAttempt(
+        round_index=round_index,
+        limit_dbtp=limit_dbtp,
+        emitted_dbtp=parse_true_peak_dbtp(stderr),
+        emitted_lufs=parse_integrated_lufs(stderr),
+        worst_window_err_lu=worst,
+        whole_err_lu=whole_program_err_lu(series, target_lufs=target_lufs),
+        wall_s=wall_s,
+        decoded_peak_dbfs=decoded_peak_dbfs,
+    )
+
+
+def measure_artifact(
+    artifact_path: Path,
+    *,
+    params: RideParams,
+    round_index: int,
+    limit_dbtp: float,
+    target_lufs: float,
+    duration_s: float | None = None,
+    wall_s: float = 0.0,
+    timeout_s: float | None = None,
+    cancel_event: threading.Event | None = None,
+) -> LeveledAttempt:
+    """Measure one emitted artifact: its loudness series, and its decoded peak.
+
+    The two measurements are independent failure domains.  A failed *loudness*
+    pass costs the artifact its loudness evidence and nothing else -- the peak
+    was still measured, so the hard gate can still hold, and a ride whose
+    measurement child died is reported rather than discarded.  A failed *scan*
+    costs the hard gate, which is exactly what an unmeasurable artifact should
+    lose.  Cancellation is neither: it is the caller shutting down, and it is
+    re-raised.
+    """
+    try:
+        text = run_capture(
+            build_artifact_measure_args(artifact_path=artifact_path),
+            timeout_s=timeout_s,
+            cancel_event=cancel_event,
+        )
+    except LoudnessRideCancelledError:
+        raise
+    except LoudnessRideError:
+        text = ""
+    try:
+        peak = scan_peak_dbfs(
+            artifact_path,
+            params=params,
+            timeout_s=timeout_s,
+            cancel_event=cancel_event,
+        )
+    except LoudnessRideCancelledError:
+        raise
+    except LoudnessRideError:
+        peak = None
+    return attempt_from_measurement(
+        text,
+        round_index=round_index,
+        limit_dbtp=limit_dbtp,
+        target_lufs=target_lufs,
+        duration_s=duration_s,
+        decoded_peak_dbfs=peak,
+        wall_s=wall_s,
+    )
+
+
+@dataclass(frozen=True)
+class LeveledWindow:
+    """One window, leveled: what shipped, why, and what went wrong on the way.
+
+    ``audio_path`` is the artifact that airs -- the nominal emit's file, or the
+    guard's round moved onto it.  ``round_error`` is set only when a round was
+    wanted and failed; it is a report for the caller to log, not a failure of
+    the window, because the nominal artifact is still there and still the best
+    attempt the guard has.  ``tee_path`` records where the post-curve PCM went;
+    it is a *record*, not a promise -- :func:`level_window` has already unlinked
+    it when the module made it, and when the caller supplied it the caller owns
+    it and does with it as it likes.
+    """
+
+    selection: LeveledSelection
+    curve: RideCurve
+    audio_path: Path
+    wall_s: float
+    tee_path: Path
+    round_error: str | None = None
+
+
+def level_window(
+    *,
+    source_path: Path,
+    audio_path: Path,
+    params: RideParams,
+    profile: CanonicalProfile,
+    duration_s: float | None = None,
+    segment: EgressSourceSegment | None = None,
+    pcm_path: Path | None = None,
+    threads: int | None = None,
+    ride_runner: RideRunner | None = None,
+    reencode_runner: ReencodeRunner | None = None,
+    cancel_event: threading.Event | None = None,
+    timeout_s: float | None = None,
+) -> LeveledWindow:
+    """Level one window end to end and leave the artifact that should air at
+    ``audio_path``.
+
+    The whole of answer 12, in order: measure the source, converge the ride,
+    emit once through the profile's codec, measure what was emitted, and -- only
+    if the emitted true peak is still above target -- spend ONE re-encode round
+    against the retained ride PCM at the ceiling the guard asks for.  Then keep
+    the best attempt (see :func:`select_leveled_attempt`) and make
+    ``audio_path`` be it: the round is moved onto the caller's path when it wins,
+    deleted when it does not, so the caller has one file to publish and no
+    choice left to make.
+
+    ``pcm_path`` is the tee of post-curve PCM the emit writes and the round
+    reads.  The caller may supply one (it then owns the file and it outlives the
+    call); otherwise the module makes its own, next to the artifact, and deletes
+    it on the way out -- at 48 kHz stereo float32 that is ~23 MB per minute of
+    program, so it is not a file to leave behind.
+
+    Raises :class:`LoudnessRideError` when the source cannot be measured or the
+    ride cannot converge -- the caller's cue to degrade to the pre-U25 conform.
+    Cancellation raises :class:`LoudnessRideCancelledError` and is re-raised
+    after the files this call owns are cleaned up.  A round that fails is not an
+    error: it is reported in ``round_error`` and the nominal ships.
+    """
+    ride = run_ride if ride_runner is None else ride_runner
+    reencode = run_reencode if reencode_runner is None else reencode_runner
+
+    source_stderr = run_capture(
+        build_source_series_args(
+            source_path=source_path,
+            segment=segment,
+            params=params,
+            threads=threads,
+        ),
+        timeout_s=timeout_s,
+        cancel_event=cancel_event,
+    )
+    source_series = parse_ebur128_series(source_stderr)
+    if not source_series:
+        raise LoudnessRideError(
+            "the source pass measured no loudness series, so there is nothing to level"
+        )
+    source_levels = sliding_levels(source_series, params.window_s, params.step_s)
+
+    def render(curve: list[tuple[float, float]], trim_db: float | None) -> RideRender:
+        return ride(
+            decoder_args=build_decoder_args(
+                source_path=source_path,
+                segment=segment,
+                params=params,
+                threads=threads,
+            ),
+            sink_args=build_measure_sink_args(trim_db, params=params),
+            curve=curve,
+            params=params,
+            cancel_event=cancel_event,
+            timeout_s=timeout_s,
+        )
+
+    curve = converge(
+        params,
+        source_blocks=source_series,
+        source_levels=source_levels,
+        render=render,
+    )
+
+    owned_tee = pcm_path is None
+    if pcm_path is None:
+        tee_file = tempfile.NamedTemporaryFile(  # noqa: SIM115 - closed and unlinked below
+            prefix="civiccast-ride-", suffix=".pcm", dir=audio_path.parent, delete=False
+        )
+        tee_path = Path(tee_file.name)
+        tee_file.close()
+    else:
+        tee_path = pcm_path
+
+    t_start = time.perf_counter()
+    round_path: Path | None = None
+    round_error: str | None = None
+    try:
+        emit = ride(
+            decoder_args=build_decoder_args(
+                source_path=source_path,
+                segment=segment,
+                params=params,
+                threads=threads,
+            ),
+            sink_args=build_encode_sink_args(
+                audio_path,
+                curve.trim_db,
+                params=params,
+                profile=profile,
+            ),
+            curve=curve.curve,
+            params=params,
+            pcm_path=tee_path,
+            cancel_event=cancel_event,
+            timeout_s=timeout_s,
+        )
+
+        attempts = [
+            measure_artifact(
+                audio_path,
+                params=params,
+                round_index=0,
+                limit_dbtp=params.limit_dbtp,
+                target_lufs=params.target_lufs,
+                duration_s=duration_s,
+                wall_s=emit.wall_s,
+                timeout_s=timeout_s,
+                cancel_event=cancel_event,
+            )
+        ]
+
+        ceiling = guard_next_ceiling(attempts)
+        if ceiling is not None:
+            round_path = audio_path.with_name(f"{audio_path.name}.round{len(attempts)}.ts")
+            try:
+                round_render = reencode(
+                    pcm_path=tee_path,
+                    output_path=round_path,
+                    trim_db=curve.trim_db,
+                    params=replace(params, limit_dbtp=ceiling),
+                    profile=profile,
+                    timeout_s=timeout_s,
+                )
+            except LoudnessRideCancelledError:
+                round_path.unlink(missing_ok=True)
+                round_path = None
+                raise
+            except LoudnessRideError as exc:
+                round_error = str(exc)
+                round_path.unlink(missing_ok=True)
+                round_path = None
+            else:
+                attempts.append(
+                    measure_artifact(
+                        round_path,
+                        params=params,
+                        round_index=len(attempts),
+                        limit_dbtp=ceiling,
+                        target_lufs=params.target_lufs,
+                        duration_s=duration_s,
+                        wall_s=round_render.wall_s,
+                        timeout_s=timeout_s,
+                        cancel_event=cancel_event,
+                    )
+                )
+
+        selection = select_leveled_attempt(
+            attempts,
+            window_tol_lu=LOUDNESS_WINDOW_TOL_LU,
+            whole_tol_lu=LOUDNESS_WHOLE_TOL_LU,
+        )
+        # One file airs, and it is the kept attempt's.  A losing round is deleted
+        # rather than left beside the artifact: a second, hotter file in the
+        # same cache directory is a file something can pick up by accident.
+        if round_path is not None:
+            if selection.kept is attempts[0]:
+                round_path.unlink(missing_ok=True)
+            else:
+                round_path.replace(audio_path)
+    finally:
+        if owned_tee:
+            with contextlib.suppress(OSError):
+                tee_path.unlink(missing_ok=True)
+
+    return LeveledWindow(
+        selection=selection,
+        curve=curve,
+        audio_path=audio_path,
+        wall_s=time.perf_counter() - t_start,
+        tee_path=tee_path,
+        round_error=round_error,
     )
