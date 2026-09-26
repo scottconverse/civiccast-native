@@ -1613,12 +1613,21 @@ class SourcePreparer:
         ``build_conform_source_args`` build those exactly as before.
         """
         # U29: the warm's OWN budget, scaled to the asset -- see
-        # ``warm_preparation_timeout_seconds``. Computed here (not inside the
-        # job) so the value the job hands ffmpeg and the value the failure
-        # warning prints are provably the same number.
-        warm_timeout_seconds = warm_preparation_timeout_seconds(
-            media_duration_seconds, self._preparation_timeout_seconds
-        )
+        # ``warm_preparation_timeout_seconds``. U42 moved WHERE it is computed:
+        # no longer here, but inside ``_job``. The caller cannot always supply
+        # a duration -- a TRIMMED airing probes nothing at all (the ``if
+        # trimmed:`` branch in ``prepare``), and a cache meta can have
+        # persisted ``media_duration_seconds: null`` for a later airing to read
+        # back -- and ``warm_preparation_timeout_seconds(None, base)`` is the
+        # bare base. That is the flat 300 s that killed the live whole-asset
+        # conforms ("unknown duration, allowed 300s to conform", six warms in
+        # one day), so the job probes the duration itself when it has none.
+        # It probes THERE, on the single warm worker, and not here: this method
+        # runs inline on the air path's thread (``prepare`` calls it), and an
+        # ffprobe must never sit between a segment and airtime. Computing it
+        # inside the job keeps the property U29 wanted -- the value handed to
+        # ffmpeg and the value the failure warning prints are provably the same
+        # number -- because both read the one local the job binds below.
         with self._warming_guard:
             if key in self._warming:
                 return
@@ -1639,7 +1648,28 @@ class SourcePreparer:
             self._warming.add(key)
 
         def _job() -> None:
+            # U42: both names are bound BEFORE the ``try``, so the failure
+            # branch below can always print a coherent bound -- including when
+            # the probe is itself what raised. ``warm_preparation_timeout_
+            # seconds`` is pure arithmetic, so the pre-try computation costs
+            # nothing when the caller already supplied a usable duration.
+            warm_duration_seconds = media_duration_seconds
+            warm_timeout_seconds = warm_preparation_timeout_seconds(
+                warm_duration_seconds, self._preparation_timeout_seconds
+            )
             try:
+                # U42: an unknown duration scales nothing. Probe it here -- on
+                # the warm worker, never on the air path -- then size the
+                # budget, the conform call and the warning text from what the
+                # probe read. ``probe_media_duration_seconds`` is deliberately
+                # total (``None`` for every failure mode), so a genuinely
+                # unprobeable asset keeps the base bound and the honest
+                # "unknown duration" wording instead of inventing one.
+                if warm_duration_seconds is None or warm_duration_seconds <= 0:
+                    warm_duration_seconds = probe_media_duration_seconds(source_path)
+                    warm_timeout_seconds = warm_preparation_timeout_seconds(
+                        warm_duration_seconds, self._preparation_timeout_seconds
+                    )
                 # Item 66 round-4 (Opus review, point 1): this job may have
                 # sat in the single-worker warm queue for a while (round-3,
                 # point 4) -- by the time it is finally about to run, the
@@ -1667,7 +1697,7 @@ class SourcePreparer:
                     config,
                     loudness,
                     normalized,
-                    media_duration_seconds=media_duration_seconds,
+                    media_duration_seconds=warm_duration_seconds,
                     timeout_seconds=warm_timeout_seconds,
                     lower_priority=True,
                 )
@@ -1691,10 +1721,13 @@ class SourcePreparer:
                 # bound it exceeded; ffmpeg's own stderr is in the log.
                 with self._warming_guard:
                     self._warm_backoff_until[key] = time.monotonic() + _WARM_FAILURE_BACKOFF_SECONDS
+                # U42: the DURATION THE WARM USED (its own probe's value when
+                # the caller had none), so this line and the bound next to it
+                # always describe the same attempt.
                 duration_text = (
                     "unknown duration"
-                    if media_duration_seconds is None
-                    else f"{media_duration_seconds:g}s of media"
+                    if warm_duration_seconds is None
+                    else f"{warm_duration_seconds:g}s of media"
                 )
                 reason = f"{type(exc).__name__}: {exc}"
                 if len(reason) > 300:

@@ -3597,6 +3597,8 @@ def test_prepare_accepts_a_decodable_prepared_segment(tmp_path: Path) -> None:
 
     assert report.source_plan.channel_id == "gov"
     assert report.records[0].prepared_path.endswith("segment-0001.ts")
+
+
 # U29 — the warm's timeout, priority and retry budget
 #
 # Observed on the live station (2026-09-25, reports/U29.md): the LPM rotation's
@@ -3758,6 +3760,136 @@ def test_long_asset_warm_uses_the_scaled_timeout_at_lower_priority(
     assert conforms[0]["timeout"] == pytest.approx(expected)
     assert probes[0]["lower_priority"] is True
     assert conforms[0]["lower_priority"] is True
+
+
+def test_unknown_duration_warm_probes_the_asset_and_scales_its_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U42: an UNKNOWN duration must not collapse a warm's budget to the base.
+
+    OBSERVED on the live station (2026-09-26): six whole-asset warms died with
+    ``Conform-cache warm failed for '<asset>' (unknown duration, allowed 300s
+    to conform, reason: SourcePrepareError: FFmpeg source preparation timed out
+    after 300s ...)`` -- control_plane-app.log:3108/:6617/:19464/:21934 and
+    .log.1:34469/:34955 -- and the same flat 300 s killed the pre-install
+    whole-asset loudnorm conform of a 2.5 h upload (control_plane-app.log.1:123).
+
+    ``media_duration`` reaches ``_schedule_warm`` as ``None`` for a TRIMMED
+    airing (the ``if trimmed:`` branch in ``prepare`` probes nothing at all)
+    and for any airing whose cache meta persisted ``media_duration_seconds:
+    null``.  ``warm_preparation_timeout_seconds(None, base)`` is the bare base,
+    so U29's scaled bound never applied to exactly the long assets it was
+    written for.  The warm must probe the asset itself, size its budget from
+    what it reads, and hand that same value to the conform -- so the meta it
+    writes stops persisting ``None`` for the next airing to read back.
+    """
+
+    calls: list[dict[str, object]] = []
+    preparer, warm_jobs, source, key, config = _u29_warm_fixture(
+        tmp_path, monkeypatch, _warm_kwargs_capturing_runner(calls)
+    )
+    probed: list[Path] = []
+
+    def fake_probe(path: Path) -> float | None:
+        probed.append(path)
+        return _U29_LONG_ASSET_SECONDS
+
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", fake_probe)
+
+    # No ``media_duration_seconds`` at all: the trimmed-airing shape.
+    preparer._schedule_warm(key, source, config, _loudness(), True)
+    assert len(warm_jobs) == 1
+    warm_jobs[0]()
+
+    assert probed == [source], "the warm must probe the asset it sizes itself for"
+    expected = preparer_module.warm_preparation_timeout_seconds(
+        _U29_LONG_ASSET_SECONDS, preparer._preparation_timeout_seconds
+    )
+    assert expected > preparer._preparation_timeout_seconds
+    assert calls, "the warm ran"
+    for call in calls:
+        assert call["timeout"] == pytest.approx(expected)
+    meta = preparer._read_cache_meta(key)
+    assert meta is not None
+    assert meta["media_duration_seconds"] == pytest.approx(_U29_LONG_ASSET_SECONDS)
+
+
+def test_unknown_duration_warm_warning_names_the_probed_duration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """U42: the failure warning names the duration the WARM probed.
+
+    The operator reads this line to decide what to do with the asset, and
+    "unknown duration, allowed 300s to conform" was the exact text that hid a
+    probed-and-known 2.5 h duration behind the flat base (live log lines cited
+    in the sibling test above).  Once the warm probes, the line must carry the
+    number the budget was computed from -- and a probe that genuinely fails
+    must still fall back to the honest "unknown duration" wording.
+    """
+
+    def runner(
+        args: list[str],
+        *,
+        cancel_event: threading.Event | None = None,
+        timeout: float | None = None,
+        lower_priority: bool = False,
+    ) -> FfmpegResult:
+        raise subprocess.TimeoutExpired(args, timeout=timeout or 300.0)
+
+    preparer, warm_jobs, source, key, config = _u29_warm_fixture(tmp_path, monkeypatch, runner)
+    monkeypatch.setattr(
+        preparer_module, "probe_media_duration_seconds", lambda _path: _U29_LONG_ASSET_SECONDS
+    )
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.preparer"):
+        preparer._schedule_warm(key, source, config, _loudness(), False)
+        assert len(warm_jobs) == 1
+        warm_jobs[0]()
+
+    records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(records) == 1, [r.getMessage() for r in caplog.records]
+    message = records[0].getMessage()
+    assert "unknown duration" not in message
+    assert f"{_U29_LONG_ASSET_SECONDS:g}s of media" in message
+    expected = preparer_module.warm_preparation_timeout_seconds(
+        _U29_LONG_ASSET_SECONDS, preparer._preparation_timeout_seconds
+    )
+    assert f"{expected:g}s to conform" in message
+
+
+def test_unknown_duration_warm_still_reports_unknown_when_the_probe_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """U42 guard rail: a probe that reports nothing is NOT grounds for a wider
+    budget -- the base stays the bound and the wording stays honest.
+
+    ``probe_media_duration_seconds`` is deliberately total (it answers ``None``
+    for every failure mode), so this is the shape a genuinely unprobeable
+    asset takes: no duration, no scaling, and a warning that says so.
+    """
+
+    def runner(
+        args: list[str],
+        *,
+        cancel_event: threading.Event | None = None,
+        timeout: float | None = None,
+        lower_priority: bool = False,
+    ) -> FfmpegResult:
+        raise subprocess.TimeoutExpired(args, timeout=timeout or 300.0)
+
+    preparer, warm_jobs, source, key, config = _u29_warm_fixture(tmp_path, monkeypatch, runner)
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: None)
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.preparer"):
+        preparer._schedule_warm(key, source, config, _loudness(), False)
+        assert len(warm_jobs) == 1
+        warm_jobs[0]()
+
+    records = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(records) == 1, [r.getMessage() for r in caplog.records]
+    message = records[0].getMessage()
+    assert "unknown duration" in message
+    assert f"{preparer._preparation_timeout_seconds:g}s to conform" in message
 
 
 def test_on_demand_preparation_keeps_the_base_timeout_and_normal_priority(
