@@ -47,7 +47,7 @@ from civiccast.egress.gst.encoder_probe import (
     probe_hardware_encoder,
 )
 from civiccast.egress.gst.graph import AudioTapLeg, PlayoutGraph, graph_to_json
-from civiccast.egress.gst.reload_policy import reload_sidecar_suffix
+from civiccast.egress.gst.reload_policy import WORKER_PERSISTENT_ENV, reload_sidecar_suffix
 from civiccast.native.supervisor.replay import (
     ChannelReplay,
     LostAckOutcome,
@@ -680,6 +680,18 @@ def _default_worker_launcher(
     # Production worker runs run_forever; scrub the smoke-only SWAPS/INTERVAL so a
     # stray value in the daemon's environment can't put it in fixed-swap mode (audit M4).
     env = {key: value for key, value in os.environ.items() if key not in ("SWAPS", "INTERVAL")}
+    # U41: state the mode the worker cannot infer for itself. THIS launcher is the
+    # daemon's live-channel path (the daemon's ``EncoderStartRequest`` sites ->
+    # ``GstPlayoutStrategy.start()`` -> ``self._launch``); the finite runs -- smoke
+    # ``SWAPS`` mode, unit harnesses, the beta.5 baseline pin -- spawn worker.py
+    # themselves and never see this environment. The worker arms its plan-EOS slate
+    # hold only for the exact value "1", so a live channel stays on air while the
+    # daemon prepares the next reload, and a finite run still ends at plan EOS.
+    # Assigned, not ``setdefault``: the child's mode is this launcher's decision, not
+    # whatever the daemon's own environment happens to carry. Daemon and worker ship
+    # together, so there is no older-daemon case to serve -- an older worker simply
+    # ignores a variable it does not read.
+    env[WORKER_PERSISTENT_ENV] = "1"
     # The worker imports gi/Gst and now runs on BOTH lines: the WSL/Linux line
     # against a system GStreamer install, and the native Windows line against
     # the installed closure (`civiccast.native.gstreamer_runtime`

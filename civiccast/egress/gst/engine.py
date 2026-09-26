@@ -3397,14 +3397,26 @@ class GstPlayoutEngine:
         clean = self.stop()
         return {"swaps": state["n"], "error": self._error, "teardown_clean": clean}
 
-    def run_forever(self, *, control_fifo: str | None = None) -> dict[str, Any]:
+    def run_forever(
+        self, *, control_fifo: str | None = None, hold_slate_at_plan_eos: bool = False
+    ) -> dict[str, Any]:
         """Run the channel until EOS, a pipeline error, SIGINT/SIGTERM, or a control
         ``stop``. Production mode for the per-channel worker. If ``control_fifo`` is
         given, newline commands (``swap <index>``, ``reload <graph.json>``, ``stop``)
         drive seamless role swaps and program content-reloads (D-S1-6: change the
         active source in place, never a restart). SIGTERM — what the daemon's
         ``terminate()`` sends — also quits and tears down gracefully (time-bounded
-        ``→NULL`` with force-exit so the worker can never hang)."""
+        ``→NULL`` with force-exit so the worker can never hang).
+
+        ``hold_slate_at_plan_eos`` (U41) is the one part of that contract that is
+        NOT universal, so it is a parameter and defaults OFF. Set it only for a
+        PERSISTENT live channel -- the daemon's own launches mark those with
+        ``reload_policy.WORKER_PERSISTENT_ENV=1`` in the child's environment and
+        ``worker.main()`` forwards it here. The engine then holds the always-hot
+        slate for the current programme's EOS (see ``_on_program_pad_plan_eos``)
+        instead of letting EOS end the run. A FINITE run -- smoke ``SWAPS`` mode,
+        a harness, the beta.5 baseline pin, whose only shutdown IS the plan ending
+        -- must keep the old behaviour, so anything unmarked passes False."""
         bus = self.pipeline.get_bus()
         bus.add_signal_watch()
         bus.connect("message", self._on_bus)
@@ -3434,16 +3446,18 @@ class GstPlayoutEngine:
         self._arm_live_caption_gap_heartbeat()
         self._flush_lang_tags()  # push deferred secondary-audio ISO-639 descriptors
         self._arm_stall_watchdog()  # S9-5: quit (→ daemon restart) on a silent output stall
-        # U41: the plan ending is not the channel ending. A production worker that
-        # reaches the end of its programme with no replacement ready holds the
-        # always-hot slate instead of quitting, so the daemon never has to relaunch
-        # it (2026-09-25 education channel: worker exit_code=0 at 23:54:41 with
-        # state=ON_AIR, ~3 minutes dark, while the next source was still being
-        # prepared). Armed here -- the production entry point -- so the finite
-        # validation ``run()`` keeps its EOS-ends-the-run contract.
-        self._hold_slate_at_plan_eos = True
+        # U41: the plan ending is not the channel ending. A worker that reaches the
+        # end of its programme with no replacement ready holds the always-hot slate
+        # instead of quitting, so the daemon never has to relaunch it (2026-09-25
+        # education channel: worker exit_code=0 at 23:54:41 with state=ON_AIR, ~3
+        # minutes dark, while the next source was still being prepared). Armed here
+        # -- the production entry point -- and ONLY for a run the daemon marked
+        # persistent, so a finite run keeps its EOS-ends-the-run contract (the
+        # beta.5 baseline pin depends on it; ``run()`` never arms it either).
+        self._hold_slate_at_plan_eos = hold_slate_at_plan_eos
         self._plan_eos_held = False
-        self._arm_plan_eos_hold_probes()
+        if hold_slate_at_plan_eos:
+            self._arm_plan_eos_hold_probes()
 
         keepalive_fd = self._watch_control_fifo(control_fifo) if control_fifo else None
 

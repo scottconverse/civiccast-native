@@ -502,7 +502,9 @@ def _windows_pipe_reader_loop(
             pass
 
 
-def _run_forever_windows_pipe(engine_instance: Any, pipe_name: str) -> dict[str, Any]:
+def _run_forever_windows_pipe(
+    engine_instance: Any, pipe_name: str, *, hold_slate_at_plan_eos: bool = False
+) -> dict[str, Any]:
     """D2 Windows worker-pipe entry point: starts the reader thread, then runs the
     engine's normal ``run_forever`` loop with ``control_fifo=None`` (no FIFO --
     the reader thread marshals commands onto the SAME GLib main loop via
@@ -517,7 +519,9 @@ def _run_forever_windows_pipe(engine_instance: Any, pipe_name: str) -> dict[str,
     )
     reader_thread.start()
     try:
-        result: dict[str, Any] = engine_instance.run_forever(control_fifo=None)
+        result: dict[str, Any] = engine_instance.run_forever(
+            control_fifo=None, hold_slate_at_plan_eos=hold_slate_at_plan_eos
+        )
         return result
     finally:
         stop_event.set()
@@ -555,15 +559,27 @@ def main() -> int:
         commit_timeout_s=commit_timeout,
     )
     swaps = int(os.environ.get("SWAPS", "0"))
+    # U41: the daemon's live-channel launcher (strategy._default_worker_launcher)
+    # marks its child with WORKER_PERSISTENT_ENV=1; the engine arms its plan-EOS
+    # slate hold only for that. Unset -- a smoke SWAPS run, a test harness, the
+    # beta.5 baseline pin -- is a FINITE run that must still exit when its plan
+    # ends (that pin's only shutdown is the worker exiting at plan EOS). Read
+    # through the sibling module, never a civiccast package import: see this
+    # module's docstring for the isolation contract.
+    persistent = os.environ.get(reload_policy_mod.WORKER_PERSISTENT_ENV) == "1"
     try:
         if swaps > 0:
             result = engine_instance.run(
                 swaps=swaps, interval_s=int(os.environ.get("INTERVAL", "2"))
             )
         elif os.name == "nt" and control_fifo:
-            result = _run_forever_windows_pipe(engine_instance, control_fifo)
+            result = _run_forever_windows_pipe(
+                engine_instance, control_fifo, hold_slate_at_plan_eos=persistent
+            )
         else:
-            result = engine_instance.run_forever(control_fifo=control_fifo)
+            result = engine_instance.run_forever(
+                control_fifo=control_fifo, hold_slate_at_plan_eos=persistent
+            )
     except enginemod.PrerollTimeoutError as exc:
         # Item 82: a slow-but-progressing preroll under CPU load is a slow
         # start, not a crash. Exit with a DISTINCT code (never 1, the generic

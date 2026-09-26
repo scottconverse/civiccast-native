@@ -93,7 +93,17 @@ _SLATE_LINE = "CTRL plan EOS: slate on air; the channel stays up until the repla
 
 # A 20 s settle window: the deferred switch is armed early and must commit on the
 # replacement's first buffer, so a wedged state fails fast instead of holding.
-_RELOAD_SETTLE_ENV = {"CIVICAST_RELOAD_TIMEOUT_S": "20"}
+#
+# U41: the hold is armed only for a run the DAEMON marked persistent (its launcher
+# sets ``reload_policy.WORKER_PERSISTENT_ENV`` in the child's environment); this
+# harness spawns ``worker.py`` itself, so it has to say the same thing. Read from
+# the product -- the name comes from the module ``worker.main()`` itself reads, so
+# a rename cannot leave this test arming a hold on a flag nothing consumes (which
+# would fail here as a silent "worker exited at plan EOS", not as an error).
+_RELOAD_SETTLE_ENV = {
+    "CIVICAST_RELOAD_TIMEOUT_S": "20",
+    native.reloadpolicy.WORKER_PERSISTENT_ENV: "1",
+}
 
 
 def _programs(tmp_path: Path) -> tuple[list[ScheduleItemResponse], dict[str, StaffAssetRow]]:
