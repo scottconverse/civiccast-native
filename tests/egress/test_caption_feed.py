@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -305,3 +306,94 @@ def test_feed_resumes_from_scratch_when_live_captions_are_switched_on() -> None:
 
     assert worker.run_once().cues_sent == 1
     assert len(sender.calls) == 2
+
+
+# --- U46 (2026-09-26): the sidecar the parser cannot read ------------------
+#
+# Public's sidecar kept growing while its emitted stream carried no captions.
+# The feed parsed 0 cues, sent 0 commands, and every warning the daemon,
+# strategy and engine legs own stayed silent too -- nothing below the feed ever
+# saw a command. These tests pin the feed's own report of that case: a sidecar
+# full of timing windows the parser cannot read is a caption fault, not an
+# empty channel.
+
+#: The exact shape public's sidecar was writing: three-digit hours, because the
+#: sidecar's program clock is an absolute second count since program start.
+_PUBLIC_SIDECAR = (
+    "WEBVTT\n\n"
+    "public-cue-101697\n"
+    "112:59:50.000 --> 112:59:52.000\n"
+    "Motion carries.\n\n"
+    "public-cue-101698\n"
+    "112:59:52.000 --> 112:59:54.310\n"
+    "Second reading.\n\n"
+)
+
+#: A window that carries text but no duration: ``ffmpeg`` emits instantaneous
+#: CEA-608/708 cues, and the reader skips degenerate timings rather than letting
+#: CaptionCue raise. Structurally a window; nothing the parser will return.
+_DEGENERATE_SIDECAR = (
+    "WEBVTT\n\npublic-cue-101697\n112:59:50.000 --> 112:59:50.000\nMotion carries.\n\n"
+)
+
+
+def _feed_with_sidecar(sidecar: Path) -> CaptionFeedWorker:
+    """A production-built feed worker whose sidecar lookup points at ``sidecar``."""
+
+    return build_caption_feed_worker(
+        lambda: None,
+        send_caption_cue=_Sender(),
+        work_dir=sidecar.parent,
+        caption_sidecar_for=lambda _channel: sidecar,
+    )
+
+
+def test_feed_reads_sidecar_clock_hours_past_one_hundred(tmp_path: Path) -> None:
+    sidecar = tmp_path / "active.vtt"
+    sidecar.write_text(_PUBLIC_SIDECAR, encoding="utf-8")
+
+    cues = _feed_with_sidecar(sidecar)._caption_cue_provider("public")
+
+    assert [cue.cue_id for cue in cues] == [
+        "public-public-cue-101697",
+        "public-public-cue-101698",
+    ]
+    assert cues[0].start_seconds == 112 * 3600 + 59 * 60 + 50.0
+
+
+def test_feed_announces_a_sidecar_it_cannot_read_once_per_broken_spell(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    sidecar = tmp_path / "active.vtt"
+    sidecar.write_text(_DEGENERATE_SIDECAR, encoding="utf-8")
+    feed = _feed_with_sidecar(sidecar)
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.caption_feed"):
+        for _ in range(3):  # a 2 s poll loop must not repeat the warning
+            assert feed._caption_cue_provider("public") == []
+        warnings = [record for record in caplog.records if "0 cues" in record.getMessage()]
+        assert len(warnings) == 1
+        assert "public" in warnings[0].getMessage()
+        assert "1 timing windows" in warnings[0].getMessage()
+
+        # The sidecar becomes readable again: no further warning, and the next
+        # broken spell is announced afresh rather than suppressed by the old one.
+        sidecar.write_text(_PUBLIC_SIDECAR, encoding="utf-8")
+        assert len(feed._caption_cue_provider("public")) == 2
+        caplog.clear()
+        sidecar.write_text(_DEGENERATE_SIDECAR, encoding="utf-8")
+        assert feed._caption_cue_provider("public") == []
+        assert len([r for r in caplog.records if "0 cues" in r.getMessage()]) == 1
+
+
+def test_feed_does_not_announce_a_sidecar_with_no_windows(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    sidecar = tmp_path / "active.vtt"
+    sidecar.write_text("WEBVTT\n\n", encoding="utf-8")
+    feed = _feed_with_sidecar(sidecar)
+
+    with caplog.at_level(logging.WARNING, logger="civiccast.egress.caption_feed"):
+        assert feed._caption_cue_provider("public") == []
+
+    assert [r for r in caplog.records if "0 cues" in r.getMessage()] == []
