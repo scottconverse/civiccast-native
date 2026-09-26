@@ -64,6 +64,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -164,6 +165,19 @@ MAX_SEGMENTS_UPPER_BOUND: Final[int] = 16
 #: Bounded total verifier wall-clock ceiling (per external analyzer call).
 ANALYZER_TIMEOUT_SECONDS: Final[float] = 90.0
 
+#: The relay replaces ``playlist.m3u8`` atomically and rotates segments while
+#: this verifier reads them, so a read that lands inside that window on Windows
+#: gets EACCES (or ENOENT for the instant the name is gone).  A transient race
+#: is not a station fault: every live read is retried this many times, this far
+#: apart, before it fails exactly as it did before the retry existed (U48).
+RACE_RETRY_ATTEMPTS: Final[int] = 20
+RACE_RETRY_DELAY_SECONDS: Final[float] = 0.1
+
+#: The two errnos an atomic replace produces, and only those two: a retry here
+#: must never absorb a real permission failure or a real absence past the
+#: budget.
+_RACE_ERRORS: Final[tuple[type[OSError], ...]] = (PermissionError, FileNotFoundError)
+
 
 class Verdict:
     PASS = "PASS"
@@ -259,6 +273,81 @@ def _safe_rmtree(path: Path) -> None:
     # Not a strict temp descendant: refuse.
 
 
+def _read_live_text(path: Path) -> str:
+    """Read a live file whole, retrying a racing atomic replace.
+
+    One handle per attempt: opened, read to EOF, closed before any retry.  A
+    handle held across a retry can block the relay's replace, which is the very
+    fault this absorbs.  Raises the last race error once the budget is spent.
+    """
+
+    last: OSError | None = None
+    for attempt in range(RACE_RETRY_ATTEMPTS):
+        try:
+            with path.open(encoding="utf-8", errors="replace") as handle:
+                return handle.read()
+        except _RACE_ERRORS as exc:
+            last = exc
+            if attempt + 1 < RACE_RETRY_ATTEMPTS:
+                time.sleep(RACE_RETRY_DELAY_SECONDS)
+    if last is None:  # pragma: no cover - the budget is at least one attempt
+        raise RuntimeError(f"unreadable live file: {path}")
+    raise last
+
+
+def _open_live_fd(src: Path) -> int:
+    """One read-only open of a live file.  A race error propagates unhandled."""
+
+    return os.open(str(src), os.O_RDONLY | getattr(os, "O_BINARY", 0))
+
+
+def _read_live_segment(src: Path) -> tuple[bytes, os.stat_result, os.stat_result] | None:
+    """One read attempt of a live segment; ``None`` when the attempt is unstable.
+
+    ``PermissionError`` / ``FileNotFoundError`` -- the relay's replace racing
+    this read -- PROPAGATE, so ``_snapshot_segment`` can retry them rather than
+    score a station fault.  Every other failure returns ``None``, exactly as the
+    single-attempt copy did before the retry existed.
+    """
+
+    try:
+        fd = _open_live_fd(src)
+    except _RACE_ERRORS:
+        raise
+    except OSError:
+        return None
+    try:
+        try:
+            pre_stat = os.fstat(fd)
+        except OSError:
+            return None
+        try:
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(fd, 1 << 20)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        except OSError:
+            return None
+        data = b"".join(chunks)
+        try:
+            post_stat = os.fstat(fd)
+        except OSError:
+            # Handle closed under us; treat as unstable and fail closed.
+            return None
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(fd)
+    if not data:
+        # zero-byte/torn read: never accept as a snapshot
+        return None
+    if post_stat.st_size != pre_stat.st_size or post_stat.st_mtime_ns != pre_stat.st_mtime_ns:
+        # source identity changed across the read -> unstable; fail closed.
+        return None
+    return data, pre_stat, post_stat
+
+
 def _snapshot_segment(src: Path, scratch: Path) -> tuple[Path | None, str | None]:
     """Copy a live segment's bytes into private scratch EARLY, read-only-on-live.
 
@@ -267,54 +356,40 @@ def _snapshot_segment(src: Path, scratch: Path) -> tuple[Path | None, str | None
     analyzer, so analysis/decode-back must run on a private copy captured at
     identity time -- never on the live path, which can vanish mid-run. The
     source is opened read-only and never modified or deleted.
-    """
-    # Capture the source identity from the SAME open handle BEFORE and AFTER the
-    # read, via os.fstat on one fd. This is the strongest check available without
-    # taking an OS-level lock (which the read-only live path deliberately avoids):
-    #   * pre = fstat(fd) before reading bytes,
-    #   * data = read all bytes from that same fd,
-    #   * post = fstat(fd) after reading.
-    # A same-size rewrite during the read that stabilizes before any stat is NOT
-    # fully detectable, so we make NO atomicity claim: we only fail closed when
-    # the pre/post identity differs (size OR mtime_ns), and the recorded evidence
-    # is the CAPTURED BYTES hash. Rotation (the fd no longer resolves on the live
-    # path) is handled explicitly and does not invalidate the captured bytes.
-    import os as _os
 
-    try:
-        fd = _os.open(str(src), _os.O_RDONLY | getattr(_os, "O_BINARY", 0))
-    except OSError:
+    The read is retried through a racing atomic replace (U48): an ``EACCES`` or
+    ``ENOENT`` inside the relay's replace window is not a station fault, so the
+    attempt is repeated rather than reported.  A read that is still unreadable
+    once the budget is spent returns ``(None, None)`` -- exactly what it
+    returned before the retry existed.
+
+    Capture the source identity from the SAME open handle BEFORE and AFTER the
+    read, via os.fstat on one fd. This is the strongest check available without
+    taking an OS-level lock (which the read-only live path deliberately avoids):
+      * pre = fstat(fd) before reading bytes,
+      * data = read all bytes from that same fd,
+      * post = fstat(fd) after reading.
+    A same-size rewrite during the read that stabilizes before any stat is NOT
+    fully detectable, so we make NO atomicity claim: we only fail closed when
+    the pre/post identity differs (size OR mtime_ns), and the recorded evidence
+    is the CAPTURED BYTES hash. Rotation (the fd no longer resolves on the live
+    path) is handled explicitly and does not invalidate the captured bytes.
+    """
+
+    read: tuple[bytes, os.stat_result, os.stat_result] | None = None
+    for attempt in range(RACE_RETRY_ATTEMPTS):
+        try:
+            read = _read_live_segment(src)
+        except _RACE_ERRORS:
+            if attempt + 1 < RACE_RETRY_ATTEMPTS:
+                time.sleep(RACE_RETRY_DELAY_SECONDS)
+                continue
+            return None, None
+        break
+    if read is None:
         return None, None
-    try:
-        try:
-            pre_stat = _os.fstat(fd)
-        except OSError:
-            return None, None
-        try:
-            chunks: list[bytes] = []
-            while True:
-                chunk = _os.read(fd, 1 << 20)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-        except OSError:
-            return None, None
-        data = b"".join(chunks)
-        try:
-            post_stat = _os.fstat(fd)
-        except OSError:
-            # Handle closed under us; treat as unstable and fail closed.
-            return None, None
-    finally:
-        with contextlib.suppress(OSError):
-            _os.close(fd)
-    if not data:
-        # zero-byte/torn read: never accept as a snapshot
-        return None, None
+    data = read[0]
     digest = hashlib.sha256(data).hexdigest()
-    if post_stat.st_size != pre_stat.st_size or post_stat.st_mtime_ns != pre_stat.st_mtime_ns:
-        # source identity changed across the read -> unstable; fail closed.
-        return None, None
     dst = scratch / src.name
     try:
         dst.write_bytes(data)
@@ -589,12 +664,22 @@ class Playlist:
 
 
 def parse_playlist(path: Path) -> Playlist:
-    if not path.is_file():
-        return Playlist(path=path, media_sequence=None, target_duration=None, parse_error="playlist missing")
+    """Parse a media playlist; a read that races the relay's replace is retried.
+
+    The retry is built on the read itself rather than on a pre-check:
+    ``Path.is_file()`` swallows ``OSError``, so an ``is_file()`` guard would
+    report a raced playlist as "playlist missing" -- a station fault that never
+    happened.  A playlist that is still unreadable once the budget is spent
+    reports exactly what it reported before the retry existed.
+    """
+
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        text = _read_live_text(path)
+    except FileNotFoundError:
+        return Playlist(path=path, media_sequence=None, target_duration=None, parse_error="playlist missing")
     except OSError as exc:
         return Playlist(path=path, media_sequence=None, target_duration=None, parse_error=repr(exc))
+    lines = text.splitlines()
     if not lines or lines[0].strip() != "#EXTM3U":
         return Playlist(path=path, media_sequence=None, target_duration=None, parse_error="missing #EXTM3U")
     media_sequence: int | None = None
@@ -1496,8 +1581,6 @@ def verify_all(
     # ensure channel ids cannot escape the HLS root.
     max_segments = validate_max_segments(max_segments)
     channel_ids = validate_channel_ids(tuple(channel_ids))
-
-    import time
 
     versions = tool_versions()
     ffprobe_path = Path(versions["ffprobe"]["path"]) if versions["ffprobe"]["path"] else None

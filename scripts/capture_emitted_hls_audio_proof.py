@@ -129,6 +129,19 @@ DEFAULT_MAX_SEGMENTS: Final[int] = 300
 #: loop gives up and reports UNVERIFIED.  Well above the >=3 min target.
 DEFAULT_MAX_WAIT_SECONDS: Final[float] = 420.0
 
+#: The relay replaces ``playlist.m3u8`` atomically and writes each segment out
+#: of band, so a read that lands inside that window on Windows gets EACCES (or
+#: ENOENT for the instant the name is gone).  A transient race is not a station
+#: fault: every live read is retried this many times, this far apart, before it
+#: fails exactly as it did before the retry existed (U48).
+RACE_RETRY_ATTEMPTS: Final[int] = 20
+RACE_RETRY_DELAY_SECONDS: Final[float] = 0.1
+
+#: The two errnos an atomic replace produces, and only those two: a retry here
+#: must never absorb a real permission failure or a real absence past the
+#: budget.
+_RACE_ERRORS: Final[tuple[type[OSError], ...]] = (PermissionError, FileNotFoundError)
+
 #: A segment whose observed size is 0, or which reports a duration wildly
 #: different from its playlist EXTINF, is treated as partial rather than
 #: trusted.  0.5 s of drift on a 2 s segment is the tolerated ceiling.
@@ -340,13 +353,76 @@ class Playlist:
     discontinuity_indices: list[int] = field(default_factory=list)
 
 
-def parse_playlist(path: Path) -> Playlist:
-    """Parse a media playlist, recording sequence gaps and parse failures."""
+def _read_live_text(path: Path) -> str:
+    """Read a live file whole, retrying a racing atomic replace.
 
-    if not path.is_file():
-        return Playlist(path=path, parse_error="playlist missing")
+    One handle per attempt: opened, read to EOF, closed before any retry.  A
+    handle held across a retry can block the relay's replace, which is the very
+    fault this absorbs.  Raises the last race error once the budget is spent.
+    """
+
+    last: OSError | None = None
+    for attempt in range(RACE_RETRY_ATTEMPTS):
+        try:
+            with path.open(encoding="utf-8", errors="replace") as handle:
+                return handle.read()
+        except _RACE_ERRORS as exc:
+            last = exc
+            if attempt + 1 < RACE_RETRY_ATTEMPTS:
+                time.sleep(RACE_RETRY_DELAY_SECONDS)
+    if last is None:  # pragma: no cover - the budget is at least one attempt
+        raise CaptureError(f"unreadable live file: {path}")
+    raise last
+
+
+def _read_live_bytes(path: Path) -> bytes:
+    """Read a live file's bytes whole, retrying a racing atomic replace."""
+
+    last: OSError | None = None
+    for attempt in range(RACE_RETRY_ATTEMPTS):
+        try:
+            with path.open("rb") as handle:
+                return handle.read()
+        except _RACE_ERRORS as exc:
+            last = exc
+            if attempt + 1 < RACE_RETRY_ATTEMPTS:
+                time.sleep(RACE_RETRY_DELAY_SECONDS)
+    if last is None:  # pragma: no cover - the budget is at least one attempt
+        raise CaptureError(f"unreadable live file: {path}")
+    raise last
+
+
+def _wait_for_file(path: Path) -> bool:
+    """True once the path exists; False after the race-retry budget.
+
+    ``Path.is_file()`` swallows ``OSError``, so a file that is momentarily gone
+    during the relay's replace and one that is genuinely absent look identical
+    here -- the retry is the only thing that separates them.
+    """
+
+    for attempt in range(RACE_RETRY_ATTEMPTS):
+        if path.is_file():
+            return True
+        if attempt + 1 < RACE_RETRY_ATTEMPTS:
+            time.sleep(RACE_RETRY_DELAY_SECONDS)
+    return False
+
+
+def parse_playlist(path: Path) -> Playlist:
+    """Parse a media playlist, recording sequence gaps and parse failures.
+
+    The read is retried through a racing atomic replace (``_read_live_text``),
+    and the retry is built on the read itself rather than on a pre-check:
+    ``Path.is_file()`` swallows ``OSError``, so an ``is_file()`` guard would
+    report a raced playlist as "playlist missing" -- a station fault that never
+    happened.  A playlist that is still unreadable once the budget is spent
+    reports exactly what it reported before the retry existed.
+    """
+
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = _read_live_text(path)
+    except FileNotFoundError:
+        return Playlist(path=path, parse_error="playlist missing")
     except OSError as exc:
         return Playlist(path=path, parse_error=f"playlist unreadable: {exc}")
 
@@ -871,15 +947,21 @@ def _copy_segment(
     extinf: float,
     evidence: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Copy one TS immutably; record a partial/missing segment as a blocker."""
+    """Copy one TS immutably; record a partial/missing segment as a blocker.
 
+    Both live touches are race-aware (U48): the presence check and the byte
+    read are each retried through the relay's replace before a segment is
+    called missing or its capture called incomplete.
+    """
+
+    present = _wait_for_file(source)
     record: dict[str, Any] = {
         "name": source.name,
         "sequence": sequence,
         "extinf_seconds": extinf,
-        "present": source.is_file(),
+        "present": present,
     }
-    if not source.is_file():
+    if not present:
         record["capture_status"] = "missing"
         evidence["blocking_reasons"].append(f"referenced segment missing: {source.name}")
         return None
@@ -888,14 +970,11 @@ def _copy_segment(
         size_before = source.stat().st_size
         if size_before <= 0:
             raise CaptureError(f"segment is empty: {source.name}")
-        digest = hashlib.sha256()
-        with source.open("rb") as src, snapshot_path.open("wb") as dst:
-            while True:
-                chunk = src.read(1024 * 1024)
-                if not chunk:
-                    break
-                digest.update(chunk)
-                dst.write(chunk)
+        data = _read_live_bytes(source)
+        if len(data) != size_before:
+            raise CaptureError(f"segment changed size during capture: {source.name}")
+        digest = hashlib.sha256(data)
+        snapshot_path.write_bytes(data)
         size_after = source.stat().st_size
         copied = snapshot_path.stat().st_size
         if copied != size_before or size_after != size_before:
