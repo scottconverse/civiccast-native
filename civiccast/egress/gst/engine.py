@@ -604,6 +604,13 @@ _REBASE_DRAIN_POLL_MS = 20
 # and this bound together.
 _STREAM_LAG_BOUND_S = 2.0
 
+# U41: the always-hot SLATE leg's selector index. It is the second leg the graph
+# builds (``bridge.py`` pads the program leg at 0 and the live/infinite slate at
+# 1), and it is the only thing in the pipeline that can be put on air when the
+# programme's own plan has ended and its replacement is not ready yet -- which is
+# what makes ``_hold_slate_for_plan_eos`` a hold rather than a stop.
+_SLATE_LEG_INDEX = 1
+
 
 def _resolve_commit_timeout_s(explicit: float) -> float:
     """Validate/clamp the reload-commit watchdog bound to
@@ -680,6 +687,15 @@ class InputSelectorSwap(SwapController):
 
 class GstPlayoutEngine:
     """One persistent playout pipeline built from a ``PlayoutGraph``."""
+
+    # U41: whether the end of the programme's PLAN is a reason to stop feeding the
+    # channel. Class-level defaults, so a partially-built engine (and every test
+    # that assembles one with ``object.__new__``) inherits the finite-run
+    # behaviour -- ``run()`` still ends at EOS. Only ``run_forever``, the
+    # production worker, turns the hold on; only a commit turns ``_plan_eos_held``
+    # back off. See ``_on_program_pad_plan_eos``.
+    _hold_slate_at_plan_eos: bool = False
+    _plan_eos_held: bool = False
 
     def __init__(
         self,
@@ -3418,6 +3434,16 @@ class GstPlayoutEngine:
         self._arm_live_caption_gap_heartbeat()
         self._flush_lang_tags()  # push deferred secondary-audio ISO-639 descriptors
         self._arm_stall_watchdog()  # S9-5: quit (→ daemon restart) on a silent output stall
+        # U41: the plan ending is not the channel ending. A production worker that
+        # reaches the end of its programme with no replacement ready holds the
+        # always-hot slate instead of quitting, so the daemon never has to relaunch
+        # it (2026-09-25 education channel: worker exit_code=0 at 23:54:41 with
+        # state=ON_AIR, ~3 minutes dark, while the next source was still being
+        # prepared). Armed here -- the production entry point -- so the finite
+        # validation ``run()`` keeps its EOS-ends-the-run contract.
+        self._hold_slate_at_plan_eos = True
+        self._plan_eos_held = False
+        self._arm_plan_eos_hold_probes()
 
         keepalive_fd = self._watch_control_fifo(control_fifo) if control_fifo else None
 
@@ -3791,7 +3817,15 @@ class GstPlayoutEngine:
             # outgoing-EOS condition starts satisfied for an immediate switch.
             "switch_at_end_of_current": switch_at_end_of_current,
             "new_leg_ready": False,
-            "old_leg_eos": not switch_at_end_of_current,
+            # U41: a boundary-aligned switch normally waits for the outgoing leg's
+            # own EOS. After ``_hold_slate_for_plan_eos`` there is no such EOS to
+            # wait for -- the leg already ended and its EOS was dropped -- so the
+            # transaction starts with the boundary recorded, which is the state
+            # ``_on_new_leg_ready`` commits on at once. Without this, a reload
+            # dispatched after a held plan end would sit on a ready leg until the
+            # 900 s ``defer_switch_timeout_s`` fired, with the slate on air the
+            # whole time.
+            "old_leg_eos": (not switch_at_end_of_current) or self._plan_eos_held,
             "boundary_forced": False,
             "defer_timeout_id": None,
             # Finite replacement timing state (immediate or deferred):
@@ -4417,8 +4451,16 @@ class GstPlayoutEngine:
         the daemon restarts the channel to a known state. A bounded freeze then a
         restart is the fail-safe end of this path; the alternative (forwarding the
         EOS) is an immediate, unconditional restart at EVERY boundary, which is the
-        defect. Closing the gap properly means switching to slate for the interval,
-        which is a separate change."""
+        defect.
+
+        U41 closed the same gap one case earlier -- a plan that ends with NO
+        transaction in flight at all, which is what the 2026-09-25 education-channel
+        incident was: ``_on_program_pad_plan_eos`` holds the slate for that interval.
+        This path still freezes, deliberately: a transaction IS in flight, so its
+        commit (or its abort, which hands the frozen leg back to the stall watchdog)
+        is the settlement this boundary belongs to. The interval is bounded by
+        ``reload_timeout_s`` rather than by a live slate, and the watchdog owns the
+        escalation if it expires."""
         pending = self._pending_reload
         if pending is None:
             return False  # aborted or superseded before this fired
@@ -4716,6 +4758,14 @@ class GstPlayoutEngine:
         if self.audio_sink_pads and pending["new_audio_pad"] is not None:
             self.audio_sink_pads[0] = pending["new_audio_pad"]
         self._source_leg_elements[0] = pending["new_elements"]
+        # U41: the program is back, so any plan-EOS hold is over -- and the hold has
+        # to be re-armed on the pad just published, because the probe from before
+        # this commit sits on the pad the line above displaced. Both statements
+        # belong to this moment and nowhere else: earlier and the probe would guard
+        # a pad that is not on air yet, later and a plan end in between would still
+        # quit the worker.
+        self._plan_eos_held = False
+        self._arm_plan_eos_hold_probes()
         pending["selector_handoff_confirmed"] = True
         print(
             "CTRL reload diagnostic: stage=selector-handoff-confirmed",
@@ -5075,6 +5125,158 @@ class GstPlayoutEngine:
         )
         self._abort_pending_reload("timeout")
         return False  # one-shot
+
+    def _is_current_program_pad(self, pad: Any) -> bool:
+        """True only for the pad the channel is airing RIGHT NOW.
+
+        Identity, never name or value. ``selector_sink_pads[0]`` is replaced by
+        every commit (see ``_confirm_reload_selector_handoff``), so the pad a
+        superseded transaction was watching is a DIFFERENT object from the one on
+        air, and that is exactly the distinction the hold needs: an EOS from the
+        displaced leg is the boundary machinery's business, not the hold's."""
+        for slots in (self.selector_sink_pads, self.audio_sink_pads):
+            for current in slots[:1]:
+                if current is not None and current is pad:
+                    return True
+        return False
+
+    def _arm_plan_eos_hold_probes(self) -> None:
+        """Install the U41 plan-EOS hold on the CURRENT program leg's selector sink
+        pads -- video and audio, one probe each.
+
+        Best-effort by construction: a pad that refuses the probe is left
+        unguarded, which is precisely the pre-U41 behaviour (the leg's EOS crosses
+        and the worker exits cleanly), never a new failure. Both call sites matter:
+        ``run_forever`` installs it for the first plan, and every commit installs it
+        again, because a commit REPLACES the pad object in
+        ``selector_sink_pads[0]``/``audio_sink_pads[0]`` -- a probe left behind on
+        the displaced pad would guard a leg the channel no longer airs, and the next
+        plan end would quit the worker exactly as it used to.
+
+        Nothing is installed when the hold is disarmed (``run()``'s finite
+        contract), and nothing is installed on the slate pads -- the slate leg is
+        live and infinite (``bridge.py``), so an EOS from it is real information
+        that must keep its existing behaviour."""
+        if not self._hold_slate_at_plan_eos:
+            return
+        for pad in self.selector_sink_pads[:1] + self.audio_sink_pads[:1]:
+            if pad is None:
+                continue
+            try:
+                pad.add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, self._on_program_pad_plan_eos)
+            except Exception as exc:  # pragma: no cover - a pad that refuses a probe
+                print(
+                    f"WARN: could not arm the plan-EOS hold on {pad!r}: {exc!r}; "
+                    "this leg's EOS will keep its existing behaviour",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+    def _on_program_pad_plan_eos(self, pad: Gst.Pad, info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+        """Streaming thread: the CURRENT program leg reached its natural end and
+        nothing is being prepared to replace it. DROP the EOS and put the slate on
+        air, so the channel never goes dark waiting.
+
+        Why a probe and not the bus: once an EOS crosses an ACTIVE selector pad it
+        is forwarded to ``mpegtsmux`` and to the bus, and ``_on_bus`` answers a
+        pipeline EOS by quitting the loop (engine.py:1841-1844). The output side is
+        ended by then -- re-selecting a pad cannot revive it. The only place an EOS
+        can be declined is before it crosses, which is the same mechanism every
+        healthy rollover already uses (``_arm_boundary_probes``).
+
+        Why it declines so much: this probe sits on the same pad as a transaction's
+        boundary probe and is installed FIRST (arming order is
+        ``run_forever``/commit, then the transaction). Same-priority pad probes run
+        in installation order, so an unconditional DROP here would starve
+        ``_on_outgoing_pad_data`` and no reload could ever commit. Hence:
+
+        * a reload transaction in flight -> OK: its boundary probe owns this
+          boundary, and the commit it drives is the correct outcome;
+        * fewer than two legs -> OK: there is no slate to hold, and swallowing the
+          EOS would turn a clean, classifiable exit into an unclassifiable freeze;
+        * not the current program pad -> OK: the slate leg and every displaced pad
+          keep their own behaviour;
+        * not an EOS (the mask is EVENT_DOWNSTREAM, which also carries segments,
+          caps and tags) or an unreadable event -> OK. Dropping a SEGMENT here
+          would corrupt the very timeline the reload machinery rebases onto.
+
+        The decision is main-loop state (``_pending_reload``) read from a streaming
+        thread, which is safe in one direction only: a transaction that appears
+        between this read and the queued ``_hold_slate_for_plan_eos`` makes that
+        callback re-check and decline, whereas a transaction that was already in
+        flight is seen here. Losing that race is the pre-U41 behaviour, not a new
+        failure."""
+        if not self._hold_slate_at_plan_eos:
+            return Gst.PadProbeReturn.OK
+        if self._pending_reload is not None:
+            return Gst.PadProbeReturn.OK
+        if len(self.selector_sink_pads) < 2:
+            return Gst.PadProbeReturn.OK
+        if not self._is_current_program_pad(pad):
+            return Gst.PadProbeReturn.OK
+        try:
+            event = info.get_event()
+        except Exception:
+            return Gst.PadProbeReturn.OK  # an unanswerable probe info is not an EOS
+        if event is None or getattr(event, "type", None) != Gst.EventType.EOS:
+            return Gst.PadProbeReturn.OK
+        print(
+            "CTRL plan EOS: program leg ended with no reload in flight; holding the slate",
+            file=sys.stderr,
+            flush=True,
+        )
+        GLib.idle_add(self._hold_slate_for_plan_eos)
+        return Gst.PadProbeReturn.DROP
+
+    def _hold_slate_for_plan_eos(self) -> bool:
+        """Main-loop: the programme's plan ended with nothing replacing it, so put
+        the always-hot slate leg on air and stay there until a reload commits.
+
+        The slate leg is ``videotestsrc is-live=True`` + ``audiotestsrc
+        is-live=True`` -- live and infinite, so it never EOSes and the output keeps
+        advancing: the S9-5 stall watchdog is not tripped, the bus never sees an
+        EOS, and the worker stays alive under the daemon's state row, which is
+        already ON_AIR. That is also why the plan's end no longer needs to be
+        treated as the channel's end: nothing about the off-air decision belonged
+        to the plan in the first place.
+
+        ``_plan_eos_held`` is what the next ``reload_program`` reads: its
+        ``old_leg_eos`` flag starts True, so ``_on_new_leg_ready`` commits the
+        instant the replacement's first buffer lands instead of arming the 900 s
+        ``defer_switch_timeout_s`` for a boundary that has already passed.
+
+        If the selector cannot be switched after the EOS has been dropped, the
+        output really would freeze with no signal, so the worker is failed
+        explicitly (``_error`` + quit) -- the daemon's restart is the correct and
+        only remaining recovery, and it is the same escalation the stall watchdog
+        uses."""
+        if not self._hold_slate_at_plan_eos or self._plan_eos_held:
+            return False
+        if self._pending_reload is not None:
+            return False  # a transaction appeared while this callback was queued
+        if len(self.selector_sink_pads) < 2:
+            return False
+        try:
+            self.swap.swap_to(_SLATE_LEG_INDEX)
+        except Exception as exc:
+            print(
+                f"CTRL plan EOS: could not select the slate leg ({exc!r}); "
+                "failing the worker so the daemon restarts the channel",
+                file=sys.stderr,
+                flush=True,
+            )
+            self._error = f"plan EOS: slate hold failed: {exc!r}"
+            if self._loop is not None:
+                with contextlib.suppress(Exception):
+                    self._loop.quit()
+            return False
+        self._plan_eos_held = True
+        print(
+            "CTRL plan EOS: slate on air; the channel stays up until the replacement is ready",
+            file=sys.stderr,
+            flush=True,
+        )
+        return False
 
     def _arm_boundary_probes(self, pending: dict[str, Any]) -> None:
         """Watch BOTH outgoing pads (video AND audio -- an unhandled audio EOS

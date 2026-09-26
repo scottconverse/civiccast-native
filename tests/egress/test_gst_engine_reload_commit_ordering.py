@@ -5006,3 +5006,364 @@ def test_u37_observer_window_close_reports_what_it_counted(
     # Already disarmed: a second tick is silent.
     assert engine._on_rebase_observer_deadline(pending) is False
     assert capsys.readouterr().err == ""
+
+
+# -- U41: a plan that ends with nothing replacing it holds the slate -----------
+#
+# 2026-09-25, education channel, live: the programme plan's last segment ended at
+# 23:54:41 and the worker exited cleanly with ``state=ON_AIR,
+# pending_reload=False``. The daemon's classification is at daemon.py:3466-3473 and
+# its reaction is "_relaunch_after_crash" -> "Worker exited cleanly while the
+# channel was expected to stay on air; relaunching encoder" (daemon.py:3970), and
+# the channel was dark for ~3 minutes while the replacement source was still being
+# prepared (its loudness-conform cache had been invalidated by the 18:16 install).
+# Nothing was wrong with the preparation, the rollover, or the relaunch: the plan
+# ran out while its replacement was not ready, and NO reload transaction was in
+# flight -- so no boundary probe sat on the program leg's selector sink pad, the
+# leg's EOS crossed into ``mpegtsmux``, reached the bus, and quit the worker.
+#
+# The repair reuses the machinery every healthy rollover already runs: an
+# ``EVENT_DOWNSTREAM`` probe on the CURRENT program leg's selector sink pads that
+# DROPs the EOS before it can cross, and -- instead of waiting for a boundary that
+# is already past -- switches the selector to the always-hot slate leg in the same
+# main-loop tick. Output keeps flowing, the worker stays alive, and the incoming
+# reload commits as soon as its new leg is ready (``reload_program`` marks
+# ``old_leg_eos`` when the plan end was already held, which is exactly the state
+# ``_on_new_leg_ready`` commits immediately on).
+#
+# Three guards keep the blast radius at zero:
+#   * the hold is armed only by ``run_forever``, so a finite validation ``run()``
+#     keeps its EOS-ends-the-run contract (pinned by
+#     ``test_u30_a_pipeline_eos_names_itself_before_it_quits_the_worker``);
+#   * a probe that finds a reload transaction in flight passes the EOS through
+#     untouched -- that transaction's own boundary probe owns the boundary
+#     (same-priority probes run in installation order, and this one is installed
+#     first, so "return OK" is what keeps the boundary probe reachable);
+#   * a probe on any pad that is not the CURRENT program leg's passes through, so
+#     the slate leg and every retired pad keep their normal behaviour.
+
+
+class _U41SwapRecorder:
+    """Records every index the plan-EOS hold asked the selector to select."""
+
+    def __init__(self) -> None:
+        self.swaps: list[int] = []
+
+    def swap_to(self, index: int) -> None:
+        self.swaps.append(index)
+
+
+class _U41QuitCounter:
+    def __init__(self) -> None:
+        self.quits = 0
+
+    def quit(self) -> None:
+        self.quits += 1
+
+
+class _U41NoEventInfo:
+    """Probe info whose ``get_event`` cannot answer at all.
+
+    A probe callback runs on a streaming thread: an exception raised there is not
+    a clean failure, it is a swallowed EOS. The callback has to decline the event
+    rather than raise.
+    """
+
+    type = _FakePadProbeType.EVENT_DOWNSTREAM
+
+    def get_buffer(self) -> Any:
+        return None
+
+    def get_event(self) -> Any:
+        raise RuntimeError("probe info carries no event")
+
+
+class _U41Rig:
+    """A bare engine with a real two-leg selector: program (pad 0) + slate (pad 1)."""
+
+    def __init__(self, module: types.ModuleType, recorder: _Recorder) -> None:
+        self.recorder = recorder
+        self.engine = _bare_engine_for_commit(module, recorder)
+        self.program_video = _FakeOldPad("prog-video", recorder, None)
+        self.program_audio = _FakeOldPad("prog-audio", recorder, None)
+        self.slate_video = _FakeOldPad("slate-video", recorder, None)
+        self.slate_audio = _FakeOldPad("slate-audio", recorder, None)
+        self.engine.selector_sink_pads = [self.program_video, self.slate_video]
+        self.engine.audio_sink_pads = [self.program_audio, self.slate_audio]
+        self.swap = _U41SwapRecorder()
+        self.engine.swap = self.swap
+        self.loop = _U41QuitCounter()
+        self.engine._loop = self.loop
+        self.engine._pending_reload = None
+        # The production value, set here explicitly: everything a test leaves
+        # unset is the class default, which is the finite-run behaviour.
+        self.engine._hold_slate_at_plan_eos = True
+
+
+def _u41_eos_info() -> _FakeEventProbeInfo:
+    return _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS))
+
+
+def test_u41_a_program_plan_eos_with_no_reload_in_flight_holds_the_slate(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The exact 23:54:41 shape: the plan ended, nothing was in flight to replace it.
+
+    Dropping the EOS is what keeps the mux (and therefore the bus, and therefore
+    ``_on_bus`` -> ``_loop.quit()``) from seeing the end of the programme, and
+    the slate is what keeps output flowing while the replacement is prepared.
+    """
+    rig = _U41Rig(engine_module, _Recorder())
+    rig.engine._plan_eos_held = False
+
+    assert (
+        rig.engine._on_program_pad_plan_eos(rig.program_video, _u41_eos_info())
+        == engine_module.Gst.PadProbeReturn.DROP
+    )
+
+    assert rig.swap.swaps == [1], "the selector was not switched to the slate leg"
+    assert rig.loop.quits == 0, "the worker was told to quit at a plan EOS"
+    assert rig.engine._plan_eos_held is True
+    err = capsys.readouterr().err
+    assert "CTRL plan EOS: program leg ended with no reload in flight" in err
+    assert "CTRL plan EOS: slate on air; the channel stays up" in err
+
+
+def test_u41_the_audio_program_pad_is_held_too(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unhandled audio EOS takes the pipeline down exactly like a video one.
+
+    The boundary probes already watch both streams for the same reason
+    (``_arm_boundary_probes``: "an unhandled audio EOS latches the mux's audio pad
+    just as fatally"). The plan-EOS hold has to cover the same two pads.
+    """
+    rig = _U41Rig(engine_module, _Recorder())
+
+    assert (
+        rig.engine._on_program_pad_plan_eos(rig.program_audio, _u41_eos_info())
+        == engine_module.Gst.PadProbeReturn.DROP
+    )
+
+    assert rig.swap.swaps == [1]
+    assert rig.loop.quits == 0
+    assert rig.engine._plan_eos_held is True
+    assert "CTRL plan EOS: slate on air" in capsys.readouterr().err
+
+
+def test_u41_a_plan_eos_with_a_reload_in_flight_is_left_to_the_boundary_probe(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A dispatched reload owns this boundary -- the hold must not race it.
+
+    Every same-priority probe on a pad runs in installation order, and the hold
+    probe is installed before any transaction's boundary probe. If it dropped the
+    EOS unconditionally it would starve ``_on_outgoing_pad_data`` and the reload
+    would never commit; if it switched to the slate it would undo a boundary that
+    is about to be committed. So it does nothing at all.
+    """
+    rig = _U41Rig(engine_module, _Recorder())
+    rig.engine._pending_reload = _u30_pending_for_eos(rig.program_video)
+
+    assert (
+        rig.engine._on_program_pad_plan_eos(rig.program_video, _u41_eos_info())
+        == engine_module.Gst.PadProbeReturn.OK
+    )
+
+    assert rig.swap.swaps == []
+    assert rig.engine._plan_eos_held is False
+    assert capsys.readouterr().err == ""
+
+
+def test_u41_a_plan_eos_on_a_pad_that_is_not_the_programs_is_left_alone(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Only the CURRENT program leg is guarded.
+
+    The slate leg is live and infinite (bridge.py:633-687), so an EOS from it is
+    real information and must keep its existing exit behaviour; a pad that has
+    already been displaced by a commit is not the channel's programming either.
+    """
+    rig = _U41Rig(engine_module, _Recorder())
+    retired = _FakeOldPad("retired", rig.recorder, None)
+
+    for pad in (rig.slate_video, rig.slate_audio, retired):
+        assert (
+            rig.engine._on_program_pad_plan_eos(pad, _u41_eos_info())
+            == engine_module.Gst.PadProbeReturn.OK
+        ), pad.name
+
+    assert rig.swap.swaps == []
+    assert rig.engine._plan_eos_held is False
+    assert capsys.readouterr().err == ""
+
+
+def test_u41_only_the_eos_event_is_held(engine_module, capsys: pytest.CaptureFixture[str]) -> None:
+    """The mask is ``EVENT_DOWNSTREAM``, which carries segments, caps and tags too.
+
+    Anything that is not an EOS -- and any probe info that cannot even answer the
+    question -- must pass straight through, because dropping a SEGMENT here would
+    corrupt the very timeline the reload machinery rebases onto.
+    """
+    rig = _U41Rig(engine_module, _Recorder())
+    segment = _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.SEGMENT))
+    caps_like = _FakeEventProbeInfo(_FakeProbeEvent("CAPS"))
+
+    for info in (segment, caps_like, _U41NoEventInfo()):
+        assert (
+            rig.engine._on_program_pad_plan_eos(rig.program_video, info)
+            == engine_module.Gst.PadProbeReturn.OK
+        ), info
+
+    assert rig.swap.swaps == []
+    assert rig.engine._plan_eos_held is False
+    assert capsys.readouterr().err == ""
+
+
+def test_u41_a_plan_eos_with_no_slate_leg_leaves_the_eos_alone(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Dropping an EOS with nothing behind it is a silent freeze.
+
+    ``InputSelectorSwap.swap_to`` raises IndexError outside the pads it was bound
+    with (engine.py:651-678), so a single-leg pipeline has no slate to hold. Swallowing
+    the EOS there would be strictly worse than the clean exit it replaced -- a
+    frozen output the daemon cannot classify -- so the drop is conditional on
+    there being a leg to hold.
+    """
+    rig = _U41Rig(engine_module, _Recorder())
+    rig.engine.selector_sink_pads = [rig.program_video]
+    rig.engine.audio_sink_pads = [rig.program_audio]
+
+    assert (
+        rig.engine._on_program_pad_plan_eos(rig.program_video, _u41_eos_info())
+        == engine_module.Gst.PadProbeReturn.OK
+    )
+
+    assert rig.swap.swaps == []
+    assert rig.engine._plan_eos_held is False
+    assert capsys.readouterr().err == ""
+
+
+def test_u41_the_hold_is_off_for_a_finite_validation_run(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``run()`` must keep its EOS-ends-the-run contract.
+
+    The hold is armed by ``run_forever`` alone (the production worker). A bare
+    engine therefore carries the class default, and an EOS on the program pad goes
+    straight through -- which is what
+    ``test_u30_a_pipeline_eos_names_itself_before_it_quits_the_worker`` pins on the
+    bus side.
+    """
+    rig = _U41Rig(engine_module, _Recorder())
+    rig.engine._hold_slate_at_plan_eos = False  # the class default
+
+    assert (
+        rig.engine._on_program_pad_plan_eos(rig.program_video, _u41_eos_info())
+        == engine_module.Gst.PadProbeReturn.OK
+    )
+    rig.engine._arm_plan_eos_hold_probes()
+
+    assert rig.swap.swaps == []
+    assert rig.program_video.probes == []
+    assert rig.program_audio.probes == []
+    assert capsys.readouterr().err == ""
+
+
+def test_u41_arming_the_hold_covers_both_current_program_stream_pads(engine_module) -> None:
+    """One probe per current program pad, EVENT_DOWNSTREAM only, nothing on the slate."""
+    rig = _U41Rig(engine_module, _Recorder())
+
+    rig.engine._arm_plan_eos_hold_probes()
+
+    for pad in (rig.program_video, rig.program_audio):
+        assert len(pad.probes) == 1, (pad.name, pad.probes)
+        assert pad.probes[0][1] == engine_module.Gst.PadProbeType.EVENT_DOWNSTREAM, pad.probes
+        assert pad.probes[0][2].__name__ == "_on_program_pad_plan_eos", pad.probes
+    assert rig.slate_video.probes == []
+    assert rig.slate_audio.probes == []
+
+
+def test_u41_a_commit_clears_the_hold_and_re_arms_it_on_the_new_program_pads(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The hold ends where the program returns.
+
+    ``_confirm_reload_selector_handoff`` is the moment ``selector_sink_pads[0]``
+    becomes the incoming leg's pad; the selector is already switched to it there,
+    so the hold is over. The SAME commit has to re-arm the probe on the pad it just
+    published -- a commit replaces the pad object, so a probe left on the displaced
+    one would guard a pad the channel no longer airs, and the next plan end would
+    quit the worker exactly as before.
+    """
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine._hold_slate_at_plan_eos = True
+    engine._plan_eos_held = True
+    new_video = _FakeOldPad("new-video", recorder, None)
+    new_audio = _FakeOldPad("new-audio", recorder, None)
+    pending: dict[str, Any] = {
+        "timeout_id": None,
+        "defer_timeout_id": None,
+        "new_video_pad": new_video,
+        "new_audio_pad": new_audio,
+        "rebase_new_leg": False,
+        "hold_probes": [],
+        "boundary_probes": [],
+        "old_video_pad": _FakeOldPad("old-video", recorder, None),
+        "old_audio_pad": None,
+        "old_elements": [],
+        "new_elements": [],
+        "on_settled": None,
+    }
+
+    assert _complete_commit_for_test(engine, pending) is False
+
+    assert engine.selector_sink_pads[0] is new_video
+    assert engine.audio_sink_pads[0] is new_audio
+    assert engine._plan_eos_held is False
+    assert "add_probe:new-video:4:_on_program_pad_plan_eos" in recorder.calls, recorder.calls
+    assert "add_probe:new-audio:4:_on_program_pad_plan_eos" in recorder.calls, recorder.calls
+    capsys.readouterr()
+
+
+def test_u41_a_reload_after_a_held_plan_eos_commits_on_readiness(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The boundary is already past -- the next reload must not wait for another.
+
+    ``_on_new_leg_ready`` commits immediately when ``pending['old_leg_eos']`` is
+    already True and otherwise arms the 900 s ``defer_switch_timeout_s``. Without
+    this flag a reload dispatched after the hold would sit on a ready leg for 15
+    minutes (or until the forced-boundary watchdog) waiting for an EOS from a leg
+    that has already ended -- and the slate would stay on air the whole time.
+    """
+    observed: dict[bool, Any] = {}
+
+    def _old_leg_eos_seen_at_build(plan_eos_held: bool) -> Any:
+        recorder = _Recorder()
+        engine = _bare_engine_for_commit(engine_module, recorder)
+        engine._reload_txn_counter = count(1)
+        engine._hold_slate_at_plan_eos = True
+        engine._plan_eos_held = plan_eos_held
+        engine.selector_sink_pads = [_FakeOldPad("sink_0", recorder, None)]
+        engine.audio_sink_pads = [_FakeOldPad("sink_1", recorder, None)]
+        seen: dict[str, Any] = {}
+
+        def _build(_leg: Any) -> Any:
+            pending = engine._pending_reload
+            seen["old_leg_eos"] = None if pending is None else pending["old_leg_eos"]
+            raise _StopBuild
+
+        engine._instantiate_source_leg = _build  # type: ignore[method-assign]
+        with pytest.raises(_StopBuild):
+            engine.reload_program(_StubLeg(), switch_at_end_of_current=True)
+        return seen["old_leg_eos"]
+
+    observed[True] = _old_leg_eos_seen_at_build(True)
+    observed[False] = _old_leg_eos_seen_at_build(False)
+
+    assert observed[True] is True, observed
+    assert observed[False] is False, observed
+    capsys.readouterr()
