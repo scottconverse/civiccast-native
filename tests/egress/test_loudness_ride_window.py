@@ -25,6 +25,7 @@ as a wrong number rather than as a table that merely looks different.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -339,8 +340,56 @@ _ROUND = b"round-artifact"
 _WINDOW_S = 240.0
 _FLAT = _flat(-16.0, seconds=_WINDOW_S)
 #: A round that came back 4 LU quiet: lawful on the hard bound, and over the
-#: window gate, which is how the live ceiling round failed.
+#: window gate, which is how the pre-U43 ceiling round failed live (U42 log line
+#: 18797).  U43's pad round hands the level back as drive, so this is the shape
+#: the round *used* to have -- kept here because the selector still has to judge
+#: a quiet round when a recorder hands it one.
 _QUIET = _flat(-20.0, seconds=_WINDOW_S)
+
+
+@dataclass(frozen=True)
+class _Limiter:
+    """The limiter's (drive, ceiling) -> level coupling, in the shape U43 measured.
+
+    ``level = nominal_level + drive - ceiling_cost``.  The drive is returned 1:1
+    -- what the pad and its correction both move is a constant gain *before* the
+    limiter -- and a ceiling lowered by ``d`` costs ``ceiling_cost_lu_per_db * d``
+    LU of whole-program loudness.
+
+    ``ceiling_cost_lu_per_db=1.0`` is a limiter that takes back exactly what the
+    pad hands it: the pad round then lands on the target with nothing to correct,
+    which is the whole of the pad round's behaviour as U43 part II left it, and is
+    why it is the default.  A recorder with no limiter measures the target on
+    every pass -- the canned behaviour every other test in this file runs on.
+
+    Cell A is *below* 1.0, and that is the shape answer 2 exists for: after a
+    3.25 dB pad the attempt came back 0.53 LU loud, so the lowered ceiling cost
+    the limiter 2.72 LU of the 3.25 it was handed -- harder limiting removes less
+    loudness than the pad returns, by 0.53 LU more than the pad assumed.
+    """
+
+    ceiling_cost_lu_per_db: float = 1.0
+    nominal_ceiling_dbtp: float = -1.5
+    nominal_level_lufs: float = -16.0
+
+    def level(self, trim_db: float, ceiling_dbtp: float) -> float:
+        """The whole-program loudness of ``trim_db`` of drive at ``ceiling_dbtp``."""
+        drop = max(self.nominal_ceiling_dbtp - ceiling_dbtp, 0.0)
+        return self.nominal_level_lufs + trim_db - self.ceiling_cost_lu_per_db * drop
+
+
+def _probe_trim(sink_args: list[str]) -> float:
+    """The drive a probe pass ran with, read off its own filter chain.
+
+    A pass with no ``volume`` filter (the ride-only pass) ran at 0.0 dB; anything
+    else carries the drive the module formatted into its argv, which is what
+    actually ran -- not the arithmetic that asked for it.
+    """
+    chain = str(sink_args[sink_args.index("-af") + 1])
+    for part in chain.split(","):
+        if part.startswith("volume="):
+            return float(part[len("volume=") : -2])
+    return 0.0
 
 
 class _Recorder:
@@ -349,12 +398,19 @@ class _Recorder:
     One object because the round's artifact path is only known once the round
     runs, and the measurement fakes have to key on it.
 
-    ``round_stderr``/``round_peak`` are the *ceiling* round's (``variant=None``,
-    the one answer 12 spends).  ``variant_results`` are the U42 variant rounds'
+    ``round_stderr``/``round_peak`` are the *pad* round's (``variant=None``,
+    the one answer 12's ceiling and U43's drive are spent in).  ``variant_results``
+    are the U42 variant rounds'
     -- ``(stderr, decoded peak)`` per variant call, in call order, so a test can
     give the 256 kbps round a different artifact from the fast-coder one.  A
-    variant call with no entry left falls back to the ceiling round's, which is
+    variant call with no entry left falls back to the pad round's, which is
     what a test that does not care about the variants wants.
+
+    ``limiter`` is the one knob that overrides the canned numbers: with a model
+    in play, every pass -- the probes and the re-encodes alike -- measures the
+    loudness its own (drive, ceiling) emits, which is what makes the pad round's
+    probe informative to the module and what a canned stderr cannot express.  The
+    decoded peaks stay canned in every case.
     """
 
     def __init__(
@@ -368,11 +424,13 @@ class _Recorder:
         round_error: Exception | None = None,
         capture_error: Exception | None = None,
         source_stderr: str = "",
+        limiter: _Limiter | None = None,
     ) -> None:
         self.nominal_stderr = nominal_stderr
         self.nominal_peak = nominal_peak
         self.round_stderr = round_stderr
         self.round_peak = round_peak
+        self.limiter = limiter
         self.variant_results = list(variant_results or [])
         self.round_error = round_error
         self.capture_error = capture_error
@@ -412,12 +470,17 @@ class _Recorder:
         )
         target = Path(sink_args[-1])
         if str(sink_args[-1]) == "-":
-            # A probe pass: the measure sink discards, so it has no artifact.
+            # A probe pass: the measure sink discards, so it has no artifact.  With
+            # a limiter model, the pass measures its own drive at its own ceiling --
+            # which is exactly the question the pad round's probe is asking.
+            level = -16.0
+            if self.limiter is not None:
+                level = self.limiter.level(_probe_trim(sink_args), params.limit_dbtp)
             return lr.RideRender(
                 frames=0,
                 audio_seconds=0.0,
                 wall_s=0.5,
-                stderr=_stderr(_FLAT, integrated_lufs=-16.0),
+                stderr=_stderr(_flat(level), integrated_lufs=level),
             )
         if pcm_path is not None:
             Path(pcm_path).write_bytes(b"tee")
@@ -446,6 +509,13 @@ class _Recorder:
             text, peak = self.variant_results.pop(0)
         else:
             text, peak = self.round_stderr, self.round_peak
+        if self.limiter is not None:
+            # The model has the last word on what a re-encode measures: the level
+            # a given (drive, ceiling) emits is the whole point of the A-shaped
+            # test, and a canned stderr cannot express it.
+            level = self.limiter.level(trim_db, params.limit_dbtp)
+            text = _stderr(_flat(level), peak_dbtp=self.round_peak, integrated_lufs=level)
+            peak = self.round_peak
         path = Path(output_path)
         path.write_bytes(_ROUND)
         self.artifact_text[path] = text
@@ -511,9 +581,14 @@ def test_level_window_keeps_the_round_that_clears_the_gates_with_the_lower_peak(
     decides, and the round wins.  The artifact that airs must then *be* the
     round's: same bytes, in the caller's path.
 
-    The round's ceiling is the guard's own arithmetic on the nominal attempt: the
-    nominal ceiling (-1.5) down by the overshoot past the -1.0 dBTP target (0.40)
-    plus the margin (0.3), i.e. -2.2 dBTP.
+    The round's two settings are U43's measured pad on the nominal attempt: the
+    decoded peak is 0.40 over the +0.1 dBFS bound, so the pad is 0.40 - 0.1 + 0.5
+    = 0.80 dB -- the ceiling drops to -2.30 dBTP and the drive rises by the same
+    0.80 dB.  That drive is only the round's *guess*: the pad round probes its own
+    settings first and corrects the drive by the loudness it measured (answer 2).
+    This recorder measures the target on every pass, so the correction here is a
+    no-op and the guess is what is spent.  The case where it is not a no-op is
+    ``test_level_window_corrects_the_pad_rounds_drive_onto_the_target``.
     """
     rec = _Recorder(
         nominal_stderr=_stderr(_FLAT, peak_dbtp=-0.60, integrated_lufs=-16.0),
@@ -526,18 +601,98 @@ def test_level_window_keeps_the_round_that_clears_the_gates_with_the_lower_peak(
     selection = result.selection
     assert [a.round_index for a in selection.attempts] == [0, 1]
     assert selection.kept.round_index == 1
-    assert selection.kept.limit_dbtp == pytest.approx(-2.2)
+    assert selection.kept.limit_dbtp == pytest.approx(-2.3)
     assert selection.hard_tp_met is True
     assert selection.target_met is True
     assert selection.warning is None
     assert result.audio_path.read_bytes() == _ROUND
     # The round re-encodes the PCM the nominal emit consumed -- the tee the run
-    # was handed -- at the ceiling the guard asked for, and it is spent once.
+    # was handed -- at the padded ceiling and drive, and it is spent once.
     assert len(rec.round_calls) == 1, "the round met the bound, so no variant is spent"
     assert rec.round_calls[0].variant is None
     assert rec.round_calls[0].pcm_path is not None
-    assert rec.round_calls[0].params.limit_dbtp == pytest.approx(-2.2)
-    assert rec.round_calls[0].trim_db == pytest.approx(result.curve.trim_db)
+    assert rec.round_calls[0].params.limit_dbtp == pytest.approx(-2.3)
+    assert rec.round_calls[0].trim_db == pytest.approx(result.curve.trim_db + 0.80)
+
+
+def test_level_window_corrects_the_pad_rounds_drive_onto_the_target(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Answer 2: the pad's drive guesses, the round's own measurement corrects it.
+
+    Cell A, on a limiter model built from the live measurement.  The nominal is
+    over the bound at +2.85 dBFS, so the pad is 3.25 dB and the round is set to
+    emit at a -4.75 dBTP ceiling and a +3.25 dB drive.  A limiter that handed back
+    exactly what the pad spends would land on -16.0 LUFS untouched -- but harder
+    limiting removes *less* loudness than the pad returns, and the live sweep
+    measured this round 0.53 LU loud: of the 3.25 dB of ceiling it was given, the
+    limiter cost it 2.72 LU.  0.53 LU is over the 0.5 LU whole-program tolerance
+    by 0.03, so the uncorrected round is *not* lawful, and the loudness-first
+    keep-best below would pass over the round that fixed the bound.
+
+    So the round measures the settings it is about to spend: one probe pass at
+    (-4.75, +3.25) comes back at -15.47 LUFS, and the drive is corrected by that
+    error -- 3.25 - 0.53 = 2.72 dB -- before the encode.  The corrected round is
+    lawful on both gates and under the bound (-1.938 dBFS), so it is what ships
+    and no variant is owed.  Run against the module before this correction
+    existed, the same recorder never sees the probe (three ride passes, not four)
+    and the uncorrected round is scored unlawful.
+    """
+    limiter = _Limiter(ceiling_cost_lu_per_db=2.72 / 3.25)
+    rec = _Recorder(
+        nominal_stderr=_stderr(_FLAT, peak_dbtp=+4.60, integrated_lufs=-16.0),
+        nominal_peak=2.85,
+        round_stderr="",  # the model measures the round, so no canned numbers
+        round_peak=-1.938,
+        limiter=limiter,
+    )
+    result = _run(tmp_path, monkeypatch, rec)
+
+    pad = 2.85 - lr.TP_GUARD_MAX_PEAK_DBFS + lr.TP_GUARD_PAD_MARGIN_DB
+    pad_ceiling = -1.5 - pad
+    assert pad == pytest.approx(3.25)
+    # Three convergence passes, then the pad round's own probe -- and the probe
+    # ran at the pad's guess, at the ceiling the round will emit at.
+    probes = [c for c in rec.ride_calls if str(c.sink_args[-1]) == "-"]
+    assert len(probes) == 4
+    assert probes[-1].params.limit_dbtp == pytest.approx(pad_ceiling)
+    assert _probe_trim(probes[-1].sink_args) == pytest.approx(result.curve.trim_db + pad)
+    # ...and that guess is exactly the one that misses: +0.53 LU, 0.03 LU over the
+    # whole-program tolerance.  This is the product's own gate judging the same
+    # measurement the round corrects from, so the test cannot drift from it.
+    guess_level = limiter.level(result.curve.trim_db + pad, pad_ceiling)
+    guess = lr.attempt_from_measurement(
+        _stderr(_flat(guess_level), peak_dbtp=-1.938, integrated_lufs=guess_level),
+        round_index=1,
+        limit_dbtp=pad_ceiling,
+        target_lufs=-16.0,
+        duration_s=_WINDOW_S,
+        decoded_peak_dbfs=-1.938,
+    )
+    assert guess.whole_err_lu == pytest.approx(0.53)
+    assert guess.hard_tp_ok() is True
+    assert (
+        guess.loudness_ok(
+            window_tol_lu=lr.LOUDNESS_WINDOW_TOL_LU,
+            whole_tol_lu=lr.LOUDNESS_WHOLE_TOL_LU,
+        )
+        is False
+    )
+
+    # The round that was actually spent carries the corrected drive, and it holds
+    # both gates -- which is why it is kept and why no variant is owed.
+    assert len(rec.round_calls) == 1, "the corrected round met the bound"
+    assert rec.round_calls[0].variant is None
+    assert rec.round_calls[0].params.limit_dbtp == pytest.approx(pad_ceiling)
+    assert rec.round_calls[0].trim_db == pytest.approx(result.curve.trim_db + pad - 0.53)
+    selection = result.selection
+    assert [a.round_index for a in selection.attempts] == [0, 1]
+    assert selection.kept.round_index == 1
+    assert selection.kept.whole_err_lu == pytest.approx(0.0, abs=1e-9)
+    assert selection.hard_tp_met is True
+    assert selection.target_met is True
+    assert selection.warning is None
+    assert result.audio_path.read_bytes() == _ROUND
 
 
 def test_level_window_spends_no_round_when_the_nominal_emitted_at_target(
@@ -584,8 +739,8 @@ def test_level_window_warns_when_the_kept_attempt_missed_the_tp_target(
 ) -> None:
     """Every round spent and still hot: it ships, with the guard's warning.
 
-    The ceiling round is hot (+0.35 dBFS) and so are both U42 encoder variants
-    (this recorder hands every variant the ceiling round's own numbers, which is
+    The pad round is hot (+0.35 dBFS) and so are both U42 encoder variants
+    (this recorder hands every variant the pad round's own numbers, which is
     the honest stand-in for "the encoder did not help either"), so the selector
     has nothing better to keep than round 1 and the warning says so.
     """
@@ -597,7 +752,7 @@ def test_level_window_warns_when_the_kept_attempt_missed_the_tp_target(
     )
     result = _run(tmp_path, monkeypatch, rec)
     selection = result.selection
-    assert len(rec.round_calls) == 3, "the ceiling round and both encoder variants"
+    assert len(rec.round_calls) == 3, "the pad round and both encoder variants"
     assert [c.variant is None for c in rec.round_calls] == [True, False, False]
     assert selection.kept.round_index == 1
     assert selection.target_met is False
@@ -749,7 +904,7 @@ def test_level_window_spends_no_round_when_the_round_fails(tmp_path: Path, monke
         round_error=lr.LoudnessRideError("the guard's re-encode exited 1"),
     )
     result = _run(tmp_path, monkeypatch, rec)
-    assert len(rec.round_calls) == 3, "the ceiling round and both encoder variants"
+    assert len(rec.round_calls) == 3, "the pad round and both encoder variants"
     assert result.selection.kept.round_index == 0
     assert result.audio_path.read_bytes() == _NOMINAL
     # The failure is reported, not swallowed: the caller logs it beside the
@@ -770,7 +925,7 @@ def test_level_window_keeps_the_nominal_when_the_round_peaks_higher(
     airs is the nominal's, and the round's file does not outlive the decision.
 
     That kept nominal is over the hard bound, so U42 spends both encoder
-    variants too -- and this recorder hands them the ceiling round's own hot
+    variants too -- and this recorder hands them the pad round's own hot
     numbers, which is the honest stand-in for "the encoder did not help".  All
     three rounds lose to the nominal, and all three files are deleted.
     """
@@ -799,14 +954,15 @@ def test_level_window_variants_the_encoder_when_the_kept_attempt_is_hot(
     """U42's live shape: the ceiling is not the lever, the encoder is.
 
     This is log line 18797 reproduced as a decision.  The nominal emits +2.60
-    dBTP / +0.783 dBFS at the -1.50 dBTP ceiling; the ceiling round the guard
-    asks for (-5.40) is lawful on peak but 4 LU quiet, so it fails the loudness
-    gate and cannot be kept -- the attempt the selector would still ship is the
-    nominal, and it is over the bound.  The guard's remaining lever is the
+    dBTP / +0.783 dBFS at the -1.50 dBTP ceiling; U43's pad round (ceiling -2.683,
+    drive +1.183) is lawful on peak but 4 LU quiet this time, so it fails the
+    loudness gate and cannot be kept -- the attempt the selector would still ship
+    is the nominal, and it is over the bound.  The guard's remaining lever is the
     encoder, so it re-encodes the same retained PCM at the *kept attempt's own*
-    ceiling with the profile's first variant (256 kbps), which comes back at
-    -1.064 dBFS and is kept.  The second variant is never spent: the first one
-    met the bound, and the order is a cost contract.
+    settings -- the nominal's, since the pad round lost -- with the profile's
+    first variant (256 kbps), which comes back at -1.064 dBFS and is kept.  The
+    second variant is never spent: the first one met the bound, and the order is a
+    cost contract.
     """
     rec = _Recorder(
         nominal_stderr=_stderr(_FLAT, peak_dbtp=+2.60, integrated_lufs=-16.0),
@@ -819,12 +975,18 @@ def test_level_window_variants_the_encoder_when_the_kept_attempt_is_hot(
     selection = result.selection
 
     assert [c.variant for c in rec.round_calls] == [None, lr.EncoderVariant(256)]
+    # Round 0 is the pad round: +0.783 dBFS is 0.683 over the bound, plus the
+    # 0.5 dB margin, so the ceiling drops to -2.683 and the drive rises by 1.183.
+    pad = 0.783 - lr.TP_GUARD_MAX_PEAK_DBFS + lr.TP_GUARD_PAD_MARGIN_DB
+    assert rec.round_calls[0].params.limit_dbtp == pytest.approx(-1.5 - pad)
+    assert rec.round_calls[0].trim_db == pytest.approx(result.curve.trim_db + pad)
     # The variant re-encodes the SAME retained PCM, at the kept attempt's own
-    # ceiling: no re-render, no re-convergence, and the ceiling is not a second
-    # variable moving at the same time as the encoder.
+    # settings -- the nominal's, because the pad round lost the loudness gate: no
+    # re-render, no re-convergence, and neither the ceiling nor the drive is a
+    # second variable moving at the same time as the encoder.
     assert rec.round_calls[1].pcm_path == rec.round_calls[0].pcm_path
     assert rec.round_calls[1].params.limit_dbtp == pytest.approx(-1.5)
-    assert rec.round_calls[1].trim_db == pytest.approx(rec.round_calls[0].trim_db)
+    assert rec.round_calls[1].trim_db == pytest.approx(result.curve.trim_db)
 
     assert [a.round_index for a in selection.attempts] == [0, 1, 2]
     assert [a.encoder for a in selection.attempts] == ["aac 192k", "aac 192k", "aac 256k"]
@@ -842,7 +1004,7 @@ def test_level_window_spends_every_variant_until_one_meets_the_bound(
 ) -> None:
     """The variants are an ordered list, and the guard walks it in order.
 
-    The ceiling round fails its loudness gate and the 256 kbps variant comes
+    The pad round fails its loudness gate and the 256 kbps variant comes
     back hot too (+0.35 dBFS), so the guard cannot stop there: it spends the
     second variant, the fast coder, which clears the bound at -0.387 dBFS.
     Round 3 is kept and its bytes are what airs.
@@ -877,3 +1039,44 @@ def test_level_window_spends_every_variant_until_one_meets_the_bound(
     assert result.audio_path.read_bytes() == _ROUND
     for index in (1, 2, 3):
         assert not (tmp_path / f"audio.ts.round{index}.ts").exists()
+
+
+def test_level_window_spends_the_variants_at_the_pad_rounds_ceiling_and_drive(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The order is one pad round, then the variants at the *pad round's* settings.
+
+    U43's round moves two settings at once -- the ceiling down by the pad and the
+    drive up by exactly the same pad -- so after it the attempt the guard must
+    beat is no longer the nominal.  Here the pad round holds both loudness gates
+    and still comes back over the bound at +0.30 dBFS: lower than the nominal's
+    +0.40, so it is what the selector would ship, and the encoder variant is then
+    spent at *its* pair (-2.30 dBTP, drive +0.80) rather than the nominal's.  A
+    variant that moved the ceiling or the drive back would be varying three axes
+    at once, and its artifact would not be comparable with the one it beats.
+    """
+    rec = _Recorder(
+        nominal_stderr=_stderr(_FLAT, peak_dbtp=-0.60, integrated_lufs=-16.0),
+        nominal_peak=0.40,
+        round_stderr=_stderr(_FLAT, peak_dbtp=-1.10, integrated_lufs=-16.0),
+        round_peak=0.30,
+        variant_results=[(_stderr(_FLAT, peak_dbtp=-1.60, integrated_lufs=-16.0), -0.15)],
+    )
+    result = _run(tmp_path, monkeypatch, rec)
+    selection = result.selection
+    pad = 0.40 - lr.TP_GUARD_MAX_PEAK_DBFS + lr.TP_GUARD_PAD_MARGIN_DB
+
+    assert [c.variant for c in rec.round_calls] == [None, lr.EncoderVariant(256)]
+    assert [a.round_index for a in selection.attempts] == [0, 1, 2]
+    assert rec.round_calls[0].params.limit_dbtp == pytest.approx(-1.5 - pad)
+    assert rec.round_calls[0].trim_db == pytest.approx(result.curve.trim_db + pad)
+    assert rec.round_calls[1].params.limit_dbtp == pytest.approx(-1.5 - pad)
+    assert rec.round_calls[1].trim_db == pytest.approx(result.curve.trim_db + pad)
+    # The pad round is what the guard would ship when the variant is spent, and
+    # it is over the bound -- which is exactly why the variant is owed.
+    assert selection.kept.round_index == 2
+    assert selection.kept.decoded_peak_dbfs == pytest.approx(-0.15)
+    assert selection.hard_tp_met is True
+    assert result.audio_path.read_bytes() == _ROUND
+    assert not (tmp_path / "audio.ts.round1.ts").exists()
+    assert not (tmp_path / "audio.ts.round2.ts").exists()
