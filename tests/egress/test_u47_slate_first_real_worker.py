@@ -47,6 +47,7 @@ would fail this run with a squat-detection error, or race the station's own pipe
 
 from __future__ import annotations
 
+import contextlib
 import json
 import shutil
 import threading
@@ -225,7 +226,8 @@ class _PopenRecorder:
         self.spawns: list[_Spawn] = []
         self._lock = threading.Lock()
 
-    def Popen(self, argv: list[str], **kwargs: Any) -> Any:  # noqa: N802 - mirrors subprocess
+    # N802 is deliberately not silenced: this method's name IS the subprocess contract.
+    def Popen(self, argv: list[str], **kwargs: Any) -> Any:
         process = self._real.Popen(argv, **kwargs)
         env = kwargs.get("env") or {}
         spawn = _Spawn(
@@ -391,34 +393,29 @@ class _Harness:
         # executor, so a hold that is still armed would hang this teardown.
         if self.observer is not None:
             self.observer.release.set()
+        # Every block below is ``suppress`` rather than a bare raise: teardown must
+        # not mask the test's own result, and each is a best-effort release of a
+        # resource whose double-release is already expected.
         for spawn in self.recorder.spawns:
             process = spawn.process
             if process.poll() is None:
                 process.kill()
-            try:
+            with contextlib.suppress(Exception):
                 process.wait(timeout=10)
-            except Exception:  # noqa: BLE001 - teardown must not mask a test failure
-                pass
         for handle in self.handles:
             # The daemon's terminate path closes these itself (one spawn -- the slate
             # worker of F3(b) -- has already been through it); closing twice is harmless
             # and this is what stops the leak becoming a pytest error.
-            try:
+            with contextlib.suppress(Exception):
                 handle.close()
-            except Exception:  # noqa: BLE001 - teardown must not mask a test failure
-                pass
         if self.daemon is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self.daemon.shutdown_preparation()
-            except Exception:  # noqa: BLE001 - teardown must not mask a test failure
-                pass
         for channel in self.channels:
             # The strategy closes a replaced channel itself (``strategy.py:983``), so a
             # double close here is expected, not exceptional.
-            try:
+            with contextlib.suppress(Exception):
                 channel.close()
-            except Exception:  # noqa: BLE001 - teardown must not mask a test failure
-                pass
 
 
 def _tick_until(
