@@ -95,26 +95,30 @@ measured the limiter holding to +0.0034 dB over its own ceiling while the AAC
 round trip added up to +3.27 dB, which is why a lowered ceiling does not buy a
 proportionally lower emitted peak.  The artifact therefore gets the last word,
 through the pair of pure decision functions that are this module's whole guard
-API: after an attempt's emit, the emitted true peak and loudness are measured
-seek-free, :func:`guard_next_ceiling` returns the ceiling the one re-encode round
-owes (the overshoot plus :data:`TP_GUARD_MARGIN_DB` below the ceiling that
-produced it, for at most :data:`TP_GUARD_MAX_ROUNDS` round), and
-:func:`select_leveled_attempt` picks which attempt ships -- hard true peak first
-(:meth:`LeveledAttempt.hard_tp_ok`), then the loudness gates, then the lowest
-emitted true peak, the nominal attempt when nothing clears them.
+API: after an attempt's emit, the emitted true peak, the loudness and the decoded
+sample peak are measured seek-free, :func:`guard_next_ceiling` returns the ceiling
+the one re-encode round owes (the overshoot plus :data:`TP_GUARD_MARGIN_DB` below
+the ceiling that produced it, for at most :data:`TP_GUARD_MAX_ROUNDS` round), and
+:func:`select_leveled_attempt` picks which attempt ships -- the loudness gates
+first, then the lowest decoded sample peak, then the lowest emitted true peak,
+keeping the nominal attempt when nothing separates them.
 
 That round is a *re-encode*, not a re-convergence.  The ride PCM is already
 correct, so the guard re-runs only the limiter, the codec and the mux, over the
 bytes the nominal emit consumed -- ``run_ride``'s ``pcm_path`` tee retains them
 (:func:`build_reencode_args`, :func:`run_reencode`) -- and the bound is therefore
 one round whose cost is seconds, not a second full ride.  The emitted true peak is
-best effort at :data:`TP_GUARD_TARGET_DBTP`; the *hard* gate
-(:data:`TP_GUARD_HARD_DBTP` on the emit, plus no decoded sample over 0 dBFS) is
-the guarantee, and when no attempt clears it the caller emits once more at
-:data:`TP_GUARD_LAST_RESORT_DBTP` (:func:`needs_last_resort`) and ships that with
-an error line.  The caller owns the ride, the encode and the measurement; this
-module never spawns a process for the guard and never logs.  The trigger rate and
-the time it costs are counted in the unit report.
+best effort at :data:`TP_GUARD_TARGET_DBTP`; the *guarantee* is
+:data:`TP_GUARD_MAX_PEAK_DBFS` -- no decoded sample above +0.1 dBFS -- and it is
+measured on the artifact rather than promised by a ceiling, which is why an
+artifact over it is *reported* rather than re-emitted: the selector keeps the best
+attempt it has, and an over-bound one ships with an error line, because a channel
+that airs a slightly hot artifact beats one that airs nothing.  U25's panel is
+what settled that: BIG's nominal emit, the hottest artifact the panel produced,
+sits at +0.0036 dBFS from one sample in 9000 s, and every attempt that tried to
+fix it landed worse.  The caller owns the ride, the encode and the measurement;
+this module never spawns a process for the guard and never logs.  The trigger rate
+and the time it costs are counted in the unit report.
 
 The gap cap is not a leveler for room tone
 ------------------------------------------
@@ -155,9 +159,8 @@ from civiccast.egress.models import CanonicalProfile, EgressSourceSegment
 
 __all__ = [
     "DIGITAL_SILENCE",
-    "TP_GUARD_HARD_DBTP",
-    "TP_GUARD_LAST_RESORT_DBTP",
     "TP_GUARD_MARGIN_DB",
+    "TP_GUARD_MAX_PEAK_DBFS",
     "TP_GUARD_MAX_ROUNDS",
     "TP_GUARD_TARGET_DBTP",
     "LeveledAttempt",
@@ -186,7 +189,6 @@ __all__ = [
     "guard_next_ceiling",
     "limit_value",
     "limiter_filter",
-    "needs_last_resort",
     "parse_ebur128_series",
     "parse_integrated_lufs",
     "resample_filter",
@@ -1394,21 +1396,20 @@ def guard_ceiling_dbtp(current_dbtp: float, emitted_dbtp: float) -> float | None
 
 
 # ---------------------------------------------------------------------------
-# The guard (answer 11: one re-encode round, then a last resort)
+# The guard (answer 12: one re-encode round, keep-best, a measured bound)
 # ---------------------------------------------------------------------------
 
-#: The hard true-peak gate the artifact must clear: no decoded sample above
-#: 0 dBFS, and an emitted true peak at or below this.  This is the guarantee;
-#: :data:`TP_GUARD_TARGET_DBTP` below is best effort, because the emitted true
-#: peak is the codec's own overshoot rather than the limiter's ceiling, so a hot
-#: asset can miss the target through no fault of the limiter's.
-TP_GUARD_HARD_DBTP = 0.0
-
-#: The limiter ceiling of the last resort, used only when no attempt cleared the
-#: hard gate.  Four dB under the target leaves the codec room it has been measured
-#: to need; an artifact emitted here airs quieter than target to stay lawful, so
-#: the caller reports it with an error line rather than a warning.
-TP_GUARD_LAST_RESORT_DBTP = -4.0
+#: The hard true-peak gate: no decoded sample above this.  It is a bound measured
+#: on the artifact rather than promised by the limiter, because the AAC round
+#: trip's overshoot is the codec's own -- U25 round 7 measured the limiter holding
+#: to +0.0034 dB over its ceiling while the emit added up to +3.27 dB.  +0.1 dBFS
+#: is what the product can honestly guarantee: BIG's nominal emit, the hottest
+#: artifact the U25 panel produced, sat at +0.0036 dBFS on one sample in 9000 s,
+#: a codec overshoot under the audibility floor and far better than the incumbent
+#: two-pass conform's +2.8 dBFS on the same asset.  An artifact over the bound is
+#: *reported*, not re-emitted: :data:`TP_GUARD_TARGET_DBTP` is the best effort,
+#: and the caller airs the best attempt it has with an error line.
+TP_GUARD_MAX_PEAK_DBFS = 0.1
 
 #: Re-encode rounds a hot artifact may spend.  One.  The round re-runs only the
 #: limiter, the codec and the mux over the ride PCM the nominal emit already
@@ -1429,10 +1430,10 @@ class LeveledAttempt:
     errors are the attempt's *own* artifact's, not the loop's pre-encode probe --
     the gates are judged on what airs.
 
-    ``decoded_peak_dbfs`` is the hottest sample a decode of the artifact found.
-    It is the second leg of the hard gate and is ``None`` when the artifact was
-    not scanned, which -- like a missing loudness measurement -- cannot clear the
-    gate it cannot evidence.
+    ``decoded_peak_dbfs`` is the hottest sample a decode of the artifact found,
+    and it is the hard gate's whole evidence.  It is ``None`` when the artifact
+    was not scanned, which -- like a missing loudness measurement -- cannot clear
+    the gate it cannot evidence.
     """
 
     round_index: int
@@ -1454,15 +1455,18 @@ class LeveledAttempt:
         )
 
     def hard_tp_ok(self) -> bool:
-        """Whether this attempt clears the hard true-peak gate on both legs.
+        """Whether this attempt clears the hard true-peak gate.
 
-        An unmeasurable attempt fails: the gate is a guarantee, and a missing
+        The gate is one bound on measured fact -- no decoded sample above
+        :data:`TP_GUARD_MAX_PEAK_DBFS`.  The emitted true peak is deliberately not
+        a leg of it: it is the codec's own overshoot, so gating on it would only
+        re-impose the ceiling arithmetic the guard exists to stop trusting.
+
+        An unscanned attempt fails: the gate is a guarantee, and a missing
         measurement is not evidence that the guarantee held.
         """
         return (
-            self.emitted_dbtp is not None
-            and self.emitted_dbtp <= TP_GUARD_HARD_DBTP
-            and (self.decoded_peak_dbfs is None or self.decoded_peak_dbfs <= 0.0)
+            self.decoded_peak_dbfs is not None and self.decoded_peak_dbfs <= TP_GUARD_MAX_PEAK_DBFS
         )
 
 
@@ -1470,17 +1474,17 @@ class LeveledAttempt:
 class LeveledSelection:
     """Which attempt ships, and the one warning that explains it.
 
-    ``warning`` is the caller's to log -- this module never logs.  ``hard_tp_met``
-    is the guarantee and ``target_met`` the best effort; ``last_resort_needed`` is
-    the caller's instruction to emit once more at
-    :data:`TP_GUARD_LAST_RESORT_DBTP`.
+    ``warning`` is the caller's to log -- this module never logs.  ``target_met``
+    is the best effort and ``hard_tp_met`` the guarantee; neither changes what
+    ships.  ``hard_tp_met`` being ``False`` is the caller's cue for an *error*
+    line: the artifact airs anyway, because the selector had nothing better to
+    keep and a hot artifact beats a silent channel.
     """
 
     kept: LeveledAttempt
     attempts: list[LeveledAttempt]
     target_met: bool
     hard_tp_met: bool
-    last_resort_needed: bool
     warning: str | None
 
 
@@ -1511,19 +1515,6 @@ def guard_next_ceiling(
     return guard_ceiling_dbtp(latest.limit_dbtp, latest.emitted_dbtp)
 
 
-def needs_last_resort(attempts: Sequence[LeveledAttempt]) -> bool:
-    """Whether every *measured* attempt missed the hard gate, so none may ship.
-
-    Only measured attempts count.  An artifact nobody could measure is a
-    measurement failure, not a hot one, and answering it with a quieter emit would
-    trade a known loudness for an unknown peak.  A panel with nothing measured
-    therefore asks for no last resort: there is no evidence of an over-peak
-    artifact to correct.
-    """
-    measured = [a for a in attempts if a.emitted_dbtp is not None]
-    return bool(measured) and not any(a.hard_tp_ok() for a in measured)
-
-
 def select_leveled_attempt(
     attempts: Sequence[LeveledAttempt],
     *,
@@ -1533,31 +1524,33 @@ def select_leveled_attempt(
 ) -> LeveledSelection:
     """Which attempt ships, and whether it reached the target.
 
-    The order is answer 11's, and it is a hierarchy rather than a filter:
+    The order is answer 12's keep-best, and it is a hierarchy rather than a filter:
 
-    1. **hard true peak** (:meth:`LeveledAttempt.hard_tp_ok`) -- the guarantee;
-    2. **the loudness gates** -- the level the audience was promised;
-    3. **the lowest emitted true peak** -- the guard's actual purpose.
+    1. **the loudness gates** -- the level the audience was promised;
+    2. **the lowest decoded sample peak** -- what the hard gate is judged on, and
+       the one axis the guard can actually move;
+    3. **the lowest emitted true peak** -- the guard's original purpose.
 
-    Each level only breaks ties within the one above it, so a lawful-but-hot
-    attempt can never outrank a cold one that misses the loudness gates.  Ranking
-    the loudness gates first -- filtering on them and then taking the coldest --
-    is the ordering that let a loud attempt over the hard gate win in U25 round 7.
+    Each level only breaks ties within the one above it.  There is no fourth
+    level and no over-riding clause: the guard keeps the best attempt it has and
+    the caller ships it, whether or not it clears the hard gate.  Answer 11's
+    last resort did the opposite -- it over-rode a loudness-lawful keep with a
+    quieter re-emit -- and U25's panel measured that artifact losing on every
+    gated axis at once, which is the case this ordering exists to prevent.
 
-    An unmeasurable attempt can never win: it cannot be shown to be the coldest,
-    and the guard does not trade a measured artifact for an unmeasured one.  When
-    *nothing* is measured the *nominal* attempt is kept, because a program that
-    cannot be measured still airs; the caller warns and the last-resort decision is
-    :func:`needs_last_resort`'s, not this function's.  Ties go to the earlier
-    round, so the nominal ceiling keeps its claim whenever a lowered one is no
-    better.
+    An unmeasurable attempt can never win an axis it has no measurement for: a
+    peak nobody scanned is ``inf``, not zero, and the guard does not trade a
+    measured artifact for an unmeasured one.  When no axis separates the attempts
+    at all -- nothing measured -- the *nominal* attempt is kept, because a program
+    that cannot be measured still airs.  Ties go to the earlier round, so the
+    nominal ceiling keeps its claim whenever a lowered one is no better.
     """
     nominal = attempts[0]
     kept = min(
         attempts,
         key=lambda a: (
-            0 if a.hard_tp_ok() else 1,
             0 if a.loudness_ok(window_tol_lu=window_tol_lu, whole_tol_lu=whole_tol_lu) else 1,
+            math.inf if a.decoded_peak_dbfs is None else a.decoded_peak_dbfs,
             math.inf if a.emitted_dbtp is None else a.emitted_dbtp,
             a.round_index,
         ),
@@ -1567,6 +1560,11 @@ def select_leveled_attempt(
     warning: str | None = None
     if not target_met:
         kept_tp = "unmeasurable" if kept.emitted_dbtp is None else f"{kept.emitted_dbtp:+.2f} dBTP"
+        kept_peak = (
+            "unmeasurable"
+            if kept.decoded_peak_dbfs is None
+            else f"{kept.decoded_peak_dbfs:+.2f} dBFS"
+        )
         nominal_tp = (
             "unmeasurable" if nominal.emitted_dbtp is None else f"{nominal.emitted_dbtp:+.2f} dBTP"
         )
@@ -1575,11 +1573,17 @@ def select_leveled_attempt(
             + ("unmeasurable" if a.emitted_dbtp is None else f"{a.emitted_dbtp:+.2f} dBTP emitted")
             + ", "
             + (
+                "unmeasurable peak"
+                if a.decoded_peak_dbfs is None
+                else f"peak {a.decoded_peak_dbfs:+.2f} dBFS"
+            )
+            + ", "
+            + (
                 "loudness ok"
                 if a.loudness_ok(window_tol_lu=window_tol_lu, whole_tol_lu=whole_tol_lu)
                 else "loudness gate failed"
             )
-            + ("" if a.hard_tp_ok() else ", over the hard true-peak gate")
+            + ("" if a.hard_tp_ok() else f", over the {TP_GUARD_MAX_PEAK_DBFS:+.1f} dBFS bound")
             for a in attempts
         )
         warning = (
@@ -1587,13 +1591,13 @@ def select_leveled_attempt(
             f"target and this is best effort only -- the hard true-peak gate is "
             f"what must hold; the nominal attempt emitted {nominal_tp}; attempts: "
             f"{tried}; keeping round {kept.round_index} at a {kept.limit_dbtp:+.2f} "
-            f"dBTP ceiling (hard gate {'met' if kept.hard_tp_ok() else 'NOT met'})"
+            f"dBTP ceiling, peak {kept_peak} (hard gate "
+            f"{'met' if kept.hard_tp_ok() else 'NOT met'})"
         )
     return LeveledSelection(
         kept=kept,
         attempts=list(attempts),
         target_met=target_met,
         hard_tp_met=kept.hard_tp_ok(),
-        last_resort_needed=needs_last_resort(attempts),
         warning=warning,
     )

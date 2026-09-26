@@ -1,24 +1,31 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""U25 answer 11: the emitted-artifact guard, as one re-encode-only round.
+"""U25 answer 12: the emitted-artifact guard, keep-best, with a measured bound.
 
 Answer 7's guard re-ran the *whole* leveling path at a lowered ceiling, and U25
 round 7 measured what that cost: on BIG it spent all three allowed rounds and
 539.13 s of a 908.41 s total, and its step law (ceiling down by the overshoot,
 emitted true peak follows 1:1) did not hold -- a -1.30 dB ceiling step bought
 0.00 dB of true peak, because the emitted true peak is the AAC codec's own
-overshoot rather than a property of the limiter.  Answer 11 replaces it:
+overshoot rather than a property of the limiter.  Answer 11 replaced it with one
+re-encode-only round plus a *last resort* -- and U25's own panel then showed that
+clause harming exactly the case it fired on: on BIG the last-resort artifact was
+worse than the attempt the selector already held on **every** gated axis
+(loudness 1.588 vs 0.285 LU of window error, whole-program -1.1 vs 0.0 LU,
+decoded peak +0.4018 vs +0.0036 dBFS), because it gave up a loudness gate it had
+passed in order to keep failing the one it was chasing.  Answer 12 deletes it:
 
-* the hard true-peak gate -- no decoded sample over 0 dBFS and an emitted true
-  peak at or under :data:`TP_GUARD_HARD_DBTP` -- is the *guarantee*; the
-  :data:`TP_GUARD_TARGET_DBTP` of -1.0 dBTP is best effort;
-* a hot emit buys exactly ONE more round, and that round re-encodes the
-  already-correct ride PCM (limiter + AAC + mux).  It never re-converges and
-  never takes a model step;
-* the selector orders hard true peak first, then the loudness gates, then the
-  lowest emitted true peak;
-* when no attempt meets the hard gate, the caller emits once more at
-  :data:`TP_GUARD_LAST_RESORT_DBTP` and ships that attempt with an error line.
+* the selector is keep-best, always: the attempts that pass the loudness gates
+  first, then the lowest decoded sample peak, then the lowest emitted true peak;
+* the hard true-peak gate is a bound the product can honestly guarantee -- no
+  decoded sample above :data:`TP_GUARD_MAX_PEAK_DBFS`.  BIG's nominal emit, the
+  hottest artifact the panel produced, sits at +0.0036 dBFS from one sample in
+  9000 s: a codec overshoot under the audibility floor;
+* an artifact over that bound on *every* attempt still ships, with an error line
+  rather than a stop -- the selector has nothing better to keep, and a channel
+  that airs a slightly hot artifact beats one that airs nothing;
+* the one re-encode round stays, and so does the :data:`TP_GUARD_TARGET_DBTP` of
+  -1.0 dBTP as best effort, with one warning when the selector's keep misses it.
 
 These tests are the guard's whole contract: they hold the module to the answer
 the coordinator gave, not to the shape it had before.
@@ -93,21 +100,32 @@ def _select(attempts: list[lr.LeveledAttempt]) -> lr.LeveledSelection:
 
 def test_the_gate_constants_are_the_answered_ones() -> None:
     assert lr.TP_GUARD_TARGET_DBTP == -1.0
-    assert lr.TP_GUARD_HARD_DBTP == 0.0
-    assert lr.TP_GUARD_LAST_RESORT_DBTP == -4.0
+    assert lr.TP_GUARD_MAX_PEAK_DBFS == 0.1
     assert lr.TP_GUARD_MAX_ROUNDS == 1
+    # Answer 12 deleted the last-resort branch, constant and all.
+    assert not hasattr(lr, "TP_GUARD_LAST_RESORT_DBTP")
+    assert not hasattr(lr, "TP_GUARD_HARD_DBTP")
+    assert not hasattr(lr, "needs_last_resort")
 
 
-def test_hard_gate_reads_the_emitted_and_the_decoded_peak() -> None:
-    """Both legs of the guarantee: emit at or under 0 dBTP, no sample over 0 dBFS."""
-    assert _attempt(emitted_dbtp=None).hard_tp_ok() is False
-    assert _attempt(emitted_dbtp=0.01).hard_tp_ok() is False
-    assert _attempt(emitted_dbtp=0.0).hard_tp_ok() is True
-    assert _attempt(emitted_dbtp=-0.5).hard_tp_ok() is True
-    # A decoded sample above 0 dBFS is a failure even when the emit reads cold.
-    assert _attempt(emitted_dbtp=-0.5, decoded_peak_dbfs=0.02).hard_tp_ok() is False
-    assert _attempt(emitted_dbtp=-0.5, decoded_peak_dbfs=0.0).hard_tp_ok() is True
-    assert _attempt(emitted_dbtp=-0.5, decoded_peak_dbfs=-1.0).hard_tp_ok() is True
+def test_the_hard_gate_is_the_decoded_sample_bound() -> None:
+    """One bound, measured on the artifact: no decoded sample above +0.1 dBFS.
+
+    The emitted true peak is deliberately not part of it -- it is the codec's own
+    overshoot, so an emitted-true-peak leg would only re-impose the ceiling
+    arithmetic answer 12 abandoned.  ``+0.0036`` is BIG's nominal emit.
+    """
+    assert _attempt(decoded_peak_dbfs=0.0).hard_tp_ok() is True
+    assert _attempt(decoded_peak_dbfs=0.1).hard_tp_ok() is True
+    assert _attempt(decoded_peak_dbfs=0.0036).hard_tp_ok() is True
+    assert _attempt(decoded_peak_dbfs=0.1001).hard_tp_ok() is False
+    assert _attempt(decoded_peak_dbfs=0.4018).hard_tp_ok() is False
+    assert _attempt(decoded_peak_dbfs=-1.3202).hard_tp_ok() is True
+    # An unscanned artifact cannot clear a bound nobody measured.
+    assert _attempt(decoded_peak_dbfs=None).hard_tp_ok() is False
+    # ... and the emit's own true peak does not decide it.
+    assert _attempt(emitted_dbtp=+2.8, decoded_peak_dbfs=-0.5).hard_tp_ok() is True
+    assert _attempt(emitted_dbtp=-1.5, decoded_peak_dbfs=+0.5).hard_tp_ok() is False
 
 
 def test_loudness_gates_are_unchanged_by_the_answer_11_reshuffle() -> None:
@@ -150,59 +168,50 @@ def test_the_round_is_not_owed_when_the_emit_is_lawful_or_unmeasurable() -> None
 
 
 # ---------------------------------------------------------------------------
-# The last resort
+# Selection: the loudness gates, then the lowest decoded peak, then the emit
 # ---------------------------------------------------------------------------
 
 
-def test_last_resort_needs_a_measured_attempt_that_misses_the_hard_gate() -> None:
-    assert lr.needs_last_resort([]) is False
-    # Nothing measured: a missing measurement is not a hot artifact.
-    assert (
-        lr.needs_last_resort(
-            [_attempt(emitted_dbtp=None), _attempt(round_index=1, emitted_dbtp=None)]
-        )
-        is False
-    )
-    # Measured and lawful: no last resort.
-    assert lr.needs_last_resort([_attempt(emitted_dbtp=-0.3)]) is False
-    assert lr.needs_last_resort([_attempt(emitted_dbtp=0.0)]) is False
-    # Measured and over the hard gate: last resort.
-    assert lr.needs_last_resort([_attempt(emitted_dbtp=0.2)]) is True
-    # ... on the decoded-sample leg too.
-    assert lr.needs_last_resort([_attempt(emitted_dbtp=-0.3, decoded_peak_dbfs=0.02)]) is True
-    # Any lawful attempt settles it.
-    assert (
-        lr.needs_last_resort(
-            [_attempt(emitted_dbtp=0.2), _attempt(round_index=1, emitted_dbtp=-0.3)]
-        )
-        is False
-    )
+def test_the_loudness_gates_outrank_the_lowest_decoded_peak() -> None:
+    """The adverse-BIG shape, in the panel's own numbers.
 
-
-# ---------------------------------------------------------------------------
-# Selection: hard true peak, then loudness, then the coldest emit
-# ---------------------------------------------------------------------------
-
-
-def test_the_hard_gate_outranks_the_loudness_gates() -> None:
-    """A loudness-lawful attempt over 0 dBTP must not beat a cold one that is not.
-
-    This is the ordering answer 11 names, and it is the one answer 7 got wrong:
-    the old selector filtered on the loudness gates first, so the only attempt
-    that cleared them won even when it was the one over the hard gate.
+    BIG's nominal round passed both loudness gates at a decoded peak of
+    +0.0036 dBFS.  The single re-encode round came back 0.6 LU quieter, blew the
+    window gate at 0.92 LU, and decoded **hotter** at +0.7979 dBFS.  Ranking the
+    peak first would ship the second; answer 12 ranks the gates first, and the
+    hard bound that follows is then judged on what ships.
     """
-    hot_loud = _attempt(limit_dbtp=-1.5, emitted_dbtp=0.2)
-    cold_not_loud = _attempt(round_index=1, limit_dbtp=-2.8, emitted_dbtp=-1.2, worst=1.4)
-    sel = _select([hot_loud, cold_not_loud])
-    assert sel.kept.round_index == 1
-    assert sel.hard_tp_met is True
-    assert sel.last_resort_needed is False
-    assert sel.target_met is True
+    big_nominal = _attempt(
+        round_index=0,
+        limit_dbtp=-1.5,
+        emitted_dbtp=0.0,
+        emitted_lufs=-16.0,
+        worst=0.285,
+        whole=0.0,
+        decoded_peak_dbfs=0.0036,
+    )
+    big_reencode = _attempt(
+        round_index=1,
+        limit_dbtp=-2.8,
+        emitted_dbtp=0.9,
+        emitted_lufs=-16.6,
+        worst=0.92,
+        whole=-0.6,
+        decoded_peak_dbfs=0.7979,
+    )
+    sel = _select([big_nominal, big_reencode])
+    assert sel.kept.round_index == 0
+    assert sel.hard_tp_met is True, "+0.0036 dBFS is inside the +0.1 bound"
+    assert sel.target_met is False, "+0.00 dBTP misses the -1.0 dBTP target"
+    assert sel.warning is not None
+    assert "+0.00 dBFS" in sel.warning
 
 
 def test_the_loudness_gates_outrank_the_coldest_emit() -> None:
-    loud = _attempt(limit_dbtp=-1.5, emitted_dbtp=-0.4)
-    colder_not_loud = _attempt(round_index=1, limit_dbtp=-2.4, emitted_dbtp=-0.9, worst=1.4)
+    loud = _attempt(limit_dbtp=-1.5, emitted_dbtp=-0.4, decoded_peak_dbfs=-0.487)
+    colder_not_loud = _attempt(
+        round_index=1, limit_dbtp=-2.4, emitted_dbtp=-0.9, worst=1.4, decoded_peak_dbfs=-1.2
+    )
     sel = _select([loud, colder_not_loud])
     assert sel.kept.round_index == 0
     assert sel.hard_tp_met is True
@@ -210,11 +219,21 @@ def test_the_loudness_gates_outrank_the_coldest_emit() -> None:
     assert sel.warning is not None
 
 
-def test_the_coldest_lawful_emit_wins() -> None:
+def test_the_lowest_decoded_peak_wins_among_lawful_attempts() -> None:
+    """The peak axis is live: a colder *emit* does not outrank a colder *decode*."""
+    lower_peak_hotter_tp = _attempt(limit_dbtp=-1.5, emitted_dbtp=-0.9, decoded_peak_dbfs=-1.30)
+    colder_tp_higher_peak = _attempt(
+        round_index=1, limit_dbtp=-2.8, emitted_dbtp=-1.5, decoded_peak_dbfs=-0.80
+    )
+    sel = _select([lower_peak_hotter_tp, colder_tp_higher_peak])
+    assert sel.kept.round_index == 0
+
+
+def test_the_coldest_lawful_emit_breaks_a_peak_tie() -> None:
     sel = _select(
         [
-            _attempt(limit_dbtp=-1.5, emitted_dbtp=-1.2),
-            _attempt(round_index=1, limit_dbtp=-1.8, emitted_dbtp=-1.6),
+            _attempt(limit_dbtp=-1.5, emitted_dbtp=-1.2, decoded_peak_dbfs=-0.5),
+            _attempt(round_index=1, limit_dbtp=-1.8, emitted_dbtp=-1.6, decoded_peak_dbfs=-0.5),
         ]
     )
     assert sel.kept.round_index == 1
@@ -224,20 +243,31 @@ def test_the_coldest_lawful_emit_wins() -> None:
 
 def test_an_unmeasurable_attempt_never_wins() -> None:
     sel = _select(
-        [_attempt(emitted_dbtp=None), _attempt(round_index=1, limit_dbtp=-2.0, emitted_dbtp=-1.3)]
+        [
+            _attempt(emitted_dbtp=None, decoded_peak_dbfs=None),
+            _attempt(round_index=1, limit_dbtp=-2.0, emitted_dbtp=-1.3, decoded_peak_dbfs=-0.9),
+        ]
     )
     assert sel.kept.round_index == 1
     assert sel.warning is None
 
 
-def test_all_unmeasurable_keeps_the_nominal_and_asks_for_no_last_resort() -> None:
+def test_an_unscanned_peak_cannot_win_the_peak_axis() -> None:
+    """A peak nobody measured is not the lowest peak; it is no evidence at all."""
+    unscanned = _attempt(limit_dbtp=-1.5, emitted_dbtp=-1.4, decoded_peak_dbfs=None)
+    scanned = _attempt(round_index=1, limit_dbtp=-1.8, emitted_dbtp=-1.4, decoded_peak_dbfs=-0.05)
+    sel = _select([unscanned, scanned])
+    assert sel.kept.round_index == 1
+    assert sel.hard_tp_met is True
+
+
+def test_all_unmeasurable_keeps_the_nominal() -> None:
     sel = _select(
         [_attempt(emitted_dbtp=None), _attempt(round_index=1, limit_dbtp=-2.8, emitted_dbtp=None)]
     )
     assert sel.kept.round_index == 0
     assert sel.target_met is False
     assert sel.hard_tp_met is False
-    assert sel.last_resort_needed is False
     assert sel.warning is not None
     assert "unmeasurable" in sel.warning
 
@@ -245,33 +275,51 @@ def test_all_unmeasurable_keeps_the_nominal_and_asks_for_no_last_resort() -> Non
 def test_ties_go_to_the_earlier_round() -> None:
     sel = _select(
         [
-            _attempt(limit_dbtp=-1.5, emitted_dbtp=-1.4),
-            _attempt(round_index=1, limit_dbtp=-1.8, emitted_dbtp=-1.4),
+            _attempt(limit_dbtp=-1.5, emitted_dbtp=-1.4, decoded_peak_dbfs=-0.6),
+            _attempt(round_index=1, limit_dbtp=-1.8, emitted_dbtp=-1.4, decoded_peak_dbfs=-0.6),
         ]
     )
     assert sel.kept.round_index == 0
 
 
-def test_the_warning_names_both_true_peaks() -> None:
-    """One warning, and the two numbers an operator needs: what was emitted, what ships."""
+def test_the_warning_names_both_true_peaks_and_the_peak() -> None:
+    """One warning, and the numbers an operator needs: what ships, what was emitted."""
     sel = _select(
         [
-            _attempt(limit_dbtp=-1.5, emitted_dbtp=0.3),
-            _attempt(round_index=1, limit_dbtp=-2.8, emitted_dbtp=-0.2),
+            _attempt(limit_dbtp=-1.5, emitted_dbtp=0.3, decoded_peak_dbfs=-0.31),
+            _attempt(round_index=1, limit_dbtp=-2.8, emitted_dbtp=-0.2, decoded_peak_dbfs=-0.55),
         ]
     )
     assert sel.kept.round_index == 1
     assert sel.target_met is False
-    assert sel.last_resort_needed is False
     assert sel.warning is not None
     assert "+0.30 dBTP" in sel.warning
     assert "-0.20 dBTP" in sel.warning
+    assert "-0.55 dBFS" in sel.warning
 
 
 def test_no_warning_when_the_target_is_met() -> None:
-    sel = _select([_attempt(emitted_dbtp=-1.2)])
+    sel = _select([_attempt(emitted_dbtp=-1.2, decoded_peak_dbfs=-1.0)])
     assert sel.target_met is True
     assert sel.warning is None
+
+
+def test_every_attempt_over_the_bound_still_ships_the_best_one() -> None:
+    """An ERROR line, not a stop, and not another emit.
+
+    Answer 12: nothing better exists to keep, so the best attempt airs and the
+    caller reports it.  The guard must not answer a hot artifact with a quieter
+    emit -- that is the last-resort mistake the panel measured.
+    """
+    hot = _attempt(limit_dbtp=-1.5, emitted_dbtp=0.4, decoded_peak_dbfs=0.30)
+    hotter = _attempt(round_index=1, limit_dbtp=-2.8, emitted_dbtp=1.1, decoded_peak_dbfs=0.40)
+    sel = _select([hot, hotter])
+    assert sel.kept.round_index == 0
+    assert sel.hard_tp_met is False
+    assert sel.target_met is False
+    assert sel.warning is not None
+    assert "+0.30 dBFS" in sel.warning
+    assert "NOT met" in sel.warning
 
 
 # ---------------------------------------------------------------------------
