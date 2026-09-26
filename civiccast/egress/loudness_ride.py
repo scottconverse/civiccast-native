@@ -94,22 +94,26 @@ Oversampling makes the *pre*-AAC true peak bounded; it does not by itself make
 the *artifact* compliant, because the codec's overshoot is its own -- U25 round 7
 measured the limiter holding to +0.0034 dB over its own ceiling while the AAC
 round trip added up to +3.27 dB, which is why a lowered ceiling does not buy a
-proportionally lower emitted peak.  The artifact therefore gets the last word,
-through the pair of pure decision functions that are this module's whole guard
-API: after an attempt's emit, the emitted true peak, the loudness and the decoded
-sample peak are measured seek-free, :func:`guard_next_ceiling` returns the ceiling
-the one re-encode round owes (the overshoot plus :data:`TP_GUARD_MARGIN_DB` below
-the ceiling that produced it, for at most :data:`TP_GUARD_MAX_ROUNDS` round), and
-:func:`select_leveled_attempt` picks which attempt ships -- the loudness gates
-first, then the lowest decoded sample peak, then the lowest emitted true peak,
-keeping the nominal attempt when nothing separates them.
+proportionally lower emitted peak.  U43 then showed the overshoot is codec-side
+rather than spectral -- a lowpass at the encoder's own cutoff moved the peak by
++0.00 dB -- so the only lever that reaches it is headroom at the encoder.  The
+artifact therefore gets the last word, through the pure decision functions that
+are this module's whole guard API: after an attempt's emit, the emitted true
+peak, the loudness and the decoded sample peak are measured seek-free,
+:func:`guard_pad_db` returns how far the one pad round moves -- headroom equal to
+the measured overshoot plus :data:`TP_GUARD_PAD_MARGIN_DB`, capped at
+:data:`TP_GUARD_MAX_PAD_DB`, with the drive raised by the same amount so the
+programme loudness holds -- and :func:`select_leveled_attempt` picks which
+attempt ships -- the loudness gates first, then the lowest decoded sample peak,
+then the lowest emitted true peak, keeping the nominal attempt when nothing
+separates them.
 
 That round is a *re-encode*, not a re-convergence.  The ride PCM is already
 correct, so the guard re-runs only the limiter, the codec and the mux, over the
 bytes the nominal emit consumed -- ``run_ride``'s ``pcm_path`` tee retains them
-(:func:`build_reencode_args`, :func:`run_reencode`) -- and the bound is therefore
-one round whose cost is seconds, not a second full ride.  The emitted true peak is
-best effort at :data:`TP_GUARD_TARGET_DBTP`; the *guarantee* is
+(:func:`build_reencode_args`, :func:`run_reencode`) -- so every round costs
+seconds, not a second full ride.  The emitted true peak is best effort at
+:data:`TP_GUARD_TARGET_DBTP`; the *guarantee* is
 :data:`TP_GUARD_MAX_PEAK_DBFS` -- no decoded sample above +0.1 dBFS -- and it is
 measured on the artifact rather than promised by a ceiling, which is why an
 artifact over it is *reported* rather than re-emitted: the selector keeps the best
@@ -119,8 +123,9 @@ what settled that: BIG's nominal emit, the hottest artifact the panel produced,
 sits at +0.0036 dBFS from one sample in 9000 s, and every attempt that tried to
 fix it landed worse.  The caller owns the ride, the encode and the measurement
 *policy*: :func:`level_window` is the one entry point here that spawns the passes
-(a source series, the converge probes, one emit, the artifact's measurement and
-at most one round), and it does that only because the caller asked for a leveled
+(a source series, the converge probes, one emit, the artifact's measurement, at
+most one pad round and then the encoder variants while the bound is still
+missed), and it does that only because the caller asked for a leveled
 window by calling it -- every piece it spawns is a module function the caller
 could have run itself.  It never logs: it returns a :class:`LeveledSelection`
 whose ``warning`` the caller logs, and a ``round_error`` the caller logs beside
@@ -186,9 +191,9 @@ __all__ = [
     "LOUDNESS_WINDOW_OFFSET_S",
     "LOUDNESS_WINDOW_S",
     "LOUDNESS_WINDOW_TOL_LU",
-    "TP_GUARD_MARGIN_DB",
+    "TP_GUARD_MAX_PAD_DB",
     "TP_GUARD_MAX_PEAK_DBFS",
-    "TP_GUARD_MAX_ROUNDS",
+    "TP_GUARD_PAD_MARGIN_DB",
     "TP_GUARD_TARGET_DBTP",
     "LeveledAttempt",
     "LeveledSelection",
@@ -217,8 +222,7 @@ __all__ = [
     "gain_curve",
     "gap_cap",
     "gated_loudness",
-    "guard_ceiling_dbtp",
-    "guard_next_ceiling",
+    "guard_pad_db",
     "level_window",
     "limit_value",
     "limiter_filter",
@@ -1574,7 +1578,7 @@ class ReencodeRunner(Protocol):
     so it is bounded by its input rather than by a stream, and the round's
     timeout is its whole cancellation story.
 
-    The guard may run more than one round -- a ceiling round, then up to one
+    The guard may run more than one round -- one pad round, then up to one
     round per :data:`TP_GUARD_ENCODER_VARIANTS` entry (U42) -- and every round
     goes through this one callable, so the module has exactly one place that
     spends an encode on a fix.
@@ -1793,27 +1797,9 @@ def converge(
 #: The emitted true peak the artifact must not exceed (dBTP).
 TP_GUARD_TARGET_DBTP = -1.0
 
-#: Headroom the guard leaves under that target when it lowers the ceiling.  Not
-#: slack in the contract -- the artifact still has to measure at or below the
-#: target -- it is room for the *next* decode, whose resampler is not the one the
-#: guard measured with.
-TP_GUARD_MARGIN_DB = 0.3
-
-
-def guard_ceiling_dbtp(current_dbtp: float, emitted_dbtp: float) -> float | None:
-    """The ceiling to re-emit with, or ``None`` when the emit is already lawful.
-
-    The correction is the overshoot plus the margin: the ceiling moves down by
-    however far the emit missed the target, plus :data:`TP_GUARD_MARGIN_DB`.
-    """
-    if emitted_dbtp <= TP_GUARD_TARGET_DBTP:
-        return None
-    overshoot = emitted_dbtp - TP_GUARD_TARGET_DBTP
-    return round(current_dbtp - (overshoot + TP_GUARD_MARGIN_DB), 3)
-
 
 # ---------------------------------------------------------------------------
-# The guard (answer 12: one re-encode round, keep-best, a measured bound)
+# The guard (answer 12: keep-best and a measured bound; U43: the pad round)
 # ---------------------------------------------------------------------------
 
 #: The hard true-peak gate: no decoded sample above this.  It is a bound measured
@@ -1823,17 +1809,88 @@ def guard_ceiling_dbtp(current_dbtp: float, emitted_dbtp: float) -> float | None
 #: is what the product can honestly guarantee: BIG's nominal emit, the hottest
 #: artifact the U25 panel produced, sat at +0.0036 dBFS on one sample in 9000 s,
 #: a codec overshoot under the audibility floor and far better than the incumbent
-#: two-pass conform's +2.8 dBFS on the same asset.  An artifact over the bound is
-#: *reported*, not re-emitted: :data:`TP_GUARD_TARGET_DBTP` is the best effort,
-#: and the caller airs the best attempt it has with an error line.
+#: two-pass conform's +2.8 dBFS on the same asset.  An artifact still over the
+#: bound when every lever is spent is *reported* rather than re-emitted again:
+#: :data:`TP_GUARD_TARGET_DBTP` is the best effort, and the caller airs the best
+#: attempt it has with an error line.
 TP_GUARD_MAX_PEAK_DBFS = 0.1
 
-#: Re-encode rounds a hot artifact may spend.  One.  The round re-runs only the
-#: limiter, the codec and the mux over the ride PCM the nominal emit already
-#: consumed (:func:`build_reencode_args`), so it costs seconds instead of a second
-#: full ride -- and U25 round 7 measured a lowered ceiling buying 0.00 dB of
-#: emitted true peak on BIG, so a second round would buy cost, not compliance.
-TP_GUARD_MAX_ROUNDS = 1
+#: Headroom the pad round leaves under that bound.  Not slack in the contract --
+#: the artifact still has to measure at or below the bound -- it is room for the
+#: *next* decode, whose resampler is not the one the guard measured with: the
+#: bound is measured on one decode of the artifact, and the station decodes it
+#: again to air it.
+TP_GUARD_PAD_MARGIN_DB = 0.5
+
+#: The most ceiling a single pad round may take.  A measured need larger than
+#: this is not a peak problem the round can fix -- the overshoot is the codec's,
+#: and below this the drive is doing the work, not the ceiling.  The round pads
+#: by the cap and lets keep-best and the caller's ERROR line report what is left,
+#: rather than spending a second round chasing a fixed point (U25 round 7
+#: measured a second ceiling drop buying 0.00 dB).
+TP_GUARD_MAX_PAD_DB = 6.0
+
+
+def guard_pad_db(
+    attempt: LeveledAttempt,
+    *,
+    max_pad_db: float = TP_GUARD_MAX_PAD_DB,
+) -> float | None:
+    """How far the one pad round moves, or ``None`` when no round is owed.
+
+    The round exists for the hard bound, so it is measured on the hard bound's
+    own evidence: the *decoded sample peak* of the artifact, which is what
+    :data:`TP_GUARD_MAX_PEAK_DBFS` is a bound on.  That is the U43 correction --
+    answer 11 measured the emitted *true* peak instead, which the AAC round trip
+    inflates well past the sample peak the bound actually names, so its round
+    paid 2.6 dB of ceiling for a 1.2 dB overshoot on U43's hermetic cell and
+    missed the bound entirely where the artifact was live (U42's log line 18797).
+
+    The pad is the measured overshoot plus :data:`TP_GUARD_PAD_MARGIN_DB`, capped
+    at ``max_pad_db``.  The caller spends it on both axes at once -- ceiling down
+    by the pad, drive up by the pad -- so the level the round takes out of the
+    ceiling is handed back to the programme rather than taken from it.
+    A ``None`` peak is not evidence of an overshoot, so an unscanned attempt owes
+    no round: the guard does not spend an encode on a measurement that never ran.
+    """
+    if not attempt.over_hard_bound():
+        return None
+    assert attempt.decoded_peak_dbfs is not None  # over_hard_bound() implies it
+    need = attempt.decoded_peak_dbfs - TP_GUARD_MAX_PEAK_DBFS + TP_GUARD_PAD_MARGIN_DB
+    return round(min(need, max_pad_db), 3)
+
+
+def guard_pad_trim_db(
+    level_lufs: float | None,
+    *,
+    trim_db: float,
+    target_lufs: float,
+) -> float | None:
+    """The drive the pad round emits with, from the pass that measured it.
+
+    The pad hands the drive back exactly what the ceiling took, which is the
+    right arithmetic for the *bound* and the wrong arithmetic for the *level*:
+    a lowered ceiling makes the limiter work harder, so it removes less loudness
+    than the pad returns and the round lands loud -- U43's sweep measured +0.53 LU
+    on cell A and -0.28 LU on cell B, so the residue is neither small nor even
+    fixed in sign.  The round therefore measures before it spends: the caller
+    runs one measured pass at the pad's own (ceiling, drive), hands this function
+    that pass's integrated loudness, and emits at the drive it returns.
+
+    This is :func:`converge`'s own correction -- the pre-limiter drive is moved
+    by the whole-program error it just measured -- spent once rather than
+    iterated, because the guard owes one round and not a fixed point.  The level
+    read here is the same printed integrated value ``converge`` reads.
+
+    ``level_lufs`` is ``None`` when the pass measured no integrated loudness at
+    all.  There is then no error to correct with, but the round is still owed for
+    the hard bound, so the caller emits the uncorrected pad rather than skipping
+    the round or raising: an unreachable bound is the worse failure, and the
+    attempt this round started from is still in the keep-best field.
+    """
+    if level_lufs is None:
+        return None
+    return round(trim_db + (target_lufs - level_lufs), 3)
 
 
 @dataclass(frozen=True)
@@ -1841,12 +1898,14 @@ class EncoderVariant:
     """One encoder configuration the guard may re-emit an artifact with.
 
     The guard's first lever is the limiter ceiling -- :func:`build_reencode_args`
-    at a lower ``params.limit_dbtp``.  U42's live full-asset artifact showed that
-    the ceiling is not always a lever at all: the emitted peak was the AAC round
-    trip's own, so lowering the ceiling moved the loudness gate off target while
-    leaving the peak hot (log line 18797: round 0 hot at the nominal ceiling,
-    round 1 quiet *and* still over the bound).  This is the second lever -- the
-    same PCM, the same limiter, the same mux, a different encoder.
+    at a lower ``params.limit_dbtp``, with the drive raised by the same amount so
+    the level holds (U43's pad round; :func:`guard_pad_db`).  U42's live
+    full-asset artifact showed that the ceiling alone does not reach the emitted
+    peak: it is the AAC round trip's own, so lowering the ceiling without
+    compensating moved the loudness gate off target while leaving the peak hot
+    (log line 18797: round 0 hot at the nominal ceiling, round 1 quiet *and*
+    still over the bound).  This is the second lever -- the same PCM, the same
+    limiter, the same mux, a different encoder.
 
     ``extra_args`` are the encoder's own options, appended verbatim beside
     ``-c:a``.  A variant therefore cannot move the input, the filter chain, the
@@ -1995,33 +2054,6 @@ class LeveledSelection:
     warning: str | None
 
 
-def guard_next_ceiling(
-    attempts: Sequence[LeveledAttempt],
-    *,
-    max_rounds: int = TP_GUARD_MAX_ROUNDS,
-) -> float | None:
-    """The ceiling for the next re-encode round, or ``None`` to stop here.
-
-    The correction is measured against the *latest* attempt, never against the
-    best one so far: the ceiling's effect on the emitted peak is not monotone, so
-    a correction derived from a ceiling that is no longer in force chases a fixed
-    point that does not exist.  A round is spent only while the latest artifact is
-    still above :data:`TP_GUARD_TARGET_DBTP` and rounds remain; an unmeasurable
-    latest attempt cannot be corrected, so it ends the search rather than guessing.
-
-    The round this returns the ceiling for is a re-encode of the retained ride PCM
-    (see :func:`build_reencode_args`), not a re-convergence -- one round, seconds.
-    """
-    if not attempts:
-        return None
-    if len(attempts) - 1 >= max(0, max_rounds):
-        return None
-    latest = attempts[-1]
-    if latest.emitted_dbtp is None:
-        return None
-    return guard_ceiling_dbtp(latest.limit_dbtp, latest.emitted_dbtp)
-
-
 def _encoder_suffix(attempt: LeveledAttempt) -> str:
     """`` (aac 256k)`` when the attempt names its encoder, else nothing.
 
@@ -2114,8 +2146,9 @@ def select_leveled_attempt(
         )
         warning = (
             f"the emitted true peak is {kept_tp}, above the {target_dbtp:+.1f} dBTP "
-            f"target and this is best effort only -- the hard true-peak gate is "
-            f"what must hold; the nominal attempt emitted {nominal_tp}; attempts: "
+            f"target and this is best effort only -- the hard gate is the decoded "
+            f"sample peak below, which the selection above enforces and this line "
+            f"reports; the nominal attempt emitted {nominal_tp}; attempts: "
             f"{tried}; keeping round {kept.round_index}{_encoder_suffix(kept)} at a "
             f"{kept.limit_dbtp:+.2f} "
             f"dBTP ceiling, peak {kept_peak} (hard gate "
@@ -2283,13 +2316,26 @@ def level_window(
     The whole of answer 12, in order: measure the source, converge the ride,
     emit once through the profile's codec, measure what was emitted, and then --
     only while the attempt that would be kept is still over the hard bound --
-    spend re-encode rounds against the retained ride PCM.  The ceiling round
-    comes first (answer 11's lever); if the kept attempt is *still* hot after it,
-    the encoder variants (:data:`TP_GUARD_ENCODER_VARIANTS`, U42) follow in their
-    fixed order, and the loop stops at the first attempt that is not over the
-    bound.  All rounds read the same PCM and re-encode only the codec and the
-    mux: no re-render, no re-convergence, so no round can move the loudness the
-    convergence settled on.  Then keep the best attempt (see
+    spend re-encode rounds against the retained ride PCM.  The pad round comes
+    first (answer 11's ceiling, U43's compensating drive; :func:`guard_pad_db`);
+    if the kept attempt is *still* hot after it, the encoder variants
+    (:data:`TP_GUARD_ENCODER_VARIANTS`, U42) follow in their fixed order, and the
+    loop stops at the first attempt that is not over the bound.  All rounds read
+    the same PCM and re-run only the limiter, the codec and the mux: no
+    re-convergence, and no re-render of the curve.  The drive is the one thing a
+    round may move, and only the pad round moves it.  That round first *measures*
+    the settings it is about to spend: one extra limited pass over the source, at
+    its own ceiling and drive, measuring rather than encoding.  (The ride's own
+    render is the pass that can be pointed at another ceiling; the retained PCM is
+    headerless raw f32, so the module's artifact measurement, which reads a media
+    file, cannot score it.)  The drive is then corrected by the
+    whole-program error that pass measured (:func:`guard_pad_trim_db`), because a
+    lowered ceiling makes the limiter work harder and it then removes *less*
+    loudness than the pad hands back (U43's sweep: +0.53 LU on one live cell,
+    -0.28 LU on another).  Once, not to a fixed point: the guard owes the bound
+    one round, not a converged level.  If that measuring pass dies, the round
+    still ships at the uncorrected pad -- the bound is still owed.
+    Then keep the best attempt (see
     :func:`select_leveled_attempt`) and make ``audio_path`` be it: the winning
     round is moved onto the caller's path, every losing one deleted, so the
     caller has one file to publish and no choice left to make.
@@ -2326,17 +2372,31 @@ def level_window(
         )
     source_levels = sliding_levels(source_series, params.window_s, params.step_s)
 
-    def render(curve: list[tuple[float, float]], trim_db: float | None) -> RideRender:
+    def render(
+        curve: list[tuple[float, float]],
+        trim_db: float | None,
+        *,
+        limit_dbtp: float | None = None,
+    ) -> RideRender:
+        """One measured pass over the source, at the ride's ceiling or another.
+
+        ``limit_dbtp`` is for U43's pad round, which has to measure the level it
+        would actually emit at: the limiter's gain reduction -- and therefore the
+        whole-program loudness -- depends on the ceiling, so a pass at the ride's
+        ceiling is not evidence about a pass at the round's.  ``None`` keeps the
+        ride's own ceiling, which is what convergence wants.
+        """
+        pass_params = params if limit_dbtp is None else replace(params, limit_dbtp=limit_dbtp)
         return ride(
             decoder_args=build_decoder_args(
                 source_path=source_path,
                 segment=segment,
-                params=params,
+                params=pass_params,
                 threads=threads,
             ),
-            sink_args=build_measure_sink_args(trim_db, params=params),
+            sink_args=build_measure_sink_args(trim_db, params=pass_params),
             curve=curve,
-            params=params,
+            params=pass_params,
             cancel_event=cancel_event,
             timeout_s=timeout_s,
         )
@@ -2397,6 +2457,14 @@ def level_window(
             )
         ]
 
+        #: What each round was emitted with, keyed by round index.  The nominal
+        #: emit is round 0; :func:`reemit` records the rest.  The guard needs it
+        #: because both of its levers are relative to an attempt that already
+        #: exists: the pad round moves *the kept attempt's* drive and ceiling, and
+        #: a variant re-emits at the ceiling and drive of the attempt it is trying
+        #: to beat -- otherwise the encoder would not be the single varying axis.
+        spent: dict[int, tuple[float, float]] = {0: (curve.trim_db, params.limit_dbtp)}
+
         def keep_best() -> LeveledAttempt:
             """The attempt :func:`select_leveled_attempt` would ship right now.
 
@@ -2413,15 +2481,15 @@ def level_window(
                 whole_tol_lu=LOUDNESS_WHOLE_TOL_LU,
             ).kept
 
-        def reemit(*, limit_dbtp: float, variant: EncoderVariant | None) -> None:
+        def reemit(*, limit_dbtp: float, trim_db: float, variant: EncoderVariant | None) -> None:
             """Spend one re-encode round on the retained PCM, and measure it.
 
-            Both of the guard's levers arrive here: a lowered ``limit_dbtp``
-            (answer 11) or an ``EncoderVariant`` (U42).  The input is
-            ``tee_path`` in both cases -- the very samples the nominal emit
-            consumed -- so a round is always "the same audio, one setting
-            different", which is what lets the selector compare the attempts at
-            all.
+            Both of the guard's levers arrive here: the limiter ceiling with the
+            drive that goes with it (answer 11's ceiling, U43's pad) or an
+            ``EncoderVariant`` (U42).  The input is ``tee_path`` in every case --
+            the very samples the nominal emit consumed -- so a round is always
+            "the same audio, one setting different", which is what lets the
+            selector compare the attempts at all.
 
             A failed round is not raised: it is recorded in ``round_error`` and
             the attempts that did survive are what the selector sees.  The first
@@ -2434,11 +2502,12 @@ def level_window(
             index = len(attempts)
             path = audio_path.with_name(f"{audio_path.name}.round{index}.ts")
             round_paths[index] = path
+            spent[index] = (trim_db, limit_dbtp)
             try:
                 render = reencode(
                     pcm_path=tee_path,
                     output_path=path,
-                    trim_db=curve.trim_db,
+                    trim_db=trim_db,
                     params=replace(params, limit_dbtp=limit_dbtp),
                     profile=profile,
                     timeout_s=timeout_s,
@@ -2468,22 +2537,69 @@ def level_window(
                 )
             )
 
-        ceiling = guard_next_ceiling(attempts)
-        if ceiling is not None:
-            reemit(limit_dbtp=ceiling, variant=None)
+        # U43: one pad round, and only one, against the attempt that would ship.
+        # The overshoot this chases is codec-side (U43's band-limit probe moved
+        # the encoder's own cutoff by +0.00 dB), so the cure is headroom at the
+        # encoder: the ceiling drops by exactly the measured pad AND the drive
+        # rises by the same amount, which keeps the programme loudness where the
+        # converged curve put it while the decoder's peaks land under the bound.
+        # A round that does not pay is not re-tried -- the pad is the measured
+        # need, not a knob to search -- and an attempt nobody would keep is not
+        # worth spending a round on at all, which is what keep_best() answers.
+        #
+        # The pad's arithmetic is the right one for the bound and the wrong one
+        # for the level: the ceiling it takes is what the limiter has to work
+        # against, and harder limiting removes less loudness than the pad hands
+        # back (U43's sweep measured the round +0.53 LU loud on one live cell and
+        # -0.28 LU quiet on another, so the residue is neither small nor fixed in
+        # sign).  So the round measures the settings it is about to spend, at the
+        # ceiling it will emit at, and corrects the drive by what it finds --
+        # converge()'s own correction, spent once.  The measuring pass is a
+        # measurement, not a required step: if it dies, the round still ships at
+        # the uncorrected pad, because the bound is still owed.
+        hot = keep_best()
+        pad = guard_pad_db(hot)
+        if pad is not None:
+            hot_trim, hot_ceiling = spent[hot.round_index]
+            pad_trim = hot_trim + pad
+            pad_ceiling = hot_ceiling - pad
+            try:
+                probe = render(curve.curve, pad_trim, limit_dbtp=pad_ceiling)
+                measured = parse_integrated_lufs(probe.stderr)
+            except LoudnessRideCancelledError:
+                raise
+            except LoudnessRideError:
+                measured = None
+            corrected = guard_pad_trim_db(
+                measured,
+                trim_db=pad_trim,
+                target_lufs=params.target_lufs,
+            )
+            reemit(
+                limit_dbtp=pad_ceiling,
+                trim_db=pad_trim if corrected is None else corrected,
+                variant=None,
+            )
 
-        # U42: the ceiling is spent, so if the attempt that would ship is still
-        # hot, the encoder is the lever that is left.  Each variant re-emits at
-        # the *kept* attempt's own ceiling -- the encoder is then the single
-        # varying axis, and the variant's result is comparable with the attempt
-        # it is trying to beat.  Stop at the first attempt that is not over the
-        # bound; if every variant misses it, the best attempt ships anyway and
-        # the caller's ERROR line says so.
+        # U42: the ceiling and the drive are spent, so if the attempt that would
+        # ship is still hot, the encoder is the lever that is left.  Each variant
+        # re-emits at the *kept* attempt's own ceiling and drive -- the encoder is
+        # then the single varying axis, and the variant's result is comparable
+        # with the attempt it is trying to beat.  That pair *is* the pad round's
+        # whenever the pad round is the attempt being beaten: the pad round is the
+        # kept attempt exactly when it holds loudness and peaks lower than the
+        # rest, and a variant re-emits at its anchor.  A pad round that lost
+        # keep-best -- quiet, or peaking above what it was trying to fix -- is not
+        # what the encoder should be compared against, and the anchor stays on the
+        # attempt that would actually ship.  Stop at the first attempt that is not
+        # over the bound; if every variant misses it, the best attempt ships
+        # anyway and the caller's ERROR line says so.
         for variant in encoder_variants_for(profile):
             kept_now = keep_best()
             if not kept_now.over_hard_bound():
                 break
-            reemit(limit_dbtp=kept_now.limit_dbtp, variant=variant)
+            kept_trim, kept_ceiling = spent[kept_now.round_index]
+            reemit(limit_dbtp=kept_ceiling, trim_db=kept_trim, variant=variant)
 
         selection = select_leveled_attempt(
             attempts,
