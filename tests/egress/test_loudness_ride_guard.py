@@ -103,11 +103,18 @@ def _select(attempts: list[lr.LeveledAttempt]) -> lr.LeveledSelection:
 def test_the_gate_constants_are_the_answered_ones() -> None:
     assert lr.TP_GUARD_TARGET_DBTP == -1.0
     assert lr.TP_GUARD_MAX_PEAK_DBFS == 0.1
-    assert lr.TP_GUARD_MAX_ROUNDS == 1
+    assert lr.TP_GUARD_PAD_MARGIN_DB == 0.5
+    assert lr.TP_GUARD_MAX_PAD_DB == 6.0
     # Answer 12 deleted the last-resort branch, constant and all.
     assert not hasattr(lr, "TP_GUARD_LAST_RESORT_DBTP")
     assert not hasattr(lr, "TP_GUARD_HARD_DBTP")
     assert not hasattr(lr, "needs_last_resort")
+    # U43 replaced the emitted-TP ceiling step with the measured pad: the step's
+    # helpers, its round budget and its margin are gone, not merely unused.
+    assert not hasattr(lr, "guard_ceiling_dbtp")
+    assert not hasattr(lr, "guard_next_ceiling")
+    assert not hasattr(lr, "TP_GUARD_MAX_ROUNDS")
+    assert not hasattr(lr, "TP_GUARD_MARGIN_DB")
 
 
 def test_the_hard_gate_is_the_decoded_sample_bound() -> None:
@@ -138,35 +145,79 @@ def test_loudness_gates_are_unchanged_by_the_answer_11_reshuffle() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The one re-encode-only round
+# The one re-encode-only round: U43's measured pad
 # ---------------------------------------------------------------------------
 
 
-def test_the_step_is_the_overshoot_plus_the_margin() -> None:
+def test_the_pad_is_the_measured_overshoot_plus_the_margin() -> None:
+    """The pad is measured on the artifact, not derived from the emitted dBTP.
+
+    U43 measured the emitted true peak's excursion past the ceiling to be the
+    codec's own (a 192 kbps AAC round trip added +4.34 dB over a -1.5 dBFS-limited
+    signal, and a lowpass at the encoder's own cutoff moved it +0.00 dB), so the
+    emitted dBTP is the wrong place to derive a correction from.  The overshoot
+    the guard corrects is the one it can see on the artifact it would air: the
+    decoded peak's distance above :data:`TP_GUARD_MAX_PEAK_DBFS`.
+    """
     # Already lawful: no round is owed.
-    assert lr.guard_ceiling_dbtp(-1.5, -1.4) is None
-    assert lr.guard_ceiling_dbtp(-1.5, -1.0) is None
-    # Emitted at exactly 0.0 dBTP from a -1.5 dBTP ceiling: 1.0 + 0.3 below it.
-    assert lr.guard_ceiling_dbtp(-1.5, 0.0) == -2.8
-    # Emitted -0.4 from -1.8: 0.6 + 0.3 below the ceiling it came from.
-    assert lr.guard_ceiling_dbtp(-1.8, -0.4) == -2.7
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=-1.30)) is None
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=0.1)) is None
+    # An unmeasured peak is not evidence that a round is owed either.
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=None)) is None
+    # U42's live full-asset artifact: +0.783 dBFS is 0.683 over the bound, plus
+    # the 0.5 dB margin.
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=0.783)) == 1.183
+    # U43's Senior-window cell: +2.85 dBFS is 2.75 over, plus the margin.
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=2.85)) == 3.25
+    # The emitted true peak decides nothing -- the decoded peak is the evidence.
+    assert lr.guard_pad_db(_attempt(emitted_dbtp=+2.85, decoded_peak_dbfs=0.783)) == 1.183
 
 
-def test_a_hot_emit_buys_exactly_one_re_encode_round() -> None:
-    assert lr.guard_next_ceiling([]) is None
-    # -0.2 dBTP emitted from a -1.5 dBTP ceiling: 0.8 overshoot + 0.3 margin.
-    hot = _attempt(limit_dbtp=-1.5, emitted_dbtp=-0.2)
-    assert lr.guard_next_ceiling([hot]) == -2.6
-    # The bound is spent after that one round, however hot the re-encode reads.
-    assert (
-        lr.guard_next_ceiling([hot, _attempt(round_index=1, limit_dbtp=-2.0, emitted_dbtp=-0.1)])
-        is None
-    )
+def test_the_pad_is_capped_and_the_cap_is_not_a_second_round() -> None:
+    """A measured need past the cap takes the cap; the miss is reported, not chased.
+
+    One round is the whole budget: a second would move the ceiling and the drive
+    again over the same retained PCM, and U43 measured that a ceiling drop alone
+    buys loudness loss rather than peak.  So the cap is where the guard stops, and
+    keep-best plus the caller's ERROR line are what tell the operator it did not
+    reach the bound.
+    """
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=5.5)) == 5.9, "under the cap, as measured"
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=5.6)) == 6.0, "6.0 is the cap exactly"
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=6.5)) == 6.0
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=12.0)) == 6.0
+    # The cap is a parameter, so the arithmetic above is the cap's, not a
+    # constant baked into the formula.
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=12.0), max_pad_db=2.0) == 2.0
 
 
-def test_the_round_is_not_owed_when_the_emit_is_lawful_or_unmeasurable() -> None:
-    assert lr.guard_next_ceiling([_attempt(emitted_dbtp=-1.4)]) is None
-    assert lr.guard_next_ceiling([_attempt(emitted_dbtp=None)]) is None
+def test_the_pad_rounds_drive_is_corrected_by_its_own_measurement() -> None:
+    """Answer 2: the pad's drive is a guess; the round's measurement corrects it.
+
+    Raising the drive by exactly the pad assumes the harder limiting hands back
+    the loudness the pad spent.  U43's live sweep measured that it does not: the
+    pad round came back +0.53 LU over the target on cell A and -0.28 LU under on
+    cell B -- opposite signs, so the limiter is nonlinear in the ceiling and no
+    fixed compensation holds loudness.  The round therefore measures the limited
+    pass and corrects its own pre-limiter drive by the error it measured, the
+    same correction :func:`converge` applies to the nominal's trim.
+    """
+    # Cell A's residue: 3.25 dB of pad came back 0.53 LU short of the target, so
+    # the drive the round actually emits with is 3.25 - 0.53 = 2.72 dB.
+    assert lr.guard_pad_trim_db(-15.47, trim_db=3.25, target_lufs=-16.0) == 2.72
+    # Cell B's residue has the other sign: the round overshot the target, so the
+    # correction adds rather than subtracts.
+    assert lr.guard_pad_trim_db(-16.28, trim_db=3.25, target_lufs=-16.0) == 3.53
+    # Already on target is a no-op, not a write of zero drive.
+    assert lr.guard_pad_trim_db(-16.0, trim_db=0.80, target_lufs=-16.0) == 0.80
+    # The correction is relative to the drive it was handed, not to 0 dB.
+    assert lr.guard_pad_trim_db(-15.0, trim_db=0.15, target_lufs=-16.0) == -0.85
+    # A pass that measured no loudness corrects nothing: the caller emits the
+    # uncorrected pad rather than inventing a drive from an absent measurement.
+    assert lr.guard_pad_trim_db(None, trim_db=3.25, target_lufs=-16.0) is None
+    # The drive is emitted in the ``volume=`` element's own 3 dp form, so the
+    # corrected value is rounded there and not left as a longer float.
+    assert lr.guard_pad_trim_db(-16.12349, trim_db=0.0, target_lufs=-16.0) == 0.123
 
 
 # ---------------------------------------------------------------------------
@@ -640,7 +691,7 @@ def test_an_attempt_over_the_bound_is_not_an_unscanned_one() -> None:
 def test_the_warning_names_every_attempts_encoder_settings() -> None:
     """U42: each attempt's encoder settings are named, and so is the kept one.
 
-    The shape is the live one -- the nominal at 192 kbps hot, the ceiling round
+    The shape is the live one -- the nominal at 192 kbps hot, the pad round
     lawful on peak but over the bound, the 256 kbps variant clearing it -- with
     the variant's emitted true peak still short of the best-effort target, which
     is the only case that produces a warning at all.
@@ -652,7 +703,7 @@ def test_the_warning_names_every_attempts_encoder_settings() -> None:
         decoded_peak_dbfs=0.783,
         encoder="aac 192k",
     )
-    ceiling_round = _attempt(
+    pad_round = _attempt(
         round_index=1,
         limit_dbtp=-5.4,
         emitted_dbtp=-1.90,
@@ -667,7 +718,7 @@ def test_the_warning_names_every_attempts_encoder_settings() -> None:
         decoded_peak_dbfs=-1.064,
         encoder="aac 256k",
     )
-    sel = _select([hot_nominal, ceiling_round, variant])
+    sel = _select([hot_nominal, pad_round, variant])
     assert sel.kept.round_index == 2, "the variant is loudness-lawful and coldest"
     assert sel.hard_tp_met is True
     assert sel.target_met is False
