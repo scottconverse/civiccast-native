@@ -281,7 +281,9 @@ def test_u41_a_real_plan_end_holds_the_slate_until_the_reload_lands(tmp_path: Pa
         native._reap(proc)
 
     text = log.read_text(encoding="utf-8", errors="replace")
-    assert returncode == 0, f"unclean teardown after the held-slate reload (rc={returncode});\n{text}"
+    assert returncode == 0, (
+        f"unclean teardown after the held-slate reload (rc={returncode});\n{text}"
+    )
     native._assert_reload_committed(text)
     assert {"video", "audio"} <= native._ffprobe_codec_types(out_ts), (
         f"ffprobe did not report both a video and an audio stream across the hold;\n{text}"
