@@ -157,7 +157,13 @@ def build_persistent_encoder_args(
         output_args.extend(["-c:v", "copy"])
         output_args.extend(_per_sink_audio_args(resolution, profile))
         output_args.extend(caption_stream_args)
-        output_args.extend(sink.output_args())
+        # container_args(), not output_args(): the audio decision for this group
+        # is already made above (_per_sink_audio_args), and a sink's args land
+        # last, so a sink that states its own -c:a/-c:v would override it by
+        # position -- fatal when the group carries -filter:a, because ffmpeg
+        # refuses a filter next to a stream copy ("Filtering and streamcopy
+        # cannot be used together").
+        output_args.extend(sink.container_args())
     if audio_tap_plan is not None:
         output_args.extend(audio_tap_plan.output_args())
     return [*input_args, *output_args]

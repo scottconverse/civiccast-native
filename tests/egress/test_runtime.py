@@ -425,6 +425,48 @@ def test_build_persistent_encoder_args_reencodes_only_the_divergent_sink(tmp_pat
     assert loudnorm_index < cable_index
 
 
+def test_build_persistent_encoder_args_divergent_hls_sink_keeps_the_callers_codec(
+    tmp_path: Path,
+) -> None:
+    """A divergent HLS sink re-encodes, and its own argv must not override that.
+
+    ``runtime`` appends a sink's args AFTER its audio group, so a sink that
+    states its own ``-c:a`` wins by position. HlsSink must therefore contribute
+    only its container args on this path: a sink-imposed ``-c:a copy`` sitting
+    next to the caller's ``-filter:a loudnorm`` makes ffmpeg reject the whole
+    output ("Filtering and streamcopy cannot be used together" -- measured on
+    the station's ffmpeg: rc=1, "Error opening output files: Invalid argument").
+    """
+    out_dir = tmp_path / "live-hls"
+    args = build_persistent_encoder_args(
+        concat_plan=tmp_path / "plan.ffconcat",
+        config=EgressConfig(
+            channel_id="gov",
+            enabled=True,
+            slate_message="x",
+            loudness_target_lufs=-16.0,
+            sinks=[
+                EgressSinkSpec(
+                    kind="hls",
+                    label="Web",
+                    uri=str(out_dir),
+                    loudness_regime="atsc-a85",
+                )
+            ],
+        ),
+    )
+
+    assert "loudnorm=I=-24:LRA=11:TP=-1.5" in args
+    # Exactly one audio codec decision in the group, and it is the caller's
+    # re-encode -- not a second, sink-imposed one that would win by position.
+    assert args.count("-c:a") == 1, args
+    assert args[args.index("-c:a") + 1] == "aac"
+    # The sink still supplies its container: the HLS muxer and the playlist.
+    # (``_has_subseq``, because the group's first -f is the input's "concat".)
+    assert _has_subseq(args, "-f", "hls")
+    assert args[-1] == str(out_dir / "playlist.m3u8")
+
+
 def _has_subseq(seq: list[str], a: str, b: str) -> bool:
     return any(seq[i] == a and seq[i + 1] == b for i in range(len(seq) - 1))
 

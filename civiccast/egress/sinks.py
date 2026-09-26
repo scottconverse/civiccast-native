@@ -81,6 +81,26 @@ class EgressSink:
     def output_args(self) -> list[str]:
         raise NotImplementedError
 
+    def container_args(self) -> list[str]:
+        """The sink's output args with no codec decision of its own.
+
+        ``runtime.build_persistent_encoder_args`` appends a sink's args at the
+        END of an output group, so a sink that states ``-c:a``/``-c:v`` wins by
+        position over anything the caller emitted earlier in that group. On the
+        per-sink loudness path the caller has already chosen the codec (it emits
+        ``-filter:a loudnorm`` + ``-c:a <profile codec>``, or a bare
+        ``-c:a copy``), and a sink-imposed choice there is not merely redundant:
+        ffmpeg refuses the whole output when a filter and a stream copy meet in
+        one group ("Filtering and streamcopy cannot be used together"). This
+        method lets that caller take the container half of the argv and keep the
+        decision.
+
+        Default: the sink states no codec choice, so its output args ARE its
+        container args and the per-sink path loses nothing. A sink that does
+        state one (``HlsSink``) overrides this to exclude the codec pair.
+        """
+        return self.output_args()
+
     def is_connected(self) -> bool:
         return False
 
@@ -270,28 +290,52 @@ class HlsSink(EgressSink):
         return str(self._directory() / "playlist.m3u8")
 
     def output_args(self) -> list[str]:
+        # Stream-copy BOTH streams instead of re-encoding them.
+        #
+        # Video: a re-encode through the bundled H.264 encoders (libopenh264,
+        # h264_mf) strips the A/53 closed-caption SEI, so the HLS leg lost every
+        # caption even though the upstream GStreamer embed leg produced it --
+        # the decode-back verifier then saw zero cues on a captioned channel.
+        # Copy preserves the SEI byte-for-byte. Cadence consequence:
+        # -force_key_frames/-g are encoder-side and are impossible with copy, so
+        # the ~2s cut points now depend on the upstream encoder's IDR interval.
+        # That interval is contractual: gst/graph.py pins openh264enc's
+        # ``gop-size`` to segment_seconds worth of frames. Copy also means the
+        # video bitrate is whatever upstream already produced, so -b:v is
+        # intentionally absent.
+        #
+        # Audio: a bare ``-c:a aac`` here (no ``-b:a``) was a SECOND lossy AAC
+        # generation on the only audio path that reaches viewers, and beta.10
+        # U49 measured that generation as the one that adds overshoot -- the
+        # relay's input holds -1.1 dBTP while the emitted segment decodes to
+        # +1.16 dBFS on real samples, four of them in a row. The worker's AAC is
+        # ADTS (48 kHz stereo LC), which is exactly what HLS carries, so copy is
+        # valid here and removes the overshoot by construction rather than
+        # bounding it after the fact with a limiter. It also costs no CPU and
+        # gives the viewer the worker's measured -1.1 dBTP / -16.1 LUFS instead
+        # of a re-encode's. The trade is bandwidth on the public HLS leg
+        # (~133 -> ~198 kbps, +48 %), accepted for this fix. This is also what
+        # the spec already documents for the live/persistent encoder (MASTER
+        # spec section 3 loudness row: "playout encoder is -c:a copy").
+        return [
+            *self.spec.extra_output_args,
+            "-c:v",
+            "copy",
+            "-c:a",
+            "copy",
+            *self.container_args(),
+        ]
+
+    def container_args(self) -> list[str]:
+        """``output_args()`` minus the codec decision -- see the base method.
+
+        The per-sink loudness path has already chosen the audio codec (loudnorm
+        re-encode or copy) and must not have it overridden by position.
+        """
         directory = self._directory()
         directory.mkdir(parents=True, exist_ok=True)
         segment_pattern = str(directory / "seg%09d.ts")
         return [
-            *self.spec.extra_output_args,
-            # Stream-copy the encoded video instead of re-encoding it. A
-            # re-encode through the bundled H.264 encoders (libopenh264,
-            # h264_mf) strips the A/53 closed-caption SEI, so the HLS leg lost
-            # every caption even though the upstream GStreamer embed leg
-            # produced it -- the decode-back verifier then saw zero cues on a
-            # captioned channel. Copy preserves the SEI byte-for-byte.
-            #
-            # Cadence consequence: -force_key_frames/-g are encoder-side and
-            # are impossible with copy, so the ~2s cut points now depend on the
-            # upstream encoder's IDR interval. That interval is contractual:
-            # gst/graph.py pins openh264enc's ``gop-size`` to segment_seconds
-            # worth of frames. Copy also means the video bitrate is whatever
-            # upstream already produced, so -b:v is intentionally absent.
-            "-c:v",
-            "copy",
-            "-c:a",
-            "aac",
             "-f",
             "hls",
             "-hls_time",

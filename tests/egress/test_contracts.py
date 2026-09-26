@@ -221,9 +221,48 @@ def test_hls_sink_builds_rolling_live_manifest_output_args(tmp_path: Path) -> No
     assert "-force_key_frames" not in args
     assert "-g" not in args
     assert "-b:v" not in args
+    # Audio is stream-copied for the same reason, and one worse. The playout
+    # worker already encodes AAC; a relay-side `-c:a aac` is a SECOND lossy
+    # generation on the only audio path that reaches viewers, and U49 measured
+    # that generation as the one that adds overshoot: the relay's input holds
+    # -1.1 dBTP, the emitted segment decodes to +1.16 dBFS on real samples.
+    # The worker's AAC is ADTS (48 kHz stereo LC) -- exactly what HLS carries --
+    # so copy is valid here and removes the overshoot by construction instead of
+    # trying to bound it with a limiter after the fact. This is also what the
+    # spec documents for the live/persistent encoder (MASTER spec section 3
+    # loudness row: "playout encoder is -c:a copy").
+    assert "-c:a" in args and args[args.index("-c:a") + 1] == "copy"
     # Writing output_args() must create the directory so ffmpeg's hls muxer
     # (which does not mkdir -p) can write the manifest + segments into it.
     assert out_dir.is_dir()
+
+
+def test_hls_sink_container_args_leave_the_codec_choice_to_the_caller(tmp_path: Path) -> None:
+    """The per-sink loudness path owns the codec decision; the sink must yield.
+
+    ``runtime.build_persistent_encoder_args`` appends a sink's args AFTER its
+    own audio group, so a sink that states ``-c:a`` wins by position. On the
+    per-sink path that caller has already chosen (``-filter:a loudnorm`` +
+    ``-c:a <profile codec>``), and a sink-imposed ``-c:a copy`` next to a
+    filter makes ffmpeg refuse the whole output ("Filtering and streamcopy
+    cannot be used together"). ``container_args()`` is the half of a sink's
+    argv that carries no codec choice, so that caller can use it.
+    """
+    out_dir = tmp_path / "live-hls"
+    sink = build_sink(EgressSinkSpec(kind="hls", label="Web", uri=str(out_dir)))
+    assert isinstance(sink, HlsSink)
+
+    container = sink.container_args()
+    assert "-c:a" not in container and "-c:v" not in container
+    # It is the sink's real tail: the container, the segment pattern, the
+    # playlist target -- and it still creates the directory.
+    assert container[container.index("-f") + 1] == "hls"
+    assert container[-1] == str(out_dir / "playlist.m3u8")
+    assert out_dir.is_dir()
+    # A sink with no codec choice of its own is unaffected: its container args
+    # ARE its output args, so the per-sink path loses nothing by calling this.
+    udp = build_sink(EgressSinkSpec(kind="udp-ts", label="Headend", uri="udp://239.0.0.1:5000"))
+    assert udp.container_args() == udp.output_args()
 
 
 def test_hls_sink_accepts_file_uri_directory(tmp_path: Path) -> None:
