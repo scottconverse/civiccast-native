@@ -1442,6 +1442,17 @@ class ChannelAutomationService:
             # pipe connection before asking it to reload back to the schedule.
             # Do not consume the latch/cooldown or call the provider yet.
             return
+        if self._daemon_has_pending_preparation(channel_id):
+            # U47: the daemon is preparing this channel's program for the
+            # slate that is on air right now (a slate-first hand-off). The
+            # reload this pass would queue is the very hand-off it is already
+            # running: it reaches ``_request_reload`` -> ``_cancel_preparation``,
+            # abandons the in-flight preparation and conforms the program a
+            # second time. Like the control-connection gate above, this does NOT
+            # consume the latch or the cooldown -- if the hand-off's preparation
+            # FAILS, the channel stays FALLBACK_SLATE with no preparation
+            # registered and the next tick issues the reload exactly as before.
+            return
         if channel_id in self._reload_issued:
             return
         # Audit ENG-002: when the due item persistently fails PREPARATION,
@@ -2403,6 +2414,31 @@ class ChannelAutomationService:
         method's own top-of-function early return)."""
 
         reader = getattr(self._daemon, "has_pending_reload_settlement", None)
+        if not callable(reader):
+            return False
+        return bool(reader(channel_id))
+
+    def _daemon_has_pending_preparation(self, channel_id: str) -> bool:
+        """U47: whether the daemon is already preparing THIS channel's program.
+
+        Same optional-capability shape as ``has_manual_override`` and
+        ``_daemon_has_pending_reload_settlement`` above: a daemon double that
+        predates the reader answers "no", preserving its existing behavior.
+
+        This is deliberately the NARROW reader (``has_pending_preparation``),
+        not ``has_pending_reload_settlement``: the latter also reports an ARMED
+        reload that is still settling, and using it here would hold the
+        slate-replan pass off through every rollover's settle window -- a
+        change with its own latch and cooldown, and none of U47's business.
+
+        The window this closes is the slate-first hand-off's own conform: the
+        channel is legitimately FALLBACK_SLATE (the slate is on air and the
+        program is being prepared) while a preparation for it is registered, so
+        without this the pass would queue a ``reload`` that
+        ``EgressDaemon._request_reload`` answers with ``_cancel_preparation`` --
+        abandoning the hand-off and conforming the same program a second time."""
+
+        reader = getattr(self._daemon, "has_pending_preparation", None)
         if not callable(reader):
             return False
         return bool(reader(channel_id))

@@ -846,6 +846,84 @@ class TestSlateReplan:
         assert "public" in service._reload_issued
         assert "public" in service._replan_retry_at
 
+    def test_due_program_waits_for_a_preparation_the_daemon_is_already_running(
+        self,
+    ) -> None:
+        """U47: the hand-off's own conform is not a slate gap.
+
+        A slate-first start/relaunch leaves the channel legitimately
+        FALLBACK_SLATE -- the fallback slate on air, the program it is waiting
+        for being prepared right now -- so this pass would otherwise queue the
+        very reload that hand-off is already running. The queued ``reload``
+        reaches ``EgressDaemon._request_reload``, whose first act is
+        ``_cancel_preparation``: the in-flight hand-off is abandoned and the
+        same program is conformed a second time (20-133 s per conform in the
+        field), on the one path U47 exists to keep the channel UP through.
+
+        Same contract as the control-connection gate above it: waiting does not
+        consume the latch or the cooldown, so a hand-off whose preparation
+        FAILS leaves the channel FALLBACK_SLATE with nothing registered and the
+        next tick issues the reload exactly as it always did.
+        """
+
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._slate_state(store, "public")
+        provider_calls = 0
+
+        class _PreparingDaemon(_FakeDaemon):
+            preparation_pending = True
+
+            def has_pending_preparation(self, _channel_id: str) -> bool:
+                return self.preparation_pending
+
+        daemon = _PreparingDaemon(live_channels={"public"})
+
+        def provider(channel_id: str) -> EgressSourcePlan:
+            nonlocal provider_calls
+            provider_calls += 1
+            return _plan(channel_id)
+
+        service = ChannelAutomationService(
+            store, daemon, provider, settings=ChannelAutomationSettings()
+        )
+
+        service._check_slate_replan("public", now=_NOW)
+        assert provider_calls == 0, "the provider must not be sampled for a preparation in flight"
+        assert _pending_actions(store, "public") == []
+        assert "public" not in service._reload_issued
+        assert "public" not in service._replan_retry_at
+
+        # The hand-off's preparation settles: the pass resumes as before.
+        daemon.preparation_pending = False
+        service._check_slate_replan("public", now=_NOW + timedelta(seconds=1))
+        assert provider_calls == 1
+        assert _pending_actions(store, "public") == ["reload"]
+        assert "public" in service._reload_issued
+        assert "public" in service._replan_retry_at
+
+    def test_a_daemon_without_the_pending_preparation_reader_is_unaffected(self) -> None:
+        """U47 optional-capability contract: absence means "no preparation".
+
+        ``has_pending_preparation`` is probed via ``getattr`` like
+        ``has_manual_override``/``has_pending_reload_settlement``, so a daemon
+        double that predates it (``_FakeDaemon``) keeps its existing behavior --
+        which is what every other test in this class exercises against exactly
+        that double.
+        """
+
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._slate_state(store, "public")
+        daemon = _FakeDaemon(live_channels={"public"})
+        service = ChannelAutomationService(
+            store, daemon, lambda cid: _plan(cid), settings=ChannelAutomationSettings()
+        )
+
+        assert service._daemon_has_pending_preparation("public") is False
+        service._check_slate_replan("public", now=_NOW)
+        assert _pending_actions(store, "public") == ["reload"]
+
     def test_no_plan_or_unplayable_plan_stays_on_slate(self) -> None:
         store = InMemoryEgressStore()
         store.upsert_config(_config("public"))
